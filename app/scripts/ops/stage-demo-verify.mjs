@@ -58,6 +58,43 @@ export const storefrontHomeProblems = (label, html) => {
   return problems;
 };
 
+const GatewayAuthenticationRequiredSchema = Schema.fromJsonString(
+  Schema.Struct({
+    status: Schema.Literal(401),
+    type: Schema.Literal('https://ontos.dev/problems/gateway-authentication-required'),
+  }),
+);
+
+/**
+ * The Symmy REST ingress's answer to a caller without a key: the gateway's whole 401 authentication problem with the
+ * API key challenge, never a redirect into the web app or its HTML. A status other than 401 is the only problem
+ * reported for that answer. Media types and authentication schemes compare without case, as HTTP defines them.
+ * @param {{ status: number, location: string | null, contentType: string | null, challenge: string | null, body: string }} answer The unauthenticated answer.
+ * @returns {{ reason: 'body' | 'content' | 'status', problem: string }[]} The problems found, empty for the expected answer.
+ */
+export const symmyIngressAnswerProblems = ({ body, challenge, contentType, location, status }) => {
+  if (status !== 401) {
+    const redirectedTo = location === null ? '' : ` to ${location}`;
+    return [{ problem: `answered ${String(status)}${redirectedTo}, not 401`, reason: 'status' }];
+  }
+  const problems = [];
+  const mediaType = (contentType ?? '').split(';')[0]?.trim().toLowerCase();
+  if (mediaType !== 'application/problem+json') {
+    problems.push({ problem: `answered content-type ${contentType ?? 'none'}`, reason: 'content' });
+  }
+  const scheme = (challenge ?? '').trim().split(/\s+/u)[0]?.toLowerCase();
+  if (scheme !== 'apikey') {
+    problems.push({ problem: 'answered without the ApiKey challenge', reason: 'content' });
+  }
+  if (Option.isNone(Schema.decodeUnknownOption(GatewayAuthenticationRequiredSchema)(body))) {
+    problems.push({
+      problem: `answered not the gateway authentication problem: ${body.slice(0, 200)}`,
+      reason: 'body',
+    });
+  }
+  return problems;
+};
+
 /** A request or body read failed at the private fetch adapter. */
 export const StageTransportError = Data.TaggedError('StageTransportError');
 

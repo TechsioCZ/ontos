@@ -7,6 +7,7 @@ import {
   DOCUMENT_ACCEPTANCE_MS,
   StageTransportError,
   StageVerificationFailure,
+  symmyIngressAnswerProblems,
   verifyStage,
   verifyStageFromConfig,
 } from '../ops/stage-demo-verify.mjs';
@@ -442,3 +443,62 @@ it.effect('a storefront home that answers 200 without products, with an unavaila
     expect((yield* healthy.run).failures).toEqual([]);
   }),
 );
+
+const symmyProblem = JSON.stringify({
+  detail: 'A valid API key is required.',
+  status: 401,
+  title: 'Gateway authentication required',
+  type: 'https://ontos.dev/problems/gateway-authentication-required',
+});
+const symmyAnswer = {
+  body: `${symmyProblem}\n`,
+  challenge: 'ApiKey realm="ontos-gateway"',
+  contentType: 'application/problem+json',
+  location: null,
+  status: 401,
+} as const;
+
+it('accepts the Symmy ingress authentication problem whatever the case of its media type and scheme', () => {
+  expect(symmyIngressAnswerProblems(symmyAnswer)).toEqual([]);
+  expect(
+    symmyIngressAnswerProblems({
+      ...symmyAnswer,
+      challenge: 'apikey realm="ontos-gateway"',
+      contentType: 'Application/Problem+JSON; charset=utf-8',
+    }),
+  ).toEqual([]);
+});
+
+it('reports a redirect of the Symmy ingress into the web app as its only problem', () => {
+  expect(
+    symmyIngressAnswerProblems({
+      body: '',
+      challenge: null,
+      contentType: 'application/octet-stream',
+      location: '/en/api/symmy/v1/admin/products',
+      status: 302,
+    }),
+  ).toEqual([{ problem: 'answered 302 to /en/api/symmy/v1/admin/products, not 401', reason: 'status' }]);
+});
+
+it('reports each wrong part of a 401 Symmy ingress answer on its own', () => {
+  expect(
+    symmyIngressAnswerProblems({ ...symmyAnswer, contentType: 'application/problem+json-seq' }).map(
+      ({ reason }) => reason,
+    ),
+  ).toEqual(['content']);
+  expect(symmyIngressAnswerProblems({ ...symmyAnswer, challenge: 'Bearer realm="x"' })).toEqual([
+    { problem: 'answered without the ApiKey challenge', reason: 'content' },
+  ]);
+  expect(
+    symmyIngressAnswerProblems({ ...symmyAnswer, body: symmyProblem.slice(0, 40) }).map(({ reason }) => reason),
+  ).toEqual(['body']);
+  expect(
+    symmyIngressAnswerProblems({
+      ...symmyAnswer,
+      body: '<!DOCTYPE html>',
+      challenge: null,
+      contentType: 'text/html',
+    }).map(({ reason }) => reason),
+  ).toEqual(['content', 'content', 'body']);
+});

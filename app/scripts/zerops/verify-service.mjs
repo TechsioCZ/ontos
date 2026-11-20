@@ -1,27 +1,14 @@
 // Run the existing mandatory probe contract without making app proofs wait for a storefront deployment.
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Option, Schema } from 'effect';
+import { Config, Console, Effect, Option } from 'effect';
 import { Argument, Command } from 'effect/cli';
 
-import { StageVerificationFailure, verifyStage } from '../ops/stage-demo-verify.mjs';
+import { StageVerificationFailure, symmyIngressAnswerProblems, verifyStage } from '../ops/stage-demo-verify.mjs';
 
 const SYMMY_INGRESS_PROBE = '/api/symmy/v1/admin/products';
-const GatewayAuthenticationRequiredSchema = Schema.fromJsonString(
-  Schema.Struct({
-    status: Schema.Literal(401),
-    type: Schema.Literal('https://ontos.dev/problems/gateway-authentication-required'),
-  }),
-);
 /**
- * @param {'body' | 'content' | 'status'} reason What about the answer is wrong.
- * @param {string} problem The observed answer.
- */
-const symmyIngressFailure = (reason, problem) =>
-  new StageVerificationFailure('Symmy ingress', reason, `${SYMMY_INGRESS_PROBE} ${problem}`);
-/**
- * The Shell mounts the Symmy REST ingress (ONTOS_INTERNAL_SYMMY_INGRESS in zerops.yaml's app build): a caller without a
- * key gets the ingress's own whole 401 gateway authentication problem with the API key challenge, never a redirect into
- * the web app or its HTML. A status other than 401 is the only failure reported for that response.
+ * The Shell mounts the Symmy REST ingress (ONTOS_INTERNAL_SYMMY_INGRESS in zerops.yaml's app build): the answer to a
+ * caller without a key is judged by {@link symmyIngressAnswerProblems}, read whole under one deadline.
  * @param {string} shellUrl The live Shell origin.
  */
 const symmyIngressFailures = (shellUrl) =>
@@ -33,30 +20,22 @@ const symmyIngressFailures = (shellUrl) =>
         redirect: 'manual',
         signal: AbortSignal.timeout(20_000),
       });
-      return { body: await response.text(), response };
+      return {
+        body: await response.text(),
+        challenge: response.headers.get('www-authenticate'),
+        contentType: response.headers.get('content-type'),
+        location: response.headers.get('location'),
+        status: response.status,
+      };
     },
   }).pipe(
     Effect.match({
       onFailure: (failure) => [failure],
-      onSuccess: ({ body, response }) => {
-        if (response.status !== 401) {
-          const location = response.headers.get('location');
-          const redirectedTo = location === null ? '' : ` to ${location}`;
-          return [symmyIngressFailure('status', `answered ${response.status}${redirectedTo}, not 401`)];
-        }
-        const contentType = response.headers.get('content-type') ?? 'none';
-        return [
-          ...(contentType.startsWith('application/problem+json')
-            ? []
-            : [symmyIngressFailure('content', `answered content-type ${contentType}`)]),
-          ...(response.headers.get('www-authenticate')?.startsWith('ApiKey ') === true
-            ? []
-            : [symmyIngressFailure('status', 'answered without the ApiKey challenge')]),
-          ...(Option.isSome(Schema.decodeUnknownOption(GatewayAuthenticationRequiredSchema)(body))
-            ? []
-            : [symmyIngressFailure('body', `answered not the gateway authentication problem: ${body.slice(0, 200)}`)]),
-        ];
-      },
+      onSuccess: (answer) =>
+        symmyIngressAnswerProblems(answer).map(
+          ({ problem, reason }) =>
+            new StageVerificationFailure('Symmy ingress', reason, `${SYMMY_INGRESS_PROBE} ${problem}`),
+        ),
     }),
   );
 
