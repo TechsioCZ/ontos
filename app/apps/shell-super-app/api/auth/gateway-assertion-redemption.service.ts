@@ -34,41 +34,53 @@ const unavailableError = (cause?: unknown) => {
  * no token, principal, tenant or business payload is stored.
  */
 export const makeShellGatewayAssertionRedemption = (
-  executor: Pick<AuthDatabaseExecutor, 'execute' | 'insert'>,
+  executor: Pick<AuthDatabaseExecutor, 'transaction'>,
 ): GatewayAssertionRedemption => ({
   consume: Effect.fn('ShellGatewayAssertionRedemption.consume')(function* consume(
     input: GatewayAssertionRedemptionInput,
   ) {
     const nowEpochMs = yield* Clock.currentTimeMillis;
+    const acceptanceDeadlineMs = (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) * 1000;
     // Verification can finish after its captured clock passes the assertion's skew window. Reject before cleanup can
     // delete this assertion's existing replay evidence.
-    if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(nowEpochMs / 1000)) {
+    if (acceptanceDeadlineMs <= nowEpochMs) {
       return yield* replayError();
     }
+    // Retain each identity past the longest redemption that could have started before it expired.
     const expiredBefore = DateTime.toDateUtc(
-      DateTime.makeUnsafe(nowEpochMs - Duration.toMillis(Duration.seconds(GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS))),
+      DateTime.makeUnsafe(
+        nowEpochMs -
+          Duration.toMillis(Duration.seconds(GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS)) -
+          Duration.toMillis(REDEMPTION_TIMEOUT),
+      ),
     );
     const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
-    yield* executor
-      .execute(
-        sql`delete from ${gatewayAssertionRedemptions}
-          where (issuer, audience, jti) in (
-            select issuer, audience, jti from ${gatewayAssertionRedemptions}
-            where expires_at < ${expiredBefore} order by expires_at limit ${CLEANUP_BATCH}
-          )`,
-      )
-      .pipe(recoverSqlTransactionError, Effect.mapError(unavailableError));
+    // Cleanup and claim are one transaction: a claim never races a cleanup of the evidence it is compared with.
     const inserted = yield* executor
-      .insert(gatewayAssertionRedemptions)
-      .values({ audience: input.audience, expiresAt, issuer: input.issuer, jti: input.jti })
-      .onConflictDoNothing()
-      .returning({ jti: gatewayAssertionRedemptions.jti })
+      .transaction(
+        Effect.fn('ShellGatewayAssertionRedemption.redeem')(function* redeem(transaction) {
+          yield* transaction.execute(
+            sql`delete from ${gatewayAssertionRedemptions}
+              where (issuer, audience, jti) in (
+                select issuer, audience, jti from ${gatewayAssertionRedemptions}
+                where expires_at < ${expiredBefore} order by expires_at limit ${CLEANUP_BATCH}
+              )`,
+          );
+          return yield* transaction
+            .insert(gatewayAssertionRedemptions)
+            .values({ audience: input.audience, expiresAt, issuer: input.issuer, jti: input.jti })
+            .onConflictDoNothing()
+            .returning({ jti: gatewayAssertionRedemptions.jti });
+        }),
+      )
       .pipe(
         recoverSqlTransactionError,
         Effect.mapError(unavailableError),
         Effect.timeoutOrElse({ duration: REDEMPTION_TIMEOUT, orElse: () => Effect.fail(unavailableError()) }),
       );
-    if (inserted.length !== 1) {
+    // A claim that only completed after the assertion stopped being acceptable is not a pass.
+    const redeemedAtMs = yield* Clock.currentTimeMillis;
+    if (inserted.length !== 1 || acceptanceDeadlineMs <= redeemedAtMs) {
       return yield* replayError();
     }
     return yield* Effect.void;
