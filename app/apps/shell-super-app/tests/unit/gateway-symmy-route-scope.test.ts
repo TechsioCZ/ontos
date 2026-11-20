@@ -62,6 +62,7 @@ const request = {
 
 const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   readonly activeBinding?: boolean;
+  readonly allowedOwnerOperations?: typeof response.allowedOwnerOperations;
   readonly catalog?: ShellInstalledCatalog;
   readonly replayIdempotencyDigest?: string;
   readonly responseTenant?: string;
@@ -78,7 +79,11 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
       body: await incoming.text(),
       url: incoming.url,
     });
-    const ownerResponse = { ...response, tenantId: options.responseTenant ?? response.tenantId };
+    const ownerResponse = {
+      ...response,
+      allowedOwnerOperations: options.allowedOwnerOperations ?? response.allowedOwnerOperations,
+      tenantId: options.responseTenant ?? response.tenantId,
+    };
     if (options.replayIdempotencyDigest !== undefined) {
       Object.assign(ownerResponse, {
         allowedOwnerOperations: [],
@@ -105,7 +110,10 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     currentTimeSeconds: Effect.succeed(1_700_000_000),
     generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
     loadAdmission: Effect.succeed({
-      audiences: new Map([['symmy-integration', 'native-route-build']]),
+      audiences: new Map([
+        ['commerce-customer-context', 'native-route-build'],
+        ['symmy-integration', 'native-route-build'],
+      ]),
       revision: options.catalog?.composition.revision ?? compositionRevision,
     }),
     loadConfig: Effect.succeed({
@@ -359,6 +367,92 @@ it.effect('signs only exact admission Actions and the approved v1 sync lookup fo
         }),
       );
       expect(retainedToken.payload['routeScope']).toMatchObject({ operations, replayIdempotencyDigest, routeKey });
+    }
+  }),
+);
+
+it.effect('signs on the customer groups admission route only its enrolled Commerce definition read', () =>
+  Effect.gen(function* admissionDefinitionRead() {
+    const moduleId = 'commerce.customer-context';
+    const definitionRead = 'commerce.customer-context.api.customer-group-definition-source';
+    const otherRead = 'commerce.customer-context.api.customer-profile-source-page';
+    const commerce = makeModuleContractFixture({ appId: 'commerce-customer-context', moduleId });
+    const snapshot = yield* makeCompositionSnapshot([
+      {
+        ...commerce,
+        manifest: {
+          ...commerce.manifest,
+          publicSurface: {
+            ...commerce.manifest.publicSurface,
+            api: [{ key: 'commerce.customer-context.api.reads', operationKeys: ['read0.execute', 'read1.execute'] }],
+            operationContracts: [definitionRead, otherRead].map((entrypointKey, index) => ({
+              apiKey: 'commerce.customer-context.api.reads',
+              entrypoint: defineTenantModuleEntrypoint({
+                access: 'read',
+                authorization: { kind: 'protected' },
+                entrypointKey,
+                moduleKey: moduleId,
+                role: 'api',
+              }),
+              operationKey: `read${index}.execute`,
+              schemaVersion: '1',
+            })),
+          },
+        },
+      },
+    ]);
+    const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+    const enrolled = (entrypointKeys: readonly string[]) =>
+      entrypointKeys.map((entrypointKey) => ({ entrypointKey, moduleId, schemaVersion: '1' }));
+    const issue = (routeKey: 'customerGroupsBatch' | 'customersBatch', entrypointKeys: readonly string[]) =>
+      Effect.gen(function* issueCommerceRead() {
+        const current = yield* fixture({
+          allowedOwnerOperations: enrolled(entrypointKeys),
+          catalog: { ...catalog, composition: snapshot.composition },
+        });
+        const assertion = yield* Effect.gen(function* admissionRoute() {
+          const proof = yield* acquireSymmyRouteScopeProof({
+            ...request,
+            compositionRevision: snapshot.composition.revision,
+            routeRequest: { routeKey },
+            sourcePurpose: 'admit',
+          });
+          return yield* issueSymmyRouteScopeAssertion(proof, {
+            audience: 'commerce-customer-context',
+            legalEntityId,
+            principal,
+          });
+        }).pipe(Effect.provide(current.layer));
+        return yield* Effect.promise(() =>
+          jwtVerify(assertion.token, current.publicKey, {
+            algorithms: ['EdDSA'],
+            audience: 'commerce-customer-context',
+            currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+            issuer: 'https://shell.test',
+          }),
+        );
+      });
+    const groupRoute = [
+      'commerce.customer-context.create-customer-group',
+      'commerce.customer-context.update-customer-group',
+      definitionRead,
+      otherRead,
+    ];
+    const signed = yield* issue('customerGroupsBatch', groupRoute);
+    expect(signed.payload['routeScope']).toMatchObject({
+      legalEntityId,
+      operations: [{ entrypointKey: definitionRead, schemaVersion: '1' }],
+      principalId: principal.principalId,
+      routeKey: 'customerGroupsBatch',
+      tenantId: principal.tenantId,
+    });
+    // Another admission route, and the group route without the definition read, reach no Commerce read.
+    for (const [routeKey, entrypointKeys] of [
+      ['customersBatch', groupRoute],
+      ['customerGroupsBatch', groupRoute.filter((entrypointKey) => entrypointKey !== definitionRead)],
+    ] as const) {
+      const refused = yield* Effect.flip(issue(routeKey, entrypointKeys));
+      expect(refused).toMatchObject({ code: 'forbidden' });
     }
   }),
 );
