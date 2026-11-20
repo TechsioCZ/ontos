@@ -1272,6 +1272,75 @@ it.effect('uses a privately acquired route assertion without falling back to hum
   }),
 );
 
+it.effect('replays a group membership admission on a route retained for replay without any owner read', () =>
+  Effect.gen(function* retainedMembershipReplay() {
+    const rawCode = 'CZ wholesale';
+    const source = {
+      entityKind: 'CUSTOMER_GROUP',
+      issuerId: internalRoute.issuerId,
+      route: { integrationRouteId: internalRoute.sourceRouteId, tenantId: internalRoute.tenantId },
+      sourceNamespace: 'source-customer-group-namespace',
+      sourceRecordId: rawCode,
+    };
+    // The route of an accepted job whose enrollment changed since: it carries the saved selector and allows no read.
+    const retained = yield* Schema.decodeUnknownEffect(SymmyRouteContextResponseSchema)({
+      ...internalRoute,
+      allowedOwnerOperations: [],
+      replayIdempotencyDigest: 'a'.repeat(64),
+      resolvedCode: rawCode,
+      selector: { kind: 'CUSTOMER_GROUP', source, target: nativeCustomerGroupRef },
+    });
+    const code = encodeSymmySourceSelector(
+      {
+        issuerId: source.issuerId,
+        routeId: source.route.integrationRouteId,
+        selectorKind: 'CUSTOMER_GROUP',
+        sourceNamespace: source.sourceNamespace,
+        tenantId: source.route.tenantId,
+      },
+      rawCode,
+      nativeCustomerGroupRef.resourceId,
+    );
+    const admitPath = `${releasePath}/symmy-integration/actions/admit-symmy-job`;
+    const nativeCalls: string[] = [];
+    // Every owner read is refused; only the admission answers, with the job it saved for this key.
+    const ownerFetch: typeof fetch = async (input, init) => {
+      const path = new URL(new Request(input, init).url).pathname;
+      nativeCalls.push(path);
+      return path === admitPath
+        ? Response.json({ jobId, phase: 'admitted' })
+        : Response.json(forbidden, { status: 403 });
+    };
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          acquireOwnerAssertion: () => Effect.fail(forbidden),
+          acquireRouteAssertion: () =>
+            Effect.succeed({
+              apiBaseUrl,
+              assertion: Redacted.make('retained-route-assertion'),
+              compositionRevision: revision,
+              route: retained,
+            }),
+          dispatch: makeSymmyGovernedDispatch(Effect.succeed('retained-replay-correlation')),
+          ownerFetch,
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', code), {
+        ...groupCustomersJson,
+        headers: { ...groupCustomersJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+        method: 'POST',
+      }),
+    );
+    expect(response.status).toBe(202);
+    expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
+    expect(nativeCalls).toEqual([admitPath]);
+  }),
+);
+
 const priceBatchRoute = (logicalRouteId: string, namespace: string) => ({
   ...internalRoute,
   allowedOwnerOperations: [
