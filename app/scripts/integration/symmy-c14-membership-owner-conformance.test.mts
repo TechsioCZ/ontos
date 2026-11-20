@@ -583,6 +583,47 @@ it.live(
           HttpBody.jsonUnsafe({ customers: [{ ...customer, operation: 'REMOVE' }] }),
         );
         expect(rejectedRemoval.status).toBe(400);
+        // An internal plan that removes the assigned membership is refused on the assignment-only route: no job,
+        // no ledger order and no owner call.
+        const ledgerOrders = admin`select effect_id from symmy_integration.membership_source_orders where tenant_id=${tenantId} order by source_order`;
+        const ordersBeforeRemoval = yield* ledgerOrders;
+        const removalPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(
+          yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
+            items: [
+              {
+                effects: [
+                  {
+                    effectKey: 'withdrawn-membership',
+                    intent: {
+                      _tag: 'CustomerGroupMembership',
+                      payload: {
+                        ...(yield* Schema.encodeEffect(membershipAssignmentSchema)(pinned.payload)),
+                        expectedRevision: assigned.membership.revision,
+                        membershipRef: assigned.membership.membershipRef,
+                        operation: 'REMOVE',
+                      },
+                    },
+                    operation: commerceOperation(membershipActionKey),
+                  },
+                ],
+                itemKey: 'withdrawn-membership',
+                source: {
+                  entityKind: pinned.payload.manager.factFamily,
+                  issuerId: groupSource.issuer,
+                  sourceNamespace: groupSource.namespace,
+                  sourceRecordId: pinned.payload.source.sourceRecordId,
+                },
+              },
+            ],
+          }),
+        );
+        const rejectedRemovalPlan = yield* submit(
+          selectedCode,
+          'INTERNAL_C14_SELECTED_MEMBERSHIP_REMOVE_PLAN',
+          HttpBody.jsonUnsafe({ contractVersion: 'INTERNAL_C14', plan: removalPlan }),
+        );
+        expect(rejectedRemovalPlan.status).toBe(403);
+        expect(yield* ledgerOrders).toEqual(ordersBeforeRemoval);
         expect(yield* membershipInvocations).toEqual(beforeRemoval);
         expect(yield* admittedJobs).toEqual(jobsBeforeRemoval);
         expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);

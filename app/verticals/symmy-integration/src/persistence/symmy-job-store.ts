@@ -696,13 +696,16 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
       return yield* routeDenied();
     }
     // A membership an internal plan or the template states takes the order the ledger reserves for its lineage,
-    // exactly as one of the public customers; the order the plan carries is replaced before anything is pinned.
+    // exactly as one of the public customers, once it names what the admitted route enrolls; the order the plan
+    // carries is replaced before anything is pinned.
     const ordered =
       groupCustomers === undefined
         ? yield* orderSymmyPlanMemberships({
+            authority: sourceAuthority(route, template),
             legalEntityId: scope.legalEntityId,
             plan: configured,
             reserve: reserveLineageOrder(transaction),
+            template,
             tenantId: scope.tenantId,
           })
         : Option.some(configured);

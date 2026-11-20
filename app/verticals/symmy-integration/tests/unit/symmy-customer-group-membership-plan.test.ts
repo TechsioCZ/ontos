@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyGroupCustomerRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
@@ -19,6 +19,8 @@ import type {
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const routeId = '33333333-3333-4333-8333-333333333333';
+/** The Symmy route a request is admitted on; its source route is `routeId`. */
+const admittedRouteId = '77777777-7777-4777-8777-777777777777';
 const authority = { mappingRevision: 'mapping-1', routeId, routeRevision: 'route-1' };
 const groupRef = (resourceId: string) => ({
   moduleId: 'commerce.customer-context',
@@ -121,6 +123,7 @@ const AssignmentIntentSchema = Schema.Struct({
 const assignmentOf = (plan: SymmyFixtureExecutionPlan, index: number) =>
   Schema.decodeUnknownSync(AssignmentIntentSchema)(plan.items[index]?.effects[0]?.intent).payload;
 const lower = 'abcdef00-6666-4666-8666-666666666666';
+type PlanItem = SymmyFixtureExecutionPlan['items'][number];
 
 describe('Symmy group membership plan from the public customers', () => {
   it.effect('assigns each profile to the selected group under its manager, route and reserved order', () =>
@@ -226,8 +229,12 @@ const planMembership = (
   resourceId: string,
   options: {
     readonly group?: ReturnType<typeof groupRef>;
+    readonly issuer?: string;
+    readonly managerTenant?: string;
+    readonly namespace?: string;
     readonly order?: number;
     readonly profileTenant?: string;
+    readonly route?: { readonly id: string; readonly revision: string };
   } = {},
 ) => ({
   effectKey,
@@ -238,14 +245,14 @@ const planMembership = (
       groupRef: options.group ?? wholesale,
       manager: {
         factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
-        issuer: 'route-issuer',
-        sourceNamespace: 'route-memberships',
-        tenantId,
+        issuer: options.issuer ?? 'route-issuer',
+        sourceNamespace: options.namespace ?? 'route-memberships',
+        tenantId: options.managerTenant ?? tenantId,
       },
       operation: 'ASSIGN',
       profile: profile(resourceId, options.profileTenant).profile,
       reason: 'Internal plan membership',
-      route: { id: routeId, revision: 'route-1' },
+      route: options.route ?? { id: routeId, revision: 'route-1' },
       source: {
         assertionId: `assertion-${effectKey}`,
         effectId: 'ASSIGNED_BY_NATIVE_ADMISSION',
@@ -308,11 +315,19 @@ const planOf = (...items: readonly (readonly unknown[])[]) =>
       sourceOccurrenceId: `occurrence-${index}`,
     })),
   });
-const orderPlan = (book: Ledger, plan: SymmyFixtureExecutionPlan, withoutLegalEntity = false) =>
+/** The enrollment of a route that selects no customer group. */
+const { selector: _selector, ...unselected } = templateFor(wholesale, 'symmy-wholesale');
+const orderPlan = (
+  book: Ledger,
+  plan: SymmyFixtureExecutionPlan,
+  options: { readonly template?: SymmyFixtureExecutionPlan; readonly withoutLegalEntity?: boolean } = {},
+) =>
   orderSymmyPlanMemberships({
-    legalEntityId: withoutLegalEntity ? noLegalEntity : legalEntityId,
+    authority,
+    legalEntityId: options.withoutLegalEntity === true ? noLegalEntity : legalEntityId,
     plan,
     reserve: book.reserve,
+    template: options.template ?? templateFor(wholesale, 'symmy-wholesale'),
     tenantId,
   });
 
@@ -326,6 +341,7 @@ describe('Symmy membership order of an internal plan', () => {
       const ordered = yield* orderPlan(
         book,
         planOf([priceAssignment, planMembership('membership', lower.toUpperCase(), { group: retail })]),
+        { template: templateFor(retail, 'symmy-retail') },
       );
       expect(Option.getOrThrow(ordered)).toEqual(
         planOf([priceAssignment, planMembership('membership', lower.toUpperCase(), { group: retail, order: 2 })]),
@@ -341,12 +357,14 @@ describe('Symmy membership order of an internal plan', () => {
     Effect.gen(function* consecutiveLineageOrders() {
       const book = ledger();
       const later = 'ffffffff-6666-4666-8666-666666666666';
+      // A route that selects no group admits memberships of any group its enrolled source manages.
       const ordered = yield* orderPlan(
         book,
         planOf(
           [planMembership('later', later, { order: 1 })],
           [planMembership('first', lower, { order: 1 }), planMembership('second', lower, { group: retail, order: 1 })],
         ),
+        { template: unselected },
       );
       expect(Option.getOrThrow(ordered)).toEqual(
         planOf(
@@ -363,7 +381,7 @@ describe('Symmy membership order of an internal plan', () => {
       const book = ledger();
       const plan = planOf([priceAssignment]);
       expect(Option.getOrThrow(yield* orderPlan(book, plan))).toBe(plan);
-      expect(Option.getOrThrow(yield* orderPlan(book, plan, true))).toBe(plan);
+      expect(Option.getOrThrow(yield* orderPlan(book, plan, { withoutLegalEntity: true }))).toBe(plan);
       expect(book.reserved).toEqual([]);
     }),
   );
@@ -378,7 +396,78 @@ describe('Symmy membership order of an internal plan', () => {
       ]) {
         expect(Option.isNone(yield* orderPlan(book, plan))).toBe(true);
       }
-      expect(Option.isNone(yield* orderPlan(book, planOf([planMembership('valid', lower)]), true))).toBe(true);
+      expect(
+        Option.isNone(yield* orderPlan(book, planOf([planMembership('valid', lower)]), { withoutLegalEntity: true })),
+      ).toBe(true);
+      expect(book.reserved).toEqual([]);
+    }),
+  );
+
+  it.effect('refuses a membership of a manager, source route or group the route does not enroll', () =>
+    Effect.gen(function* refusesUnenrolled() {
+      const book = ledger();
+      const foreignTenant = '99999999-9999-4999-8999-999999999999';
+      for (const membership of [
+        planMembership('other-issuer', lower, { issuer: 'other-issuer' }),
+        planMembership('other-namespace', lower, { namespace: 'other-memberships' }),
+        planMembership('other-tenant', lower, { managerTenant: foreignTenant }),
+        planMembership('other-route', lower, { route: { id: admittedRouteId, revision: 'route-1' } }),
+        planMembership('other-revision', lower, { route: { id: routeId, revision: 'route-2' } }),
+        planMembership('other-group', lower, { group: retail }),
+      ]) {
+        // One unenrolled membership refuses the whole plan, the enrolled one beside it included.
+        const plan = planOf([planMembership('valid', lower), membership]);
+        expect(Option.isNone(yield* orderPlan(book, plan)), membership.effectKey).toBe(true);
+      }
+      const valid = yield* orderPlan(book, planOf([planMembership('valid', lower)]), { template: unselected });
+      expect(Option.isSome(valid)).toBe(true);
+      expect(book.reserved).toHaveLength(1);
+    }),
+  );
+
+  it.effect('orders a membership after one it depends on, even one the plan lists later', () =>
+    Effect.gen(function* dependencyOrder() {
+      const book = ledger();
+      const dependsOn = [{ effectKey: 'assigned-first', itemKey: 'item-1' }];
+      const ordered = yield* orderPlan(
+        book,
+        planOf([{ ...planMembership('assigned-second', lower), dependsOn }], [planMembership('assigned-first', lower)]),
+      );
+      expect(Option.getOrThrow(ordered)).toEqual(
+        planOf(
+          [{ ...planMembership('assigned-second', lower, { order: 2 }), dependsOn }],
+          [planMembership('assigned-first', lower, { order: 1 })],
+        ),
+      );
+    }),
+  );
+
+  it.effect('refuses dependencies that form a cycle and reserves nothing', () =>
+    Effect.gen(function* refusesCycle() {
+      const book = ledger();
+      const forward = planOf(
+        [{ ...planMembership('one', lower), dependsOn: [{ effectKey: 'two', itemKey: 'item-1' }] }],
+        [planMembership('two', lower)],
+      );
+      const [dependent] = forward.items;
+      const [dependentEffect] = dependent.effects;
+      const cyclic: SymmyFixtureExecutionPlan = {
+        ...forward,
+        items: EffectArray.map<SymmyFixtureExecutionPlan['items'], PlanItem>((item) =>
+          item.itemKey === dependent.itemKey
+            ? item
+            : {
+                ...item,
+                effects: EffectArray.map<PlanItem['effects'], PlanItem['effects'][number]>((effect) => ({
+                  ...effect,
+                  dependsOn: [{ effectKey: dependentEffect.effectKey, itemKey: dependent.itemKey }],
+                }))(item.effects),
+              },
+        )(forward.items),
+      };
+      // The admission's own plan decoder refuses this graph; the ordering refuses it as well.
+      expect(Schema.is(SymmyFixtureExecutionPlanSchema)(cyclic)).toBe(false);
+      expect(Option.isNone(yield* orderPlan(book, cyclic))).toBe(true);
       expect(book.reserved).toEqual([]);
     }),
   );
