@@ -14,8 +14,20 @@ import { memoryAdapter } from 'better-auth/adapters/memory';
 import { verifyPassword } from 'better-auth/crypto';
 import { eq, inArray, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { Cause, ConfigProvider, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Redacted, Ref } from 'effect';
-import { Command } from 'effect/cli';
+import {
+  Cause,
+  ConfigProvider,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Redacted,
+  Ref,
+  Stdio,
+} from 'effect';
 import { describe, expect, it, rstest } from 'effect-rstest';
 
 import { loadAuthConfig } from '../../api/auth/config.ts';
@@ -35,10 +47,12 @@ import {
   parseStageAccountsBootstrapConfig,
   stageAccountsDryRunLines,
   stageAccountsFailureLine,
+  stageDepartureLine,
 } from '../../api/auth/stage-accounts-bootstrap-contract.ts';
 import type {
   StageAccountsBootstrapConfig,
   StageAccountsBootstrapError,
+  StageAccountsExecution,
 } from '../../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
   bootstrapStageAccounts,
@@ -804,7 +818,14 @@ describe('stage-accounts-bootstrap', () => {
                 where principal_auth_binding_id = ${apps.foreign.binding}`,
           );
           const retired = yield* run(retirement);
-          expect(retired.retiredPrincipals).toEqual([{ email: leaverEmail, principalId: leaver, tenantId }]);
+          expect(
+            retired.departures.map(({ archives, email, principalId, tenantId: at }) => ({
+              archives,
+              at,
+              email,
+              principalId,
+            })),
+          ).toEqual([{ archives: true, at: tenantId, email: leaverEmail, principalId: leaver }]);
           expect(retired.endedConnectedApps.map(({ grantId, status }) => ({ grantId, status }))).toEqual([
             { grantId: apps.live.grant, status: 'active' },
           ]);
@@ -845,9 +866,12 @@ describe('stage-accounts-bootstrap', () => {
             expect(yield* tokenCountsOf(grantId)).toEqual([0, 0, 0]);
           }
           expect(yield* tokenCountsOf(survivingGrant)).toEqual([1, 1, 1]);
-          // The same file again ends nothing, so it records nothing, and finds nothing left to delete.
+          // The same file again ends nothing, so it records nothing, says so, and finds nothing left to delete.
           const replayed = yield* run(retirement);
           expect(replayed.endedConnectedApps).toEqual([]);
+          expect(replayed.departures.map((departure) => stageDepartureLine(departure, 'commit'))).toEqual([
+            `The Principal of ${leaverEmail} was retired already: tenant=${tenantId} principal=${leaver}; the run wrote nothing of it again`,
+          ]);
           expect(yield* revocationEvents).toEqual(recorded);
           for (const grantId of leaverGrants) {
             expect(yield* tokenCountsOf(grantId)).toEqual([0, 0, 0]);
@@ -858,7 +882,7 @@ describe('stage-accounts-bootstrap', () => {
     180_000,
   );
   it.live(
-    'dry-runs the AKROS move with --dry-run: the real move transaction, rolled back, leaves every table as it was, and the real run then writes exactly what the dry run printed',
+    'rehearses the AKROS move by default: the real move transaction, rolled back, leaves every table as it was, and the real run then writes exactly what the rehearsal printed',
     () =>
       Effect.scoped(
         Effect.gen(function* dryRunsTheAkrosMove() {
@@ -970,14 +994,13 @@ describe('stage-accounts-bootstrap', () => {
             retiredTenants: [],
             tenants: [],
           };
-          // The operator's `--dry-run`, parsed as the command parses it: the very move transaction of the real run,
-          // rolled back. Every table the real run writes is as it was.
-          const requested = yield* Ref.make(false);
-          yield* Command.runWith(
-            makeStageAccountsCommand((dryRunRequested) => Ref.set(requested, dryRunRequested)),
-            { version: 'test' },
-          )(['--dry-run']);
-          expect(yield* Ref.get(requested)).toBe(true);
+          // The operator's command with no argument, read as the command reads it, is the dry run: the very move
+          // transaction of the real run, rolled back. Every table the real run writes is as it was.
+          const requested = yield* Ref.make<readonly StageAccountsExecution[]>([]);
+          yield* makeStageAccountsCommand((execution) => Ref.update(requested, (runs) => [...runs, execution])).pipe(
+            Effect.provide(Stdio.layerTest({ args: Effect.succeed([]) })),
+          );
+          expect(yield* Ref.get(requested)).toEqual(['dry-run']);
           const dry = yield* dryRun(operatorFile);
           expect(yield* snapshot).toEqual(before);
           expect(dry.departures).toHaveLength(1);
@@ -1036,6 +1059,7 @@ describe('stage-accounts-bootstrap', () => {
             'Would write 1 audit events (oauth.connection.revoked)',
             'Dry run skipped the clean-up after the commit: the run would delete the Better Auth tokens and consent of 2 connected apps of the people it retires',
             `Dry run skipped the authorization reconcile of tenant ${source}, which somebody leaves`,
+            'Nothing was written. Check every line above; the real run of the same, unchanged file is `node scripts/bootstrap-stage-accounts.mts --commit`',
           ]);
           // The real run then writes exactly the moves the dry run printed.
           const real = yield* realRun(operatorFile);

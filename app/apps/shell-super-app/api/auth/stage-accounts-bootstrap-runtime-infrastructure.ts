@@ -10,7 +10,9 @@ import {
 } from '@app/core-runtime/install/stage-context-bootstrap';
 import type {
   InstallationRuntime,
+  StageAttachment,
   StageContextBootstrapResult,
+  StageDeparture,
   StageMoves,
   StageRetiredConnectedApp,
   StageRetiredPrincipalIdentity,
@@ -422,15 +424,15 @@ const toAccountResult = (
 });
 
 /**
- * What one operator run did: its accounts and retired accounts, the logins it attached, the people it retired and the
- * connected apps their departure ended, and what its move transaction wrote, which its dry run reports beforehand.
+ * What one operator run did: its accounts and retired accounts, the logins it attached, each departure with every write
+ * its move transaction made (a replay's included) and the connected apps the departures ended, and what its move
+ * transaction wrote, which its dry run reports beforehand.
  */
 export interface StageAccountsBootstrapRunResult extends StageAccountsBootstrapResult {
-  readonly attachedLogins: readonly {
-    readonly email: string;
-    readonly principalId: string;
-    readonly tenantId: string;
-  }[];
+  /** Each attached login of the file, with the email it names it by and whether this run created it. */
+  readonly attachments: readonly (StageAttachment & { readonly email: string })[];
+  /** Each departure of the file, with the email it names the person by and every write it made. */
+  readonly departures: readonly (StageDeparture & { readonly email: string })[];
   /** The connected apps this run ended, by client name and id; never a token. */
   readonly endedConnectedApps: readonly {
     readonly clientId: string;
@@ -442,11 +444,6 @@ export interface StageAccountsBootstrapRunResult extends StageAccountsBootstrapR
     readonly tenantId: string;
   }[];
   readonly moves: StageMoves;
-  readonly retiredPrincipals: readonly {
-    readonly email: string;
-    readonly principalId: string;
-    readonly tenantId: string;
-  }[];
 }
 
 export interface StageAccountsBootstrapOptions {
@@ -510,6 +507,28 @@ const completedRetirementsOf = (retiredPrincipals: readonly StageRetiredPrincipa
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
   }).pipe(Effect.mapError(stageRunFailure));
 
+/** Each attachment the move transaction made, or would make, with the email the file names its login by. */
+const attachmentsOf = (
+  attachedLogins: readonly { readonly email: string; readonly principalId: string; readonly tenantId: string }[],
+  moves: StageMoves,
+): readonly (StageAttachment & { readonly email: string })[] =>
+  attachedLogins.flatMap(({ email, principalId, tenantId }) =>
+    moves.attachments.flatMap((attachment) =>
+      attachment.principalId === principalId && attachment.tenantId === tenantId ? [{ ...attachment, email }] : [],
+    ),
+  );
+
+/** Each departure the move transaction made, or would make, with the email the file names its person by. */
+const departuresOf = (
+  retiredPrincipals: readonly { readonly email: string; readonly principalId: string; readonly tenantId: string }[],
+  moves: StageMoves,
+): readonly (StageDeparture & { readonly email: string })[] =>
+  retiredPrincipals.flatMap(({ email, principalId, tenantId }) =>
+    moves.departures.flatMap((departure) =>
+      departure.principalId === principalId && departure.tenantId === tenantId ? [{ ...departure, email }] : [],
+    ),
+  );
+
 /** Every account of the file's tenants, tenant by tenant and account by account. */
 const accountConfigurationsOf = (accountsFile: StageAccountsFile): readonly StageAccountConfig[] =>
   accountsFile.tenants.flatMap(({ accounts }) =>
@@ -543,8 +562,8 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
   yield* refuseUndeclaredModules(accountsFile, options.modules);
   const retiredPrincipalIdentities = yield* retiredPrincipalIdentitiesOf(accountsFile);
   // The read-only pre-step finishes a departure an earlier run of this file committed first, whatever the run then
-  // decides about the rest of the file: a run that stopped before its clean-up is completed even when, say, a login it
-  // attached has since connected an app of its own and the attachment's exact replay refuses the file. A person of the
+  // decides about the rest of the file: a run that stopped before its clean-up is completed even when the rest of the
+  // file is refused this time. A person of the
   // file who is archived with every binding revoked, one of them the login's, and nothing live has completed it, since a
   // retirement is one transaction that also archives the Principal; only the tokens and consent of their ended grants
   // are deleted, by grant id, which is idempotent and harmless even for a Principal archived by other means. This and
@@ -603,7 +622,8 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
   });
   return {
     accounts,
-    attachedLogins: attachedLogins.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
+    attachments: attachmentsOf(attachedLogins, run.moves),
+    departures: departuresOf(retiredPrincipals, run.moves),
     endedConnectedApps: retiredPrincipals.flatMap(({ email, principalId, tenantId }) =>
       run.connectedApps.flatMap((app) =>
         app.endedByThisRun && app.principalId === principalId && app.tenantId === tenantId
@@ -623,12 +643,11 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
     ),
     moves: run.moves,
     retiredAccounts,
-    retiredPrincipals: retiredPrincipals.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
   };
 });
 
 /**
- * The dry run of `bootstrapStageAccounts` (`--dry-run`): every read and refusal of the real run, in the real run's
+ * The dry run of `bootstrapStageAccounts` (the operator command's default): every read and refusal of the real run, in the real run's
  * order, then Core's move transaction with every lock, read and write of the real run, rolled back instead of
  * committed. Nothing persists. What the real run writes outside that transaction is skipped and reported instead: the
  * pre-step's deletion of Better Auth tokens and consent (its read runs), the reconciliation of the file's Better Auth
@@ -665,18 +684,10 @@ export const rehearseStageAccounts = Effect.fn('StageAccountsBootstrap.rehearse'
   ).pipe(Effect.mapError(stageRunFailure));
   return {
     accounts,
-    attachments: attachedLogins.flatMap(({ email, principalId, tenantId }) =>
-      moved.moves.attachments.flatMap((attachment) =>
-        attachment.principalId === principalId && attachment.tenantId === tenantId ? [{ ...attachment, email }] : [],
-      ),
-    ),
+    attachments: attachmentsOf(attachedLogins, moved.moves),
     completedConnectedApps,
     connectedApps: moved.connectedApps,
-    departures: retiredPrincipals.flatMap(({ email, principalId, tenantId }) =>
-      moved.moves.departures.flatMap((departure) =>
-        departure.principalId === principalId && departure.tenantId === tenantId ? [{ ...departure, email }] : [],
-      ),
-    ),
+    departures: departuresOf(retiredPrincipals, moved.moves),
     leftTenantIds: [...new Set(retiredPrincipals.map(({ tenantId }) => tenantId))],
     retiredAccountEmails: accountsFile.retiredAccountEmails,
     retiredTenantIds: accountsFile.retiredTenants.map(({ tenantId }) => tenantId),

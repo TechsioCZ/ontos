@@ -1,20 +1,24 @@
 import { StageContextBootstrapError } from '@app/core-runtime/install/stage-context-bootstrap';
-import { NodeServices } from '@effect/platform-node';
-import { Effect, Exit, Redacted, Ref, Schema } from 'effect';
-import { Command } from 'effect/cli';
+import { Effect, Redacted, Ref, Schema, Stdio } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
+  STAGE_ACCOUNTS_USAGE,
   StageAccountsBootstrapError,
   classifyExactStageAccountsRecord,
   parseStageAccountsBootstrapConfig,
   stageAccountsDatabases,
   stageAccountsDryRunLines,
   stageAccountsFailureLine,
+  stageAttachmentLine,
+  stageDepartureLine,
   stageRunFailure,
 } from '../../api/auth/stage-accounts-bootstrap-contract.ts';
-import type { StageAccountsRehearsal } from '../../api/auth/stage-accounts-bootstrap-contract.ts';
+import type {
+  StageAccountsExecution,
+  StageAccountsRehearsal,
+} from '../../api/auth/stage-accounts-bootstrap-contract.ts';
 import { loadStageAccountsConfiguration } from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 import { makeStageAccountsCommand } from '../../scripts/bootstrap-stage-accounts.mts';
 
@@ -239,25 +243,64 @@ it.effect('treats an exact record as idempotent and rejects conflicting state', 
   }),
 );
 
-/** The operator command line as the script parses it; the run it selects is recorded instead of started. */
+/** The operator command line as the script reads it; the run it selects is recorded instead of started. */
 const runsSelectedBy = (argv: readonly string[]) =>
   Effect.gen(function* parseCommandLine() {
-    const selected = yield* Ref.make<readonly boolean[]>([]);
-    const exit = yield* Command.runWith(
-      makeStageAccountsCommand((dryRun) => Ref.update(selected, (runs) => [...runs, dryRun])),
-      { renderErrors: false, version: 'test' },
-    )(argv).pipe(Effect.exit);
-    return { refused: Exit.isFailure(exit), runs: yield* Ref.get(selected) };
+    const selected = yield* Ref.make<readonly StageAccountsExecution[]>([]);
+    const outcome = yield* makeStageAccountsCommand((execution) =>
+      Ref.update(selected, (runs) => [...runs, execution]),
+    ).pipe(
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(argv) })),
+      Effect.match({
+        onFailure: ({ code, reason }) => ({ refused: { code, reason } }),
+        onSuccess: () => ({ refused: false as const }),
+      }),
+    );
+    return { ...outcome, runs: yield* Ref.get(selected) };
   });
 
-it.effect('runs for real without a flag, dry with --dry-run, and refuses a mistyped flag or stray argument unrun', () =>
-  Effect.gen(function* parsesTheCommandLine() {
-    expect(yield* runsSelectedBy([])).toEqual({ refused: false, runs: [false] });
-    expect(yield* runsSelectedBy(['--dry-run'])).toEqual({ refused: false, runs: [true] });
-    for (const argv of [['--dryrun'], ['dry-run'], ['--dry-run', '--dry-run'], ['--commit']]) {
-      expect(yield* runsSelectedBy(argv)).toEqual({ refused: true, runs: [] });
-    }
-  }).pipe(Effect.provide(NodeServices.layer)),
+it.effect(
+  'rehearses by default or with --dry-run, runs for real only with exactly --commit, and refuses anything else unrun',
+  () =>
+    Effect.gen(function* parsesTheCommandLine() {
+      expect(yield* runsSelectedBy([])).toEqual({ refused: false, runs: ['dry-run'] });
+      expect(yield* runsSelectedBy(['--dry-run'])).toEqual({ refused: false, runs: ['dry-run'] });
+      expect(yield* runsSelectedBy(['--commit'])).toEqual({ refused: false, runs: ['commit'] });
+      for (const argv of [
+        ['--commit=true'],
+        ['--commit=false'],
+        ['--commit', 'true'],
+        ['--commit', 'false'],
+        ['--no-commit'],
+        ['--dry-run', '--commit'],
+        ['--commit', '--dry-run'],
+        ['--commit', '--commit'],
+        ['--dry-run', '--dry-run'],
+        ['--dry-run=false'],
+        ['--dry-run', 'no'],
+        ['--no-dry-run'],
+        ['--commit', 'stray'],
+        ['stray'],
+        ['commit'],
+        ['--COMMIT'],
+        ['--commit '],
+        ['-c'],
+        ['--', '--commit'],
+        ['--help'],
+        [''],
+      ]) {
+        expect(yield* runsSelectedBy(argv)).toEqual({
+          refused: {
+            code: 'stage_accounts_configuration_invalid',
+            reason: `The command line is not one the command accepts. ${STAGE_ACCOUNTS_USAGE}`,
+          },
+          runs: [],
+        });
+      }
+      expect(STAGE_ACCOUNTS_USAGE).toBe(
+        'Run `node scripts/bootstrap-stage-accounts.mts` for the dry run, which writes nothing, or `node scripts/bootstrap-stage-accounts.mts --commit` for the real run',
+      );
+    }),
 );
 
 it.effect('takes two distinct logins of one database and refuses another server, port or database', () =>
@@ -285,6 +328,45 @@ it.effect('takes two distinct logins of one database and refuses another server,
   }),
 );
 
+it.effect(
+  'reads both URLs as the driver connects with them: no identity override, and names decoded as it decodes them',
+  () =>
+    Effect.gen(function* comparesWhatTheDriverReaches() {
+      const admin = 'postgresql://stage_admin:admin@db18:5432/ontos';
+      const runtime = 'postgresql://ontos_runtime:runtime@db18:5432/ontos';
+      // `%64b18` is `db18` to the driver, as host and as database name.
+      const encoded = yield* stageAccountsDatabases({
+        DATABASE_ADMIN_URL: 'postgresql://stage_admin:admin@%64b18:5432/%64b18',
+        DATABASE_URL: 'postgresql://ontos_runtime:runtime@db18:5432/db18',
+      });
+      expect([encoded.admin.host, encoded.admin.database]).toEqual(['db18', 'db18']);
+      // The driver connects `//ontos` to the database `/ontos`, another database than `ontos`.
+      const doubled = yield* Effect.flip(
+        stageAccountsDatabases({
+          DATABASE_ADMIN_URL: admin,
+          DATABASE_URL: 'postgresql://ontos_runtime:runtime@db18:5432//ontos',
+        }),
+      );
+      expect({ code: doubled.code, reason: doubled.reason }).toEqual({
+        code: 'stage_accounts_configuration_invalid',
+        reason: 'DATABASE_URL and DATABASE_ADMIN_URL must name the same PostgreSQL server, port and database',
+      });
+      // A query parameter the driver would connect to another database, server or user with is refused on either URL.
+      for (const parameter of ['dbname=other', 'host=replica', 'port=5433', 'user=stage_admin']) {
+        for (const [environment, key] of [
+          [{ DATABASE_ADMIN_URL: admin, DATABASE_URL: `${runtime}?${parameter}` }, 'DATABASE_URL'],
+          [{ DATABASE_ADMIN_URL: `${admin}?${parameter}`, DATABASE_URL: runtime }, 'DATABASE_ADMIN_URL'],
+        ] as const) {
+          const refused = yield* Effect.flip(stageAccountsDatabases(environment));
+          expect({ code: refused.code, reason: refused.reason }).toEqual({
+            code: 'stage_accounts_configuration_invalid',
+            reason: `${key} must not override its user, server or database with parameters`,
+          });
+        }
+      }
+    }),
+);
+
 it('prints what the move transaction would write, every write the dry run skipped, and no secret', () => {
   const tenantId = '10000000-0000-4000-8000-0000000000e0';
   const app = {
@@ -308,6 +390,26 @@ it('prints what the move transaction would write, every write the dry run skippe
     grantId: '50000000-0000-4000-8000-0000000000e2',
     lastUsedAt: null,
     status: 'draft',
+  };
+  // A person an earlier run retired, whose draft consent went live after the archive: the replay archives nothing, yet
+  // it still denies that draft.
+  const lateDraft = {
+    ...draft,
+    clientName: 'Late draft client',
+    grantId: '50000000-0000-4000-8000-0000000000e4',
+    principalId: '20000000-0000-4000-8000-0000000000e4',
+    userPrincipalId: '20000000-0000-4000-8000-0000000000e4',
+  };
+  const lateReplay = {
+    archives: false,
+    bindings: [],
+    connectedApps: [lateDraft],
+    directory: 0,
+    email: 'late@example.invalid',
+    ended: { assignments: 0, delegations: 0, memberships: 0, teamPlaces: 0 },
+    principalId: '20000000-0000-4000-8000-0000000000e4',
+    revocationEvents: 0,
+    tenantId,
   };
   const rehearsal: StageAccountsRehearsal = {
     accounts: [
@@ -366,6 +468,7 @@ it('prints what the move transaction would write, every write the dry run skippe
         revocationEvents: 0,
         tenantId,
       },
+      lateReplay,
     ],
     leftTenantIds: [tenantId],
     retiredAccountEmails: ['old@example.invalid'],
@@ -377,7 +480,9 @@ it('prints what the move transaction would write, every write the dry run skippe
     `Would retire the Principal of leaver@example.invalid: tenant=${tenantId} principal=20000000-0000-4000-8000-0000000000e1 bindings=better_auth/oauth_grant:active=1,better_auth/oauth_grant:disabled=2,better_auth/user:active=1 memberships=3 assignments=2 delegations=1 teamPlaces=0 directory=1 auditEvents=1`,
     `Would end connected app "E-shop client" (https://client.example/metadata) of leaver@example.invalid: tenant=${tenantId} grant=50000000-0000-4000-8000-0000000000e1 was=active lastUsed=2026-11-19T10:00:00.000Z`,
     `Would end connected app "Draft client" (https://client.example/metadata) of leaver@example.invalid: tenant=${tenantId} grant=50000000-0000-4000-8000-0000000000e2 was=draft lastUsed=never`,
-    `The Principal of gone@example.invalid is retired already: tenant=${tenantId} principal=20000000-0000-4000-8000-0000000000e3; the run ends nothing of it again`,
+    `The Principal of gone@example.invalid is retired already: tenant=${tenantId} principal=20000000-0000-4000-8000-0000000000e3; the run writes nothing of it again`,
+    `The Principal of late@example.invalid is retired already: tenant=${tenantId} principal=20000000-0000-4000-8000-0000000000e4; the run archives nothing again but still writes bindings=none memberships=0 assignments=0 delegations=0 teamPlaces=0 directory=0 auditEvents=0`,
+    `Would end connected app "Late draft client" (https://client.example/metadata) of late@example.invalid: tenant=${tenantId} grant=50000000-0000-4000-8000-0000000000e4 was=draft lastUsed=never`,
     'Would attach login leaver@example.invalid: tenant=10000000-0000-4000-8000-0000000000f0 principal=20000000-0000-4000-8000-0000000000f1 binding=30000000-0000-4000-8000-0000000000f1',
     'Login moved@example.invalid is attached already: tenant=10000000-0000-4000-8000-0000000000f0 principal=20000000-0000-4000-8000-0000000000f2 binding=30000000-0000-4000-8000-0000000000f2; the run creates nothing',
     'Would write 1 audit events (oauth.connection.revoked)',
@@ -390,5 +495,17 @@ it('prints what the move transaction would write, every write the dry run skippe
     'Dry run skipped tenant 10000000-0000-4000-8000-0000000000c0 of the file: its identity rows, access bootstrap and authorization reconcile',
     'Dry run skipped retiring tenant 10000000-0000-4000-8000-0000000000d0',
     'Dry run skipped banning the retired account old@example.invalid',
+    'Nothing was written. Check every line above; the real run of the same, unchanged file is `node scripts/bootstrap-stage-accounts.mts --commit`',
+  ]);
+  // The real run reports each attachment as created or found, and each departure with the same writes, a replay's late
+  // draft included.
+  expect(rehearsal.attachments.map((attachment) => stageAttachmentLine(attachment, 'commit'))).toEqual([
+    'Attached stage login leaver@example.invalid: tenant=10000000-0000-4000-8000-0000000000f0 principal=20000000-0000-4000-8000-0000000000f1 binding=30000000-0000-4000-8000-0000000000f1',
+    'Login moved@example.invalid was attached already: tenant=10000000-0000-4000-8000-0000000000f0 principal=20000000-0000-4000-8000-0000000000f2 binding=30000000-0000-4000-8000-0000000000f2; the run created nothing',
+  ]);
+  expect(rehearsal.departures.map((departure) => stageDepartureLine(departure, 'commit'))).toEqual([
+    `Retired stage Principal of leaver@example.invalid: tenant=${tenantId} principal=20000000-0000-4000-8000-0000000000e1 bindings=better_auth/oauth_grant:active=1,better_auth/oauth_grant:disabled=2,better_auth/user:active=1 memberships=3 assignments=2 delegations=1 teamPlaces=0 directory=1 auditEvents=1`,
+    `The Principal of gone@example.invalid was retired already: tenant=${tenantId} principal=20000000-0000-4000-8000-0000000000e3; the run wrote nothing of it again`,
+    `The Principal of late@example.invalid was retired already: tenant=${tenantId} principal=20000000-0000-4000-8000-0000000000e4; the run archived nothing again but wrote bindings=none memberships=0 assignments=0 delegations=0 teamPlaces=0 directory=0 auditEvents=0`,
   ]);
 });

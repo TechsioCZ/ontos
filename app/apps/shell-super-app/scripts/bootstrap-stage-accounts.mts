@@ -28,9 +28,8 @@ import type {
   DatabaseConnectionPair,
   DatabaseIdentityEnrollmentContext,
 } from '@app/core-runtime';
-import { ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import { ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema, Stdio } from 'effect';
 import type { Crypto } from 'effect';
-import { Command, Flag } from 'effect/cli';
 
 import { AuthDatabaseForExpectedRoleLive } from '../api/auth/db/client.ts';
 import type { AuthDatabaseConnectionError } from '../api/auth/db/connection-error.ts';
@@ -39,10 +38,14 @@ import {
   StageAccountsBootstrapError,
   stageAccountsDatabases,
   stageAccountsDryRunLines,
+  stageAccountsExecutionOf,
   stageAccountsFailureLine,
+  stageAttachmentLine,
+  stageDepartureLine,
 } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import type {
   StageAccountsBootstrapConfig,
+  StageAccountsExecution,
   StageAccountsFileReader,
 } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
@@ -223,7 +226,7 @@ const reportUnopenedPools = function reportUnopenedPools<Value, Requirements>(
   );
 };
 
-/** The dry run (`--dry-run`): it rolls its move transaction back, writes nothing and prints what the real run would do. */
+/** The dry run (the default): it rolls its move transaction back, writes nothing and prints what the real run would do. */
 const dryRunOf = Effect.fn('StageAccountsBootstrap.dryRun')(function* dryRunEffect(
   configuration: StageAccountsBootstrapConfig,
   modules: readonly AccessCatalogModule[],
@@ -236,7 +239,7 @@ const dryRunOf = Effect.fn('StageAccountsBootstrap.dryRun')(function* dryRunEffe
   yield* Effect.forEach(stageAccountsDryRunLines(rehearsal), (line) => Console.log(line), { discard: true });
 });
 
-/** The real run: it reconciles the file and prints what it did. */
+/** The real run (`--commit`): it reconciles the file and prints what it did, every write of a replay included. */
 const realRunOf = Effect.fn('StageAccountsBootstrap.realRun')(function* realRunEffect(
   configuration: StageAccountsBootstrapConfig,
   modules: readonly AccessCatalogModule[],
@@ -254,20 +257,12 @@ const realRunOf = Effect.fn('StageAccountsBootstrap.realRun')(function* realRunE
       ),
     { discard: true },
   );
-  yield* Effect.forEach(
-    result.attachedLogins,
-    (login) =>
-      Console.log(`Attached stage login ${login.email}: tenant=${login.tenantId} principal=${login.principalId}`),
-    { discard: true },
-  );
-  yield* Effect.forEach(
-    result.retiredPrincipals,
-    (retired) =>
-      Console.log(
-        `Retired stage Principal of ${retired.email}: tenant=${retired.tenantId} principal=${retired.principalId}`,
-      ),
-    { discard: true },
-  );
+  yield* Effect.forEach(result.attachments, (attachment) => Console.log(stageAttachmentLine(attachment, 'commit')), {
+    discard: true,
+  });
+  yield* Effect.forEach(result.departures, (departure) => Console.log(stageDepartureLine(departure, 'commit')), {
+    discard: true,
+  });
   yield* Effect.forEach(
     result.endedConnectedApps,
     (app) =>
@@ -283,40 +278,34 @@ const realRunOf = Effect.fn('StageAccountsBootstrap.realRun')(function* realRunE
   );
 });
 
-/** One run of the operator command: the dry run when `dryRun`, else the real run. */
-const program = (dryRun: boolean) =>
-  Effect.gen(function* stageAccountsProgram() {
-    const { declaredWorkloadKeys, modules } = yield* stageAccessModules;
-    const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, declaredWorkloadKeys);
-    const connections = yield* stageAccountsConnections(configuration.databaseAdminUrl);
-    return yield* (dryRun ? dryRunOf : realRunOf)(configuration, modules, connections);
-  }).pipe(
-    Effect.tapError((failure) => Console.error(stageAccountsFailureLine(failure))),
-    Effect.tapDefect(() => Console.error('Stage accounts bootstrap failed unexpectedly')),
-  );
+/** One run of the operator command: the real run for `commit`, else the dry run. */
+const program = Effect.fn('StageAccountsBootstrap.program')(function* stageAccountsProgram(
+  execution: StageAccountsExecution,
+) {
+  const { declaredWorkloadKeys, modules } = yield* stageAccessModules;
+  const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, declaredWorkloadKeys);
+  const connections = yield* stageAccountsConnections(configuration.databaseAdminUrl);
+  return yield* (execution === 'commit' ? realRunOf : dryRunOf)(configuration, modules, connections);
+});
 
 /**
- * The operator command line: no flag is the real run, `--dry-run` its dry run. The parser refuses any other argument
- * before the command reads its file or opens a connection, so a mistyped flag never starts the real run.
+ * The operator command line, read exactly (`stageAccountsExecutionOf`): no argument, or `--dry-run`, is the dry run, and
+ * only the one argument `--commit` is the real run. Any other command line is refused with the two valid ones before
+ * the command reads its file or opens a connection, so no spelling of a flag starts the real run by itself.
  */
 export const makeStageAccountsCommand = function makeStageAccountsCommand<Failure, Requirements>(
-  run: (dryRun: boolean) => Effect.Effect<void, Failure, Requirements>,
+  run: (execution: StageAccountsExecution) => Effect.Effect<void, Failure, Requirements>,
 ) {
-  return Command.make(
-    'bootstrap-stage-accounts',
-    {
-      dryRun: Flag.Boolean('dry-run').pipe(
-        Flag.withDefault(false),
-        Flag.withDescription(
-          "Run the move transaction with the real run's locks and writes, roll it back, and print what the real run would do",
-        ),
-      ),
-    },
-    ({ dryRun }) => run(dryRun),
-  ).pipe(Command.withDescription('Reconcile the operator stage accounts file named by ONTOS_STAGE_ACCOUNTS_FILE'));
+  return Effect.gen(function* stageAccountsCommand() {
+    const execution = yield* stageAccountsExecutionOf(yield* (yield* Stdio.Stdio).args);
+    return yield* run(execution);
+  });
 };
 
-export const main = Command.run({ version: '1.0.0' })(makeStageAccountsCommand(program));
+export const main = makeStageAccountsCommand(program).pipe(
+  Effect.tapError((failure) => Console.error(stageAccountsFailureLine(failure))),
+  Effect.tapDefect(() => Console.error('Stage accounts bootstrap failed unexpectedly')),
+);
 
 if (import.meta.main) {
   const exit = await Effect.runPromiseExit(main.pipe(Effect.provide(NodeServices.layer), Effect.scoped));
