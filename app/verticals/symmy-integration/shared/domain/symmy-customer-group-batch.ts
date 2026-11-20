@@ -24,7 +24,9 @@ const definitionSource = create.source.schema.fields;
  *
  * Symmy states no revision or time for a group, so the order in which OntOS admits requests is the order: each
  * admission asserts its code after the last assertion the owner holds, under a revision derived from its
- * Idempotency-Key. A delayed older request admitted later wins.
+ * Idempotency-Key. A delayed older request admitted later wins. Two requests for one code that overlap are planned
+ * against the same owner state: the first to execute is accepted, the other is refused by the owner's revision and order
+ * fence in its own result and stays refused under that key, so the source states the group again under a new key.
  *
  * A synchronous admission stores the plan it admitted, not the outcomes of its effects, and an exact retry of a key
  * reads no current definition again. An effect the owner committed is answered from the owner's receipt: indeterminate while
