@@ -126,15 +126,26 @@ const ownerStore = (table: string, ...columns: readonly string[]): StoredColumns
  */
 const categoriesById = {
   ATTACHMENT_LINK_REFERENCES: {
-    // No attachment or link reference column exists today. The per-type link or attachment policy (2A) and its document
-    // owner are an input gate; a column added later must be declared here first (the guard test proves it).
-    businessStart: null,
-    copyKind: 'NONE_PERSISTED',
+    // The document pin (#1409) persists the REFERENCE to the business document and to the exact Core Media Asset the owner
+    // resolved, with its form: never a byte, URL, file name or permission. The per-type link or attachment policy (2A) and
+    // its document owner stay an input gate; a column added later must be declared here first (the guard test proves it).
+    businessStart: { column: 'created_at', event: 'MESSAGE_INTENT_PINNED', table: 'message_intents' },
+    copyKind: 'LOCAL_REFERENCE_ONLY',
     excludedContent: ['ATTACHMENT_BYTES', 'AUTH_SECRET_OR_PROOF'],
     ownerCapability: COMMUNICATIONS_OWNER_CAPABILITY,
-    personalDataKinds: [],
+    personalDataKinds: ['SUBJECT_REFERENCE', 'TIMING_FACT'],
     recordContentScope: 'communications.attachment-link-references',
-    storage: [],
+    storage: [
+      ownerStore(
+        'intent_document_pins',
+        'intent_id',
+        'document_module',
+        'document_type',
+        'document_id',
+        'asset_id',
+        'pinned_at',
+      ),
+    ],
   },
   ATTEMPTS_PROVIDER_OBSERVATIONS_SUPPRESSION: {
     businessStart: { column: 'prepared_at', event: 'DELIVERY_ATTEMPT_PREPARED', table: 'delivery_attempts' },
@@ -177,6 +188,27 @@ const categoriesById = {
         'linked_at',
       ),
       ownerStore('intent_resend_links', 'original_intent_id', 'resend_intent_id', 'reason_code', 'linked_at'),
+      // a Recovery Evaluation (#1403) names the attempt it was made after and the closed reasons of a halt or stop
+      ownerStore(
+        'intent_recovery_evaluations',
+        'intent_id',
+        'basis_attempt_id',
+        'outcome',
+        'code',
+        'reasons',
+        'evaluated_at',
+      ),
+      // the append-only fact that a later reconciliation observation settled a Provider Observation Conflict
+      ownerStore(
+        'provider_observation_conflict_resolutions',
+        'resolution_id',
+        'conflict_id',
+        'intent_id',
+        'attempt_id',
+        'basis_observation_id',
+        'reason_code',
+        'resolved_at',
+      ),
     ],
   },
   ORIGINAL_RECIPIENT_ENDPOINT: {
@@ -553,9 +585,20 @@ export const TECHNICAL_COLUMNS: Readonly<Record<string, Readonly<Record<string, 
     communication_request_conflicts: { ...TENANT, ...INVOCATION },
     communication_requests: { ...TENANT, ...INVOCATION, occurrence_revision: 'ORDERING_OR_COUNTER' },
     delivery_attempts: { ...TENANT, attempt_number: 'ORDERING_OR_COUNTER' },
+    intent_document_pins: {
+      ...TENANT,
+      asset_module: 'CLOSED_VOCABULARY_CODE',
+      asset_type: 'CLOSED_VOCABULARY_CODE',
+      classification: 'CLOSED_VOCABULARY_CODE',
+      form: 'CLOSED_VOCABULARY_CODE',
+      position: 'ORDERING_OR_COUNTER',
+      revision: 'ORDERING_OR_COUNTER',
+    },
     intent_handoff_stops: { ...TENANT, evaluation_seq: 'ORDERING_OR_COUNTER', proven: 'CLOSED_VOCABULARY_CODE' },
+    intent_recovery_evaluations: { ...TENANT, evaluation_seq: 'ORDERING_OR_COUNTER', proven: 'CLOSED_VOCABULARY_CODE' },
     intent_resend_links: { ...TENANT },
     message_intents: { ...TENANT, decision_id: 'OPAQUE_ROW_LINK', reason: 'CLOSED_VOCABULARY_CODE' },
+    provider_observation_conflict_resolutions: { ...TENANT },
     provider_observation_conflicts: { ...TENANT, recorded_seq: 'ORDERING_OR_COUNTER' },
     provider_observations: { ...TENANT, recorded_seq: 'ORDERING_OR_COUNTER' },
     template_activations: {

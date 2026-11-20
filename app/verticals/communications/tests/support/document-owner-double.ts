@@ -95,7 +95,11 @@ export const documentOwnerDouble = () => {
     },
     layer: Layer.succeed(DocumentLinkOwner, { authorizeOpen, resolve }),
     revokeOpen: (asset: CommunicationResourceRef, principalId: string) => {
-      openers.get(asset.resourceId)?.delete(principalId);
+      // rebuilt without the principal: a test double has no reason to use a member the destruction guard reserves
+      openers.set(
+        asset.resourceId,
+        new Set([...(openers.get(asset.resourceId) ?? [])].filter((id) => id !== principalId)),
+      );
     },
     setOutage: (outage: boolean) => {
       state.outage = outage;

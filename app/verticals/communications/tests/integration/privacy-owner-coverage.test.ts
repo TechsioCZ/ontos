@@ -22,6 +22,7 @@ import {
 import { privacyOwnerCoverageForScope } from '../../src/services/privacy-owner-coverage.service.ts';
 import type { PrivacyOwnerCoverageOptions } from '../../src/services/privacy-owner-coverage.service.ts';
 import {
+  fixtureType,
   FIXTURE_APPROVER_ROLE,
   FIXTURE_CONTACT_OWNER,
   FIXTURE_CONTACT_RESOURCE_TYPE,
@@ -29,13 +30,15 @@ import {
 } from '../unit/support/catalog-fixtures.ts';
 import { binding } from '../unit/support/recipient-fixtures.ts';
 import { baseIdentity, seedLanguages } from '../support/language-fixtures.ts';
-import { decideOne, ingest, minutesFromNow, step, targetOf } from '../support/history-world.ts';
+import { decideOne, ingest, intentIdAt, minutesFromNow, step, targetOf } from '../support/history-world.ts';
 import type { World } from '../support/history-world.ts';
-import { communicationRequest, handoffDouble } from '../support/intake-fixtures.ts';
+import { communicationRequest, handoffDouble, originalRecipient } from '../support/intake-fixtures.ts';
+import { assetRef } from '../support/document-owner-double.ts';
+import { answers, attemptsOf, reconcileThenStep, resolutionsOf, stepWith } from '../support/recovery-world.ts';
+import { step22Double } from '../support/step22-observation-double.ts';
 import { decided, intakeWorld, requestFor } from '../support/intake-world.ts';
 import { makeRuntimeDatabase, nativeServices, nextId } from '../support/persistence.fixture.ts';
 import { measureOf, ownerScope } from '../unit/support/privacy-owner-fixtures.ts';
-import { step22Double } from '../support/step22-observation-double.ts';
 
 /**
  * [#1410 AC-01 AC-05 AC-08 AC-10 AC-12 AC-15 AC-16] Communications' Owner Coverage, contribution, outcome evidence and
@@ -159,11 +162,11 @@ describe('Communications Owner Coverage on native PostgreSQL (AC-08 AC-15)', () 
       expect(refs).toContain(`communications.core.request:${requestId}`);
       expect(refs).toContain(`communications.core.intent:${intentId}`);
       expect(refs.some((ref) => ref.startsWith('communications.core.attempt:'))).toBe(true);
-      // the rendered content and attachment parts hold nothing by design and are still evidenced
+      // the rendered content part holds nothing by design and is still evidenced
       expect(coverage.coverageParts).toHaveLength(scopePartRefs.length);
       expect(ownerMutationBoundary).toBe('NO_AUTOMATIC_OR_DESTRUCTIVE_OWNER_OPERATION');
       // no Privacy input is supplied, so every persisted category is a configuration gap, never a default
-      expect(configuration.filter(({ state }) => state === 'CONFIGURATION_GAP')).toHaveLength(5);
+      expect(configuration.filter(({ state }) => state === 'CONFIGURATION_GAP')).toHaveLength(6);
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -622,5 +625,89 @@ describe('Observing, evaluating and handing over change nothing (AC-05 AC-12 AC-
         expect(refused._tag).toBe('Failure');
         expect((yield* world.read((tx) => tx.select().from(messageIntents))).length).toBeGreaterThan(0);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+/** The tables of the recovery, reconciliation and document lanes are read by the same owner coverage (#1403, #1409). */
+const documentPolicy = {
+  attachment: { kind: 'NOT_ALLOWED' },
+  classification: 'fixture.classification.customer',
+  documentOwner: 'fixture.documents',
+  link: 'ALLOWED',
+  recipientScope: 'ORIGINAL_RECIPIENT',
+} as const;
+
+describe('Communications Owner Coverage finds the recovery, reconciliation and document records (#1403 #1409 #1410)', () => {
+  it.live(
+    'finds a document pin as an attachment-link reference, the part is evidenced and the pin is a reference only',
+    () =>
+      Effect.gen(function* documentPin() {
+        const world = yield* setup({ types: [fixtureType({ documents: documentPolicy })] });
+        world.documents.assign('doc-1', assetRef('asset-1'));
+        const run = yield* world.runner.submit(
+          world.tenantId,
+          communicationRequest({
+            bindings: [originalRecipient('customer-1')],
+            documents: [{ documentId: 'doc-1' }],
+            occurrenceId: 'fixture-occurrence-1',
+            tenantId: world.tenantId,
+          }),
+        );
+        const result = decided(run);
+        const intents = result.decision.kind === 'MESSAGE_INTENTS' ? result.decision.intents : [];
+        const intentId = yield* intentIdAt(intents);
+        yield* stepWith(world, handoffDouble(), intentId);
+        const answer = yield* coverageOf(world, [subject('customer-1')], withBackup());
+        const part = Option.match(answer, {
+          onNone: () => undefined,
+          onSome: ({ coverage }) =>
+            coverage.coverageParts.find(({ scopeRef }) => scopeRef === 'communications.attachment-link-references'),
+        });
+        expect(part?.foundContentRefs).toEqual([`communications.core.document-pin:${intentId}:0`]);
+        // the reference names nothing of the content: no byte, URL or file name reaches Privacy
+        expect(JSON.stringify(part)).not.toMatch(/asset-1|doc-1|https?:/u);
+        // and the pin starts its retention at the message it belongs to, the original business event
+        const starts = yield* world.database.inTenant(world.tenantId, (transaction) =>
+          privacyOwnerCoverageForScope(transaction, operationalScope(world.tenantId), withBackup()).businessStarts(),
+        );
+        expect(
+          starts
+            .filter(({ category }) => category === 'ATTACHMENT_LINK_REFERENCES')
+            .map(({ contentRef }) => contentRef),
+        ).toEqual([`communications.core.document-pin:${intentId}:0`]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('finds a recovery evaluation and a conflict resolution as history records of the subject', () =>
+    Effect.gen(function* recoveryRecords() {
+      const world = yield* setup({ types: [fixtureType()] });
+      let calls = 0;
+      const handoff = handoffDouble(() => {
+        calls += 1;
+        return calls === 1 ? answers.timeout() : answers.accepted();
+      });
+      const { intentId } = yield* decideOne(world);
+      yield* stepWith(world, handoff, intentId);
+      const [first] = yield* attemptsOf(world, intentId);
+      const target = targetOf(world, intentId, first?.attemptId ?? '');
+      const now = yield* DateTime.now;
+      const later = DateTime.add(now, { minutes: 5 });
+      expect(yield* ingest(world, step22Double.nonAcceptanceProven(target, { key: 'r-1', observedAt: now }))).toBe(
+        'RECORDED',
+      );
+      expect(yield* ingest(world, step22Double.nonAcceptanceProven(target, { key: 'r-1', observedAt: later }))).toBe(
+        'CONFLICT',
+      );
+      yield* reconcileThenStep(world, handoff, intentId, [
+        step22Double.nonAcceptanceProven(target, { key: 'r-2', observedAt: later }),
+      ]);
+      const [resolution] = yield* resolutionsOf(world, intentId);
+      const answer = yield* coverageOf(world, [subject('customer-1')], withBackup());
+      const refs = found(answer);
+      expect(refs).toContain(
+        `communications.core.provider-observation-conflict-resolution:${resolution?.resolutionId}`,
+      );
+      expect(refs.some((ref) => ref.startsWith('communications.core.recovery-evaluation:'))).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

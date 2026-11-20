@@ -37,9 +37,12 @@ import {
   communicationRequestConflicts,
   communicationRequests,
   deliveryAttempts,
+  intentDocumentPins,
   intentHandoffStops,
+  intentRecoveryEvaluations,
   intentResendLinks,
   messageIntents,
+  providerObservationConflictResolutions,
   providerObservationConflicts,
   providerObservations,
   templateActivations,
@@ -151,7 +154,17 @@ const gatherByIntents = Effect.fn('CommunicationsPrivacyCoverage.gatherByIntents
   intentIds: readonly string[],
 ) {
   if (intentIds.length === 0) {
-    return { attempts: [], observationConflicts: [], observations: [], resends: [], retries: [], stops: [] };
+    return {
+      attempts: [],
+      conflictResolutions: [],
+      documentPins: [],
+      observationConflicts: [],
+      observations: [],
+      recoveryEvaluations: [],
+      resends: [],
+      retries: [],
+      stops: [],
+    };
   }
   const ids = [...intentIds];
   return yield* Effect.all(
@@ -160,6 +173,19 @@ const gatherByIntents = Effect.fn('CommunicationsPrivacyCoverage.gatherByIntents
         .select()
         .from(deliveryAttempts)
         .where(and(eq(deliveryAttempts.tenantId, tenantId), inArray(deliveryAttempts.intentId, ids))),
+      conflictResolutions: transaction
+        .select()
+        .from(providerObservationConflictResolutions)
+        .where(
+          and(
+            eq(providerObservationConflictResolutions.tenantId, tenantId),
+            inArray(providerObservationConflictResolutions.intentId, ids),
+          ),
+        ),
+      documentPins: transaction
+        .select()
+        .from(intentDocumentPins)
+        .where(and(eq(intentDocumentPins.tenantId, tenantId), inArray(intentDocumentPins.intentId, ids))),
       observationConflicts: transaction
         .select()
         .from(providerObservationConflicts)
@@ -170,6 +196,10 @@ const gatherByIntents = Effect.fn('CommunicationsPrivacyCoverage.gatherByIntents
         .select()
         .from(providerObservations)
         .where(and(eq(providerObservations.tenantId, tenantId), inArray(providerObservations.intentId, ids))),
+      recoveryEvaluations: transaction
+        .select()
+        .from(intentRecoveryEvaluations)
+        .where(and(eq(intentRecoveryEvaluations.tenantId, tenantId), inArray(intentRecoveryEvaluations.intentId, ids))),
       resends: transaction
         .select()
         .from(intentResendLinks)
@@ -556,6 +586,22 @@ export const privacyOwnerCoverageForScope = (
             .select({ at: messageIntents.createdAt, id: messageIntents.intentId })
             .from(messageIntents)
             .where(eq(messageIntents.tenantId, tenantId)),
+          // a pin's retention starts at the message it belongs to: the ORIGINAL business event, never the later pin time
+          pins: transaction
+            .select({
+              at: messageIntents.createdAt,
+              intentId: intentDocumentPins.intentId,
+              position: intentDocumentPins.position,
+            })
+            .from(intentDocumentPins)
+            .innerJoin(
+              messageIntents,
+              and(
+                eq(messageIntents.tenantId, intentDocumentPins.tenantId),
+                eq(messageIntents.intentId, intentDocumentPins.intentId),
+              ),
+            )
+            .where(eq(intentDocumentPins.tenantId, tenantId)),
           observations: transaction
             .select({ at: providerObservations.recordedAt, id: providerObservations.observationId })
             .from(providerObservations)
@@ -571,6 +617,11 @@ export const privacyOwnerCoverageForScope = (
         ...startsOf('REQUEST_DECISION_INTENT', REF_KIND.request, rows.requests),
         ...startsOf('ORIGINAL_RECIPIENT_ENDPOINT', REF_KIND.originalRecipient, rows.intents),
         ...startsOf('TYPE_LANGUAGE_TEMPLATE_REVISION', REF_KIND.templatePin, rows.intents),
+        ...startsOf(
+          'ATTACHMENT_LINK_REFERENCES',
+          REF_KIND.documentPin,
+          rows.pins.map(({ at, intentId, position }) => ({ at, id: `${intentId}:${position}` })),
+        ),
         ...startsOf('ATTEMPTS_PROVIDER_OBSERVATIONS_SUPPRESSION', REF_KIND.attempt, rows.attempts),
         ...startsOf('PROVIDER_COPY_WORKING_COPY_PROTECTION', REF_KIND.providerCorrelation, rows.observations),
       ];

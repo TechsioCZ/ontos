@@ -135,11 +135,13 @@ describe('Communications own-data inventory (#1410 AC-01 AC-03, PRIV-COM-01/02)'
     );
   });
 
-  it('keeps the rendered content and attachment categories empty: nothing is persisted for them and no column suggests it', () => {
-    for (const id of ['TEMPORARY_RENDERED_CONTENT', 'ATTACHMENT_LINK_REFERENCES'] as const) {
-      expect(category(id).copyKind).toBe('NONE_PERSISTED');
-      expect(category(id).storage).toEqual([]);
-    }
+  it('keeps the rendered content category empty and the attachment category a pure reference: no byte, URL or file name column', () => {
+    expect(category('TEMPORARY_RENDERED_CONTENT').copyKind).toBe('NONE_PERSISTED');
+    expect(category('TEMPORARY_RENDERED_CONTENT').storage).toEqual([]);
+    // the document pin (#1409) stores the reference to the document and to the Core Media Asset, nothing of the content
+    expect(category('ATTACHMENT_LINK_REFERENCES').copyKind).toBe('LOCAL_REFERENCE_ONLY');
+    expect(category('ATTACHMENT_LINK_REFERENCES').storage.map(({ table }) => table)).toEqual(['intent_document_pins']);
+    expect(category('ATTACHMENT_LINK_REFERENCES').excludedContent).toContain('ATTACHMENT_BYTES');
     const suspicious =
       /(?:^|_)(?:body_text|rendered|html|attachment|document_url|download|secret|token|password|otp|address|email)(?:_|$)/u;
     const offending = COMMUNICATIONS_TABLES.flatMap((table) =>

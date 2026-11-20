@@ -11,9 +11,12 @@ import type {
   communicationRequestConflicts,
   communicationRequests,
   deliveryAttempts,
+  intentDocumentPins,
   intentHandoffStops,
+  intentRecoveryEvaluations,
   intentResendLinks,
   messageIntents,
+  providerObservationConflictResolutions,
   providerObservationConflicts,
   providerObservations,
 } from '../database/schema.ts';
@@ -27,13 +30,16 @@ import type {
 export const REF_KIND = {
   attempt: 'attempt',
   conflict: 'request-conflict',
+  conflictResolution: 'provider-observation-conflict-resolution',
   decision: 'decision',
+  documentPin: 'document-pin',
   handoffStop: 'handoff-stop',
   intent: 'intent',
   observation: 'provider-observation',
   observationConflict: 'provider-observation-conflict',
   originalRecipient: 'original-recipient',
   providerCorrelation: 'provider-correlation',
+  recoveryEvaluation: 'recovery-evaluation',
   request: 'request',
   resendLink: 'resend-link',
   retryLink: 'retry-link',
@@ -42,13 +48,16 @@ export const REF_KIND = {
 
 export interface Gathered {
   readonly attempts: readonly (typeof deliveryAttempts.$inferSelect)[];
+  readonly conflictResolutions: readonly (typeof providerObservationConflictResolutions.$inferSelect)[];
   readonly conflicts: readonly (typeof communicationRequestConflicts.$inferSelect)[];
   readonly decisions: readonly (typeof communicationDecisions.$inferSelect)[];
+  readonly documentPins: readonly (typeof intentDocumentPins.$inferSelect)[];
   readonly intents: readonly (typeof messageIntents.$inferSelect)[];
   readonly observationConflicts: readonly (typeof providerObservationConflicts.$inferSelect)[];
   readonly observations: readonly (typeof providerObservations.$inferSelect)[];
   /** Requests whose own document names one of the trusted lookups: they are the requester's whatever their intents say. */
   readonly payloadNamedRequestIds: readonly string[];
+  readonly recoveryEvaluations: readonly (typeof intentRecoveryEvaluations.$inferSelect)[];
   readonly requests: readonly (typeof communicationRequests.$inferSelect)[];
   readonly resends: readonly (typeof intentResendLinks.$inferSelect)[];
   readonly retries: readonly (typeof attemptRetryLinks.$inferSelect)[];
@@ -116,6 +125,15 @@ const historyRecords = (data: Gathered | undefined, add: AddRecord) => {
   }
   for (const { conflictId, intentId } of data?.observationConflicts ?? []) {
     add(history, REF_KIND.observationConflict, conflictId, { intentId });
+  }
+  for (const { evaluationSeq, intentId } of data?.recoveryEvaluations ?? []) {
+    add(history, REF_KIND.recoveryEvaluation, `${intentId}:${evaluationSeq}`, { intentId });
+  }
+  for (const { intentId, resolutionId } of data?.conflictResolutions ?? []) {
+    add(history, REF_KIND.conflictResolution, resolutionId, { intentId });
+  }
+  for (const { intentId, position } of data?.documentPins ?? []) {
+    add('ATTACHMENT_LINK_REFERENCES', REF_KIND.documentPin, `${intentId}:${position}`, { intentId });
   }
   for (const { attemptId, intentId } of data?.retries ?? []) {
     add(history, REF_KIND.retryLink, attemptId, { intentId });
@@ -246,7 +264,7 @@ export interface ReasonContext {
 
 /** Why a category cannot be complete although it was examined; none when nothing stands in the way. */
 export const unresolvedReasonOf = (category: InventoryCategoryId, context: ReasonContext): string | undefined => {
-  if (category === 'ATTACHMENT_LINK_REFERENCES' || category === 'TEMPORARY_RENDERED_CONTENT') {
+  if (category === 'TEMPORARY_RENDERED_CONTENT') {
     // nothing is persisted by design, and a guard test proves it: there is no table to examine and nothing to resolve
     return undefined;
   }

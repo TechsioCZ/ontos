@@ -58,13 +58,13 @@ describe('Non-destructive Retention Evaluation hook (#588)', () => {
       'TYPE_LANGUAGE_TEMPLATE_REVISION',
       'ATTEMPTS_PROVIDER_OBSERVATIONS_SUPPRESSION',
       'PROVIDER_COPY_WORKING_COPY_PROTECTION',
+      'ATTACHMENT_LINK_REFERENCES',
     ] as const) {
       const found = finding(report.findings, category);
       expect(found?.kind).toBe('CONFIGURATION_GAP');
       expect(found).toMatchObject({ nextStep: 'SUPPLY_MISSING_PRIVACY_INPUTS', pendingReview: true });
     }
     expect(finding(report.findings, 'TEMPORARY_RENDERED_CONTENT')).toMatchObject({ kind: 'NOT_APPLICABLE' });
-    expect(finding(report.findings, 'ATTACHMENT_LINK_REFERENCES')).toMatchObject({ kind: 'NOT_APPLICABLE' });
   });
 
   it('names who has to supply the missing inputs, so the gap has a traceable owner', () => {
