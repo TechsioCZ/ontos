@@ -13,6 +13,7 @@ import {
   assetMetadataRead,
   confirmAssetAction,
   coreActionCatalog,
+  recordAssetIntegrityFailureAction,
   renameDisplayFilenameAction,
   uploadAssetAction,
 } from '../../src/index.ts';
@@ -50,13 +51,23 @@ const mediaAssetRef = Schema.decodeUnknownSync(MediaAssetRefSchema)({
 const upload = uploadAssetAction.descriptor;
 const confirm = confirmAssetAction.descriptor;
 const rename = renameDisplayFilenameAction.descriptor;
+const integrity = recordAssetIntegrityFailureAction.descriptor;
 const metadata = assetMetadataRead.descriptor;
-const ACTIONS = [upload, confirm, rename] as const;
+const ACTIONS = [upload, confirm, rename, integrity] as const;
+const ALL = [upload, confirm, rename, integrity, metadata] as const;
 
-/** The declarations of the four capabilities that exist, as ADR-0030 and the design (D-H, A09, A11) fix them. */
+/** The declarations of the five capabilities that exist, as ADR-0030 and the design (D-H, A09, A11) fix them. */
 const EXPECTED = {
   confirm: {
     key: 'core.media.asset.confirm',
+    kind: 'action',
+    modes: ['run'],
+    placement: { group: 'media', level: 'extended' },
+    risk: 'routine',
+    selectors: [],
+  },
+  integrity: {
+    key: 'core.media.asset-integrity.fail',
     kind: 'action',
     modes: ['run'],
     placement: { group: 'media', level: 'extended' },
@@ -98,7 +109,6 @@ const EXPECTED = {
 const OPEN_DECLARATIONS = [
   'core.media.asset-download.read',
   'core.media.asset-current.read',
-  'core.media.asset-integrity.fail',
   'core.media.operation.read',
 ] as const;
 
@@ -106,17 +116,18 @@ it('declares each existing capability under its own key with the audited kind, r
   expect(upload.accessDeclaration).toEqual(EXPECTED.upload);
   expect(confirm.accessDeclaration).toEqual(EXPECTED.confirm);
   expect(rename.accessDeclaration).toEqual(EXPECTED.rename);
+  expect(integrity.accessDeclaration).toEqual(EXPECTED.integrity);
   expect(metadata.accessDeclaration).toEqual(EXPECTED.metadata);
 });
 
-it('gives the four capabilities four distinct keys, all prefixed by the Core Media owner and none shared', () => {
-  const keys = [upload, confirm, rename, metadata].map((descriptor) => descriptor.accessDeclaration?.key ?? '');
-  expect(new Set(keys).size).toBe(4);
+it('gives the five capabilities five distinct keys, all prefixed by the Core Media owner and none shared', () => {
+  const keys = ALL.map((descriptor) => descriptor.accessDeclaration?.key ?? '');
+  expect(new Set(keys).size).toBe(5);
   for (const key of keys) {
     expect(key.startsWith('core.media.')).toBe(true);
   }
   // No field group, lineage, ephemeral flag or money limit stands in for another capability.
-  for (const descriptor of [upload, confirm, rename, metadata]) {
+  for (const descriptor of ALL) {
     expect(descriptor.accessDeclaration).not.toHaveProperty('lineage');
     expect(descriptor.accessDeclaration).not.toHaveProperty('ephemeral');
     expect(descriptor.accessDeclaration).not.toHaveProperty('amountInput');
@@ -126,7 +137,7 @@ it('gives the four capabilities four distinct keys, all prefixed by the Core Med
 });
 
 it('is protected and Core-owned on every entrypoint, so the one gate always asks', () => {
-  for (const descriptor of [upload, confirm, rename, metadata]) {
+  for (const descriptor of ALL) {
     expect(descriptor.entrypoint).toMatchObject({
       authorization: { kind: 'protected' },
       moduleKey: 'core.media',
@@ -143,6 +154,8 @@ it('is protected and Core-owned on every entrypoint, so the one gate always asks
 });
 
 it('is routine on every capability, and only the rename may be proposed or approved', () => {
+  // The integrity record is run-only too: a proposal keeps no proof, and a proof is a service, never a payload.
+  expect(integrity.accessDeclaration?.modes).toEqual(['run']);
   for (const declaration of Object.values(EXPECTED)) {
     expect(declaration.risk).toBe('routine');
   }
@@ -173,16 +186,19 @@ it('names the one exact record on exactly the record-scoped capabilities, never 
   expect(rename.accessDeclaration?.selectors).toEqual(['all']);
 });
 
-it('rides the machine carrier on the two upload legs only, with one workload key of the Core Media namespace', () => {
+it('rides the machine carrier on the upload legs and the integrity record only, with Core Media workload keys', () => {
   expect(upload.accessWorkload?.workloads).toEqual(['core.media.ingest']);
   expect(confirm.accessWorkload?.workloads).toEqual(['core.media.ingest']);
+  // Recording proven corruption is its own workload: the ingest binding of an uploader never records integrity.
+  expect(integrity.accessWorkload?.workloads).toEqual(['core.media.integrity']);
+  expect(integrity.accessTarget).toBeUndefined();
   // Rename and the metadata read are human and agent only: a bound machine is refused by the declaration carrier.
   expect(rename.accessWorkload).toBeUndefined();
   expect(metadata.accessWorkload).toBeUndefined();
 });
 
-it('lists exactly the four existing keys in the access catalog, with no duplicate and no workload entry', () => {
-  const descriptors = [upload, confirm, rename, metadata].flatMap((descriptor) =>
+it('lists exactly the five existing keys in the access catalog, with no duplicate and no workload entry', () => {
+  const descriptors = ALL.flatMap((descriptor) =>
     descriptor.accessDeclaration === undefined
       ? []
       : [{ accessDeclaration: descriptor.accessDeclaration, entrypoint: descriptor.entrypoint }],
@@ -190,6 +206,7 @@ it('lists exactly the four existing keys in the access catalog, with no duplicat
   const catalog = Result.getOrThrow(collectAccessCatalog([{ descriptors, moduleId: 'core.media' }]));
   const keys = catalog.entries.map(({ accessDeclaration }) => accessDeclaration.key);
   expect(keys.toSorted()).toEqual([
+    'core.media.asset-integrity.fail',
     'core.media.asset-metadata.read',
     'core.media.asset.confirm',
     'core.media.asset.upload',
@@ -201,13 +218,14 @@ it('has no Core Media Action beyond the audited ones', () => {
   const mediaActions = coreActionCatalog.filter(({ owningModuleKey }) => owningModuleKey === 'core.media');
   expect(mediaActions.map(({ actionKey }) => actionKey).toSorted()).toEqual([
     'core.media.confirm-asset',
+    'core.media.record-asset-integrity-failure',
     'core.media.rename-display-filename',
     'core.media.upload-asset',
   ]);
 });
 
 it('makes a missing declaration on any Core Media entrypoint a definition-time error, never a reported gap', () => {
-  for (const descriptor of [upload, confirm, rename, metadata]) {
+  for (const descriptor of ALL) {
     // The same entrypoint with no carrier at all is refused by the descriptor rules before it can be registered.
     expect(missingAccessCarrierIssue({ entrypoint: descriptor.entrypoint })).toBeDefined();
     expect(
@@ -236,7 +254,7 @@ const allSources = Effect.fn('CoreMediaAuthorizationAudit.sources')(function* al
 });
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('core media declarations in the source tree', (suite) => {
-  suite.effect('are exactly the four audited keys, and none of the still-open keys exists before its operation', () =>
+  suite.effect('are exactly the five audited keys, and none of the still-open keys exists before its operation', () =>
     Effect.gen(function* sourceKeys() {
       const declared = new Set<string>();
       for (const [, text] of yield* allSources()) {
@@ -245,6 +263,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media declarat
         }
       }
       expect([...declared].toSorted()).toEqual([
+        'core.media.asset-integrity.fail',
         'core.media.asset-metadata.read',
         'core.media.asset.confirm',
         'core.media.asset.upload',

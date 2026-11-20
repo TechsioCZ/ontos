@@ -967,6 +967,7 @@ export { changePrincipalStatusAction } from './modules/actions/change-principal-
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
 export { confirmAssetAction } from './modules/actions/confirm-asset.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
+export { recordAssetIntegrityFailureAction } from './modules/actions/record-asset-integrity-failure.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { renameDisplayFilenameAction } from './modules/actions/rename-display-filename.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';

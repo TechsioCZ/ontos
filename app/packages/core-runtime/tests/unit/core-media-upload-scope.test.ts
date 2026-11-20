@@ -129,10 +129,11 @@ it('exposes no storage location, provider or key in either Action payload or res
   }
 });
 
-it('adds only the upload legs and the display-name rename as Core Media Actions: no delete, link or integrity Action', () => {
+it('adds only the upload legs, the display-name rename and the integrity record as Core Media Actions: no delete or link', () => {
   const mediaActions = coreActionCatalog.filter(({ owningModuleKey }) => owningModuleKey === 'core.media');
   expect(mediaActions.map(({ actionKey }) => actionKey).toSorted()).toEqual([
     'core.media.confirm-asset',
+    'core.media.record-asset-integrity-failure',
     'core.media.rename-display-filename',
     'core.media.upload-asset',
   ]);

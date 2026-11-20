@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';
 
 import { mediaAssets } from '../db/schema.ts';
@@ -113,6 +113,34 @@ export const mediaAssetRepositoryFromTransaction = (transaction: ScopedTransacti
         return yield* mediaUnavailable('Media storage identity is ambiguous');
       }
       return Option.fromUndefinedOr(row);
+    }),
+    /**
+     * The one regression a ready asset has: PROVEN corruption closes it as `failed`. It only applies to the very
+     * identity the proof was made against, so a stale or foreign finding can never close a different content.
+     * `rejected` carries the untouched row.
+     */
+    recordIntegrityFailure: Effect.fn('MediaAssetRepository.recordIntegrityFailure')(function* recordIntegrityFailure(
+      mediaAssetId: MediaAssetId,
+      recorded: { readonly byteSize: MediaByteSize; readonly contentSha256: MediaContentSha256 },
+    ) {
+      const now = yield* DateTime.nowAsDate;
+      const [row] = yield* transaction
+        .update(mediaAssets)
+        .set({ processingStatus: 'failed' satisfies MediaProcessingStatus, updatedAt: now })
+        .where(
+          and(
+            scopePredicate(mediaAssetId),
+            eq(mediaAssets.processingStatus, 'ready' satisfies MediaProcessingStatus),
+            eq(mediaAssets.byteSize, BigInt(recorded.byteSize)),
+            eq(mediaAssets.contentSha256, recorded.contentSha256),
+            isNotNull(mediaAssets.sealedAt),
+          ),
+        )
+        .returning()
+        .pipe(Effect.mapError(persistenceUnavailable));
+      return row === undefined
+        ? ({ current: yield* find(mediaAssetId), kind: 'rejected' } as const)
+        : ({ asset: row, kind: 'applied' } as const);
     }),
     renameDisplayFilename: Effect.fn('MediaAssetRepository.renameDisplayFilename')(function* rename(
       mediaAssetId: MediaAssetId,
