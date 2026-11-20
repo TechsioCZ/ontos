@@ -23,11 +23,12 @@ const MODULE_KEY = 'commerce.customer-context' as const;
 const domainEvents = {} as const;
 
 /**
- * Establishes or changes one Commerce source route (#1125-#1128): the binding of an exact issuer and
+ * Establishes, changes or pauses one Commerce source route (#1125-#1128): the binding of an exact issuer and
  * namespace to the enrolled principals that may write or read source facts through that route revision.
- * Every named principal must be one Core currently enrolls for the route's workload, though a stored route
- * can always be paused. The write is a compare-and-set against the stored route generation, an identical
- * route is a no-op, and an existing route never changes the source identity it was configured for.
+ * Every principal a configured route names must be one Core enrolls for the route's workload; a pause names
+ * only the stored route and changes nothing but its active flag. Each decision is a compare-and-set against
+ * the stored route generation, an identical route is a no-op, and an existing route never changes the source
+ * identity it was configured for.
  */
 export const handleConfigureCustomerSourceRoute = Effect.fn('ConfigureCustomerSourceRoute.handle')(
   function* configureCustomerSourceRoute(
@@ -42,8 +43,17 @@ export const handleConfigureCustomerSourceRoute = Effect.fn('ConfigureCustomerSo
     const outcome = Match.value(result).pipe(
       Match.tagsExhaustive({
         CONFIGURED: () => 'CONFIGURED' as const,
+        // A pause that found the route already inactive left its generation unchanged.
+        PAUSED: ({ generation }) =>
+          Option.contains(previousGeneration, generation) ? ('UNCHANGED' as const) : ('PAUSED' as const),
         REJECTED: ({ reason }) => reason,
         UNCHANGED: () => 'UNCHANGED' as const,
+      }),
+    );
+    const { routeId, routeKind } = Match.value(payload).pipe(
+      Match.tagsExhaustive({
+        CONFIGURE: ({ route }) => ({ routeId: route.route.id, routeKind: route._tag }),
+        PAUSE: (pause) => ({ routeId: pause.routeId, routeKind: pause.routeKind }),
       }),
     );
     // A generation is recorded only where a route was stored; the route history holds that generation's route.
@@ -58,17 +68,17 @@ export const handleConfigureCustomerSourceRoute = Effect.fn('ConfigureCustomerSo
         onSome: (generation) => ({ previousGeneration: generation }),
       }),
       reason: payload.reason,
-      routeId: payload.route.route.id,
-      routeKind: payload.route._tag,
+      routeId,
+      routeKind,
     });
     // The routine read the stored route under its lock; no previous generation means none was stored.
     yield* context.recordDataAccess({
       accessKind: 'read',
-      queryHash: `customer-source-route:${payload.route._tag}`,
+      queryHash: `customer-source-route:${routeKind}`,
       resultCount: Option.isSome(previousGeneration) ? 1 : 0,
       servingModuleKey: MODULE_KEY,
       targetModuleKey: MODULE_KEY,
-      targetResourceId: payload.route.route.id,
+      targetResourceId: routeId,
       targetResourceType: `${MODULE_KEY}.customer-source-route`,
     });
     return result;

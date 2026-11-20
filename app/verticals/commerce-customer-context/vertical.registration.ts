@@ -67,6 +67,7 @@ import { customerProfileSourcePartiesRead } from './src/api/customer-profile-sou
 import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { customerProfileTradingGateRead } from './src/api/customer-profile-trading-gate.read.ts';
 import { customerRecordVisibilityRead } from './src/api/customer-record-visibility.read.ts';
+import { customerSourceRouteRead } from './src/api/customer-source-route.read.ts';
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
 import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
 import { effectiveCustomerGroupMembershipSetV1Read } from './src/api/effective-customer-group-membership-set-v1.read.ts';
@@ -262,6 +263,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'customer-profile-source-parties': () => import('./src/api/customer-profile-source-parties-client.ts'),
       'customer-profile-trading-gate': () => import('./src/api/customer-profile-trading-gate-client.ts'),
       'customer-record-visibility': () => import('./src/api/customer-record-visibility-client.ts'),
+      'customer-source-route': () => import('./src/api/customer-source-route-client.ts'),
       'delivery-destination-resolution': () => import('./src/api/delivery-destination-resolution-client.ts'),
       'effective-customer-group-membership-set-v1': () =>
         import('./src/api/effective-customer-group-membership-set-v1-client.ts'),
@@ -376,6 +378,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     customerProfileSourcePageRead,
     customerProfileSourcePartiesRead,
     customerProfileSourceRead,
+    customerSourceRouteRead,
     deliveryDestinationResolutionRead,
     effectiveCustomerGroupMembershipSetV1Read,
     guestPaymentTermsResolutionRead,

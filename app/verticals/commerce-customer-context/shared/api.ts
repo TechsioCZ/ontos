@@ -73,6 +73,7 @@ import { CustomerProfileSourcePageApi } from './apis/customer-profile-source-pag
 import { CustomerProfileSourcePartiesApi } from './apis/customer-profile-source-parties.ts';
 import { CustomerProfileTradingGateApi } from './apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './apis/customer-record-visibility.ts';
+import { CustomerSourceRouteApi } from './apis/customer-source-route.ts';
 import { DecidePurchaseApprovalRequestActionApi } from './apis/decide-purchase-approval-request-action.ts';
 import { DeliveryDestinationResolutionApi } from './apis/delivery-destination-resolution.ts';
 import { EffectiveCustomerGroupMembershipsApi } from './apis/effective-customer-group-memberships.ts';
@@ -257,6 +258,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof CustomerProfileSourcePartiesApi
   | typeof CustomerProfileTradingGateApi
   | typeof CustomerRecordVisibilityApi
+  | typeof CustomerSourceRouteApi
   | typeof DecidePurchaseApprovalRequestActionApi
   | typeof DeliveryDestinationResolutionApi
   | typeof EffectiveCustomerGroupMembershipsApi
@@ -405,6 +407,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(CustomerProfileSourcePartiesApi)
   .addHttpApi(CustomerProfileTradingGateApi)
   .addHttpApi(CustomerRecordVisibilityApi)
+  .addHttpApi(CustomerSourceRouteApi)
   .addHttpApi(DecidePurchaseApprovalRequestActionApi)
   .addHttpApi(DeliveryDestinationResolutionApi)
   .addHttpApi(EffectiveCustomerGroupMembershipsApi)

@@ -73,26 +73,42 @@ export const CustomerSourceRouteGenerationSchema = Schema.Int.check(
   Schema.isLessThanOrEqualTo(2_147_483_647),
 );
 
-/** The registry entry one route configuration addresses, whatever the route kind. */
-const CustomerSourceRouteIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
+/** The registry entry one route decision addresses, whatever the route kind. */
+export const CustomerSourceRouteIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
   Schema.brand('CustomerSourceRouteId'),
 );
+export const CustomerSourceRouteKindSchema = Schema.Literals([
+  'PROFILE',
+  'GROUP_DEFINITION',
+  'MEMBERSHIP',
+  'SAVED_ADDRESS',
+]);
 
 /**
- * `expectedGeneration` is the generation of the route the administrator last read, or none (null) when the
- * route must not exist yet. Any other stored generation is an expectation mismatch, so a decision taken on a
- * stale view never overwrites a later one.
+ * `CONFIGURE` states the whole route; its `expectedGeneration` is the generation of the route the administrator
+ * last read, or none (null) when the route must not exist yet. `PAUSE` names only the stored route and the
+ * generation read, and changes nothing but its active flag. Any other stored generation is an expectation
+ * mismatch, so a decision taken on a stale view never overwrites a later one.
  */
-export const ConfigureCustomerSourceRoutePayloadSchema = Schema.Struct({
-  expectedGeneration: Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema),
-  reason: CustomerSourceRouteReasonSchema,
-  route: CustomerSourceRouteSchema,
-});
+export const ConfigureCustomerSourceRoutePayloadSchema = Schema.Union([
+  Schema.TaggedStruct('CONFIGURE', {
+    expectedGeneration: Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema),
+    reason: CustomerSourceRouteReasonSchema,
+    route: CustomerSourceRouteSchema,
+  }),
+  Schema.TaggedStruct('PAUSE', {
+    expectedGeneration: CustomerSourceRouteGenerationSchema,
+    reason: CustomerSourceRouteReasonSchema,
+    routeId: CustomerSourceRouteIdSchema,
+    routeKind: CustomerSourceRouteKindSchema,
+  }),
+]);
 export type ConfigureCustomerSourceRoutePayload = typeof ConfigureCustomerSourceRoutePayloadSchema.Type;
 
 /**
  * A refusal names only the stored generation (none when no route is stored): the comparison never depends on a
- * stored route still satisfying today's route contract, so even such a route can be repaired.
+ * stored route still satisfying today's route contract, so even such a route can be repaired or paused.
+ * `PAUSED` names the generation that leaves the route inactive, the expected one when it already was.
  */
 export const ConfigureCustomerSourceRouteResultSchema = Schema.Union([
   Schema.TaggedStruct('CONFIGURED', {
@@ -103,6 +119,7 @@ export const ConfigureCustomerSourceRouteResultSchema = Schema.Union([
     generation: CustomerSourceRouteGenerationSchema,
     route: CustomerSourceRouteSchema,
   }),
+  Schema.TaggedStruct('PAUSED', { generation: CustomerSourceRouteGenerationSchema }),
   Schema.TaggedStruct('REJECTED', {
     currentGeneration: Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema),
     reason: Schema.Literals(['EXPECTATION_MISMATCH', 'PRINCIPAL_INELIGIBLE', 'SOURCE_IDENTITY_IMMUTABLE']),
@@ -120,6 +137,7 @@ export const CustomerSourceRouteAuditEvidenceSchema = Schema.Struct({
   outcome: Schema.Literals([
     'CONFIGURED',
     'UNCHANGED',
+    'PAUSED',
     'EXPECTATION_MISMATCH',
     'PRINCIPAL_INELIGIBLE',
     'SOURCE_IDENTITY_IMMUTABLE',
@@ -127,7 +145,64 @@ export const CustomerSourceRouteAuditEvidenceSchema = Schema.Struct({
   previousGeneration: Schema.optionalKey(CustomerSourceRouteGenerationSchema),
   reason: CustomerSourceRouteReasonSchema,
   routeId: CustomerSourceRouteIdSchema,
-  routeKind: Schema.Literals(['PROFILE', 'GROUP_DEFINITION', 'MEMBERSHIP', 'SAVED_ADDRESS']),
+  routeKind: CustomerSourceRouteKindSchema,
+});
+
+/**
+ * A route exactly as its owner stores it. A route stored before the configuration Action existed may lack a fact
+ * today's contract requires (a Group mapping revision, part of a Membership completeness contract); it is shown
+ * with that fact absent (null), never with an invented one.
+ */
+const StoredRouteRefSchema = Schema.Struct({ id: Schema.String, revision: Schema.String });
+const StoredFactSchema = Schema.OptionFromNullOr(Schema.String);
+export const StoredCustomerSourceRouteSchema = Schema.Union([
+  Schema.TaggedStruct('PROFILE', {
+    active: Schema.Boolean,
+    issuer: Schema.String,
+    mappingRevision: Schema.String,
+    namespace: Schema.String,
+    principalId: PrincipalIdSchema,
+    recordType: Schema.String,
+    route: StoredRouteRefSchema,
+    sourceReaderPrincipalIds: Schema.Array(PrincipalIdSchema),
+  }),
+  Schema.TaggedStruct('GROUP_DEFINITION', {
+    active: Schema.Boolean,
+    issuer: Schema.String,
+    mappingRevision: StoredFactSchema,
+    namespace: Schema.String,
+    principalId: PrincipalIdSchema,
+    route: StoredRouteRefSchema,
+  }),
+  Schema.TaggedStruct('MEMBERSHIP', {
+    active: Schema.Boolean,
+    allowComplete: Schema.Boolean,
+    completenessContract: Schema.OptionFromNullOr(
+      Schema.Struct({ coverage: StoredFactSchema, ref: StoredFactSchema, revision: StoredFactSchema }),
+    ),
+    issuer: Schema.String,
+    principalId: PrincipalIdSchema,
+    route: StoredRouteRefSchema,
+    sourceNamespace: Schema.String,
+  }),
+  Schema.TaggedStruct('SAVED_ADDRESS', {
+    active: Schema.Boolean,
+    issuer: Schema.String,
+    mappingRevision: Schema.String,
+    namespace: Schema.String,
+    principalId: PrincipalIdSchema,
+    recordType: Schema.String,
+    route: StoredRouteRefSchema,
+  }),
+]);
+
+/** One decision in a route's append-only history, without the route documents it compared. */
+export const CustomerSourceRouteHistoryEntrySchema = Schema.Struct({
+  actingPrincipalId: PrincipalIdSchema,
+  actionInvocationId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId')),
+  generation: CustomerSourceRouteGenerationSchema,
+  reason: Schema.String,
+  recordedAt: Schema.DateTimeUtcFromString,
 });
 
 export class CustomerSourceRouteUnavailable extends Schema.TaggedError<CustomerSourceRouteUnavailable>()(

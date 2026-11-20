@@ -8307,6 +8307,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.customer-source-route.read",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-source-routes",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.api.customer-source-route",
+            "moduleKey": "commerce.customer-context",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.delivery-destination.clear-default",
             "kind": "action",
             "modes": [
