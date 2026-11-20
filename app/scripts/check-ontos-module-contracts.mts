@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices, NodeRuntime } from '@effect/platform-node';
-import { Effect, Equal, FileSystem, Layer, Predicate, Schema } from 'effect';
+import { Effect, Equal, FileSystem, Layer, Schema } from 'effect';
 import { parseSync } from 'oxc-parser';
 import type { Expression } from 'oxc-parser';
 import type { PlatformError } from 'effect/PlatformError';
@@ -77,6 +77,7 @@ import {
   MODULE_REGISTRATION_WORKER_SLOT_START,
   ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
 } from './scaffolding/shared.mts';
+import { systemWorkloadRegistrationIssues } from './system-workload-registrations.mts';
 
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
@@ -466,49 +467,9 @@ const validateSplitMarkerOwnership = (manifest: string, registration: string, de
   });
 
 /**
- * The job keys of the system workloads one source file registers: every `registerSystemWorkload({ jobKey })` call
- * initialises a top-level constant and names its key as a string or a top-level string constant of the same file.
- * `unresolved` counts the calls this reading cannot name a key for, so none escapes the manifest check.
- */
-const registeredSystemWorkloadKeys = (fileName: string, content: string) => {
-  const parsed = parseSync(fileName, content, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  const declarators = parsed.program.body.flatMap((statement) => {
-    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
-    return declaration?.type === 'VariableDeclaration' ? declaration.declarations : [];
-  });
-  const strings = new Map(
-    declarators.flatMap((declarator) =>
-      declarator.id.type === 'Identifier' &&
-      declarator.init?.type === 'Literal' &&
-      Predicate.isString(declarator.init.value)
-        ? [[declarator.id.name, declarator.init.value] as const]
-        : [],
-    ),
-  );
-  const keys = declarators.flatMap(({ init }) => {
-    if (
-      init?.type !== 'CallExpression' ||
-      init.callee.type !== 'Identifier' ||
-      init.callee.name !== 'registerSystemWorkload'
-    ) {
-      return [];
-    }
-    const [argument] = init.arguments;
-    const jobKey = literalProperty(argument?.type === 'SpreadElement' ? undefined : argument, 'jobKey');
-    if (jobKey?.type === 'Literal' && Predicate.isString(jobKey.value)) {
-      return [jobKey.value];
-    }
-    const named = jobKey?.type === 'Identifier' ? strings.get(jobKey.name) : undefined;
-    return named === undefined ? [] : [named];
-  });
-  const calls = content.match(/\bregisterSystemWorkload\(/gu)?.length ?? 0;
-  return { keys, unresolved: calls - keys.length };
-};
-
-/**
- * Every system workload a module's own source registers is one its manifest declares in `systemWorkloads`, so the
- * published contract names every key Core may enroll a Tenant's system Principal for, and no other. Tests are not
- * the module's source.
+ * The system workloads a module's own source registers are exactly the ones its manifest declares in
+ * `systemWorkloads`, so the published contract names every key Core may enroll a Tenant's system Principal for, and
+ * no other. Tests are not the module's source.
  */
 const validateSystemWorkloadRegistrations = (
   verticalDirectory: string,
@@ -517,30 +478,22 @@ const validateSystemWorkloadRegistrations = (
 ) =>
   Effect.gen(function* validateSystemWorkloads() {
     const fileSystem = yield* FileSystem.FileSystem;
-    const declared: ReadonlySet<string> = new Set(derived.manifest.systemWorkloads);
-    const files = (yield* walkSourceFiles(verticalDirectory)).filter(
+    const paths = (yield* walkSourceFiles(verticalDirectory)).filter(
       (filePath) => !filePath.includes(`${path.sep}tests${path.sep}`),
     );
-    for (const filePath of files) {
+    const files = [];
+    for (const filePath of paths) {
       const content = yield* fileSystem.readFileString(filePath);
-      if (!content.includes('registerSystemWorkload(')) {
-        continue;
-      }
-      const relative = path.relative(verticalDirectory, filePath);
-      const { keys, unresolved } = registeredSystemWorkloadKeys(filePath, content);
-      if (unresolved !== 0) {
-        return yield* failure(
-          `${appId} ${relative} registers a system workload whose key is not a top-level string constant of that file`,
-        );
-      }
-      const undeclared = keys.find((key) => !declared.has(key));
-      if (undeclared !== undefined) {
-        return yield* failure(
-          `${appId} ${relative} registers system workload ${undeclared}, which its manifest does not declare in systemWorkloads`,
-        );
+      if (content.includes('registerSystemWorkload')) {
+        files.push({ content, path: path.relative(verticalDirectory, filePath) });
       }
     }
-    return yield* Effect.void;
+    const issues = systemWorkloadRegistrationIssues({
+      appId,
+      declared: derived.manifest.systemWorkloads ?? [],
+      files,
+    });
+    return issues.length === 0 ? yield* Effect.void : yield* failure(issues.join('\n'));
   });
 
 const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contractUrl: string) =>
