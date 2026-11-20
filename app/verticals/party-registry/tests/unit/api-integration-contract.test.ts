@@ -52,11 +52,13 @@ const apiNames = [
   'personEngagementMutations',
   'personEngagementProfile',
   'privacyMeasureExecution',
+  'retailCustomerProfile',
   'searchLabels',
   'sourceCounterpartyAdmission',
   'sourcePartySearch',
   'sourcePersonAdmission',
   'sourceProfileExport',
+  'updateRetailCustomerProfileAction',
 ] as const;
 
 type Equal<Left, Right> =

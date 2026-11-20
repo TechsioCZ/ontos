@@ -14,6 +14,8 @@ import { expect, it } from 'effect-rstest';
 
 import { enrollRetailCustomerAction } from '../../src/actions/enroll-retail-customer.action.ts';
 import { ownedRetailPartyResultRead } from '../../src/api/owned-retail-party-result.read.ts';
+import { updateRetailCustomerProfileAction } from '../../src/actions/update-retail-customer-profile.action.ts';
+import { retailCustomerProfileRead } from '../../src/api/retail-customer-profile.read.ts';
 
 const TENANT = '00000000-0000-4000-8000-000000000001';
 const SUBJECT = '00000000-0000-4000-8000-000000000002';
@@ -114,6 +116,16 @@ const entrypoints: readonly RetailEntrypoint[] = [
     carrier: ownedRetailPartyResultRead.descriptor,
     legalEntityScope: ownedRetailPartyResultRead.descriptor.legalEntityScope,
     name: 'owned retail result recovery',
+  },
+  {
+    carrier: retailCustomerProfileRead.descriptor,
+    legalEntityScope: retailCustomerProfileRead.descriptor.legalEntityScope,
+    name: 'own retail customer profile read',
+  },
+  {
+    carrier: updateRetailCustomerProfileAction.descriptor,
+    legalEntityScope: updateRetailCustomerProfileAction.descriptor.legalEntityScope,
+    name: 'own retail customer profile update',
   },
 ];
 

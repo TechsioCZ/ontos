@@ -42,6 +42,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'party-source-effect-receipt': () => import('./src/api/party-source-effect-receipt-client.ts'),
       'person-engagement-profile': () => import('./src/api/person-engagement-profile-client.ts'),
       'privacy-measure-execution': () => import('./src/api/privacy-measure-execution-client.ts'),
+      'retail-customer-profile': () => import('./src/api/retail-customer-profile-client.ts'),
       'search-labels': () => import('./src/api/search-labels-client.ts'),
       'source-counterparty-admission': () => import('./src/api/source-counterparty-admission-client.ts'),
       'source-party-search': () => import('./src/api/source-party-search-client.ts'),

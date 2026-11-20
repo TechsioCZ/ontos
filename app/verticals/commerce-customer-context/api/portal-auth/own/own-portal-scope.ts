@@ -3,6 +3,8 @@ import {
   loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { Crypto, Effect } from 'effect';
+import type { OperationalScope } from '@app/core-runtime/operations/context';
+import type { CustomerPortalOwnSession } from '../../../shared/portal-auth/own-session.ts';
 
 import type { CustomerPartyProfileScope } from '../profile/party-profile.ts';
 
@@ -10,10 +12,8 @@ import type { CustomerPartyProfileScope } from '../profile/party-profile.ts';
 export interface OwnPortalOperation {
   /** The Core-admitted composition revision, when the runtime handed one over. */
   readonly compositionRevision?: string | undefined;
-  readonly legalEntityId: string | undefined;
-  /** The Party of the admitted session's own account (the overlay proved it inside the operation). */
-  readonly partyId: string;
-  readonly tenantId: string;
+  readonly scope: OperationalScope;
+  readonly session: CustomerPortalOwnSession;
 }
 
 /**
@@ -25,7 +25,7 @@ export const ownPortalScope = Effect.fn('CustomerOwnPortal.scope')(function* own
   operation: OwnPortalOperation,
   unavailable: () => Failure,
 ) {
-  const { legalEntityId } = operation;
+  const { legalEntityId, tenantId } = operation.scope;
   if (legalEntityId === undefined) {
     return yield* Effect.fail(unavailable());
   }
@@ -38,11 +38,17 @@ export const ownPortalScope = Effect.fn('CustomerOwnPortal.scope')(function* own
   const crypto = yield* Crypto.Crypto;
   const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
   const scope: CustomerPartyProfileScope = {
+    admittedScope: operation.scope,
+    attestation: Object.freeze({
+      ...operation.session,
+      sellingLegalEntityId: legalEntityId,
+      tenantId,
+    }),
     compositionRevision,
     legalEntityId,
-    partyId: operation.partyId,
+    partyId: operation.session.partyId,
     requestCorrelation,
-    tenantId: operation.tenantId,
+    tenantId,
   };
   return scope;
 });

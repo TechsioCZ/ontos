@@ -1,6 +1,6 @@
 import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { OrganizationBusinessUpdateOutcomeSchema } from '../services/organization-business-update.service.ts';
 
@@ -63,9 +63,8 @@ type UpdatePartyPersistenceError =
   | PartyAliasWriteRejected
   | PartyEvidenceInsufficientError
   | PartyPersistenceUnavailableError;
-const updatePartyRecord = updatePartyIdentityRecord;
-type UpdateOutcome = Effect.Success<ReturnType<typeof updatePartyRecord>>;
-interface Services {
+type UpdateOutcome = Effect.Success<ReturnType<typeof updatePartyIdentityRecord>>;
+export interface UpdatePartyServices {
   readonly update: (
     payload: UpdatePartyPayload,
     actionInvocationId: string,
@@ -74,7 +73,7 @@ interface Services {
 
 const handle = Effect.fn('UpdatePartyAction.handle')(function* updateParty(
   payload: UpdatePartyPayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
+  context: ActionHandlerContext<typeof domainEvents, UpdatePartyServices>,
 ) {
   const persistenceResult = yield* context.services.update(payload, context.actionInvocationId);
   if (Schema.is(OrganizationBusinessUpdateOutcomeSchema)(persistenceResult)) {
@@ -145,6 +144,44 @@ const handle = Effect.fn('UpdatePartyAction.handle')(function* updateParty(
   );
   return result;
 });
+
+export { ErrorSchema as UpdatePartyErrorSchema, domainEvents as updatePartyDomainEvents, handle as handleUpdateParty };
+
+/** Shared only by this owner's bounded composite Actions; permission checks stay on each outer registration. */
+export const updatePartyServices: ActionServiceFactory<UpdatePartyServices> = (transaction, scope) =>
+  Effect.succeed({
+    update: (payload: UpdatePartyPayload, actionInvocationId: string) =>
+      requireAdmittedPartySourceReference(transaction, scope, clientSourceAssertion(payload.subjectEvidence)).pipe(
+        Effect.andThen(
+          clientSourceAssertion(payload.subjectEvidence) === undefined
+            ? authorizePartyEvidence(payload.subjectEvidence, scope, {
+                operation: 'UPDATE',
+                partyId: payload.partyRef.resourceId,
+              })
+            : Effect.void,
+        ),
+        Effect.andThen(
+          updatePartyIdentityRecord(transaction, scope.tenantId, {
+            actionInvocationId,
+            sourceScope: scope,
+            firstName: payload.firstName,
+            lastName: payload.lastName,
+            businessName: payload.businessName,
+            expectedRevision: payload.expectedRevision,
+            externalEvidence: payload.externalEvidence,
+            partyId: payload.partyRef.resourceId,
+            partyType: payload.partyType,
+            principalId: scope.principalId,
+            provenanceMethod: payload.provenanceMethod,
+            provenanceSource: payload.provenanceSource,
+            subjectEvidence: payload.subjectEvidence,
+            validFrom: DateTime.formatIso(DateTime.makeUnsafe(payload.validFrom)),
+          }),
+        ),
+        withPartyClientSourcePrivacyRequirement('party.registry.update-party'),
+      ),
+  });
+
 export const updatePartyAction = defineAction(
   {
     accessWorkload: {
@@ -184,37 +221,5 @@ export const updatePartyAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction, scope) =>
-    Effect.succeed({
-      update: (payload: UpdatePartyPayload, actionInvocationId: string) =>
-        requireAdmittedPartySourceReference(transaction, scope, clientSourceAssertion(payload.subjectEvidence)).pipe(
-          Effect.andThen(
-            clientSourceAssertion(payload.subjectEvidence) === undefined
-              ? authorizePartyEvidence(payload.subjectEvidence, scope, {
-                  operation: 'UPDATE',
-                  partyId: payload.partyRef.resourceId,
-                })
-              : Effect.void,
-          ),
-          Effect.andThen(
-            updatePartyRecord(transaction, scope.tenantId, {
-              actionInvocationId,
-              sourceScope: scope,
-              firstName: payload.firstName,
-              lastName: payload.lastName,
-              businessName: payload.businessName,
-              expectedRevision: payload.expectedRevision,
-              externalEvidence: payload.externalEvidence,
-              partyId: payload.partyRef.resourceId,
-              partyType: payload.partyType,
-              principalId: scope.principalId,
-              provenanceMethod: payload.provenanceMethod,
-              provenanceSource: payload.provenanceSource,
-              subjectEvidence: payload.subjectEvidence,
-              validFrom: DateTime.formatIso(DateTime.makeUnsafe(payload.validFrom)),
-            }),
-          ),
-          withPartyClientSourcePrivacyRequirement('party.registry.update-party'),
-        ),
-    }),
+  updatePartyServices,
 );

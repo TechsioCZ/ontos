@@ -1,8 +1,10 @@
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { normalizePhone, PartyContactPointsResponseSchema, PartyDetailResponseSchema } from '@app/party-registry/api';
-import { Array as EffectArray, Effect, Option, Redacted, Result, Schema } from 'effect';
+import { Array as EffectArray, ConfigProvider, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import {
   projectCustomerOwnProfile,
@@ -94,6 +96,38 @@ const request = {
   displayName: 'Customer Name',
   phone: '+420777123456',
   version: 'a'.repeat(64),
+};
+
+/** These validation-only fixtures carry no Core provenance or credentials and must never dispatch. */
+const negativeOwnerScope = (ownedPartyId: string, requestCorrelation: string) => {
+  const legalEntityId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  return {
+    admittedScope: {
+      ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+        authBindingId: '30000000-0000-4000-8000-000000000001',
+        authContextRef: 'validation-only-no-source-assertion',
+        authMethod: 'api_key',
+        legalEntityId,
+        principalId: '30000000-0000-4000-8000-000000000002',
+        tenantId,
+      }),
+      correlationId: requestCorrelation,
+    },
+    attestation: {
+      authBindingId: '40000000-0000-4000-8000-000000000001',
+      customerPrincipalId: '40000000-0000-4000-8000-000000000002',
+      partyId: ownedPartyId,
+      providerSubjectId: 'validation-only-subject',
+      sellingLegalEntityId: legalEntityId,
+      sessionRefDigest: 'a'.repeat(64),
+      tenantId,
+    },
+    compositionRevision: 'c'.repeat(64),
+    legalEntityId,
+    partyId: ownedPartyId,
+    requestCorrelation,
+    tenantId,
+  };
 };
 
 it.effect('preserves the exact owner destination, authorization, cookie and request headers in the native client', () =>
@@ -229,15 +263,9 @@ it.effect('rejects a changed name plus an invalid phone before acquiring any nat
       // command attempted first would fail as 503; invalid phone intent must instead fail as 400.
       const problem = yield* Effect.flip(
         updateCustomerPartyProfile(
-          {
-            compositionRevision: 'c'.repeat(64),
-            legalEntityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            partyId: party.party.partyRef.resourceId,
-            requestCorrelation: 'invalid-profile-phone',
-            tenantId,
-          },
+          negativeOwnerScope(party.party.partyRef.resourceId, 'invalid-profile-phone'),
           { ...profile, displayName: 'Must not be committed', phone },
-          { contacts, detail: party, partyRef: party.party.partyRef, profile },
+          { profile },
         ),
       );
       expect(problem.status).toBe(400);
@@ -310,28 +338,36 @@ it.effect('refuses redacted owner fields rather than projecting empty editable v
     expect(Result.isSuccess(emptyKnown) && emptyKnown.success.displayName === '').toBe(true);
   }),
 );
-it.effect('does not overwrite an unknown surname or acquire a write credential for a redacted name', () =>
-  Effect.gen(function* redactedSurname() {
+it.effect('does not dispatch a profile change without verified source provenance', () =>
+  Effect.gen(function* missingSourceProvenance() {
     const party = yield* detail;
-    const contacts = { items: [] };
-    const profile = yield* Effect.fromResult(projectCustomerOwnProfile(party, contacts));
-    const { lastName: _redactedSurname, ...withoutSurname } = party.party;
+    const profile = yield* Effect.fromResult(projectCustomerOwnProfile(party, { items: [] }));
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (target, init) => {
+      requests.push(new Request(target, init));
+      return Promise.resolve(Response.json({}, { status: 500 }));
+    };
     const problem = yield* updateCustomerPartyProfile(
-      {
-        compositionRevision: 'c'.repeat(64),
-        legalEntityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        partyId: party.party.partyRef.resourceId,
-        requestCorrelation: 'redacted-surname',
-        tenantId,
-      },
+      negativeOwnerScope(party.party.partyRef.resourceId, 'missing-source-provenance'),
       { ...profile, displayName: 'Changed Name' },
-      {
-        contacts,
-        detail: { ...party, party: withoutSurname },
-        partyRef: party.party.partyRef,
-        profile,
-      },
-    ).pipe(Effect.flip);
+      { profile },
+    ).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.provide(
+        Layer.merge(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              ONTOS_SHELL_GATEWAY_BASE_URL: 'https://profile-shell.example.test/shell-super-app-api',
+            }),
+          ),
+          Layer.effectDiscard(
+            holdTestModuleCredentials({ 'commerce-customer-context': 'profile-negative-module-key' }),
+          ),
+        ),
+      ),
+      Effect.flip,
+    );
     expect(problem.status).toBe(503);
+    expect(requests).toEqual([]);
   }).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

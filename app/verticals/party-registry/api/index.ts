@@ -54,11 +54,13 @@ import { organizationRecordFactsReadApiLive } from './organization-record-facts-
 import { ownedRetailPartyResultReadApiLive } from './owned-retail-party-result-read-server.ts';
 import { partySourceEffectReceiptReadApiLive } from './party-source-effect-receipt-read-server.ts';
 import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
+import { retailCustomerProfileReadApiLive } from './retail-customer-profile-read-server.ts';
 import { searchLabelsReadApiLive } from './search-labels-read-server.ts';
 import { sourceCounterpartyAdmissionReadApiLive } from './source-counterparty-admission-read-server.ts';
 import { sourcePartySearchReadApiLive } from './source-party-search-read-server.ts';
 import { sourcePersonAdmissionReadApiLive } from './source-person-admission-read-server.ts';
 import { sourceProfileExportReadApiLive } from './source-profile-export-read-server.ts';
+import { updateRetailCustomerProfileActionApiLive } from './update-retail-customer-profile-action-server.ts';
 // </generated-governed-http-handler-imports>
 import { engagementProfileApiHandlersLive } from './engagement-profile-server.ts';
 import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
@@ -251,11 +253,13 @@ export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArgum
     partySourceEffectReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     personEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacyMeasureExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    retailCustomerProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     searchLabelsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     sourceCounterpartyAdmissionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     sourcePartySearchReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     sourcePersonAdmissionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     sourceProfileExportReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    updateRetailCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(

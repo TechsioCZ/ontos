@@ -16,7 +16,7 @@ it('accepts consecutive bounded messages whose combined size exceeds one frame',
 
 it('retains the exact frame byte boundary across chunks and resets at a newline', () => {
   const accepts = priceGroupCurrentInputGuard();
-  expect(accepts(new Uint8Array(262_143).fill(97))).toBe(true);
+  expect(accepts(new Uint8Array(262_142).fill(97))).toBe(true);
   expect(accepts(Uint8Array.of(97, 10, 98, 10))).toBe(true);
 });
 
@@ -28,11 +28,19 @@ it('rejects an oversized fragmented message and keeps the stream rejected', () =
 });
 
 it('rejects an oversized message even when followed by a newline in the same chunk', () => {
-  const frame = new Uint8Array(262_146).fill(97);
+  const frame = new Uint8Array(262_145).fill(97);
   frame[frame.length - 1] = 10;
   expect(priceGroupCurrentInputGuard()(frame)).toBe(false);
 });
 
+it('includes a fragmented newline in the wire byte budget', () => {
+  const accepts = priceGroupCurrentInputGuard();
+  expect(accepts(new Uint8Array(262_144).fill(97))).toBe(true);
+  expect(accepts(Uint8Array.of(10))).toBe(false);
+});
+
 it('counts UTF-8 bytes rather than JavaScript characters', () => {
-  expect(priceGroupCurrentInputGuard()(new TextEncoder().encode('🙂'.repeat(65_537)))).toBe(false);
+  const encode = new TextEncoder();
+  expect(priceGroupCurrentInputGuard()(encode.encode(`${'🙂'.repeat(65_535)}abc\n`))).toBe(true);
+  expect(priceGroupCurrentInputGuard()(encode.encode(`${'🙂'.repeat(65_536)}\n`))).toBe(false);
 });

@@ -45,14 +45,39 @@ import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts'
 import { PartySourceEffectReceiptApi } from './apis/party-source-effect-receipt.ts';
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
+import { RetailCustomerProfileApi } from './apis/retail-customer-profile.ts';
 import { SearchLabelsApi } from './apis/search-labels.ts';
 import { SourceCounterpartyAdmissionApi } from './apis/source-counterparty-admission.ts';
 import { SourcePartySearchApi } from './apis/source-party-search.ts';
 import { SourcePersonAdmissionApi } from './apis/source-person-admission.ts';
 import { SourceProfileExportApi } from './apis/source-profile-export.ts';
+import { UpdateRetailCustomerProfileActionApi } from './apis/update-retail-customer-profile-action.ts';
 // </generated-governed-http-api-imports>
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
+
+export {
+  RetailCustomerProfileAttestationSchema,
+  RetailCustomerProfileDetailsSchema,
+  RetailCustomerIdentityViewSchema,
+  RetailCustomerProfileViewSchema,
+  RetailCustomerProfileRequestSchema,
+  RetailCustomerProfileResponseSchema,
+  RetailCustomerProfilePolicyConflictProblemSchema,
+  RetailCustomerProfileDomainConflictProblemSchema,
+  RetailCustomerProfileUnavailableProblemSchema,
+  UpdateRetailCustomerProfilePayloadSchema,
+  UpdateRetailCustomerProfileResultSchema,
+} from './apis/retail-customer-profile.ts';
+export type {
+  RetailCustomerProfileAttestation,
+  RetailCustomerProfileDetails,
+  RetailCustomerProfileRequest,
+} from './apis/retail-customer-profile.ts';
+export {
+  UpdateRetailCustomerProfileActionConflictProblemSchema,
+  UpdateRetailCustomerProfileActionInvalidProblemSchema,
+} from './apis/update-retail-customer-profile-action.ts';
 
 export {
   EnrollRetailCustomerPayloadSchema,
@@ -640,11 +665,13 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartySourceEffectReceiptApi)
   .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PrivacyMeasureExecutionApi)
+  .addHttpApi(RetailCustomerProfileApi)
   .addHttpApi(SearchLabelsApi)
   .addHttpApi(SourceCounterpartyAdmissionApi)
   .addHttpApi(SourcePartySearchApi)
   .addHttpApi(SourcePersonAdmissionApi)
   .addHttpApi(SourceProfileExportApi)
+  .addHttpApi(UpdateRetailCustomerProfileActionApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

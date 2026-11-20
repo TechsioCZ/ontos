@@ -63,9 +63,8 @@ export const customerOwnProfileRead = defineRead(
       const scope = yield* ownPortalScope(
         {
           compositionRevision: context.compositionRevision,
-          legalEntityId: context.scope.legalEntityId,
-          partyId: input.session.partyId,
-          tenantId: context.scope.tenantId,
+          scope: context.scope,
+          session: input.session,
         },
         profileUnavailable,
       );

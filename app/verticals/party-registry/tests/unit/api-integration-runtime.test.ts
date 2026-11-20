@@ -33,6 +33,17 @@ import { RetailEnrollmentSubjectSchema } from '../../shared/actions/accept-retai
 import { EnrollRetailCustomerPayloadSchema } from '../../shared/actions/enroll-retail-customer.ts';
 import { OwnedRetailPartyResultRequestSchema } from '../../shared/apis/owned-retail-party-result.ts';
 import { PartyDetailAuthenticationProblemSchema } from '../../shared/apis/party-detail.ts';
+import {
+  RetailCustomerProfileApi,
+  RetailCustomerProfileConflict,
+  RetailCustomerProfileUnavailable,
+  RetailCustomerProfileDomainConflictProblemSchema,
+  RetailCustomerProfileDomainUnavailableProblemSchema,
+  RetailCustomerProfileRequestSchema,
+  UpdateRetailCustomerProfilePayloadSchema,
+} from '../../shared/apis/retail-customer-profile.ts';
+import { UpdateRetailCustomerProfileActionApi } from '../../shared/apis/update-retail-customer-profile-action.ts';
+import type { RetailCustomerProfileDomainError } from '../../src/api/retail-customer-profile.read.ts';
 import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
 import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
@@ -171,6 +182,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         let counterpartySearchCalls = 0;
         let partySearchCalls = 0;
         let readCalls = 0;
+        let retailProfileFailure: RetailCustomerProfileDomainError | undefined;
         let searchLayerLoads = 0;
         let compositionLoads = 0;
         const actionRuntime: ActionRuntimeService = {
@@ -216,6 +228,17 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               Effect.flatMap(({ context, principal: readPrincipal, transport }) => {
                 const scope = preserveSystemPrincipalContextTrust(readPrincipal, { ...readPrincipal, ...transport });
                 readCalls += 1;
+                if (
+                  registration.descriptor.readKey === 'party.registry.api.retail-customer-profile' &&
+                  retailProfileFailure !== undefined
+                ) {
+                  const domainSchema = registration.descriptor.domainErrorSchema;
+                  assert.isOk(domainSchema !== undefined);
+                  return Schema.decodeUnknownEffect(domainSchema)(retailProfileFailure).pipe(
+                    Effect.orDie,
+                    Effect.flatMap(Effect.fail),
+                  );
+                }
                 if (registration.descriptor.readKey === 'party.registry.api.ares-lookup') {
                   const service = Context.getOrUndefined(context, AresSubjectService);
                   assert.isOk(service !== undefined);
@@ -358,6 +381,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         expect(partyRegistryApi.groups.ownerActionApprovals.endpoints).toBe(
           OwnerActionApprovalApi.groups.ownerActionApprovals.endpoints,
         );
+        expect(partyRegistryApi.groups.retailCustomerProfile.endpoints).toBe(
+          RetailCustomerProfileApi.groups.retailCustomerProfile.endpoints,
+        );
+        expect(partyRegistryApi.groups.updateRetailCustomerProfileAction.endpoints).toBe(
+          UpdateRetailCustomerProfileActionApi.groups.updateRetailCustomerProfileAction.endpoints,
+        );
         const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
           Object.values(group.endpoints).map((endpoint) => ({ endpoint, group })),
         );
@@ -447,10 +476,33 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           evidence: retailSubject,
           idempotencyKey: 'runtime-assembly:owned-retail-create',
         });
+        const retailProfileRequest = yield* Schema.decodeUnknownEffect(RetailCustomerProfileRequestSchema)({
+          attestation: {
+            authBindingId: principal.authBindingId,
+            customerPrincipalId: principal.principalId,
+            partyId: partyRef.resourceId,
+            providerSubjectId: retailSubject.providerSubjectId,
+            sellingLegalEntityId: retailSubject.sellingLegalEntityId,
+            sessionRefDigest: 'd'.repeat(64),
+            tenantId: principal.tenantId,
+          },
+          view: 'PROFILE',
+        });
+        const retailProfileUpdate = yield* Schema.decodeUnknownEffect(UpdateRetailCustomerProfilePayloadSchema)({
+          attestation: retailProfileRequest.attestation,
+          update: {
+            contactEmail: 'updated-runtime@example.test',
+            displayName: 'Updated Runtime Customer',
+            phone: '+420777123456',
+            version: 'e'.repeat(64),
+          },
+        });
         const manualPayloads = {
           '/reads/owned-retail-party-result': ownedRetailRequest,
+          '/reads/retail-customer-profile': retailProfileRequest,
           '/reads/privacy-measure-execution': { idempotencyKey: 'runtime-test:1' },
           '/party-registry/actions/enroll-retail-customer': retailEnrollmentPayload,
+          '/party-registry/actions/update-retail-customer-profile': retailProfileUpdate,
           '/party-registry/actions/execute-privacy-measure': {
             handoff: {
               contentScopeRefs: ['party.registry.counterparty.lifecycle'],
@@ -758,6 +810,50 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ),
         );
         expect(foreignPreflight.headers.get('access-control-allow-origin')).toBe(null);
+        yield* Effect.forEach(
+          [
+            new RetailCustomerProfileConflict({
+              code: 'retail_customer_profile_conflict',
+              reason: 'Private owner details must not leak',
+            }),
+            new RetailCustomerProfileUnavailable({
+              code: 'retail_customer_profile_unavailable',
+              reason: 'Private dependency details must not leak',
+            }),
+          ],
+          Effect.fn('PartyRuntimeAssembly.profileDomainProblem')(function* profileDomainProblem(failure) {
+            retailProfileFailure = failure;
+            const body = yield* Schema.encodeEffect(Schema.fromJsonString(RetailCustomerProfileRequestSchema))(
+              retailProfileRequest,
+            );
+            const response = yield* Effect.promise(() =>
+              runtime.handler(
+                new Request('http://localhost/reads/retail-customer-profile', {
+                  body,
+                  headers,
+                  method: 'POST',
+                }),
+              ),
+            );
+            const problem = yield* Effect.promise(() => response.json());
+            if (Schema.is(RetailCustomerProfileConflict)(failure)) {
+              expect(response.status).toBe(409);
+              expect(
+                (yield* Schema.decodeUnknownEffect(RetailCustomerProfileDomainConflictProblemSchema)(problem))
+                  .reasonCode,
+              ).toBe(failure.code);
+            } else {
+              expect(response.status).toBe(503);
+              expect(
+                (yield* Schema.decodeUnknownEffect(RetailCustomerProfileDomainUnavailableProblemSchema)(problem))
+                  .retryable,
+              ).toBe(true);
+            }
+            const encodedProblem = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(problem);
+            expect(encodedProblem).not.toContain(failure.reason);
+          }),
+          { concurrency: 1, discard: true },
+        );
       }),
     15_000,
   );

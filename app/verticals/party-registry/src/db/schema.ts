@@ -1307,7 +1307,14 @@ export const partyCorrections = enableGovernedRls(
     },
     (table) => [
       unique('party_corrections_tenant_id_uk').on(table.tenantId, table.correctionId),
-      unique('party_corrections_action_invocation_uk').on(table.tenantId, table.actionInvocationId),
+      // A bounded profile Action may correct both contact channels in one native invocation.
+      // Keep one truthful audit row per corrected contact; all other correction kinds remain one per invocation.
+      uniqueIndex('party_corrections_action_invocation_non_contact_uk')
+        .on(table.tenantId, table.actionInvocationId)
+        .where(sql`${table.contactPointId} is null`),
+      uniqueIndex('party_corrections_action_invocation_contact_uk')
+        .on(table.tenantId, table.actionInvocationId, table.contactPointId)
+        .where(sql`${table.contactPointId} is not null`),
       foreignKey({
         columns: [table.tenantId, table.partyId],
         foreignColumns: [parties.tenantId, parties.partyId],
