@@ -100,6 +100,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   expect(Object.keys(ShellAuthenticationApi.groups.emailReceipts.endpoints)).toEqual(['list', 'provider']);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
+    'changeSystemWorkloadEnrollment',
     'configureDemoCompanies',
     'createNonHumanPrincipal',
     'demoAccountCapability',
@@ -144,6 +145,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     availableTenants: '/auth/tenants',
     changePrincipalBindingStatus: '/auth/identity/external/binding/status',
     changePrincipalStatus: '/auth/identity/principal-status',
+    changeSystemWorkloadEnrollment: '/auth/identity/system-workload-enrollments',
     configureDemoCompanies: '/auth/identity/demo-companies',
     connectApprove: '/auth/oauth-connections/approve',
     connectDeny: '/auth/oauth-connections/deny',

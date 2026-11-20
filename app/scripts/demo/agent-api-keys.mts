@@ -7,6 +7,7 @@ import { IdentityLifecycle } from '../../apps/shell-super-app/api/auth/identity-
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { AgentProfileSetupError } from './agent-profile-setup.mts';
 import { selectAgentOperatorCompany } from './agent-operator-session.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 const targetFlags = {
   company: Flag.String('company'),
@@ -79,5 +80,11 @@ const revoke = Command.make(
 ).pipe(Command.provide(AgentProfileOperatorLive));
 const command = Command.make('agent-api-keys').pipe(Command.withSubcommands([issue, revoke]));
 if (import.meta.main) {
-  await Effect.runPromise(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));
+  await Effect.runPromise(
+    Command.run(command, { version: '1.0.0' }).pipe(
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 }

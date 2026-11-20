@@ -15,10 +15,8 @@ import {
   readVerifiedGatewayCompositionRevision,
   trustVerifiedGatewayPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
-import {
-  registerSystemWorkload,
-  systemPrincipalContextResolverFromRepository,
-} from '../../src/auth/system-principal-context.ts';
+import { systemPrincipalContextResolverFromRepository } from '../../src/auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../../src/auth/system-workload-registration.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import { makeTestOperationalScopeAccess } from '../../src/testing/access-gate.ts';

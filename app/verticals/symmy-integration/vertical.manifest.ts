@@ -22,6 +22,7 @@ import { symmySyncAdmissionRead } from './src/api/symmy-sync-admission.read.ts';
 import { syncAdmissionResourceDescriptor } from './shared/resources/sync-admission.ts';
 // </generated-module-manifest-imports>
 import { symmyIntegrationRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
+import { symmyExecutionRegistration } from './src/services/symmy-worker-identity.service.ts';
 
 const privacyModuleId = 'privacy.core' as const;
 const ownerOperationProviders = [
@@ -307,4 +308,6 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
     ],
     schemaVersion: '1',
   },
+  // The Symmy job worker resolves the Tenant's one enrolled system Principal under this key (resolveEnrolled).
+  systemWorkloads: [symmyExecutionRegistration],
 });

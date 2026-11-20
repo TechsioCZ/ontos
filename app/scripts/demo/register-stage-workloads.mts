@@ -21,7 +21,21 @@ import { createHash } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
 import { and, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
-import { Config, Console, DateTime, Effect, Exit, FileSystem, Layer, Option, Redacted, Result, Schema } from 'effect';
+import {
+  Cause,
+  Config,
+  Console,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT as enrollment } from '../../database/identity-enrollment.ts';
@@ -48,6 +62,7 @@ import {
   principals,
 } from '../../packages/core-runtime/src/db/schema.ts';
 import { stageScopeOf } from '../../packages/core-runtime/src/install/stage-context-bootstrap.ts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 const modes = ['dry-run', 'apply', 'verify'] as const;
 /** Machine principal kinds a workload binding may name; a person or an agent is never bound (O73). */
@@ -421,21 +436,36 @@ const command = Command.make(
     registrations: Flag.String('registrations'),
     reviewed: Flag.String('reviewed-plan-sha256').pipe(Flag.optional),
   },
-  ({ mode, registrations, reviewed }) =>
-    main(mode, registrations, reviewed).pipe(
-      Effect.tapError((failure) =>
-        Console.error(
-          isRegistrationFailure(failure)
-            ? `Workload registration stopped: ${failure.reason}`
-            : 'Workload registration stopped; database details withheld',
-        ),
-      ),
-    ),
+  ({ mode, registrations, reviewed }) => main(mode, registrations, reviewed),
 ).pipe(Command.provide(WorkloadsLive));
+
+/**
+ * Why a run stopped, for every failure including one while the database layer is built: the operator's own reason, or
+ * the failure's tag and message with any connection address removed, never its cause or configuration.
+ */
+export const stageWorkloadFailureReason = (cause: Cause.Cause<unknown>): string => {
+  const problem = Cause.squash(cause);
+  if (isRegistrationFailure(problem)) {
+    return problem.reason;
+  }
+  const tag = Predicate.hasProperty(problem, '_tag') ? String(problem._tag) : 'unexpected failure';
+  const message = Predicate.hasProperty(problem, 'message') ? String(problem.message) : '';
+  const safe = message.replaceAll(/[a-z][a-z0-9+.-]*:\/\/\S+/giu, '<address withheld>').slice(0, 500);
+  return safe === '' ? tag : `${tag}: ${safe}`;
+};
 
 if (import.meta.main) {
   const result = await Effect.runPromiseExit(
-    Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)),
+    Command.run(command, { version: '1.0.0' }).pipe(
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? Console.error(`Workload registration stopped: ${stageWorkloadFailureReason(exit.cause)}`)
+          : Effect.void,
+      ),
+      Effect.provide(NodeServices.layer),
+    ),
   );
   process.exitCode = Exit.isFailure(result) ? 1 : 0;
 }
