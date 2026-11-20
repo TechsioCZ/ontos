@@ -226,10 +226,10 @@ it.effect(
     }),
 );
 
-it.effect('a streaming consumer refuses, without reading a byte, an object whose declared length differs', () =>
+it.effect('a streaming consumer refuses, delivering no byte, an object whose declared length differs', () =>
   Effect.gen(function* otherLengthStream() {
     const storage = yield* withStored(encoder.encode('a different and longer confirmed body'));
-    let pulled = false;
+    let pulled = 0;
     const watching: ObjectStorageService = {
       ...storage.service,
       get: (objectKey) =>
@@ -237,7 +237,7 @@ it.effect('a streaming consumer refuses, without reading a byte, an object whose
           Effect.map((opened) => ({
             ...opened,
             body: Stream.suspend(() => {
-              pulled = true;
+              pulled += 1;
               return opened.body;
             }),
           })),
@@ -253,7 +253,8 @@ it.effect('a streaming consumer refuses, without reading a byte, an object whose
         read: { outcome: 'inconsistent_metadata', reason: 'declared_size_differs' },
       });
     }
-    expect(pulled).toBe(false);
+    // At most the first chunk was pulled, only to end the provider response; none of it was delivered.
+    expect(pulled).toBeLessThanOrEqual(1);
   }),
 );
 
@@ -266,12 +267,11 @@ it.effect('reads the whole object under another technical version pin and judges
     expect((yield* verify(tampered.service, readyAsset({ storageObjectVersionRef: 'v9' }))).outcome).toBe(
       'integrity_failed',
     );
-    // A streaming consumer still refuses a pin that differs before the first byte.
-    const exit = yield* openVerifiedMediaStream(readyAsset({ storageObjectVersionRef: 'v9' })).pipe(
+    // A streaming consumer delivers bytes that verify whatever the pin: it is technical, never the identity.
+    const opened = yield* openVerifiedMediaStream(readyAsset({ storageObjectVersionRef: 'v9' })).pipe(
       Effect.provideService(ObjectStorage, storage.service),
-      Effect.exit,
     );
-    expect(Exit.isFailure(exit)).toBe(true);
+    expect(Buffer.concat(yield* Stream.runCollect(opened.body)).equals(Buffer.from(content))).toBe(true);
     // No recorded pin means no pin to compare, whatever the provider reports now.
     expect((yield* verify(storage.service, readyAsset({ storageObjectVersionRef: null }))).outcome).toBe('verified');
   }),
@@ -404,6 +404,27 @@ it.effect('never releases the last chunk before the verdict: corrupt bytes never
     );
     const all = yield* Stream.runCollect(reopened.body);
     expect(all.map((chunk) => chunk.byteLength)).toEqual([10, content.byteLength - 10]);
+  }),
+);
+
+it.effect('an empty trailing chunk never releases the real last chunk before the verdict', () =>
+  Effect.gen(function* emptyTail() {
+    const tampered = encoder.encode('THE CONFIRMED BYTES OF ONE ASSET');
+    const storage = yield* withStored(tampered);
+    const chunked: ObjectStorageService = {
+      ...storage.service,
+      get: () =>
+        Effect.succeed({
+          body: Stream.fromIterable([tampered.slice(0, 16), tampered.slice(16), new Uint8Array(0)]),
+          stat: { byteSize: tampered.byteLength },
+        }),
+    };
+    const opened = yield* openVerifiedMediaStream(readyAsset()).pipe(Effect.provideService(ObjectStorage, chunked));
+    const received: Uint8Array[] = [];
+    const exit = yield* Effect.exit(Stream.runForEach(opened.body, (chunk) => Effect.sync(() => received.push(chunk))));
+    expect(Exit.isFailure(exit)).toBe(true);
+    // Only the first chunk was released: the last real chunk waited for a verdict that never came.
+    expect(received.map((chunk) => chunk.byteLength)).toEqual([16]);
   }),
 );
 

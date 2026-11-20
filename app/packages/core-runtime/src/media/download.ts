@@ -81,7 +81,7 @@ export const streamConfirmedBytes = Effect.fn('MediaDownload.stream')(function* 
           reason: 'The asset is not ready, so its bytes cannot be presented',
         });
       }
-      if (read.reason === 'declared_size_differs' || read.reason === 'version_differs') {
+      if (read.reason === 'declared_size_differs') {
         // The provider declares another object than the confirmed one: only a complete read can prove it. It is
         // read here with nothing delivered, so proven corruption closes the asset and a doubtful read does not.
         const full = yield* verifyReadyMediaAsset(asset);

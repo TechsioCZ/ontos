@@ -220,6 +220,7 @@ it('presents the recorded type only as a plain media type and never lets a name 
     expect(downloadContentType(hostile)).toBe('application/octet-stream');
   }
   const names = [
+    'invoice\u202Egnp.exe',
     'evil"\r\nSet-Cookie: x=1',
     '../../etc/passwd',
     String.raw`C:\temp\x.exe`,
@@ -237,6 +238,7 @@ it('presents the recorded type only as a plain media type and never lets a name 
     const fallback = /filename="(?<fallback>[^"]*)"; filename\*=UTF-8''/u.exec(disposition)?.groups?.['fallback'];
     expect(fallback).toBeDefined();
     expect(fallback).toMatch(/^[ -~]*$/u);
+    expect(disposition).not.toMatch(/%E2%80%AE/u);
   }
   expect(downloadContentDisposition('žluťoučký kůň.pdf')).toContain(
     "filename*=UTF-8''%C5%BElu%C5%A5ou%C4%8Dk%C3%BD%20k%C5%AF%C5%88.pdf",

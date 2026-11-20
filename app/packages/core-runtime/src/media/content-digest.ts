@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Effect, Predicate, Schema } from 'effect';
+import { Duration, Effect, Predicate, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -21,19 +21,13 @@ interface ContentIdentity {
   readonly contentSha256: MediaContentSha256;
 }
 
-// @effect-diagnostics asyncFunction:off -- The platform DigestStream is promise based and must be awaited in order; expires: 2027-03-31.
-/* oxlint-disable effect-native/no-promise-shaped-port, effect-native/require-timeout-on-external-effect -- The Workers runtime's DigestStream is a platform type whose writes and digest are promises; they run on local CPU against an in-memory hash, never on an external service, so no timeout or retry policy applies and none may be invented. expires: 2027-03-31. */
-
-/** The writable stream the Workers runtime offers for hashing; its `digest` settles after `close`. */
-interface NativeDigestWriter {
-  readonly close: () => Promise<void>;
-  readonly write: (chunk: Uint8Array) => Promise<void>;
-}
-interface NativeDigestStream {
-  readonly digest: Promise<ArrayBuffer>;
-  readonly getWriter: () => NativeDigestWriter;
-}
-export type NativeDigestStreamConstructor = new (algorithm: 'SHA-256') => NativeDigestStream;
+/**
+ * The runtime's `crypto.DigestStream`: a writable stream whose `digest` settles after it is closed. It runs on local
+ * CPU against an in-memory hash state, so the only bound it needs is a technical guard against a stuck platform call
+ * (the same 5 seconds the release identity hashing uses); it is not a product limit and no object size is capped by it.
+ */
+export type NativeDigestStreamConstructor = new (algorithm: 'SHA-256') => WritableStream<Uint8Array>;
+const DIGEST_STEP_GUARD = Duration.seconds(5);
 
 /** A constructor is the only thing the platform offers under the name `DigestStream`. */
 const DigestStreamConstructorSchema = Schema.declare((candidate): candidate is NativeDigestStreamConstructor =>
@@ -51,9 +45,17 @@ export const platformDigestStream = (): NativeDigestStreamConstructor | undefine
   return isDigestStreamConstructor(DigestStream) ? DigestStream : undefined;
 };
 
+const ArrayBufferSchema = Schema.instanceOf(ArrayBuffer);
+
 const identityOf = (byteSize: number, digest: Uint8Array): ContentIdentity => ({
   byteSize: MediaByteSizeSchema.make(byteSize),
   contentSha256: MediaContentSha256Schema.make(Hex.encode(digest)),
+});
+
+/** A platform step that must not hang: a stuck one is a defect of the platform, never of the object. */
+const digestStepTimeout = Effect.timeoutOrElse({
+  duration: DIGEST_STEP_GUARD,
+  orElse: () => Effect.die('The platform digest did not answer'),
 });
 
 /**
@@ -61,10 +63,12 @@ const identityOf = (byteSize: number, digest: Uint8Array): ContentIdentity => ({
  * last one; `finish` is repeatable and always answers the same identity.
  */
 export class ContentDigest {
-  readonly #native: { readonly stream: NativeDigestStream; readonly writer: NativeDigestWriter } | undefined;
+  readonly #native:
+    | { readonly stream: WritableStream<Uint8Array>; readonly writer: WritableStreamDefaultWriter<Uint8Array> }
+    | undefined;
   readonly #pure = sha256.create();
   #byteSize = 0;
-  #finished: Promise<ContentIdentity> | undefined;
+  #identity: ContentIdentity | undefined;
 
   /** `digestStream` is for tests that stand in for the platform: absent means "use the platform's, if any". */
   constructor(options: { readonly digestStream?: NativeDigestStreamConstructor | undefined } = {}) {
@@ -76,28 +80,42 @@ export class ContentDigest {
   }
 
   add(chunk: Uint8Array): Effect.Effect<void> {
-    return Effect.promise(async () => {
-      this.#byteSize += chunk.byteLength;
-      if (this.#native === undefined) {
+    this.#byteSize += chunk.byteLength;
+    const native = this.#native;
+    if (native === undefined) {
+      return Effect.sync(() => {
         this.#pure.update(chunk);
-        return;
-      }
-      await this.#native.writer.write(chunk);
-    });
+      });
+    }
+    return Effect.promise(native.writer.write.bind(native.writer, chunk)).pipe(digestStepTimeout);
   }
 
   finish(): Effect.Effect<ContentIdentity> {
-    return Effect.promise(async () => {
-      this.#finished ??= this.#conclude();
-      return await this.#finished;
-    });
-  }
-
-  async #conclude(): Promise<ContentIdentity> {
-    if (this.#native === undefined) {
-      return identityOf(this.#byteSize, this.#pure.digest());
+    const known = this.#identity;
+    if (known !== undefined) {
+      return Effect.succeed(known);
     }
-    await this.#native.writer.close();
-    return identityOf(this.#byteSize, new Uint8Array(await this.#native.stream.digest));
+    const native = this.#native;
+    if (native === undefined) {
+      return Effect.sync(() => {
+        this.#identity ??= identityOf(this.#byteSize, this.#pure.digest());
+        return this.#identity;
+      });
+    }
+    // The digest of the platform stream settles only once it is closed.
+    const { stream, writer } = native;
+    const digest: unknown = Predicate.hasProperty(stream, 'digest') ? stream.digest : undefined;
+    return Effect.promise(writer.close.bind(writer)).pipe(
+      Effect.andThen(Effect.promise(Promise.resolve.bind(Promise, digest))),
+      Effect.flatMap(Schema.decodeUnknownEffect(ArrayBufferSchema)),
+      Effect.map((bytes) => identityOf(this.#byteSize, new Uint8Array(bytes))),
+      Effect.tap((identity) =>
+        Effect.sync(() => {
+          this.#identity = identity;
+        }),
+      ),
+      Effect.orDie,
+      digestStepTimeout,
+    );
   }
 }

@@ -19,34 +19,26 @@ const expected = Hex.encode(sha256(whole));
 /** What the stand-in recorded about the order of the platform calls. */
 const calls: string[] = [];
 
-/* oxlint-disable effect-native/no-promise-shaped-port -- The stand-in mirrors the platform's DigestStream, whose digest is a promise. expires: 2027-03-31. */
 /** A native digest stream stand-in: ordered writes, `digest` settles only after `close`. */
-class StandInDigestStream {
-  readonly digest: Promise<ArrayBuffer>;
-  readonly #hash = sha256.create();
-  readonly #settle: (digest: ArrayBuffer) => void;
+class StandInDigestStream extends WritableStream<Uint8Array> {
+  readonly digest;
 
   constructor(algorithm: 'SHA-256') {
-    calls.push(`new ${algorithm}`);
     const gate = Promise.withResolvers<ArrayBuffer>();
-    this.digest = gate.promise;
-    this.#settle = gate.resolve;
-  }
-
-  getWriter() {
-    return {
+    const hash = sha256.create();
+    calls.push(`new ${algorithm}`);
+    super({
       close: () => {
         calls.push('close');
-        const bytes = this.#hash.digest();
-        this.#settle(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-        return Promise.resolve();
+        const bytes = hash.digest();
+        gate.resolve(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
       },
-      write: (chunk: Uint8Array) => {
+      write: (chunk) => {
         calls.push(`write ${chunk.byteLength}`);
-        this.#hash.update(chunk);
-        return Promise.resolve();
+        hash.update(chunk);
       },
-    };
+    });
+    this.digest = gate.promise;
   }
 }
 

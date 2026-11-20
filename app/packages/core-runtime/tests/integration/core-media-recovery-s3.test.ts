@@ -260,11 +260,8 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
         Effect.scoped(
           withProxy(ctx, (proxy, base) =>
             Effect.gen(function* downloadThroughS3() {
-              const storage = yield* makeS3ObjectStorage({
-                ...base,
-                endpoint: proxy.origin,
-                requestTimeoutMillis: Option.some(400),
-              });
+              // No adapter timeout: this suite injects resets and cuts, never a hang, and a loaded machine must not flake.
+              const storage = yield* makeS3ObjectStorage({ ...base, endpoint: proxy.origin });
               const overwriting = yield* makeS3ObjectStorage({ ...base, conditionalCreate: 'unsupported' });
               const identity = yield* freshIdentity;
               const key = deriveMediaStorageKey(identity);

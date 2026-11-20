@@ -54,8 +54,6 @@ const InconsistentMetadataReasonSchema = Schema.Literals([
   'identity_invalid',
   /** The provider declares another length than the recorded one: a streaming consumer refuses before a byte. */
   'declared_size_differs',
-  /** The provider's technical version pin differs from the recorded one: a streaming consumer refuses before a byte. */
-  'version_differs',
 ]);
 type MediaInconsistentMetadataReason = typeof InconsistentMetadataReasonSchema.Type;
 
@@ -177,17 +175,14 @@ interface OpenedObject {
 const statRefusalOf = (
   stat: ObjectStat,
   recorded: OpenedObject['recorded'],
-): MediaInconsistentMetadataReason | undefined => {
-  if (stat.byteSize !== recorded.byteSize) {
-    return 'declared_size_differs';
-  }
-  return recorded.versionRef !== undefined && stat.versionRef !== recorded.versionRef ? 'version_differs' : undefined;
-};
+): MediaInconsistentMetadataReason | undefined =>
+  // The technical version pin is not part of the confirmed identity: bytes that verify are the confirmed bytes.
+  stat.byteSize === recorded.byteSize ? undefined : 'declared_size_differs';
 
 /**
  * Everything that can be refused before a byte is read: the row and the provider identity, and, for a consumer
- * that delivers the bytes (`refuseStatMismatch`), the provider's own stat against the recorded one, with the
- * opened body released unread. A full verification does not refuse on the stat: it reads the whole object, because
+ * that delivers the bytes (`refuseStatMismatch`), the provider's declared length against the recorded one, with the
+ * opened body released undelivered. A full verification does not refuse on the stat: it reads the whole object, because
  * only a complete read can prove that another size is corruption.
  */
 const openRecordedObject = Effect.fn('MediaVerifiedRead.open')(function* openRecordedObject(
@@ -202,8 +197,8 @@ const openRecordedObject = Effect.fn('MediaVerifiedRead.open')(function* openRec
   const opened = yield* storage.get(recorded.storageKey).pipe(Effect.mapError(providerInterruption));
   const refusal = options.refuseStatMismatch ? statRefusalOf(opened.stat, recorded) : undefined;
   if (refusal !== undefined) {
-    // The body is never consumed: pulling nothing releases it without reading the object.
-    yield* Stream.runDrain(Stream.take(opened.body, 0)).pipe(Effect.ignore);
+    // Nothing of it is delivered; taking at most its first chunk ends the stream, which releases the provider response.
+    yield* Stream.runDrain(Stream.take(opened.body, 1)).pipe(Effect.ignore);
     return yield* interrupted({ outcome: 'inconsistent_metadata', reason: refusal });
   }
   return { body: opened.body, key: recorded.storageKey, recorded, stat: opened.stat } satisfies OpenedObject;
@@ -264,6 +259,8 @@ const verifiedBody = (opened: OpenedObject) =>
       Stream.mapError(providerInterruption),
       // One chunk at a time: the digest is order-dependent, so the sequence is the contract, not an accident.
       Stream.mapEffect((chunk) => digest.add(chunk).pipe(Effect.as(chunk)), { concurrency: 1 }),
+      // An empty chunk carries no byte and must never push the real last chunk out before the verdict.
+      Stream.filter((chunk) => chunk.byteLength > 0),
       Stream.map((chunk) => exchange(Option.some(chunk))),
       Stream.flattenIterable,
       Stream.concat(

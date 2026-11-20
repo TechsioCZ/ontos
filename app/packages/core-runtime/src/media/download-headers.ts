@@ -26,12 +26,25 @@ const encodeExtended = (name: string): string =>
     })
     .join('');
 
-/** The name as one safe path-free text line: control characters and separators become `_`, the length is bounded. */
+/** Separators and characters a header or a path must never carry. */
+const SEPARATORS = String.raw`\/"<>:*?|;%`;
+
+/** Control and bidirectional-format characters never reach a header: they hide or inject, whatever they look like. */
+const isInvisibleControl = (char: string): boolean =>
+  char < '\u0020' ||
+  (char >= '\u007F' && char <= '\u009F') ||
+  char === '\u200E' ||
+  char === '\u200F' ||
+  (char >= '\u202A' && char <= '\u202E') ||
+  (char >= '\u2066' && char <= '\u2069');
+
+const isUnsafeNameCharacter = (char: string): boolean => isInvisibleControl(char) || SEPARATORS.includes(char);
+
+/** The name as one safe path-free text line: control and bidi characters and separators become `_`, the length is bounded. */
 const safeName = (displayFilename: string): string => {
   const cleaned = displayFilename
     .split('')
-    // oxlint-disable-next-line no-control-regex -- Control characters are exactly what must never reach a header.
-    .map((char) => (/[\u0000-\u001F\u007F\u0080-\u009F\\/"<>:*?|;%]/u.test(char) ? '_' : char))
+    .map((char) => (isUnsafeNameCharacter(char) ? '_' : char))
     .join('')
     .trim();
   const bounded = cleaned.split('').slice(0, MAX_NAME_CHARACTERS).join('').replace(/^\.+/u, '_');
