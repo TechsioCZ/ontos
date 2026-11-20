@@ -1,3 +1,4 @@
+import { StageContextBootstrapError } from '@app/core-runtime/install/stage-context-bootstrap';
 import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -6,6 +7,8 @@ import {
   StageAccountsBootstrapError,
   classifyExactStageAccountsRecord,
   parseStageAccountsBootstrapConfig,
+  stageAccountsFailureLine,
+  stageRunFailure,
 } from '../../api/auth/stage-accounts-bootstrap-contract.ts';
 import { loadStageAccountsConfiguration } from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 
@@ -194,6 +197,30 @@ it.effect('rejects malformed workloads even when a caller includes them in its s
     expect(failure.reason).not.toContain(account.password);
   }),
 );
+
+it("passes every code Core refuses or fails a run under through to the operator's output line", () => {
+  const reason =
+    'The connected app Client 236 (https://client-236.example/metadata) of a retired stage Principal acts in company 00000000-0000-4000-8000-000000000005, which the acting tenant owner does not administer at the decision time';
+  for (const code of [
+    'stage_connected_app_not_administered',
+    'stage_last_administrator',
+    'stage_context_bootstrap_failed',
+  ] as const) {
+    const failure = stageRunFailure(new StageContextBootstrapError({ cause: 'a driver failure', code, reason }));
+    expect(failure).toBeInstanceOf(StageAccountsBootstrapError);
+    expect({ cause: failure.cause, code: failure.code, reason: failure.reason }).toEqual({
+      cause: undefined,
+      code,
+      reason,
+    });
+    expect(stageAccountsFailureLine(failure)).toBe(`Stage accounts bootstrap failed (${code}): ${reason}`);
+  }
+  expect(
+    stageAccountsFailureLine(
+      new StageAccountsBootstrapError({ code: 'stage_accounts_persistence_failed', reason: 'The pool is closed' }),
+    ),
+  ).toBe('Stage accounts bootstrap failed (stage_accounts_persistence_failed): The pool is closed');
+});
 
 it.effect('treats an exact record as idempotent and rejects conflicting state', () =>
   Effect.gen(function* treatsAnExactRecordAsIdempotent() {

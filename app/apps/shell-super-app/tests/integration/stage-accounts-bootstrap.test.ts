@@ -27,7 +27,10 @@ import {
   session,
   user,
 } from '../../api/auth/db/schema.ts';
-import { parseStageAccountsBootstrapConfig } from '../../api/auth/stage-accounts-bootstrap-contract.ts';
+import {
+  parseStageAccountsBootstrapConfig,
+  stageAccountsFailureLine,
+} from '../../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
   bootstrapStageAccounts,
   ensureStageAccountAuthUser,
@@ -442,9 +445,10 @@ describe('stage-accounts-bootstrap', () => {
           const [leaverUser] = yield* auth.select({ id: user.id }).from(user).where(eq(user.email, leaverEmail));
           const leaverUserId = leaverUser?.id ?? '';
           // The leaver's connected apps, as the product leaves them: one they disconnected, one an administrator
-          // revoked earlier without any event, and one still live. Another grant of the same login (one it holds as
-          // another Principal) keeps its tokens.
+          // revoked earlier without any event, one still live, and one still live in a company the owner does not
+          // administer. Another grant of the same login (one it holds as another Principal) keeps its tokens.
           const apps = {
+            foreign: { binding: randomUUID(), grant: randomUUID(), name: 'Client of an unadministered company' },
             live: { binding: randomUUID(), grant: randomUUID(), name: 'Live client' },
             olderAdmin: { binding: randomUUID(), grant: randomUUID(), name: 'Older administrator revocation' },
             userRevoked: { binding: randomUUID(), grant: randomUUID(), name: 'Disconnected client' },
@@ -454,6 +458,7 @@ describe('stage-accounts-bootstrap', () => {
           const connect = (
             app: { readonly binding: string; readonly grant: string; readonly name: string },
             ending: { readonly by: string; readonly reason: 'admin' | 'user' } | null,
+            company = legalEntityId,
           ) =>
             Effect.gen(function* connectApp() {
               yield* auth.execute(
@@ -462,7 +467,7 @@ describe('stage-accounts-bootstrap', () => {
                        client_id, client_name, client_host, client_kind, modules_json, write_policy, profile_id,
                        auth_binding_id, status, consented_at, last_used_at, revoked_at, revoked_by_principal_id,
                        revoke_reason)
-                    values (${app.grant}, ${tenantId}, ${legalEntityId}, ${leaverUserId}, ${leaver}, ${leaver}, 'human',
+                    values (${app.grant}, ${tenantId}, ${company}, ${leaverUserId}, ${leaver}, ${leaver}, 'human',
                             ${clientId}, ${app.name}, ${new URL(clientId).host}, 'cimd', '"all"'::jsonb, 'direct',
                             gen_random_uuid(), ${app.binding}, ${ending === null ? 'active' : 'revoked'},
                             now() - interval '10 days', now() - interval '1 day',
@@ -480,6 +485,14 @@ describe('stage-accounts-bootstrap', () => {
           yield* connect(apps.userRevoked, { by: leaver, reason: 'user' });
           yield* connect(apps.olderAdmin, { by: owner, reason: 'admin' });
           yield* connect(apps.live, null);
+          // A second company of the tenant that no access scope covers, so the acting owner administers nothing there.
+          const unadministered = randomUUID();
+          yield* auth.execute(
+            sql`insert into core.legal_entities
+                  (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+                values (${unadministered}, ${tenantId}, 'Unadministered s.r.o.', 'CZ', ${unadministered}, 'active')`,
+          );
+          yield* connect(apps.foreign, null, unadministered);
           const issue = (grantId: string) =>
             Effect.gen(function* issueGrantTokens() {
               const refreshId = randomUUID();
@@ -505,7 +518,7 @@ describe('stage-accounts-bootstrap', () => {
                 .insert(oauthConsent)
                 .values({ clientId, id: randomUUID(), referenceId: grantId, scopes, userId: leaverUserId });
             });
-          const leaverGrants = [apps.userRevoked.grant, apps.olderAdmin.grant, apps.live.grant];
+          const leaverGrants = [apps.userRevoked.grant, apps.olderAdmin.grant, apps.live.grant, apps.foreign.grant];
           yield* Effect.forEach([...leaverGrants, survivingGrant], issue, { concurrency: 1, discard: true });
           const tokenCountsOf = (grantId: string) =>
             Effect.all(
@@ -552,6 +565,33 @@ describe('stage-accounts-bootstrap', () => {
             retiredTenants: [],
             tenants: [],
           };
+          // The live app in a company the acting owner does not administer refuses the whole file under Core's own
+          // code, which reaches the operator's output line, and the move transaction writes nothing.
+          const grantsBefore = (yield* grantRows).toSorted(byGrant);
+          const refused = yield* run(retirement).pipe(Effect.flip);
+          expect(refused.code).toBe('stage_connected_app_not_administered');
+          expect(refused.reason).toContain(`${apps.foreign.name} (${clientId})`);
+          expect(refused.reason).toContain(`company ${unadministered}`);
+          expect(stageAccountsFailureLine(refused)).toBe(
+            `Stage accounts bootstrap failed (stage_connected_app_not_administered): ${refused.reason}`,
+          );
+          expect((yield* grantRows).toSorted(byGrant)).toEqual(grantsBefore);
+          expect(yield* revocationEvents).toEqual([]);
+          for (const grantId of [...leaverGrants, survivingGrant]) {
+            expect(yield* tokenCountsOf(grantId)).toEqual([1, 1, 1]);
+          }
+          // The person disconnects that app in the product (the grant revoked, its binding only disabled), and the
+          // same file then retires them.
+          yield* auth.execute(
+            sql`update core.oauth_connection_grants
+                  set status = 'revoked', revoked_at = now(), revoked_by_principal_id = ${leaver}, revoke_reason = 'user'
+                where grant_id = ${apps.foreign.grant}`,
+          );
+          yield* auth.execute(
+            sql`update core.principal_auth_bindings
+                  set status = 'disabled', binding_revision = binding_revision + 1, updated_at = now()
+                where principal_auth_binding_id = ${apps.foreign.binding}`,
+          );
           const retired = yield* run(retirement);
           expect(retired.retiredPrincipals).toEqual([{ email: leaverEmail, principalId: leaver, tenantId }]);
           expect(retired.endedConnectedApps.map(({ grantId, status }) => ({ grantId, status }))).toEqual([
@@ -562,10 +602,11 @@ describe('stage-accounts-bootstrap', () => {
               { grant: apps.userRevoked.grant, reason: 'user', revoked_by: leaver, status: 'revoked' },
               { grant: apps.olderAdmin.grant, reason: 'admin', revoked_by: owner, status: 'revoked' },
               { grant: apps.live.grant, reason: 'admin', revoked_by: owner, status: 'revoked' },
+              { grant: apps.foreign.grant, reason: 'user', revoked_by: leaver, status: 'revoked' },
             ].toSorted(byGrant),
           );
           // Core recorded exactly the app the run moved from active to revoked, in the run's transaction on the runtime
-          // login: the acting owner as actor, reason admin, the bootstrap's note. The disconnected app and the older
+          // login: the acting owner as actor, reason admin, the bootstrap's note. The two disconnected apps and the older
           // administrator revocation get none.
           const recorded = [
             {

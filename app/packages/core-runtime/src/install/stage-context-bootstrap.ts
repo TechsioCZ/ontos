@@ -155,15 +155,18 @@ export interface StageContextBootstrapOptions {
   readonly modules: readonly AccessCatalogModule[];
 }
 
+/** Why a stage run refused or failed: the code the operator reads beside the reason. */
+export const StageContextBootstrapCodeSchema = Schema.Literals([
+  'stage_context_bootstrap_failed',
+  'stage_connected_app_not_administered',
+  'stage_last_administrator',
+]);
+
 export class StageContextBootstrapError extends Schema.TaggedError<StageContextBootstrapError>()(
   'StageContextBootstrapError',
   {
     cause: Schema.optionalKey(Schema.Unknown),
-    code: Schema.Literals([
-      'stage_context_bootstrap_failed',
-      'stage_connected_app_not_administered',
-      'stage_last_administrator',
-    ]),
+    code: StageContextBootstrapCodeSchema,
     reason: Schema.String,
     /** The access scope a `stage_last_administrator` refusal would leave without anybody who administers it. */
     scopeId: Schema.optionalKey(AccessScopeIdSchema),

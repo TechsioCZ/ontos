@@ -361,7 +361,7 @@ Stage bootstrap is an operator action, not a migration, startup hook, or automat
 - outside normal application startup;
 - responsible only for the documented initial installation exception.
 
-The operator supplies every stage Tenant, account, and grant in a JSON file outside the repository and names it with `ONTOS_STAGE_ACCOUNTS_FILE`. `mise exec -- pnpm --filter shell-super-app stage:bootstrap-accounts` fails when the variable is unset, the file cannot be read, the file is readable by group or others, or it does not match this shape. Errors never echo file values, and output names accounts but never passwords.
+The operator supplies every stage Tenant, account, and grant in a JSON file outside the repository and names it with `ONTOS_STAGE_ACCOUNTS_FILE`. `mise exec -- pnpm --filter shell-super-app stage:bootstrap-accounts` fails when the variable is unset, the file cannot be read, the file is readable by group or others, or it does not match this shape. Errors never echo file values, and output names accounts but never passwords. A failed run prints `Stage accounts bootstrap failed (<code>): <reason>`; a refusal of the run keeps the code Core decided it under (`stage_last_administrator`, `stage_connected_app_not_administered`, `stage_context_bootstrap_failed`), so it is never reported as a persistence failure.
 
 ```json
 {

@@ -37,7 +37,10 @@ import type { Crypto } from 'effect';
 
 import { AuthDatabaseForExpectedRoleLive } from '../api/auth/db/client.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../api/database-identity-enrollment.ts';
-import { StageAccountsBootstrapError } from '../api/auth/stage-accounts-bootstrap-contract.ts';
+import {
+  StageAccountsBootstrapError,
+  stageAccountsFailureLine,
+} from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import type { StageAccountsFileReader } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
   bootstrapStageAccounts,
@@ -231,7 +234,7 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
     { discard: true },
   );
 }).pipe(
-  Effect.tapError((failure) => Console.error(`Stage accounts bootstrap failed: ${failure.reason}`)),
+  Effect.tapError((failure) => Console.error(stageAccountsFailureLine(failure))),
   Effect.tapDefect(() => Console.error('Stage accounts bootstrap failed unexpectedly')),
 );
 

@@ -8,6 +8,8 @@ import type {
   StageAccountsFileContents,
   StageAccountsFileError,
 } from '@app/core-runtime/install/stage-accounts-file';
+import { StageContextBootstrapCodeSchema } from '@app/core-runtime/install/stage-context-bootstrap';
+import type { StageContextBootstrapError } from '@app/core-runtime/install/stage-context-bootstrap';
 import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
 
 export { STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY } from '@app/core-runtime/install/stage-accounts-file';
@@ -57,14 +59,29 @@ export class StageAccountsBootstrapError extends Schema.TaggedError<StageAccount
   'StageAccountsBootstrapError',
   {
     cause: Schema.optionalKey(Schema.Defect()),
-    code: Schema.Literals([
-      'stage_accounts_configuration_invalid',
-      'stage_accounts_conflict',
-      'stage_accounts_persistence_failed',
+    /** The Shell's own codes, or the code Core's run refused or failed under, passed through unchanged. */
+    code: Schema.Union([
+      Schema.Literals([
+        'stage_accounts_configuration_invalid',
+        'stage_accounts_conflict',
+        'stage_accounts_persistence_failed',
+      ]),
+      StageContextBootstrapCodeSchema,
     ]),
     reason: Schema.String,
   },
 ) {}
+
+/**
+ * Core's refusal or failure as the operator command reports it: the code Core decided it under, such as
+ * `stage_connected_app_not_administered` or `stage_last_administrator`, and its reason, never a cause.
+ */
+export const stageRunFailure = (error: StageContextBootstrapError): StageAccountsBootstrapError =>
+  new StageAccountsBootstrapError({ code: error.code, reason: error.reason });
+
+/** The one line the operator command prints for a failed run: its code, then its reason. */
+export const stageAccountsFailureLine = (failure: StageAccountsBootstrapError): string =>
+  `Stage accounts bootstrap failed (${failure.code}): ${failure.reason}`;
 
 const configurationFailure = (reason: string): StageAccountsBootstrapError =>
   new StageAccountsBootstrapError({

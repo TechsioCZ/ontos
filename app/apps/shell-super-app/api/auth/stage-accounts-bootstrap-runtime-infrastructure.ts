@@ -28,6 +28,7 @@ import {
   StageAccountsBootstrapError,
   classifyExactStageAccountsRecord,
   parseStageAccountsBootstrapConfig,
+  stageRunFailure,
 } from './stage-accounts-bootstrap-contract.ts';
 import type {
   StageAccountConfig,
@@ -451,15 +452,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
   yield* finishStageConnectedAppEndings(
     yield* completedStageRetirementsOf(retiredPrincipalIdentities, {
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-    }).pipe(
-      Effect.mapError(
-        (error) =>
-          new StageAccountsBootstrapError({
-            code: 'stage_accounts_persistence_failed',
-            reason: error.reason,
-          }),
-      ),
-    ),
+    }).pipe(Effect.mapError(stageRunFailure)),
   );
   const attachedLoginIdentities = yield* Effect.forEach(
     attachedLogins,
@@ -506,6 +499,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
         }),
     ),
   );
+  // A refusal keeps the code Core decided it under, so the operator reads why, not a persistence failure.
   const run = yield* reconcileStageContextBootstraps(
     {
       attachedLogins: attachedLoginIdentities,
@@ -514,15 +508,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
       tenants,
     },
     { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID, modules: options.modules },
-  ).pipe(
-    Effect.mapError(
-      (error) =>
-        new StageAccountsBootstrapError({
-          code: 'stage_accounts_persistence_failed',
-          reason: error.reason,
-        }),
-    ),
-  );
+  ).pipe(Effect.mapError(stageRunFailure));
   yield* finishStageConnectedAppEndings(run.connectedApps);
   const retiredAccounts = yield* Effect.forEach(accountsFile.retiredAccountEmails, retireAuthUser, {
     concurrency: 1,
