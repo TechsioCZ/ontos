@@ -1,9 +1,9 @@
+import type { RetailEnrollmentSubjectSchema } from '@app/party-registry/api';
 import { PartyCommandAlreadyCommittedProblemSchema } from '@app/party-registry/api';
 import {
   acceptRetailEnrollmentEvidenceWithAuthorization,
   createPartyWithAuthorization,
-  recoverPartyCreateWithAuthorization,
-  resolvePartyCommandCommitWithAuthorization,
+  executeOwnedRetailPartyResultWithAuthorization,
 } from '@app/party-registry/api/client';
 import type { acceptRetailEnrollmentEvidence, createParty, recoverPartyCreate } from '@app/party-registry/api/client';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
@@ -77,6 +77,7 @@ export interface RetailPartyCandidateOwnerInput {
   readonly legalEntityId: string;
   readonly originator: RetailEnrollmentOriginator;
   readonly requestCorrelation: string;
+  readonly subject: typeof RetailEnrollmentSubjectSchema.Type;
   readonly tenantId: string;
 }
 
@@ -149,7 +150,7 @@ export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwn
 /** Fresh module delegation preserves the original enrollment subject for every Party call. */
 export const acquireRetailEnrollmentPartyGateway = Effect.fn(
   'RetailSelfEnrollmentPartyOwner.acquireEnrollmentPartyGateway',
-)(function* acquireGateway(input: Omit<RetailPartyCandidateOwnerInput, 'candidate'>) {
+)(function* acquireGateway(input: Omit<RetailPartyCandidateOwnerInput, 'candidate' | 'subject'>) {
   const { compositionRevision, crypto, legalEntityId, originator, requestCorrelation, tenantId } = input;
   if (originator.tenantId !== tenantId || originator.compositionRevision !== compositionRevision) {
     return yield* unavailable('The enrollment originator does not match the immutable Attempt scope');
@@ -170,9 +171,12 @@ export const acquireRetailEnrollmentPartyGateway = Effect.fn(
 });
 
 const makeRetailPartyCandidateOwnerExecutors = (
-  input: RetailPartyCandidateOwnerInput,
+  input: RetailPartyCandidateOwnerInput & {
+    readonly verifiedEvidence: Effect.Effect<RetailEvidence, CommerceEnrollmentOwnerEffectError>;
+  },
 ): RetailPartyCandidateOwnerExecutors => {
   const { compositionRevision, crypto, legalEntityId, originator, requestCorrelation, tenantId } = input;
+  const subject = Object.freeze({ ...input.subject });
   const gatewayScope = Object.freeze({
     compositionRevision,
     crypto,
@@ -203,28 +207,41 @@ const makeRetailPartyCandidateOwnerExecutors = (
           }),
         ),
       ),
-    recoverPartyCreate: (payload, options) =>
-      recoverPartyCreateWithAuthorization(payload, acquire, {
-        ...options,
-        compositionRevision,
-        correlationId: requestCorrelation,
-      }),
-    resolveOriginalInvocation: (ownerInvocationId) =>
-      acquire().pipe(
-        Effect.flatMap(({ credential, options }) =>
-          resolvePartyCommandCommitWithAuthorization(
-            { actionKey: 'party.registry.create-party', idempotencyKey: ownerInvocationId },
-            Redacted.value(credential),
-            { ...options, correlationId: requestCorrelation },
-          ),
-        ),
-        Effect.mapError((cause) => unavailable('The original Party Create invocation is unavailable', cause)),
-        Effect.flatMap((result) =>
-          result.state === 'COMMITTED'
-            ? Effect.succeed(result.invocationId)
-            : Effect.fail(unavailable('The original Party Create has not committed')),
-        ),
-      ),
+    recoverPartyCreate: Effect.fn('RetailPartyOwner.recoverOwnedCreate')(function* recoverOwnedRetailCreate(payload) {
+      if (payload.idempotencyKey === undefined || payload.actionKey !== 'party.registry.create-party') {
+        return yield* unavailable('Retail recovery requires the original Party Create key');
+      }
+      const evidence = subject;
+      const { credential, options } = yield* acquire();
+      const resolution = yield* executeOwnedRetailPartyResultWithAuthorization(
+        { evidence, idempotencyKey: payload.idempotencyKey },
+        Redacted.value(credential),
+        requestCorrelation,
+        options,
+      ).pipe(Effect.mapError((cause) => unavailable('The original Party Create result is unavailable', cause)));
+      if (resolution.state !== 'COMMITTED') {
+        return { _tag: 'PartyCreateRecoveryPending' as const, resolution };
+      }
+      if (resolution.createResult === undefined) {
+        return yield* unavailable('The owned Create has no retained result');
+      }
+      return { _tag: 'PartyCreateRecovered' as const, result: resolution.createResult };
+    }),
+    resolveOriginalInvocation: Effect.fn('RetailPartyOwner.resolveOriginalInvocation')(
+      function* resolveOriginalInvocation(ownerInvocationId) {
+        const evidence = subject;
+        const { credential, options } = yield* acquire();
+        const result = yield* executeOwnedRetailPartyResultWithAuthorization(
+          { evidence, idempotencyKey: ownerInvocationId },
+          Redacted.value(credential),
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError((cause) => unavailable('The original Party Create invocation is unavailable', cause)));
+        return result.state === 'COMMITTED'
+          ? result.invocationId
+          : yield* unavailable('The original Party Create has not committed');
+      },
+    ),
   });
 };
 

@@ -257,7 +257,17 @@ export {
   executeFenceLegacyIcoAuthorityWithAuthorization,
 } from './fence-legacy-ico-authority-action-client.ts';
 export type { FenceLegacyIcoAuthorityActionClientOptions } from './fence-legacy-ico-authority-action-client.ts';
+export {
+  executeEnrollRetailCustomer,
+  executeEnrollRetailCustomerWithAuthorization,
+} from './enroll-retail-customer-action-client.ts';
+export type { EnrollRetailCustomerActionClientOptions } from './enroll-retail-customer-action-client.ts';
 // </generated-action-http-client-exports>
+export {
+  executeOwnedRetailPartyResult,
+  executeOwnedRetailPartyResultWithAuthorization,
+} from './owned-retail-party-result-client.ts';
+export type { OwnedRetailPartyResultClientOptions } from './owned-retail-party-result-client.ts';
 export {
   AresApplySelectionInvalid,
   applyAresObservation,

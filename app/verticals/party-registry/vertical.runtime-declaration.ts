@@ -58,6 +58,7 @@ import { DuplicateCandidateListApi } from './shared/apis/duplicate-candidate-lis
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
+import { enrollRetailCustomerAction } from './src/actions/enroll-retail-customer.action.ts';
 import { executePrivacyMeasureAction } from './src/actions/execute-privacy-measure.action.ts';
 import { fenceLegacyIcoAuthorityAction } from './src/actions/fence-legacy-ico-authority.action.ts';
 import { GuestPartyResolutionApi } from './shared/apis/guest-party-resolution.ts';
@@ -73,6 +74,8 @@ import { OrganizationIcoFactsApi } from './shared/apis/organization-ico-facts.ts
 import { organizationIcoFactsRead } from './src/api/organization-ico-facts.read.ts';
 import { OrganizationRecordFactsApi } from './shared/apis/organization-record-facts.ts';
 import { organizationRecordFactsRead } from './src/api/organization-record-facts.read.ts';
+import { OwnedRetailPartyResultApi } from './shared/apis/owned-retail-party-result.ts';
+import { ownedRetailPartyResultRead } from './src/api/owned-retail-party-result.read.ts';
 import { PartyContactPointDetailApi } from './shared/apis/party-contact-point-detail.ts';
 import { partyContactPointDetailRead } from './src/api/party-contact-point-detail.read.ts';
 import { PartyContactPointsApi } from './shared/apis/party-contact-points.ts';
@@ -203,6 +206,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       endContactPointAction,
       endPartyOfficialIdentifierAction,
       endPartyRelationshipAction,
+      enrollRetailCustomerAction,
       executePrivacyMeasureAction,
       fenceLegacyIcoAuthorityAction,
       markDuplicateCandidateNeedsEvidenceAction,
@@ -238,6 +242,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       'organization-engagement-profile': OrganizationEngagementProfileApi,
       'organization-ico-facts': OrganizationIcoFactsApi,
       'organization-record-facts': OrganizationRecordFactsApi,
+      'owned-retail-party-result': OwnedRetailPartyResultApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'party-contact-point-detail': PartyContactPointDetailApi,
       'party-contact-points': PartyContactPointsApi,
@@ -339,6 +344,11 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         apiKey: 'organization-record-facts',
         operationKey: 'organizationRecordFacts.execute',
         registration: organizationRecordFactsRead,
+      },
+      {
+        apiKey: 'owned-retail-party-result',
+        operationKey: 'ownedRetailPartyResult.execute',
+        registration: ownedRetailPartyResultRead,
       },
       {
         apiKey: 'party-contact-point-detail',
@@ -836,6 +846,7 @@ export const partyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput =
     organizationBusinessNameExportRead,
     organizationIcoFactsRead,
     organizationRecordFactsRead,
+    ownedRetailPartyResultRead,
     partyContactPointDetailRead,
     partyDetailRead,
     partySourceEffectReceiptRead,

@@ -301,6 +301,7 @@ export const ResolvePartyCommandCommitPayloadSchema = Schema.Union([
         'party.registry.accept-retail-enrollment-evidence',
         'party.registry.counterparty-customer-onboard',
         'party.registry.add-contact-point',
+        'party.registry.enroll-retail-customer',
       ]),
       DuplicateCandidateResolutionActionKeySchema,
     ]),

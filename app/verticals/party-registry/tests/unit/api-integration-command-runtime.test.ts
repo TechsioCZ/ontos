@@ -270,7 +270,7 @@ const endpointNames = [
 
 const makeAssertion = (
   audience = 'party-registry',
-  options: { readonly expiresAt?: number; readonly tokenIssuer?: string } = {},
+  options: { readonly delegated?: boolean; readonly expiresAt?: number; readonly tokenIssuer?: string } = {},
 ) =>
   Effect.gen(function* signPrincipalAssertions() {
     const snapshot = yield* partyCompositionSnapshot;
@@ -283,12 +283,27 @@ const makeAssertion = (
     };
     const tokenId = yield* nextUuid;
     const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+    const subject =
+      options.delegated === true
+        ? { ...principal, authenticationNamespaceId: 'ontos.staff.better-auth.v1', authMethod: 'api_key' as const }
+        : principal;
+    const actorClaims =
+      options.delegated === true
+        ? {
+            act: {
+              appId: ultramodernApiMarker.appId,
+              buildMarker: ultramodernApiMarker.buildMarker,
+              principalId: 'a2000000-0000-4000-8000-000000000003',
+            },
+            ver: 3,
+          }
+        : { ver: 1 };
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: snapshot.composition.revision,
-        principal,
+        principal: subject,
         targetBuildMarker: ultramodernApiMarker.buildMarker,
-        ver: 1,
+        ...actorClaims,
       })
         .setProtectedHeader({
           alg: 'EdDSA',
@@ -303,7 +318,7 @@ const makeAssertion = (
         .setJti(tokenId)
         .sign(privateKey),
     );
-    const otherPrincipal = { ...principal, principalId: yield* nextUuid };
+    const otherPrincipal = { ...subject, principalId: yield* nextUuid };
     const otherTokenId = yield* nextUuid;
     const otherIssuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const otherToken = yield* Effect.promise(() =>
@@ -311,7 +326,7 @@ const makeAssertion = (
         compositionRevision: snapshot.composition.revision,
         principal: otherPrincipal,
         targetBuildMarker: ultramodernApiMarker.buildMarker,
-        ver: 1,
+        ...actorClaims,
       })
         .setProtectedHeader({
           alg: 'EdDSA',
@@ -1574,6 +1589,57 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
       expect(yield* Effect.promise(() => replay.json())).toEqual(result);
       expect(harness.snapshot().invocations.length).toBe(1);
       expect(harness.snapshot().committed).toEqual(committed);
+    }),
+  );
+
+  suite.effect('resolves an owned non-Create commit without requiring the unrelated Create result Read', () =>
+    Effect.gen(function* resolveOwnedNonCreateWithoutResultPermission() {
+      const assertion = yield* makeAssertion('party-registry', { delegated: true });
+      const harness = yield* makePartyActionTestHarness({
+        access: 'allowed',
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        ownerRegistration: partyRegistryBackendRegistration,
+      });
+      let resultReads = 0;
+      const deniedCreateResult: ReadRuntimeService = {
+        runRead: () =>
+          Effect.suspend(() => {
+            resultReads += 1;
+            return Effect.fail(
+              new ReadPermissionDenied({
+                code: 'read_permission_denied',
+                reason: 'The delegated workload has no generic Party Create result grant',
+              }),
+            );
+          }),
+      };
+      const app = yield* mountApp(harness, assertion.environment, deniedCreateResult);
+      const command = yield* handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'owned-non-create-resolution',
+        }),
+      );
+      expect(command.status).toBe(200);
+      const [invocation] = harness.snapshot().invocations;
+      assert(invocation !== undefined);
+      expect(invocation.actionKey).toBe('party.registry.request-search-rebuild');
+
+      const unrelated = yield* handle(app, recoveryRequest(invocation.actionInvocationId, assertion.otherToken));
+      expect(unrelated.status).toBe(200);
+      expect(yield* Effect.promise(() => unrelated.json())).toEqual(notStartedResolution);
+      expect(resultReads).toBe(0);
+
+      const resolution = yield* expectCommitResolution(
+        app,
+        invocation.actionInvocationId,
+        assertion.token,
+        'COMMITTED',
+      );
+      expect(resolution).not.toHaveProperty('createResult');
+      expect(resultReads).toBe(0);
+      expect(harness.snapshot().invocations).toHaveLength(1);
+      expect(harness.snapshot().committed).toHaveLength(1);
     }),
   );
 

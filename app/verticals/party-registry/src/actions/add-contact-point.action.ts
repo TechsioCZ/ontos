@@ -4,7 +4,7 @@
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { requireAdmittedPartySourceReference } from '../services/party-client-source-evidence.service.ts';
 import { withPartyClientSourcePrivacyRequirement } from '../services/party-client-source-privacy.service.ts';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
 import { AddContactPointPayloadSchema, AddContactPointResultSchema } from '../../shared/actions/add-contact-point.ts';
@@ -41,7 +41,7 @@ export type { AddContactPointPayload } from '../../shared/actions/add-contact-po
 
 const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
 
-const AddContactPointErrorSchema = Schema.Union([
+export const AddContactPointErrorSchema = Schema.Union([
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
   PartyAliasWriteRejected,
@@ -58,6 +58,10 @@ const ContactPointAddedEventSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const addContactPointDomainEvents = {
+  'party.registry.contact-point-added.v1': ContactPointAddedEventSchema,
+};
+
 export interface AddContactPointCommand {
   readonly sourceReference?: AddContactPointPayload['sourceReference'];
   readonly acceptedByActionInvocationId: string;
@@ -69,7 +73,7 @@ export interface AddContactPointCommand {
   readonly validFrom: string;
 }
 
-interface Services {
+export interface AddContactPointServices {
   readonly add: (
     command: AddContactPointCommand,
   ) => Effect.Effect<
@@ -104,13 +108,13 @@ const validateAndNormalize = (payload: AddContactPointPayload) =>
     },
   });
 
-const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactPoint')(function* addContactPoint(
+export const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactPoint')(function* addContactPoint(
   payload: AddContactPointPayload,
   context: ActionHandlerContext<
     Readonly<{
       'party.registry.contact-point-added.v1': typeof ContactPointAddedEventSchema;
     }>,
-    Services
+    AddContactPointServices
   >,
 ) {
   const command = yield* validateAndNormalize(payload);
@@ -154,6 +158,15 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
   return contactPoint;
 });
 
+export const addContactPointServices: ActionServiceFactory<AddContactPointServices> = (transaction, scope) =>
+  Effect.succeed({
+    add: (command: AddContactPointCommand) =>
+      requireAdmittedPartySourceReference(transaction, scope, command.sourceReference).pipe(
+        Effect.andThen(addContactPointSourceRecord(transaction, scope, command)),
+        withPartyClientSourcePrivacyRequirement('party.registry.add-contact-point'),
+      ),
+  });
+
 export const addContactPointAction = defineAction(
   {
     accessActor: {
@@ -183,9 +196,7 @@ export const addContactPointAction = defineAction(
     actionKey: 'party.registry.add-contact-point',
     auditProfile: 'sensitive',
     domainErrorSchema: AddContactPointErrorSchema,
-    domainEvents: {
-      'party.registry.contact-point-added.v1': ContactPointAddedEventSchema,
-    },
+    domainEvents: addContactPointDomainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },
@@ -202,12 +213,5 @@ export const addContactPointAction = defineAction(
     schemaVersion: '1',
   },
   handleAddContactPoint,
-  (transaction, scope) =>
-    Effect.succeed({
-      add: (command: AddContactPointCommand) =>
-        requireAdmittedPartySourceReference(transaction, scope, command.sourceReference).pipe(
-          Effect.andThen(addContactPointSourceRecord(transaction, scope, command)),
-          withPartyClientSourcePrivacyRequirement('party.registry.add-contact-point'),
-        ),
-    }),
+  addContactPointServices,
 );

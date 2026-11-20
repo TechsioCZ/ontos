@@ -1,4 +1,8 @@
-import { RetailEnrollmentEvidenceSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
+import {
+  RetailEnrollmentEvidenceSchema,
+  RetailEnrollmentSubjectSchema,
+  PartyCommandUnavailableProblemSchema,
+} from '@app/party-registry/api';
 import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -120,6 +124,18 @@ const candidate: RetailPartyCandidateOwnerInput['candidate'] = {
   validFrom: effectiveAt,
 };
 
+const enrollmentEvidence = Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+  authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
+  candidateEvidenceRef: '10000000-0000-4000-8000-000000000001',
+  emailOwnership: 'VERIFIED' as const,
+  enrollmentAttemptId: '20000000-0000-4000-8000-000000000001',
+  journey: 'RETAIL_SELF_ENROLLMENT' as const,
+  providerOwnerInvocationId: ownerInvocationId,
+  providerSubjectId: 'provider-subject',
+  sellingLegalEntityId: '50000000-0000-4000-8000-000000000001',
+  tenantId,
+});
+
 const partyOwnerInput = {
   candidate,
   compositionRevision: 'c'.repeat(64),
@@ -130,20 +146,9 @@ const partyOwnerInput = {
   legalEntityId: '50000000-0000-4000-8000-000000000001',
   originator: { actionInvocationId, compositionRevision: 'c'.repeat(64), tenantId },
   requestCorrelation,
+  subject: Schema.decodeUnknownSync(RetailEnrollmentSubjectSchema)(enrollmentEvidence),
   tenantId,
-  verifiedEvidence: Effect.succeed(
-    Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
-      authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
-      candidateEvidenceRef: '10000000-0000-4000-8000-000000000001',
-      emailOwnership: 'VERIFIED' as const,
-      enrollmentAttemptId: '20000000-0000-4000-8000-000000000001',
-      journey: 'RETAIL_SELF_ENROLLMENT' as const,
-      providerOwnerInvocationId: ownerInvocationId,
-      providerSubjectId: 'provider-subject',
-      sellingLegalEntityId: '50000000-0000-4000-8000-000000000001',
-      tenantId,
-    }),
-  ),
+  verifiedEvidence: Effect.succeed(enrollmentEvidence),
 };
 
 const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({

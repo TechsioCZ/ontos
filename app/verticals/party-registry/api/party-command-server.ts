@@ -7,7 +7,6 @@ import type { HttpServerRequest } from 'effect/http';
 
 import { partyCommandResultRead } from '../src/api/party-command-result.read.ts';
 import { partyRegistryApi } from '../shared/api.ts';
-import { DuplicateCandidateResolutionActionKeySchema } from '../shared/command-api.ts';
 import type { ResolvePartyCommandCommitPayload, ResolvePartyCommandCommitResult } from '../shared/command-api.ts';
 import { bindActionHttpRunner } from './action-http-runner.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
@@ -242,10 +241,10 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
     if (resolution.state !== 'COMMITTED') {
       return { _tag: 'PartyCommandCommitResolution', ...resolution } satisfies ResolvePartyCommandCommitResult;
     }
-    // Only the persisted, caller-owned invocation proves this was a review command, for either lookup form.
-    // Reviewers need native commit proof, not the create continuation's separate manage-identity grant.
+    // Ownership is already proved for either lookup form. Only Create has a continuation result;
+    // other Actions return native commit metadata without the unrelated human Create-result grant.
     const { actionKey, ...commitResolution } = resolution;
-    if (Schema.is(DuplicateCandidateResolutionActionKeySchema)(actionKey)) {
+    if (actionKey !== 'party.registry.create-party') {
       return { _tag: 'PartyCommandCommitResolution', ...commitResolution } satisfies ResolvePartyCommandCommitResult;
     }
     const readRuntime = yield* ReadRuntime;

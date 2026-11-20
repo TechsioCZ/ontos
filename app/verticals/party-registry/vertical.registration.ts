@@ -27,6 +27,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'organization-engagement-profile': () => import('./src/api/organization-engagement-profile-client.ts'),
       'organization-ico-facts': () => import('./src/api/organization-ico-facts-client.ts'),
       'organization-record-facts': () => import('./src/api/organization-record-facts-client.ts'),
+      'owned-retail-party-result': () => import('./src/api/owned-retail-party-result-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'party-contact-point-detail': () => import('./src/api/party-contact-point-detail-client.ts'),
       'party-contact-points': () => import('./src/api/party-contact-points-client.ts'),

@@ -43,6 +43,7 @@ import { crmClientIntakeReviewReadApiLive } from './crm-client-intake-review-rea
 import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
 import { duplicateCandidateListReadApiLive } from './duplicate-candidate-list-read-server.ts';
+import { enrollRetailCustomerActionApiLive } from './enroll-retail-customer-action-server.ts';
 import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { fenceLegacyIcoAuthorityActionApiLive } from './fence-legacy-ico-authority-action-server.ts';
 import { guestPartyResolutionReadApiLive } from './guest-party-resolution-read-server.ts';
@@ -50,6 +51,7 @@ import { legacyIcoInventoryReadApiLive } from './legacy-ico-inventory-read-serve
 import { organizationBusinessNameExportReadApiLive } from './organization-business-name-export-read-server.ts';
 import { organizationIcoFactsReadApiLive } from './organization-ico-facts-read-server.ts';
 import { organizationRecordFactsReadApiLive } from './organization-record-facts-read-server.ts';
+import { ownedRetailPartyResultReadApiLive } from './owned-retail-party-result-read-server.ts';
 import { partySourceEffectReceiptReadApiLive } from './party-source-effect-receipt-read-server.ts';
 import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
 import { searchLabelsReadApiLive } from './search-labels-read-server.ts';
@@ -222,6 +224,7 @@ export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArgum
     customerListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    enrollRetailCustomerActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     executePrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     fenceLegacyIcoAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     guestPartyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -230,6 +233,10 @@ export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArgum
     organizationEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     organizationIcoFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     organizationRecordFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    ownedRetailPartyResultReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      Layer.provide(governedActionRuntimeLive),
+    ),
     partiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(searchProjectionGateway)),
     partyContactPointDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     partyContactPointsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

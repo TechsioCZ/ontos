@@ -21,6 +21,7 @@ import { CrmClientIntakeReviewApi } from './apis/crm-client-intake-review.ts';
 import { CustomerListApi } from './apis/customer-list.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
 import { DuplicateCandidateListApi } from './apis/duplicate-candidate-list.ts';
+import { EnrollRetailCustomerActionApi } from './apis/enroll-retail-customer-action.ts';
 import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
 import { FenceLegacyIcoAuthorityActionApi } from './apis/fence-legacy-ico-authority-action.ts';
 import { GuestPartyResolutionApi } from './apis/guest-party-resolution.ts';
@@ -29,6 +30,7 @@ import { OrganizationBusinessNameExportApi } from './apis/organization-business-
 import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
 import { OrganizationIcoFactsApi } from './apis/organization-ico-facts.ts';
 import { OrganizationRecordFactsApi } from './apis/organization-record-facts.ts';
+import { OwnedRetailPartyResultApi } from './apis/owned-retail-party-result.ts';
 import { PartiesSearchApi } from './apis/parties-search.ts';
 import { PartyContactPointDetailApi } from './apis/party-contact-point-detail.ts';
 import { PartyContactPointsApi } from './apis/party-contact-points.ts';
@@ -51,6 +53,19 @@ import { SourceProfileExportApi } from './apis/source-profile-export.ts';
 // </generated-governed-http-api-imports>
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
+
+export {
+  EnrollRetailCustomerPayloadSchema,
+  EnrollRetailCustomerActionAlreadyCommittedProblemSchema,
+  EnrollRetailCustomerActionConflictProblemSchema,
+  EnrollRetailCustomerActionForbiddenProblemSchema,
+  EnrollRetailCustomerActionIneligibleProblemSchema,
+} from './apis/enroll-retail-customer-action.ts';
+export {
+  OwnedRetailPartyResultRequestSchema,
+  OwnedRetailPartyResultResponseSchema,
+} from './apis/owned-retail-party-result.ts';
+export { RetailEnrollmentSubjectSchema } from './actions/accept-retail-enrollment-evidence.ts';
 
 export {
   AcceptRetailEnrollmentEvidencePayloadSchema,
@@ -601,6 +616,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(CustomerListApi)
   .addHttpApi(DuplicateCandidateDetailApi)
   .addHttpApi(DuplicateCandidateListApi)
+  .addHttpApi(EnrollRetailCustomerActionApi)
   .addHttpApi(ExecutePrivacyMeasureActionApi)
   .addHttpApi(FenceLegacyIcoAuthorityActionApi)
   .addHttpApi(GuestPartyResolutionApi)
@@ -609,6 +625,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(OrganizationEngagementProfileApi)
   .addHttpApi(OrganizationIcoFactsApi)
   .addHttpApi(OrganizationRecordFactsApi)
+  .addHttpApi(OwnedRetailPartyResultApi)
   .addHttpApi(PartiesSearchApi)
   .addHttpApi(PartyContactPointDetailApi)
   .addHttpApi(PartyContactPointsApi)
