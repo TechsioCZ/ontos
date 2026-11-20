@@ -10,11 +10,15 @@ import { isMap, isSeq, parseDocument } from 'yaml';
  * run stage-only behaviour. Every runtime reaches SpiceDB over TLS and pins the in-project `spicedb`
  * service's gRPC certificate (`SPICEDB_CA_CERT`); production's copy also points every runtime at
  * production's SpiceDB endpoint, which that certificate must name, and sets `ONTOS_INTERNAL_SYMMY_INGRESS` to 0 in
- * every setup that names it, so production's Shell never mounts the stage-only Symmy REST ingress.
+ * every setup that names it, so production's Shell never mounts the stage-only Symmy REST ingress. It drops
+ * `ONTOS_SYMMY_JOB_RETENTION_POLICIES` from every setup: its entries name stage Tenants and routes, and the Symmy
+ * owner reads an absent setting as no retention policy, so production admits no Symmy write route until its own
+ * deployment configures one.
  */
 export const DEPLOYMENT_ENVIRONMENT_VARIABLE = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 export const SPICEDB_ENDPOINT_VARIABLE = 'SPICEDB_ENDPOINT';
 export const SYMMY_INGRESS_VARIABLE = 'ONTOS_INTERNAL_SYMMY_INGRESS';
+export const SYMMY_RETENTION_POLICIES_VARIABLE = 'ONTOS_SYMMY_JOB_RETENTION_POLICIES';
 
 export const DeploymentEnvironmentSchema = Schema.Literals(['production', 'stage']);
 export type DeploymentEnvironment = typeof DeploymentEnvironmentSchema.Type;
@@ -102,6 +106,9 @@ const configureZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnviro
       }
       for (const path of variablePaths(document, setupCount, SYMMY_INGRESS_VARIABLE)) {
         document.setIn(path, '0');
+      }
+      for (const path of variablePaths(document, setupCount, SYMMY_RETENTION_POLICIES_VARIABLE)) {
+        document.deleteIn(path);
       }
     }
     return document.toString({ lineWidth: 0 });

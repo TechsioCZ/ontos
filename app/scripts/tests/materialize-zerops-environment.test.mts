@@ -9,6 +9,7 @@ import {
   materializeZeropsEnvironment,
   materializeZeropsSetupFiles,
   SYMMY_INGRESS_VARIABLE,
+  SYMMY_RETENTION_POLICIES_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 
@@ -192,6 +193,30 @@ it.effect('unmounts the Symmy ingress in every production setup and keeps it on 
     expected.deleteIn(flagged[0]);
     const text = yield* materializeZeropsEnvironment(unflagged.toString(), production);
     expect(parseDocument(text).toJS()).toEqual(expected.toJS());
+  }),
+);
+
+it.effect('drops the stage Symmy retention policies from every production setup and keeps them on stage', () =>
+  Effect.gen(function* dropsSymmyRetentionPolicies() {
+    const policies = '[{"policyId":"stage-route","revision":"v1"}]';
+    const input = parseDocument(fixture);
+    const named = [
+      ['zerops', 1, 'run', 'envVariables', SYMMY_RETENTION_POLICIES_VARIABLE],
+      ['zerops', 2, 'run', 'envVariables', SYMMY_RETENTION_POLICIES_VARIABLE],
+    ];
+    for (const path of named) {
+      input.setIn(path, policies);
+    }
+    const productionFiles = yield* materializeZeropsSetupFiles(input.toString(), production);
+    const rejoined = parseDocument(
+      `zerops:\n${productionFiles.map(({ file }) => file.replace(/^zerops:\n/u, '')).join('')}`,
+    );
+    expect(rejoined.toJS()).toEqual(parseDocument(yield* materializeZeropsEnvironment(fixture, production)).toJS());
+    for (const path of named) {
+      expect(rejoined.hasIn(path)).toBe(false);
+    }
+    const stageText = yield* materializeZeropsEnvironment(input.toString(), stage);
+    expect(parseDocument(stageText).toJS()).toEqual(input.toJS());
   }),
 );
 
