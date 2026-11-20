@@ -1,7 +1,7 @@
 import {
+  ScopedRoutineInvocationError,
   TrustedPrincipalContextSchema,
   defineScopedRoutine,
-  findPostgresFailure,
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
@@ -136,6 +136,10 @@ const issuer = 'internal-membership-issuer';
 const namespace = 'internal-memberships';
 /** A digest from a hexadecimal seed, one per admission of a route. */
 const digest = (seed: string) => seed.repeat(64).slice(0, 64);
+
+/** The PostgreSQL SQLSTATE a scoped routine failed with, as its invocation error reports it. */
+const sqlStateOf = <Failure>(failure: Failure) =>
+  Schema.is(ScopedRoutineInvocationError)(failure) ? Option.getOrUndefined(failure.postgresCode) : undefined;
 
 class FixtureRollback extends Schema.TaggedError<FixtureRollback>()('FixtureRollback', {}) {}
 
@@ -386,11 +390,11 @@ it.effect(
       // under another idempotency digest than the reservation's, or a public membership stating another time, is
       // refused, and its whole admission with it: no order is consumed.
       const unreserved = yield* admit('retail', profileId, '1', { jobDigest: digest('2') }).pipe(Effect.flip);
-      expect(Option.getOrThrow(findPostgresFailure(unreserved))).toMatchObject({ code: '42501' });
+      expect(sqlStateOf(unreserved)).toBe('42501');
       const otherTime = yield* admit('retail', profileId, '3', {
         statedAt: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
       }).pipe(Effect.flip);
-      expect(Option.getOrThrow(findPostgresFailure(otherTime))).toMatchObject({ code: '42501' });
+      expect(sqlStateOf(otherTime)).toBe('42501');
       expect((yield* admit('retail', profileId, '4')).order).toBe(4);
 
       // Delivery is sequenced: a later order waits until every earlier one of its lineage has settled.
@@ -481,13 +485,13 @@ it.effect(
           true,
         ]),
       ).pipe(Effect.flip);
-      expect(Option.getOrThrow(findPostgresFailure(foreignReservation))).toMatchObject({ code: '42501' });
+      expect(sqlStateOf(foreignReservation)).toBe('42501');
       const foreignPinned = membershipEffect('wholesale', crypto.randomUUID(), '16', '2026-11-20T00:00:00.000Z', 1);
       const foreignJobId = yield* insertJob(admin, 'wholesale', digest('16'), foreignPinned, otherCompany);
       const foreignRecord = yield* scoped((transaction) => transaction.invoke(record, [foreignJobId])).pipe(
         Effect.flip,
       );
-      expect(Option.getOrThrow(findPostgresFailure(foreignRecord))).toMatchObject({ code: '42501' });
+      expect(sqlStateOf(foreignRecord)).toBe('42501');
       // Readiness refuses this company's effect to a transaction scoped to another company; the tenant-wide worker
       // reads every company's effects.
       const foreignReady = yield* inScope(
@@ -495,7 +499,7 @@ it.effect(
         makeScope(tenantId, principalId, otherCompany),
         (transaction) => transaction.invoke(ready, [other.effectId]),
       ).pipe(Effect.flip);
-      expect(Option.getOrThrow(findPostgresFailure(foreignReady))).toMatchObject({ code: '42501' });
+      expect(sqlStateOf(foreignReady)).toBe('42501');
       const { legalEntityId: _company, ...tenantScope } = scope;
       const tenantWide = yield* inScope(connections.runtime.connectionString, tenantScope, (transaction) =>
         transaction.invoke(ready, [other.effectId]),
@@ -507,7 +511,7 @@ it.effect(
       const unordered = membershipEffect('retail', crypto.randomUUID(), '17', '2026-11-20T00:00:00.000Z', 1);
       yield* insertJob(admin, 'retail', digest('17'), unordered);
       const unorderedReady = yield* isReady(unordered.effectId).pipe(Effect.flip);
-      expect(Option.getOrThrow(findPostgresFailure(unorderedReady))).toMatchObject({ code: '55000' });
+      expect(sqlStateOf(unorderedReady)).toBe('55000');
       const notMembership = membershipEffect('retail', crypto.randomUUID(), '18', '2026-11-20T00:00:00.000Z', 1);
       const { intent: _intent, ...withoutIntent } = notMembership.effect;
       yield* insertJob(admin, 'retail', digest('18'), { ...notMembership, effect: withoutIntent });
