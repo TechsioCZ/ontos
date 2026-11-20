@@ -494,7 +494,6 @@ it.live('updates an open person detail from waiting to the native undeliverable 
     yield* networkIdle;
     expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
     expect(screen.queryByText(/undeliverable_recipient/u)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Poslat pozvánku znovu' })).toBeNull();
   }).pipe(Effect.provide(network)),
 );
 

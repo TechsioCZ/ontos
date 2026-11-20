@@ -453,7 +453,7 @@ it.live('contains a remote render exception while the Shell framing and healthy 
     expect(output).toContain('Remote module entrypoint failed');
     expect(output).toContain('contacts.core');
     expect(output).toContain('1296_PRIVATE_RENDER_SENTINEL');
-    expect(output).toContain('render');
+    expect(output).toContain('phase=render');
   }),
 );
 
@@ -657,7 +657,10 @@ it.live('does not let the first queued page caller abort the shared SDK thunk ne
     const ownerBlockers = Array.from({ length: 5 }, (_, index) => ownerPageFixture(index));
     const sentinel = ownerPageFixture(5);
     const blockers = [...contactsBlockers, ...ownerBlockers, sentinel];
-    const held = new Map(blockers.map((model) => [exposeRequest(model.target), heldExpose()]));
+    const firstContactHeld = heldExpose();
+    const held = new Map(
+      blockers.map((model, index) => [exposeRequest(model.target), index === 0 ? firstContactHeld : heldExpose()]),
+    );
     const fx = yield* federation({
       scripted: (request) => Option.map(Option.fromNullishOr(held.get(request)), Deferred.await),
     });
@@ -686,11 +689,7 @@ it.live('does not let the first queued page caller abort the shared SDK thunk ne
 
       act(() => first.view.unmount());
       const freedRequest = exposeRequest(targetFixture('contacts.core.page-blocker-a', 'contacts.core.page.blocker-a'));
-      const freed = held.get(freedRequest);
-      expect(freed).toBeDefined();
-      if (freed !== undefined) {
-        yield* settle(fx, freedRequest, freed, { default: fx.page });
-      }
+      yield* settle(fx, freedRequest, firstContactHeld, { default: fx.page });
 
       expect(yield* fx.nextRequest).toBe(exposeRequest(resolvedModel.target));
       expect(
