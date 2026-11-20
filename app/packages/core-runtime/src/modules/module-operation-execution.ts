@@ -5,6 +5,7 @@ import {
   resolveExternalSubjectRead,
 } from '../auth/external-identity/read.ts';
 import { assetCurrentRead } from '../generated-reads/asset-current.ts';
+import { assetByteSourceRead } from '../generated-reads/asset-byte-source.ts';
 import { assetDownloadRead } from '../generated-reads/asset-download.ts';
 import { assetMetadataRead } from '../generated-reads/asset-metadata.ts';
 import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
@@ -318,6 +319,7 @@ const coreReads = Object.freeze([
   managedPrincipalsRead,
   legalEntityDetailRead,
   assetMetadataRead,
+  assetByteSourceRead,
   assetDownloadRead,
   assetCurrentRead,
   readPrincipalBinding,

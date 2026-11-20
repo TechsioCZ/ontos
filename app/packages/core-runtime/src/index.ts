@@ -195,6 +195,9 @@ export { assetDownloadRead } from './generated-reads/asset-download.ts';
 
 // @ontos-core-read asset-current
 export { assetCurrentRead } from './generated-reads/asset-current.ts';
+
+// @ontos-core-read asset-byte-source
+export { assetByteSourceRead } from './generated-reads/asset-byte-source.ts';
 // @ontos-codesmith-core-read-exports:end
 export {
   LegalEntityContext,
