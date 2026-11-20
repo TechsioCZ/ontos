@@ -13,6 +13,7 @@ import type { CommercePortalAuthRecoveryRateLimitRule } from '../../../api/porta
 import { CommercePortalAuthRecoveryUnavailable } from '../../../api/portal-auth/provider/recovery/unavailable.ts';
 import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import type {
+  CommercePortalAuthOtpChallenge,
   CommercePortalAuthRecoveryLedgerBinding,
   CommercePortalAuthRecoveryResetClaim,
   CommercePortalAuthRecoveryStore,
@@ -762,13 +763,13 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         // admitting one would let a long-dead token open a support reconciliation row on demand.
         // The statement's own clock decides, exactly as the reset ledger's peek does.
         const rows = yield* database
-          .select({ value: verification.value })
+          .select({ expiresAt: verification.expiresAt, value: verification.value })
           .from(verification)
           .where(and(eq(verification.identifier, identifier), gt(verification.expiresAt, now)))
           .pipe(Effect.mapError((cause) => unavailable('recovery-ledger-peek', cause)));
         const decoded = rows.flatMap((row) => {
           const record = decodeVerificationLedgerRecord(row.value);
-          return Option.isSome(record) ? [record.value] : [];
+          return Option.isSome(record) ? [{ ...record.value, expiresAt: row.expiresAt }] : [];
         });
         if (decoded.length === 0) {
           return Option.none();
@@ -839,7 +840,11 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           Effect.mapError((cause) => unavailable('password-reset-ledger-peek-hash', cause)),
         );
         const rows = yield* database
-          .select({ email: recoveryResetLedger.email, providerSubjectId: recoveryResetLedger.providerSubjectId })
+          .select({
+            email: recoveryResetLedger.email,
+            expiresAt: recoveryResetLedger.expiresAt,
+            providerSubjectId: recoveryResetLedger.providerSubjectId,
+          })
           .from(recoveryResetLedger)
           .where(
             and(
@@ -854,7 +859,12 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         if (row === undefined || row.email === null || row.providerSubjectId === null) {
           return Option.none();
         }
-        return Option.some({ email: row.email, providerSubjectId: row.providerSubjectId, tokenDigest });
+        return Option.some({
+          email: row.email,
+          expiresAt: row.expiresAt,
+          providerSubjectId: row.providerSubjectId,
+          tokenDigest,
+        });
       },
     );
 
@@ -1064,6 +1074,57 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       },
     );
 
+    const OTP_ONLY_DIGITS = /^\d{1,12}$/u;
+    const attemptsOf = (value: string) => Number.parseInt(value.split(':')[1] ?? '', 10) || 0;
+
+    /**
+     * The stored challenge of a freshly issued one-time code. Better Auth keeps its verification identifiers hashed, so the
+     * challenge cannot be named by its session binding from here; the code the plugin stored (plain, `<code>:<failed attempts>`)
+     * is the link. A code that two live challenges hold at once cannot be told apart, so it names none: fail closed, never a
+     * guess at another account's challenge.
+     */
+    const locateOtpChallenge = Effect.fn('CommercePortalAuthRecoveryStore.locateOtpChallenge')(
+      function* locateOtpChallengeEffect(input: {
+        readonly otp: Redacted.Redacted;
+      }): Effect.fn.Return<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable> {
+        const code = Redacted.value(input.otp);
+        if (!OTP_ONLY_DIGITS.test(code)) {
+          return Option.none();
+        }
+        const now = yield* DateTime.nowAsDate;
+        const matches = yield* database
+          .select({ expiresAt: verification.expiresAt, identifier: verification.identifier, value: verification.value })
+          .from(verification)
+          .where(and(like(verification.value, `${code}:%`), gt(verification.expiresAt, now)))
+          .pipe(Effect.mapError((cause) => unavailable('otp-challenge-locate', cause)));
+        const [only] = matches;
+        return matches.length === 1 && only !== undefined
+          ? Option.some({
+              attempts: attemptsOf(only.value),
+              challenge: Redacted.make(only.identifier),
+              expiresAt: only.expiresAt,
+            })
+          : Option.none();
+      },
+    );
+
+    const readOtpChallenge = Effect.fn('CommercePortalAuthRecoveryStore.readOtpChallenge')(
+      function* readOtpChallengeEffect(input: {
+        readonly challenge: Redacted.Redacted;
+      }): Effect.fn.Return<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable> {
+        const now = yield* DateTime.nowAsDate;
+        const [row] = yield* database
+          .select({ expiresAt: verification.expiresAt, value: verification.value })
+          .from(verification)
+          .where(and(eq(verification.identifier, Redacted.value(input.challenge)), gt(verification.expiresAt, now)))
+          .limit(1)
+          .pipe(Effect.mapError((cause) => unavailable('otp-challenge-read', cause)));
+        return row === undefined
+          ? Option.none()
+          : Option.some({ attempts: attemptsOf(row.value), challenge: input.challenge, expiresAt: row.expiresAt });
+      },
+    );
+
     return {
       accountExists,
       consumeEmailVerificationWithAudit,
@@ -1071,9 +1132,11 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       consumeRateLimitBudget,
       dispatchPasswordResetLedger,
       findAccountSubjectForEmail,
+      locateOtpChallenge,
       peekDispatchedPasswordResetLedger,
       peekEmailVerificationLedger,
       peekPasswordResetLedger,
+      readOtpChallenge,
       recordRecoveryReconciliation,
       registerEmailVerificationToken,
       registerPasswordResetToken,

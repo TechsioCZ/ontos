@@ -57,6 +57,7 @@ export const PORTAL_AUTH_ISSUANCE_STATE = {
   expired: 'commerce.customer-context.portal-auth.issuance-expired',
   notResumable: 'commerce.customer-context.portal-auth.issuance-not-resumable',
   revoked: 'commerce.customer-context.portal-auth.issuance-revoked',
+  superseded: 'commerce.customer-context.portal-auth.issuance-superseded',
 } as const;
 
 /**

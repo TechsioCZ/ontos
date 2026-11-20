@@ -138,14 +138,14 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect('a new verification link or code revokes the earlier one of the same subject and flow, and no other', () =>
+  it.effect('a new verification link or code supersedes the earlier one of the same subject and flow, and no other', () =>
     Effect.gen(function* supersede() {
       const handoff = yield* withHandoff();
       yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
       yield* handoff.hold(held('otp', 'pa-a'), { supersede: true });
       yield* handoff.hold(held('otp', 'pa-b', { subject: 'subject-2' }), { supersede: true });
       yield* handoff.hold(held('otp', 'pa-c'), { supersede: true });
-      expect(yield* handoff.currentness(ref('pa-a'))).toBe('REVOKED');
+      expect(yield* handoff.currentness(ref('pa-a'))).toBe('SUPERSEDED');
       expect(yield* handoff.currentness(ref('pa-b'))).toBe('CURRENT');
       expect(yield* handoff.currentness(ref('pa-c'))).toBe('CURRENT');
     }).pipe(Effect.provide(TestClock.layer())),

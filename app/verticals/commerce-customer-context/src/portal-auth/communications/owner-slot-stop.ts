@@ -3,7 +3,7 @@ import { Schema } from 'effect';
 /**
  * Closed reasons an Auth issuance cannot lead to a completed owner-rendered slot. They name an Auth lifecycle fact and
  * never carry a value: no token, link, code, address or provider text can travel in one.
- * - EXPIRED / CONSUMED / REVOKED: the issuance is no longer usable (Auth's own state);
+ * - EXPIRED / CONSUMED / REVOKED / SUPERSEDED: the issuance is no longer usable (Auth's own state; SUPERSEDED = a newer one replaced it);
  * - NO_LONGER_CURRENT: Auth's ledger no longer offers it (consumed, revoked or superseded; the ledger does not say which);
  * - NOT_RESUMABLE: this runtime no longer holds the protected handoff of the issuance (a restart, another instance). The
  *   secret is never reproduced; only Auth itself can issue a new one;
@@ -16,6 +16,7 @@ export const OwnerSlotStopReasonSchema = Schema.Literals([
   'NOT_RESUMABLE',
   'REVOKED',
   'SLOT_NOT_DECLARED',
+  'SUPERSEDED',
 ]);
 
 /** Expected failure: Auth will not complete an owner-rendered slot. Nothing is reproduced and nothing is reissued. */

@@ -25,7 +25,7 @@ import { OwnerSlotStop } from './owner-slot-stop.ts';
 /** What Auth's own ledger says about a held issuance now. A flow without a ledger answers CURRENT and relies on expiry and settlement. */
 export type IssuanceLedgerProbe = (
   held: HeldIssuance,
-) => Effect.Effect<'CURRENT' | 'NO_LONGER_CURRENT', PortalAuthIssuanceStateUnavailable>;
+) => Effect.Effect<'CONSUMED' | 'CURRENT' | 'NO_LONGER_CURRENT', PortalAuthIssuanceStateUnavailable>;
 
 /** The provider-issuance context the enrollment gateway reserves BEFORE it asks the provider to issue, so the callback can name the issuance. */
 export interface IssuanceReservation {
@@ -42,7 +42,7 @@ export interface ProtectedHandoffService {
     issuanceRef: PortalAuthIssuanceRef,
   ) => Effect.Effect<Option.Option<Redacted.Redacted>, PortalAuthIssuanceStateUnavailable>;
   readonly forget: (issuanceRef: PortalAuthIssuanceRef) => Effect.Effect<void>;
-  /** Holds one issuance; `supersede` revokes the earlier issuance of the same flow and subject (a new link or code replaces it). */
+  /** Holds one issuance; `supersede` marks the earlier issuance SUPERSEDED of the same flow and subject (a new link or code replaces it). */
   readonly hold: (held: HeldIssuance, options: { readonly supersede: boolean }) => Effect.Effect<void>;
   /** The safe facts Auth tells Communications about the issuance; never the protected side. */
   readonly issuanceOf: (issuanceRef: PortalAuthIssuanceRef) => Effect.Effect<Option.Option<PortalAuthIssuance>>;
@@ -75,7 +75,7 @@ export class CommercePortalAuthProtectedHandoff extends Context.Service<
 
 interface Entry {
   readonly held: HeldIssuance;
-  readonly settled: Option.Option<'CONSUMED' | 'REVOKED'>;
+  readonly settled: Option.Option<'CONSUMED' | 'REVOKED' | 'SUPERSEDED'>;
 }
 type Entries = HashMap.HashMap<PortalAuthIssuanceRef, Entry>;
 
@@ -86,7 +86,7 @@ const revokeIfSameSubject = (incoming: PortalAuthIssuance) => (entry: Entry) =>
   entry.held.issuance.flow === incoming.flow &&
   entry.held.issuance.providerSubjectId === incoming.providerSubjectId &&
   Option.isNone(entry.settled)
-    ? { ...entry, settled: Option.some('REVOKED' as const) }
+    ? { ...entry, settled: Option.some('SUPERSEDED' as const) }
     : entry;
 
 /** The entries after one more issuance: expired entries are dropped (bounding memory), and a superseding issuance revokes its predecessor. */
@@ -96,7 +96,7 @@ const withIssuance = (entries: Entries, incoming: HeldIssuance, now: DateTime.Ut
   return kept.pipe(HashMap.set(incoming.issuance.issuanceRef, { held: incoming, settled: Option.none() }));
 };
 
-const settledAs = (state: 'CONSUMED' | 'REVOKED') => (entry: Entry) => ({
+const settledAs = (state: 'CONSUMED' | 'REVOKED' | 'SUPERSEDED') => (entry: Entry) => ({
   ...entry,
   settled: Option.orElse(entry.settled, () => Option.some(state)),
 });

@@ -1,4 +1,4 @@
-import { Crypto, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { PortalAuthIssuanceRefSchema } from '../../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow } from '../../../shared/portal-auth-communications.ts';
@@ -14,9 +14,9 @@ import { CommercePortalAuthTrustedScope } from '../../../src/portal-auth/communi
 import type { PortalAuthTrustedScopeUnavailable } from '../../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import { withCause } from '../problems-support.ts';
 import type { CommercePortalAuthEmailDelivery } from './auth.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
-import { COMMERCE_PORTAL_AUTH_MFA_POLICY } from './mfa/plugin.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from './raw-email-delivery-service.ts';
+import { CommercePortalAuthRecoveryStoreService } from './recovery/store-service.ts';
+import type { CommercePortalAuthRecoveryStore } from './recovery/store-service.ts';
 
 /**
  * The Communications-routed form of the three Portal Auth e-mail callbacks (#1406). It is the ONLY place where an issued
@@ -33,21 +33,55 @@ import { CommercePortalAuthRawEmailDeliveryService } from './raw-email-delivery-
  * direct `EmailDeliveryService` delivery and Core and staff Auth run without Communications.
  */
 
-/** The lifetime Auth's own policy gives each issuance. Read from the policy that already governs the provider; never set here. */
-const issuanceLifetimeOf = (flow: PortalAuthEmailFlow): Duration.Duration => {
-  if (flow === 'verify-email') {
-    return Duration.seconds(COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds);
-  }
-  return flow === 'otp'
-    ? Duration.minutes(COMMERCE_PORTAL_AUTH_MFA_POLICY.otpPeriodMinutes)
-    : Duration.seconds(COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds);
-};
-
 const ISSUANCE_REFERENCE_OPERATION = 'issuance-reference';
 const decodeIssuanceRef = Schema.decodeUnknownEffect(PortalAuthIssuanceRefSchema);
 
 /** A new verification link or code replaces the earlier one of the subject; every unexpired reset link stays valid, as in the provider. */
 const supersedesEarlierIssuance = (flow: PortalAuthEmailFlow): boolean => flow !== 'reset-password';
+
+/**
+ * What Auth itself STORED about the issuance it was just handed: its real expiry, and for a one-time code the two-factor
+ * challenge Better Auth keeps it under (the key of its real consumed/exhausted state). Never a callback time plus a policy
+ * lifetime: the request states the expiry Auth enforces. An issuance whose stored facts cannot be read is not submitted.
+ */
+interface StoredIssuanceFacts {
+  readonly expiresAt: DateTime.Utc;
+  readonly ledgerToken: Option.Option<Redacted.Redacted>;
+}
+
+const STORED_FACTS_OPERATION = 'stored-issuance-facts';
+
+const storedFactsOf = Effect.fn('CommercePortalAuthCommunicationsEmail.storedFacts')(function* storedFacts(
+  store: Pick<
+    CommercePortalAuthRecoveryStore,
+    'locateOtpChallenge' | 'peekEmailVerificationLedger' | 'peekPasswordResetLedger'
+  >,
+  issued: IssuedSecret,
+): Effect.fn.Return<StoredIssuanceFacts, PortalAuthCommunicationUnavailable> {
+  const unavailable = (cause?: unknown) =>
+    withCause(new PortalAuthCommunicationUnavailable({ operation: STORED_FACTS_OPERATION }), cause);
+  if (issued.flow === 'otp') {
+    const challenge = yield* store.locateOtpChallenge({ otp: issued.secret }).pipe(Effect.mapError(unavailable));
+    return yield* Option.match(challenge, {
+      onNone: () => Effect.fail(unavailable()),
+      onSome: (found) =>
+        Effect.succeed({
+          expiresAt: DateTime.fromDateUnsafe(found.expiresAt),
+          ledgerToken: Option.some(found.challenge),
+        }),
+    });
+  }
+  const peek = issued.flow === 'verify-email' ? store.peekEmailVerificationLedger : store.peekPasswordResetLedger;
+  const binding = yield* Option.match(issued.ledgerToken, {
+    onNone: () => Effect.fail(unavailable()),
+    onSome: (token) => peek({ token }).pipe(Effect.mapError(unavailable)),
+  });
+  const expiresAt = Option.flatMapNullishOr(binding, ({ expiresAt: stored }) => stored);
+  return yield* Option.match(expiresAt, {
+    onNone: () => Effect.fail(unavailable()),
+    onSome: (stored) => Effect.succeed({ expiresAt: DateTime.fromDateUnsafe(stored), ledgerToken: issued.ledgerToken }),
+  });
+});
 
 interface IssuedSecret {
   readonly flow: PortalAuthEmailFlow;
@@ -73,6 +107,7 @@ const notSentReasonOf = (submission: PortalAuthSubmission): Option.Option<string
 const issuanceOf = Effect.fn('CommercePortalAuthCommunicationsEmail.issuance')(function* issuance(
   issued: IssuedSecret,
   reservation: Option.Option<IssuanceReservation>,
+  expiresAt: DateTime.Utc,
 ) {
   const issuedAt = yield* DateTime.now;
   const issuanceRef = yield* Option.match(reservation, {
@@ -81,7 +116,7 @@ const issuanceOf = Effect.fn('CommercePortalAuthCommunicationsEmail.issuance')(f
     onSome: ({ issuanceRef: reserved }) => Effect.succeed(reserved),
   });
   const base = {
-    expiresAt: DateTime.addDuration(issuedAt, issuanceLifetimeOf(issued.flow)),
+    expiresAt,
     flow: issued.flow,
     issuanceRef,
     issuedAt,
@@ -108,6 +143,7 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
     const handoff = yield* CommercePortalAuthProtectedHandoff;
     const submitter = yield* CommercePortalAuthCommunicationRequestSubmitter;
     const trustedScope = yield* CommercePortalAuthTrustedScope;
+    const store = yield* CommercePortalAuthRecoveryStoreService;
     const context = yield* Effect.context<Crypto.Crypto>();
     const runWithContext = Effect.runPromiseWith(context);
     const run: <A, E>(effect: Effect.Effect<A, E>) => ReturnType<typeof runWithContext<A, E>> = runWithContext;
@@ -123,7 +159,9 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
     > {
       const scope = yield* trustedScope.current;
       const reservation = yield* handoff.takeReservation(issued.flow, issued.user.id);
-      const issuance = yield* issuanceOf(issued, reservation).pipe(
+      // Auth's own stored facts first: an issuance whose real expiry cannot be read is never submitted
+      const stored = yield* storedFactsOf(store, issued);
+      const issuance = yield* issuanceOf(issued, reservation, stored.expiresAt).pipe(
         Effect.provideContext(context),
         Effect.mapError((cause) =>
           withCause(new PortalAuthCommunicationUnavailable({ operation: ISSUANCE_REFERENCE_OPERATION }), cause),
@@ -131,7 +169,9 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
       );
       // the request is validated against the published contract BEFORE the secret is held, so a refused request leaves nothing behind
       const request = yield* portalAuthCommunicationRequest(issuance, scope);
-      yield* handoff.hold(heldOf(issued, issuance), { supersede: supersedesEarlierIssuance(issued.flow) });
+      yield* handoff.hold(heldOf({ ...issued, ledgerToken: stored.ledgerToken }, issuance), {
+        supersede: supersedesEarlierIssuance(issued.flow),
+      });
       // an unavailable intake keeps the held issuance: the request may exist, and its handoff must still find the secret
       const submission = yield* submitter.submit(request);
       // Communications decided that no message leaves: the held secret serves nothing. Auth never reissues to repair a stop.

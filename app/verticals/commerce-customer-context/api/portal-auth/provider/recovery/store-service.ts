@@ -21,12 +21,37 @@ export type CommercePortalAuthRecoveryResetClaim = typeof CommercePortalAuthReco
 /** A non-destructive read of one ledger's recorded issuance-time binding. */
 export interface CommercePortalAuthRecoveryLedgerBinding {
   readonly email: string;
+  /** The expiry Auth's own ledger stored for the token (the instant the issuance stops being usable); set by the real store. */
+  readonly expiresAt?: Date;
   readonly providerSubjectId: string;
   /** The stored digest of the token this binding was read by; the audit trail's correlation key. */
   readonly tokenDigest: string;
 }
 
+/** What Better Auth's two-factor plugin itself stored for ONE issued one-time code: the challenge it lives under and its real state. */
+export interface CommercePortalAuthOtpChallenge {
+  /** Failed presentations Better Auth counted against the code; the code is exhausted at the plugin's own limit. */
+  readonly attempts: number;
+  /** The verification row identifier the code is stored under (Better Auth's hashed form); opaque, never logged. */
+  readonly challenge: Redacted.Redacted;
+  readonly expiresAt: Date;
+}
+
 export interface CommercePortalAuthRecoveryStore {
+  /**
+   * Read-only: the stored challenge of a one-time code that was just issued, found by the code Better Auth stored for it.
+   * None when no live challenge holds that code, or when more than one does (they cannot be told apart).
+   */
+  readonly locateOtpChallenge: (input: {
+    readonly otp: Redacted.Redacted;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable>;
+  /**
+   * Read-only: the CURRENT state of one stored challenge. None means Better Auth no longer holds it (consumed by a
+   * verification, spent by a failed-attempt reset, or expired and swept).
+   */
+  readonly readOtpChallenge: (input: {
+    readonly challenge: Redacted.Redacted;
+  }) => Effect.Effect<Option.Option<CommercePortalAuthOtpChallenge>, CommercePortalAuthRecoveryUnavailable>;
   /** Read-only: true when the named provider subject still names an active account. */
   readonly accountExists: (input: {
     readonly providerSubjectId: string;
