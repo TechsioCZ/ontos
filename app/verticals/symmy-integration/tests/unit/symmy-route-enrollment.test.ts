@@ -96,6 +96,10 @@ const customerPage = operation(
   'commerce.customer-context.api.customer-profile-source-page',
 );
 const createGroup = operation('commerce.customer-context', 'commerce.customer-context.create-customer-group');
+const groupDefinitionSource = operation(
+  'commerce.customer-context',
+  'commerce.customer-context.api.customer-group-definition-source',
+);
 const applyMembership = operation(
   'commerce.customer-context',
   'commerce.customer-context.apply-customer-group-membership-source',
@@ -171,7 +175,10 @@ const valid = {
     configuration: { items: [item('CUSTOMER', [applyMembership])], selector, sourceRouteId },
     routeCode: 'VIP',
   }),
-  customerGroupsBatch: () => ({ ...write, configuration: { items: [item('CUSTOMER_GROUP', [createGroup])] } }),
+  customerGroupsBatch: () => ({
+    ...write,
+    configuration: { items: [item('CUSTOMER_GROUP', [createGroup, groupDefinitionSource])] },
+  }),
   customersBatch: () => ({ ...write, configuration: { items: [item('CUSTOMER', [createParty, retailProfile])] } }),
   priceListPricesBatch: () => ({
     ...write,
@@ -238,6 +245,11 @@ const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => 
 };
 const codes = (enrollment: SymmyRouteEnrollmentRequest) =>
   symmyRouteRequestRefusals(enrollment, inventoryOf(enrollment.routeKey)).map(({ code }) => code);
+/** The request refusals of a request, each as code and detail. */
+const requestRefusals = (enrollment: SymmyRouteEnrollmentRequest) =>
+  symmyRouteRequestRefusals(enrollment, inventoryOf(enrollment.routeKey)).map(
+    ({ code, detail }) => `${code}: ${detail}`,
+  );
 
 type RouteRow = typeof symmyJobRoutes.$inferSelect;
 const storedRow = (enrollment: SymmyRouteEnrollmentRequest, changes: Partial<RouteRow> = {}): RouteRow => ({
@@ -345,7 +357,7 @@ describe('Symmy route inventories', () => {
 
 describe('Symmy route request refusals', () => {
   it('refuses an executable intent in the enrolled configuration', () => {
-    const group = item('CUSTOMER_GROUP', [createGroup]);
+    const group = item('CUSTOMER_GROUP', [createGroup, groupDefinitionSource]);
     const intent = {
       _tag: 'CustomerGroupCreate',
       payload: {
@@ -371,7 +383,7 @@ describe('Symmy route request refusals', () => {
         },
       },
     } as const;
-    const withIntent: EncodedItem = { ...group, effects: [{ ...group.effects[0], intent }] };
+    const withIntent: EncodedItem = { ...group, effects: [{ ...group.effects[0], intent }, ...group.effects.slice(1)] };
     expect(codes(withConfiguration('customerGroupsBatch', { items: [withIntent] }))).toEqual(['owner_intent_enrolled']);
   });
 
@@ -462,6 +474,18 @@ describe('Symmy route request refusals', () => {
         ['company_scope_required'],
       ]);
     }
+  });
+
+  it('requires a customer groups route to enroll the Group definition read the Shell admits through, for a company', () => {
+    expect(
+      requestRefusals(withConfiguration('customerGroupsBatch', { items: [item('CUSTOMER_GROUP', [createGroup])] })),
+    ).toEqual([
+      'required_operation_missing: customerGroupsBatch cannot serve a request without commerce.customer-context.api.customer-group-definition-source@1',
+    ]);
+    expect(requestRefusals(request('customerGroupsBatch'))).toEqual([]);
+    expect(requestRefusals(request('customerGroupsBatch', {}, ['legalEntityId']))).toEqual([
+      'company_scope_required: customerGroupsBatch reads or writes the data of one company and cannot be enrolled on a Tenant-only route',
+    ]);
   });
 
   it('requires a customers route to enroll a complete person or organization plan', () => {

@@ -478,6 +478,34 @@ describe('Symmy route bindings', () => {
     expect(unpublished(['commerce.pricing.define-price'], [])).toEqual([]);
   });
 
+  it('asks the integration principal for the Group definition read the Shell makes before it admits groups', () => {
+    const definitionRead = 'commerce.customer-context.api.customer-group-definition-source';
+    const sourceRead = 'commerce.customer-context.source-read';
+    const groupBindings = (published: readonly string[]) =>
+      deriveSymmyRouteBindings({
+        companyScoped: true,
+        contracts: [
+          symmy,
+          contract('commerce-customer-context', 'commerce.customer-context', {
+            operationContracts: published.map((entrypointKey) => carrier(entrypointKey, [sourceRead])),
+          }),
+        ],
+        enrolled: enrolledOf('customerGroupsBatch', [
+          'commerce.customer-context.create-customer-group',
+          definitionRead,
+        ]),
+        inventory: inventoryOf('customerGroupsBatch'),
+      });
+    const reading = groupBindings([definitionRead]);
+    expect(reading.bindings.filter(({ purpose }) => purpose === `${definitionRead}@1`)).toEqual([
+      { identity: 'integration', purpose: `${definitionRead}@1`, workloads: [sourceRead] },
+    ]);
+    expect(reading.moduleKeys).toContain('commerce.customer-context');
+    expect(groupBindings([]).refusals.map(({ detail }) => detail)).toContain(
+      `${definitionRead}@1 is not published by commerce.customer-context`,
+    );
+  });
+
   it('refuses a company-scoped call on a route that passes no company to it', () => {
     const pricing = contract('pricing', 'commerce.pricing', {
       actions: receivingAction('commerce.pricing.define-price'),
