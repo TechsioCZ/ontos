@@ -27,6 +27,9 @@ type Route = typeof SymmyRouteContextResponseSchema.Type;
 type RouteRequest = typeof SymmyRouteContextRequestSchema.Encoded;
 const SourcePurposeSchema = Schema.Literals(['admit', 'read']);
 type SourcePurpose = typeof SourcePurposeSchema.Type;
+/** The job read polls: the owner's job status Read admits only the poll workload. */
+type WorkloadPurpose = SourcePurpose | 'poll';
+const IngressRouteKeySchema = Schema.Union([SymmyRouteContextRequestSchema.fields.routeKey, Schema.Literal('job')]);
 const routeJsonSchema = Schema.fromJsonString(SymmyRouteContextResponseSchema);
 const readRoutes: ReadonlySet<RouteRequest['routeKey']> = new Set([
   'adminCustomers',
@@ -74,7 +77,7 @@ const sameIdentity = (left: TrustedPrincipalContext, right: TrustedPrincipalCont
 /** Native identity and source-workload facts are read again for every projection attempt. */
 const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(function* validatePrincipal(
   candidate: TrustedPrincipalContext,
-  sourcePurpose: SourcePurpose,
+  purpose: WorkloadPurpose,
 ) {
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(candidate).pipe(
     Effect.mapError(delegationForbidden),
@@ -109,7 +112,7 @@ const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(fu
       where p.tenant_id=${principal.tenantId}::uuid and p.principal_id=${principal.principalId}::uuid
         and p.kind='integration' and p.status='active'
         and exists(select 1 from core.access_workload_bindings w where w.tenant_id=p.tenant_id and w.principal_id=p.principal_id
-          and w.status='active' and (w.workload_key='integration.symmy-admit' or (${sourcePurpose}='read' and w.workload_key='integration.symmy-poll')))
+          and w.status='active' and ((${purpose}<>'poll' and w.workload_key='integration.symmy-admit') or (${purpose}<>'admit' and w.workload_key='integration.symmy-poll')))
       limit 2`,
           'objects',
         );
@@ -121,6 +124,27 @@ const validateRoutePrincipal = Effect.fn('SymmyRouteScope.validatePrincipal')(fu
   }
   return principal;
 });
+const workloadPurpose = (routeKey: typeof IngressRouteKeySchema.Type): WorkloadPurpose => {
+  if (routeKey === 'job') {
+    return 'poll';
+  }
+  return readRoutes.has(routeKey) ? 'read' : 'admit';
+};
+
+/**
+ * The tenant-local Symmy workload the named route requires, checked before its request is decoded: a write admits,
+ * a business read admits or polls, and the job read polls. An unknown route is forbidden.
+ */
+export const requireSymmyRouteWorkload = Effect.fn('SymmyRouteScope.requireWorkload')(function* requireWorkload(
+  principal: TrustedPrincipalContext,
+  route: string,
+) {
+  const routeKey = yield* Schema.decodeUnknownEffect(IngressRouteKeySchema)(route).pipe(
+    Effect.mapError(delegationForbidden),
+  );
+  yield* validateRoutePrincipal(principal, workloadPurpose(routeKey));
+});
+
 const validateCompany = Effect.fn('SymmyRouteScope.validateCompany')(function* company(route: Route, tenantId: string) {
   if (route.tenantId !== tenantId) {
     return yield* delegationForbidden();

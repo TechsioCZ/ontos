@@ -250,9 +250,11 @@ export interface SymmyIngressDispatch {
 export class SymmyIngress extends Context.Service<
   SymmyIngress,
   {
+    /** `route` names the matched endpoint; admission checks the tenant-local workload that route requires. */
     readonly admit: (
       rawKey: string,
       request: HttpServerRequest.HttpServerRequest,
+      route: string,
     ) => Effect.Effect<SymmyIngressAdmission, SymmyIngressProblem, HttpServerRequest.HttpServerRequest>;
     readonly dispatch: SymmyIngressDispatch;
   }
@@ -419,13 +421,15 @@ export const SymmyHostMountLive = HttpRouter.middleware(
 );
 
 /**
- * Verifies the API key and admits its workload: 401 with the ApiKey challenge for a missing, blank or refused key,
- * 403 for a refused principal or workload. Symmy authentication runs it for every route before HttpApi decodes the
- * path, headers, query or body, so a caller who is not admitted never makes the Shell decode or map its request.
+ * Verifies the API key and admits the workload the matched route requires: 401 with the ApiKey challenge for a
+ * missing, blank or refused key, 403 for a refused principal or workload. Symmy authentication runs it for every
+ * route before HttpApi decodes the path, headers, query or body, so a caller who is not admitted never makes the
+ * Shell decode or map its request.
  */
 export const admitSymmyCaller = Effect.fn('SymmyIngress.admitCaller')(function* admitSymmyIngressCaller(
   ingress: typeof SymmyIngress.Service,
   credential: Redacted.Redacted,
+  route: string,
 ): Effect.fn.Return<typeof SymmyAdmittedCaller.Service, SymmyIngressProblem, HttpServerRequest.HttpServerRequest> {
   yield* noStore;
   const rawKey = Redacted.value(credential);
@@ -433,7 +437,7 @@ export const admitSymmyCaller = Effect.fn('SymmyIngress.admitCaller')(function* 
     return yield* requireAuthentication;
   }
   const admission = yield* ingress
-    .admit(rawKey, yield* HttpServerRequest.HttpServerRequest)
+    .admit(rawKey, yield* HttpServerRequest.HttpServerRequest, route)
     .pipe(Effect.catchTag('GatewayAuthenticationRequiredProblem', () => requireAuthentication));
   return { admission, credential: Redacted.make(rawKey.trim()) };
 });

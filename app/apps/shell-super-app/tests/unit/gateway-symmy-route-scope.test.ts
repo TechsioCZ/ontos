@@ -18,6 +18,7 @@ import {
   issueSymmyRouteScopeAssertion,
   projectSymmyRouteScopePrincipal,
   readSymmyRouteScope,
+  requireSymmyRouteWorkload,
 } from '../../api/auth/gateway-symmy-route-scope.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
@@ -70,12 +71,18 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
   );
   const jwk = yield* Effect.promise(() => exportJWK(privateKey));
-  const calls: { readonly authorization: string | null; readonly body: string; readonly url: string }[] = [];
+  const calls: {
+    readonly authorization: string | null;
+    readonly body: string;
+    readonly correlation: string | null;
+    readonly url: string;
+  }[] = [];
   const fakeFetch: typeof fetch = async (input, init) => {
     const incoming = new Request(input, init);
     calls.push({
       authorization: incoming.headers.get('authorization'),
       body: await incoming.text(),
+      correlation: incoming.headers.get('x-correlation-id'),
       url: incoming.url,
     });
     const ownerResponse = { ...response, tenantId: options.responseTenant ?? response.tenantId };
@@ -87,17 +94,22 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     }
     return Response.json(ownerResponse);
   };
-  const connection = testSqlConnection((statement, parameters) =>
-    Effect.succeed(
-      statement.includes('from core.principals p') &&
+  const purposes: unknown[] = [];
+  const connection = testSqlConnection((statement, parameters) => {
+    const eligibility = statement.includes('from core.principals p');
+    if (eligibility) {
+      purposes.push(parameters.find((value) => value === 'admit' || value === 'read' || value === 'poll'));
+    }
+    return Effect.succeed(
+      eligibility &&
         options.activeBinding !== false &&
         parameters.includes(principal.authBindingId) &&
         parameters.includes('native-route-key') &&
         parameters.includes(principal.authenticationNamespaceId)
         ? [{ principal_id: principal.principalId }]
         : [],
-    ),
-  );
+    );
+  });
   const database = Layer.effect(CoreDatabase, testCoreDatabase.pipe(Effect.map((executor) => ({ executor })))).pipe(
     Layer.provide(scriptedPgClientLayer(Effect.succeed(connection)).pipe(Layer.provide(Reactivity.layer))),
   );
@@ -139,6 +151,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     calls,
     layer: Layer.mergeAll(database, issuer, company, catalog, Layer.succeed(FetchHttpClient.Fetch, fakeFetch)),
     publicKey,
+    purposes,
   };
 });
 
@@ -171,6 +184,8 @@ it.effect('obtains route scope from the protected generated owner Read and refus
       'https://symmy-owner-relay.invalid/module-api/symmy-integration/native-route-build/symmy-integration-api/reads/symmy-route-context',
     );
     expect(JSON.parse(current.calls[0]?.body ?? '{}')).toEqual({ routeKey: 'adminCustomers' });
+    // The Shell passes only its sanitized correlation id; the route read forwards exactly that value.
+    expect(current.calls[0]?.correlation).toBe(request.requestCorrelation);
     const authorization = current.calls[0]?.authorization ?? '';
     expect(decodeJwt(authorization.slice('Bearer '.length)).aud).toBe('symmy-integration');
   }),
@@ -189,6 +204,29 @@ it.effect('rejects a different tenant returned by the owner and a revoked authen
     expect(bindingFailure.code).toBe('forbidden');
     expect(revoked.calls).toHaveLength(0);
   }),
+);
+
+it.effect(
+  'requires the workload of the named route: a write admits, a business read admits or polls, a job polls',
+  () =>
+    Effect.gen(function* routeWorkloads() {
+      const current = yield* fixture({});
+      yield* Effect.gen(function* checkRouteWorkloads() {
+        for (const route of ['productsBatch', 'adminProducts', 'job']) {
+          yield* requireSymmyRouteWorkload(principal, route);
+        }
+        const unknown = yield* Effect.flip(requireSymmyRouteWorkload(principal, 'unknownRoute'));
+        expect(unknown.code).toBe('forbidden');
+      }).pipe(Effect.provide(current.layer));
+      expect(current.purposes).toEqual(['admit', 'read', 'poll']);
+      expect(current.calls).toHaveLength(0);
+      const revoked = yield* fixture({ activeBinding: false });
+      const failure = yield* requireSymmyRouteWorkload(principal, 'job').pipe(
+        Effect.flip,
+        Effect.provide(revoked.layer),
+      );
+      expect(failure.code).toBe('forbidden');
+    }),
 );
 
 it.effect('refuses an admit-purpose claim for a read route before requesting owner authority', () =>

@@ -4,7 +4,11 @@ import {
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
-import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
+import {
+  GatewayAuthenticationRequiredProblemSchema,
+  GatewayForbiddenProblemSchema,
+  GatewayRateLimitedProblemSchema,
+} from '@app/shared-contracts';
 import {
   decodeSymmyItemOutcome,
   SYMMY_FIXTURE_ROUTES,
@@ -288,6 +292,8 @@ const publicReadBody = (path: string, references: readonly string[]) => {
 const idempotencyKey = 'fixture-job-attempt';
 const validKey = 'fedcba9876543210fedcba9876543210';
 const wrongKindKey = 'synthetic-other-kind-key';
+const rateLimitedKey = 'synthetic-rate-limited-key';
+const unavailableKey = 'synthetic-unavailable-key';
 const revision = 'fixture-approved-revision';
 const apiBaseUrl = moduleReleaseApiBaseUrl('symmy-integration', 'fixture-build');
 const releasePath = '/module-api/symmy-integration/fixture-build/symmy-integration-api';
@@ -303,6 +309,13 @@ const forbidden = GatewayForbiddenProblemSchema.make({
   status: 403,
   title: 'Gateway context forbidden',
   type: 'https://ontos.dev/problems/gateway-forbidden',
+});
+const rateLimited = GatewayRateLimitedProblemSchema.make({
+  detail: 'Too many gateway requests.',
+  retryAfterSeconds: 30,
+  status: 429,
+  title: 'Gateway rate limited',
+  type: 'https://ontos.dev/problems/gateway-rate-limited',
 });
 
 const fixtureApi = HttpApi.make(ShellAuthenticationApi.identifier)
@@ -336,6 +349,7 @@ const start = ({
   readonly ownerFetch?: typeof fetch;
 } = {}) => {
   const authAttempts: string[] = [];
+  const admissionRoutes: string[] = [];
   const logs: ReturnType<typeof Logger.formatStructured.log>[] = [];
   const logger = Logger.layer([
     Logger.make((options) => {
@@ -360,11 +374,18 @@ const start = ({
       return yield* result ?? Effect.fail(symmyUnavailableProblem);
     });
   const ingress = Layer.succeed(SymmyIngress, {
-    admit: (key) =>
+    admit: (key, _request, route) =>
       Effect.gen(function* authorizeFixture() {
         authAttempts.push(key);
+        admissionRoutes.push(route);
         if (key === wrongKindKey) {
           return yield* Effect.fail(forbidden);
+        }
+        if (key === rateLimitedKey) {
+          return yield* Effect.fail(rateLimited);
+        }
+        if (key === unavailableKey) {
+          return yield* Effect.fail(symmyUnavailableProblem);
         }
         if (key !== validKey) {
           return yield* Effect.fail(invalid);
@@ -412,6 +433,7 @@ const start = ({
     openapi: { path: '/openapi.json' },
   });
   return {
+    admissionRoutes,
     assertions: () => assertions,
     authAttempts,
     dispose: runtime.dispose,
@@ -2672,8 +2694,8 @@ it.effect('authenticates and admits the caller of every route before decoding or
           : server.request(`${path}?audience=outside-module`, { headers: credential, method: definition.method }),
       );
     };
-    const routes = Object.values({ ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES });
-    for (const definition of routes) {
+    const routes = Object.entries({ ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES });
+    for (const [, definition] of routes) {
       for (const key of [undefined, 'wrong-key']) {
         const unauthenticated = yield* send(definition, key);
         expect(unauthenticated.status).toBe(401);
@@ -2682,13 +2704,27 @@ it.effect('authenticates and admits the caller of every route before decoding or
         expect(yield* Effect.promise(() => unauthenticated.json())).toEqual(invalid);
       }
       expect((yield* send(definition, wrongKindKey)).status).toBe(403);
+      // Admission's own 429 and 503 answer the request before any validation problem.
+      for (const [key, problem] of [
+        [rateLimitedKey, rateLimited],
+        [unavailableKey, symmyUnavailableProblem],
+      ] as const) {
+        const refused = yield* send(definition, key);
+        expect(refused.status).toBe(problem.status);
+        expect(refused.headers.get('cache-control')).toBe('no-store');
+        expect(yield* Effect.promise(() => refused.json())).toEqual(problem);
+      }
       const admitted = yield* send(definition, validKey);
       expect(admitted.status).toBe(400);
+      expect(admitted.headers.get('cache-control')).toBe('no-store');
       expect(yield* Effect.promise(() => admitted.json())).toMatchObject({
         type: 'https://ontos.dev/problems/symmy-invalid',
       });
     }
-    expect(server.authAttempts).toEqual(routes.flatMap(() => ['wrong-key', wrongKindKey, validKey]));
+    const attempts = ['wrong-key', wrongKindKey, rateLimitedKey, unavailableKey, validKey];
+    expect(server.authAttempts).toEqual(routes.flatMap(() => attempts));
+    // Each admission names the matched endpoint, whose workload it checks before decoding.
+    expect(server.admissionRoutes).toEqual(routes.flatMap(([route]) => attempts.map(() => route)));
     expect(forwarded).toEqual([]);
   }),
 );
