@@ -9,10 +9,12 @@ import { isMap, isSeq, parseDocument } from 'yaml';
  * environment pushes a copy that names that environment in every build and runtime, so its services never
  * run stage-only behaviour. Every runtime reaches SpiceDB over TLS and pins the in-project `spicedb`
  * service's gRPC certificate (`SPICEDB_CA_CERT`); production's copy also points every runtime at
- * production's SpiceDB endpoint, which that certificate must name.
+ * production's SpiceDB endpoint, which that certificate must name, and sets `ONTOS_INTERNAL_SYMMY_INGRESS` to 0 in
+ * every setup that names it, so production's Shell never mounts the stage-only Symmy REST ingress.
  */
 export const DEPLOYMENT_ENVIRONMENT_VARIABLE = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 export const SPICEDB_ENDPOINT_VARIABLE = 'SPICEDB_ENDPOINT';
+export const SYMMY_INGRESS_VARIABLE = 'ONTOS_INTERNAL_SYMMY_INGRESS';
 
 export const DeploymentEnvironmentSchema = Schema.Literals(['production', 'stage']);
 export type DeploymentEnvironment = typeof DeploymentEnvironmentSchema.Type;
@@ -97,6 +99,9 @@ const configureZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnviro
       }
       for (const path of endpointPaths) {
         document.setIn(path, target.spiceDbEndpoint);
+      }
+      for (const path of variablePaths(document, setupCount, SYMMY_INGRESS_VARIABLE)) {
+        document.setIn(path, '0');
       }
     }
     return document.toString({ lineWidth: 0 });

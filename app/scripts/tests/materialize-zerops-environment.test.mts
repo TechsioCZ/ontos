@@ -5,7 +5,11 @@ import { Array as Arr, Effect, Exit, FileSystem, Layer, Order, Schema } from 'ef
 import { expect, it } from 'effect-rstest';
 import { parseDocument } from 'yaml';
 
-import { materializeZeropsEnvironment, materializeZeropsSetupFiles } from '../materialize-zerops-environment.mts';
+import {
+  materializeZeropsEnvironment,
+  materializeZeropsSetupFiles,
+  SYMMY_INGRESS_VARIABLE,
+} from '../materialize-zerops-environment.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 
 const HOST = 'app';
@@ -25,6 +29,7 @@ const fixture = `zerops:
       buildCommands:
         - echo "app build"
       envVariables:
+        ONTOS_INTERNAL_SYMMY_INGRESS: '1'
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ZE_FAIL_BUILD: 'true'
     run:
@@ -129,6 +134,7 @@ it.effect('only rewrites the selected setup for production and preserves its TLS
     expected.setIn(['zerops', 1, 'build', 'envVariables', 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'], 'production');
     expected.setIn(['zerops', 1, 'run', 'envVariables', 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'], 'production');
     expected.setIn(['zerops', 1, 'run', 'envVariables', 'SPICEDB_ENDPOINT'], PRODUCTION_SPICEDB_ENDPOINT);
+    expected.setIn(['zerops', 1, 'build', 'envVariables', SYMMY_INGRESS_VARIABLE], '0');
     const text = yield* materializeZeropsEnvironment(
       fixture,
       { environment: 'production', spiceDbEndpoint: PRODUCTION_SPICEDB_ENDPOINT },
@@ -161,6 +167,33 @@ for (const bytes of [49_999, 50_000, 50_001]) {
 }
 
 const production = { environment: 'production', spiceDbEndpoint: PRODUCTION_SPICEDB_ENDPOINT } as const;
+
+it.effect('unmounts the Symmy ingress in every production setup and keeps it on stage', () =>
+  Effect.gen(function* unmountsSymmyIngress() {
+    const input = parseDocument(fixture);
+    input.setIn(['zerops', 2, 'run', 'envVariables', SYMMY_INGRESS_VARIABLE], '1');
+    const flagged = [
+      ['zerops', 1, 'build', 'envVariables', SYMMY_INGRESS_VARIABLE],
+      ['zerops', 2, 'run', 'envVariables', SYMMY_INGRESS_VARIABLE],
+    ];
+    const productionFiles = yield* materializeZeropsSetupFiles(input.toString(), production);
+    const rejoined = parseDocument(
+      `zerops:\n${productionFiles.map(({ file }) => file.replace(/^zerops:\n/u, '')).join('')}`,
+    );
+    for (const path of flagged) {
+      expect(rejoined.getIn(path)).toBe('0');
+    }
+    expect(rejoined.hasIn(['zerops', 1, 'run', 'envVariables', SYMMY_INGRESS_VARIABLE])).toBe(false);
+    const stageText = yield* materializeZeropsEnvironment(input.toString(), stage);
+    expect(parseDocument(stageText).toJS()).toEqual(input.toJS());
+    const unflagged = parseDocument(fixture);
+    unflagged.deleteIn(flagged[0]);
+    const expected = parseDocument(yield* materializeZeropsEnvironment(fixture, production));
+    expected.deleteIn(flagged[0]);
+    const text = yield* materializeZeropsEnvironment(unflagged.toString(), production);
+    expect(parseDocument(text).toJS()).toEqual(expected.toJS());
+  }),
+);
 
 it.effect('splits every setup into one pushable file per setup', () =>
   Effect.gen(function* splitsSetups() {

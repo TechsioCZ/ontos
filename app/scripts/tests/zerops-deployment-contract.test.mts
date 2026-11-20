@@ -9,6 +9,7 @@ import {
   materializeZeropsEnvironment,
   materializeZeropsSetupFiles,
   SPICEDB_ENDPOINT_VARIABLE,
+  SYMMY_INGRESS_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { MUTATION_MARKER } from '../zerops/delivery-plan.mts';
 import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
@@ -393,6 +394,7 @@ it.effect('materializes every Zerops setup with the deploying environment named 
     const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(zeropsYaml));
     let environmentCount = 0;
     let endpointCount = 0;
+    let ingressCount = 0;
     for (const [index] of zerops.entries()) {
       for (const phase of ['build', 'run']) {
         const environment = ['zerops', index, phase, 'envVariables'];
@@ -413,10 +415,17 @@ it.effect('materializes every Zerops setup with the deploying environment named 
           source.setIn(endpoint, productionEndpoint);
           endpointCount += 1;
         }
+        const ingress = [...environment, SYMMY_INGRESS_VARIABLE];
+        if (source.hasIn(ingress)) {
+          expect(actual.getIn(ingress)).toBe('0');
+          source.setIn(ingress, '0');
+          ingressCount += 1;
+        }
       }
     }
     expect(environmentCount).toBeGreaterThan(0);
     expect(endpointCount).toBeGreaterThan(0);
+    expect(ingressCount).toBeGreaterThan(0);
     expect(Schema.decodeUnknownSync(Schema.Unknown)(actual.toJS())).toEqual(
       Schema.decodeUnknownSync(Schema.Unknown)(source.toJS()),
     );
