@@ -68,6 +68,8 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
+import type { TrustedPrincipalContext } from '../../src/actions/principal-context.ts';
+import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { assetCurrentRead } from '../../src/generated-reads/asset-current.ts';
 import { assetDownloadRead } from '../../src/generated-reads/asset-download.ts';
 import { assetMetadataRead } from '../../src/generated-reads/asset-metadata.ts';
@@ -606,13 +608,18 @@ const memberWithoutRole = (
 
 /** The carrier a descriptor hands the gate: only what it declares, so a missing declaration stays missing. */
 const carrierOf = (descriptor: {
+  readonly accessActor?: GateInput['carrier']['accessActor'];
   readonly accessDeclaration?: GateInput['carrier']['accessDeclaration'];
   readonly accessWorkload?: GateInput['carrier']['accessWorkload'];
 }): GateInput['carrier'] =>
   withOptional(
-    withOptional({}, 'accessDeclaration', descriptor.accessDeclaration),
-    'accessWorkload',
-    descriptor.accessWorkload,
+    withOptional(
+      withOptional({}, 'accessDeclaration', descriptor.accessDeclaration),
+      'accessWorkload',
+      descriptor.accessWorkload,
+    ),
+    'accessActor',
+    descriptor.accessActor,
   );
 
 const targetOf = (recordKey: string) => ({
@@ -927,6 +934,14 @@ const downloadAs = (
  * The Current V1 owner read (#1443) through the real runtime as one principal: one governed call for a whole set of
  * refs. The provider is the in-memory double unless the case injects another, and the call reads no byte.
  */
+/** The requester's scope with the calling module sealed beside it, exactly as the gateway verifier seals it (D4). */
+const relayedBy = <Requester extends TrustedPrincipalContext>(requester: Requester, appId: string): Requester =>
+  trustVerifiedGatewayPrincipalContext(requester, 'a'.repeat(64), undefined, {
+    appId,
+    buildMarker: `${appId}-build`,
+    principalId: uid(7777),
+  });
+
 const currentAs = (
   world: MediaWorld,
   principalId: string,
@@ -2323,6 +2338,61 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             // The tenant-wide owner sees both: the narrowing is the holder's selected company, not the asset.
             const asOwner = yield* currentAs(world, OWNER, [own, other]);
             expect(asOwner.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE', 'AVAILABLE']);
+          }),
+        ),
+    );
+    suite.effect(
+      'a module that relays its requester gets Current only for a requester who holds it, only from an allow-listed module, and never any other media capability',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* relayedRequester() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [CURRENT], principalId: CURRENT_HOLDER, slot: 12 });
+            yield* grantOnly(world, seeded, { keys: [METADATA, DOWNLOAD], principalId: METADATA_HOLDER, slot: 3 });
+            yield* reconcile(scenario);
+            const ref = yield* readyWithBytes(world, 'cur-relayed');
+            const callsBefore = yield* providerCalls(world);
+
+            // The gate's answer for a requester relayed by a module: the requester's own right decides, `rights`.
+            const decisionFor = Effect.fn('CoreMediaAuthorizationTest.relayedDecision')(function* relayedDecision(
+              descriptor: Parameters<typeof carrierOf>[0],
+              principalId: string,
+              appId: string,
+            ) {
+              return yield* world.live.boundGate.decide({
+                carrier: carrierOf(descriptor),
+                legalEntityScope: 'optional',
+                now: DECISION_AT,
+                scope: relayedBy(yield* scenario.scopeFor(principalId), appId),
+                target: targetOf(ref.resourceId),
+              });
+            });
+            const current = assetCurrentRead.descriptor;
+            // Catalog relays a requester who holds Current: allowed, and that very read answers the requester's call.
+            expect((yield* decisionFor(current, CURRENT_HOLDER, 'catalog')).outcome).toBe('ALLOWED');
+            expect((yield* currentAs(world, CURRENT_HOLDER, [ref])).entries.map(({ kind }) => kind)).toEqual([
+              'AVAILABLE',
+            ]);
+            // The module adds no permission: a requester without Current is refused, whoever relays them.
+            for (const requester of [METADATA_HOLDER, PLAIN]) {
+              expect((yield* decisionFor(current, requester, 'catalog')).outcome).toBe('DENIED');
+            }
+            // Only the allow-listed module may relay: another module, even for a holder, is refused by the gate.
+            const otherModule = yield* decisionFor(current, CURRENT_HOLDER, 'pricing');
+            expect(otherModule.outcome).toBe('DENIED');
+            expect(otherModule.reasons.map(({ code }) => code)).toContain('deny.actor_unbound');
+            // A relayed requester reaches no other Core Media capability: the carriers declare no module actor.
+            for (const descriptor of [assetMetadataRead.descriptor, assetDownloadRead.descriptor]) {
+              const decision = yield* decisionFor(descriptor, METADATA_HOLDER, 'catalog');
+              expect(decision.outcome).toBe('DENIED');
+              expect(decision.reasons.map(({ code }) => code)).toContain('deny.actor_forbidden');
+            }
+            // Refusals reached no provider: only the one allowed call stat'ed the object.
+            const stats = (yield* world.storage.calls)
+              .slice(callsBefore)
+              .filter(({ operation }) => operation === 'stat');
+            expect(stats).toHaveLength(1);
           }),
         ),
     );

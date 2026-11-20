@@ -14774,6 +14774,12 @@
             "moduleKey": "core.media",
             "role": "api",
             "scope": "system"
+          },
+          "actor": {
+            "callers": [
+              "catalog"
+            ],
+            "subject": "rights"
           }
         },
         {
