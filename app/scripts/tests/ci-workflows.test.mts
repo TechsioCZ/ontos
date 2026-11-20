@@ -784,6 +784,174 @@ it('plans without app dependencies and publishes only the exact changed paths', 
   });
 });
 
+const LEAN_CORE_STEP = 'Lean Core Dependencies';
+const BASH_SHEBANG = '#!/bin/bash';
+const COMPARISON_BASE_OUTPUT = 'needs.ci-plan.outputs.base';
+const ComparisonBaseStepSchema = Schema.Struct({
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  name: Schema.optional(Schema.String),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+const ComparisonBaseWorkflowSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      outputs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      permissions: Schema.optional(Schema.Unknown),
+      steps: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            ...ComparisonBaseStepSchema.fields,
+            parallel: Schema.optional(Schema.Array(ComparisonBaseStepSchema)),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
+it('publishes the planner comparison base only to the Lean Core row, which fetches that commit alone', () => {
+  const { jobs } = Schema.decodeUnknownSync(ComparisonBaseWorkflowSchema)(readGateWorkflow());
+  expect(jobs[CI_PLAN_JOB]?.outputs?.base).toBe(expression('steps.changes.outputs.base'));
+  const readers = Object.entries(jobs).flatMap(([job, { steps = [] }]) =>
+    steps
+      .flatMap((step) => step.parallel ?? [step])
+      .filter((step) => JSON.stringify(step).includes(COMPARISON_BASE_OUTPUT))
+      .map((step) => `${job}: ${step.name ?? ''}`),
+  );
+  expect(readers).toEqual([`${STATIC_CONTRACTS_JOB}: ${LEAN_CORE_STEP}`]);
+  // The checkout every static check shares stays one commit deep and credential-free, and the job holds no
+  // token: the row fetches its one comparison commit over the public remote.
+  const staticContracts = jobs[STATIC_CONTRACTS_JOB];
+  const checkout = staticContracts?.steps?.find(({ uses }) => uses?.startsWith('actions/checkout@') === true);
+  expect(checkout?.with).toEqual({ 'fetch-depth': 1, 'persist-credentials': false });
+  expect(staticContracts?.permissions).toBeUndefined();
+  expect(JSON.stringify(staticContracts)).not.toMatch(/token|secrets\./iu);
+});
+
+const leanCoreChecked = (comparison: string) => `mise exec -- pnpm lean-core:check --base ${comparison}`;
+
+it.live(
+  'runs the Lean Core shrink-only rule against that base, the first parent on schedule and dispatch, and fails closed without one',
+  () =>
+    Effect.sync(() => {
+      const { jobs } = Schema.decodeUnknownSync(ComparisonBaseWorkflowSchema)(readGateWorkflow());
+      const leanCore = (jobs[STATIC_CONTRACTS_JOB]?.steps ?? [])
+        .flatMap(({ parallel }) => parallel ?? [])
+        .find(({ name }) => name === LEAN_CORE_STEP);
+      expect(leanCore?.env).toEqual({ COMPARISON_BASE: expression(COMPARISON_BASE_OUTPUT) });
+      const head = 'a'.repeat(40);
+      const parent = 'b'.repeat(40);
+      const base = 'c'.repeat(40);
+      /** Runs the row with a recording git, whose fetch exits with fetchExit, and a recording mise. */
+      const run = (event: string, comparisonBase: string, fetchExit = 0) => {
+        const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lean-core-row-'));
+        try {
+          const calls = path.join(directory, 'calls');
+          writeFileSync(calls, '');
+          const record = `printf '%s\\n' "$(basename "$0") $*" >> '${calls}'`;
+          writeFileSync(
+            path.join(directory, 'git'),
+            [
+              BASH_SHEBANG,
+              record,
+              'case "$1" in',
+              `  fetch) exit ${fetchExit} ;;`,
+              `  rev-parse) echo ${parent} ;;`,
+              'esac',
+              '',
+            ].join('\n'),
+          );
+          writeFileSync(path.join(directory, 'mise'), [BASH_SHEBANG, record, ''].join('\n'));
+          chmodSync(path.join(directory, 'git'), 0o755);
+          chmodSync(path.join(directory, 'mise'), 0o755);
+          const passed = stepPasses(leanCore?.run ?? 'exit 1', {
+            COMPARISON_BASE: comparisonBase,
+            GITHUB_EVENT_NAME: event,
+            GITHUB_SHA: head,
+            PATH: `${directory}:${STEP_PATH}`,
+          });
+          return { calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean), passed };
+        } finally {
+          rmSync(directory, { force: true, recursive: true });
+        }
+      };
+      for (const event of ['pull_request', 'merge_group', 'push']) {
+        expect(run(event, base), event).toEqual({
+          calls: [`git fetch --quiet --no-tags --depth=1 origin ${base}`, leanCoreChecked(base)],
+          passed: true,
+        });
+        // No published base, or a base that is not a commit name, fails the row before anything runs.
+        for (const missing of ['', 'HEAD~1']) {
+          expect(run(event, missing), `${event} ${missing}`).toEqual({ calls: [], passed: false });
+        }
+      }
+      expect(run('merge_group', base, 128)).toEqual({
+        calls: [`git fetch --quiet --no-tags --depth=1 origin ${base}`],
+        passed: false,
+      });
+      for (const event of ['schedule', 'workflow_dispatch']) {
+        expect(run(event, ''), event).toEqual({
+          calls: [
+            `git fetch --quiet --no-tags --depth=2 origin ${head}`,
+            'git rev-parse --verify HEAD^1^{commit}',
+            leanCoreChecked(parent),
+          ],
+          passed: true,
+        });
+      }
+    }),
+);
+
+it.live('publishes as the base exactly the commit the planner compared with, and none without that comparison', () =>
+  Effect.sync(() => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-base-'));
+    const git = (...args: string[]) =>
+      execFileSync('/usr/bin/git', ['-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid', ...args], {
+        cwd: directory,
+        encoding: 'utf-8',
+      }).trim();
+    try {
+      git('init', '--quiet');
+      writeFileSync(path.join(directory, 'runtime.ts'), 'before\n');
+      git('add', '.');
+      git('commit', '--quiet', '-m', 'base');
+      const base = git('rev-parse', 'HEAD');
+      writeFileSync(path.join(directory, 'runtime.ts'), 'after\n');
+      git('commit', '--quiet', '-am', 'change');
+      const published = (event: string, comparison: string) => {
+        const output = path.join(directory, 'outputs');
+        writeFileSync(output, '');
+        execFileSync(
+          '/bin/bash',
+          [fileURLToPath(new URL('../plan-ci-changes.sh', import.meta.url)), path.join(directory, 'paths')],
+          {
+            cwd: directory,
+            env: {
+              BASE_SHA: comparison,
+              GITHUB_EVENT_NAME: event,
+              GITHUB_OUTPUT: output,
+              HEAD_SHA: git('rev-parse', 'HEAD'),
+              PATH: STEP_PATH,
+            },
+            stdio: 'pipe',
+          },
+        );
+        return readFileSync(output, 'utf-8')
+          .split('\n')
+          .filter((line) => line.startsWith('base='));
+      };
+      expect(published('merge_group', base)).toEqual([`base=${base}`]);
+      expect(published('merge_group', '0'.repeat(40))).toEqual(['base=']);
+      expect(published('schedule', base)).toEqual(['base=']);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }),
+);
+
 /** Helper jobs that run a planned list, with the ci-plan output that lists their rows. */
 const PLANNED_HELPERS = [
   [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
