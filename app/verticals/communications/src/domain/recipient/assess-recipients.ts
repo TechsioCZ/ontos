@@ -4,6 +4,7 @@ import type { CommunicationDecisionRequest, RecipientFact } from '../catalog/dec
 import type { TransactionalMessageType } from '../catalog/message-type.ts';
 import type { PrivacyEvidence } from '../catalog/vocabulary.ts';
 import { resourceRefKey } from '../catalog/vocabulary.ts';
+import { safeCauseSummaryOf } from '../intake/safe-cause.ts';
 import { bindOriginalRecipients } from './bind-original-recipients.ts';
 import type { BoundRecipient } from './bind-original-recipients.ts';
 import { RecipientCurrentGate, RecipientGateVerdict } from './current-gate.ts';
@@ -11,6 +12,7 @@ import type { RecipientGateQuery } from './current-gate.ts';
 import { endpointMaskIsSafe } from './original-binding.ts';
 import type {
   OriginalContactBinding,
+  OriginalContactEvidence,
   OriginalRecipientBinding,
   ProtectedEndpoint,
   RecipientScope,
@@ -43,10 +45,28 @@ export interface EvaluatedRecipient {
 /** Bounds parallel owner calls only; it never limits how many recipients a request may have. */
 export const GATE_CONCURRENCY = 8;
 
-/** The owner answered for the contact and revision the source evidenced, and for no other. */
+/**
+ * The owner echoed the revision or snapshot reference the original evidence names, and the same one: an answer that
+ * omits it or names another cannot be told apart from an answer for another version of the contact, so it fails closed.
+ * An authoritative reference names neither a revision nor a snapshot, so the contact reference is its whole identity.
+ */
+const echoesEvidence = (endpoint: ProtectedEndpoint, evidence: OriginalContactEvidence) => {
+  if (evidence.kind === 'VERSIONED_SNAPSHOT') {
+    return endpoint.contactRevision === evidence.contactRevision;
+  }
+  if (evidence.kind === 'HISTORICAL_SNAPSHOT') {
+    return (
+      endpoint.snapshotRef !== undefined &&
+      resourceRefKey(endpoint.snapshotRef) === resourceRefKey(evidence.snapshotRef)
+    );
+  }
+  return true;
+};
+
+/** The owner answered for the contact the source evidenced and for the revision or snapshot it names, and for no other. */
 const answersOriginalContact = (endpoint: ProtectedEndpoint, contact: OriginalContactBinding) =>
   resourceRefKey(endpoint.contactRef) === resourceRefKey(contact.contactRef) &&
-  (contact.evidence.kind !== 'VERSIONED_SNAPSHOT' || endpoint.contactRevision === contact.evidence.contactRevision);
+  echoesEvidence(endpoint, contact.evidence);
 
 /** A usable endpoint is allowed only for the original contact and with a mask that hides the address. */
 const assessEndpoint = (endpoint: ProtectedEndpoint, bound: BoundRecipient): RecipientAssessmentCase => {
@@ -93,9 +113,11 @@ export const checkBoundRecipient = (
       ),
       Effect.timeoutOption(gate.checkTimeout),
       Effect.map(Option.getOrElse(() => sourceUnavailable(bound))),
-      // Anything left is a defect of the owner adapter: it is logged, kept out of this recipient's result and
+      // Anything left is a defect of the owner adapter: it is logged by its safe kind only, kept out of this recipient's result and
       // turned into the same fail-closed outcome as an unavailable owner.
-      Effect.tapCause((cause) => Effect.logError('Recipient gate check failed unexpectedly; failing closed', cause)),
+      Effect.tapCause((cause) =>
+        Effect.logError('Recipient gate check failed unexpectedly; failing closed', safeCauseSummaryOf(cause)),
+      ),
       Effect.exit,
       Effect.map(Exit.match({ onFailure: () => sourceUnavailable(bound), onSuccess: identity })),
     ),

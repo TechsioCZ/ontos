@@ -49,9 +49,10 @@ export interface RecipientGateSettings {
 
 /**
  * TRUST BOUNDARY for the owner contract (d21-07): the domain only compares what the owner echoes. A real adapter
- * MUST echo and pin the contact reference and, for a versioned snapshot, the revision (or snapshot reference) it
- * actually resolved. An owner that omits or invents them can pass the echo check without having resolved the
- * original contact, so that echo is part of the owner contract, not something Communications can verify alone.
+ * MUST echo and pin the contact reference and the revision (versioned snapshot) or snapshot reference (historical
+ * snapshot) it actually resolved; an answer that omits it or names another is refused. An owner that invents them can
+ * still pass the echo check without having resolved the original contact, so that echo is part of the owner contract,
+ * not something Communications can verify alone.
  */
 export interface RecipientCurrentGateService extends RecipientGateSettings {
   /** Re-check the original recipient and endpoint now; an unreachable authority fails closed, never as stale data. */

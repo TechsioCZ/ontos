@@ -92,14 +92,15 @@ export const EndpointChannelSchema = Schema.String.check(
 /**
  * The original endpoint as its owner hands it over for the last stoppable handoff. The usable value is
  * `Redacted`: it prints as `<redacted>`, is never part of evidence, history or a log, and only the handoff adapter
- * unwraps it. `contactRef` and `contactRevision` echo which contact the owner resolved, so a gate that answered for
- * another contact is caught. `mask` is the only form that may be stored.
+ * unwraps it. `contactRef`, `contactRevision` and `snapshotRef` echo which contact and which revision or snapshot the
+ * owner resolved, so a gate that answered for another contact, revision or snapshot is caught. `mask` is the only form that may be stored.
  */
 export const ProtectedEndpointSchema = Schema.Struct({
   channel: EndpointChannelSchema,
   contactRef: CommunicationResourceRefSchema,
   contactRevision: Schema.optionalKey(RevisionSchema),
   mask: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80)),
+  snapshotRef: Schema.optionalKey(CommunicationResourceRefSchema),
   value: Schema.Redacted(Schema.String),
 });
 export type ProtectedEndpoint = typeof ProtectedEndpointSchema.Type;

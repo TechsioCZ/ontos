@@ -1,5 +1,5 @@
 import { findPostgresFailure } from '@app/core-runtime';
-import { Option, Schema } from 'effect';
+import { Cause, Option, Schema } from 'effect';
 
 /**
  * What a typed "unavailable" error may keep of the failure it replaces.
@@ -36,3 +36,23 @@ export const safeCauseOf = (cause: unknown): SafeCause => {
       constraint === undefined ? { kind, sqlState: code } : { constraint, kind, sqlState: code },
   });
 };
+
+/**
+ * What a log may print of a whole Cause: the safe kind of each of its reasons and never a message, a stack or the
+ * value itself. A defect of an owner adapter can carry the exact request, a recipient reference or a secret, so the
+ * raw Cause is never logged; this summary is.
+ */
+export interface SafeCauseSummary {
+  readonly reasons: readonly (SafeCause & { readonly type: 'Die' | 'Fail' | 'Interrupt' })[];
+}
+
+export const safeCauseSummaryOf = (cause: Cause.Cause<unknown>): SafeCauseSummary => ({
+  reasons: cause.reasons.map((reason) => {
+    if (Cause.isFailReason(reason)) {
+      return { ...safeCauseOf(reason.error), type: 'Fail' as const };
+    }
+    return Cause.isDieReason(reason)
+      ? { ...safeCauseOf(reason.defect), type: 'Die' as const }
+      : { kind: 'interrupt', type: 'Interrupt' as const };
+  }),
+});

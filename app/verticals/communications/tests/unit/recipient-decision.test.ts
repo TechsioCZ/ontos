@@ -1,4 +1,4 @@
-import { DateTime, Effect, Fiber, Result, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Logger, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -39,6 +39,8 @@ import {
   unusable,
   usable,
   usableForOtherContact,
+  usableForOtherEvidence,
+  usableWithoutEvidenceEcho,
   usableWithMask,
 } from './support/recipient-fixtures.ts';
 import type { OwnerAnswer } from './support/recipient-fixtures.ts';
@@ -413,6 +415,56 @@ describe('#1395 Rule: nothing is handed off on error, unavailable authority or a
   );
 
   it.effect.each([
+    ['a versioned snapshot', { contactRevision: 2, kind: 'VERSIONED_SNAPSHOT' }],
+    [
+      'a historical snapshot (the Auth evidence)',
+      {
+        kind: 'HISTORICAL_SNAPSHOT',
+        snapshotRef: { moduleId: 'fixture.party', resourceId: 'snapshot-1', resourceType: 'fixture.snapshot' },
+      },
+    ],
+  ] as const)(
+    'an owner that omits or changes the revision or snapshot it was asked about is not allowed for %s',
+    ([, evidence]) =>
+      Effect.gen(function* ownerDoesNotEchoEvidence() {
+        const input = evaluationInput(single, [
+          binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-original', { evidence }),
+        ]);
+        const faithful = yield* assess(input, { 'contact-original': usable() }).run;
+        const omitted = yield* assess(input, { 'contact-original': usableWithoutEvidenceEcho(ORIGINAL_ADDRESS) }).run;
+        const changed = yield* assess(input, { 'contact-original': usableForOtherEvidence(ORIGINAL_ADDRESS) }).run;
+
+        expect(faithful.map(({ assessment }) => assessmentSummary(assessment).outcome)).toEqual(['recipient-allowed']);
+        for (const evaluated of [omitted, changed]) {
+          expect(evaluated.map(({ assessment }) => assessmentSummary(assessment))).toEqual([
+            { outcome: 'recipient-not-allowed', reason: 'ENDPOINT_IDENTITY_CHANGED', recipient: 'recipient-a' },
+          ]);
+        }
+      }),
+  );
+
+  it.effect(
+    'an authoritative reference names no revision or snapshot, so the contact reference alone identifies it',
+    () =>
+      Effect.gen(function* authoritativeReference() {
+        const input = evaluationInput(single, [
+          binding(FIXTURE_ORIGINAL_ROLE, 'recipient-a', 'contact-original', {
+            evidence: { kind: 'AUTHORITATIVE_REFERENCE' },
+          }),
+        ]);
+        const allowed = yield* assess(input, { 'contact-original': usableWithoutEvidenceEcho(ORIGINAL_ADDRESS) }).run;
+        const other = yield* assess(input, {
+          'contact-original': usableForOtherContact(ORIGINAL_ADDRESS, 'contact-new'),
+        }).run;
+
+        expect(allowed.map(({ assessment }) => assessmentSummary(assessment).outcome)).toEqual(['recipient-allowed']);
+        expect(other.map(({ assessment }) => assessmentSummary(assessment))).toEqual([
+          { outcome: 'recipient-not-allowed', reason: 'ENDPOINT_IDENTITY_CHANGED', recipient: 'recipient-a' },
+        ]);
+      }),
+  );
+
+  it.effect.each([
     ['NOT_ALLOWED', 'PRIVACY_NOT_ALLOWED'],
     ['INDETERMINATE', 'PRIVACY_INDETERMINATE'],
   ] as const)(
@@ -468,6 +520,29 @@ describe('#1395 Rule: one failing owner check never takes the other recipients d
         authorization: 'SOURCE_UNAVAILABLE',
         reason: 'AUTHORITY_UNAVAILABLE',
       });
+    }),
+  );
+
+  it.effect('a defect carrying a secret is logged by its safe kind only, never by its raw cause', () =>
+    Effect.gen(function* secretBearingDefect() {
+      const logged: string[] = [];
+      const capture = Logger.make((options) => {
+        logged.push(JSON.stringify([options.message, String(options.cause)]));
+      });
+      const secret = 'customer-secret-9@example.test Bearer-token-xyz';
+      const leaking: OwnerAnswer = () => Effect.die(Object.assign(new Error(secret), { name: 'LeakyAdapterDefect' }));
+      const evaluated = yield* assess(evaluationInput(nRecipientPolicyType, approvers), {
+        'contact-a': usable('a@example.test'),
+        'contact-b': leaking,
+        'contact-c': usable('c@example.test'),
+      }).run.pipe(Effect.provide(Logger.layer([capture])));
+
+      expect(summaries(evaluated)).toEqual(othersStillEvaluated);
+      const text = logged.join('\n');
+      expect(text).toContain('failed unexpectedly');
+      expect(text).toContain('LeakyAdapterDefect');
+      expect(text).not.toContain('customer-secret-9');
+      expect(text).not.toContain('Bearer-token-xyz');
     }),
   );
 

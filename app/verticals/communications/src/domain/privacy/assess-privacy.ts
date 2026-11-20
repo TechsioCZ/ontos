@@ -10,13 +10,16 @@ import type {
   ProcessingEligibilityVerdictCase,
   UnavailableReason,
 } from './eligibility-gate.ts';
+import { safeCauseSummaryOf } from '../intake/safe-cause.ts';
 import { processingScopeKey, subjectLocatorKey } from './processing-scope.ts';
 import type { ProcessingScope } from './processing-scope.ts';
 
 /**
  * What Communications concludes from one Privacy answer for ONE exact scope (#1396, BR-01, BR-03, BR-04). Four
  * outcomes, none of them convertible into another:
- * - `Allowed`: the owner evidenced a Current ALLOWED for this very scope. It permits only to CONTINUE into the
+ * - `Allowed`: the owner evidenced a Current ALLOWED for the scope it ECHOED (controller, activity, processing scope,
+ *   purpose version, data and recipients); the channel, catalog purpose and subject locator are only DECLARED by the
+ *   adapter and not echoed by Privacy (`DECLARED_NOT_ECHOED`). It permits only to CONTINUE into the
  *   independent recipient, source and channel checks; it is not Permission, not a send and not a delivery.
  * - `NotAllowed`: the owner PROVED a prohibition of this scope, with its own evidence.
  * - `Indeterminate`: the owner answered but could not evidence a decision; no prohibition is proven.
@@ -49,17 +52,18 @@ const sameSet = (a: readonly string[], b: readonly string[]) => {
 };
 
 /**
- * The owner evaluated exactly the use that was asked about. Privacy's own subject reference is opaque to us; every
- * other dimension that is echoed must equal the question's, including the subject locator, the catalog purpose and the
- * channel the adapter bound the owner request to (Privacy's published scope has none of those three, so they are only
- * as trustworthy as the adapter's request binding). A decision for another scope is never applied, in either direction.
+ * The decision is for exactly the use that was asked about, in the two ways the evidence can say so, kept apart:
+ * - ECHOED by Privacy (`evaluatedScope`): controller, activity, processing scope, purpose and its version, data and
+ *   recipient dimensions. Only these are verified against the owner's own answer;
+ * - DECLARED by the adapter, NOT echoed (`declaredScope`): the subject locator, the catalog purpose and the channel.
+ *   Privacy's published scope has none of them, so ALLOWED proves nothing about them; they are only the adapter's request
+ *   binding, compared so that an answer an adapter correlated with another message, subject, purpose or channel is refused.
+ * A decision for another scope is never applied, in either direction.
  */
 const evidenceCoversScope = (evidence: EligibilityEvidence, scope: ProcessingScope) => {
   const echoed = evidence.evaluatedScope;
+  const declared = evidence.declaredScope;
   return (
-    subjectLocatorKey(echoed.subject) === subjectLocatorKey(scope.subject) &&
-    echoed.catalogPurposeRef === scope.catalogPurposeRef &&
-    echoed.channel === scope.channel &&
     echoed.controllerRef === scope.controllerRef &&
     echoed.operation === scope.operation &&
     echoed.purposeRef === scope.purposeRef &&
@@ -67,7 +71,10 @@ const evidenceCoversScope = (evidence: EligibilityEvidence, scope: ProcessingSco
     echoed.processingScopeRef.scopeId === scope.processingScopeRef.scopeId &&
     echoed.processingScopeRef.scopeType === scope.processingScopeRef.scopeType &&
     sameSet(echoed.dataCategoryRefs, scope.dataCategoryRefs) &&
-    sameSet(echoed.recipientRefs, scope.recipientRefs)
+    sameSet(echoed.recipientRefs, scope.recipientRefs) &&
+    subjectLocatorKey(declared.subject) === subjectLocatorKey(scope.subject) &&
+    declared.catalogPurposeRef === scope.catalogPurposeRef &&
+    declared.channel === scope.channel
   );
 };
 
@@ -115,8 +122,10 @@ export const assessPrivacyEligibility = Effect.fn('Communications.assessPrivacyE
     Effect.catchTag('ProcessingEligibilityUnavailable', ({ reason }) => Effect.succeed(unavailable(reason))),
     Effect.timeoutOption(gate.checkTimeout),
     Effect.map(Option.getOrElse(() => unavailable('OWNER_UNAVAILABLE'))),
-    // A defective adapter is logged, kept out of this result and treated as an unavailable owner.
-    Effect.tapCause((cause) => Effect.logError('Privacy eligibility check failed unexpectedly; failing closed', cause)),
+    // A defective adapter is logged by its safe kind only (never its raw cause), kept out of this result and treated as an unavailable owner.
+    Effect.tapCause((cause) =>
+      Effect.logError('Privacy eligibility check failed unexpectedly; failing closed', safeCauseSummaryOf(cause)),
+    ),
     Effect.exit,
     Effect.map(Exit.match({ onFailure: () => unavailable('OWNER_UNAVAILABLE'), onSuccess: identity })),
   );

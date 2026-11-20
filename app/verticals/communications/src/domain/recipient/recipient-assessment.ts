@@ -13,7 +13,8 @@ import type { OriginalRecipientBinding, ProtectedEndpoint } from './original-bin
  * Why the original recipient may not be used, as a current and owner-decided fact:
  * - SCOPE_MISMATCH: the binding was evidenced in another Tenant, Legal Entity, profile, Counterparty or Storefront;
  * - RECIPIENT_IDENTITY_CHANGED: the intent, binding and request no longer name the same recipient and slot;
- * - ENDPOINT_IDENTITY_CHANGED: the owner answered for another contact or revision than the original one;
+ * - ENDPOINT_IDENTITY_CHANGED: the owner answered for another contact, revision or snapshot than the original one, or did not echo the
+ *   revision or snapshot reference the original evidence names;
  * - ENDPOINT_MASK_UNSAFE: the owner's endpoint mask would expose the protected address, so it cannot be recorded;
  * - ORIGINAL_CONTACT_CHANGED: a handoff candidate carries another contact or evidence than the original binding;
  * - TYPE_REVISION_CHANGED: the intent was decided under another approved type revision than the one rechecked now;

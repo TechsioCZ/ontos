@@ -1,18 +1,6 @@
 import { Effect, Option, Predicate, Redacted } from 'effect';
 
 import {
-  attemptRetryLinks,
-  communicationDecisions,
-  communicationRequestConflicts,
-  communicationRequests,
-  deliveryAttempts,
-  intentHandoffStops,
-  intentRecoveryEvaluations,
-  intentResendLinks,
-  messageIntents,
-  providerObservations,
-} from '../../../verticals/communications/src/database/schema.ts';
-import {
   accessReads,
   nativeRuntimeClient,
   visibilityDouble,
@@ -37,25 +25,16 @@ export const allowedAccess = {
   [READ_MASK]: 'allowed',
 } as const;
 
-/** Every row of every Communications table of the world's Tenant, as the runtime role sees them. */
+/**
+ * Every row of EVERY table of the `communications` schema (enumerated from the database catalog, so no table is left out
+ * by a hand list) and of Core's real outbox tables (`core.outbox_messages`, `core.outbox_deliveries`), as the runtime role
+ * sees them for the world's Tenant. The in-process messages the Action collector held are scanned separately as `outboxes`.
+ */
 export const everyStoredRow = (world: AuthWorld) =>
-  world.database.inTenant(world.tenantId, (tx) =>
-    Effect.all(
-      {
-        attempts: tx.select().from(deliveryAttempts),
-        conflicts: tx.select().from(communicationRequestConflicts),
-        decisions: tx.select().from(communicationDecisions),
-        intents: tx.select().from(messageIntents),
-        observations: tx.select().from(providerObservations),
-        recoveries: tx.select().from(intentRecoveryEvaluations),
-        requests: tx.select().from(communicationRequests),
-        resends: tx.select().from(intentResendLinks),
-        retries: tx.select().from(attemptRetryLinks),
-        stops: tx.select().from(intentHandoffStops),
-      },
-      { concurrency: 1 },
-    ),
-  );
+  world.database.everyRowOf(world.tenantId, {
+    schemas: ['communications'],
+    tables: ['core.outbox_messages', 'core.outbox_deliveries'],
+  });
 
 /** The authorized history Reads of the world's Tenant, through Core's real Read lifecycle over the real owner SQL. */
 export const historyReads = Effect.fn('AuthCommunicationsChecks.reads')(function* reads(
@@ -108,7 +87,8 @@ const occursIn = (needle: string, haystack: string) =>
     : haystack.includes(needle);
 
 /**
- * Proves nothing secret was stored, shown or logged: scans every stored row, the self-outbox payloads, the requests Auth made,
+ * Proves nothing secret was stored, shown or logged: scans every row of every table of the communications schema, the
+ * real Core outbox rows of the Tenant, the outbox payloads the Action collected in process, the requests Auth made,
  * the safe history (list and detail of every intent) and the captured log lines for each of the given needles.
  */
 export const expectNoSecretAnywhere = Effect.fn('AuthCommunicationsChecks.noSecret')(function* scan(
@@ -116,7 +96,8 @@ export const expectNoSecretAnywhere = Effect.fn('AuthCommunicationsChecks.noSecr
   needles: readonly string[],
   logLines: readonly string[] = [],
 ) {
-  const stored = JSON.stringify(yield* everyStoredRow(world));
+  const tables = yield* everyStoredRow(world);
+  const stored = JSON.stringify(tables);
   const outbox = JSON.stringify(world.outboxes);
   const requests = JSON.stringify(world.submissions);
   const reads = yield* historyReads(world);
@@ -135,7 +116,8 @@ export const expectNoSecretAnywhere = Effect.fn('AuthCommunicationsChecks.noSecr
       haystack !== undefined && occursIn(needle, haystack) ? [`${where}: ${needle.slice(0, 4)}…`] : [],
     ),
   );
-  return found;
+  // A scan over no communications table at all proves nothing, so it is itself a finding.
+  return tables.some(({ table }) => table.startsWith('communications.')) ? found : [...found, 'rows: no table scanned'];
 });
 
 /** The link or code the recipient sees in a delivered mail. Only the test, playing the inbox, reads it. */

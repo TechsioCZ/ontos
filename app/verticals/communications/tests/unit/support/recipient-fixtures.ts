@@ -131,6 +131,14 @@ export type OwnerAnswer = (query: RecipientGateQuery) => OwnerReply;
 
 const SAFE_MASK = 'p***@example.test';
 
+/** What a faithful owner echoes of the original evidence: its revision or its snapshot reference. */
+const evidenceEcho = (evidence: RecipientGateQuery['contact']['evidence']) => {
+  if (evidence.kind === 'VERSIONED_SNAPSHOT') {
+    return { contactRevision: evidence.contactRevision };
+  }
+  return evidence.kind === 'HISTORICAL_SNAPSHOT' ? { snapshotRef: evidence.snapshotRef } : {};
+};
+
 const protectedEndpoint = (
   query: RecipientGateQuery,
   address: string,
@@ -144,10 +152,7 @@ const protectedEndpoint = (
     mask,
     value: Redacted.make(address),
   };
-  return RecipientGateVerdict.Usable({
-    endpoint:
-      evidence.kind === 'VERSIONED_SNAPSHOT' ? { ...endpoint, contactRevision: evidence.contactRevision } : endpoint,
-  });
+  return RecipientGateVerdict.Usable({ endpoint: { ...endpoint, ...evidenceEcho(evidence) } });
 };
 
 export const usable =
@@ -168,6 +173,49 @@ export const usableForOtherContact =
     Effect.succeed(
       protectedEndpoint(query, address, { ...query.contact.contactRef, resourceId: decodeResourceId(otherContactId) }),
     );
+
+/** An owner that answers for the original contact but echoes no revision and no snapshot reference at all. */
+export const usableWithoutEvidenceEcho =
+  (address: string): OwnerAnswer =>
+  (query) =>
+    Effect.succeed(
+      RecipientGateVerdict.Usable({
+        endpoint: {
+          channel: 'email',
+          contactRef: query.contact.contactRef,
+          mask: SAFE_MASK,
+          value: Redacted.make(address),
+        },
+      }),
+    );
+
+const otherEvidenceEcho = (evidence: RecipientGateQuery['contact']['evidence']) => {
+  if (evidence.kind === 'VERSIONED_SNAPSHOT') {
+    return { contactRevision: evidence.contactRevision + 1 };
+  }
+  return evidence.kind === 'HISTORICAL_SNAPSHOT'
+    ? { snapshotRef: { ...evidence.snapshotRef, resourceId: decodeResourceId('another-snapshot') } }
+    : {};
+};
+
+/** An owner that echoes another revision, or another snapshot reference, than the original evidence names. */
+export const usableForOtherEvidence =
+  (address: string): OwnerAnswer =>
+  (query) => {
+    const { evidence } = query.contact;
+    const other = otherEvidenceEcho(evidence);
+    return Effect.succeed(
+      RecipientGateVerdict.Usable({
+        endpoint: {
+          channel: 'email',
+          contactRef: query.contact.contactRef,
+          mask: SAFE_MASK,
+          value: Redacted.make(address),
+          ...other,
+        },
+      }),
+    );
+  };
 
 export const unusable =
   (reason: GateUnusableReason): OwnerAnswer =>

@@ -80,9 +80,13 @@ export const ownerEvidence = (
   decidedAt: string = FIXTURE_OWNER_DECISION_TIME,
 ): EligibilityEvidence => ({
   authoritativeReferences: [{ kind: 'FIXTURE_OWNER_FACT', reference: `fixture:${outcome}`, revision: '1' }],
-  evaluatedScope: {
+  declaredScope: {
+    basis: 'DECLARED_NOT_ECHOED',
     catalogPurposeRef: scope.catalogPurposeRef,
     channel: scope.channel,
+    subject: scope.subject,
+  },
+  evaluatedScope: {
     controllerRef: scope.controllerRef,
     dataCategoryRefs: scope.dataCategoryRefs,
     operation: scope.operation,
@@ -91,7 +95,6 @@ export const ownerEvidence = (
     purposeRef: scope.purposeRef,
     purposeVersionId: scope.purposeVersionId,
     recipientRefs: scope.recipientRefs,
-    subject: scope.subject,
   },
   policyRevisions: [{ policyRef: 'fixture:policy', revision: '1' }],
   reasonCodes,

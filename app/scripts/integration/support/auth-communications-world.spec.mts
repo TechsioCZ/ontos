@@ -278,10 +278,20 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
         }).pipe(Effect.mapError(() => new RecipientAuthorityUnavailable({ authority: 'SOURCE_OWNER' })));
         return Option.match(address, {
           onNone: () => RecipientGateVerdict.Unusable({ reason: 'SOURCE_NO_LONGER_VALID' }),
-          onSome: (value) =>
-            RecipientGateVerdict.Usable({
-              endpoint: { channel: 'email', contactRef: query.contact.contactRef, mask: maskedAddressOf(value), value },
-            }),
+          onSome: (value) => {
+            const endpoint = {
+              channel: 'email',
+              contactRef: query.contact.contactRef,
+              mask: maskedAddressOf(value),
+              value,
+            };
+            const { evidence } = query.contact;
+            // The owner echoes the snapshot it resolved, exactly as the contact binding names it.
+            return RecipientGateVerdict.Usable({
+              endpoint:
+                evidence.kind === 'HISTORICAL_SNAPSHOT' ? { ...endpoint, snapshotRef: evidence.snapshotRef } : endpoint,
+            });
+          },
         });
       }),
     checkTimeout: TEST_GATE_CHECK_TIMEOUT,

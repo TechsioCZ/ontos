@@ -23,22 +23,20 @@ export type { UnavailableReason } from './eligibility-errors.ts';
  * - provider uncertainty, which is not asked here (step 22, reconciliation).
  */
 
+/** The marker of a scope dimension the owner did not echo: it is declared by the adapter and not proven by Privacy. */
+export const DECLARED_NOT_ECHOED = 'DECLARED_NOT_ECHOED' as const;
+
 /** Safe references to the facts behind an owner decision; never a payload, a secret or a consent history copy. */
 const EligibilityEvidenceSchema = Schema.Struct({
   authoritativeReferences: Schema.Array(
     Schema.Struct({ kind: Schema.String, reference: Schema.String, revision: Schema.String }),
   ),
   /**
-   * The exact scope the decision was evaluated for, so a decision for another use is recognized and never applied.
-   * Privacy's published scope has controller, activity, processing scope, purpose and its version, data and recipient
-   * dimensions and its own opaque subject. It has NO channel, no catalog purpose key and no locator of the subject.
-   * Those three are the request binding of the adapter: the very scope it put to the owner for this answer, so an answer
-   * correlated with another message, subject, purpose or channel is refused. They are exactly as trustworthy as the
-   * adapter (see the trust boundary on the gate); Privacy's own subject reference is opaque and is not compared.
+   * The scope Privacy ITSELF reported it evaluated: controller, activity, processing scope, purpose and its version, data
+   * and recipient dimensions and its own opaque subject. Only these are echoed by the owner, so only these prove that the
+   * decision was for the use that was asked about; a decision for another use is recognized and never applied.
    */
   evaluatedScope: Schema.Struct({
-    catalogPurposeRef: PrivacyPurposeKeySchema,
-    channel: EndpointChannelSchema,
     controllerRef: Schema.String,
     dataCategoryRefs: Schema.Array(Schema.String),
     operation: Schema.String,
@@ -47,6 +45,17 @@ const EligibilityEvidenceSchema = Schema.Struct({
     purposeRef: Schema.String,
     purposeVersionId: PrivacyPurposeVersionIdSchema,
     recipientRefs: Schema.Array(Schema.String),
+  }),
+  /**
+   * What the adapter DECLARES it asked about, NOT echoed by Privacy: Privacy's published request and scope carry no
+   * channel, no catalog purpose key and no locator of the subject (it resolves its own subject from the located record).
+   * They are the adapter's own request binding, only as trustworthy as the adapter (see the trust boundary on the gate),
+   * so an ALLOWED proves nothing about them and they are never presented as owner-verified evidence.
+   */
+  declaredScope: Schema.Struct({
+    basis: Schema.Literal(DECLARED_NOT_ECHOED),
+    catalogPurposeRef: PrivacyPurposeKeySchema,
+    channel: EndpointChannelSchema,
     subject: SubjectLocatorSchema,
   }),
   policyRevisions: Schema.Array(Schema.Struct({ policyRef: Schema.String, revision: Schema.String })),
@@ -66,7 +75,8 @@ export type EligibilityEvidence = typeof EligibilityEvidenceSchema.Type;
  * - PROTECTED_MATERIAL: Privacy refuses the material as protected but supplied no evaluation evidence, so it is not
  *   reported as a Privacy prohibition (that needs the owner's own evidence);
  * - EVIDENCE_MISSING: a denial arrived without the owner evidence that a proven prohibition requires;
- * - EVIDENCE_SCOPE_MISMATCH: the owner decision is for another use than the one asked about, so it is not applied;
+ * - EVIDENCE_SCOPE_MISMATCH: the owner decision (its echoed scope) or the adapter's declared binding (channel, catalog
+ *   purpose, subject locator) is for another use than the one asked about, so it is not applied;
  * - EVIDENCE_INCONSISTENT: the decision contradicts its own evidence.
  */
 const IndeterminateCauseSchema = Schema.Literals([

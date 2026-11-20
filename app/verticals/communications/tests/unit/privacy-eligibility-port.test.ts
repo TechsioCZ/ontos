@@ -1,4 +1,4 @@
-import { DateTime, Effect, Fiber, Result, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Logger, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -213,6 +213,26 @@ describe('#1396 Rule: an ALLOWED is never reused across purpose, controller, cha
     }),
   );
 
+  it.effect('Scenario: a defect carrying a secret is logged by its safe kind only, never by its raw cause', () =>
+    Effect.gen(function* secretBearingDefect() {
+      const logged: string[] = [];
+      const capture = Logger.make((options) => {
+        logged.push(JSON.stringify([options.message, String(options.cause)]));
+      });
+      const secret = 'customer-secret-9@example.test Bearer-token-xyz';
+      const assessment = yield* assess({
+        'recipient-a': () => Effect.die(Object.assign(new Error(secret), { name: 'LeakyAdapterDefect' })),
+      }).run.pipe(Effect.provide(Logger.layer([capture])));
+
+      expect(assessmentSummary(assessment)).toEqual({ kind: 'Unavailable', reason: 'OWNER_UNAVAILABLE' });
+      const text = logged.join('\n');
+      expect(text).toContain('failed unexpectedly');
+      expect(text).toContain('LeakyAdapterDefect');
+      expect(text).not.toContain('customer-secret-9');
+      expect(text).not.toContain('Bearer-token-xyz');
+    }),
+  );
+
   it.effect('Scenario: a prohibition of an unrelated purpose (a marketing unsubscribe) does not block this one', () =>
     Effect.gen(function* unrelatedProhibition() {
       const assessment = yield* assess({ 'recipient-a': privacyAnswersFor(marketingScope, 'NOT_ALLOWED') }).run;
@@ -295,16 +315,18 @@ describe('#1396 Rule: an ALLOWED is never reused across purpose, controller, cha
     ['another Party target', { subject: partyTarget('party-two') }],
     ['another catalog purpose', { catalogPurposeRef: FIXTURE_MARKETING_PURPOSE }],
     ['another channel', { channel: 'sms' }],
-  ] as const)('Scenario: an answer echoing %s is refused as a scope mismatch, ALLOWED or not', ([, change]) =>
-    Effect.gen(function* echoOfAnotherUse() {
-      for (const outcome of ['ALLOWED', 'NOT_ALLOWED'] as const) {
-        const assessment = yield* assess({
-          'recipient-a': privacyAnswersFor(() => processingScope('recipient-a', change), outcome),
-        }).run;
-        expect(assessmentSummary(assessment)).toEqual({ cause: 'EVIDENCE_SCOPE_MISMATCH', kind: 'Indeterminate' });
-        expect(privacyEvidenceOf(assessment)).toBe('INDETERMINATE');
-      }
-    }),
+  ] as const)(
+    'Scenario: an adapter binding that declares %s is refused as a scope mismatch, ALLOWED or not',
+    ([, change]) =>
+      Effect.gen(function* echoOfAnotherUse() {
+        for (const outcome of ['ALLOWED', 'NOT_ALLOWED'] as const) {
+          const assessment = yield* assess({
+            'recipient-a': privacyAnswersFor(() => processingScope('recipient-a', change), outcome),
+          }).run;
+          expect(assessmentSummary(assessment)).toEqual({ cause: 'EVIDENCE_SCOPE_MISMATCH', kind: 'Indeterminate' });
+          expect(privacyEvidenceOf(assessment)).toBe('INDETERMINATE');
+        }
+      }),
   );
 
   it.effect('Scenario: a Party-target subject is asked, answered and compared like any other exact scope', () =>
@@ -421,6 +443,29 @@ const evaluatedDenial = (outcome: 'INDETERMINATE' | 'NOT_ALLOWED', evidenceOutco
   });
 
 describe('#1396 Rule: the Privacy owner public response maps to the three outcomes only on matching owner evidence', () => {
+  it('Scenario: the channel, catalog purpose and subject locator are declared by the adapter and never presented as echoed by Privacy', () => {
+    const verdict = verdictOf(allowedResponse('ALLOWED'));
+    const evidence = ProcessingEligibilityVerdict.$is('Allowed')(verdict) ? verdict.evidence : undefined;
+
+    expect(evidence?.declaredScope).toEqual({
+      basis: 'DECLARED_NOT_ECHOED',
+      catalogPurposeRef: sentScope.catalogPurposeRef,
+      channel: sentScope.channel,
+      subject: sentScope.subject,
+    });
+    // What Privacy evaluated holds only what the owner's own response echoed.
+    expect(Object.keys(evidence?.evaluatedScope ?? {}).toSorted()).toEqual([
+      'controllerRef',
+      'dataCategoryRefs',
+      'operation',
+      'privacySubjectRef',
+      'processingScopeRef',
+      'purposeRef',
+      'purposeVersionId',
+      'recipientRefs',
+    ]);
+  });
+
   it('Scenario: ALLOWED needs evidence that itself says ALLOWED', () => {
     expect(verdictSummary(verdictOf(allowedResponse('ALLOWED')))).toEqual({ kind: 'Allowed' });
     expect(verdictSummary(verdictOf(allowedResponse('NOT_ALLOWED')))).toEqual({

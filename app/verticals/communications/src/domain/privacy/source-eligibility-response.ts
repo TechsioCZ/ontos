@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { ProcessingEligibilityVerdict } from './eligibility-gate.ts';
+import { DECLARED_NOT_ECHOED, ProcessingEligibilityVerdict } from './eligibility-gate.ts';
 import type { UnavailableReason } from './eligibility-errors.ts';
 import type { EligibilityEvidence, ProcessingEligibilityVerdictCase } from './eligibility-gate.ts';
 import {
@@ -68,15 +68,19 @@ export const PrivacySourceEligibilityResponseSchema = Schema.Union([
 export type PrivacySourceEligibilityResponse = typeof PrivacySourceEligibilityResponseSchema.Type;
 
 /**
- * `sent` is the scope the adapter actually put to the owner for THIS response. Privacy's published scope does not echo
- * the channel, the catalog purpose key or the subject locator, so the evidence carries the request binding for them
- * and the assessment refuses a response that was correlated with another question.
+ * `sent` is the scope the adapter actually put to the owner for THIS response. Privacy's published request and scope
+ * carry no channel, no catalog purpose key and no subject locator, so the owner can echo none of them: they are filed
+ * under `declaredScope` as `DECLARED_NOT_ECHOED` (the adapter's own binding), never as part of what Privacy evaluated.
  */
 const safeEvidenceOf = (evidence: OwnerEvidence, sent: ProcessingScope): EligibilityEvidence => ({
   authoritativeReferences: evidence.authoritativeReferences,
-  evaluatedScope: {
+  declaredScope: {
+    basis: DECLARED_NOT_ECHOED,
     catalogPurposeRef: sent.catalogPurposeRef,
     channel: sent.channel,
+    subject: sent.subject,
+  },
+  evaluatedScope: {
     controllerRef: evidence.evaluatedScope.controllerRef,
     dataCategoryRefs: evidence.evaluatedScope.dataCategoryRefs,
     operation: evidence.evaluatedScope.operation,
@@ -85,7 +89,6 @@ const safeEvidenceOf = (evidence: OwnerEvidence, sent: ProcessingScope): Eligibi
     purposeRef: evidence.evaluatedScope.purposeRef,
     purposeVersionId: evidence.evaluatedScope.purposeVersionId,
     recipientRefs: evidence.evaluatedScope.recipientRefs,
-    subject: sent.subject,
   },
   policyRevisions: evidence.policyRevisions,
   reasonCodes: evidence.reasonCodes,
