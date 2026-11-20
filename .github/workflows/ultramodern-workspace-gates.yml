@@ -107,8 +107,13 @@ jobs:
             echo "No merge group run proved $GITHUB_SHA; the gates run before the deploy."
             echo 'proven=false' >>"$GITHUB_OUTPUT"
           fi
+      # A proof only saves work: a checkout or lookup that fails or stalls leaves no proof and the gates run, it
+      # never fails the push (Workspace gates fails on a failed queue-proof job). Both steps together end well
+      # inside the job's five minutes.
       - name: Checkout the candidate proof finder
         if: github.ref == 'refs/heads/demo/sales-crm'
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -117,6 +122,8 @@ jobs:
       - name: Look up a successful candidate run of this workflow on this commit
         id: candidate-proof
         if: github.ref == 'refs/heads/demo/sales-crm'
+        continue-on-error: true
+        timeout-minutes: 2
         env:
           BEFORE_SHA: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}

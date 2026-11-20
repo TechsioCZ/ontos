@@ -21,7 +21,7 @@ export const staffAuthenticationNamespaceRegistration = (allowedAudiences: reado
   Schema.decodeEffect(AuthenticationNamespaceRegistrationSchema)({
     allowedAudiences,
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-    provider: 'better-auth',
+    provider: 'better_auth',
     requiresOperationAdmission: false,
     reservationPrincipalKind: 'human',
     subjectTypes: ['user', 'api_key', 'oauth_grant'],

@@ -79,7 +79,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, PartyRegistryAuthenticationNamespaceRe
           expect(staff.value).toEqual({
             allowedAudiences: [ACTION_GATEWAY_AUDIENCE],
             authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-            provider: 'better-auth',
+            provider: 'better_auth',
             requiresOperationAdmission: false,
             reservationPrincipalKind: 'human',
             subjectTypes: ['user', 'api_key', 'oauth_grant'],

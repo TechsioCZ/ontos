@@ -174,7 +174,14 @@ const TargetWorkflowSchema = Schema.Struct({
       if: Schema.String,
       outputs: Schema.Record(Schema.String, Schema.String),
       permissions: Schema.Record(Schema.String, Schema.String),
-      steps: Schema.Array(WorkflowStepSchema),
+      steps: Schema.Array(
+        Schema.Struct({
+          ...WorkflowStepSchema.fields,
+          'continue-on-error': Schema.optional(Schema.Boolean),
+          uses: Schema.optional(Schema.String),
+        }),
+      ),
+      'timeout-minutes': Schema.Number,
     }),
     [WORKSPACE_GATES_JOB]: Schema.Struct({
       if: Schema.String,
@@ -314,6 +321,21 @@ it('selects work before gates and starts source checks without waiting for artif
       ),
     );
   }
+});
+
+// A proof only saves work. Workspace gates fails on a failed queue-proof job, so a checkout or lookup that fails or
+// stalls must end as "no proof" inside the job's own limit, never as a failed job.
+it('leaves no proof, never a failed job, when the candidate proof checkout or lookup fails or stalls', () => {
+  const proof = readTargetWorkflow().jobs[QUEUE_PROOF_JOB];
+  const checkout = proof.steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true);
+  const find = proof.steps.find(({ id }) => id === 'candidate-proof');
+  for (const step of [checkout, find]) {
+    expect(step?.if).toBe(DEMO_REF);
+    expect(step?.['continue-on-error']).toBe(true);
+  }
+  expect((checkout?.['timeout-minutes'] ?? Infinity) + (find?.['timeout-minutes'] ?? Infinity)).toBeLessThan(
+    proof['timeout-minutes'],
+  );
 });
 
 it('starts each integration row job once its producers finished and only when the plan lists rows for it', () => {
