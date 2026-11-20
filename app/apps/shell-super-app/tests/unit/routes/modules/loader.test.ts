@@ -23,7 +23,14 @@ import {
 } from '../../../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 
-const request = () => new Request('https://shell.example.test/en/contacts');
+/** The DOM's Request drops a cookie header, as a browser does; a loader request carries it. */
+const request = (cookie = 'session=test-session') => {
+  const value = new Request('https://shell.example.test/en/contacts');
+  Object.defineProperty(value, 'headers', {
+    value: new Headers({ cookie }),
+  });
+  return value;
+};
 
 const approvedTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
   appId: 'party-registry',
