@@ -101,7 +101,8 @@ export const runtimeClosure = (directory: string, packages: readonly WorkspacePa
  *   `build` script runs, with their reference graphs;
  * - every other path at the repository or app root that is not classified below (lockfile, workspace and tool
  *   pins, patches, tsconfigs, topology, Module Federation sharing, Git ignore rules and any new root file);
- * - the build variables of the environment, as values (see buildEnvironment).
+ * - the build variables of the environment, as values (see buildEnvironment), and those only this unit reads
+ *   (UNIT_BUILD_VARIABLES).
  * Excluded, each with its reason: tests and fixtures (never bundled; a test file a build does import is reached
  * and included), documentation, other workspace packages and tool scripts the build neither runs nor reaches, and
  * NON_BUILD_PATHS. The commit is NOT part of the identity: a kept unit keeps the release identity it was built with.
@@ -209,6 +210,14 @@ const BUILD_VARIABLE =
   /^(?:MODERN_|ULTRAMODERN_|PUBLIC_|RSPACK_|RSBUILD_|BROWSERSLIST|ONTOS_[A-Z0-9_]*ORIGIN$|NODE_ENV$|NODE_OPTIONS$|BABEL_ENV$)/u;
 /** A forced revision or marker would only relabel output; the commit is deliberately not an input. */
 const IDENTITY_OVERRIDE = /^ULTRAMODERN_(?:SOURCE_REVISION|BUILD_MARKER)$/u;
+/**
+ * Build variables only some units read, by unit directory: the Shell's build mounts the Symmy REST ingress when
+ * ONTOS_INTERNAL_SYMMY_INGRESS is 1 (apps/shell-super-app/modern.config.ts). Every other unit's identity leaves them out.
+ */
+const UNIT_BUILD_VARIABLES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['app/apps/shell-super-app', new Set(['ONTOS_INTERNAL_SYMMY_INGRESS'])],
+]);
+const UNIT_SCOPED_VARIABLES = new Set([...UNIT_BUILD_VARIABLES.values()].flatMap((names) => [...names]));
 
 /** Modern.js's file-system router scans src/routes, so nothing there counts as a test. */
 export const isTestInput = (filepath: string): boolean =>
@@ -222,10 +231,12 @@ export const isUnitDocumentation = (filepath: string): boolean =>
 /** The tracked files whose text can name another build input. */
 export const isReferenceSource = (filepath: string): boolean =>
   /\.(?:[cm]?[jt]sx?|css|sh)$/u.test(filepath) || /(?:^|\/)(?:package|tsconfig[^/]*)\.json$/u.test(filepath);
-/** The build variables among `name=value` pairs of an environment, sorted by name. */
+/** The build variables among `name=value` pairs of an environment, unit-scoped ones included, sorted by name. */
 export const buildEnvironment = (variables: readonly (readonly [string, string])[]) =>
   sortArray(Order.mapInput(Order.String, ([name]: readonly [string, string]) => name))(
-    variables.filter(([name]) => BUILD_VARIABLE.test(name) && !IDENTITY_OVERRIDE.test(name)),
+    variables.filter(
+      ([name]) => (BUILD_VARIABLE.test(name) || UNIT_SCOPED_VARIABLES.has(name)) && !IDENTITY_OVERRIDE.test(name),
+    ),
   );
 
 /** A unit identity's view of one commit: tracked paths, the package graph and the text of reference sources. */
@@ -601,18 +612,18 @@ const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 export const unitIdentity = (directory: string, input: UnitDigestInput) =>
   Effect.gen(function* identifyUnit() {
     const { closure, inputs } = yield* unitInputs(directory, input.graph, input.driver);
+    const environment = input.environment.filter(
+      ([name]) => !UNIT_SCOPED_VARIABLES.has(name) || UNIT_BUILD_VARIABLES.get(directory)?.has(name) === true,
+    );
     const encode = Schema.encodeEffect(Schema.fromJsonString(DigestInputsSchema));
     const [digest, files] = yield* Effect.all(
-      [
-        encode({ closure, environment: input.environment, inputs, version: 3 }),
-        encode({ closure, environment: [], inputs, version: 3 }),
-      ],
+      [encode({ closure, environment, inputs, version: 3 }), encode({ closure, environment: [], inputs, version: 3 })],
       { concurrency: 1 },
     );
     return {
       digest: sha256(digest),
       files: sha256(files),
-      variables: input.environment.map(([name, value]) => `${name}=${sha256(value).slice(0, 12)}`),
+      variables: environment.map(([name, value]) => `${name}=${sha256(value).slice(0, 12)}`),
     };
   });
 export const unitInputDigest = (directory: string, input: UnitDigestInput) =>

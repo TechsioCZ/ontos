@@ -136,6 +136,8 @@ zerops:
       base: alpine/nodejs@26
       envVariables:
         BUILD_JOBS: '2'
+        # The Shell build mounts the Symmy REST ingress at /api/symmy/v1 (apps/shell-super-app/modern.config.ts).
+        ONTOS_INTERNAL_SYMMY_INGRESS: '1'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz

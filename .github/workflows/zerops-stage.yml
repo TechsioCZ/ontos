@@ -65,6 +65,9 @@ env:
   # 15 s copying 1331 packages out of the store. Each job restores its own store and no job here saves it, so links
   # into it are safe; the Zerops app build links the same way (app/zerops.yaml).
   PNPM_CONFIG_PACKAGE_IMPORT_METHOD: hardlink
+  # The Shell build mounts the Symmy REST ingress (apps/shell-super-app/modern.config.ts), as app/zerops.yaml's build
+  # does. Declared for the whole run, so the identity step, the build shards and deliver-stage's unit build agree.
+  ONTOS_INTERNAL_SYMMY_INGRESS: '1'
 
 jobs:
   # Created at push time and holding the only runner the delivery needs: plan, push, verify.

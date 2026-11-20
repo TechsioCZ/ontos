@@ -196,6 +196,17 @@ it.effect('keeps a unit identity for unrelated units, deploy files, tests, docs,
   }),
 );
 
+it.effect('hashes the Symmy ingress flag into the Shell identity alone', () =>
+  Effect.gen(function* unitScopedVariable() {
+    const graph = graphOf();
+    const mounted = buildEnvironment([...environment, ['ONTOS_INTERNAL_SYMMY_INGRESS', '1']]);
+    const digest = (directory: string, variables: typeof environment) =>
+      unitInputDigest(directory, { environment: variables, graph });
+    expect(yield* digest(SHELL, mounted)).not.toBe(yield* digest(SHELL, environment));
+    expect(yield* digest(CRM, mounted)).toBe(yield* digest(CRM, environment));
+  }),
+);
+
 it.effect('follows a devDependency only when included code imports it', () =>
   Effect.gen(function* devDependency() {
     expect(yield* runtimeClosure(CRM, packages)).toEqual([CRM, PARTY]);
