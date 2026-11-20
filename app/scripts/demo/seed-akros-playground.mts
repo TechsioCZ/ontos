@@ -610,7 +610,7 @@ const main = (mode: 'plan' | 'bootstrap' | 'apply' | 'verify', file: string, fin
       }
       const password = yield* Config.Redacted('ONTOS_AKROS_SOURCE_PASSWORD');
       const client = yield* Effect.acquireRelease(
-        connectSeedClient({ ...akrosCopySource, shellUrl: origin }, 'eshop@akros.demo', password),
+        connectSeedClient({ ...akrosCopySource, shellUrl: origin }, 'eshop@sroubarna.demo', password),
         (session) => session.signOut.pipe(Effect.ignore),
       );
       const snapshot = yield* captureCopySnapshot(client, origin, akrosCopySource, `${file}.capture`);

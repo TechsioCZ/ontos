@@ -190,6 +190,17 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
     { discard: true },
   );
   yield* Effect.forEach(
+    result.attachedLogins,
+    (login) =>
+      Console.log(`Attached stage login ${login.email}: tenant=${login.tenantId} principal=${login.principalId}`),
+    { discard: true },
+  );
+  yield* Effect.forEach(
+    result.retiredPrincipals,
+    (retired) => Console.log(`Retired stage Principal ${retired.principalId} in tenant=${retired.tenantId}`),
+    { discard: true },
+  );
+  yield* Effect.forEach(
     result.retiredAccounts,
     (account) => Console.log(`Retired stage account ${account.email}: ${account.status}`),
     { discard: true },

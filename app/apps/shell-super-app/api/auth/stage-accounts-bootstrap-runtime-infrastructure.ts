@@ -271,6 +271,27 @@ const retireAuthUser = Effect.fn('StageAccountsBootstrap.retireAuthUser')(functi
   return { email, status: banned === 0 ? ('absent' as const) : ('banned' as const) };
 });
 
+/** The Better Auth user an attached login already signs in as; the login is never created or changed here. */
+const attachedLoginUser = Effect.fn('StageAccountsBootstrap.attachedLoginUser')(function* attachedLoginUser(
+  email: string,
+) {
+  const { executor: database } = yield* AuthDatabase;
+  const users = yield* database
+    .select({ banned: user.banned, id: user.id })
+    .from(user)
+    .where(eq(user.email, email))
+    .limit(2)
+    .pipe(Effect.mapError(persistenceFailure));
+  const [existingUser] = users;
+  if (users.length !== 1 || existingUser === undefined || existingUser.banned === true) {
+    return yield* new StageAccountsBootstrapError({
+      code: 'stage_accounts_conflict',
+      reason: 'An attached login needs exactly one Better Auth user that is not banned',
+    });
+  }
+  return existingUser.id;
+});
+
 const toAccountResult = (
   accountConfiguration: StageAccountConfig,
   authUser: { readonly status: StageAccountResult['authUser'] },
@@ -285,6 +306,16 @@ const toAccountResult = (
   tenantId: context.tenantId,
 });
 
+/** What one operator run did: its accounts and retired accounts, the logins it attached and the people it retired. */
+export interface StageAccountsBootstrapRunResult extends StageAccountsBootstrapResult {
+  readonly attachedLogins: readonly {
+    readonly email: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }[];
+  readonly retiredPrincipals: readonly { readonly principalId: string; readonly tenantId: string }[];
+}
+
 export interface StageAccountsBootstrapOptions {
   /**
    * The declarations of every module the running composition serves (O69). A stage tenant's release is
@@ -296,18 +327,22 @@ export interface StageAccountsBootstrapOptions {
 /**
  * Creates each stage account's Better Auth user and then the tenant's authorization v2 authority: one
  * bootstrap per tenant (owner, memberships, release, "Plný přístup"), the same role for every further
- * account the operator names, and one reconcile through the single Core writer. A retired account loses
- * its Better Auth user and a retired tenant loses its intent, so nothing of them keeps answering.
+ * account the operator names, and one reconcile through the single Core writer. An attached login gets a
+ * Principal in an existing tenant for the Better Auth user it already has. A retired account loses its
+ * Better Auth user, a retired Principal its sign-in and authority in its tenant, and a retired tenant its
+ * intent, so nothing of them keeps answering.
  */
 export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstrap')(function* bootstrap(
   configuration: StageAccountsBootstrapConfig,
   options: StageAccountsBootstrapOptions,
 ): Effect.fn.Return<
-  StageAccountsBootstrapResult,
+  StageAccountsBootstrapRunResult,
   StageAccountsBootstrapError,
   AuthDatabase | Crypto.Crypto | DatabaseIdentityEnrollmentContext | InstallationRuntime
 > {
   const { accountsFile } = configuration;
+  const attachedLogins = accountsFile.attachedLogins ?? [];
+  const retiredPrincipals = accountsFile.retiredPrincipals ?? [];
   const moduleRefusal = stageModuleIntentRefusal(
     accountsFile.tenants.map(({ moduleKey }) => moduleKey),
     options.modules,
@@ -318,6 +353,20 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
       reason: moduleRefusal.reason,
     });
   }
+  const attachedLoginIdentities = yield* Effect.forEach(
+    attachedLogins,
+    (login) =>
+      attachedLoginUser(login.email).pipe(
+        Effect.map((providerUserId) => ({
+          authBindingId: login.authBindingId,
+          displayName: login.displayName,
+          principalId: login.principalId,
+          providerUserId,
+          tenantId: login.tenantId,
+        })),
+      ),
+    { concurrency: 1 },
+  );
   const accountConfigurations = accountsFile.tenants.flatMap(({ accounts }) =>
     accounts.map(({ displayName, email, password }) => ({ displayName, email, password })),
   );
@@ -350,7 +399,12 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
     ),
   );
   const results = yield* reconcileStageContextBootstraps(
-    { retiredTenants: accountsFile.retiredTenants, tenants },
+    {
+      attachedLogins: attachedLoginIdentities,
+      retiredPrincipals,
+      retiredTenants: accountsFile.retiredTenants,
+      tenants,
+    },
     { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID, modules: options.modules },
   ).pipe(
     Effect.mapError(
@@ -371,7 +425,12 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
       ? []
       : [toAccountResult(accountConfiguration, authUser, result)];
   });
-  return { accounts, retiredAccounts };
+  return {
+    accounts,
+    attachedLogins: attachedLogins.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
+    retiredAccounts,
+    retiredPrincipals: retiredPrincipals.map(({ principalId, tenantId }) => ({ principalId, tenantId })),
+  };
 });
 
 /**
@@ -385,7 +444,7 @@ export const bootstrapStageAccountsFromEnvironment = Effect.fn('StageAccountsBoo
     readAccountsFile: StageAccountsFileReader,
     input: { readonly declaredWorkloadKeys: ReadonlySet<string>; readonly modules: readonly AccessCatalogModule[] },
   ): Effect.fn.Return<
-    StageAccountsBootstrapResult,
+    StageAccountsBootstrapRunResult,
     StageAccountsBootstrapError,
     AuthDatabase | Crypto.Crypto | DatabaseIdentityEnrollmentContext | InstallationRuntime
   > {

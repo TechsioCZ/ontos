@@ -228,7 +228,7 @@ The storefront is nonproduction: all pages inherit robots `noindex, nofollow`, e
 `X-Robots-Tag: noindex, nofollow, noarchive`, and `/robots.txt` disallows all crawlers. This is
 indexing guidance, not authentication or access control.
 
-Staff: `eshop@akros.demo`, `http://localhost:3020/cs/provoz/produkty` (AKROS company).
+Staff: `eshop@sroubarna.demo`, the e-shop administrator of company `71000000-0000-4000-8000-000000000024`, at `http://localhost:3020/cs/provoz/produkty`. `eshop@akros.demo` is a stage login of the AKROS tenant only.
 Edit a product name, description, image, label, category or variant net price, save, wait at most
 10 seconds, reload the storefront. An existing cart
 shows a price-change acceptance state; new additions use the fresh price. Orders appear in

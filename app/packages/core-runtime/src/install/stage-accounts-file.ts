@@ -85,20 +85,43 @@ const StageRetiredTenantSchema = Schema.Struct({
 });
 
 /**
+ * An existing login that also signs in to an existing Tenant outside this file: a Principal of its own
+ * there and a staff binding to the login's Better Auth user. Neither the Tenant nor the login changes, and
+ * the Principal holds no access until the Tenant's administrator grants it through People.
+ */
+const StageAttachedLoginSchema = Schema.Struct({
+  authBindingId: AuthBindingIdSchema,
+  displayName: TrimmedNonEmptyString,
+  email: AccountEmailSchema,
+  principalId: PrincipalIdSchema,
+  tenantId: TenantIdSchema,
+});
+
+/** A Principal whose sign-in to its still active Tenant ends, with every membership and assignment it held. */
+const StageRetiredPrincipalSchema = Schema.Struct({
+  principalId: PrincipalIdSchema,
+  tenantId: TenantIdSchema,
+});
+
+/**
  * The operator stage accounts file. Its values never enter source control; only this shape does.
  * The number of Tenants and accounts, their identifiers, and their grants are all data.
  */
 const StageAccountsFileSchema = Schema.Struct({
+  attachedLogins: Schema.optionalKey(Schema.Array(StageAttachedLoginSchema)),
   retiredAccountEmails: Schema.Array(AccountEmailSchema),
+  retiredPrincipals: Schema.optionalKey(Schema.Array(StageRetiredPrincipalSchema)),
   retiredTenants: Schema.Array(StageRetiredTenantSchema),
   schemaVersion: Schema.Literal(2),
-  tenants: Schema.NonEmptyArray(StageTenantSchema),
+  tenants: Schema.Array(StageTenantSchema),
 });
 
 export type StageAccountsFile = typeof StageAccountsFileSchema.Type;
 export type StageTenant = StageAccountsFile['tenants'][number];
 export type StageAccount = StageTenant['accounts'][number];
 export type StageRetiredTenant = StageAccountsFile['retiredTenants'][number];
+export type StageAttachedLogin = typeof StageAttachedLoginSchema.Type;
+export type StageRetiredPrincipal = typeof StageRetiredPrincipalSchema.Type;
 export type StageAccountRole = StageAccount['grants']['roles'][number];
 
 /** The accounts file as read by the operator runtime: its text and POSIX permission bits. */
@@ -120,6 +143,54 @@ const GROUP_AND_OTHER_PERMISSION_RANGE = 0o100;
 
 const hasDuplicates = (values: readonly string[]): boolean =>
   new Set(values.map((value) => value.toLowerCase())).size !== values.length;
+
+/**
+ * An attached login joins, once, a Tenant this file neither creates nor retires, with identifiers no account
+ * uses; a retired Principal is none of the file's people and belongs to a Tenant that stays.
+ */
+const loginRetirementRefusal = (
+  file: StageAccountsFile,
+  active: {
+    readonly principalIds: ReadonlySet<string>;
+    readonly retiredEmails: ReadonlySet<string>;
+    readonly tenantIds: ReadonlySet<string>;
+  },
+): StageAccountsFileError | undefined => {
+  const attachedLogins = file.attachedLogins ?? [];
+  const retiredPrincipals = file.retiredPrincipals ?? [];
+  const retiredTenantIds: ReadonlySet<string> = new Set(file.retiredTenants.map(({ tenantId }) => tenantId));
+  const attachedPrincipalIds: ReadonlySet<string> = new Set(attachedLogins.map(({ principalId }) => principalId));
+  if (
+    hasDuplicates([...active.principalIds.values(), ...attachedLogins.map(({ principalId }) => principalId)]) ||
+    hasDuplicates([
+      ...file.tenants.flatMap(({ accounts }) => accounts.map(({ authBindingId }) => authBindingId)),
+      ...attachedLogins.map(({ authBindingId }) => authBindingId),
+    ]) ||
+    hasDuplicates(attachedLogins.map(({ email, tenantId }) => `${email}:${tenantId}`)) ||
+    attachedLogins.some(
+      ({ email, tenantId }) =>
+        active.tenantIds.has(tenantId) ||
+        retiredTenantIds.has(tenantId) ||
+        active.retiredEmails.has(email.toLowerCase()),
+    )
+  ) {
+    return invalid(
+      'Every attached login needs its own Principal and binding ID and joins, once, a Tenant outside this file with a login that is not retired',
+    );
+  }
+  if (
+    hasDuplicates(retiredPrincipals.map(({ principalId }) => principalId)) ||
+    retiredPrincipals.some(
+      ({ principalId, tenantId }) =>
+        active.principalIds.has(principalId) || attachedPrincipalIds.has(principalId) || retiredTenantIds.has(tenantId),
+    )
+  ) {
+    return invalid(
+      'Retired Principals must be unique and not be an active account, an attached login, or in a retired Tenant',
+    );
+  }
+  return undefined;
+};
 
 /**
  * Validates the operator accounts file without echoing any of its values: owner-only permissions,
@@ -212,6 +283,14 @@ export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(funct
     )
   ) {
     return yield* invalid('Retired stage Tenants must be unique and not overlap an active Tenant or Principal');
+  }
+  const loginRefusal = loginRetirementRefusal(file, {
+    principalIds: activePrincipalIdSet,
+    retiredEmails: new Set(retiredEmails),
+    tenantIds: activeTenantIdSet,
+  });
+  if (loginRefusal !== undefined) {
+    return yield* loginRefusal;
   }
   return file;
 });

@@ -14,7 +14,10 @@ interface BootstrapIdentity {
   readonly tenantId: string;
 }
 
-export const selectBootstrapLegalEntities = (transaction: CoreTransaction, context: BootstrapIdentity) =>
+export const selectBootstrapLegalEntities = (
+  transaction: CoreTransaction,
+  context: Pick<BootstrapIdentity, 'legalEntityId' | 'registrationCountry' | 'registrationNumber' | 'tenantId'>,
+) =>
   transaction
     .select({
       legalEntityId: legalEntities.legalEntityId,
@@ -37,7 +40,10 @@ export const selectBootstrapLegalEntities = (transaction: CoreTransaction, conte
     )
     .limit(2);
 
-export const selectBootstrapPrincipals = (transaction: CoreTransaction, context: BootstrapIdentity) =>
+export const selectBootstrapPrincipals = (
+  transaction: CoreTransaction,
+  context: Pick<BootstrapIdentity, 'principalId'>,
+) =>
   transaction
     .select({
       displayName: principals.displayName,
@@ -52,7 +58,7 @@ export const selectBootstrapPrincipals = (transaction: CoreTransaction, context:
 
 export const selectBootstrapAuthBindings = (
   transaction: CoreTransaction,
-  context: BootstrapIdentity,
+  context: Pick<BootstrapIdentity, 'authBindingId' | 'tenantId'>,
   authUserId: string,
   authenticationNamespaceId: string,
 ) =>
@@ -84,7 +90,9 @@ export const selectBootstrapAuthBindings = (
     )
     .limit(2);
 
-export const bootstrapPrincipalRecord = (context: BootstrapIdentity) =>
+export const bootstrapPrincipalRecord = (
+  context: Pick<BootstrapIdentity, 'principalDisplayName' | 'principalId' | 'tenantId'>,
+) =>
   ({
     displayName: context.principalDisplayName,
     kind: 'human',

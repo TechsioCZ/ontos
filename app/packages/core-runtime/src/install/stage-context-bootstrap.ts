@@ -45,7 +45,12 @@ import {
   stageHolderOf,
   writeStageAssignments,
 } from './stage-access-holders.ts';
-import type { StageAccountRole, StageAccountsFile, StageRetiredTenant } from './stage-accounts-file.ts';
+import type {
+  StageAccountRole,
+  StageAccountsFile,
+  StageRetiredPrincipal,
+  StageRetiredTenant,
+} from './stage-accounts-file.ts';
 
 /*
  * The stage bootstrap of authorization v2 (CUTOVER-PLAN §3.5, ADR-0028, O67-Q6). A stage tenant is
@@ -94,6 +99,15 @@ export interface StageAccountIdentity {
   readonly principalId: string;
   readonly providerUserId: string;
   readonly roles: readonly StageAccountRole[];
+}
+
+/** An existing login joining an existing tenant: its own Principal there, bound to the login's Better Auth user. */
+export interface StageAttachedLoginIdentity {
+  readonly authBindingId: string;
+  readonly displayName: string;
+  readonly principalId: string;
+  readonly providerUserId: string;
+  readonly tenantId: string;
 }
 
 export interface StageTenantBootstrap {
@@ -309,18 +323,6 @@ const classifyExactRecord = <Expected extends ExactRecord>(
   return Effect.succeed('existing');
 };
 
-/** The identity of one account as the shared bootstrap reads and writes it. */
-const bootstrapIdentityOf = (tenant: StageTenantIdentity, account: StageAccountIdentity) => ({
-  authBindingId: account.authBindingId,
-  legalEntityId: tenant.legalEntity.legalEntityId,
-  legalName: tenant.legalEntity.legalName,
-  principalDisplayName: account.displayName,
-  principalId: account.principalId,
-  registrationCountry: tenant.legalEntity.registrationCountry,
-  registrationNumber: tenant.legalEntity.registrationNumber,
-  tenantId: tenant.tenantId,
-});
-
 /** A module state id derived from what it names, so a re-run resumes the row it wrote (D27). */
 const stageModuleStateIdFor = (tenantId: string, moduleKey: string): string =>
   stableUuid(`ontos.stage.module-state:${tenantId}:${moduleKey}`);
@@ -370,15 +372,20 @@ const reconcileModuleState = Effect.fn('StageContextBootstrap.reconcileModuleSta
   },
 );
 
-/** The account identity rows one tenant needs: principal, Better Auth binding and its own module state. */
+/** The identity rows one login needs in a tenant: its human Principal and its Better Auth staff binding. */
 const reconcileTenantAccount = Effect.fn('StageContextBootstrap.reconcileTenantAccount')(
   function* reconcileTenantAccountEffect(
     transaction: CoreTransaction,
-    tenant: StageTenantIdentity,
-    account: StageAccountIdentity,
+    tenantId: string,
+    account: Pick<StageAccountIdentity, 'authBindingId' | 'displayName' | 'principalId' | 'providerUserId'>,
     authenticationNamespaceId: string,
   ): Effect.fn.Return<void, StageContextBootstrapError> {
-    const identity = bootstrapIdentityOf(tenant, account);
+    const identity = {
+      authBindingId: account.authBindingId,
+      principalDisplayName: account.displayName,
+      principalId: account.principalId,
+      tenantId,
+    };
     const principalCandidates = yield* selectBootstrapPrincipals(transaction, identity).pipe(
       Effect.mapError(bootstrapFailureFromCause),
     );
@@ -403,7 +410,7 @@ const reconcileTenantAccount = Effect.fn('StageContextBootstrap.reconcileTenantA
       providerSubjectId: account.providerUserId,
       status: 'active',
       subjectType: 'user',
-      tenantId: tenant.tenantId,
+      tenantId,
     } as const;
     if ((yield* classifyExactRecord('authentication binding', bindingCandidates[0], expectedBinding)) === 'create') {
       yield* transaction
@@ -452,11 +459,7 @@ const reconcileTenantIdentity = Effect.fn('StageContextBootstrap.reconcileTenant
       yield* transaction.insert(tenants).values(expectedTenant).pipe(Effect.mapError(bootstrapFailureFromCause));
     }
     const legalEntityCandidates = yield* selectBootstrapLegalEntities(transaction, {
-      authBindingId: '',
       legalEntityId: tenant.legalEntity.legalEntityId,
-      legalName: tenant.legalEntity.legalName,
-      principalDisplayName: '',
-      principalId: '',
       registrationCountry: tenant.legalEntity.registrationCountry,
       registrationNumber: tenant.legalEntity.registrationNumber,
       tenantId: tenant.tenantId,
@@ -480,7 +483,7 @@ const reconcileTenantIdentity = Effect.fn('StageContextBootstrap.reconcileTenant
     }
     yield* Effect.forEach(
       input.accounts,
-      (account) => reconcileTenantAccount(transaction, tenant, account, authenticationNamespaceId),
+      (account) => reconcileTenantAccount(transaction, tenant.tenantId, account, authenticationNamespaceId),
       { concurrency: 1, discard: true },
     );
     yield* Effect.forEach(
@@ -550,6 +553,116 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
   return yield* Effect.void;
 });
 
+/**
+ * An existing login joins an existing, active tenant: a human Principal of its own there and a `better_auth`
+ * staff binding to the login's user. Nothing here grants it access; the tenant's administrator does that
+ * through the governed People commands, so the tenant's release and its other people stay as they are.
+ */
+const attachLogin = Effect.fn('StageContextBootstrap.attachLogin')(function* attachLoginEffect(
+  transaction: CoreTransaction,
+  login: StageAttachedLoginIdentity,
+  authenticationNamespaceId: string,
+): Effect.fn.Return<void, StageContextBootstrapError> {
+  const [tenant] = yield* transaction
+    .select({ status: tenants.status })
+    .from(tenants)
+    .where(eq(tenants.tenantId, login.tenantId))
+    .limit(1)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  if (tenant?.status !== 'active') {
+    return yield* failure('An attached login needs an existing active tenant');
+  }
+  return yield* reconcileTenantAccount(transaction, login.tenantId, login, authenticationNamespaceId);
+});
+
+/**
+ * Ends one person's sign-in to a tenant that stays active, with the writes a retired tenant receives for
+ * everyone: the person's bindings, memberships and assignments are revoked and the Principal archived. The
+ * reconcile that follows removes its projected tuples. A tenant owner is refused, because ending it would
+ * leave the tenant without one.
+ */
+const retirePrincipal = Effect.fn('StageContextBootstrap.retirePrincipal')(function* retirePrincipalEffect(
+  transaction: CoreTransaction,
+  retired: StageRetiredPrincipal,
+  retiredAt: Date,
+  scope: OperationalScope,
+  enrollment: DatabaseIdentityEnrollment,
+): Effect.fn.Return<void, StageContextBootstrapError> {
+  yield* installOperationalScope(transaction, scope, enrollment).pipe(Effect.mapError(bootstrapFailureFromCause));
+  const [principal] = yield* transaction
+    .select({ kind: principals.kind })
+    .from(principals)
+    .where(and(eq(principals.tenantId, retired.tenantId), eq(principals.principalId, retired.principalId)))
+    .limit(1)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  if (principal?.kind !== 'human') {
+    return yield* failure('A retired stage Principal must be a person of its tenant');
+  }
+  const ownership = yield* transaction
+    .select({ membershipId: accessMemberships.membershipId })
+    .from(accessMemberships)
+    .where(
+      and(
+        eq(accessMemberships.tenantId, retired.tenantId),
+        eq(accessMemberships.principalId, retired.principalId),
+        eq(accessMemberships.kind, 'owner'),
+        ne(accessMemberships.status, 'revoked'),
+      ),
+    )
+    .limit(1)
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  if (ownership.length > 0) {
+    return yield* failure('A retired stage Principal must not own its tenant');
+  }
+  yield* Effect.forEach(
+    [
+      transaction
+        .update(principalAuthBindings)
+        .set({ revokedAt: retiredAt, status: 'revoked' })
+        .where(
+          and(
+            eq(principalAuthBindings.tenantId, retired.tenantId),
+            eq(principalAuthBindings.principalId, retired.principalId),
+            ne(principalAuthBindings.status, 'revoked'),
+          ),
+        ),
+      transaction
+        .update(accessMemberships)
+        .set({ status: 'revoked' })
+        .where(
+          and(
+            eq(accessMemberships.tenantId, retired.tenantId),
+            eq(accessMemberships.principalId, retired.principalId),
+            ne(accessMemberships.status, 'revoked'),
+          ),
+        ),
+      transaction
+        .update(accessAssignments)
+        .set({ status: 'revoked' })
+        .where(
+          and(
+            eq(accessAssignments.tenantId, retired.tenantId),
+            eq(accessAssignments.principalId, retired.principalId),
+            ne(accessAssignments.status, 'revoked'),
+          ),
+        ),
+      transaction
+        .update(principals)
+        .set({ status: 'archived' })
+        .where(
+          and(
+            eq(principals.tenantId, retired.tenantId),
+            eq(principals.principalId, retired.principalId),
+            ne(principals.status, 'archived'),
+          ),
+        ),
+    ],
+    (statement) => statement.pipe(Effect.mapError(bootstrapFailureFromCause)),
+    { concurrency: 1, discard: true },
+  );
+  return yield* Effect.void;
+});
+
 const runTenantTransaction = (
   executor: CoreDatabaseExecutor,
   body: (transaction: CoreTransaction) => Effect.Effect<void, StageContextBootstrapError>,
@@ -559,15 +672,28 @@ const runTenantTransaction = (
     Effect.catchTag('SqlError', (sqlFailure) => Effect.fail(bootstrapFailureFromCause(sqlFailure))),
   );
 
+/** Everything one stage run reconciles, as the operator accounts file names it. */
+export interface StageContextBootstrapInput {
+  readonly attachedLogins: readonly StageAttachedLoginIdentity[];
+  readonly retiredPrincipals: readonly StageRetiredPrincipal[];
+  readonly retiredTenants: readonly StageRetiredTenant[];
+  readonly tenants: readonly StageTenantBootstrap[];
+}
+
 /** Every refusal a stage run decides before it writes anything, or `undefined` when it may run. */
 export const stageBootstrapRefusal = (
-  input: { readonly retiredTenants: readonly StageRetiredTenant[]; readonly tenants: readonly StageTenantBootstrap[] },
+  input: StageContextBootstrapInput,
   options: StageContextBootstrapOptions,
 ): StageContextBootstrapError | undefined => {
-  // An operator file may retire its last tenant, so an empty tenant list is only a refusal when there is
-  // nothing at all to reconcile.
-  if (input.tenants.length === 0 && input.retiredTenants.length === 0) {
-    return failure('At least one stage account is required');
+  // An operator file may only attach or retire logins, or retire its last tenant, so an empty tenant list is
+  // only a refusal when there is nothing at all to reconcile.
+  if (
+    input.tenants.length === 0 &&
+    input.retiredTenants.length === 0 &&
+    input.attachedLogins.length === 0 &&
+    input.retiredPrincipals.length === 0
+  ) {
+    return failure('At least one stage account, attached login or retirement is required');
   }
   if (options.modules.length === 0) {
     // A composition that declares nothing would publish an empty release and deny the owner everything.
@@ -696,16 +822,13 @@ const reconcileTenant = Effect.fn('StageContextBootstrap.reconcileTenant')(funct
 });
 
 /**
- * Reconciles every stage tenant from the operator accounts file and retires the tenants the file retires.
- * Results follow the order of the accounts; one transaction writes each tenant's identity rows, one
- * bootstrap creates its authority, and one reconcile projects it.
+ * Reconciles every stage tenant from the operator accounts file, attaches the logins it attaches, and retires
+ * the Principals and tenants it retires. Results follow the order of the accounts; one transaction writes each
+ * tenant's identity rows, one bootstrap creates its authority, and one reconcile projects it.
  */
 export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.reconcileStageContextBootstraps')(
   function* reconcileStageContextsEffect(
-    input: {
-      readonly retiredTenants: readonly StageRetiredTenant[];
-      readonly tenants: readonly StageTenantBootstrap[];
-    },
+    input: StageContextBootstrapInput,
     options: StageContextBootstrapOptions,
   ): Effect.fn.Return<
     readonly StageContextBootstrapResult[],
@@ -737,6 +860,28 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
         ),
       { concurrency: 1 },
     );
+    yield* Effect.forEach(
+      input.attachedLogins,
+      (login) =>
+        runTenantTransaction(executor, (transaction) =>
+          attachLogin(transaction, login, options.authenticationNamespaceId),
+        ),
+      { concurrency: 1, discard: true },
+    );
+    const retireStagePrincipal = Effect.fn('StageContextBootstrap.retireStagePrincipal')(
+      function* retireStagePrincipalEffect(retired: StageRetiredPrincipal) {
+        const retiredScope = yield* stageScopeOf(retired);
+        yield* runTenantTransaction(executor, (transaction) =>
+          retirePrincipal(transaction, retired, at, retiredScope, enrollment),
+        );
+        // The tenant stays: its graph is reconciled from the intent that remains, without this person.
+        yield* writer
+          .reconcileTenant({ scope: retiredScope })
+          .pipe(Effect.mapError((cause) => failure(`${cause.code}: ${cause.reason}`, cause)));
+        return yield* Effect.void;
+      },
+    );
+    yield* Effect.forEach(input.retiredPrincipals, retireStagePrincipal, { concurrency: 1, discard: true });
     const retireStageTenant = Effect.fn('StageContextBootstrap.retireStageTenant')(function* retireStageTenantEffect(
       retired: StageRetiredTenant,
     ) {

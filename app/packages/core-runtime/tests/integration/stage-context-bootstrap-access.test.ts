@@ -197,6 +197,9 @@ const decisionAt = DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00Z'
 
 const INSTALLATION_OPTIONS = { authenticationNamespaceId: 'staff', modules } as const;
 
+/** A stage run that reconciles nothing; each case names only what its operator file adds. */
+const emptyRun = { attachedLogins: [], retiredPrincipals: [], retiredTenants: [], tenants: [] } as const;
+
 /** A failure travels as text: a bootstrap or a reconcile reports a phase plus the reason it recorded. */
 class StageFailure extends Schema.TaggedError<StageFailure>()('StageFailure', { reason: Schema.String }) {}
 
@@ -323,9 +326,7 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
     withStage((stage) =>
       Effect.gen(function* createsStageTenant() {
         const { tenantId } = stage;
-        const results = yield* stage
-          .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] })
-          .pipe(failClosed);
+        const results = yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
         expect(results.map(({ owner: isOwner, principalId }) => ({ owner: isOwner, principalId }))).toEqual([
           { owner: true, principalId: owner },
           { owner: false, principalId: colleague },
@@ -362,7 +363,7 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
     withStage((stage) =>
       Effect.gen(function* reconcilesIdempotently() {
         const { tenantId } = stage;
-        yield* stage.reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+        yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
         const scope = yield* scopeFor(tenantId, owner);
         const repeated = yield* stage.project(scope).pipe(failClosed);
         // The intent did not move, so the plan and the graph are equal: nothing is written and the writer
@@ -371,7 +372,7 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
         expect(repeated.deletions).toBe(0);
         expect(repeated.verified).toBe(true);
         // Running the whole stage bootstrap again resumes what it wrote instead of adding to it.
-        yield* stage.reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+        yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
         const after = yield* stage.project(scope).pipe(failClosed);
         expect(after.touches).toBe(0);
         expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
@@ -383,12 +384,13 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
     withStage((stage) =>
       Effect.gen(function* retiresTenant() {
         const { tenantId } = stage;
-        yield* stage.reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+        yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
         expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
         // The operator removes the tenant from the file and names it as retired: its memberships and
         // assignments are revoked in intent and the reconcile takes the tuples with them.
         const retired = yield* stage
           .reconcile({
+            ...emptyRun,
             retiredTenants: [
               {
                 legalEntityId: LegalEntityIdSchema.make(company),
@@ -396,7 +398,6 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
                 tenantId: TenantIdSchema.make(tenantId),
               },
             ],
-            tenants: [],
           })
           .pipe(failClosed);
         expect(retired).toEqual([]);
@@ -414,5 +415,74 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
         expect(counts.map(({ count }) => count)).toEqual(['0']);
       }),
     ),
+  );
+
+  suite.effect(
+    'an attached login joins holding nothing, and a retired login stops deciding in a tenant that stays',
+    () =>
+      withStage((stage) =>
+        Effect.gen(function* attachesAndRetiresLogins() {
+          const { tenantId } = stage;
+          yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+          const attached = uid(6);
+          // The operator attaches an existing login to the live tenant: a Principal and a binding, no access.
+          yield* stage
+            .reconcile({
+              ...emptyRun,
+              attachedLogins: [
+                {
+                  authBindingId: uid(14),
+                  displayName: 'Attached',
+                  principalId: attached,
+                  providerUserId: `auth-attached-${tenantId}`,
+                  tenantId,
+                },
+              ],
+            })
+            .pipe(failClosed);
+          const attachedBindings = yield* stage.admin
+            .unsafe<{ status: string }>(
+              `select status from core.principal_auth_bindings where tenant_id = '${tenantId}' and principal_id = '${attached}'`,
+            )
+            .pipe(Effect.orDie);
+          expect(attachedBindings.map(({ status }) => status)).toEqual(['active']);
+          expect((yield* stage.decide({ carrier: readCarrier, principalId: attached, tenantId })).outcome).toBe(
+            'DENIED',
+          );
+          // The colleague's login is retired: its binding, membership and "Plný přístup" end, the tenant stays.
+          const retiredColleague = {
+            principalId: PrincipalIdSchema.make(colleague),
+            tenantId: TenantIdSchema.make(tenantId),
+          };
+          expect((yield* stage.decide({ carrier: readCarrier, principalId: colleague, tenantId })).outcome).toBe(
+            'ALLOWED',
+          );
+          yield* stage.reconcile({ ...emptyRun, retiredPrincipals: [retiredColleague] }).pipe(failClosed);
+          expect((yield* stage.decide({ carrier: readCarrier, principalId: colleague, tenantId })).outcome).toBe(
+            'DENIED',
+          );
+          expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
+          const colleagueRows = yield* stage.admin
+            .unsafe<{ binding: string; principal: string }>(
+              `select b.status as binding, p.status as principal from core.principal_auth_bindings b
+             join core.principals p on p.tenant_id = b.tenant_id and p.principal_id = b.principal_id
+             where b.tenant_id = '${tenantId}' and b.principal_id = '${colleague}'`,
+            )
+            .pipe(Effect.orDie);
+          expect(colleagueRows).toEqual([{ binding: 'revoked', principal: 'archived' }]);
+          // Re-running the same file changes nothing; retiring the owner is refused and leaves it deciding.
+          yield* stage.reconcile({ ...emptyRun, retiredPrincipals: [retiredColleague] }).pipe(failClosed);
+          const refused = yield* stage
+            .reconcile({
+              ...emptyRun,
+              retiredPrincipals: [
+                { principalId: PrincipalIdSchema.make(owner), tenantId: TenantIdSchema.make(tenantId) },
+              ],
+            })
+            .pipe(Effect.flip);
+          expect(refused.reason).toMatch(/must not own its tenant/u);
+          expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
+        }),
+      ),
   );
 });

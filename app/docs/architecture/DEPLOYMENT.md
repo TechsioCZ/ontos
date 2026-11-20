@@ -372,6 +372,7 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
       "slug": "<lowercase-slug>",
       "displayName": "<name>",
       "defaultLocale": "<locale>",
+      "moduleKey": "<base module key declared by the composition>",
       "moduleStateId": "<uuid>",
       "legalEntity": {
         "legalEntityId": "<uuid>",
@@ -395,14 +396,26 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
       "workloads": [{ "principalId": "<uuid of an account of this Tenant>", "workloadKey": "<declared workload key>" }]
     }
   ],
+  "attachedLogins": [
+    {
+      "tenantId": "<uuid>",
+      "principalId": "<uuid>",
+      "authBindingId": "<uuid>",
+      "email": "<email>",
+      "displayName": "<name>"
+    }
+  ],
+  "retiredPrincipals": [{ "tenantId": "<uuid>", "principalId": "<uuid>" }],
   "retiredTenants": [{ "tenantId": "<uuid>", "legalEntityId": "<uuid>", "principalIds": ["<uuid>"] }],
   "retiredAccountEmails": ["<email>"]
 }
 ```
 
-- Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected.
+- Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected. `tenants` may be empty when the file only attaches or retires logins; every Tenant it lists is reconciled in full, including its owner's password.
 - `grants.owner` names the one account that owns the Tenant: `bootstrapTenantAccess` creates the Tenant's scopes, its owner's memberships and the "Plný přístup" role assigned to it in every scope. `grants.roles` lists what a further account holds beside its membership; `full_access` is the only role the file may name today. Nothing assigns rights by account kind, and no account receives a blanket grant: a capability a module ships later arrives through Novinky and an explicit adoption, never by rebuilding the release a role is pinned to.
 - `workloads` (optional) registers the trusted machine workloads of one Tenant (O73): each entry names a Principal of that Tenant and one `<module>.<workload-name>` key a carrier declares with `accessWorkload`. A workload that is not registered is refused, so a service principal never acts on the strength of its kind.
+- `attachedLogins` (optional) gives an existing login a Principal of its own in an existing, active Tenant that the file does not list: a human Principal and a `better_auth` staff binding to the login's Better Auth user, found by email (exactly one, not banned). The login, its password and the Tenant's release stay unchanged, and the Principal holds no access until the Tenant's administrator grants it through People.
+- `retiredPrincipals` (optional) ends one person's sign-in to a Tenant that stays active: the bootstrap revokes that Principal's bindings, memberships and assignments, archives it and reconciles the Tenant, so its projected tuples go. A Tenant owner, a non-human Principal, an active account, an attached login and a Principal of a retired Tenant are refused. Attach the login's new Principal and retire its old one in the same run to move a login between Tenants.
 - `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their bindings, archives their rows, and reconciles the intent that carried their authority, so the projection of it goes with it.
 - `retiredAccountEmails` (may be empty) lists former stage accounts. The bootstrap bans each one, ends its sessions and removes its password credential. Retired data must not overlap an active Tenant, Principal, or email.
 - Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. The bootstrap is insert-only: it never revives a membership, an assignment or a role an administrator ended, and removing a grant from the file does not revoke it.

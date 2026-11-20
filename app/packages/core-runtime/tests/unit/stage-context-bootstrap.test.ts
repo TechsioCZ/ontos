@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
-import { ModuleKeySchema } from '../../src/access/ids.ts';
+import { ModuleKeySchema, PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 import {
@@ -184,20 +184,33 @@ it.effect('refuses a stage run with no tenant, no declaration set or no owner ac
       return yield* Effect.die(new Error('the fixture must declare one tenant'));
     }
     const options = { authenticationNamespaceId: 'namespace', modules };
-    expect(stageBootstrapRefusal({ retiredTenants: [], tenants: [] }, options)?.reason).toMatch(/At least one/u);
+    const run = { attachedLogins: [], retiredPrincipals: [], retiredTenants: [], tenants };
+    expect(stageBootstrapRefusal({ ...run, tenants: [] }, options)?.reason).toMatch(/At least one/u);
+    // A file that only attaches or retires logins reconciles no tenant and is still a run.
+    const attachedLogin = {
+      authBindingId: '30000000-0000-4000-8000-0000000000b1',
+      displayName: 'Attached login',
+      principalId: '20000000-0000-4000-8000-0000000000b1',
+      providerUserId: 'auth-user-attached',
+      tenantId: '10000000-0000-4000-8000-0000000000b0',
+    };
+    expect(stageBootstrapRefusal({ ...run, attachedLogins: [attachedLogin], tenants: [] }, options)).toBeUndefined();
+    const retiredPrincipal = {
+      principalId: PrincipalIdSchema.make('20000000-0000-4000-8000-0000000000c2'),
+      tenantId: TenantIdSchema.make('10000000-0000-4000-8000-0000000000b0'),
+    };
+    expect(
+      stageBootstrapRefusal({ ...run, retiredPrincipals: [retiredPrincipal], tenants: [] }, options),
+    ).toBeUndefined();
     // A composition that declares nothing would publish an empty release and deny the owner everything.
-    expect(stageBootstrapRefusal({ retiredTenants: [], tenants }, { ...options, modules: [] })?.reason).toMatch(
+    expect(stageBootstrapRefusal(run, { ...options, modules: [] })?.reason).toMatch(
       /declarations of the running composition/u,
     );
     const withoutOwner = [{ ...tenant, accounts: tenant.accounts.map((account) => ({ ...account, owner: false })) }];
-    expect(stageBootstrapRefusal({ retiredTenants: [], tenants: withoutOwner }, options)?.reason).toMatch(
-      /exactly one owner/u,
-    );
+    expect(stageBootstrapRefusal({ ...run, tenants: withoutOwner }, options)?.reason).toMatch(/exactly one owner/u);
     const twoOwners = [{ ...tenant, accounts: tenant.accounts.map((account) => ({ ...account, owner: true })) }];
-    expect(stageBootstrapRefusal({ retiredTenants: [], tenants: twoOwners }, options)?.reason).toMatch(
-      /exactly one owner/u,
-    );
-    expect(stageBootstrapRefusal({ retiredTenants: [], tenants }, options)).toBeUndefined();
+    expect(stageBootstrapRefusal({ ...run, tenants: twoOwners }, options)?.reason).toMatch(/exactly one owner/u);
+    expect(stageBootstrapRefusal(run, options)).toBeUndefined();
     return yield* Effect.void;
   }),
 );
@@ -225,7 +238,7 @@ it.effect('uses explicit operator module intent and refuses a module absent from
     expect(refused.reason).toMatch(/base module.*running composition/u);
     expect(
       stageBootstrapRefusal(
-        { retiredTenants: [], tenants },
+        { attachedLogins: [], retiredPrincipals: [], retiredTenants: [], tenants },
         { authenticationNamespaceId: 'namespace', modules: absent },
       )?.reason,
     ).toMatch(/base module/u);

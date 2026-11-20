@@ -77,7 +77,7 @@ it.effect('accepts any number of Tenants and accounts with v2 authority as data'
       })),
     });
     const [firstTenant] = parsed.tenants;
-    const [owner, holder] = firstTenant.accounts;
+    const [owner, holder] = firstTenant?.accounts ?? [];
     expect(owner?.grants).toEqual({ owner: true, roles: [] });
     expect(holder?.grants).toEqual({ owner: false, roles: ['full_access'] });
     expect(Redacted.value(owner?.password ?? Redacted.make(''))).toBe('fixture-a-1-password');
@@ -103,7 +103,6 @@ it.effect('rejects malformed files without echoing their values', () =>
     for (const file of [
       { ...validFile, schemaVersion: 1 },
       { ...validFile, extra: true },
-      { ...validFile, tenants: [] },
       withAccount({ password: 'short' }),
       withAccount({ email: 'not-an-email' }),
       withAccount({ role: 'anything' }),
@@ -149,6 +148,73 @@ it.effect('rejects duplicate identities, unknown role keys, and overlapping reti
         ],
       }),
     ).toMatch(/documented schema/u);
+  }),
+);
+
+it.effect('attaches existing logins to Tenants outside the file and retires single Principals', () =>
+  Effect.gen(function* attachesAndRetiresLogins() {
+    const attachedLogin = {
+      authBindingId: '30000000-0000-4000-8000-0000000000d1',
+      displayName: 'Attached login',
+      email: 'attached-fixture@example.invalid',
+      principalId: '20000000-0000-4000-8000-0000000000d1',
+      tenantId: '10000000-0000-4000-8000-0000000000d0',
+    };
+    const retiredPrincipal = {
+      principalId: '20000000-0000-4000-8000-0000000000d9',
+      tenantId: '10000000-0000-4000-8000-0000000000d0',
+    };
+    // A run that only moves logins names no Tenant of its own.
+    const loginsOnly = {
+      attachedLogins: [attachedLogin],
+      retiredAccountEmails: [],
+      retiredPrincipals: [retiredPrincipal],
+      retiredTenants: [],
+      schemaVersion: 2,
+      tenants: [],
+    };
+    expect(yield* parse(loginsOnly)).toMatchObject({
+      attachedLogins: [attachedLogin],
+      retiredPrincipals: [retiredPrincipal],
+      tenants: [],
+    });
+    const [first] = validFile.tenants;
+    const [owner] = first?.accounts ?? [];
+    const other = {
+      authBindingId: '30000000-0000-4000-8000-0000000000d2',
+      principalId: '20000000-0000-4000-8000-0000000000d2',
+    };
+    for (const attachedLogins of [
+      [{ ...attachedLogin, tenantId: first?.tenantId }],
+      [{ ...attachedLogin, tenantId: validFile.retiredTenants[0]?.tenantId }],
+      [{ ...attachedLogin, principalId: owner?.principalId }],
+      [{ ...attachedLogin, authBindingId: owner?.authBindingId }],
+      [{ ...attachedLogin, email: validFile.retiredAccountEmails[0] }],
+      [attachedLogin, { ...attachedLogin, ...other, email: attachedLogin.email.toUpperCase() }],
+    ]) {
+      const reason = yield* rejectionReason({ ...validFile, attachedLogins });
+      expect(reason).toMatch(/attached login/u);
+      expect(reason).not.toMatch(/fixture|20000000|10000000/u);
+    }
+    expect(
+      yield* parse({
+        ...validFile,
+        attachedLogins: [
+          attachedLogin,
+          { ...attachedLogin, ...other, tenantId: retiredPrincipal.tenantId.replace('d0', 'e0') },
+        ],
+      }),
+    ).toMatchObject({ attachedLogins: [{}, {}] });
+    for (const retiredPrincipals of [
+      [{ principalId: owner?.principalId, tenantId: first?.tenantId }],
+      [{ principalId: attachedLogin.principalId, tenantId: attachedLogin.tenantId }],
+      [{ ...retiredPrincipal, tenantId: validFile.retiredTenants[0]?.tenantId }],
+      [retiredPrincipal, retiredPrincipal],
+    ]) {
+      const reason = yield* rejectionReason({ ...validFile, attachedLogins: [attachedLogin], retiredPrincipals });
+      expect(reason).toMatch(/Retired Principals/u);
+      expect(reason).not.toMatch(/fixture|20000000|10000000/u);
+    }
   }),
 );
 
@@ -251,7 +317,7 @@ it.effect('uses exactly one supplied workload set, with no retained declarations
     };
     const contents = { mode: 0o600, source: yield* encodeFile(withWorkload) };
     const parsed = yield* parseStageAccountsFile(contents, new Set([workloadKey]));
-    expect(parsed.tenants[0].workloads).toEqual([{ principalId: first.accounts[0]?.principalId, workloadKey }]);
+    expect(parsed.tenants[0]?.workloads).toEqual([{ principalId: first.accounts[0]?.principalId, workloadKey }]);
     for (const declared of [new Set<string>(), reviewedWorkloads]) {
       const failure = yield* parseStageAccountsFile(contents, declared).pipe(Effect.flip);
       expect(failure.reason).toMatch(/declared by the composition/u);
@@ -300,6 +366,6 @@ it.effect('requires explicit valid base-module intent without a legacy default',
       );
     }
     const alternate = yield* parse({ ...validFile, tenants: [{ ...first, moduleKey: 'another.owner' }] });
-    expect(alternate.tenants[0].moduleKey).toBe('another.owner');
+    expect(alternate.tenants[0]?.moduleKey).toBe('another.owner');
   }),
 );
