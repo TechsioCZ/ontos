@@ -18,12 +18,15 @@ import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import type { DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
 import { WorkloadKeySchema } from '../../src/authorization/access-declaration.ts';
+import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
 import type { MediaByteHopAsset } from '../../src/media/byte-stream.ts';
+import { MediaAssetIdSchema, MediaTenantIdSchema } from '../../src/media/identity.ts';
+import { checkTemporaryObjectCleanup } from '../../src/media/cleanup-eligibility.ts';
 import { reconcileUncertainUpload, mayStartIndependentUpload } from '../../src/media/reconciliation.ts';
 import { ProvenMediaIntegrityFinding } from '../../src/media/integrity-contract.ts';
 import { ObjectStorage, ObjectStorageNetworkError, ObjectStorageTimeout } from '../../src/media/object-storage.ts';
@@ -107,6 +110,8 @@ const insertActor = Effect.fn('CoreMediaRecoveryHarness.insertActor')(function* 
 const cleanTenant = (admin: PgClient.PgClient, tenantId: string) =>
   Effect.forEach(
     [
+      'core.evidence_references',
+      'core.media_links',
       'core.media_assets',
       'core.data_access_events',
       'core.audit_events',
@@ -1245,3 +1250,125 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })(
     );
   },
 );
+
+const checkCleanup = (
+  harness: Harness,
+  world: World,
+  options: {
+    readonly authority?: 'absent' | 'verified';
+    readonly mediaAssetId: string;
+    readonly providerProtection?: 'none_recorded' | 'recorded' | 'unknown';
+    readonly tenantId?: string;
+  },
+) =>
+  Effect.gen(function* cleanupCheck() {
+    const trusted = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(principalOf(world, world.human));
+    const scope = { ...trusted, correlationId: 'core-media-cleanup' };
+    const target = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({ mediaAssetId: MediaAssetIdSchema, tenantId: MediaTenantIdSchema }),
+    )({ mediaAssetId: options.mediaAssetId, tenantId: options.tenantId ?? world.tenantId });
+    return yield* harness.database.executor.transaction((transaction) =>
+      installOperationalScope(transaction, scope).pipe(
+        Effect.flatMap((scoped) =>
+          checkTemporaryObjectCleanup(scoped, {
+            authority: options.authority ?? 'verified',
+            providerProtection: options.providerProtection ?? 'none_recorded',
+            target: {
+              ...target,
+              storageKey: deriveMediaStorageKey(target),
+              storageProvider: harness.storage.service.providerId,
+            },
+          }),
+        ),
+      ),
+    );
+  });
+
+const refusalsOfCheck = (assessment: Effect.Success<ReturnType<typeof checkCleanup>>) =>
+  assessment.eligible ? [] : [...assessment.refusals].toSorted();
+
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media cleanup eligibility on PostgreSQL', (suite) => {
+  suite.effect('refuses a confirmed asset, an open intent and a failed one: nothing Core wrote is temporary', () =>
+    Effect.gen(function* refusals() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const ready = yield* uploadReadyAsset(harness, world, world.human, content, { key: 'clean-ready' });
+      const open = yield* reserveAsset(harness, world, world.human, content, { key: 'clean-open' });
+      const failed = yield* reserveAsset(harness, world, world.human, content, { key: 'clean-failed' });
+      yield* harness.admin.unsafe(
+        `update core.media_assets set processing_status = 'failed' where tenant_id = $1 and media_asset_id = $2`,
+        [world.tenantId, failed.mediaAssetRef.resourceId],
+      );
+      const rowsBefore = yield* harness.admin.unsafe(
+        `select * from core.media_assets where tenant_id = $1 order by media_asset_id`,
+        [world.tenantId],
+      );
+      const objectsBefore = (yield* harness.storage.calls).length;
+      expect(refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: ready.mediaAssetId }))).toEqual([
+        'action_invocation_present',
+        'confirmed_asset',
+      ]);
+      expect(
+        refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: open.mediaAssetRef.resourceId })),
+      ).toEqual(['action_invocation_present', 'open_intent']);
+      expect(
+        refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: failed.mediaAssetRef.resourceId })),
+      ).toEqual(['action_invocation_present', 'failed_asset_evidence']);
+      // A check deletes nothing, writes nothing and does not even call the provider.
+      expect(
+        yield* harness.admin.unsafe(`select * from core.media_assets where tenant_id = $1 order by media_asset_id`, [
+          world.tenantId,
+        ]),
+      ).toEqual(rowsBefore);
+      expect((yield* harness.storage.calls).length).toBe(objectsBefore);
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('refuses an asset that is linked or referenced as evidence', () =>
+    Effect.gen(function* referenced() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const linked = yield* reserveAsset(harness, world, world.human, content, { key: 'clean-link' });
+      const evidenced = yield* reserveAsset(harness, world, world.human, content, { key: 'clean-evidence' });
+      yield* harness.admin.unsafe(
+        `insert into core.media_links (tenant_id, media_asset_id, action_invocation_id, link_source, target_module_key, target_resource_type, target_resource_id, link_kind)
+         values ($1, $2, $2, 'user', 'catalog', 'catalog.product', 'p-1', 'attachment')`,
+        [world.tenantId, linked.mediaAssetRef.resourceId],
+      );
+      yield* harness.admin.unsafe(
+        `insert into core.evidence_references (tenant_id, legal_entity_id, media_asset_id, source_kind, action_invocation_id, evidence_kind, evidence_policy_key, retention_policy_key, artifact_content_sha256, storage_lock_scope, storage_lock_mode, storage_lock_status, disposition_status, data_classification)
+         values ($1, $3, $2, 'action', $2, 'artifact', 'p', 'r', $4, 'object', 'none', 'unlocked', 'active', 'internal')`,
+        [world.tenantId, evidenced.mediaAssetRef.resourceId, world.legalEntityId, digestOf(content)],
+      );
+      expect(
+        refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: linked.mediaAssetRef.resourceId })),
+      ).toContain('linked');
+      expect(
+        refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: evidenced.mediaAssetRef.resourceId })),
+      ).toContain('evidence_reference');
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('is eligible only for an object that was never part of any Core intent, with every attestation', () =>
+    Effect.gen(function* eligible() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const neverReserved = yield* nextUuid;
+      expect(yield* checkCleanup(harness, world, { mediaAssetId: neverReserved })).toEqual({ eligible: true });
+      // The same object is refused the moment one attestation is missing, however unlikely the object looks.
+      expect(
+        refusalsOfCheck(yield* checkCleanup(harness, world, { authority: 'absent', mediaAssetId: neverReserved })),
+      ).toEqual(['authority_unverified']);
+      for (const providerProtection of ['recorded', 'unknown'] as const) {
+        expect(
+          refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: neverReserved, providerProtection })),
+        ).toEqual(['protection_unproven']);
+      }
+      // A target of another tenant than the trusted scope is never assessed against this tenant's facts.
+      const other = yield* makeWorld(harness.admin, harness.database.executor);
+      expect(
+        refusalsOfCheck(yield* checkCleanup(harness, world, { mediaAssetId: neverReserved, tenantId: other.tenantId })),
+      ).toEqual(['target_unverified']);
+    }).pipe(Effect.scoped),
+  );
+});
