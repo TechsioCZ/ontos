@@ -461,8 +461,9 @@ it.live(
           expect(Exit.isFailure(yield* owner(statement).pipe(Effect.exit))).toBe(true);
         }
 
-        // With two system principals enrolled for source writes Core names no writer, so no route can be configured;
-        // a pause needs no enrollment and still succeeds.
+        // With two system principals enrolled for source writes Core reports the enrollment as ambiguous, so a
+        // configuration is answered unavailable before the owner routine runs; a pause needs no enrollment and still
+        // succeeds.
         const secondWriter = yield* enroll(tenantId, 'system', SOURCE_WRITE);
         const ambiguous = yield* Effect.flip(configure(3, 'Resume under an ambiguous enrollment', route));
         expect(Schema.is(CustomerSourceRouteUnavailable)(ambiguous)).toBe(true);

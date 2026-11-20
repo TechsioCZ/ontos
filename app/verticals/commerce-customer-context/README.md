@@ -165,19 +165,18 @@ Action, and reads it, with the generation a decision must name and its decision 
 `customer-source-route` Read. Every principal a configured route names must be one Core enrolls for
 the route's workload.
 
-Each decision is first compared with the stored route generation the administrator read (none for a
-route that must not exist yet). A mismatch writes nothing, so a second create-only request for an
-existing route is refused even when it states the same route. Only then does a pause clear the
-active flag, or a configuration check its principals, its source identity and whether it changes
-anything; an identical route is `UNCHANGED`, with no new generation. An exact replay of the same
-idempotency key is answered by the Action runtime with the original result.
+The owner routine compares the stored route generation with the one the administrator read (none
+for a route that must not exist yet) before anything else it decides. A mismatch writes nothing, so
+a second create-only request for an existing route is refused even when it states the same route.
+Only then does a pause clear the active flag, or a configuration check its principals, its source
+identity and whether it changes anything; an identical route is `UNCHANGED`, with no new
+generation. A configuration whose read of Core's enrollment fails or is ambiguous (two enrolled
+writers) is answered unavailable before the routine runs, and writes nothing. An exact replay of
+the same idempotency key is answered by the Action runtime with the original result.
 
-A source recovers the receipt of an effect whose reply it lost only while the route is active. A
-Profile, Group definition or Membership receipt is recovered by the route's current writer (a
-Profile receipt also by a reader the route names) naming the route's current revision and, for a
-Profile or Group definition, its current mapping revision, whatever revision the effect was written
-under. A Saved Address receipt is recovered only while the route stays at exactly the revision and
-mapping revision the effect was written under, with the principal that wrote it still its writer.
-Pausing any route, and revising a Saved Address route or changing its writer, leaves such a reply
-unrecoverable until the route is restored; nothing committed is lost. Change a route only after the
-source's outstanding work has settled.
+Limitation: pausing a route blocks recovery through that route of a receipt whose reply the source
+lost. A Profile, Group definition or Membership receipt can still be recovered through another
+active route of the same source that satisfies its recovery routine's checks. A Saved Address
+receipt is pinned to its original route, route revision, mapping revision and writer: it is
+recovered only while that route is active at those revisions with that writer. Nothing committed is
+lost. Change a route only after the source's outstanding work has settled.
