@@ -137,7 +137,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     );
 
     suite.effect(
-      'bytes that do not match the declared identity never become ready: the upload ends failed or unconfirmed, nothing downloads, and no hash is published',
+      'bytes that do not match the declared identity are refused as a conflict and never become ready: nothing downloads and no hash is published',
       (ctx) =>
         withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
