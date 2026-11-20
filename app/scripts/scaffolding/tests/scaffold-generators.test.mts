@@ -1465,6 +1465,7 @@ it.live(
           'organization-engagement-profile-read-server.ts',
           'organization-ico-facts-read-server.ts',
           'organization-record-facts-read-server.ts',
+          'owned-retail-party-result-read-server.ts',
           'parties-search-server.ts',
           'party-contact-point-detail-read-server.ts',
           'party-contact-points-read-server.ts',
