@@ -11,6 +11,7 @@ import {
   symmyIntegrationRelations,
   symmyJobEffects,
   symmyJobRoutes,
+  symmyRouteEnrollmentRecords,
   symmySyncAdmissionAttempts,
   symmyJobPrivacyExecutions,
   symmyJobNotifications,
@@ -35,6 +36,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
   yield* database.select().from(symmySyncAdmissions).limit(0);
   yield* database.select().from(symmySyncAdmissionAttempts).limit(0);
   yield* database.select().from(symmyJobPrivacyExecutions).limit(0);
+  yield* database.select().from(symmyRouteEnrollmentRecords).limit(0);
   // The catalog is used only by this operator-side verifier.
   const tables = yield* client<{
     readonly enabled: boolean;
@@ -74,7 +76,12 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'sync_admission_attempts',
           ].includes(name) ||
         read_allowed !==
-          !['job_notifications', 'job_retention_tombstones', 'privacy_measure_executions'].includes(name) ||
+          ![
+            'job_notifications',
+            'job_retention_tombstones',
+            'privacy_measure_executions',
+            'route_enrollment_records',
+          ].includes(name) ||
         unsafe_mutation,
     )
   ) {
@@ -84,6 +91,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
   }
   const [runtime] = yield* client<{
     readonly journal_exists: boolean;
+    readonly record_append_only_trigger_enabled: boolean;
     readonly route_gate_trigger_enabled: boolean;
     readonly schema_create: boolean;
     readonly schema_usage: boolean;
@@ -95,17 +103,24 @@ const verification = Effect.gen(function* verifySymmySchema() {
           and t.tgtype = 29 -- row-level AFTER INSERT, UPDATE and DELETE
           and t.tgfoid = to_regprocedure('symmy_integration.publish_route_execution_gate()'))
         as route_gate_trigger_enabled,
+      exists(select 1 from pg_catalog.pg_trigger t
+        where t.tgrelid = 'symmy_integration.route_enrollment_records'::regclass
+          and t.tgname = 'symmy_route_enrollment_records_append_only' and t.tgenabled = 'O'
+          and t.tgtype = 27 -- row-level BEFORE UPDATE and DELETE
+          and t.tgfoid = to_regprocedure('symmy_integration.reject_route_enrollment_record_change()'))
+        as record_append_only_trigger_enabled,
       has_schema_privilege('ontos_runtime', 'symmy_integration', 'CREATE') as schema_create,
       has_schema_privilege('ontos_runtime', 'symmy_integration', 'USAGE') as schema_usage
   `;
   if (
     !runtime?.journal_exists ||
     !runtime.route_gate_trigger_enabled ||
+    !runtime.record_append_only_trigger_enabled ||
     !runtime.schema_usage ||
     runtime.schema_create
   ) {
     yield* new SymmySchemaVerificationError({
-      reason: 'Symmy migration journal, route gate trigger or runtime schema privileges mismatch',
+      reason: 'Symmy migration journal, route gate or record trigger, or runtime schema privileges mismatch',
     });
   }
   const routines = yield* client<{
@@ -150,6 +165,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
     'record_symmy_owner_request',
     'record_symmy_privacy_execution',
     'record_symmy_resolved_effect',
+    'reject_route_enrollment_record_change',
     'settle_symmy_job_effect',
     'settle_symmy_job_notification',
     'symmy_original_route_active',
@@ -168,6 +184,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'symmy_original_route_active',
             'erase_symmy_effect_payload',
             'erase_symmy_plan_payload',
+            'reject_route_enrollment_record_change',
           ].includes(routine.name) ||
         routine.definer !==
           ![
@@ -177,6 +194,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'symmy_original_route_active',
             'erase_symmy_effect_payload',
             'erase_symmy_plan_payload',
+            'reject_route_enrollment_record_change',
           ].includes(routine.name),
     )
   ) {
