@@ -4,7 +4,7 @@
  * (tenant bceaa540…, company c0c78a3e…) through the Shell's own endpoints. Their AKROS Principals come from the
  * stage accounts bootstrap (`attachedLogins`), which also retires their former demo-tenant Principals
  * (`retiredPrincipals`), so each login signs in to AKROS and nowhere else; this command refuses a login that
- * still signs in anywhere else.
+ * still signs in anywhere else or can select any other company than the AKROS seller.
  *
  * Everything it decides on is read live, never from a hand-written inventory: each exact login signs in with
  * its own password and shows the tenants it resolves and its Principal in AKROS (only a `better_auth` staff
@@ -71,6 +71,7 @@ export const FailureCodeSchema = Schema.Literals([
   'identity_missing',
   'identity_conflict',
   'foreign_tenant',
+  'foreign_company',
   'authority_missing',
   'reviewed_role_missing',
   'unsafe_permissions',
@@ -141,20 +142,61 @@ const identityIn = Effect.fn('AkrosStaffScope.identityIn')(function* identityIn(
   return String(current.identity.principalId);
 });
 
-const selectSeller = Effect.fn('AkrosStaffScope.selectSeller')(function* selectSeller(session: Session) {
-  const entities = yield* checked('legal entities', session.shell.legalEntities.availableLegalEntities({}));
-  if (!entities.legalEntities.some(({ legalEntityId }) => String(legalEntityId) === AKROS.legalEntityId)) {
+/** The companies this session may select, and the one it has selected. */
+const sellersOf = (session: Session) =>
+  checked('legal entities', session.shell.legalEntities.availableLegalEntities({})).pipe(
+    Effect.map((entities) => ({
+      offered: entities.legalEntities.map(({ legalEntityId }) => String(legalEntityId)),
+      selected: Option.map(Option.fromUndefinedOr(entities.selectedLegalEntityId), String),
+    })),
+  );
+
+/** Selects the AKROS seller unless it is selected already, and proves the selection the Shell answered. */
+const switchToSeller = Effect.fn('AkrosStaffScope.switchToSeller')(function* switchToSeller(
+  session: Session,
+  selected: Option.Option<string>,
+) {
+  if (Option.contains(selected, AKROS.legalEntityId)) {
+    return yield* Effect.void;
+  }
+  const switched = yield* checked(
+    'select AKROS seller',
+    session.shell.legalEntities.switchLegalEntity({
+      payload: { legalEntityId: LegalEntityIdSchema.make(AKROS.legalEntityId) },
+    }),
+  );
+  if (String(switched.selectedLegalEntityId) !== AKROS.legalEntityId) {
+    return yield* stop('target_unreachable', 'the seller switch selected another company than AKROS');
+  }
+  return yield* Effect.void;
+});
+
+/**
+ * A staff login works for the AKROS seller and for no other company: any other selectable company refuses it.
+ * Without any company yet it holds no seller access, which the plan reports as blocked.
+ */
+const selectStaffSeller = Effect.fn('AkrosStaffScope.selectStaffSeller')(function* selectStaffSeller(
+  session: Session,
+  email: Email,
+) {
+  const { offered, selected } = yield* sellersOf(session);
+  if (offered.some((legalEntityId) => legalEntityId !== AKROS.legalEntityId)) {
+    return yield* stop('foreign_company', `${email} can select another company than the AKROS seller`);
+  }
+  if (offered.length === 0) {
     return false;
   }
-  if (String(entities.selectedLegalEntityId) !== AKROS.legalEntityId) {
-    yield* checked(
-      'select AKROS seller',
-      session.shell.legalEntities.switchLegalEntity({
-        payload: { legalEntityId: LegalEntityIdSchema.make(AKROS.legalEntityId) },
-      }),
-    );
-  }
+  yield* switchToSeller(session, selected);
   return true;
+});
+
+/** The administrator may administer further companies of the tenant; the AKROS seller must be one of them. */
+const selectAdminSeller = Effect.fn('AkrosStaffScope.selectAdminSeller')(function* selectAdminSeller(session: Session) {
+  const { offered, selected } = yield* sellersOf(session);
+  if (!offered.includes(AKROS.legalEntityId)) {
+    return yield* stop('authority_missing', 'the administrator cannot select the AKROS seller');
+  }
+  return yield* switchToSeller(session, selected);
 });
 
 // --- observation ---------------------------------------------------------------------------------------
@@ -186,7 +228,7 @@ export const observeAccount = Effect.fn('AkrosStaffScope.observeAccount')(functi
     );
   }
   const principalId = yield* identityIn(session, AKROS.tenantId);
-  const sellerSelectable = yield* selectSeller(session);
+  const sellerSelectable = yield* selectStaffSeller(session, email);
   return { email, principalId, sellerSelectable, tenants } satisfies AccountObservation;
 });
 
@@ -214,9 +256,7 @@ export const openAdmin = Effect.fn('AkrosStaffScope.openAdmin')(function* openAd
     return yield* stop('authority_missing', 'the administrator login has no AKROS tenant');
   }
   yield* identityIn(session, AKROS.tenantId);
-  if (!(yield* selectSeller(session))) {
-    return yield* stop('authority_missing', 'the administrator cannot select the AKROS seller');
-  }
+  yield* selectAdminSeller(session);
   return session;
 });
 
@@ -412,10 +452,6 @@ export const reviewedRole = Effect.fn('AkrosStaffScope.reviewedRole')(function* 
       'unsafe_permissions',
       `role ${role.id}: ${unsafe.capabilityKey} is outside what ${holder} may hold`,
     );
-  }
-  const keys: ReadonlySet<string> = new Set(role.cells.map(({ capabilityKey }) => String(capabilityKey)));
-  if (holder !== 'routing' && (!keys.has(ORDER_PAGE) || !keys.has(ORDER_RECORDS))) {
-    return yield* stop('unsafe_permissions', `role ${role.id} lacks the order page or records read`);
   }
   return role;
 });

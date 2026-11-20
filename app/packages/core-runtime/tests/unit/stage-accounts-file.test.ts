@@ -161,6 +161,7 @@ it.effect('attaches existing logins to Tenants outside the file and retires sing
       tenantId: '10000000-0000-4000-8000-0000000000d0',
     };
     const retiredPrincipal = {
+      email: 'attached-fixture@example.invalid',
       principalId: '20000000-0000-4000-8000-0000000000d9',
       tenantId: '10000000-0000-4000-8000-0000000000d0',
     };
@@ -206,8 +207,9 @@ it.effect('attaches existing logins to Tenants outside the file and retires sing
       }),
     ).toMatchObject({ attachedLogins: [{}, {}] });
     for (const retiredPrincipals of [
-      [{ principalId: owner?.principalId, tenantId: first?.tenantId }],
-      [{ principalId: attachedLogin.principalId, tenantId: attachedLogin.tenantId }],
+      [{ ...retiredPrincipal, principalId: owner?.principalId, tenantId: first?.tenantId }],
+      [{ ...retiredPrincipal, principalId: attachedLogin.principalId, tenantId: attachedLogin.tenantId }],
+      [{ ...retiredPrincipal, principalId: attachedLogin.principalId.toUpperCase() }],
       [{ ...retiredPrincipal, tenantId: validFile.retiredTenants[0]?.tenantId }],
       [retiredPrincipal, retiredPrincipal],
     ]) {
@@ -215,6 +217,43 @@ it.effect('attaches existing logins to Tenants outside the file and retires sing
       expect(reason).toMatch(/Retired Principals/u);
       expect(reason).not.toMatch(/fixture|20000000|10000000/u);
     }
+  }),
+);
+
+/** Another spelling of the same UUID. */
+const upper = (value: string | undefined) => (value ?? '').toUpperCase();
+
+it.effect('reads every UUID in its one lowercase spelling, so a differently cased id is the same id', () =>
+  Effect.gen(function* canonicalizesIdentifiers() {
+    const [first] = validFile.tenants;
+    const [owner] = first?.accounts ?? [];
+    const parsed = yield* parse({
+      ...validFile,
+      retiredPrincipals: [
+        {
+          email: 'retired-login@example.invalid',
+          principalId: upper('20000000-0000-4000-8000-0000000000e9'),
+          tenantId: upper('10000000-0000-4000-8000-0000000000e0'),
+        },
+      ],
+      tenants: [{ ...first, tenantId: upper(first?.tenantId) }, ...validFile.tenants.slice(1)],
+    });
+    expect(parsed.tenants[0]?.tenantId).toBe(first?.tenantId);
+    expect(parsed.retiredPrincipals).toEqual([
+      {
+        email: 'retired-login@example.invalid',
+        principalId: '20000000-0000-4000-8000-0000000000e9',
+        tenantId: '10000000-0000-4000-8000-0000000000e0',
+      },
+    ]);
+    // An account retired in another spelling of its own id is the account itself.
+    const reason = yield* rejectionReason({
+      ...validFile,
+      retiredPrincipals: [
+        { email: 'retired-login@example.invalid', principalId: upper(owner?.principalId), tenantId: first?.tenantId },
+      ],
+    });
+    expect(reason).toMatch(/Retired Principals/u);
   }),
 );
 

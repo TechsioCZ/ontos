@@ -81,11 +81,15 @@ it.effect('builds the stage configuration from the operator accounts file', () =
       databaseAdminUrl: 'postgresql://db:password@db:5432/db',
     });
     const [tenant] = configuration.accountsFile.tenants;
+    if (tenant === undefined) {
+      return yield* Effect.die(new Error('the fixture declares one tenant'));
+    }
     const [account] = tenant.accounts;
     expect(account.email).toBe('account-a@example.invalid');
     expect(account.grants).toEqual({ owner: true, roles: [] });
     expect(Redacted.value(account.password)).toBe('fixture-a-password');
     expect(Redacted.isRedacted(account.password)).toBe(true);
+    return yield* Effect.void;
   }),
 );
 
@@ -153,9 +157,11 @@ it.effect('threads only the explicitly supplied workload declarations through th
     });
     const reader = readerFor(source);
     const configuration = yield* loadStageAccountsConfiguration(reader, declaredWorkloadKeys, validEnvironment);
-    expect(configuration.accountsFile.tenants[0].workloads).toEqual([
-      { principalId: account.principalId, workloadKey },
-    ]);
+    const [loaded] = configuration.accountsFile.tenants;
+    if (loaded === undefined) {
+      return yield* Effect.die(new Error('the fixture declares one tenant'));
+    }
+    expect(loaded.workloads).toEqual([{ principalId: account.principalId, workloadKey }]);
     const failure = yield* loadStageAccountsConfiguration(reader, new Set(), validEnvironment).pipe(Effect.flip);
     expect(failure.code).toBe('stage_accounts_configuration_invalid');
     expect(failure.reason).toMatch(/declared by the composition/u);
@@ -163,6 +169,7 @@ it.effect('threads only the explicitly supplied workload declarations through th
     expect(failure.reason).not.toContain(account.principalId);
     expect(failure.reason).not.toContain(account.email);
     expect(failure.reason).not.toContain(account.password);
+    return yield* Effect.void;
   }),
 );
 

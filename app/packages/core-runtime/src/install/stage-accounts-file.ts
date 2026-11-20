@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Schema, SchemaTransformation } from 'effect';
 
 import { ModuleKeySchema } from '../access/ids.ts';
 import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
@@ -7,7 +7,11 @@ import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 export const STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY = 'ONTOS_STAGE_ACCOUNTS_FILE';
 
 const TrimmedNonEmptyString = Schema.Trim.check(Schema.isNonEmpty());
-const uuid = Schema.String.check(Schema.isUUID());
+/**
+ * A UUID in its one lowercase spelling. PostgreSQL treats differently cased spellings as the same value, so
+ * every comparison the file is checked with has to as well.
+ */
+const uuid = Schema.String.pipe(Schema.decode(SchemaTransformation.toLowerCase()), Schema.check(Schema.isUUID()));
 const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
 const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const ModuleStateIdSchema = uuid.pipe(Schema.brand('ModuleStateId'));
@@ -97,8 +101,13 @@ const StageAttachedLoginSchema = Schema.Struct({
   tenantId: TenantIdSchema,
 });
 
-/** A Principal whose sign-in to its still active Tenant ends, with every membership and assignment it held. */
+/**
+ * A Principal whose sign-in to its still active Tenant ends, with every membership and assignment it held.
+ * `email` names the login that signs in as it; the bootstrap refuses a Principal any other login or
+ * credential is bound to.
+ */
 const StageRetiredPrincipalSchema = Schema.Struct({
+  email: AccountEmailSchema,
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
 });

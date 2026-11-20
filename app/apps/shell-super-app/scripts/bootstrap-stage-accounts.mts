@@ -9,8 +9,10 @@ import {
 import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
 import { AccessCatalogSnapshotWriterLive } from '@app/core-runtime/access/intent/catalog-snapshot-writer';
 import { AccessMembershipStoreLive } from '@app/core-runtime/access/intent/memberships';
+import { AccessPeopleStoreLive } from '@app/core-runtime/access/intent/people-store';
 import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
 import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/projection-writer';
+import { AccessTeamStoreLive } from '@app/core-runtime/access/intent/teams';
 import { TenantIntentLoaderLive } from '@app/core-runtime/access/intent/tenant-intent-loader';
 import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
 import { CoreDatabaseLive } from '@app/core-runtime/db/client';
@@ -104,6 +106,8 @@ export const makeStageInstallationRuntime = (
     AccessWriteJournalStoreLive,
     AccessChangesStoreLive,
     memberships,
+    AccessPeopleStoreLive,
+    AccessTeamStoreLive,
   ).pipe(Layer.provide(platform));
   const catalog = AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores));
   const writer = AccessProjectionWriterLive.pipe(Layer.provide(Layer.mergeAll(stores, platform)));
@@ -197,7 +201,10 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
   );
   yield* Effect.forEach(
     result.retiredPrincipals,
-    (retired) => Console.log(`Retired stage Principal ${retired.principalId} in tenant=${retired.tenantId}`),
+    (retired) =>
+      Console.log(
+        `Retired stage Principal of ${retired.email}: tenant=${retired.tenantId} principal=${retired.principalId}`,
+      ),
     { discard: true },
   );
   yield* Effect.forEach(

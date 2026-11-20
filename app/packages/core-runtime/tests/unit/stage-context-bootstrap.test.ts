@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
-import { ModuleKeySchema, PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
+import { ModuleKeySchema } from '../../src/access/ids.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 import {
@@ -196,8 +196,9 @@ it.effect('refuses a stage run with no tenant, no declaration set or no owner ac
     };
     expect(stageBootstrapRefusal({ ...run, attachedLogins: [attachedLogin], tenants: [] }, options)).toBeUndefined();
     const retiredPrincipal = {
-      principalId: PrincipalIdSchema.make('20000000-0000-4000-8000-0000000000c2'),
-      tenantId: TenantIdSchema.make('10000000-0000-4000-8000-0000000000b0'),
+      principalId: '20000000-0000-4000-8000-0000000000c2',
+      providerUserId: 'auth-user-retired',
+      tenantId: '10000000-0000-4000-8000-0000000000b0',
     };
     expect(
       stageBootstrapRefusal({ ...run, retiredPrincipals: [retiredPrincipal], tenants: [] }, options),

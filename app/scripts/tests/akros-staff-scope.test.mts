@@ -30,10 +30,12 @@ const at = '2026-11-19T12:00:00.000Z';
 const ORDER_PAGE = 'demo.merchandise.page-orders.read';
 const ORDER_RECORDS = 'demo.merchandise.api-records.read';
 const ROUTING = 'core.shell.tenant-module-target.resolve';
+const ORDER_STATUS = 'demo.merchandise.order-status.change';
 const TASK_READ = 'work.tasks.task.read';
 const ASSIGN = '/shell/access/people/assign';
 const ADMIT = '/shell/access/people/admit-member';
 const MEMBERSHIP = '/auth/identity/people/company-membership';
+const OTHER_COMPANY = id(950);
 
 type ScopeKind = typeof ScopeKindSchema.Type;
 interface Person {
@@ -85,13 +87,13 @@ const companyRole = (roleId: string, keys: readonly string[]) => ({
 const tenantRole = (roleId: string, keys: readonly string[]) => ({ ...roleBase(roleId, keys), scope: TENANT });
 const reviewedRoles = [
   companyRole(ESHOP_ROLE, [ORDER_PAGE, ORDER_RECORDS, TASK_READ]),
-  companyRole(EXPEDICE_ROLE, [ORDER_PAGE, ORDER_RECORDS, 'demo.merchandise.order-status.change']),
+  companyRole(EXPEDICE_ROLE, [ORDER_PAGE, ORDER_RECORDS, ORDER_STATUS]),
   tenantRole(ROUTING_ROLE, [ROUTING]),
 ];
 const catalog = [
   entry(ORDER_PAGE),
   entry(ORDER_RECORDS),
-  entry('demo.merchandise.order-status.change', 'action'),
+  entry(ORDER_STATUS, 'action'),
   entry(TASK_READ),
   entry(ROUTING),
   entry('core.access.people.manage', 'admin', 'critical'),
@@ -132,9 +134,13 @@ interface ShellSettings {
   readonly bound?: boolean;
   /** A write the Shell accepts but never records, so the next read still plans it. */
   readonly lossyPath?: string;
+  /** Another company of the tenant the administrator, or each staff login, may also select. */
+  readonly otherCompanyFor?: 'admin' | 'staff';
   /** The bootstrap has not retired the logins' former demo-tenant Principals yet. */
   readonly retained?: boolean;
   readonly roles?: readonly Json[];
+  /** The Shell answers a seller switch with another company than the one asked for. */
+  readonly switchesElsewhere?: boolean;
 }
 interface FakeState {
   readonly bodies: string[];
@@ -268,7 +274,12 @@ const routes = new Map<string, Handler>([
     (call) =>
       Effect.succeed(
         answer(call.request, {
-          legalEntities: seller(call) ? [{ legalEntityId: AKROS.legalEntityId, legalName: 'AKROS' }] : [],
+          legalEntities: [
+            ...(seller(call) ? [{ legalEntityId: AKROS.legalEntityId, legalName: 'AKROS' }] : []),
+            ...(call.state.settings.otherCompanyFor === (call.me === ADMIN_PRINCIPAL ? 'admin' : 'staff')
+              ? [{ legalEntityId: OTHER_COMPANY, legalName: 'Other seller' }]
+              : []),
+          ],
           state: 'selection_required',
           tenantContextAvailable: true,
         }),
@@ -276,7 +287,12 @@ const routes = new Map<string, Handler>([
   ],
   [
     '/auth/legal-entity/switch',
-    ({ request }) => Effect.succeed(answer(request, { selectedLegalEntityId: AKROS.legalEntityId })),
+    ({ request, state }) =>
+      Effect.succeed(
+        answer(request, {
+          selectedLegalEntityId: state.settings.switchesElsewhere === true ? OTHER_COMPANY : AKROS.legalEntityId,
+        }),
+      ),
   ],
   [
     '/auth/session',
@@ -630,6 +646,43 @@ it.effect('a write that never shows up in the next read is waited for, then refu
     const shell = fakeShell({ lossyPath: MEMBERSHIP });
     expect((yield* failureOf(shell, true)).code).toBe('no_progress');
     expect(shell.writes.filter(({ principalId }) => principalId === id(11))).toHaveLength(1);
+  }),
+);
+
+it.effect('a reviewed role is judged by what it must not hold, not by holding Merchandise reads', () =>
+  Effect.gen(function* acceptsEngineeredOwnerRoles() {
+    const shell = fakeShell({
+      roles: [
+        companyRole(ESHOP_ROLE, [TASK_READ]),
+        companyRole(EXPEDICE_ROLE, [ORDER_STATUS]),
+        tenantRole(ROUTING_ROLE, [ROUTING]),
+      ],
+    });
+    const result = yield* runWith(shell, true);
+    expect(result.blockers).toEqual([]);
+    expect(shell.people.get(id(11))?.assignments.map(({ roleId }) => roleId)).toContain(ESHOP_ROLE);
+    expect(shell.people.get(id(12))?.assignments.map(({ roleId }) => roleId)).toContain(EXPEDICE_ROLE);
+  }),
+);
+
+it.effect('a staff login must select the AKROS seller only, while the administrator may also hold others', () =>
+  Effect.gen(function* checksSelectableCompanies() {
+    const staff = fakeShell({ otherCompanyFor: 'staff' });
+    const refused = yield* failureOf(staff, true);
+    expect([refused.code, refused.reason.includes(ESHOP)]).toEqual(['foreign_company', true]);
+    expect(staff.writes).toEqual([]);
+    const administrator = fakeShell({ otherCompanyFor: 'admin' });
+    const applied = yield* runWith(administrator, true);
+    expect(applied.blockers).toEqual([]);
+    expect(administrator.writes).toHaveLength(8);
+  }),
+);
+
+it.effect('a seller switch the Shell answers with another company stops before any write', () =>
+  Effect.gen(function* verifiesTheSelectedSeller() {
+    const shell = fakeShell({ switchesElsewhere: true });
+    expect((yield* failureOf(shell, true)).code).toBe('target_unreachable');
+    expect(shell.writes).toEqual([]);
   }),
 );
 

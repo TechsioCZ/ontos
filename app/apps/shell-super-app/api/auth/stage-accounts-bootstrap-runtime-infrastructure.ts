@@ -1,4 +1,6 @@
 import type { AccessCatalogModule, DatabaseIdentityEnrollmentContext } from '@app/core-runtime';
+import type { AccessPeopleStore } from '@app/core-runtime/access/intent/people-store';
+import type { AccessTeamStore } from '@app/core-runtime/access/intent/teams';
 import {
   reconcileStageContextBootstraps,
   stageTenantsFromAccountsFile,
@@ -271,6 +273,30 @@ const retireAuthUser = Effect.fn('StageAccountsBootstrap.retireAuthUser')(functi
   return { email, status: banned === 0 ? ('absent' as const) : ('banned' as const) };
 });
 
+/**
+ * The Better Auth user a retired Principal's login signs in as. Core retires the Principal only when every live
+ * staff binding it has belongs to this user; the user itself is not changed here.
+ */
+const retiredLoginUser = Effect.fn('StageAccountsBootstrap.retiredLoginUser')(function* retiredLoginUser(
+  email: string,
+) {
+  const { executor: database } = yield* AuthDatabase;
+  const users = yield* database
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, email))
+    .limit(2)
+    .pipe(Effect.mapError(persistenceFailure));
+  const [existingUser] = users;
+  if (users.length !== 1 || existingUser === undefined) {
+    return yield* new StageAccountsBootstrapError({
+      code: 'stage_accounts_conflict',
+      reason: "A retired Principal's login needs exactly one Better Auth user",
+    });
+  }
+  return existingUser.id;
+});
+
 /** The Better Auth user an attached login already signs in as; the login is never created or changed here. */
 const attachedLoginUser = Effect.fn('StageAccountsBootstrap.attachedLoginUser')(function* attachedLoginUser(
   email: string,
@@ -313,7 +339,11 @@ export interface StageAccountsBootstrapRunResult extends StageAccountsBootstrapR
     readonly principalId: string;
     readonly tenantId: string;
   }[];
-  readonly retiredPrincipals: readonly { readonly principalId: string; readonly tenantId: string }[];
+  readonly retiredPrincipals: readonly {
+    readonly email: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }[];
 }
 
 export interface StageAccountsBootstrapOptions {
@@ -338,7 +368,12 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
 ): Effect.fn.Return<
   StageAccountsBootstrapRunResult,
   StageAccountsBootstrapError,
-  AuthDatabase | Crypto.Crypto | DatabaseIdentityEnrollmentContext | InstallationRuntime
+  | AccessPeopleStore
+  | AccessTeamStore
+  | AuthDatabase
+  | Crypto.Crypto
+  | DatabaseIdentityEnrollmentContext
+  | InstallationRuntime
 > {
   const { accountsFile } = configuration;
   const attachedLogins = accountsFile.attachedLogins ?? [];
@@ -363,6 +398,18 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
           principalId: login.principalId,
           providerUserId,
           tenantId: login.tenantId,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+  const retiredPrincipalIdentities = yield* Effect.forEach(
+    retiredPrincipals,
+    (retired) =>
+      retiredLoginUser(retired.email).pipe(
+        Effect.map((providerUserId) => ({
+          principalId: retired.principalId,
+          providerUserId,
+          tenantId: retired.tenantId,
         })),
       ),
     { concurrency: 1 },
@@ -401,7 +448,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
   const results = yield* reconcileStageContextBootstraps(
     {
       attachedLogins: attachedLoginIdentities,
-      retiredPrincipals,
+      retiredPrincipals: retiredPrincipalIdentities,
       retiredTenants: accountsFile.retiredTenants,
       tenants,
     },
@@ -429,7 +476,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
     accounts,
     attachedLogins: attachedLogins.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
     retiredAccounts,
-    retiredPrincipals: retiredPrincipals.map(({ principalId, tenantId }) => ({ principalId, tenantId })),
+    retiredPrincipals: retiredPrincipals.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
   };
 });
 
@@ -446,7 +493,12 @@ export const bootstrapStageAccountsFromEnvironment = Effect.fn('StageAccountsBoo
   ): Effect.fn.Return<
     StageAccountsBootstrapRunResult,
     StageAccountsBootstrapError,
-    AuthDatabase | Crypto.Crypto | DatabaseIdentityEnrollmentContext | InstallationRuntime
+    | AccessPeopleStore
+    | AccessTeamStore
+    | AuthDatabase
+    | Crypto.Crypto
+    | DatabaseIdentityEnrollmentContext
+    | InstallationRuntime
   > {
     const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, input.declaredWorkloadKeys);
     return yield* bootstrapStageAccounts(configuration, { modules: input.modules });
