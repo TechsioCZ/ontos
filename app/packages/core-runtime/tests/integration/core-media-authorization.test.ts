@@ -57,10 +57,13 @@ import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { assetMetadataRead } from '../../src/generated-reads/asset-metadata.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
 import { MediaAssetNotFound } from '../../src/media/errors.ts';
+import { ProvenMediaIntegrityFinding } from '../../src/media/integrity-contract.ts';
 import { ObjectStorage } from '../../src/media/object-storage.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { StoredMediaObjectVerification, verifyStoredMediaObject } from '../../src/media/verification.ts';
+import { MediaIntegrityFindingSchema } from '../../src/media/verified-read.ts';
 import { confirmAssetAction } from '../../src/modules/actions/confirm-asset.action.ts';
+import { recordAssetIntegrityFailureAction } from '../../src/modules/actions/record-asset-integrity-failure.action.ts';
 import { renameDisplayFilenameAction } from '../../src/modules/actions/rename-display-filename.action.ts';
 import { uploadAssetAction } from '../../src/modules/actions/upload-asset.action.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -123,6 +126,7 @@ const CONFIRM_HOLDER = uid(11);
 const METADATA_HOLDER = uid(12);
 const RENAME_HOLDER = uid(13);
 const PROPOSE_HOLDER = uid(14);
+const INTEGRITY_HOLDER = uid(15);
 const SYSTEM_MACHINE = uid(20);
 const INTEGRATION_MACHINE = uid(21);
 const IMPORT_MACHINE = uid(22);
@@ -131,15 +135,18 @@ const UPLOAD = 'core.media.asset.upload';
 const CONFIRM = 'core.media.asset.confirm';
 const METADATA = 'core.media.asset-metadata.read';
 const RENAME = 'core.media.display-filename.rename';
+const INTEGRITY = 'core.media.asset-integrity.fail';
 const INGEST = 'core.media.ingest';
+const INTEGRITY_WORKLOAD = 'core.media.integrity';
 
-/** The catalog a bootstrap releases: the four real Core Media declarations, taken from the real descriptors. */
+/** The catalog a bootstrap releases: the five real Core Media declarations, taken from the real descriptors. */
 const mediaModules: readonly AccessCatalogModule[] = [
   {
     descriptors: [
       uploadAssetAction.descriptor,
       confirmAssetAction.descriptor,
       renameDisplayFilenameAction.descriptor,
+      recordAssetIntegrityFailureAction.descriptor,
       assetMetadataRead.descriptor,
     ].flatMap((descriptor) =>
       descriptor.accessDeclaration === undefined
@@ -454,6 +461,7 @@ const seedMediaTenant = Effect.fn('CoreMediaAuthorizationTest.seed')(function* s
       { kind: 'human', principalId: METADATA_HOLDER },
       { kind: 'human', principalId: RENAME_HOLDER },
       { kind: 'human', principalId: PROPOSE_HOLDER },
+      { kind: 'human', principalId: INTEGRITY_HOLDER },
       { kind: 'system', principalId: SYSTEM_MACHINE },
       { kind: 'integration', principalId: INTEGRATION_MACHINE },
       { kind: 'service', principalId: IMPORT_MACHINE },
@@ -776,6 +784,38 @@ const confirmAs = (
     ),
     Effect.provideService(StoredMediaObjectVerification, verification),
   );
+
+const statusOfAsset = (world: MediaWorld, ref: MediaRef) =>
+  rowOf(world, ref.resourceId).pipe(Effect.map((row) => row?.processing_status));
+
+/** A finding of corruption measured against exactly the identity `seedAsset` gives a row. */
+const seededFinding = (tenantId: string, mediaAssetId: string) =>
+  Schema.decodeUnknownEffect(MediaIntegrityFindingSchema)({
+    observed: { byteSize: 4096, contentSha256: 'c'.repeat(64) },
+    providerId: 'secret-provider',
+    recorded: { byteSize: 4096, contentSha256: 'b'.repeat(64), versionRef: 'secret-version' },
+    storageKey: deriveMediaStorageKey({ mediaAssetId, tenantId }),
+  }).pipe(Effect.orDie);
+
+const recordIntegrityAs = (
+  world: MediaWorld,
+  principalId: string,
+  mediaAssetRef: MediaRef,
+  key: string,
+  options: { readonly runtime?: 'dead' | 'live' } = {},
+) =>
+  Effect.gen(function* recordIntegrity() {
+    const finding = yield* seededFinding(mediaAssetRef.tenantId, mediaAssetRef.resourceId);
+    const principal = yield* world.scenario.scopeFor(principalId);
+    return yield* (options.runtime === 'dead' ? world.dead : world.live)
+      .runAction({
+        payload: { mediaAssetRef },
+        principal,
+        registration: recordAssetIntegrityFailureAction,
+        transport: transport(key),
+      })
+      .pipe(Effect.provideService(ProvenMediaIntegrityFinding, finding));
+  });
 
 /**
  * The result of one operation of the matrix: did the handler run, and if not, was the stop the gate's own refusal.
@@ -1176,6 +1216,58 @@ it.layer(suiteLayer, { excludeTestServices: true })(
               expect(reasonsOfAction(refusal)).toContain('deny.insufficient_grant');
             }
             expect(yield* assetCount(world)).toBe(before);
+          }),
+        ),
+    );
+
+    suite.effect(
+      'recording proven corruption is its own capability and its own workload: nothing else, no ingest binding and no unreachable engine closes an asset',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* integrityCarriers() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [INTEGRITY], principalId: INTEGRITY_HOLDER, slot: 7 });
+            yield* grantOnly(world, seeded, {
+              keys: [UPLOAD, CONFIRM, METADATA, RENAME],
+              principalId: UPLOAD_HOLDER,
+              slot: 8,
+            });
+            yield* memberWithoutRole(world, seeded, PLAIN, 'member');
+            yield* reconcile(scenario);
+            const byPerson = yield* seedAsset(world);
+            const byMachine = yield* seedAsset(world);
+            const revoked = yield* seedAsset(world);
+            const statusOf = (ref: MediaRef) => statusOfAsset(world, ref);
+            // A member without a role, and the holder of the other four capabilities, are refused: the gate's own reason.
+            for (const principalId of [PLAIN, UPLOAD_HOLDER]) {
+              const refusal = yield* refusalOf(recordIntegrityAs(world, principalId, byPerson, `deny-${principalId}`));
+              expect(reasonsOfAction(refusal)).toContain('deny.insufficient_grant');
+            }
+            // An engine that cannot be reached stops even the holder: a retryable refusal, no effect.
+            const unreachable = yield* refusalOf(
+              recordIntegrityAs(world, INTEGRITY_HOLDER, byPerson, 'dead-engine', { runtime: 'dead' }),
+            );
+            expect(unreachable).toBeDefined();
+            // Machines: no kind, no origin and no ingest binding stands in for the integrity workload.
+            yield* scenario.bindWorkload({ principalId: SYSTEM_MACHINE, workloadKey: INGEST });
+            for (const key of ['unbound', 'ingest-only']) {
+              const refusal = yield* refusalOf(recordIntegrityAs(world, SYSTEM_MACHINE, byMachine, `machine-${key}`));
+              expect(reasonsOfAction(refusal)).toContain('deny.workload_unbound');
+            }
+            expect(yield* statusOf(byPerson)).toBe('ready');
+            expect(yield* statusOf(byMachine)).toBe('ready');
+            // The holder of the capability runs it; the bound integrity workload runs it for a machine.
+            yield* recordIntegrityAs(world, INTEGRITY_HOLDER, byPerson, 'holder');
+            expect(yield* statusOf(byPerson)).toBe('failed');
+            yield* scenario.bindWorkload({ principalId: SYSTEM_MACHINE, workloadKey: INTEGRITY_WORKLOAD });
+            yield* recordIntegrityAs(world, SYSTEM_MACHINE, byMachine, 'machine-bound');
+            expect(yield* statusOf(byMachine)).toBe('failed');
+            // Revoking the binding ends the admission for the very next request, and the asset stays ready.
+            yield* scenario.revokeWorkload({ principalId: SYSTEM_MACHINE, workloadKey: INTEGRITY_WORKLOAD });
+            const afterRevoke = yield* refusalOf(recordIntegrityAs(world, SYSTEM_MACHINE, revoked, 'machine-revoked'));
+            expect(reasonsOfAction(afterRevoke)).toContain('deny.workload_unbound');
+            expect(yield* statusOf(revoked)).toBe('ready');
           }),
         ),
     );
