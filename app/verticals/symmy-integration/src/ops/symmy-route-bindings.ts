@@ -25,6 +25,11 @@ import type { OntosRegisteredWorkloadCallInput, RegisteredWorkloadCallReceiver }
 import type { WorkloadBindingHolder } from '@app/core-runtime/access/enforcement';
 import { Option, Schema } from 'effect';
 
+import { admitSymmyJobAction } from '../actions/admit-symmy-job.action.ts';
+import { admitSymmySyncAction } from '../actions/admit-symmy-sync.action.ts';
+import { symmyJobStatusRead } from '../api/symmy-job-status.read.ts';
+import { symmyRouteContextRead } from '../api/symmy-route-context.read.ts';
+import { symmySyncAdmissionRead } from '../api/symmy-sync-admission.read.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../registered-workload-calls.ts';
 import type { SymmyRouteEnrollmentRefusal } from './symmy-route-enrollment-refused.ts';
 import { SymmyRouteCallerSchema, symmyOperationName } from './symmy-route-enrollment.ts';
@@ -111,18 +116,19 @@ const operationRequirements = (caller: Contract, served: string) =>
 const receivingModule = (contracts: readonly Contract[], call: Call) =>
   contracts.find((contract) => contract.deployment.appId === call.audience)?.manifest.module.id;
 
+const publishedAs =
+  (operation: SymmyRouteCallRef) =>
+  (candidate: { readonly entrypoint: { readonly entrypointKey: string }; readonly schemaVersion: string }) =>
+    candidate.entrypoint.entrypointKey === operation.entrypointKey &&
+    candidate.schemaVersion === operation.schemaVersion;
+
 /** The workloads a published operation admits: an Action's own carrier or a read's published carrier. */
 const publishedWorkloads = (contract: Contract | undefined, operation: SymmyRouteCallRef): readonly string[] => {
   if (contract === undefined) {
     return [];
   }
   const { actions, operationContracts } = contract.manifest.publicSurface;
-  const matches = (candidate: {
-    readonly entrypoint: { readonly entrypointKey: string };
-    readonly schemaVersion: string;
-  }) =>
-    candidate.entrypoint.entrypointKey === operation.entrypointKey &&
-    candidate.schemaVersion === operation.schemaVersion;
+  const matches = publishedAs(operation);
   return [
     ...actions.flatMap((action) => (matches(action) ? (action.accessWorkload?.workloads ?? []) : [])),
     ...(operationContracts ?? []).flatMap((contractRead) =>
@@ -131,23 +137,23 @@ const publishedWorkloads = (contract: Contract | undefined, operation: SymmyRout
   ];
 };
 
-/** What Symmy itself publishes for the integration principal to use a route of this admission kind. */
+/**
+ * Symmy's own operations the integration principal uses on a route of this admission kind. Symmy publishes no
+ * workload carrier for its reads, so the workloads each admits come from its own descriptor, which Symmy enforces when
+ * it serves the operation; the installed Symmy must still publish the operation at the descriptor's version.
+ */
 const symmyCarriers = (admission: SymmyRouteInventory['admission']) => [
-  { entrypointKey: 'integration.symmy.api.symmy-route-context', purpose: 'route context', schemaVersion: '1' },
+  { descriptor: symmyRouteContextRead.descriptor, purpose: 'route context' },
   ...(admission === 'job'
     ? [
-        { entrypointKey: 'integration.symmy.admit-symmy-job', purpose: 'job admission', schemaVersion: '1' },
-        { entrypointKey: 'integration.symmy.api.symmy-job-status', purpose: 'job read', schemaVersion: '1' },
+        { descriptor: admitSymmyJobAction.descriptor, purpose: 'job admission' },
+        { descriptor: symmyJobStatusRead.descriptor, purpose: 'job read' },
       ]
     : []),
   ...(admission === 'sync'
     ? [
-        { entrypointKey: SYMMY_SYNC_ADMISSION, purpose: 'synchronous admission', schemaVersion: '1' },
-        {
-          entrypointKey: 'integration.symmy.api.symmy-sync-admission',
-          purpose: 'synchronous receipt',
-          schemaVersion: '1',
-        },
+        { descriptor: admitSymmySyncAction.descriptor, purpose: 'synchronous admission' },
+        { descriptor: symmySyncAdmissionRead.descriptor, purpose: 'synchronous receipt' },
       ]
     : []),
 ];
@@ -322,19 +328,28 @@ export const deriveSymmyRouteBindings = (input: {
   const moduleKeys = new Set([SYMMY_MODULE]);
   const bindings: SymmyRequiredBinding[] = [];
   const refusals: SymmyRouteEnrollmentRefusal[] = [];
-  const reads = [
-    ...symmyCarriers(inventory.admission).map((carrier) => ({ ...carrier, moduleId: SYMMY_MODULE })),
-    ...[...enrolled.filter(({ caller }) => caller === 'integration'), ...(inventory.admissionReads ?? [])].map(
-      (operation) => ({ ...operation, purpose: symmyOperationName(operation) }),
-    ),
-  ];
+  const symmy = byModule(SYMMY_MODULE);
+  for (const { descriptor, purpose } of symmyCarriers(inventory.admission)) {
+    const operation = { entrypointKey: descriptor.entrypoint.entrypointKey, schemaVersion: descriptor.schemaVersion };
+    const published = [
+      ...(symmy?.manifest.publicSurface.actions ?? []),
+      ...(symmy?.manifest.publicSurface.operationContracts ?? []),
+    ].some(publishedAs(operation));
+    const [first, ...rest] = descriptor.accessWorkload?.workloads ?? [];
+    if (!published || first === undefined) {
+      refusals.push(notPublished(`${symmyOperationName(operation)} is not published by ${SYMMY_MODULE}`));
+    } else {
+      bindings.push({ identity: 'integration', purpose, workloads: [first, ...rest] });
+    }
+  }
+  const reads = [...enrolled.filter(({ caller }) => caller === 'integration'), ...(inventory.admissionReads ?? [])];
   for (const operation of reads) {
     const [first, ...rest] = publishedWorkloads(byModule(operation.moduleId), operation);
     if (first === undefined) {
       refusals.push(notPublished(`${symmyOperationName(operation)} is not published by ${operation.moduleId}`));
     } else {
       moduleKeys.add(operation.moduleId);
-      bindings.push({ identity: 'integration', purpose: operation.purpose, workloads: [first, ...rest] });
+      bindings.push({ identity: 'integration', purpose: symmyOperationName(operation), workloads: [first, ...rest] });
     }
   }
   const route = symmyRouteCalls(input);

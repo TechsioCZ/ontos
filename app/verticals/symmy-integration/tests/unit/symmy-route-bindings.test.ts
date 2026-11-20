@@ -222,6 +222,39 @@ describe('Symmy route bindings', () => {
     ]);
   });
 
+  it("takes Symmy's own workloads from its descriptors, as its deployed reads publish no carrier", () => {
+    const deployed = (reads: readonly string[]) =>
+      contract(
+        'symmy-integration',
+        'integration.symmy',
+        {
+          actions: [
+            {
+              accessWorkload: { workloads: [admit] },
+              entrypoint: { entrypointKey: 'integration.symmy.admit-symmy-job' },
+              schemaVersion: '1',
+            },
+          ],
+          operationContracts: reads.map((entrypointKey) => ({ entrypoint: { entrypointKey }, schemaVersion: '1' })),
+        },
+        symmyIntegrationRegisteredWorkloadCalls,
+        requires(SYMMY_JOB_KEY, jobCalls),
+      );
+    const plan = derive([
+      deployed(['integration.symmy.api.symmy-route-context', 'integration.symmy.api.symmy-job-status']),
+      catalog,
+      priceGroups,
+    ]);
+    expect(plan.refusals).toEqual([]);
+    expect(workloadsOf(plan.bindings, 'integration').slice(0, 3)).toEqual([`${admit} | ${poll}`, admit, poll]);
+    expect(derive([deployed(['integration.symmy.api.symmy-route-context']), catalog, priceGroups]).refusals).toEqual([
+      {
+        code: 'operation_not_published',
+        detail: 'integration.symmy.api.symmy-job-status@1 is not published by integration.symmy',
+      },
+    ]);
+  });
+
   it('refuses a call the deployed Symmy does not declare, even when its receiver publishes it', () => {
     const undeclared = symmyWith(
       symmyIntegrationRegisteredWorkloadCalls.filter((call) => !createProduct(call)),
