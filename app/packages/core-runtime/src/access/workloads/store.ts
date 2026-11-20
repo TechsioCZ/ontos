@@ -9,7 +9,8 @@ import type { AccessIntentError } from '../intent/errors.ts';
 /*
  * The write side of the registered workload identities (O73). Core is its only writer: install and
  * bootstrap register a tenant's system workloads, the stage and local bootstrap register the
- * operator-declared ones, and later a Core admin Action will manage them. Every call names the
+ * operator-declared ones, and `core.identity.change-system-workload-enrollment` enrolls and ends a
+ * tenant's system Principal for a system workload its module declares. Every call names the
  * trusted request scope it runs in (O66), so a command that names another tenant is refused before
  * SQL sees it. The drizzle implementation is `binding-store.ts`.
  */

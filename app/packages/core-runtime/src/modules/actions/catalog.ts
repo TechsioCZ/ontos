@@ -5,6 +5,7 @@ import { bindManagedApiKeyAction } from './bind-managed-api-key.action.ts';
 import { bindSelfApiKeyAction } from './bind-self-api-key.action.ts';
 import { changePrincipalBindingStatusAction } from './change-principal-binding-status.action.ts';
 import { changePrincipalStatusAction } from './change-principal-status.action.ts';
+import { changeSystemWorkloadEnrollmentAction } from './change-system-workload-enrollment.action.ts';
 import { changeTenantModuleStateAction } from './change-tenant-module-state.action.ts';
 import { confirmAssetAction } from './confirm-asset.action.ts';
 import { createNonHumanPrincipalAction } from './create-non-human-principal.action.ts';
@@ -26,6 +27,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   bindSelfApiKeyAction.descriptor,
   changePrincipalBindingStatusAction.descriptor,
   changePrincipalStatusAction.descriptor,
+  changeSystemWorkloadEnrollmentAction.descriptor,
   changeTenantModuleStateAction.descriptor,
   confirmAssetAction.descriptor,
   createNonHumanPrincipalAction.descriptor,
