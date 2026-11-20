@@ -24,7 +24,7 @@ import { SymmyCustomersResponseSchema } from '../api/symmy/customers-public-cont
 import { SymmyCustomersBatchRequestSchema } from '../api/symmy/customers-batch-request-contract.ts';
 import { SymmyCustomerGroupsBatchResponseSchema } from '../api/symmy/customer-groups-batch-public-contract.ts';
 import { SymmyCustomerGroupsBatchRequestSchema } from '../api/symmy/customer-groups-batch-request-contract.ts';
-import { SymmyGroupCustomersBatchRequestSchema } from '../api/symmy/group-customers-batch-request-contract.ts';
+import { SymmyGroupCustomersBatchPayloadSchema } from '../api/symmy/group-customers-batch-request-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
@@ -58,7 +58,7 @@ const adminRegionsEndpoint = HttpApiEndpoint.get('adminRegions', SYMMY_ROUTES.ad
 const customerGroupCustomersBatchEndpoint = HttpApiEndpoint.post(
   'customerGroupCustomersBatch',
   nativeSymmyPath(SYMMY_ROUTES.customerGroupCustomersBatch.path),
-  { ...symmySubmitOptions, params: symmyCodeParams, payload: SymmyGroupCustomersBatchRequestSchema },
+  { ...symmySubmitOptions, params: symmyCodeParams, payload: SymmyGroupCustomersBatchPayloadSchema },
 );
 const customerGroupsBatchEndpoint = HttpApiEndpoint.post('customerGroupsBatch', SYMMY_ROUTES.customerGroupsBatch.path, {
   ...symmyWriteOptions,

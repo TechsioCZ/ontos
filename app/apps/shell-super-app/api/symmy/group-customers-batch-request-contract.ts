@@ -3,6 +3,8 @@ import { SymmyGroupCustomerRowsSchema } from '@app/symmy-integration/symmy-inter
 import type { SymmyGroupCustomerRows } from '@app/symmy-integration/symmy-internal-contracts';
 import { Array as EffectArray, Schema } from 'effect';
 
+import { SymmyInternalPlanPayloadSchema } from './contract.ts';
+
 /** The profile reference `GET /admin/customers` returns for a customer, copied back unchanged. */
 const SymmyGroupCustomerSchema = Schema.Struct({
   profileRef: CustomerProfileSourceItemSchema.fields.profile.fields.profileRef,
@@ -34,6 +36,15 @@ export const SymmyGroupCustomersBatchRequestSchema = Schema.Struct({
   ),
 });
 export type SymmyGroupCustomersBatchRequest = typeof SymmyGroupCustomersBatchRequestSchema.Type;
+
+/**
+ * What the route accepts: the public customers, or an internal plan of owner intents no public body states. A plan
+ * that states a customer group definition or membership is refused with 400.
+ */
+export const SymmyGroupCustomersBatchPayloadSchema = Schema.Union([
+  SymmyGroupCustomersBatchRequestSchema,
+  SymmyInternalPlanPayloadSchema,
+]);
 
 /** The customers as the owner admission receives them. The route enrollment names the group and the source. */
 export const mapSymmyGroupCustomersBatchRequest = ({

@@ -163,7 +163,8 @@ const acquireScopedRouteContext = Effect.fn('SymmyGovernedDispatch.acquireScoped
  * about each REVISE price, which the owner admission uses on the first admission only. The products carry the price
  * list each price group code names, read the same way. The customers carry nothing more: the route enrollment and
  * the route scope the owner admission reads give it the source and the selling legal entity. The customers of a
- * selected group carry nothing more either: the route enrollment names the group and the source.
+ * selected group carry nothing more either: the route enrollment names the group and the source. An internal plan on
+ * that route carries itself, admitted only for the operations the route enrolls.
  */
 const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* submitSource(
   request: Parameters<SymmyIngressDispatch['submit']>[0]['request'],
@@ -208,6 +209,9 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
   }
   if ('groupCustomers' in request) {
     return { groupCustomers: request.groupCustomers };
+  }
+  if ('plan' in request) {
+    return { contractVersion: request.contractVersion, plan: request.plan };
   }
   return { fixtureId: request.fixtureId };
 });
@@ -429,6 +433,7 @@ export const makeSymmyGovernedDispatch = (
       'customers' in request ||
       'products' in request ||
       'groupCustomers' in request ||
+      'plan' in request ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));
     const selected = needsRoute ? yield* resolveRoute(admission, request, newRequestIdentifier) : undefined;
     const scopedAdmission = yield* selected === undefined

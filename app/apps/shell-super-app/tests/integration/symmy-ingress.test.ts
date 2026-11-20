@@ -15,7 +15,7 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { DEFAULT_DATA_BATCH_ENDPOINT } from '@modern-js/bff-effect/data-platform';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { dispatchEffectBffRequest, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Cause, Effect, Layer, Logger, Redacted, Schema } from 'effect';
+import { Cause, Effect, Layer, Logger, Redacted, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
   PriceGroupDefinitionRequestSchema,
@@ -27,6 +27,7 @@ import {
   SymmyRouteContextResponseSchema,
 } from '@app/symmy-integration/api/symmy-route-context';
 import { AdmitSymmyJobPayloadSchema } from '@app/symmy-integration/api/admit-symmy-job-action';
+import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect, it } from 'effect-rstest';
 
 import { SymmyIngressDefectLive } from '../../api/index.ts';
@@ -947,7 +948,118 @@ it.effect('requires a replay key for versioned synchronous writes before any own
   }),
 );
 
-it.effect('refuses internal plans, fixtures, removals and price fields on the customer group routes', () =>
+/** An internal plan on the selected customer group route, stating owner intents for one customer. */
+const groupRoutePlan = (...effects: readonly Schema.Json[]) => ({
+  contractVersion: 'INTERNAL_C14',
+  plan: {
+    items: [
+      {
+        effects,
+        itemKey: 'customer-1',
+        source: {
+          entityKind: 'CUSTOMER',
+          issuerId: 'internal-issuer',
+          sourceNamespace: 'internal-customers',
+          sourceRecordId: 'opaque-source-customer',
+        },
+        sourceOccurrenceId: 'internal-customer-occurrence',
+      },
+    ],
+  },
+});
+const groupOperation = (entrypointKey: string) => ({
+  entrypointKey,
+  moduleId: 'commerce.customer-context',
+  schemaVersion: '1',
+});
+const groupRouteSource = { id: 'internal-source-route', revision: 'internal-route-v1' };
+/** A price group assignment has no public body: the selected group route carries it as an internal plan. */
+const priceGroupAssignmentEffect = {
+  effectKey: 'price-group-assignment',
+  intent: {
+    _tag: 'AssignCustomerPriceGroup',
+    authorizationSubject: { kind: 'RETAIL' },
+    payload: {
+      effectiveFrom: '2026-11-20T00:00:00.000Z',
+      expectedProfileRevision: 1,
+      priceGroupRef: {
+        moduleId: 'pricing.price-group-catalog',
+        resourceId: '50000000-0000-4000-8000-000000000021',
+        resourceType: 'pricing.price-group-catalog.price-group',
+        tenantId: customersTenantId,
+      },
+      profile: customersProfile.profileRef,
+      reason: 'Explicit internal assignment',
+      source: {
+        effectId: 'ASSIGNED_BY_NATIVE_ADMISSION',
+        issuer: 'internal-issuer',
+        mappingRevision: 'internal-map-v1',
+        namespace: 'internal-customers',
+        occurrenceId: 'internal-customer-occurrence',
+        order: 1,
+        recordId: 'opaque-source-customer',
+        recordType: 'CUSTOMER',
+        revision: 'internal-source-v1',
+        route: groupRouteSource,
+      },
+    },
+  },
+  operation: groupOperation('commerce.customer-context.assign-customer-price-group'),
+};
+const internalGroupRef = {
+  moduleId: 'commerce.customer-context',
+  resourceId: '50000000-0000-4000-8000-000000000022',
+  resourceType: 'commerce.customer-context.customer-group',
+  tenantId: customersTenantId,
+};
+/** A membership comes only through the public customers body, which takes its order from the lineage ledger. */
+const membershipEffect = {
+  effectKey: 'customer-group-membership',
+  intent: {
+    _tag: 'CustomerGroupMembership',
+    payload: {
+      effectiveAt: '2026-11-20T00:00:00.000Z',
+      groupRef: internalGroupRef,
+      manager: {
+        factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+        issuer: 'internal-issuer',
+        sourceNamespace: 'internal-memberships',
+        tenantId: customersTenantId,
+      },
+      operation: 'ASSIGN',
+      profile: { profileKind: groupCustomerKind, profileRef: groupCustomerProfileRef },
+      reason: 'Explicit internal membership',
+      route: groupRouteSource,
+      source: {
+        assertionId: 'internal-customer-occurrence',
+        effectId: 'ASSIGNED_BY_NATIVE_ADMISSION',
+        order: 1,
+        sourceRecordId: 'opaque-source-membership',
+      },
+    },
+  },
+  operation: groupOperation('commerce.customer-context.apply-customer-group-membership-source'),
+};
+/** A group definition comes only through the public groups body, which fences it on what the owner holds. */
+const groupCreateEffect = {
+  effectKey: 'customer-group-create',
+  intent: {
+    _tag: 'CustomerGroupCreate',
+    payload: {
+      businessCode: 'INTERNAL_GROUP',
+      description: 'Internal source grouping',
+      initialState: 'ACTIVE',
+      meaningKey: 'source-buyer-classification',
+      membershipCriteria: 'Explicit source group membership',
+      name: 'Internal buyers',
+      purpose: 'Buyer classification',
+      reason: 'Internal conformance fixture',
+    },
+  },
+  operation: groupOperation('commerce.customer-context.create-customer-group'),
+};
+
+it.effect('refuses fixtures, removals, price fields and internal group or membership plans on the group routes', () =>
   Effect.gen(function* publicGroupBodies() {
     let calls = 0;
     const server = yield* Effect.acquireRelease(
@@ -986,8 +1098,17 @@ it.effect('refuses internal plans, fixtures, removals and price fields on the cu
     }
     const profileRef = { ...customersProfile.profileRef, resourceId: 'abcdef00-6666-4666-8666-666666666666' };
     const membersPath = SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode);
+    // Each plan is a valid internal plan, refused only because it states a group definition or membership.
+    const groupFamilyPlans = [
+      groupRoutePlan(membershipEffect),
+      groupRoutePlan(groupCreateEffect),
+      groupRoutePlan(priceGroupAssignmentEffect, membershipEffect),
+    ];
+    for (const { plan } of groupFamilyPlans) {
+      expect(Result.isSuccess(Schema.decodeUnknownResult(SymmyInternalExecutionPlanSchema)(plan))).toBe(true);
+    }
     for (const body of [
-      internalProductInput,
+      ...groupFamilyPlans,
       { fixtureId },
       { customers: [] },
       { customers: [{ customerId: 'customer-1' }] },
@@ -1597,11 +1718,6 @@ const groupItem = (index: number) =>
     ],
     itemId: `30000000-0000-4000-8000-00000000000${index}`,
   });
-const groupOperation = (entrypointKey: string) => ({
-  entrypointKey,
-  moduleId: 'commerce.customer-context',
-  schemaVersion: '1',
-});
 
 it.effect('fences the public customer groups on the owner definitions and returns one keyed result per group', () =>
   Effect.gen(function* governedSynchronousItems() {
@@ -3138,6 +3254,56 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
     ]);
     expect(calls.every(({ headers }) => headers['x-ontos-composition-revision'] === revision)).toBe(true);
     expect(JSON.stringify(calls)).not.toContain(validKey);
+  }),
+);
+
+it.effect('forwards an internal price group assignment plan on the selected group route to the owner admission', () =>
+  Effect.gen(function* forwardsInternalGroupRoutePlan() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const calls: { readonly path: string; readonly payload: Schema.Json }[] = [];
+    const fetchOwner: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      calls.push({ path, payload: Schema.decodeUnknownSync(Schema.Json)(await request.json()) });
+      return Response.json(path.endsWith('/reads/symmy-route-context') ? internalRoute : { jobId, phase: 'admitted' });
+    };
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          acquireOwnerAssertion: () =>
+            Effect.succeed({
+              apiBaseUrl,
+              assertion: Redacted.make('fresh-owner-assertion'),
+              compositionRevision: revision,
+            }),
+          dispatch: makeSymmyGovernedDispatch(Effect.succeed('internal-plan-correlation')),
+          observe: (request) => {
+            forwarded.push(request);
+          },
+          ownerFetch: fetchOwner,
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const body = groupRoutePlan(priceGroupAssignmentEffect);
+    const response = yield* Effect.promise(() =>
+      server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode), {
+        body: JSON.stringify(body),
+        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+        method: 'POST',
+      }),
+    );
+    expect(response.status).toBe(202);
+    expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
+    expect(forwarded).toEqual([{ ...body, code: groupCode, idempotencyKey, route: 'customerGroupCustomersBatch' }]);
+    expect(calls.map(({ path }) => path)).toEqual([
+      `${releasePath}/reads/symmy-route-context`,
+      `${releasePath}/symmy-integration/actions/admit-symmy-job`,
+    ]);
+    // The owner admission receives the plan exactly as its own contract admits it.
+    const admitted = { ...body, code: groupCode, idempotencyKey, routeKey: 'customerGroupCustomersBatch' };
+    expect(calls[1]?.payload).toEqual(admitted);
+    expect(Result.isSuccess(Schema.decodeUnknownResult(AdmitSymmyJobPayloadSchema)(admitted))).toBe(true);
   }),
 );
 

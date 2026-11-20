@@ -16,7 +16,10 @@ import { seedCommittedProfileSourceProcessingNativeFixture } from '@app/privacy/
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
-import { SymmyRouteExecutionConfigurationSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import {
+  SymmyInternalExecutionPlanSchema,
+  SymmyRouteExecutionConfigurationSchema,
+} from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect, it } from 'effect-rstest';
 import { PgClient } from '@effect/sql-pg';
 import { Effect, Option, Redacted, Schema } from 'effect';
@@ -546,11 +549,37 @@ it.live(
         const admittedJobs = admin`select job_id from symmy_integration.import_jobs where tenant_id=${tenantId} and route_id=${memberRouteId} order by job_id`;
         const beforeRemoval = yield* membershipInvocations;
         const jobsBeforeRemoval = yield* admittedJobs;
-        // The assignment-only route has no removal: neither a customer that asks for one nor the retired internal plan
-        // body is admitted.
+        // The assignment-only route has no removal, and an internal plan on it states no membership: the membership
+        // takes its order only from the public body. The plan restates the pinned assignment and is otherwise valid.
+        const membershipPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(
+          yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
+            items: [
+              {
+                effects: [
+                  {
+                    effectKey: 'restated-membership',
+                    intent: {
+                      _tag: 'CustomerGroupMembership',
+                      payload: yield* Schema.encodeEffect(membershipAssignmentSchema)(pinned.payload),
+                    },
+                    operation: commerceOperation(membershipActionKey),
+                  },
+                ],
+                itemKey: 'restated-membership',
+                source: {
+                  entityKind: pinned.payload.manager.factFamily,
+                  issuerId: groupSource.issuer,
+                  sourceNamespace: groupSource.namespace,
+                  sourceRecordId: pinned.payload.source.sourceRecordId,
+                },
+                sourceOccurrenceId: pinned.payload.source.assertionId,
+              },
+            ],
+          }),
+        );
         for (const [idempotencyKey, body] of [
           ['INTERNAL_C14_SELECTED_MEMBERSHIP_REMOVE', { customers: [{ ...customer, operation: 'REMOVE' }] }],
-          ['INTERNAL_C14_SELECTED_MEMBERSHIP_PLAN', { contractVersion: 'INTERNAL_C14', plan: { items: [] } }],
+          ['INTERNAL_C14_SELECTED_MEMBERSHIP_PLAN', { contractVersion: 'INTERNAL_C14', plan: membershipPlan }],
         ] as const) {
           const rejectedRemoval = yield* submit(selectedCode, idempotencyKey, HttpBody.jsonUnsafe(body));
           expect(rejectedRemoval.status).toBe(400);

@@ -48,6 +48,7 @@ import {
   symmyMethodNotAllowedProblem,
   symmyIdempotencyRequiredProblem,
   symmyUnavailableProblem,
+  SymmyInternalPlanPayloadSchema,
   SymmyInternalReadQuerySchema,
 } from './contract.ts';
 import type {
@@ -66,6 +67,7 @@ import type { SymmyInternalRegionsProjectionSchema } from './regions-projection-
 import { mapSymmyCustomersBatchRequest } from './customers-batch-public-contract.ts';
 import { SymmyCustomerGroupsBatchResponseSchema } from './customer-groups-batch-public-contract.ts';
 import { mapSymmyGroupCustomersBatchRequest } from './group-customers-batch-request-contract.ts';
+import type { SymmyGroupCustomersBatchPayloadSchema } from './group-customers-batch-request-contract.ts';
 import { mapSymmyStockBatchRequest, SymmyStockBatchResponseSchema } from './stock-batch-public-contract.ts';
 import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 import { mapSymmyPriceListsBatchRequest } from './price-lists-batch-upsert-public-contract.ts';
@@ -177,6 +179,12 @@ interface GroupCustomersSubmit {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
   readonly route: SelectedWrites;
 }
+/** An internal plan on the selected customer group route; its decoder refused any group definition or membership. */
+type GroupPlanSubmit = typeof SymmyInternalPlanPayloadSchema.Type & {
+  readonly code: string;
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly route: SelectedWrites;
+};
 /** The operator fixture routes: a registered fixture identity, never a plan. */
 type PolicyFixtureSubmit = typeof SymmyFixtureSubmitPayloadSchema.Type & {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
@@ -188,6 +196,7 @@ type PolicyFixtureSubmit = typeof SymmyFixtureSubmitPayloadSchema.Type & {
 type FixtureSubmit =
   | PolicyFixtureSubmit
   | GroupCustomersSubmit
+  | GroupPlanSubmit
   | CustomersSubmit
   | PriceBatchSubmit
   | PriceListsSubmit
@@ -372,6 +381,12 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
   if ('groupCustomers' in request) {
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyGroupCustomerRowsSchema))(
       request.groupCustomers,
+    ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+    return encoded.includes(raw);
+  }
+  if ('plan' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyInternalPlanPayloadSchema.fields.plan))(
+      request.plan,
     ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
     return encoded.includes(raw);
   }
@@ -615,6 +630,21 @@ const groupRequest = (
     ? { customerGroups, route: 'customerGroupsBatch' }
     : { customerGroups, idempotencyKey, route: 'customerGroupsBatch' };
 
+/** The customers of the selected group, or an internal plan of the owner intents no public body states. */
+const groupCustomersRequest = (
+  code: string,
+  payload: typeof SymmyGroupCustomersBatchPayloadSchema.Type,
+  idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type,
+): GroupCustomersSubmit | GroupPlanSubmit =>
+  Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(payload)
+    ? { ...payload, code, idempotencyKey, route: 'customerGroupCustomersBatch' }
+    : {
+        code,
+        groupCustomers: mapSymmyGroupCustomersBatchRequest(payload),
+        idempotencyKey,
+        route: 'customerGroupCustomersBatch',
+      };
+
 const stockRequest = (
   payload: SymmyStockBatchRequest,
   idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type | undefined,
@@ -662,12 +692,7 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('customerGroupCustomersBatch', ({ headers, params, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        {
-          code: params.code,
-          groupCustomers: mapSymmyGroupCustomersBatchRequest(payload),
-          idempotencyKey: headers['idempotency-key'],
-          route: 'customerGroupCustomersBatch',
-        },
+        groupCustomersRequest(params.code, payload, headers['idempotency-key']),
         request,
       ),
     )
