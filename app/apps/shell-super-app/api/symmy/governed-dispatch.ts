@@ -16,9 +16,9 @@ import {
   symmyUnavailableProblem,
   symmyInvalidProblem,
   symmyUnsupportedProblem,
-  SymmyInternalPlanPayloadSchema,
 } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
+import { readSymmyCustomerGroupDefinitionFacts } from './customer-group-batch-facts.ts';
 import { readSymmyPriceBatchFacts } from './price-batch-facts.ts';
 import { readSymmyProductPriceGroupFacts } from './product-batch-facts.ts';
 import {
@@ -157,22 +157,13 @@ const acquireScopedRouteContext = Effect.fn('SymmyGovernedDispatch.acquireScoped
   return { route, scoped: Option.none<SymmyOwnerAssertion>() };
 });
 
-/** The stock route sends only its rows; the group route sends a fixture identity or a versioned plan. */
-const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[0]['request']) => {
-  if ('stock' in request) {
-    return { stock: request.stock };
-  }
-  return 'fixtureId' in request
-    ? { fixtureId: request.fixtureId }
-    : { contractVersion: request.contractVersion, plan: request.plan };
-};
-
 /**
  * What a durable job carries besides its key and route. The price lists carry nothing more: the adapter reads the
  * catalog head right before each create. The price batch is authorized here (403 for a list the key may not write to) and carries what the owner holds
  * about each REVISE price, which the owner admission uses on the first admission only. The products carry the price
  * list each price group code names, read the same way. The customers carry nothing more: the route enrollment and
- * the route scope the owner admission reads give it the source and the selling legal entity.
+ * the route scope the owner admission reads give it the source and the selling legal entity. The customers of a
+ * selected group carry nothing more either: the route enrollment names the group and the source.
  */
 const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* submitSource(
   request: Parameters<SymmyIngressDispatch['submit']>[0]['request'],
@@ -215,9 +206,10 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
   if ('priceLists' in request) {
     return { priceLists: request.priceLists };
   }
-  return 'fixtureId' in request
-    ? { fixtureId: request.fixtureId }
-    : { contractVersion: request.contractVersion, plan: request.plan };
+  if ('groupCustomers' in request) {
+    return { groupCustomers: request.groupCustomers };
+  }
+  return { fixtureId: request.fixtureId };
 });
 
 const resolveRoute = Effect.fn('SymmyGovernedDispatch.routeContext')(function* routeContext(
@@ -261,7 +253,17 @@ export const makeSymmyGovernedDispatch = (
     const scoped = Option.isSome(prepared.scoped)
       ? prepared.scoped.value
       : yield* acquireSymmyReadAssertion(admission, symmyAudience, prepared.route.legalEntityId);
-    const source = syncAdmissionSource(request);
+    // The groups carry what the owner holds for each code, read now: the owner admission fences its plan on it.
+    const source =
+      'stock' in request
+        ? { stock: request.stock }
+        : {
+            customerGroups: request.customerGroups,
+            groupFacts: yield* readSymmyCustomerGroupDefinitionFacts(
+              { admission, groups: request.customerGroups, routeScope: prepared.route },
+              newRequestIdentifier,
+            ),
+          };
     const payload = yield* Schema.decodeUnknownEffect(AdmitSymmySyncPayloadSchema)({
       ...source,
       idempotencyKey: request.idempotencyKey ?? (yield* newRequestIdentifier),
@@ -426,7 +428,7 @@ export const makeSymmyGovernedDispatch = (
       'priceBatch' in request ||
       'customers' in request ||
       'products' in request ||
-      Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
+      'groupCustomers' in request ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));
     const selected = needsRoute ? yield* resolveRoute(admission, request, newRequestIdentifier) : undefined;
     const scopedAdmission = yield* selected === undefined

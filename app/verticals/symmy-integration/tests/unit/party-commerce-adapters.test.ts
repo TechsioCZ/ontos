@@ -2129,7 +2129,7 @@ const membershipPayload = Match.value(membershipEffect.intent).pipe(
   }),
 );
 const membershipResult = Schema.decodeUnknownSync(ApplyCustomerGroupMembershipSourceResultSchema)({
-  items: [],
+  items: [{ groupRef: selectedMembershipGroup, outcome: 'ALREADY_MANAGED' }],
   source: membershipPayload.source,
 });
 const membershipAdapter = Effect.gen(function* membershipAdapter() {
@@ -2258,6 +2258,52 @@ describe('current qualified Group Definition before first Membership write', () 
       expect(recovered.status).toBe('settled');
       expect(peer.membershipReceipt.sent).toHaveLength(1);
       expect(peer.groupDefinition.sent).toHaveLength(0);
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('settles nothing from a receipt of another group, order or source record', () =>
+    Effect.gen(function* foreignReceipt() {
+      const otherGroup = { ...selectedMembershipGroup, resourceId: '10000000-0000-4000-8000-000000000092' };
+      for (const receipt of [
+        { ...membershipResult, items: [{ groupRef: otherGroup, outcome: 'ALREADY_MANAGED' as const }] },
+        { ...membershipResult, items: [] },
+        { ...membershipResult, source: { ...membershipResult.source, order: membershipPayload.source.order + 1 } },
+        { ...membershipResult, source: { ...membershipResult.source, sourceRecordId: 'another-membership-record' } },
+      ]) {
+        reset();
+        peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+        peer.membershipReceipt.succeed(
+          Schema.decodeUnknownSync(ApplyCustomerGroupMembershipSourceResultSchema)(receipt),
+        );
+        const adapter = yield* membershipAdapter;
+        const recovered = yield* adapter.recover(
+          yield* withOriginalRequest({
+            ...input(),
+            effect: membershipEffect,
+            legalEntityId: sellingLegalEntityId,
+            routeKey: 'customerGroupCustomersBatch',
+          }),
+        );
+        expect(recovered.status).toBe('unavailable');
+        expect(peer.membership.sent).toHaveLength(0);
+      }
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('reads no receipt for a pinned command whose request hash is not the original one', () =>
+    Effect.gen(function* foreignIntentHash() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.membershipReceipt.succeed(membershipResult);
+      const adapter = yield* membershipAdapter;
+      const original = yield* withOriginalRequest({
+        ...input(),
+        effect: membershipEffect,
+        legalEntityId: sellingLegalEntityId,
+        routeKey: 'customerGroupCustomersBatch',
+      });
+      const recovered = yield* adapter.recover({ ...original, originalRequestHash: 'a'.repeat(64) });
+      expect(recovered.status).toBe('unavailable');
+      expect(peer.membershipReceipt.sent).toHaveLength(0);
       expect(peer.membership.sent).toHaveLength(0);
     }).pipe(asSymmyWorker),
   );

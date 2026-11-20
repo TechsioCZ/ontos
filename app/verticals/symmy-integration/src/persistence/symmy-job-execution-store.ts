@@ -134,6 +134,17 @@ const recordReceipt = defineScopedRoutine({
   resultSchema: changed,
   routineKey: 'symmy-job.record-owner-receipt',
 });
+/** Whether every earlier membership order of the effect's lineage has settled. An effect without one never waits. */
+const membershipOrderReady = defineScopedRoutine({
+  ...routineBase,
+  name: 'symmy_membership_order_ready',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: Schema.Struct({ ready: Schema.Boolean }),
+  routineKey: 'symmy-job.membership-order-ready',
+});
 const recordRequest = defineScopedRoutine({
   ...routineBase,
   name: 'record_symmy_owner_request',
@@ -281,6 +292,7 @@ interface SymmyJobExecutionStore {
     version: number,
     availability?: 'unavailable' | 'indeterminate',
   ) => Effect.Effect<boolean, SymmyJobExecutionStoreError>;
+  readonly membershipOrderReady: (effectId: string) => Effect.Effect<boolean, SymmyJobExecutionStoreError>;
   readonly recordExecutor: (
     jobId: string,
     effectId: string,
@@ -383,6 +395,15 @@ export const symmyJobExecutionStore = (transaction: ScopedRoutineInvoker): Symmy
       ])
       .pipe(Effect.mapError(unavailable));
     return row?.applied ?? false;
+  }),
+  membershipOrderReady: Effect.fn('SymmyJobExecution.membershipOrderReady')(function* readMembershipOrder(
+    effectId: string,
+  ) {
+    const [row] = yield* transaction.invoke(membershipOrderReady, [effectId]).pipe(Effect.mapError(unavailable));
+    if (row === undefined) {
+      return yield* unavailable();
+    }
+    return row.ready;
   }),
   recordExecutor: Effect.fn('SymmyJobExecution.recordExecutor')(function* recordOwnerExecutor(
     jobId: string,

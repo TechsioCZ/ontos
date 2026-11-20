@@ -45,6 +45,16 @@ import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-co
 import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
 import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batch.ts';
 import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
+import {
+  SymmyCustomerGroupRowsSchema,
+  SymmyGroupCustomerRowsSchema,
+  canonicalSymmyGroupCustomers,
+} from '../../shared/domain/symmy-customer-group-batch.ts';
+import type {
+  SymmyCustomerGroupDefinitionFacts,
+  SymmyCustomerGroupRows,
+  SymmyGroupCustomerRows,
+} from '../../shared/domain/symmy-customer-group-batch.ts';
 import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts';
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
@@ -54,6 +64,8 @@ import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
 import { buildSymmyCustomerPlan } from './symmy-customer-plan.ts';
+import { buildSymmyCustomerGroupPlan } from './symmy-customer-group-plan.ts';
+import { buildSymmyGroupMembershipPlan } from './symmy-customer-group-membership-plan.ts';
 import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyProductPlan } from './symmy-product-plan.ts';
@@ -76,8 +88,13 @@ export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()
 export interface SymmyJobAdmissionRequest {
   readonly code?: string;
   readonly contractVersion?: 'INTERNAL_C14';
+  readonly customerGroups?: SymmyCustomerGroupRows;
   readonly customers?: SymmyCustomerRows;
   readonly fixtureId?: string;
+  /** The customers of the group the route code selects. */
+  readonly groupCustomers?: SymmyGroupCustomerRows;
+  /** What the owner held for each customer group code when the request arrived. A fence, never caller intent. */
+  readonly groupFacts?: SymmyCustomerGroupDefinitionFacts;
   readonly idempotencyKey: string;
   readonly plan?: SymmyFixtureExecutionPlan;
   readonly priceBatch?: SymmyPriceBatch;
@@ -136,6 +153,32 @@ const lockEnrollment = defineScopedRoutine({
   resultSchema: Schema.Struct({ allowed: Schema.Boolean }),
   routineKey: 'symmy-route.lock-enrollment-snapshot',
   schema: 'symmy_integration',
+});
+const membershipRoutine = { ownerModuleKey: 'integration.symmy', schema: 'symmy_integration' } as const;
+/** Reserves the next membership order of one lineage; the lock it takes lasts until the admission commits. */
+const reserveMembershipOrder = defineScopedRoutine({
+  ...membershipRoutine,
+  name: 'reserve_symmy_membership_order',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: Schema.Struct({ effective_at: Schema.String, source_order: Schema.Int }),
+  routineKey: 'symmy-membership.reserve-order',
+});
+/** Records the lineage order of every membership effect the admitted job pinned. */
+const recordMembershipOrders = defineScopedRoutine({
+  ...membershipRoutine,
+  name: 'record_symmy_membership_orders',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: Schema.Struct({ recorded: Schema.Int }),
+  routineKey: 'symmy-membership.record-orders',
 });
 const lockRoute = Effect.fn('SymmyJobStore.lockEnrollment')(function* lockRouteSnapshot(
   transaction: ScopedTransactionExecutor,
@@ -289,6 +332,19 @@ const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(funct
       Effect.mapError(unavailable),
       Effect.map(Option.some),
     );
+  }
+  if (input.customerGroups !== undefined) {
+    // What the owner held for each code is a fence read when the request arrived, not caller intent.
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerGroupRowsSchema))(input.customerGroups).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
+  if (input.groupCustomers !== undefined) {
+    // Two spellings of one profile are one customer, so a replay in either spelling is the same intent.
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyGroupCustomerRowsSchema))(
+      canonicalSymmyGroupCustomers(input.groupCustomers),
+    ).pipe(Effect.mapError(unavailable), Effect.map(Option.some));
   }
   if (input.products !== undefined) {
     // The price lists the price group codes name are facts read when the request arrived, not caller intent.
@@ -467,6 +523,7 @@ const configuredEffectsAllowed = (routeKey: SymmyDurableRouteKey, plan: SymmyFix
 const carriesCallerPlan = (input: SymmyJobAdmissionRequest): boolean =>
   input.plan !== undefined ||
   input.customers !== undefined ||
+  input.groupCustomers !== undefined ||
   input.priceLists !== undefined ||
   input.priceBatch !== undefined ||
   input.products !== undefined;
@@ -543,6 +600,46 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
   });
 });
 
+/** The source route authority every group and membership assertion of a route cites. */
+const sourceAuthority = (route: typeof symmyJobRoutes.$inferSelect, template: SymmyFixtureExecutionPlan) => {
+  const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
+  return { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision };
+};
+
+/**
+ * The membership plan of the selected group. Each customer's lineage order is reserved inside this admission
+ * transaction, which makes no owner call, and is recorded with the job it admits: a replay reads the saved plan.
+ */
+const membershipPlanSource = Effect.fn('SymmyJobStore.membershipPlanSource')(function* membershipPlanSource(
+  context: { scope: OperationalScope; transaction: ScopedTransactionExecutor },
+  route: typeof symmyJobRoutes.$inferSelect,
+  input: SymmyJobAdmissionRequest & { readonly groupCustomers: SymmyGroupCustomerRows },
+  template: SymmyFixtureExecutionPlan,
+) {
+  const { scope, transaction } = context;
+  return yield* buildSymmyGroupMembershipPlan({
+    authority: sourceAuthority(route, template),
+    digest: hash,
+    idempotencyKey: input.idempotencyKey,
+    legalEntityId: scope.legalEntityId,
+    reserve: ({ issuer, namespace, profileId }) =>
+      transaction.invoke(reserveMembershipOrder, [issuer, namespace, profileId]).pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap(([reserved]) =>
+          reserved === undefined
+            ? Effect.fail(unavailable())
+            : Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(reserved.effective_at).pipe(
+                Effect.mapError(unavailable),
+                Effect.map((effectiveAt) => ({ effectiveAt, order: reserved.source_order })),
+              ),
+        ),
+      ),
+    rows: input.groupCustomers,
+    template,
+    tenantId: scope.tenantId,
+  });
+});
+
 const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(function* prepareAdmissionPlan(
   context: { scope: OperationalScope; transaction: ScopedTransactionExecutor },
   route: typeof symmyJobRoutes.$inferSelect,
@@ -576,7 +673,11 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
     if (!selectedPlanMatches(input, template, scope.tenantId)) {
       return yield* routeDenied();
     }
-    const source = yield* admissionPlanSource(route, input, scope, template);
+    const { groupCustomers } = input;
+    const source =
+      groupCustomers === undefined
+        ? yield* admissionPlanSource(route, input, scope, template)
+        : yield* membershipPlanSource(context, route, { ...input, groupCustomers }, template);
     if (Option.isNone(source)) {
       return yield* routeDenied();
     }
@@ -1038,6 +1139,38 @@ const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')
   return Option.some(result);
 });
 
+/** The plan a synchronous admission pins: the public customer groups or stock rows, or the route template. */
+const syncPlanSource = Effect.fn('SymmyJobStore.syncPlanSource')(function* syncPlanSource(
+  route: typeof symmyJobRoutes.$inferSelect,
+  input: SymmyJobAdmissionRequest,
+  template: SymmyFixtureExecutionPlan,
+) {
+  if (input.customerGroups !== undefined) {
+    return input.groupFacts === undefined
+      ? Option.none<SymmyFixtureExecutionPlan>()
+      : yield* buildSymmyCustomerGroupPlan({
+          authority: sourceAuthority(route, template),
+          digest: hash,
+          facts: input.groupFacts,
+          idempotencyKey: input.idempotencyKey,
+          rows: input.customerGroups,
+          template,
+        });
+  }
+  if (input.stock === undefined) {
+    return Option.some(input.plan ?? template);
+  }
+  // A stock row is admitted for the enrolled positions only. One row outside them rejects the whole
+  // request before any plan is pinned, so no owner call is made for any row.
+  return yield* buildSymmyStockPlan({
+    digest: hash,
+    idempotencyKey: input.idempotencyKey,
+    receivedAt: yield* DateTime.now,
+    rows: input.stock,
+    template,
+  });
+});
+
 const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* prepareSyncPlan(
   route: typeof symmyJobRoutes.$inferSelect,
   input: SymmyJobAdmissionRequest,
@@ -1051,6 +1184,9 @@ const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* pre
   if (isStockRoute !== (input.stock !== undefined) || (isStockRoute && template.inventoryBackendId === undefined)) {
     return yield* routeDenied();
   }
+  if ((input.routeKey === 'customerGroupsBatch') !== (input.customerGroups !== undefined)) {
+    return yield* routeDenied();
+  }
   yield* requireLifecyclePolicy(
     route,
     input.plan !== undefined ||
@@ -1060,20 +1196,11 @@ const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* pre
   if (input.plan !== undefined && !inputPlanAllowed(template, input.plan, scope)) {
     return yield* routeDenied();
   }
-  // A stock row is admitted for the enrolled positions only. One row outside them rejects the whole
-  // request before any plan is pinned, so no owner call is made for any row.
-  const source =
-    input.stock === undefined
-      ? Option.some(input.plan ?? template)
-      : yield* buildSymmyStockPlan({
-          digest: hash,
-          idempotencyKey: input.idempotencyKey,
-          receivedAt: yield* DateTime.now,
-          rows: input.stock,
-          template,
-        });
+  const source = yield* syncPlanSource(route, input, template);
   if (Option.isNone(source)) {
-    return yield* new SymmyJobStoreError({ code: 'stock_assertion_denied' });
+    return yield* new SymmyJobStoreError({
+      code: input.stock === undefined ? 'route_denied' : 'stock_assertion_denied',
+    });
   }
   const plan = configuredPlan(source.value, template);
   if (plan.items.some(({ effects }) => effects.some(({ intent }) => !syncIntentAllowed(input.routeKey, intent)))) {
@@ -1295,6 +1422,7 @@ export const symmyJobStoreFactory = (
               ),
             )
             .pipe(Effect.mapError(unavailable));
+          yield* transaction.invoke(recordMembershipOrders, [inserted.jobId]).pipe(Effect.mapError(unavailable));
         }
         return {
           executionReady: inserted.executionPlan !== null,

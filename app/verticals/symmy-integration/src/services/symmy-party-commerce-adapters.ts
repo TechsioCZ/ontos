@@ -2087,6 +2087,21 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'CustomerGroupMembership' }>,
 ) {
   const payload = yield* Schema.decodeUnknownEffect(ApplyCustomerGroupMembershipSourcePayloadSchema)(intent.payload);
+  if (input.originalExecutorPrincipalId === undefined || input.originalRequestHash === undefined) {
+    return unavailableRecovery;
+  }
+  // Only the command whose request hash the original invocation was admitted under can be recovered.
+  const originalScope: SymmyPartyCommerceRequestScope = {
+    principalId: input.originalExecutorPrincipalId,
+    tenantId: input.effect.ref.occurrence.record.route.tenantId,
+  };
+  const pinnedHash = yield* prepareSymmyPartyCommerceRequestHash(
+    intent,
+    input.legalEntityId === undefined ? originalScope : { ...originalScope, legalEntityId: input.legalEntityId },
+  );
+  if (pinnedHash !== input.originalRequestHash) {
+    return unavailableRecovery;
+  }
   const request = yield* Schema.decodeUnknownEffect(CustomerGroupMembershipSourceReceiptRequestSchema)({
     effectId: payload.source.effectId,
     manager: payload.manager,
@@ -2112,9 +2127,17 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
     context.requestCorrelation,
     context.options,
   );
+  // The receipt settles this effect only when it records the pinned command: its assertion, its order, its source
+  // record and, for an assignment, exactly the group it names.
+  const receiptGroups = receipt.items.map((item) => ('membership' in item ? item.membership.groupRef : item.groupRef));
   if (
     receipt.source.effectId !== payload.source.effectId ||
-    receipt.source.assertionId !== payload.source.assertionId
+    receipt.source.assertionId !== payload.source.assertionId ||
+    receipt.source.order !== payload.source.order ||
+    receipt.source.sourceRecordId !== payload.source.sourceRecordId ||
+    (payload.operation === 'ASSIGN' &&
+      (receiptGroups.length !== 1 ||
+        !receiptGroups.every((groupRef) => Schema.toEquivalence(CustomerGroupRefSchema)(groupRef, payload.groupRef))))
   ) {
     return unavailableRecovery;
   }

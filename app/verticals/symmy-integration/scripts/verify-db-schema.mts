@@ -11,6 +11,7 @@ import {
   symmyIntegrationRelations,
   symmyJobEffects,
   symmyJobRoutes,
+  symmyMembershipSourceOrders,
   symmySyncAdmissionAttempts,
   symmyJobPrivacyExecutions,
   symmyJobNotifications,
@@ -35,6 +36,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
   yield* database.select().from(symmySyncAdmissions).limit(0);
   yield* database.select().from(symmySyncAdmissionAttempts).limit(0);
   yield* database.select().from(symmyJobPrivacyExecutions).limit(0);
+  yield* database.select().from(symmyMembershipSourceOrders).limit(0);
   // The catalog is used only by this operator-side verifier.
   const tables = yield* client<{
     readonly enabled: boolean;
@@ -74,7 +76,12 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'sync_admission_attempts',
           ].includes(name) ||
         read_allowed !==
-          !['job_notifications', 'job_retention_tombstones', 'privacy_measure_executions'].includes(name) ||
+          ![
+            'job_notifications',
+            'job_retention_tombstones',
+            'membership_source_orders',
+            'privacy_measure_executions',
+          ].includes(name) ||
         unsafe_mutation,
     )
   ) {
@@ -144,14 +151,18 @@ const verification = Effect.gen(function* verifySymmySchema() {
     'read_symmy_job_notification_wake',
     'read_symmy_privacy_execution',
     'read_symmy_sync_lifecycle',
+    'record_symmy_membership_orders',
     'record_symmy_owner_executor',
     'record_symmy_owner_invocation',
     'record_symmy_owner_receipt',
     'record_symmy_owner_request',
     'record_symmy_privacy_execution',
     'record_symmy_resolved_effect',
+    'reserve_symmy_membership_order',
     'settle_symmy_job_effect',
     'settle_symmy_job_notification',
+    'symmy_membership_lineage',
+    'symmy_membership_order_ready',
     'symmy_original_route_active',
     'symmy_source_selector_code',
   ];
@@ -168,9 +179,11 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'symmy_original_route_active',
             'erase_symmy_effect_payload',
             'erase_symmy_plan_payload',
+            'symmy_membership_lineage',
           ].includes(routine.name) ||
         routine.definer !==
           ![
+            'symmy_membership_lineage',
             'symmy_source_selector_code',
             'pin_symmy_fixture_plan',
             'publish_route_execution_gate',

@@ -26,6 +26,7 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   [
     'commerce-customer-context',
     new Set([
+      'reads/customer-group-definition-source',
       'reads/customer-profile-source',
       'reads/customer-profile-source-page',
       'reads/customer-profile-source-parties',

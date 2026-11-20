@@ -423,6 +423,26 @@ const start = ({
 };
 
 const fixtureJson = { body: '{"fixtureId":"internal-c14-fixture"}', headers: { 'content-type': 'application/json' } };
+const customerGroupRow = (code: string) => ({
+  businessCode: 'WHOLESALE_BUYERS',
+  code,
+  description: 'Customers the source classifies as wholesale buyers',
+  meaningKey: 'symmy.wholesale-buyers',
+  membershipCriteria: 'The source explicitly assigns each wholesale buyer',
+  name: 'Wholesale buyers',
+  purpose: 'Wholesale buyer classification',
+});
+const customerGroupsJson = (codes: readonly string[]) => ({
+  body: JSON.stringify({ customerGroups: codes.map(customerGroupRow) }),
+  headers: { 'content-type': 'application/json' },
+});
+/** The profile reference GET /admin/customers returns, copied back as the customer of a group. */
+const groupCustomersJson = {
+  body: JSON.stringify({ customers: [{ profileRef: customersProfile.profileRef }] }),
+  headers: { 'content-type': 'application/json' },
+};
+const { kind: groupCustomerKind, ...groupCustomerProfileRef } = customersProfile.profileRef;
+const groupCustomerRows = [{ profile: { profileKind: groupCustomerKind, profileRef: groupCustomerProfileRef } }];
 const stockUnitRef = {
   moduleId: 'commerce.catalog',
   resourceId: '33333333-3333-4333-8333-333333333333',
@@ -612,6 +632,12 @@ const routeBody = (path: string) => {
   }
   if (path === SYMMY_ROUTES.customersBatch.path) {
     return customersJson();
+  }
+  if (path === SYMMY_ROUTES.customerGroupsBatch.path) {
+    return customerGroupsJson(['group-1', 'group-2']);
+  }
+  if (path === SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode)) {
+    return groupCustomersJson;
   }
   return path === SYMMY_ROUTES.priceListsBatchUpsert.path ? priceListsBatchJson([priceListRow]) : fixtureJson;
 };
@@ -910,13 +936,71 @@ it.effect('requires a replay key for versioned synchronous writes before any own
     );
     const response = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
-        body: JSON.stringify(internalProductInput),
+        body: customerGroupsJson(['group-1']).body,
         headers: { 'content-type': 'application/json', 'x-api-key': validKey },
         method: 'POST',
       }),
     );
     expect(response.status).toBe(428);
     expect(yield* Effect.promise(() => response.json())).not.toHaveProperty('jobId');
+    expect(calls).toBe(0);
+  }),
+);
+
+it.effect('refuses internal plans, fixtures, removals and price fields on the customer group routes', () =>
+  Effect.gen(function* publicGroupBodies() {
+    let calls = 0;
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          observe: () => {
+            calls += 1;
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    const post = (path: string, body: Schema.Json) =>
+      Effect.promise(() =>
+        server.request(path, {
+          body: JSON.stringify(body),
+          headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+          method: 'POST',
+        }),
+      );
+    const group = customerGroupRow('group-1');
+    const { meaningKey: _meaningKey, ...withoutMeaning } = group;
+    for (const body of [
+      internalProductInput,
+      { fixtureId },
+      { customerGroups: [] },
+      { customerGroups: [{ code: 'group-1', name: 'Only a name' }] },
+      { customerGroups: [withoutMeaning] },
+      { customerGroups: [group, group] },
+      { customerGroups: [{ ...group, priceListCode: 'wholesale' }] },
+      { customerGroups: [{ ...group, discount: '10' }] },
+      { customerGroups: [{ ...group, metadata: {} }] },
+      { contractVersion: 'INTERNAL_C14', customerGroups: [group] },
+    ]) {
+      expect((yield* post(SYMMY_ROUTES.customerGroupsBatch.path, body)).status, JSON.stringify(body)).toBe(400);
+    }
+    const profileRef = { ...customersProfile.profileRef, resourceId: 'abcdef00-6666-4666-8666-666666666666' };
+    const membersPath = SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode);
+    for (const body of [
+      internalProductInput,
+      { fixtureId },
+      { customers: [] },
+      { customers: [{ customerId: 'customer-1' }] },
+      { customers: [{ operation: 'REMOVE', profileRef }] },
+      { complete: true, customers: [{ profileRef }] },
+      { customers: [{ profileRef: { ...profileRef, resourceId: 'not-a-profile-uuid' } }] },
+      {
+        customers: [{ profileRef }, { profileRef: { ...profileRef, resourceId: profileRef.resourceId.toUpperCase() } }],
+      },
+      { customers: Array.from({ length: 17 }, () => ({ profileRef })) },
+    ]) {
+      expect((yield* post(membersPath, body)).status, JSON.stringify(body)).toBe(400);
+    }
     expect(calls).toBe(0);
   }),
 );
@@ -1066,8 +1150,8 @@ it.effect('uses a privately acquired route assertion without falling back to hum
     );
     const response = yield* Effect.promise(() =>
       server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', code), {
-        ...fixtureJson,
-        headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+        ...groupCustomersJson,
+        headers: { ...groupCustomersJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
         method: 'POST',
       }),
     );
@@ -1362,8 +1446,8 @@ it.effect('rejects foreign qualified codes and forged target hints before admitt
     const submit = (code: string) =>
       Effect.promise(() =>
         server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', code), {
-          ...fixtureJson,
-          headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+          ...groupCustomersJson,
+          headers: { ...groupCustomersJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
           method: 'POST',
         }),
       );
@@ -1502,47 +1586,96 @@ it.effect('derives async scope from the governed route and obtains a fresh scope
   }),
 );
 
-it.effect('runs the synchronous generated owner operation and returns results without a job response', () =>
+const groupItem = (index: number) =>
+  decodeSymmyItemOutcome({
+    effects: [
+      {
+        effectId: `20000000-0000-4000-8000-00000000000${index}`,
+        owner: 'commerce.customer-context',
+        status: 'accepted_change',
+      },
+    ],
+    itemId: `30000000-0000-4000-8000-00000000000${index}`,
+  });
+const groupOperation = (entrypointKey: string) => ({
+  entrypointKey,
+  moduleId: 'commerce.customer-context',
+  schemaVersion: '1',
+});
+
+it.effect('fences the public customer groups on the owner definitions and returns one keyed result per group', () =>
   Effect.gen(function* governedSynchronousItems() {
-    const item = yield* decodeSymmyItemOutcome({
-      effects: [
-        {
-          effectId: '20000000-0000-4000-8000-000000000001',
-          owner: 'commerce.customer-context',
-          status: 'accepted_change',
-        },
+    const results = [yield* groupItem(1), yield* groupItem(2)];
+    const commerceBaseUrl = moduleReleaseApiBaseUrl('commerce-customer-context', 'fixture-build');
+    const groupRoute = (definitionRead: boolean) => ({
+      ...internalRoute,
+      allowedOwnerOperations: [
+        groupOperation('commerce.customer-context.create-customer-group'),
+        groupOperation('commerce.customer-context.update-customer-group'),
+        ...(definitionRead ? [groupOperation('commerce.customer-context.api.customer-group-definition-source')] : []),
       ],
-      itemId: '30000000-0000-4000-8000-000000000001',
+      sourceEntityKind: 'CUSTOMER_GROUP',
+      sourceNamespace: 'internal-groups',
     });
+    const at = '2026-01-01T00:00:00.000Z';
+    const boundGroup = {
+      _tag: 'CURRENT',
+      group: {
+        businessCode: 'WHOLESALE_BUYERS',
+        currentDefinition: {
+          changeKind: 'CREATED',
+          description: 'Customers the source classifies as wholesale buyers',
+          membershipCriteria: 'The source explicitly assigns each wholesale buyer',
+          name: 'Wholesale buyers',
+          purpose: 'Wholesale buyer classification',
+          reason: 'Qualified Symmy source explicitly defines this customer group',
+          recordedAt: at,
+          revision: 3,
+        },
+        currentState: 'ACTIVE',
+        definitionHistory: [],
+        groupRef: nativeCustomerGroupRef,
+        lifecycleHistory: [{ activeFrom: at, archivedAt: null, reason: 'Created', recordedAt: at }],
+        meaningKey: 'symmy.wholesale-buyers',
+        revision: 3,
+      },
+      source: {
+        definitionEvidence: { kind: 'SOURCE_RECORD', reference: 'bound-group', revision: 'r-4' },
+        effectId: 'original-effect',
+        issuer: internalRoute.issuerId,
+        mappingRevision: internalRoute.sourceMappingVersion,
+        namespace: 'internal-groups',
+        order: 4,
+        recordId: 'bound-group',
+        revision: 'r-4',
+        route: { id: internalRoute.sourceRouteId, revision: internalRoute.sourceRouteRevision },
+        sourceCode: 'bound-group',
+      },
+    };
+    let definitionRead = true;
     const paths: string[] = [];
+    const bodies: Schema.Json[] = [];
     const ownerFetch: typeof fetch = async (input, init) => {
       const request = new Request(input, init);
       const path = new URL(request.url).pathname;
       paths.push(path);
-      return Response.json(
-        path.endsWith('/reads/symmy-route-context')
-          ? {
-              ...internalRoute,
-              allowedOwnerOperations: [
-                {
-                  entrypointKey: 'commerce.customer-context.create-customer-group',
-                  moduleId: 'commerce.customer-context',
-                  schemaVersion: '1',
-                },
-              ],
-              sourceEntityKind: 'CUSTOMER_GROUP',
-              sourceNamespace: 'internal-groups',
-            }
-          : { items: [item] },
-      );
+      const body = Schema.decodeUnknownSync(Schema.Json)(await request.json());
+      bodies.push(body);
+      if (path.endsWith('/reads/symmy-route-context')) {
+        return Response.json(groupRoute(definitionRead));
+      }
+      if (path.endsWith('/reads/customer-group-definition-source')) {
+        return Response.json(JSON.stringify(body).includes('"bound-group"') ? boundGroup : { _tag: 'ABSENT' });
+      }
+      return Response.json({ items: results });
     };
     const server = yield* Effect.acquireRelease(
       Effect.sync(() =>
         start({
-          acquireOwnerAssertion: () =>
+          acquireOwnerAssertion: ({ audience }) =>
             Effect.succeed({
-              apiBaseUrl,
-              assertion: Redacted.make('fresh-sync-assertion'),
+              apiBaseUrl: audience === 'commerce-customer-context' ? commerceBaseUrl : apiBaseUrl,
+              assertion: Redacted.make(`fresh-${audience}-assertion`),
               compositionRevision: revision,
             }),
           dispatch: makeSymmyGovernedDispatch(Effect.succeed('internal-sync-correlation')),
@@ -1551,60 +1684,61 @@ it.effect('runs the synchronous generated owner operation and returns results wi
       ),
       (fixture) => Effect.promise(fixture.dispose),
     );
-    const groupInput = {
-      contractVersion: 'INTERNAL_C14',
-      plan: {
-        items: [
-          {
-            effects: [
-              {
-                effectKey: 'group-create',
-                intent: {
-                  _tag: 'CustomerGroupCreate',
-                  payload: {
-                    businessCode: 'INTERNAL_GROUP',
-                    description: 'Internal source grouping',
-                    initialState: 'ACTIVE',
-                    meaningKey: 'source-buyer-classification',
-                    membershipCriteria: 'Explicit source group membership',
-                    name: 'Internal buyers',
-                    purpose: 'Buyer classification',
-                    reason: 'Internal conformance fixture',
-                  },
-                },
-                operation: {
-                  entrypointKey: 'commerce.customer-context.create-customer-group',
-                  moduleId: 'commerce.customer-context',
-                  schemaVersion: '1',
-                },
-              },
-            ],
-            itemKey: 'group-record',
-            source: {
-              entityKind: 'CUSTOMER_GROUP',
-              issuerId: 'internal-issuer',
-              sourceNamespace: 'internal-groups',
-              sourceRecordId: 'opaque-source-group',
-            },
-            sourceOccurrenceId: 'internal-group-occurrence',
-          },
-        ],
-      },
-    };
-    const response = yield* Effect.promise(() =>
-      server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
-        body: JSON.stringify(groupInput),
-        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
-        method: 'POST',
-      }),
-    );
+    const post = () =>
+      Effect.promise(() =>
+        server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
+          body: customerGroupsJson(['bound-group', 'new-group']).body,
+          headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+          method: 'POST',
+        }),
+      );
+    const response = yield* post();
     expect(response.status).toBe(200);
-    expect(yield* Effect.promise(() => response.json())).toEqual({ items: [{ ...item, outcome: 'accepted' }] });
+    expect(yield* Effect.promise(() => response.json())).toEqual({
+      items: [
+        { ...results[0], code: 'bound-group', outcome: 'accepted' },
+        { ...results[1], code: 'new-group', outcome: 'accepted' },
+      ],
+    });
+    const definitionPath =
+      '/module-api/commerce-customer-context/fixture-build/commerce-customer-context-api/reads/customer-group-definition-source';
     expect(paths).toEqual([
       `${releasePath}/reads/symmy-route-context`,
+      definitionPath,
+      definitionPath,
       `${releasePath}/symmy-integration/actions/admit-symmy-sync`,
     ]);
-    expect(paths.some((path) => path.includes('admit-symmy-job'))).toBe(false);
+    const authority = {
+      issuer: internalRoute.issuerId,
+      mappingRevision: internalRoute.sourceMappingVersion,
+      mode: 'CURRENT',
+      namespace: 'internal-groups',
+      route: { id: internalRoute.sourceRouteId, revision: internalRoute.sourceRouteRevision },
+    };
+    expect(bodies.slice(1)).toEqual([
+      { ...authority, recordId: 'bound-group' },
+      { ...authority, recordId: 'new-group' },
+      {
+        customerGroups: [customerGroupRow('bound-group'), customerGroupRow('new-group')],
+        groupFacts: [
+          {
+            businessCode: 'WHOLESALE_BUYERS',
+            code: 'bound-group',
+            groupRef: nativeCustomerGroupRef,
+            meaningKey: 'symmy.wholesale-buyers',
+            revision: 3,
+            sourceOrder: 4,
+          },
+        ],
+        idempotencyKey,
+        routeKey: 'customerGroupsBatch',
+      },
+    ]);
+    // A route that does not enroll the definition read cannot plan a revision fence: 403 and nothing is admitted.
+    definitionRead = false;
+    paths.length = 0;
+    expect((yield* post()).status).toBe(403);
+    expect(paths).toEqual([`${releasePath}/reads/symmy-route-context`]);
   }),
 );
 
@@ -1741,13 +1875,14 @@ it.effect('uses each approved route’s declared success status for internal fix
     for (const definition of Object.values(SYMMY_ROUTES)) {
       const path = definition.path.replace('{code}', groupCode).replace('{id}', jobId);
       const isStock = path === SYMMY_ROUTES.inventoryStockBatch.path;
+      const isGroups = path === SYMMY_ROUTES.customerGroupsBatch.path;
       const postBody = routeBody(path);
       const init =
         definition.method === 'POST'
           ? {
               ...postBody,
               headers:
-                definition.mode === 'durable_job' || isStock
+                definition.mode === 'durable_job' || isStock || isGroups
                   ? { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey }
                   : { ...fixtureJson.headers, 'x-api-key': validKey },
               method: definition.method,
@@ -1768,7 +1903,7 @@ it.effect('uses each approved route’s declared success status for internal fix
                 itemKey: `item-${index + 1}`,
                 locationKey: 'warehouse-1',
               }))
-            : expectedItems,
+            : expectedItems.map((item, index) => ({ ...item, code: `group-${index + 1}` })),
         },
         job_read: { items: expectedItems, jobId, status: 'indeterminate' },
       };
@@ -1780,8 +1915,12 @@ it.effect('uses each approved route’s declared success status for internal fix
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminCustomers' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminProducts' },
       { query: { contractVersion: 'INTERNAL_C14' }, route: 'adminRegions' },
-      { code: groupCode, fixtureId, idempotencyKey, route: 'customerGroupCustomersBatch' },
-      { fixtureId, route: 'customerGroupsBatch' },
+      { code: groupCode, groupCustomers: groupCustomerRows, idempotencyKey, route: 'customerGroupCustomersBatch' },
+      {
+        customerGroups: [customerGroupRow('group-1'), customerGroupRow('group-2')],
+        idempotencyKey,
+        route: 'customerGroupsBatch',
+      },
       { customers: publicCustomerRows, idempotencyKey, route: 'customersBatch' },
       {
         idempotencyKey,
@@ -2904,8 +3043,9 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
     const fetchOwner: typeof fetch = async (input, init) => {
       const request = new Request(input, init);
       const payload = Schema.decodeUnknownSync(Schema.Json)(await request.json());
-      calls.push({ headers: Object.fromEntries(request.headers), path: new URL(request.url).pathname, payload });
-      return Response.json({ jobId, phase: 'admitted' });
+      const path = new URL(request.url).pathname;
+      calls.push({ headers: Object.fromEntries(request.headers), path, payload });
+      return Response.json(path.endsWith('/reads/symmy-route-context') ? internalRoute : { jobId, phase: 'admitted' });
     };
     let identifier = 0;
     const dispatch = makeSymmyGovernedDispatch(
@@ -2914,15 +3054,30 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
         return `fixture-identifier-${identifier}`;
       }),
     );
+    let ownerAssertions = 0;
     const server = yield* Effect.acquireRelease(
-      Effect.sync(() => start({ dispatch, ownerFetch: fetchOwner })),
+      Effect.sync(() =>
+        start({
+          acquireOwnerAssertion: () =>
+            Effect.sync(() => {
+              ownerAssertions += 1;
+              return {
+                apiBaseUrl,
+                assertion: Redacted.make(`fresh-owner-assertion-${ownerAssertions}`),
+                compositionRevision: revision,
+              };
+            }),
+          dispatch,
+          ownerFetch: fetchOwner,
+        }),
+      ),
       (fixture) => Effect.promise(fixture.dispose),
     );
     const submit = () =>
       Effect.promise(() =>
         server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode), {
-          ...fixtureJson,
-          headers: { ...fixtureJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+          ...groupCustomersJson,
+          headers: { ...groupCustomersJson.headers, 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
           method: 'POST',
         }),
       );
@@ -2938,27 +3093,48 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
     expect(yield* Effect.promise(() => poll.json())).toEqual({ jobId, status: 'queued' });
     expect(yield* Effect.promise(() => first.json())).toEqual({ jobId, status: 'queued' });
     expect(yield* Effect.promise(() => retry.json())).toEqual({ jobId, status: 'queued' });
+    const routeRead = `${releasePath}/reads/symmy-route-context`;
+    const admit = `${releasePath}/symmy-integration/actions/admit-symmy-job`;
     expect(calls.map(({ path }) => path)).toEqual([
       `${releasePath}/reads/symmy-job-status`,
-      `${releasePath}/symmy-integration/actions/admit-symmy-job`,
-      `${releasePath}/symmy-integration/actions/admit-symmy-job`,
+      routeRead,
+      admit,
+      routeRead,
+      admit,
     ]);
-    const intent = { code: groupCode, fixtureId, idempotencyKey, routeKey: 'customerGroupCustomersBatch' };
-    expect(calls.map(({ payload }) => payload)).toEqual([{ jobId }, intent, intent]);
+    // The customers of a selected group always resolve their route: the owner admission needs its legal entity.
+    const selection = {
+      code: groupCode,
+      replayIdempotencyKey: idempotencyKey,
+      routeKey: 'customerGroupCustomersBatch',
+    };
+    const intent = {
+      code: groupCode,
+      groupCustomers: groupCustomerRows,
+      idempotencyKey,
+      routeKey: 'customerGroupCustomersBatch',
+    };
+    expect(calls.map(({ payload }) => payload)).toEqual([{ jobId }, selection, intent, selection, intent]);
     expect(calls.map(({ headers }) => headers['idempotency-key'])).toEqual([
       undefined,
-      'fixture-identifier-3',
-      'fixture-identifier-5',
+      undefined,
+      'fixture-identifier-4',
+      undefined,
+      'fixture-identifier-7',
     ]);
     expect(calls.map(({ headers }) => headers['authorization'])).toEqual([
       'Bearer synthetic-assertion-1',
       'Bearer synthetic-assertion-2',
+      'Bearer fresh-owner-assertion-1',
       'Bearer synthetic-assertion-3',
+      'Bearer fresh-owner-assertion-2',
     ]);
     expect(calls.map(({ headers }) => headers['x-correlation-id'])).toEqual([
       'fixture-identifier-1',
       'fixture-identifier-2',
-      'fixture-identifier-4',
+      'fixture-identifier-3',
+      'fixture-identifier-5',
+      'fixture-identifier-6',
     ]);
     expect(calls.every(({ headers }) => headers['x-ontos-composition-revision'] === revision)).toBe(true);
     expect(JSON.stringify(calls)).not.toContain(validKey);

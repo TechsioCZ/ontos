@@ -146,6 +146,7 @@ const harness = () => {
   let originalEligible = true;
   let systemEligible = true;
   let routeEligible = true;
+  let orderReady = true;
   let notified = 0;
   let notificationFails = false;
   const executed: SymmyPinnedEffect[] = [];
@@ -236,6 +237,7 @@ const harness = () => {
         };
         return true;
       }),
+    membershipOrderReady: () => Effect.sync(() => orderReady),
     recordExecutor: (_jobId: string, markedId: string, _token: string, _version: number, executorId: string) =>
       Effect.sync(() => {
         job = {
@@ -404,6 +406,9 @@ const harness = () => {
       notificationFails = value;
     },
     notified: () => notified,
+    orderReady: (value: boolean) => {
+      orderReady = value;
+    },
     originalEligible: (value: boolean) => {
       originalEligible = value;
     },
@@ -455,6 +460,24 @@ describe('Symmy durable execution and original-effect recovery', () => {
       expect(fixture.recovered).toHaveLength(0);
       expect(fixture.notified()).toBe(0);
     }),
+  );
+
+  it.effect(
+    'holds an effect behind an unsettled earlier membership order without claiming it or calling an owner',
+    () =>
+      Effect.gen(function* laterOrderWaits() {
+        const fixture = harness();
+        fixture.orderReady(false);
+        const failure = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
+        expect(failure).toMatchObject({ code: 'symmy_job_worker_unavailable' });
+        expect(fixture.executed).toHaveLength(0);
+        expect(fixture.recovered).toHaveLength(0);
+        expect(fixture.job()).toEqual(initialJob);
+        fixture.orderReady(true);
+        yield* (yield* fixture.makeWorker()).execute({ jobId }, context);
+        expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([effectId]);
+        expect(fixture.job().effects.map(({ state }) => state)).toEqual(['settled', 'settled']);
+      }),
   );
 
   it.effect('shows fresh revoked authority as blocked and reactivates only the same effect', () =>

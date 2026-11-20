@@ -22,6 +22,9 @@ import { PaymentNotificationsGroup } from '../api/payment-gateway/notification-c
 import { PaymentReconciliationBoundary } from '../api/payment-gateway/reconciliation-boundary.ts';
 import { SymmyCustomersResponseSchema } from '../api/symmy/customers-public-contract.ts';
 import { SymmyCustomersBatchRequestSchema } from '../api/symmy/customers-batch-request-contract.ts';
+import { SymmyCustomerGroupsBatchResponseSchema } from '../api/symmy/customer-groups-batch-public-contract.ts';
+import { SymmyCustomerGroupsBatchRequestSchema } from '../api/symmy/customer-groups-batch-request-contract.ts';
+import { SymmyGroupCustomersBatchRequestSchema } from '../api/symmy/group-customers-batch-request-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
@@ -55,13 +58,13 @@ const adminRegionsEndpoint = HttpApiEndpoint.get('adminRegions', SYMMY_ROUTES.ad
 const customerGroupCustomersBatchEndpoint = HttpApiEndpoint.post(
   'customerGroupCustomersBatch',
   nativeSymmyPath(SYMMY_ROUTES.customerGroupCustomersBatch.path),
-  { ...symmySubmitOptions, params: symmyCodeParams },
+  { ...symmySubmitOptions, params: symmyCodeParams, payload: SymmyGroupCustomersBatchRequestSchema },
 );
-const customerGroupsBatchEndpoint = HttpApiEndpoint.post(
-  'customerGroupsBatch',
-  SYMMY_ROUTES.customerGroupsBatch.path,
-  symmyWriteOptions,
-);
+const customerGroupsBatchEndpoint = HttpApiEndpoint.post('customerGroupsBatch', SYMMY_ROUTES.customerGroupsBatch.path, {
+  ...symmyWriteOptions,
+  payload: SymmyCustomerGroupsBatchRequestSchema,
+  success: SymmyCustomerGroupsBatchResponseSchema,
+});
 const customersBatchEndpoint = HttpApiEndpoint.post('customersBatch', SYMMY_ROUTES.customersBatch.path, {
   ...symmySubmitOptions,
   payload: SymmyCustomersBatchRequestSchema,
@@ -129,7 +132,7 @@ export interface SymmyIngressGroupContract extends HttpApiGroup.HttpApiGroup<'sy
   readonly identifier: 'symmy';
 }
 
-/** Internal fixture inputs and outputs. The real wire DTO and governed owner response require their own acceptance. */
+/** The public Symmy routes and the operator fixture routes kept apart from them. */
 export const SymmyIngressGroup: SymmyIngressGroupContract = HttpApiGroup.make('symmy')
   .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' })
   .annotate(HttpApi.QueryParseOptions, { onExcessProperty: 'error' })

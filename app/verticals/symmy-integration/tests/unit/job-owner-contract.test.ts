@@ -23,8 +23,9 @@ describe('Symmy internal job owner contracts', () => {
     expect(Result.isFailure(parseAdmission({ ...admission, code: 'unneeded' }))).toBe(true);
     expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'inventoryStockBatch' }))).toBe(true);
     expect(Result.isFailure(parseAdmission({ ...admission, routeKey: 'customerGroupCustomersBatch' }))).toBe(true);
+    // The customer group route takes only its public customers, never a fixture.
     expect(
-      Result.isSuccess(
+      Result.isFailure(
         parseAdmission({ ...admission, code: 'customer-group', routeKey: 'customerGroupCustomersBatch' }),
       ),
     ).toBe(true);
@@ -124,8 +125,88 @@ describe('Symmy internal job owner contracts', () => {
       ),
     ).toBe(true);
     expect(
-      Result.isSuccess(
+      Result.isFailure(
         parseSyncAdmission({ fixtureId: 'fixture-safe', idempotencyKey: 'group-key', routeKey: 'customerGroupsBatch' }),
+      ),
+    ).toBe(true);
+  });
+
+  it('admits the public customer groups only on the group route and only with their definition facts', () => {
+    const group = {
+      businessCode: 'WHOLESALE_BUYERS',
+      code: 'symmy-wholesale',
+      description: 'Customers the source classifies as wholesale buyers',
+      meaningKey: 'symmy.wholesale-buyers',
+      membershipCriteria: 'The source explicitly assigns each wholesale buyer',
+      name: 'Wholesale buyers',
+      purpose: 'Wholesale buyer classification',
+    };
+    const groups = {
+      customerGroups: [group],
+      groupFacts: [],
+      idempotencyKey: 'group-key',
+      routeKey: 'customerGroupsBatch',
+    };
+    expect(Result.isSuccess(parseSyncAdmission(groups))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, routeKey: 'inventoryStockBatch' }))).toBe(true);
+    const { groupFacts: _facts, ...withoutFacts } = groups;
+    expect(Result.isFailure(parseSyncAdmission(withoutFacts))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [] }))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [group, group] }))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [{ ...group, code: ' padded' }] }))).toBe(
+      true,
+    );
+    expect(
+      Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [{ ...group, businessCode: 'lower' }] })),
+    ).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, contractVersion: 'INTERNAL_C14' }))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, fixtureId: 'fixture-safe' }))).toBe(true);
+  });
+
+  it('admits the customers of a selected group only on the coded route, by distinct profile UUID', () => {
+    const profileRef = {
+      moduleId: 'commerce.customer-context',
+      resourceId: 'abcdef00-6666-4666-8666-666666666666',
+      resourceType: 'commerce.customer-context.retail-customer-profile',
+      tenantId: '11111111-1111-4111-8111-111111111111',
+    };
+    const customer = { profile: { profileKind: 'RETAIL', profileRef } };
+    const members = {
+      code: 'customer-group',
+      groupCustomers: [customer],
+      idempotencyKey: 'members-key',
+      routeKey: 'customerGroupCustomersBatch',
+    };
+    expect(Result.isSuccess(parseAdmission(members))).toBe(true);
+    const { code: _code, ...withoutCode } = members;
+    expect(Result.isFailure(parseAdmission(withoutCode))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...members, routeKey: 'customersBatch' }))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...members, fixtureId: 'fixture-safe' }))).toBe(true);
+    expect(Result.isFailure(parseAdmission({ ...members, groupCustomers: [] }))).toBe(true);
+    const upper = {
+      profile: { ...customer.profile, profileRef: { ...profileRef, resourceId: profileRef.resourceId.toUpperCase() } },
+    };
+    // Two spellings of one profile are one customer.
+    expect(Result.isFailure(parseAdmission({ ...members, groupCustomers: [customer, upper] }))).toBe(true);
+    const notUuid = { profile: { ...customer.profile, profileRef: { ...profileRef, resourceId: 'customer-1' } } };
+    expect(Result.isFailure(parseAdmission({ ...members, groupCustomers: [notUuid] }))).toBe(true);
+    const distinct = (index: number) => ({
+      profile: {
+        ...customer.profile,
+        profileRef: {
+          ...profileRef,
+          resourceId: `abcdef${String(index).padStart(2, '0')}-6666-4666-8666-666666666666`,
+        },
+      },
+    });
+    expect(
+      Result.isSuccess(
+        parseAdmission({ ...members, groupCustomers: Array.from({ length: 16 }, (_, index) => distinct(index)) }),
+      ),
+    ).toBe(true);
+    expect(
+      Result.isFailure(
+        parseAdmission({ ...members, groupCustomers: Array.from({ length: 17 }, (_, index) => distinct(index)) }),
       ),
     ).toBe(true);
   });

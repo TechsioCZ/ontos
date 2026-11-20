@@ -7,7 +7,6 @@ import {
 import type { GatewayInternalProblemSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { SymmyItemOutcomeSchema, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
 import { Schema, SchemaTransformation } from 'effect';
 import { HttpApiMiddleware } from 'effect/http-api';
@@ -221,15 +220,7 @@ export const SymmyCustomersReadQuerySchema = Schema.Struct({
 export const SymmyFixtureIdSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/u)).pipe(
   Schema.brand('SymmyFixtureId'),
 );
-export const SymmyInternalPlanPayloadSchema = Schema.Struct({
-  contractVersion: Schema.Literal('INTERNAL_C14'),
-  plan: SymmyInternalExecutionPlanSchema,
-});
 export const SymmyFixtureSubmitPayloadSchema = Schema.Struct({ fixtureId: SymmyFixtureIdSchema });
-export const SymmyInternalWritePayloadSchema = Schema.Union([
-  SymmyFixtureSubmitPayloadSchema,
-  SymmyInternalPlanPayloadSchema,
-]);
 export const symmyCodeParams = Schema.Struct({
   code: SymmySelectedSourceCodeSchema,
 });
@@ -269,14 +260,11 @@ export const symmyWriteOptions = {
     ...authenticationHeaders,
     'idempotency-key': Schema.optionalKey(SymmyClientIdempotencyKeySchema),
   }),
-  payload: SymmyInternalWritePayloadSchema,
-  success: SymmyFixtureItemResultsSchema,
 };
 export const symmySubmitOptions = {
   ...base,
   error: [...ingressProblems, SymmyFixtureIntentConflictProblemSchema],
   headers: submitHeaders,
-  payload: SymmyInternalWritePayloadSchema,
   success: SymmyFixtureAdmissionSchema.pipe(HttpApiSchema.status(202)),
 };
 

@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -42,6 +43,7 @@ export const SYMMY_INTEGRATION_TABLES = [
   'job_notifications',
   'job_retention_tombstones',
   'job_routes',
+  'membership_source_orders',
   'privacy_measure_executions',
   'sync_admission_attempts',
   'sync_admissions',
@@ -294,6 +296,38 @@ export const symmyJobEffects = symmyIntegrationSchema.table.withRLS(
   ],
 );
 
+/**
+ * The owner orders the memberships of one source manager per profile, whatever group they name, and refuses an older
+ * order. One row is the order an admission reserved for one admitted membership effect. Its lineage is a digest of
+ * the tenant, legal entity, source issuer, namespace and canonical profile, so no profile reference outlives the
+ * erasure of the effect it orders. Rows are written and read only through the Symmy order routines.
+ */
+export const symmyMembershipSourceOrders = symmyIntegrationSchema.table.withRLS(
+  'membership_source_orders',
+  {
+    effectId: uuid('effect_id').notNull(),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    lineageDigest: text('lineage_digest').notNull(),
+    sourceOrder: integer('source_order').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.lineageDigest, table.sourceOrder],
+      name: 'symmy_membership_source_orders_pk',
+    }),
+    unique('symmy_membership_source_orders_effect_uq').on(table.tenantId, table.effectId),
+    foreignKey({
+      columns: [table.tenantId, table.effectId],
+      foreignColumns: [symmyJobEffects.tenantId, symmyJobEffects.effectId],
+      name: 'symmy_membership_source_orders_effect_fk',
+    }).onDelete('restrict'),
+    check('symmy_membership_source_orders_lineage_ck', sql`${table.lineageDigest} ~ '^[0-9a-f]{64}$'`),
+    check('symmy_membership_source_orders_order_ck', sql`${table.sourceOrder} >= 1`),
+    ...tenantRlsPolicies('symmy_membership_source_orders_tenant', table.tenantId),
+  ],
+);
+
 /** Minimal owner receipt link for a new Core attempt returning an already accepted business admission. */
 export const symmySyncAdmissionAttempts = symmyIntegrationSchema.table.withRLS(
   'sync_admission_attempts',
@@ -322,6 +356,7 @@ export const symmyIntegrationRelations = defineRelations({
   symmyJobPrivacyExecutions,
   symmyJobRetentionTombstones,
   symmyJobRoutes,
+  symmyMembershipSourceOrders,
   symmySyncAdmissionAttempts,
   symmySyncAdmissions,
 });

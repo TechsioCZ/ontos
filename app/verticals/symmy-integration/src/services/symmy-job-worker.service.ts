@@ -477,6 +477,14 @@ const processEffect = Effect.fn('SymmyJobWorker.processEffect')(function* proces
   if (dependencies.some((entry) => entry.state !== 'settled')) {
     return yield* symmyJobWorkerUnavailable();
   }
+  const persistence = yield* SymmyJobExecutionPersistence;
+  // The owner refuses an older membership order of a lineage, so a later order waits for every earlier one to settle.
+  const ordered = yield* inScope(context, (scope) =>
+    persistence.storeFor(scope.routineInvoker).membershipOrderReady(saved.effect.ref.effectId),
+  );
+  if (!ordered) {
+    return yield* symmyJobWorkerUnavailable();
+  }
   const dependencyRejected = dependencies.some(
     ({ outcome }) =>
       Option.isNone(outcome) ||
@@ -488,7 +496,6 @@ const processEffect = Effect.fn('SymmyJobWorker.processEffect')(function* proces
     yield* adapterFor(saved.effect);
   }
   const crypto = yield* Crypto.Crypto;
-  const persistence = yield* SymmyJobExecutionPersistence;
   const claimToken = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
   const claim = yield* inScope(context, (scope) =>
     persistence.storeFor(scope.routineInvoker).claim(job.jobId, saved.effect.ref.effectId, claimToken),
