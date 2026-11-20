@@ -741,6 +741,45 @@ it.live(
           });
           expect(retired.status).toBe(400);
         }
+        // Public groups are caller payload the admission retains, so a route whose lifecycle policy is absent or matches
+        // no configured retention policy refuses them before admission: no sync admission and no owner write follow.
+        const groupAdmissions =
+          admin`select count(*)::integer as count from symmy_integration.sync_admissions where tenant_id=${tenantId} and route_id=${groupRouteId}`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+            Effect.map(([admissions]) => admissions?.count),
+          );
+        const admittedGroups = yield* groupAdmissions;
+        const unconfiguredPolicy = yield* json({ ...groupPolicy, revision: 'INTERNAL_C14_UNCONFIGURED' });
+        for (const [idempotencyKey, setPolicy] of [
+          [
+            'INTERNAL_C14_GROUP_WITHOUT_POLICY',
+            admin`update symmy_integration.job_routes set lifecycle_policy=null where tenant_id=${tenantId} and route_id=${groupRouteId}`,
+          ],
+          [
+            'INTERNAL_C14_GROUP_UNCONFIGURED_POLICY',
+            admin`update symmy_integration.job_routes set lifecycle_policy=${unconfiguredPolicy}::jsonb where tenant_id=${tenantId} and route_id=${groupRouteId}`,
+          ],
+        ] as const) {
+          yield* setPolicy;
+          const unretained = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${groupPath}`, {
+            body: yield* groupBody([
+              {
+                ...groupRow,
+                businessCode: 'INTERNAL_C14_UNRETAINED',
+                code: 'INTERNAL_C14_UNRETAINED',
+                meaningKey: 'internal-c14.unretained-group-meaning',
+              },
+            ]),
+            headers: { ...headers, 'idempotency-key': idempotencyKey },
+          });
+          // The owner refuses the admission as ineligible, which the Shell answers as unavailable, as for a revoked writer.
+          expect(unretained.status).toBe(503);
+          yield* unretained.json.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema, { onExcessProperty: 'error' })),
+          );
+        }
+        yield* admin`update symmy_integration.job_routes set lifecycle_policy=${yield* json(groupPolicy)}::jsonb where tenant_id=${tenantId} and route_id=${groupRouteId}`;
+        expect(yield* groupAdmissions).toBe(admittedGroups);
         const [jobs] =
           yield* admin`select count(*)::integer as count from symmy_integration.import_jobs where tenant_id=${tenantId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),

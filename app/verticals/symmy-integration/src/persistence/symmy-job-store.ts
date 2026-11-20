@@ -1191,6 +1191,7 @@ const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* pre
     route,
     input.plan !== undefined ||
       input.stock !== undefined ||
+      input.customerGroups !== undefined ||
       template.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)),
   );
   if (input.plan !== undefined && !inputPlanAllowed(template, input.plan, scope)) {
