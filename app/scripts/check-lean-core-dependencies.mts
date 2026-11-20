@@ -15,6 +15,8 @@ import {
   Schema,
 } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parseSync, Visitor } from 'oxc-parser';
 import type { ImportExpression, MemberExpression } from 'oxc-parser';
 
@@ -23,7 +25,8 @@ import type { ImportExpression, MemberExpression } from 'oxc-parser';
  * Storefront or Better Auth (package.json or source import). Non-Commerce
  * apps/verticals must never take a mandatory runtime import of Commerce's
  * private implementation, only its published `shared/` contracts or a
- * documented composition seam.
+ * documented composition seam. Package edges from a module (verticals/*) or a package (packages/*) to a
+ * module or an app (apps/*) are frozen to the committed baseline, which may only shrink.
  */
 
 export interface LeanCoreDependencyViolation {
@@ -75,6 +78,8 @@ interface ImportOccurrence {
 
 interface SourceImportAnalysis {
   readonly occurrences: readonly ImportOccurrence[];
+  /** False when the file does not parse, so none of its specifiers are known. */
+  readonly parsed: boolean;
   readonly unsupportedRuntimeImport: boolean;
 }
 
@@ -127,7 +132,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
     sourceType: file.endsWith('.cjs') ? 'script' : 'module',
   });
   if (parsed.errors.length > 0) {
-    return { occurrences: [], unsupportedRuntimeImport: true };
+    return { occurrences: [], parsed: false, unsupportedRuntimeImport: true };
   }
   const occurrences = parsed.program.body.flatMap((statement) => {
     const occurrence = occurrenceForStatement(statement);
@@ -187,6 +192,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
       [...occurrences, ...dynamicOccurrences],
       Order.mapInput(Order.Number, (occurrence: ImportOccurrence) => occurrence.index),
     ),
+    parsed: true,
     unsupportedRuntimeImport,
   };
 };
@@ -944,27 +950,602 @@ export const checkLeanCoreDependencies = (
     return EffectArray.sort(violations, ViolationOrder);
   });
 
+// --- Module boundary freeze: package edges into modules and apps ----------
+
+/**
+ * Every workspace package is a node: the package.json directories under apps/, packages/ and verticals/
+ * (modules). An edge from one package to another is the union of a declaration in any dependency field, a
+ * source specifier that names the other package, and a relative specifier that leaves the package for a
+ * file the other package owns. Its class is runtime when a runtime field declares it or a non-test source
+ * imports it, and test when only devDependencies and test sources make it.
+ *
+ * The frozen edges run from a module or a package to a module or an app: a module to another module
+ * (rule 1), a package to a module or an app (rule 2), and a module to an app (rule 3). Each one exists only
+ * as an entry of the committed baseline with its class, and every entry is such an edge of the tree with
+ * that class (rule 4). Given the run's comparison base, the baseline may only shrink: a baseline that is not
+ * the one at the base names only edges the base tree has, with the same or a wider class (rule 5).
+ */
+
+const workspacePackageParents = [
+  ['apps', 'app'],
+  ['packages', 'package'],
+  ['verticals', 'module'],
+] as const;
+type WorkspacePackageKind = (typeof workspacePackageParents)[number][1];
+
+export const moduleEdgeBaselineRelative = 'scripts/lean-core-dependency-baseline.json';
+
+const EdgeClassSchema = Schema.Literals(['runtime', 'test']);
+type EdgeClass = typeof EdgeClassSchema.Type;
+
+const ModuleEdgeBaselineEntrySchema = Schema.Struct({
+  class: EdgeClassSchema,
+  from: Schema.String,
+  to: Schema.String,
+});
+type ModuleEdgeBaselineEntry = typeof ModuleEdgeBaselineEntrySchema.Type;
+const ModuleEdgeBaselineFromJson = Schema.fromJsonString(Schema.Array(ModuleEdgeBaselineEntrySchema));
+const BaselineEntryOrder = Order.combine(
+  Order.mapInput(Order.String, (entry: ModuleEdgeBaselineEntry) => entry.from),
+  Order.mapInput(Order.String, (entry: ModuleEdgeBaselineEntry) => entry.to),
+);
+
+const dependencyFields = ['dependencies', 'peerDependencies', 'optionalDependencies', 'devDependencies'] as const;
+const DependencyFieldSchema = Schema.optional(Schema.Record(Schema.String, Schema.String));
+const PackageEdgeManifestFromJson = Schema.fromJsonString(
+  Schema.Struct({
+    dependencies: DependencyFieldSchema,
+    devDependencies: DependencyFieldSchema,
+    name: Schema.optional(Schema.String),
+    optionalDependencies: DependencyFieldSchema,
+    peerDependencies: DependencyFieldSchema,
+  }),
+);
+type PackageEdgeManifest = typeof PackageEdgeManifestFromJson.Type;
+
+interface WorkspacePackage {
+  readonly directory: string;
+  readonly kind: WorkspacePackageKind;
+  readonly manifest: PackageEdgeManifest;
+}
+
+/** One place that makes an edge: a dependency field of a manifest, or a specifier at a source line. */
+interface EdgeSite {
+  readonly class: EdgeClass;
+  readonly field?: (typeof dependencyFields)[number];
+  readonly file: string;
+  readonly line: number;
+}
+
+interface PackageEdge {
+  readonly class: EdgeClass;
+  readonly from: string;
+  readonly sites: readonly EdgeSite[];
+  readonly to: string;
+}
+
+interface PackageGraph {
+  readonly edges: ReadonlyMap<string, PackageEdge>;
+  readonly packages: ReadonlyMap<string, WorkspacePackageKind>;
+  readonly unparsable: readonly string[];
+}
+
+const edgeKey = (from: string, to: string): string => `${from} -> ${to}`;
+
+const EdgeSiteOrder = Order.combine(
+  Order.mapInput(Order.String, (site: EdgeSite) => site.file),
+  Order.mapInput(Order.Number, (site: EdgeSite) => site.line),
+);
+
+/** The package a bare specifier names: its scope and name, without a subpath. */
+const specifierPackageName = (specifier: string): string =>
+  specifier
+    .split('/')
+    .slice(0, specifier.startsWith('@') ? 2 : 1)
+    .join('/');
+
+const workspacePackageAt = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+  [parent, kind]: (typeof workspacePackageParents)[number],
+  entry: string,
+): Effect.Effect<Option.Option<WorkspacePackage>, PlatformError> =>
+  Effect.gen(function* workspacePackageAtProgram() {
+    const manifestPath = path.join(root, parent, entry, 'package.json');
+    if (!(yield* fileSystem.exists(manifestPath))) {
+      return Option.none();
+    }
+    const raw = yield* fileSystem.readFileString(manifestPath, 'utf-8');
+    const manifest = yield* Schema.decodeUnknownEffect(PackageEdgeManifestFromJson)(raw).pipe(Effect.orDie);
+    return Option.some({ directory: `${parent}/${entry}`, kind, manifest });
+  });
+
+const workspacePackagesUnderParent = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+  parent: (typeof workspacePackageParents)[number],
+): Effect.Effect<readonly WorkspacePackage[], PlatformError> =>
+  Effect.gen(function* workspacePackagesUnderParentProgram() {
+    const parentPath = path.join(root, parent[0]);
+    if (!(yield* fileSystem.exists(parentPath))) {
+      return [];
+    }
+    const entries = yield* fileSystem.readDirectory(parentPath);
+    const packages = yield* Effect.all(
+      entries.map((entry) => workspacePackageAt(fileSystem, path, root, parent, entry)),
+      { concurrency: 32 },
+    );
+    return EffectArray.getSomes(packages);
+  });
+
+const discoverWorkspacePackages = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+): Effect.Effect<readonly WorkspacePackage[], PlatformError> =>
+  Effect.gen(function* discoverWorkspacePackagesProgram() {
+    const discovered = yield* Effect.all(
+      workspacePackageParents.map((parent) => workspacePackagesUnderParent(fileSystem, path, root, parent)),
+      { concurrency: workspacePackageParents.length },
+    );
+    return EffectArray.sort(
+      discovered.flat(),
+      Order.mapInput(Order.String, (workspacePackage: WorkspacePackage) => workspacePackage.directory),
+    );
+  });
+
+/** The package edge graph of the tree at root, read from manifests and import specifiers only. */
+const derivePackageGraph = (
+  root: string,
+): Effect.Effect<PackageGraph, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* derivePackageGraphProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const packages = yield* discoverWorkspacePackages(fileSystem, path, root);
+    const directoryByName = new Map(
+      packages.flatMap(({ directory, manifest }) =>
+        manifest.name === undefined ? [] : [[manifest.name, directory] as const],
+      ),
+    );
+    const owner = (file: string): string | undefined =>
+      packages.find(({ directory }) => file.startsWith(`${directory}/`))?.directory;
+    const sitesByEdge = new Map<string, { readonly from: string; readonly sites: EdgeSite[]; readonly to: string }>();
+    const recordSite = (from: string, to: string | undefined, site: EdgeSite): void => {
+      if (to === undefined || to === from) {
+        return;
+      }
+      const key = edgeKey(from, to);
+      const edge = sitesByEdge.get(key) ?? { from, sites: [], to };
+      edge.sites.push(site);
+      sitesByEdge.set(key, edge);
+    };
+
+    for (const { directory, manifest } of packages) {
+      for (const field of dependencyFields) {
+        for (const dependency of Object.keys(manifest[field] ?? {})) {
+          recordSite(directory, directoryByName.get(dependency), {
+            class: field === 'devDependencies' ? 'test' : 'runtime',
+            field,
+            file: `${directory}/package.json`,
+            line: 1,
+          });
+        }
+      }
+    }
+
+    const files = yield* Effect.all(
+      packages.map(({ directory }) => collect(path.join(root, directory), graphSourceExtensions)),
+      { concurrency: 4 },
+    );
+    const sources = yield* Effect.all(
+      files
+        .flat()
+        .map((file) =>
+          fileSystem
+            .readFileString(file, 'utf-8')
+            .pipe(Effect.map((source) => [path.relative(root, file).split(path.sep).join('/'), source] as const)),
+        ),
+      { concurrency: 32 },
+    );
+    const unparsable: string[] = [];
+    for (const [relative, source] of sources) {
+      // Every collected file lies inside the package directory it was collected from.
+      const from = owner(relative) ?? relative;
+      const analysis = analyzeImports(relative, source);
+      if (!analysis.parsed) {
+        unparsable.push(relative);
+        continue;
+      }
+      const siteClass: EdgeClass = isTestSource(relative) ? 'test' : 'runtime';
+      for (const { index, specifier } of analysis.occurrences) {
+        const line = sourceLine(source, index);
+        recordSite(
+          from,
+          specifier.startsWith('.')
+            ? owner(resolveRelativeSpecifier(relative, specifier))
+            : directoryByName.get(specifierPackageName(specifier)),
+          { class: siteClass, file: relative, line },
+        );
+      }
+    }
+
+    return {
+      edges: new Map(
+        [...sitesByEdge].map(([key, { from, sites, to }]): readonly [string, PackageEdge] => [
+          key,
+          {
+            class: sites.some((site) => site.class === 'runtime') ? 'runtime' : 'test',
+            from,
+            sites: EffectArray.sort(sites, EdgeSiteOrder),
+            to,
+          },
+        ]),
+      ),
+      packages: new Map(packages.map(({ directory, kind }) => [directory, kind] as const)),
+      unparsable,
+    };
+  });
+
+/** Rules 1 to 3: an edge from a module or a package to a module or an app is frozen. */
+const isFrozenEdge = (graph: PackageGraph, edge: PackageEdge): boolean => {
+  const from = graph.packages.get(edge.from);
+  const to = graph.packages.get(edge.to);
+  return (from === 'module' || from === 'package') && (to === 'module' || to === 'app');
+};
+
+const frozenEdges = (graph: PackageGraph): readonly PackageEdge[] =>
+  EffectArray.sort(
+    [...graph.edges.values()].filter((edge) => isFrozenEdge(graph, edge)),
+    Order.mapInput(Order.String, (edge: PackageEdge) => edgeKey(edge.from, edge.to)),
+  );
+
+/** The files that make an edge: each manifest with its fields, each source with its lines. */
+const describeSites = (edge: PackageEdge): string => {
+  const details = new Map<string, string[]>();
+  for (const { field, file, line } of edge.sites) {
+    details.set(file, [...(details.get(file) ?? []), field ?? String(line)]);
+  }
+  return [...details]
+    .map(([file, parts]) =>
+      file.endsWith('/package.json') ? `${file} ${parts.join(', ')}` : `${file}:${parts.join(',')}`,
+    )
+    .join('; ');
+};
+
+const frozenEdgeRule = (graph: PackageGraph, edge: PackageEdge): string => {
+  const from = graph.packages.get(edge.from);
+  const to = graph.packages.get(edge.to);
+  if (from === 'package') {
+    return `A package under packages/ takes no edge to ${to === 'app' ? 'an app' : 'a module'}`;
+  }
+  return to === 'app' ? 'A module takes no edge to an app' : 'A module takes no edge to another module';
+};
+
+/** Wider classes admit more: a runtime edge also carries everything a test edge does. */
+const classAdmits = (wider: EdgeClass, narrower: EdgeClass): boolean => wider === 'runtime' || narrower === 'test';
+
+const readModuleEdgeBaseline = (
+  root: string,
+): Effect.Effect<Option.Option<readonly ModuleEdgeBaselineEntry[]>, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* readModuleEdgeBaselineProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const file = path.join(root, moduleEdgeBaselineRelative);
+    if (!(yield* fileSystem.exists(file))) {
+      return Option.none();
+    }
+    const raw = yield* fileSystem.readFileString(file, 'utf-8');
+    return Option.some(yield* Schema.decodeUnknownEffect(ModuleEdgeBaselineFromJson)(raw).pipe(Effect.orDie));
+  });
+
+const baselineViolation = (reason: string): LeanCoreDependencyViolation => ({
+  file: moduleEdgeBaselineRelative,
+  line: 1,
+  reason,
+});
+
+const sameBaseline = (left: readonly ModuleEdgeBaselineEntry[], right: readonly ModuleEdgeBaselineEntry[]): boolean =>
+  left.length === right.length &&
+  left.every(
+    (entry, index) =>
+      entry.from === right[index]?.from && entry.to === right[index]?.to && entry.class === right[index]?.class,
+  );
+
+/** Runs a command whose output is not needed; its stderr reaches the console. */
+const exitCodeOf = (command: string, args: readonly string[], cwd: string) =>
+  Effect.gen(function* exitCodeOfProgram() {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner.exitCode(
+      ChildProcess.make(command, [...args], { cwd, stderr: 'inherit', stdin: 'ignore', stdout: 'ignore' }),
+    );
+  });
+
+interface ShrinkOnlyResult {
+  readonly summary: string;
+  readonly violations: readonly LeanCoreDependencyViolation[];
+}
+
+const unreadableBase = (base: string, reason: string): ShrinkOnlyResult => ({
+  summary: `Shrink-only rule failed: the comparison base ${base} cannot be read.`,
+  violations: [
+    baselineViolation(`The comparison base ${base} cannot be read (${reason}), so the shrink-only rule fails closed`),
+  ],
+});
+
+/** Rule 5 against the comparison tree that root's commit `commit` extracted into `tree`. */
+const checkShrinkOnlyAgainst = (
+  commit: string,
+  tree: string,
+  baseline: readonly ModuleEdgeBaselineEntry[],
+): Effect.Effect<ShrinkOnlyResult, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* checkShrinkOnlyAgainstProgram() {
+    const baseBaseline = yield* readModuleEdgeBaseline(tree);
+    if (Option.isSome(baseBaseline) && sameBaseline(baseline, baseBaseline.value)) {
+      return {
+        summary: `Shrink-only rule: the baseline is the one at the comparison base ${commit}.`,
+        violations: [],
+      };
+    }
+    const baseGraph = yield* derivePackageGraph(tree);
+    const violations = baseline.flatMap((entry): readonly LeanCoreDependencyViolation[] => {
+      const edge = baseGraph.edges.get(edgeKey(entry.from, entry.to));
+      if (edge === undefined) {
+        return [
+          baselineViolation(
+            `Baseline entry ${edgeKey(entry.from, entry.to)} (${entry.class}) is not an edge of the comparison base ${commit}: the baseline only shrinks, so no new edge enters it`,
+          ),
+        ];
+      }
+      return classAdmits(edge.class, entry.class)
+        ? []
+        : [
+            baselineViolation(
+              `Baseline entry ${edgeKey(entry.from, entry.to)} is runtime, but the comparison base ${commit} has it only as test (${describeSites(edge)}): the baseline only shrinks, so no class widens`,
+            ),
+          ];
+    });
+    const baseState = Option.isSome(baseBaseline) ? 'a different baseline' : 'no baseline';
+    const outcome =
+      violations.length === 0 ? 'holds every baseline entry with the same or a wider class' : 'lacks what follows';
+    return {
+      summary: `Shrink-only rule: the comparison base ${commit} has ${baseState}, so its tree was derived and ${outcome}.`,
+      violations,
+    };
+  });
+
+/**
+ * Rule 5. The base is read from an extracted copy of its tree (git archive into a temporary directory), so
+ * it needs no install, and the head's derivation reads it. A base that cannot be read fails the check.
+ */
+const checkShrinkOnly = (
+  root: string,
+  base: string,
+  baseline: readonly ModuleEdgeBaselineEntry[],
+): Effect.Effect<
+  ShrinkOnlyResult,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> =>
+  Effect.scoped(
+    Effect.gen(function* checkShrinkOnlyProgram() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const commit = (yield* spawner.string(
+        ChildProcess.make('git', ['rev-parse', '--verify', '--quiet', `${base}^{commit}`], {
+          cwd: root,
+          stderr: 'inherit',
+          stdin: 'ignore',
+        }),
+      )).trim();
+      if (!/^[0-9a-f]{40}$/u.test(commit)) {
+        return unreadableBase(base, 'it names no commit of this repository');
+      }
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-lean-core-base-' });
+      const archive = path.join(directory, 'base.tar');
+      const tree = path.join(directory, 'tree');
+      yield* fileSystem.makeDirectory(tree);
+      // Run from root, git archive holds exactly root's subtree of the commit, at the same relative paths.
+      const archived = yield* exitCodeOf('git', ['archive', '--format=tar', `--output=${archive}`, commit], root);
+      if (archived !== 0) {
+        return unreadableBase(base, `git archive exited with ${archived}`);
+      }
+      const extracted = yield* exitCodeOf('tar', ['-x', '-f', archive, '-C', tree], root);
+      if (extracted !== 0) {
+        return unreadableBase(base, `tar exited with ${extracted}`);
+      }
+      return yield* checkShrinkOnlyAgainst(commit, tree, baseline);
+    }),
+  ).pipe(Effect.catchTag('PlatformError', (failure) => Effect.succeed(unreadableBase(base, failure.message))));
+
+/** Groups of packages that reach each other over runtime edges, each sorted, largest first. */
+const runtimeCycleGroups = (graph: PackageGraph): readonly (readonly string[])[] => {
+  const successors = new Map<string, readonly string[]>();
+  for (const edge of graph.edges.values()) {
+    if (edge.class === 'runtime') {
+      successors.set(edge.from, [...(successors.get(edge.from) ?? []), edge.to]);
+    }
+  }
+  const reachableFrom = (start: string): ReadonlySet<string> => {
+    const reached = new Set<string>();
+    const pending = [...(successors.get(start) ?? [])];
+    while (pending.length > 0) {
+      const next = pending.pop();
+      if (next === undefined || reached.has(next)) {
+        continue;
+      }
+      reached.add(next);
+      pending.push(...(successors.get(next) ?? []));
+    }
+    return reached;
+  };
+  const nodes = EffectArray.sort([...graph.packages.keys()], Order.String);
+  const reachable = new Map(nodes.map((node) => [node, reachableFrom(node)] as const));
+  const grouped = new Set<string>();
+  const groups: (readonly string[])[] = [];
+  for (const node of nodes) {
+    if (grouped.has(node) || !(reachable.get(node)?.has(node) ?? false)) {
+      continue;
+    }
+    const group = nodes.filter(
+      (other) => (reachable.get(node)?.has(other) ?? false) && (reachable.get(other)?.has(node) ?? false),
+    );
+    for (const member of group) {
+      grouped.add(member);
+    }
+    groups.push(group);
+  }
+  return EffectArray.sort(
+    groups,
+    Order.combine(
+      Order.mapInput(Order.flip(Order.Number), (group: readonly string[]) => group.length),
+      Order.mapInput(Order.String, (group: readonly string[]) => group[0] ?? ''),
+    ),
+  );
+};
+
+export interface ModuleEdgeFreezeReport {
+  readonly cycleGroups: readonly (readonly string[])[];
+  readonly frozenEdgeCounts: Readonly<Record<EdgeClass, number>>;
+  readonly shrinkOnly: string;
+  readonly violations: readonly LeanCoreDependencyViolation[];
+}
+
+/** Rules 1 to 4 against the tree at root, and rule 5 when the run's comparison base is given. */
+export const checkModuleEdgeFreeze = (
+  root: string,
+  options: { readonly base?: string | undefined } = {},
+): Effect.Effect<
+  ModuleEdgeFreezeReport,
+  PlatformError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* checkModuleEdgeFreezeProgram() {
+    const graph = yield* derivePackageGraph(root);
+    const baseline = Option.getOrElse(
+      yield* readModuleEdgeBaseline(root),
+      (): readonly ModuleEdgeBaselineEntry[] => [],
+    );
+    const frozen = frozenEdges(graph);
+    const listed = new Map(baseline.map((entry) => [edgeKey(entry.from, entry.to), entry] as const));
+    const violations: LeanCoreDependencyViolation[] = graph.unparsable.map((file) => ({
+      file,
+      line: 1,
+      reason: 'Workspace source does not parse, so the package edges it makes are unknown',
+    }));
+
+    const unordered = baseline.findIndex((entry, index) => {
+      const previous = baseline[index - 1];
+      return previous !== undefined && BaselineEntryOrder(previous, entry) !== -1;
+    });
+    if (unordered !== -1) {
+      violations.push(
+        baselineViolation(
+          `Baseline entry ${unordered + 1} is out of order or repeats an edge: entries are sorted by from, then to, one per edge`,
+        ),
+      );
+    }
+
+    for (const edge of frozen) {
+      const entry = listed.get(edgeKey(edge.from, edge.to));
+      if (entry !== undefined && classAdmits(entry.class, edge.class)) {
+        continue;
+      }
+      const [first] = edge.sites;
+      const listedAs = entry === undefined ? 'does not list it' : `lists it only as ${entry.class}`;
+      violations.push({
+        file: first?.file ?? moduleEdgeBaselineRelative,
+        line: first?.line ?? 1,
+        reason: `${frozenEdgeRule(graph, edge)} unless ${moduleEdgeBaselineRelative} lists it: ${edgeKey(edge.from, edge.to)} is a ${edge.class} edge and the baseline ${listedAs}; made by ${describeSites(edge)}`,
+      });
+    }
+
+    for (const entry of baseline) {
+      const edge = graph.edges.get(edgeKey(entry.from, entry.to));
+      if (edge === undefined || !isFrozenEdge(graph, edge)) {
+        violations.push(
+          baselineViolation(
+            `Baseline entry ${edgeKey(entry.from, entry.to)} (${entry.class}) is no frozen edge of the tree any more: remove it`,
+          ),
+        );
+      } else if (entry.class === 'runtime' && edge.class === 'test') {
+        violations.push(
+          baselineViolation(
+            `Baseline entry ${edgeKey(entry.from, entry.to)} is ${entry.class}, but the tree has it only as ${edge.class} (${describeSites(edge)}): change its class to ${edge.class}`,
+          ),
+        );
+      }
+    }
+
+    const shrinkOnly =
+      options.base === undefined
+        ? {
+            summary:
+              'Shrink-only rule not run: no --base names the comparison base (required CI passes the one its planner computed).',
+            violations: [],
+          }
+        : yield* checkShrinkOnly(root, options.base, baseline);
+
+    return {
+      cycleGroups: runtimeCycleGroups(graph),
+      frozenEdgeCounts: {
+        runtime: frozen.filter((edge) => edge.class === 'runtime').length,
+        test: frozen.filter((edge) => edge.class === 'test').length,
+      },
+      shrinkOnly: shrinkOnly.summary,
+      violations: EffectArray.sort([...violations, ...shrinkOnly.violations], ViolationOrder),
+    };
+  });
+
 class LeanCoreDependencyCheckFailed extends Schema.TaggedError<LeanCoreDependencyCheckFailed>()(
   'LeanCoreDependencyCheckFailed',
   { violationCount: Schema.Number },
 ) {}
 
-const main = Effect.gen(function* leanCoreDependencyMain() {
-  const path = yield* Path.Path;
-  const violations = yield* checkLeanCoreDependencies(path.resolve(process.cwd()));
-  if (violations.length > 0) {
+const printModuleEdgeFreeze = (report: ModuleEdgeFreezeReport) =>
+  Effect.gen(function* printModuleEdgeFreezeProgram() {
+    const { runtime, test } = report.frozenEdgeCounts;
+    yield* Console.log(
+      `Frozen package edges into modules and apps: ${runtime + test} (${runtime} runtime, ${test} test), listed in ${moduleEdgeBaselineRelative}.`,
+    );
+    yield* Console.log(`Runtime cycle groups: ${report.cycleGroups.length}`);
     yield* Effect.all(
-      violations.map((violation) => Console.error(`${violation.file}:${violation.line}: ${violation.reason}`)),
+      report.cycleGroups.map((group) => Console.log(`  ${group.length} packages: ${group.join(', ')}`)),
       { concurrency: 1, discard: true },
     );
-    return yield* Effect.fail(new LeanCoreDependencyCheckFailed({ violationCount: violations.length }));
-  }
-  return yield* Console.log('Lean-Core dependency boundaries verified');
-});
+    yield* Console.log(report.shrinkOnly);
+  });
+
+const main = (base: Option.Option<string>) =>
+  Effect.gen(function* leanCoreDependencyMain() {
+    const path = yield* Path.Path;
+    const root = path.resolve(process.cwd());
+    const leanCoreViolations = yield* checkLeanCoreDependencies(root);
+    const freeze = yield* checkModuleEdgeFreeze(root, { base: Option.getOrUndefined(base) });
+    yield* printModuleEdgeFreeze(freeze);
+    const violations = [...leanCoreViolations, ...freeze.violations];
+    if (violations.length > 0) {
+      yield* Effect.all(
+        violations.map((violation) => Console.error(`${violation.file}:${violation.line}: ${violation.reason}`)),
+        { concurrency: 1, discard: true },
+      );
+      return yield* Effect.fail(new LeanCoreDependencyCheckFailed({ violationCount: violations.length }));
+    }
+    return yield* Console.log('Lean-Core dependency boundaries verified');
+  });
+
+// `--base` names the run's comparison base; without it the shrink-only rule reports that it did not run.
+const command = Command.make(
+  'check-lean-core-dependencies',
+  { base: Flag.String('base').pipe(Flag.optional) },
+  ({ base }) => main(base),
+);
 
 const [, invokedPath] = process.argv;
 if (invokedPath === import.meta.filename) {
   const leanCoreDependencyRuntime = ManagedRuntime.make(NodeServices.layer);
-  const exit = await leanCoreDependencyRuntime.runPromiseExit(main);
+  const exit = await leanCoreDependencyRuntime.runPromiseExit(Command.run(command, { version: '1.0.0' }));
   process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
 }
