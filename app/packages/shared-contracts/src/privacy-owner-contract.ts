@@ -319,3 +319,16 @@ export const AntiResurrectionProtectionSchema = Schema.Struct({
 );
 export type AntiResurrectionProtection = typeof AntiResurrectionProtectionSchema.Type;
 export type AntiResurrectionProtectionEncoded = typeof AntiResurrectionProtectionSchema.Encoded;
+
+/**
+ * The request of a consumer's own owner-receipt Read for one dispatched Privacy Measure: the measure's idempotency
+ * identity and, optionally, the attempt. It can never carry a result: the owner loads and attests its own receipt.
+ */
+export const PrivacyOwnerExecutionReceiptRequestSchema = Schema.Struct({
+  attempt: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  idempotencyKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
+    Schema.brand('PrivacyReceiptIdempotencyKey'),
+    Schema.decodeTo(Schema.String),
+  ),
+});
+export type PrivacyOwnerExecutionReceiptRequest = typeof PrivacyOwnerExecutionReceiptRequestSchema.Type;

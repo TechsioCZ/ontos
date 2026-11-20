@@ -21,9 +21,15 @@ import {
   makeEffectHttpApiClient,
 } from '@modern-js/bff-effect/effect-client';
 import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
-import { Context } from 'effect';
+import { Context, Option } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
+import {
+  privacyDispatchConsumerOf,
+  privacyDispatchConsumerOfOperation,
+  privacyDispatchConsumerOfWorker,
+  privacyDispatchOperationFitsConsumer,
+} from './privacy-dispatch-consumers.ts';
 import { problemDetailsContentType, problemDetailsFields } from './problem-details.ts';
 
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
@@ -214,6 +220,15 @@ const symmyAppId = 'symmy-integration';
 const symmyModuleKey = 'integration.symmy';
 const privacyDispatchContracts: Readonly<Record<PrivacyDispatchOperation, FiniteGatewayOperationTarget>> =
   Object.freeze({
+    CommunicationsReceipt: Object.freeze({
+      access: 'read',
+      appId: 'communications',
+      declarationKey: 'communications.core.privacy-owner-execution-outcome.read',
+      entrypointKey: 'communications.core.api.privacy-owner-execution-outcome',
+      legalEntityScope: 'optional',
+      moduleId: 'communications.core',
+      schemaVersion: '1',
+    }),
     PrivacyEligibility: Object.freeze({
       access: 'read',
       appId: 'privacy',
@@ -257,25 +272,33 @@ export const privacyDispatchOperationContract = (
   target?: FiniteGatewayOperationTarget,
 ): FiniteGatewayOperationTarget => target ?? privacyDispatchContracts[operation];
 
-/** Derive receiver authority from the verified finite operation. Never accept it from wire metadata. */
-export const privacyDispatchAuthorityPolicy = (operation: PrivacyDispatchOperation) => {
-  const targetAccess = {
-    PrivacyEligibility: 'delegated-actor',
-    PrivacyOutcome: 'delegated-actor',
-    SymmyReceipt: 'tenant-unrestricted-list',
-    SymmyRetention: 'tenant-scope',
-  } as const;
-  return {
-    consumerModuleKey: symmyModuleKey,
-    originActionKey: 'privacy.core.dispatch-privacy-measure',
-    originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
-    producerModuleKey: privacyModuleKey,
-    subjectResourceType: 'privacy.core.privacy-measure',
-    targetAccess: targetAccess[operation],
-    topic: 'privacy.measure.dispatched',
-    workerKey: 'integration.symmy.symmy-job-privacy-dispatch',
-  };
-};
+/**
+ * Derive receiver authority from the verified finite operation and its approved consumer. Never accept it from wire
+ * metadata. A dispatch no approved consumer owns has no authority.
+ */
+export const privacyDispatchAuthorityPolicy = (dispatch: {
+  readonly operation: PrivacyDispatchOperation;
+  readonly workerKey?: string | undefined;
+}) =>
+  Option.map(Option.fromNullishOr(privacyDispatchConsumerOf(dispatch)), (consumer) => {
+    const targetAccess = {
+      CommunicationsReceipt: 'tenant-scope',
+      PrivacyEligibility: 'delegated-actor',
+      PrivacyOutcome: 'delegated-actor',
+      SymmyReceipt: 'tenant-unrestricted-list',
+      SymmyRetention: 'tenant-scope',
+    } as const;
+    return {
+      consumerModuleKey: consumer.moduleKey,
+      originActionKey: 'privacy.core.dispatch-privacy-measure',
+      originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+      producerModuleKey: privacyModuleKey,
+      subjectResourceType: 'privacy.core.privacy-measure',
+      targetAccess: targetAccess[dispatch.operation],
+      topic: 'privacy.measure.dispatched',
+      workerKey: consumer.workerKey,
+    };
+  });
 
 const organizationGovernanceReadContract = Object.freeze({
   access: 'read',
@@ -301,6 +324,23 @@ const matchesFiniteOperationIdentity = (
   target.entrypointKey === approved.entrypointKey &&
   target.legalEntityScope === approved.legalEntityScope &&
   target.moduleId === approved.moduleId;
+/** The worker of an approved consumer carrying an operation that fits it, or a durable read of an approved receipt. */
+const approvedNativeSource = (dispatch: {
+  readonly operation: PrivacyDispatchOperation;
+  readonly sourceMode: 'dispatch' | 'worker';
+  readonly workerKey?: string | undefined;
+  readonly workerModuleKey?: string | undefined;
+}): boolean => {
+  if (dispatch.sourceMode === 'worker') {
+    const consumer = privacyDispatchConsumerOfWorker(dispatch.workerKey);
+    return (
+      consumer !== undefined &&
+      dispatch.workerModuleKey === consumer.moduleKey &&
+      privacyDispatchOperationFitsConsumer(consumer, dispatch.operation)
+    );
+  }
+  return privacyDispatchConsumerOfOperation(dispatch.operation)?.receiptOperation === dispatch.operation;
+};
 /** Finite native Privacy dispatch authority retains its original human and governance company. */
 const privacyDispatchClaims = <Version extends 5 | 7>(version: Version) =>
   Schema.Struct({
@@ -336,11 +376,7 @@ const privacyDispatchClaims = <Version extends 5 | 7>(version: Version) =>
       (claims.ver === VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION)
         ? []
         : [{ issue: 'Only versioned Privacy dispatch requires a signed target', path: ['privacyDispatch', 'target'] }]),
-      ...(claims.privacyDispatch.authority === undefined &&
-      (claims.privacyDispatch.sourceMode === 'worker'
-        ? claims.privacyDispatch.workerKey === 'integration.symmy.symmy-job-privacy-dispatch' &&
-          claims.privacyDispatch.workerModuleKey === 'integration.symmy'
-        : claims.privacyDispatch.operation === 'SymmyReceipt')
+      ...(claims.privacyDispatch.authority === undefined && approvedNativeSource(claims.privacyDispatch)
         ? []
         : [{ issue: 'The dispatch authority must derive from its approved native source', path: ['privacyDispatch'] }]),
       ...(claims.privacyDispatch.target === undefined ||
@@ -517,6 +553,7 @@ const privacyDispatchAttempt = Schema.Finite.check(Schema.isInt(), Schema.isGrea
 export const GatewayPrivacyDispatchOperationSchema = Schema.Union([
   Schema.TaggedStruct('SymmyRetention', {}),
   Schema.TaggedStruct('SymmyReceipt', { attempt: Schema.optionalKey(privacyDispatchAttempt) }),
+  Schema.TaggedStruct('CommunicationsReceipt', { attempt: Schema.optionalKey(privacyDispatchAttempt) }),
   Schema.TaggedStruct('PrivacyEligibility', {}),
   Schema.TaggedStruct('PrivacyOutcome', { attempt: privacyDispatchAttempt }),
 ]);

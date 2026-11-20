@@ -360,7 +360,11 @@ const privacyDispatchAuthorityFromComposition = (
   composition: ApplicationComposition,
   dispatch: RegisteredGatewayPrivacyDispatch,
 ) => {
-  const policy = privacyDispatchAuthorityPolicy(dispatch.operation);
+  const approved = privacyDispatchAuthorityPolicy(dispatch);
+  if (Option.isNone(approved)) {
+    return Option.none();
+  }
+  const policy = approved.value;
   const contractOf = (moduleId: string) =>
     decodePublishedContract(composition.modules.find((module) => module.moduleId === moduleId)?.contractDocument);
   const producer = contractOf(policy.producerModuleKey);

@@ -28,6 +28,11 @@ import {
   privacyDispatchOperationContract,
 } from './gateway-context.ts';
 import { issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
+import {
+  privacyDispatchConsumerOfWorker,
+  privacyDispatchOperationFitsConsumer,
+  privacyDispatchReceiptVerdict,
+} from './privacy-dispatch-consumers.ts';
 import type { GatewayContextResponse, GatewayDelegatedContextRequest } from './gateway-context.ts';
 
 export class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDelegationSourceError>()(
@@ -269,14 +274,19 @@ const checkPrivacyWorker = Effect.fn('GatewayDelegation.checkPrivacyWorker')(fun
     Match.tag('PrivacyEligibility', () => true),
     Match.orElse(() => false),
   );
-  if (context.workerKey !== 'integration.symmy.symmy-job-privacy-dispatch' || eligibility) {
+  const consumer = privacyDispatchConsumerOfWorker(context.workerKey);
+  if (
+    consumer === undefined ||
+    eligibility ||
+    !privacyDispatchOperationFitsConsumer(consumer, subject.operation._tag)
+  ) {
     return yield* new GatewayDelegationSourceError({
       reason: 'Privacy dispatch does not match the actual worker operation',
     });
   }
   const key = subject.operationRequirementKey;
   if (key === undefined) {
-    return target.appId === 'symmy-integration'
+    return target.appId === consumer.appId
       ? yield* Effect.void
       : yield* new GatewayDelegationSourceError({
           reason: 'Privacy worker follow-up requires its exact conditional contract',
@@ -312,6 +322,12 @@ const checkPrivacyContinuation = Effect.fn('GatewayDelegation.checkPrivacyContin
     }
     const source = metadata.target;
     const target = privacyDispatchOperationContract(subject.operation._tag);
+    const consumer = privacyDispatchConsumerOfWorker(metadata.workerKey);
+    if (consumer === undefined || !privacyDispatchOperationFitsConsumer(consumer, subject.operation._tag)) {
+      return yield* new GatewayDelegationSourceError({
+        reason: 'Privacy continuation does not belong to the consumer of its source dispatch',
+      });
+    }
     const fact = yield* readModuleOperationRequirement(key, scope).pipe(
       Effect.mapError(
         (cause) =>
@@ -349,23 +365,23 @@ const checkPrivacyDispatchSource = Effect.fn('GatewayDelegation.checkPrivacyDisp
       Match.tag('Worker', (worker: PrivacyDispatchWorker) => checkPrivacyWorker(subject, worker)),
       Match.tag('Assertion', (assertion: PrivacyDispatchAssertion) => checkPrivacyContinuation(subject, assertion)),
       Match.tag('Dispatch', () =>
-        Match.value(subject.operation).pipe(
-          Match.tag('SymmyReceipt', () =>
-            subject.operationRequirementKey === 'privacy.core.requirement.symmy-owner-execution-outcome'
-              ? Effect.void
-              : Effect.fail(
-                  new GatewayDelegationSourceError({
-                    reason: 'Durable Privacy dispatch requires its exact receipt contract',
-                  }),
-                ),
+        Match.value(privacyDispatchReceiptVerdict(subject.operation._tag, subject.operationRequirementKey)).pipe(
+          Match.when('ALLOWED', () => Effect.void),
+          Match.when('WRONG_REQUIREMENT', () =>
+            Effect.fail(
+              new GatewayDelegationSourceError({
+                reason: 'Durable Privacy dispatch requires its exact receipt contract',
+              }),
+            ),
           ),
-          Match.orElse(() =>
+          Match.when('NOT_A_RECEIPT', () =>
             Effect.fail(
               new GatewayDelegationSourceError({
                 reason: 'Durable Privacy dispatch permits only its exact receipt operation',
               }),
             ),
           ),
+          Match.exhaustive,
         ),
       ),
       Match.exhaustive,
