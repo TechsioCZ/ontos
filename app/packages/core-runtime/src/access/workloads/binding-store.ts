@@ -1,8 +1,8 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
-import { accessWorkloadBindings } from '../../db/schema.ts';
+import { accessWorkloadBindings, principals } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import { intentConflict } from '../intent/errors.ts';
@@ -46,53 +46,63 @@ const insertValues = (binding: RegisterWorkloadBindingInput) => ({
   workloadKey: binding.workloadKey,
 });
 
-const writeBindingRows = (
-  transaction: Pick<CoreTransaction, 'insert'>,
-  bindings: readonly RegisterWorkloadBindingInput[],
-): Effect.Effect<void, AccessIntentError> =>
-  bindings.length === 0
-    ? Effect.void
-    : transaction
-        .insert(accessWorkloadBindings)
-        .values(bindings.map(insertValues))
-        // A bootstrap is idempotent: a binding that already exists (active or revoked) stays as it is,
-        // so a re-run never revives what an administrator ended (D27).
-        .onConflictDoNothing()
-        .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid);
-
 /**
- * Registers active bindings inside a transaction the caller opened in its own scope, refusing a command that names
- * another tenant. A Core Action that changes a system workload enrollment writes its binding this way, in the same
- * transaction as the Principal it binds.
+ * A Principal of kind `system` holds only what its system workload enrollment binds, together with the Principal
+ * itself (`system-workload-enrollment.ts`, the one writer of its bindings): this writer never stands in for it, so no
+ * bootstrap, fixture or later caller gives a second system Principal a key the enrolled one holds. The kind is read in
+ * the same transaction and never changes.
  */
-export const registerWorkloadBindingsIn = (
-  transaction: Pick<CoreTransaction, 'insert'>,
-  scope: OperationalScope,
-  input: RegisterWorkloadBindingsInput,
-): Effect.Effect<void, AccessIntentError> => {
-  const issue = commandIssue(scope, input.bindings);
-  return issue === null
-    ? writeBindingRows(transaction, input.bindings)
-    : Effect.fail(intentConflict('access_intent_scope_mismatch', issue));
-};
-
-/** Ends one active binding of the caller's scope inside the transaction the caller opened; a revoked one stays. */
-export const revokeWorkloadBindingIn = (
-  transaction: Pick<CoreTransaction, 'update'>,
-  scope: OperationalScope,
-  input: RevokeWorkloadBindingInput,
+const refuseSystemPrincipals = (
+  transaction: CoreTransaction,
+  bindings: readonly [RegisterWorkloadBindingInput, ...RegisterWorkloadBindingInput[]],
 ): Effect.Effect<void, AccessIntentError> =>
   transaction
-    .update(accessWorkloadBindings)
-    .set({ revokedAt: input.revokedAt, status: 'revoked' })
+    .select({ principalId: principals.principalId })
+    .from(principals)
     .where(
       and(
-        eq(accessWorkloadBindings.tenantId, scope.tenantId),
-        eq(accessWorkloadBindings.bindingId, input.bindingId),
-        eq(accessWorkloadBindings.status, 'active'),
+        eq(principals.tenantId, bindings[0].tenantId),
+        inArray(
+          principals.principalId,
+          bindings.map(({ principalId }) => principalId),
+        ),
+        eq(principals.kind, 'system'),
       ),
     )
-    .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid);
+    .limit(1)
+    .pipe(
+      durable(OWNER_UNIQUE_CONSTRAINTS),
+      Effect.flatMap(([system]) =>
+        system === undefined
+          ? Effect.void
+          : Effect.fail(
+              intentConflict(
+                'access_intent_write_refused',
+                `principal ${system.principalId} is a system principal, bound only by its system workload enrollment`,
+              ),
+            ),
+      ),
+    );
+
+const writeBindingRows = (
+  transaction: CoreTransaction,
+  bindings: readonly RegisterWorkloadBindingInput[],
+): Effect.Effect<void, AccessIntentError> => {
+  const [first, ...rest] = bindings;
+  return first === undefined
+    ? Effect.void
+    : refuseSystemPrincipals(transaction, [first, ...rest]).pipe(
+        Effect.andThen(
+          transaction
+            .insert(accessWorkloadBindings)
+            .values(bindings.map(insertValues))
+            // A bootstrap is idempotent: a binding that already exists (active or revoked) stays as it is,
+            // so a re-run never revives what an administrator ended (D27).
+            .onConflictDoNothing()
+            .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid),
+        ),
+      );
+};
 
 /**
  * Registers active bindings in the caller's own scope, refusing a command that names another tenant.
@@ -126,7 +136,17 @@ export const makeAccessWorkloadBindingDrizzleStore = (
     'AccessWorkloadBindingStore.revokeBinding',
   )(function* revokeBindingEffect(scope: OperationalScope, input: RevokeWorkloadBindingInput) {
     yield* runScoped(database, scope, OWNER_UNIQUE_CONSTRAINTS, (transaction) =>
-      revokeWorkloadBindingIn(transaction, scope, input),
+      transaction
+        .update(accessWorkloadBindings)
+        .set({ revokedAt: input.revokedAt, status: 'revoked' })
+        .where(
+          and(
+            eq(accessWorkloadBindings.tenantId, scope.tenantId),
+            eq(accessWorkloadBindings.bindingId, input.bindingId),
+            eq(accessWorkloadBindings.status, 'active'),
+          ),
+        )
+        .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid),
     );
   });
 
