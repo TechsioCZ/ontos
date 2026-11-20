@@ -74,10 +74,10 @@ describe('Catalog owner-authored dependency contracts', () => {
     expect(catalogManifest.requirements?.intrinsic).toEqual([]);
     expect(catalogManifest.requirements?.coreCapabilities).toContainEqual(ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY);
     const operations = catalogManifest.requirements?.operations ?? [];
-    expect(operations).toHaveLength(4);
+    expect(operations).toHaveLength(5);
     // Core's own Legal Entity detail is satisfied by Core itself, never by the composition: the one Core
     // requirement is the call the current-relation read makes for a managed Legal Entity target.
-    const coreRequirements = operations.filter(({ provider }) => provider.moduleId.startsWith('core.'));
+    const coreRequirements = operations.filter(({ provider }) => provider.moduleId === 'core.identity');
     expect(coreRequirements).toEqual([
       {
         condition: 'commerce.catalog.condition.retained-manufacturer-target-legal-entity',
@@ -94,7 +94,19 @@ describe('Catalog owner-authored dependency contracts', () => {
         },
       },
     ]);
-    const requirements = operations.filter(({ provider }) => !provider.moduleId.startsWith('core.'));
+    // Core Media's Current V1 is the other Core requirement: served by the Shell host for the relayed requester, so it
+    // declares the requester (person) as its only caller and Catalog needs no provider credential or Core table.
+    expect(operations.filter(({ provider }) => provider.moduleId === 'core.media')).toEqual([
+      {
+        callers: [{ kind: 'person', legalEntityScope: 'tenant' }],
+        condition: 'commerce.catalog.condition.core-media-current',
+        entrypointKey: 'commerce.catalog.api.catalog-document-current',
+        evidence: ['commerce.catalog.evidence.core-media.asset-current'],
+        key: 'commerce.catalog.requirement.core-media-current',
+        provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
+      },
+    ]);
+    const requirements = operations.filter(({ provider }) => provider.moduleId === 'party.registry');
     expect(requirements).toHaveLength(3);
     expect(
       requirements.every(
