@@ -63,6 +63,8 @@ import { confirmAssetAction } from '../../src/modules/actions/confirm-asset.acti
 import { uploadAssetAction } from '../../src/modules/actions/upload-asset.action.ts';
 import { bindAccessGate } from '../../src/operations/access-gate.ts';
 import type { AccessEnforcementPorts } from '../../src/operations/access-gate.ts';
+import { ObjectStorageConfigError, loadS3ObjectStorageConfig } from '../../src/media/s3-config.ts';
+import { makeS3ObjectStorage } from '../../src/media/s3-object-storage.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import { makeInMemoryObjectStorage, withObjectStorageFaults } from '../../src/testing/media-object-storage.ts';
@@ -71,6 +73,7 @@ import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestPgClient } from '../support/database.ts';
+import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 /*
@@ -894,6 +897,153 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
         }
         expect(everything).not.toMatch(/in-memory-test-double|core-media\/v1\/|x-amz|secret|credential|signature/iu);
         yield* Effect.void;
+      }),
+    );
+  },
+);
+
+/*
+ * EVIDENCE LEVEL: INTEGRATION EXECUTED against an S3-compatible EMULATOR (MinIO), NOT Cloudflare R2.
+ *
+ * The same edge over real PostgreSQL with the REAL S3 adapter between it and the emulator. Every fault is CONTROLLED
+ * FAULT INJECTION by the proxy in tests/support, or an out-of-band write for the corruption: not a real incident, and
+ * none of it proves R2, whose rows stay NOT VERIFIED until a real endpoint is configured and run by its owner. The
+ * suite runs only when CORE_MEDIA_S3_* points at a LOOPBACK server; with none supplied it is skipped.
+ */
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const MIB = 1024 * 1024;
+
+const emulatorConfig = (ctx: { readonly skip: () => void }) =>
+  loadS3ObjectStorageConfig({ envPath: '/nonexistent/core-media-s3-test.env' }).pipe(
+    Effect.catchTag('ObjectStorageConfigError', (failure) =>
+      failure.reason === 'CORE_MEDIA_S3_ENDPOINT is required'
+        ? Effect.sync(() => ctx.skip()).pipe(Effect.andThen(Effect.never))
+        : Effect.fail(failure),
+    ),
+    Effect.filterOrFail(
+      (settings) => LOOPBACK.has(settings.endpoint.hostname),
+      () => new ObjectStorageConfigError({ reason: 'The S3 integration suite writes only to a loopback emulator' }),
+    ),
+    Effect.orDie,
+  );
+
+/** Deterministic bytes, so a multi-part object needs no stored fixture. */
+const patternedBytes = (totalBytes: number, seed: number): Uint8Array => {
+  const bytes = new Uint8Array(totalBytes);
+  let state = seed;
+  for (let index = 0; index < totalBytes; index += 1) {
+    state = (state * 1_664_525 + 1_013_904_223) % 4_294_967_296;
+    bytes[index] = Math.floor(state / 16_777_216);
+  }
+  return bytes;
+};
+
+it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), { excludeTestServices: true })(
+  'core media upload edge through the S3 adapter (emulator, NOT R2)',
+  (suite) => {
+    const s3Edge = Effect.fn('CoreMediaUploadEdgeS3Test.edge')(function* s3Edge(ctx: { readonly skip: () => void }) {
+      const base = yield* emulatorConfig(ctx);
+      const proxy = yield* startS3FaultProxy(base.endpoint);
+      const storage = yield* makeS3ObjectStorage({
+        ...base,
+        endpoint: proxy.origin,
+        requestTimeoutMillis: Option.some(500),
+      });
+      const harness = yield* openEdgeHarness();
+      const { personas, world } = yield* edgeWorld(harness);
+      const address = yield* serveEdge(harness, personas, storage);
+      const human = yield* personaNamed(personas, 'human');
+      return { address, harness, human, proxy, storage, world };
+    });
+
+    suite.effect(
+      'roundtrips a small and a multi-part object byte for byte through reserve, PUT, confirm and read-back',
+      (ctx) =>
+        Effect.scoped(
+          Effect.gen(function* s3Roundtrip() {
+            const { address, harness, human, storage, world } = yield* s3Edge(ctx);
+            for (const [size, seed] of [
+              [content.byteLength, 1],
+              // Three parts at the protocol minimum: the edge streams the body into a multipart upload.
+              [11 * MIB, 3],
+            ] as const) {
+              const bytes = size === content.byteLength ? content : patternedBytes(size, seed);
+              const mediaAssetId = yield* reserve(harness, human, bytes, `s3-roundtrip-${size}`, storage);
+              const answer = yield* putBytes(address, mediaAssetId, { body: bytes, persona: 'human' });
+              expect(answer.status).toBe(200);
+              expect(jsonValue(answer.text)).toMatchObject({ byteSize: size, contentSha256: digestOf(bytes) });
+              const key = deriveMediaStorageKey({ mediaAssetId, tenantId: world.tenantId });
+              keysTouched.push(key);
+              const read = yield* storage.get(key);
+              const chunks = yield* Stream.runCollect(read.body);
+              expect(digestOf(Buffer.concat(chunks))).toBe(digestOf(bytes));
+              expect(yield* statusOfRow(harness, world.tenantId, mediaAssetId)).toBe('ready');
+            }
+          }),
+        ),
+    );
+
+    suite.effect('recovers the same asset after a provider outage, a hang and an answer lost after the commit', (ctx) =>
+      Effect.scoped(
+        Effect.gen(function* s3Faults() {
+          const { address, harness, human, proxy, storage, world } = yield* s3Edge(ctx);
+          // CONTROLLED FAULT: a 503, then a hang past the adapter's timeout. Neither is a success; both are retryable.
+          for (const fault of [
+            { code: 'ServiceUnavailable', kind: 'status', status: 503 },
+            { kind: 'hang' },
+          ] as const) {
+            const mediaAssetId = yield* reserve(harness, human, content, `s3-${fault.kind}`, storage);
+            proxy.setRules([{ fault, method: 'PUT' }]);
+            expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'human' })).status).toBe(503);
+            expect(yield* statusOfRow(harness, world.tenantId, mediaAssetId)).toBe('uploaded');
+            expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'human' })).status).toBe(200);
+          }
+          // CONTROLLED FAULT: the provider committed the object, the answer was lost. The same PUT completes the
+          // ORIGINAL asset from what is stored: one asset, ready, never a second one.
+          const lost = yield* reserve(harness, human, content, 's3-lost-answer', storage);
+          proxy.setRules([{ fault: { kind: 'drop-answer-after-commit' }, method: 'PUT' }]);
+          expect((yield* putBytes(address, lost, { body: content, persona: 'human' })).status).toBe(200);
+          expect(yield* statusOfRow(harness, world.tenantId, lost)).toBe('ready');
+          expect(proxy.injected().length).toBeGreaterThanOrEqual(3);
+        }),
+      ),
+    );
+
+    suite.effect(
+      'closes the asset as failed, committed, when the stored object proves different from the declaration',
+      (ctx) =>
+        Effect.scoped(
+          Effect.gen(function* s3Corruption() {
+            const { address, harness, human, storage, world } = yield* s3Edge(ctx);
+            const mediaAssetId = yield* reserve(harness, human, content, 's3-corrupt', storage);
+            const key = deriveMediaStorageKey({ mediaAssetId, tenantId: world.tenantId });
+            keysTouched.push(key);
+            // OUT-OF-BAND WRITE: an object of the right length and other bytes already sits under the key.
+            yield* storage.put({
+              body: Stream.make(encoder.encode('Q'.repeat(content.byteLength))),
+              contentType: 'application/octet-stream',
+              key,
+            });
+            // Create-only: the provider refuses to replace it, the read-back proves the difference, the asset closes.
+            expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'human' })).status).toBe(422);
+            expect(yield* statusOfRow(harness, world.tenantId, mediaAssetId)).toBe('failed');
+            // A failed asset is final: the very same bytes are refused, never made usable.
+            expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'human' })).status).toBe(422);
+          }),
+        ),
+    );
+
+    suite.effect('puts no key, provider id, endpoint, bucket or credential into any answer or log line', (ctx) =>
+      Effect.gen(function* s3NoLocator() {
+        const base = yield* emulatorConfig(ctx);
+        const everything = [...seen, ...logged].join('\n');
+        for (const key of keysTouched) {
+          expect(everything).not.toContain(key);
+        }
+        expect(everything).not.toContain(base.providerId);
+        expect(everything).not.toContain(base.bucket);
+        expect(everything).not.toContain(base.endpoint.host);
+        expect(everything).not.toMatch(/x-amz|authorization|signature|credential|secret/iu);
       }),
     );
   },
