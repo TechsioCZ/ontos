@@ -289,7 +289,9 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       companyRequired: true,
       family: 'customerGroups',
       operations: [
-        executor(customerGroupOperation('commerce.customer-context.create-customer-group'), { required: true }),
+        // Either write serves a request alone: a route may only create, only update the groups already bound, or both.
+        // A route that enrolls neither is refused as one that admits writes and enrolls no owner write.
+        executor(customerGroupOperation('commerce.customer-context.create-customer-group')),
         executor(customerGroupOperation('commerce.customer-context.update-customer-group')),
         shellRead(customerModule, 'commerce.customer-context.api.customer-group-definition-source', true),
       ],
