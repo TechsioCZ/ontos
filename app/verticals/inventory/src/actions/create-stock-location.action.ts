@@ -27,9 +27,11 @@ const ACTION_KEY = 'commerce.inventory.create-stock-location';
 const MODULE_KEY = 'commerce.inventory';
 const domainEvents = {} as const;
 
+/** Bounded: the site keys stay on the Location itself, so a valid aggregate always fits Core's audit limit. */
 export const CreateStockLocationAuditEvidenceSchema = Schema.Struct({
   operation: Schema.Literal('CREATED'),
-  operationalScope: StockLocationSchema.fields.operationalScope,
+  physicalSiteKeyCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  scopeKind: Schema.Literals(['PHYSICAL_SITE', 'LOGICAL_AGGREGATE']),
   stockLocationRef: StockLocationRefSchema,
 });
 
@@ -73,7 +75,8 @@ export const handleCreateStockLocation = Effect.fn('CreateStockLocationAction.ha
   });
   yield* context.recordAuditEvidence({
     operation: 'CREATED',
-    operationalScope: stockLocation.operationalScope,
+    physicalSiteKeyCount: stockLocation.operationalScope.physicalSiteKeys.length,
+    scopeKind: stockLocation.operationalScope._tag,
     stockLocationRef: stockLocation.ref,
   });
   return { stockLocation };

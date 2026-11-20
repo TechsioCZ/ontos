@@ -73,8 +73,10 @@ export const registerStockItemActionProblem = {
     }),
   ineligible: (
     code: ProblemOf<'RegisterStockItemActionIneligibleProblem'>['code'],
+    rejection: Pick<ProblemOf<'RegisterStockItemActionIneligibleProblem'>, 'reason' | 'stockItemId'> = {},
   ): ProblemOf<'RegisterStockItemActionIneligibleProblem'> =>
     RegisterStockItemActionIneligibleProblemSchema.make({
+      ...rejection,
       code,
       detail: 'The request is not eligible for this Action.',
       status: problemStatus.ineligible,
@@ -130,7 +132,11 @@ const mapDomainProblem = (error: DomainError): RegisterStockItemActionProblem =>
     Match.tags({
       StockItemPersistenceUnavailable: () =>
         registerStockItemActionProblem.unavailable('stock_item_persistence_unavailable'),
-      StockItemRejected: () => registerStockItemActionProblem.ineligible('stock_item_rejected'),
+      StockItemRejected: ({ reason, stockItemId }) =>
+        registerStockItemActionProblem.ineligible(
+          'stock_item_rejected',
+          stockItemId === undefined ? { reason } : { reason, stockItemId },
+        ),
     }),
     Match.exhaustive,
   );

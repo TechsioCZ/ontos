@@ -117,14 +117,17 @@ const assertSelectedOwner = (
   );
 
 /**
- * Establishes one Current Stock Position for a scope that has none, owned by the selected Inventory Backend
- * configuration. It needs no Reservation Allocation reader: a new Position has no Allocations.
+ * Establishes one Current Stock Position for a CURRENT Stock Item and an ACTIVE Stock Location whose scope has
+ * none, owned by the selected Inventory Backend configuration. Both are locked first, so a concurrent
+ * establishment for the same scope reads this one's Position and is refused naming it. It needs no Reservation
+ * Allocation reader: a new Position has no Allocations.
  */
 export const stockPositionEstablishment = (
   persistence: StockPositionPersistence,
   backendConfigurationReader: SelectedInventoryBackendConfigurationReader,
 ) =>
   Effect.fn('StockPositionService.establish')(function* establishStockPosition(input: CreateStockPositionInput) {
+    yield* persistence.lockEstablishmentTargets(input.scope);
     const current = yield* persistence.findCurrent(input.scope);
     if (Option.isSome(current)) {
       return yield* new StockPositionRejected({

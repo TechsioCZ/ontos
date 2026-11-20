@@ -13,6 +13,8 @@ import type {
 } from '../../shared/domain/stock-position.ts';
 import type { StockPositionRef } from '../../shared/resources/stock-position.ts';
 import { inventoryBackendConfigurations } from './inventory-backend-configuration-table.ts';
+import { inventoryStockItems } from './stock-item-table.ts';
+import { inventoryStockLocations } from './stock-location-table.ts';
 import { inventoryStockPositions } from './stock-position-table.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
@@ -28,6 +30,13 @@ export interface StockPositionPersistence {
   readonly findCurrent: (
     scope: StockPositionScope,
   ) => EffectType.Effect<Option.Option<StockPosition>, StockPositionPersistenceError>;
+  /**
+   * Locks the Stock Item and Stock Location a new Position will reference until the transaction ends, and
+   * refuses an Item that is not CURRENT or a Location that is not ACTIVE.
+   */
+  readonly lockEstablishmentTargets: (
+    scope: StockPositionScope,
+  ) => EffectType.Effect<void, StockPositionPersistenceError>;
   readonly read: (
     ref: StockPositionRef,
   ) => EffectType.Effect<Option.Option<StockPosition>, StockPositionPersistenceError>;
@@ -49,6 +58,10 @@ const unavailable = (cause: unknown): StockPositionPersistenceUnavailable => {
 const reject = (positionRef: StockPositionRef, reason: StockPositionRejected['reason']) =>
   new StockPositionRejected({ code: 'stock_position_rejected', positionRef, reason });
 
+/** A refusal before any Position exists to name. */
+const refuseEstablishment = (reason: StockPositionRejected['reason']) =>
+  new StockPositionRejected({ code: 'stock_position_rejected', reason });
+
 const uniqueViolationSqlState = ['23', '505'].join('');
 const checkViolationSqlState = ['23', '514'].join('');
 const foreignKeyViolationSqlState = ['23', '503'].join('');
@@ -63,7 +76,8 @@ export const mapStockPositionWriteError = (
       code === uniqueViolationSqlState && constraint === 'inventory_stock_positions_current_scope_uk',
   );
   if (Option.isSome(currentScope)) {
-    return reject(positionRef, 'POSITION_SCOPE_ALREADY_CURRENT');
+    // The losing candidate is not the Current Position of the scope, so this refusal names none.
+    return refuseEstablishment('POSITION_SCOPE_ALREADY_CURRENT');
   }
   const exactItemUnit = findPostgresFailure(
     cause,
@@ -362,6 +376,53 @@ export const stockPositionPersistenceForScope = (
     },
   );
 
+  const lockEstablishmentTargets: StockPositionPersistence['lockEstablishmentTargets'] = Effect.fn(
+    'StockPositionPersistence.lockEstablishmentTargets',
+  )(function* lockStockPositionEstablishmentTargets({ stockItemRef, stockLocationRef }) {
+    if (stockItemRef.tenantId !== scope.tenantId || stockLocationRef.tenantId !== scope.tenantId) {
+      return yield* refuseEstablishment('TENANT_SCOPE_MISMATCH');
+    }
+    // Item first, then Location: every establishment takes the two locks in this order. A retirement, a
+    // Location transition or a concurrent establishment for the same Item waits for this transaction.
+    const [item] = yield* transaction
+      .select({ lifecycleState: inventoryStockItems.lifecycleState })
+      .from(inventoryStockItems)
+      .where(
+        and(
+          eq(inventoryStockItems.tenantId, scope.tenantId),
+          eq(inventoryStockItems.stockItemId, stockItemRef.resourceId),
+        ),
+      )
+      .limit(1)
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    if (item === undefined) {
+      return yield* refuseEstablishment('STOCK_ITEM_NOT_FOUND');
+    }
+    if (item.lifecycleState !== 'CURRENT') {
+      return yield* refuseEstablishment('STOCK_ITEM_NOT_CURRENT');
+    }
+    const [location] = yield* transaction
+      .select({ lifecycleState: inventoryStockLocations.lifecycleState })
+      .from(inventoryStockLocations)
+      .where(
+        and(
+          eq(inventoryStockLocations.tenantId, scope.tenantId),
+          eq(inventoryStockLocations.stockLocationId, stockLocationRef.resourceId),
+        ),
+      )
+      .limit(1)
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    if (location === undefined) {
+      return yield* refuseEstablishment('STOCK_LOCATION_NOT_FOUND');
+    }
+    if (location.lifecycleState !== 'ACTIVE') {
+      return yield* refuseEstablishment('STOCK_LOCATION_NOT_ACTIVE');
+    }
+    return yield* Effect.void;
+  });
+
   const save: StockPositionPersistence['save'] = Effect.fn('StockPositionPersistence.save')(
     function* saveStockPosition({ expectedRevision, next }) {
       yield* requireTenant(next.ref);
@@ -393,5 +454,5 @@ export const stockPositionPersistenceForScope = (
     },
   );
 
-  return Object.freeze({ create, findCurrent, read, save });
+  return Object.freeze({ create, findCurrent, lockEstablishmentTargets, read, save });
 };

@@ -141,7 +141,8 @@ export const inventoryPublicActionContracts = [
     businessIntent: 'Register the one Stock Item for an exact Catalog Selection meaning and its exact Unit.',
     idempotency: {
       identity: 'One owner-scoped registration mutation identity per exact Catalog Selection meaning.',
-      recovery: 'A meaning that already has a Stock Item is a typed rejection naming it; no second Item is created.',
+      recovery:
+        'A meaning that already has a Current Stock Item, also one a concurrent registration just committed, is refused with exact_selection_meaning_already_registered and that stockItemId; no second Item is created.',
       retry: 'Retry the same identity and payload; the committed registration is replayed.',
     },
     inputPrecision: 'Exact Catalog Selection meaning (kind and id) and exact Catalog Product Unit reference.',
@@ -164,7 +165,8 @@ export const inventoryPublicActionContracts = [
     businessIntent: 'Create one ACTIVE Stock Location for an explicitly declared physical site or logical aggregate.',
     idempotency: {
       identity: 'One owner-scoped creation mutation identity per intended Stock Location.',
-      recovery: 'A lost response is resolved through the original identity; a new identity creates another Location.',
+      recovery:
+        'A lost response is resolved through the original identity; a new identity creates another Location, also for identical site facts, by design.',
       retry: 'Retry the same identity and payload; the committed creation is replayed.',
     },
     inputPrecision: 'Display name, operational scope with its physical-site evidence keys, optional address evidence.',
@@ -185,11 +187,12 @@ export const inventoryPublicActionContracts = [
       'Establish the one Current Stock Position for an exact Stock Item, Location and Unit with UNKNOWN ON_HAND.',
     idempotency: {
       identity: 'One owner-scoped establishment mutation identity per Customer Configuration, Stock Item and Location.',
-      recovery: 'A scope that already has a Current Position is a typed rejection naming it; no quantity is written.',
+      recovery:
+        'A scope that already has a Current Position, also one a concurrent establishment just committed, is refused with POSITION_SCOPE_ALREADY_CURRENT and that positionRef; no quantity is written.',
       retry: 'Retry the same identity and payload; the committed establishment is replayed.',
     },
     inputPrecision:
-      'Exact Customer Configuration, Stock Item, Stock Location, Unit and selected backend configuration.',
+      'Exact Customer Configuration, CURRENT Stock Item, ACTIVE Stock Location, Unit and selected backend configuration.',
     key: 'commerce.inventory.establish-stock-position',
     kind: 'ACTION',
     outcomes: {

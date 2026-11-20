@@ -10,6 +10,8 @@ import {
   EstablishStockPositionPayloadSchema,
   EstablishStockPositionResultSchema,
 } from '../actions/establish-stock-position.ts';
+import { StockPositionRejected } from '../domain/stock-position.ts';
+import { StockPositionRefSchema } from '../resources/stock-position.ts';
 
 export { EstablishStockPositionPayloadSchema } from '../actions/establish-stock-position.ts';
 export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
@@ -49,7 +51,12 @@ export const EstablishStockPositionActionConflictProblemSchema = makeProblemDeta
 export const EstablishStockPositionActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'EstablishStockPositionActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'stock_position_rejected']) },
+  {
+    code: Schema.Literals(['action_policy_denied', 'stock_position_rejected']),
+    /** The Current Position of the scope when the reason is POSITION_SCOPE_ALREADY_CURRENT. */
+    positionRef: Schema.optionalKey(StockPositionRefSchema),
+    reason: Schema.optionalKey(StockPositionRejected.fields.reason),
+  },
 );
 export const EstablishStockPositionActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'EstablishStockPositionActionPreconditionProblem',
