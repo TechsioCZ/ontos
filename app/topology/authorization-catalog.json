@@ -14752,6 +14752,32 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "core.media.asset-integrity.fail",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.record-asset-integrity-failure",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "core.media.asset-metadata.read",
             "kind": "read",
             "modes": [

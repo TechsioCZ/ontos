@@ -9,6 +9,7 @@ import type { MediaByteSize, MediaContentSha256 } from './public-contract.ts';
 import type { MediaAssetRecord } from './repository.ts';
 import { MediaStorageKeySchema } from './storage-key.ts';
 import type { MediaStorageKey } from './storage-key.ts';
+import { logMediaRecovery, mediaRecoveryRef } from './recovery-log.ts';
 import { MediaProviderIdSchema, isSameStoredObject } from './verification.ts';
 
 /*
@@ -301,9 +302,16 @@ export const verifyReadyMediaAsset = Effect.fn('MediaVerifiedRead.verify')(funct
     );
     return yield* verdictOf(opened, tally);
   });
-  return yield* read.pipe(
+  const outcome = yield* read.pipe(
     Effect.catchTag('MediaVerifiedReadInterrupted', ({ read: unverified }) =>
       Effect.succeed<MediaVerifiedReadOutcome>(unverified),
     ),
   );
+  yield* logMediaRecovery({
+    category: outcome.outcome,
+    operation: 'verified_read',
+    providerFailure: outcome.outcome === 'unavailable' ? outcome.providerFailure : undefined,
+    ref: mediaRecoveryRef(asset.storageKey),
+  });
+  return outcome;
 });

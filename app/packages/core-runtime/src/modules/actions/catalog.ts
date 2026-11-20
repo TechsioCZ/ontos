@@ -8,6 +8,7 @@ import { changePrincipalStatusAction } from './change-principal-status.action.ts
 import { changeTenantModuleStateAction } from './change-tenant-module-state.action.ts';
 import { confirmAssetAction } from './confirm-asset.action.ts';
 import { createNonHumanPrincipalAction } from './create-non-human-principal.action.ts';
+import { recordAssetIntegrityFailureAction } from './record-asset-integrity-failure.action.ts';
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
 import { renameDisplayFilenameAction } from './rename-display-filename.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
@@ -28,6 +29,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   changeTenantModuleStateAction.descriptor,
   confirmAssetAction.descriptor,
   createNonHumanPrincipalAction.descriptor,
+  recordAssetIntegrityFailureAction.descriptor,
   recordSupportImpersonationAction.descriptor,
   renameDisplayFilenameAction.descriptor,
   reservePrincipalBindingAction.descriptor,
