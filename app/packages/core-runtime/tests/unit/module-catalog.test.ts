@@ -323,3 +323,58 @@ it('keeps authoritative revocation ahead of a stale fetched candidate', () => {
     { appId: 'property-registry', status: 'revoked' },
   ]);
 });
+
+/** A contract whose manifest publishes these system workloads. */
+const declaring = (appId: string, moduleId: string, systemWorkloads: readonly string[]) => {
+  const fixture = contract(appId, moduleId);
+  return { ...fixture, manifest: { ...fixture.manifest, systemWorkloads } };
+};
+
+it('gives each system workload key one owning module: its own id and a dot start the key, and no other module declares it', () => {
+  const catalog = buildInstalledModuleCatalog([
+    {
+      contract: declaring('property-registry', 'property.registry', ['property.registry.archive-job']),
+      expectedAppId: 'property-registry',
+    },
+  ]);
+  expect(catalog.getByModuleId('property.registry')?.manifest.systemWorkloads).toEqual([
+    'property.registry.archive-job',
+  ]);
+  // A published contract naming a key of another module's namespace, or only sharing the root segment, is refused.
+  for (const foreign of ['documents.center.archive-job', 'property.registry-job', 'property.other.archive-job']) {
+    expect(() =>
+      buildInstalledModuleCatalog([
+        {
+          contract: declaring('property-registry', 'property.registry', [foreign]),
+          expectedAppId: 'property-registry',
+        },
+      ]),
+    ).toThrow();
+  }
+  // Two modules whose ids nest can both pass the prefix rule for one key; the catalog still refuses the second claim.
+  const shared = 'property.registry.archive.run';
+  const claimants = [
+    { contract: declaring('property-registry', 'property.registry', [shared]), expectedAppId: 'property-registry' },
+    {
+      contract: declaring('property-archive', 'property.registry.archive', [shared]),
+      expectedAppId: 'property-archive',
+    },
+  ];
+  const secondClaim = () => {
+    try {
+      return buildInstalledModuleCatalog(claimants);
+    } catch (error) {
+      return error;
+    }
+  };
+  expect(secondClaim()).toMatchObject({
+    reason: 'a system workload key may be declared by only one module in the installed catalog',
+  });
+  const resolved = resolveInstalledModuleCatalog(
+    [
+      ...claimants,
+      { contract: contract('documents-center', 'documents.center'), expectedAppId: 'documents-center' },
+    ].map((input) => ({ ...input, outcome: 'fetched' as const })),
+  );
+  expect(resolved.moduleIds).toEqual(['documents.center']);
+});
