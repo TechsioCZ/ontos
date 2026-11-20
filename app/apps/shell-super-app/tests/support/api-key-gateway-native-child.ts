@@ -1,9 +1,11 @@
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
 import {
+  ChangeSystemWorkloadEnrollmentPayloadSchema,
   shellAuthenticationApiContract,
   SwitchLegalEntityPayloadSchema,
   SwitchLegalEntityResponseSchema,
+  SystemWorkloadEnrollmentResponseSchema,
 } from '../../shared/browser-api.ts';
 import { issueGatewayContext } from '@app/shared-contracts';
 import type { GatewayContextRequestSchema } from '@app/shared-contracts';
@@ -82,6 +84,7 @@ import {
   ShellNativeSetupKeyBoundCommandSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
   ShellNativeSafeFailureSchema,
+  ShellNativeSystemWorkloadEnrollmentCommandSchema,
 } from '../fixtures/api-key-gateway-native.ts';
 import type {
   ShellNativeGatewayDiagnosticSchema,
@@ -671,6 +674,50 @@ const serve = Effect.scoped(
       }).pipe(Effect.provide(FetchHttpClient.layer));
       return yield* sendPrivate(writer, { _tag: 'session-gateway', gateway });
     });
+    // The signed-in human runs Core's system workload enrollment Action through the Shell's own HTTP endpoint.
+    const changeSystemWorkloadEnrollment = Effect.fn('ShellNativeChild.changeSystemWorkloadEnrollment')(
+      function* changeSystemWorkloadEnrollment(command: typeof ShellNativeSystemWorkloadEnrollmentCommandSchema.Type) {
+        if (!(yield* Ref.get(mounted))) {
+          yield* startupStage('awaiting_module_bindings');
+          return yield* unavailable();
+        }
+        const cookie = yield* Ref.get(sessionCookie);
+        if (Option.isNone(cookie)) {
+          return yield* unavailable();
+        }
+        const body = yield* Schema.encodeEffect(Schema.fromJsonString(ChangeSystemWorkloadEnrollmentPayloadSchema))(
+          command.payload,
+        ).pipe(Effect.mapError(unavailable));
+        const response = yield* Effect.tryPromise({
+          catch: unavailable,
+          try: async () =>
+            await fetch(
+              `${baseUrl}${shellAuthenticationApiContract.apiPrefix}/auth/identity/system-workload-enrollments`,
+              {
+                body,
+                headers: {
+                  'content-type': 'application/json',
+                  cookie: cookie.value,
+                  'idempotency-key': command.idempotencyKey,
+                  origin: configuration.baseUrl,
+                },
+                method: 'POST',
+              },
+            ),
+        }).pipe(bounded);
+        if (!response.ok) {
+          return yield* unavailable(`The system workload enrollment answered ${String(response.status)}`);
+        }
+        const enrollment = yield* Effect.tryPromise({
+          catch: unavailable,
+          try: async () => await response.json(),
+        }).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(SystemWorkloadEnrollmentResponseSchema)),
+          Effect.mapError(unavailable),
+        );
+        return yield* sendPrivate(writer, { _tag: 'system-workload-enrollment', enrollment });
+      },
+    );
     const issueSetupKey = Effect.fn('ShellNativeChild.issueSetupKey')(function* issueSetupKey() {
       const actor = yield* Ref.get(sessionPrincipal);
       const cookie = yield* Ref.get(sessionCookie);
@@ -862,6 +909,9 @@ const serve = Effect.scoped(
           }
           if (Schema.is(ShellNativeSessionGatewayCommandSchema)(command)) {
             return yield* sessionGateway(command.request);
+          }
+          if (Schema.is(ShellNativeSystemWorkloadEnrollmentCommandSchema)(command)) {
+            return yield* changeSystemWorkloadEnrollment(command);
           }
           if (Schema.is(ShellNativeModuleSourceIssueCommandSchema)(command)) {
             return yield* issueModuleSource(command);

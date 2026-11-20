@@ -3,13 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
-import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
+import {
+  grantTestTenantRoleAccess,
+  liveFixtureSpiceDb,
+  writeTestTenantScopes,
+} from '@app/core-runtime/testing/tenant-access';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
-import { Duration, Effect, FileSystem, Layer, Redacted, Schema, Stream } from 'effect';
+import { Config, Duration, Effect, FileSystem, Layer, Match, Redacted, Schema, Stream } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
@@ -33,6 +37,7 @@ import {
 } from './support/symmy-c14-product-runtime.mts';
 
 const workerKey = 'integration.symmy.execute-symmy-job';
+const enrollmentCapability = 'core.identity.system-workload-enrollment.change';
 const operatorRef = 'operator:internal-c14';
 const catalogModule = 'commerce.catalog';
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -69,7 +74,7 @@ const terminal: ReadonlySet<string> = new Set([
 const seedPrincipal = Effect.fn('SymmyC14RouteEnrollment.seedPrincipal')(function* seedPrincipal(
   admin: PgClient.PgClient,
   tenantId: string,
-  kind: 'human' | 'integration' | 'service' | 'system',
+  kind: 'human' | 'integration' | 'service',
 ) {
   const principalId = randomUUID();
   yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${principalId},${tenantId},${kind},'active','INTERNAL_C14 route enrollment principal')`;
@@ -167,7 +172,7 @@ it.live(
           snapshotJson: yield* encodeProductComposition(snapshot),
         });
 
-        // A fresh Tenant with its company, modules, the Symmy API-key principal and the one system worker.
+        // A fresh Tenant with its company, modules and the Symmy API-key principal; its system worker is enrolled below.
         const tenantId = randomUUID();
         const slug = `internal-c14-enrollment-${tenantId}`;
         yield* admin`insert into core.tenants(tenant_id,name,slug,status,default_locale) values(${tenantId},'INTERNAL_C14 route enrollment',${slug},'active','en')`;
@@ -187,7 +192,6 @@ it.live(
           ),
         );
         const integration = yield* seedPrincipal(admin, tenantId, 'integration');
-        const system = yield* seedPrincipal(admin, tenantId, 'system');
         const integrationWorkloads = [
           'integration.symmy-admit',
           'integration.symmy-poll',
@@ -197,8 +201,9 @@ it.live(
           'commerce.pricing.source-write',
           'commerce.market-catalog.source-read',
         ];
-        const systemWorkloads = [
-          workerKey,
+        // The owner workloads the Symmy executor calls under: binding them is not yet governed on main, so they stay
+        // test SQL. The system Principal itself and its job key come from Core's enrollment Action below.
+        const systemOwnerWorkloads = [
           'commerce.catalog.symmy-product-import',
           'commerce.catalog.symmy-product-read',
           'commerce.catalog.symmy-variant-localized-facts',
@@ -207,14 +212,15 @@ it.live(
           'commerce.pricing.source-read',
           'commerce.market-catalog.source-read',
         ];
-        for (const [principal, workloads] of [
-          [integration, integrationWorkloads],
-          [system, systemWorkloads],
-        ] as const) {
+        const bindWorkloads = Effect.fn('SymmyC14RouteEnrollment.bindWorkloads')(function* bindWorkloads(
+          principal: { readonly principalId: string },
+          workloads: readonly string[],
+        ) {
           for (const workload of workloads) {
             yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${principal.principalId},${workload},'active')`;
           }
-        }
+        });
+        yield* bindWorkloads(integration, integrationWorkloads);
         const key = yield* shell.issueFixtureProviderKey({ ...integration, issuerPrincipalId: issuer.principalId });
         yield* bindAuth(admin, integration, 'api_key', key.providerKeyId);
         yield* key.acknowledgeBinding;
@@ -228,6 +234,43 @@ it.live(
         });
         yield* bindAuth(admin, modulePrincipal, 'api_key', moduleKey.providerKeyId);
         yield* moduleKey.acknowledgeBinding;
+
+        // The Tenant's administrator enrolls the Tenant's system Principal for the Symmy job through Core's Action, in
+        // the staff session the Shell issued for that human: a replay with the same key answers the same enrollment.
+        yield* grantTestTenantRoleAccess({
+          adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+          holders: [{ capabilityKeys: [enrollmentCapability], principalId: issuer.principalId }],
+          legalEntityIds: [legalEntityId],
+          spiceDb: yield* liveFixtureSpiceDb(
+            yield* Config.all({
+              SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
+              SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
+              SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
+            }),
+          ),
+          tenantId,
+        });
+        const enrollmentRequest = {
+          idempotencyKey: 'INTERNAL_C14_SYSTEM_WORKLOAD_ENROLLMENT',
+          payload: {
+            _tag: 'ENROLL',
+            moduleKey: 'integration.symmy',
+            reason: 'INTERNAL_C14 the Tenant runs its Symmy jobs',
+            workloadKey: workerKey,
+          },
+        } as const;
+        const enrollment = yield* shell.changeFixtureSystemWorkloadEnrollment(enrollmentRequest).pipe(
+          Effect.flatMap((answer) =>
+            Match.value(answer).pipe(
+              Match.tag('ENROLLED', (enrolled) => Effect.succeed(enrolled)),
+              Match.orElse(({ _tag }) =>
+                Effect.fail(new SymmyC14ProductFixtureUnavailable({ message: `The enrollment answered ${_tag}` })),
+              ),
+            ),
+          ),
+        );
+        expect(yield* shell.changeFixtureSystemWorkloadEnrollment(enrollmentRequest)).toEqual(enrollment);
+        yield* bindWorkloads(enrollment, systemOwnerWorkloads);
 
         // The operator enrolls the products route pair through the command; nothing writes the routes otherwise.
         const productsRouteId = randomUUID();
