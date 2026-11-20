@@ -20,7 +20,9 @@ import {
   OntosModuleDeploymentContractSchema,
   OntosModuleIdSchema,
   canonicalOntosPublicApiKey,
+  LEGAL_ENTITY_SCOPES,
   extractVerticalRuntimeSafeDescriptors,
+  isReadRegistration,
 } from '../packages/core-runtime/src/index.ts';
 import type { OntosModuleManifest, VerticalRuntimeRegistration } from '../packages/core-runtime/src/index.ts';
 import {
@@ -123,6 +125,7 @@ const JsonDocumentTextSchema = Schema.fromJsonString(Schema.Unknown, {
   space: 2,
 });
 const JsonStringTextSchema = Schema.fromJsonString(Schema.String);
+const ReadScopeSchema = Schema.Struct({ legalEntityScope: Schema.Literals(LEGAL_ENTITY_SCOPES) });
 
 const canonicalSlugPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const outputRootByTarget: Readonly<Record<OntosModuleContractTarget, string>> = Object.freeze({
@@ -608,20 +611,56 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
     return { contract: decoded, mcpToolCatalog: mcp?.toolCatalog };
   });
 
-/** The contract plus the exact text of the MCP tool catalog artifact it pins (when the module offers tools). */
-export const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
-  Effect.gen(function* deriveModuleReleaseProgram() {
+/** The owner manifest and registration of one vertical, loaded once its generated owner slots are checked. */
+const loadVerticalOwner = (input: DeriveOntosModuleContractInput) =>
+  Effect.gen(function* loadVerticalOwnerProgram() {
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..'));
     const vertical = yield* assertPlainTarget(input.vertical, 'vertical', canonicalSlugPattern);
     const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
     yield* assertOwnerSlots(verticalDirectory);
     const owner = yield* loadOwnerValues(workspaceRoot, verticalDirectory, vertical);
-    return yield* deriveContract(workspaceRoot, vertical, owner);
+    return { owner, vertical, workspaceRoot };
   });
+
+/** The contract plus the exact text of the MCP tool catalog artifact it pins (when the module offers tools). */
+export const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
+  loadVerticalOwner(input).pipe(
+    Effect.flatMap(({ owner, vertical, workspaceRoot }) => deriveContract(workspaceRoot, vertical, owner)),
+  );
 
 export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleContractInput) =>
   deriveOntosModuleRelease(input).pipe(Effect.map(({ contract }) => contract));
+
+/**
+ * The scope each public Read of the module is published under: the `legalEntityScope` of the read registration its
+ * public operation contract binds, loaded from the owner as its contract is. The deployment contract does not carry it
+ * (`OntosOperationContractSchema` names no scope), so a caller that states a read's scope beside the installed
+ * contracts compares it with this.
+ */
+export const deriveOntosModuleReadScopes = (input: DeriveOntosModuleContractInput) =>
+  loadVerticalOwner(input).pipe(
+    Effect.flatMap(({ owner }) =>
+      Effect.forEach(
+        (owner.manifest.publicSurface.operationContracts ?? []).flatMap(({ registration }) =>
+          isReadRegistration(registration) ? [registration.descriptor] : [],
+        ),
+        // The opaque registration type names no scope; `defineRead` refused any descriptor without a valid one.
+        (descriptor) =>
+          Schema.decodeUnknownEffect(ReadScopeSchema)(descriptor).pipe(
+            Effect.map(({ legalEntityScope }) => ({
+              entrypointKey: descriptor.entrypoint.entrypointKey,
+              legalEntityScope,
+              moduleId: owner.manifest.module.id,
+              schemaVersion: descriptor.schemaVersion,
+            })),
+            Effect.mapError((cause) =>
+              failure(`public Read ${descriptor.readKey} states no legal entity scope`, cause),
+            ),
+          ),
+      ),
+    ),
+  );
 
 /** Derives and validates one contract without writing deployment output. */
 
