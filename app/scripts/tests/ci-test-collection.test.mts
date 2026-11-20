@@ -28,6 +28,74 @@ const literalDirectoryMutation = 'changed literal working directory';
 const browserShardMutation = 'incomplete shard family';
 const browserTitleMutation = 'title filter';
 const browserInvertedTitleMutation = 'inverted title filter';
+const browserProjectGrepMutation = 'project config grep';
+const browserConfigGrepInvertMutation = 'inherited config grepInvert';
+const projectArrayAnchor = 'projects: [';
+const chromiumAnchor = "name: 'chromium',";
+const unmodelledProjectOption = 'unmodelled project option';
+const browserConfigFilters = new Map([
+  [
+    browserProjectGrepMutation,
+    { anchor: chromiumAnchor, option: 'grep: /reloads failed Contacts into a genuinely published R2/,' },
+  ],
+  ['project config grepInvert', { anchor: chromiumAnchor, option: 'grepInvert: /login/,' }],
+  ['inherited config grep', { anchor: projectArrayAnchor, option: 'grep: /login/,' }],
+  [browserConfigGrepInvertMutation, { anchor: projectArrayAnchor, option: 'grepInvert: /login/,' }],
+]);
+const unsupportedBrowserConfig = new Map([
+  ['config shard', 'shard: { current: 1, total: 2 },'],
+  ['config test list', "testList: 'selected-tests.txt',"],
+  ['config inverted test list', "testListInverted: 'excluded-tests.txt',"],
+  ['config git ignore', 'respectGitIgnore: true,'],
+  ['config zero repeats', 'repeatEach: 0,'],
+  ['config max failures', 'maxFailures: 1,'],
+  ['config unknown selector', 'futureCollectionSelector: true,'],
+]);
+const browserConfigMutation = (mutation: string, original: string) => {
+  const filter = browserConfigFilters.get(mutation);
+  if (filter !== undefined) {
+    const { anchor, option } = filter;
+    return original.replace(anchor, anchor === projectArrayAnchor ? `${option} ${anchor}` : `${anchor} ${option}`);
+  }
+  const unsupported = unsupportedBrowserConfig.get(mutation);
+  if (unsupported !== undefined) {
+    return original.replace(projectArrayAnchor, `${unsupported} ${projectArrayAnchor}`);
+  }
+  return mutation === unmodelledProjectOption
+    ? original.replace(chromiumAnchor, `${chromiumAnchor} dependencies: ['setup'],`)
+    : null;
+};
+const browserMutationFailure = (mutation: string) => {
+  if (mutation === browserShardMutation) {
+    return 'Unsupported Playwright collection option: --shard';
+  }
+  if (unsupportedBrowserConfig.has(mutation) || mutation === unmodelledProjectOption) {
+    return 'unsupported Playwright collection option:';
+  }
+  return uncollectedBrowser;
+};
+const unsupportedShellCommands = new Map([
+  ['exit before runner', 'exit 0; pnpm run test:unit'],
+  ['short-circuited runner', 'false && pnpm run test:unit'],
+  ['subshell runner', '(pnpm run test:unit)'],
+  ['directory change before runner', 'cd scripts; pnpm run test:unit'],
+  ['exit on a preceding line', 'exit 0\npnpm run test:unit'],
+  ['return before runner', 'return 0\npnpm run test:unit'],
+  ['exec before runner', 'exec echo done\npnpm run test:unit'],
+  ['exec runner', 'exec pnpm run test:unit'],
+  ['unknown preceding executable', 'unknown-command\npnpm run test:unit'],
+  ['directory change on a preceding line', 'cd scripts\npnpm run test:unit'],
+  ['OR short circuit', 'true || pnpm run test:unit'],
+  ['backgrounded runner', 'pnpm run test:unit &'],
+  ['redirected runner', 'pnpm run test:unit > /dev/null'],
+  ['conditional runner', 'if false; then pnpm run test:unit; fi'],
+  ['loop runner', 'while false; do pnpm run test:unit; done'],
+  ['command substitution', '$(exit 0) pnpm run test:unit'],
+  ['double-quoted command substitution', 'echo "$(exit 0)"\npnpm run test:unit'],
+  ['unknown environment assignment', 'BASH_ENV=skip-tests.sh pnpm run test:unit'],
+  ['unmodelled shell wrapper', 'bash -c "exit 0"\npnpm run test:unit'],
+  ['literal instead of expanded wrapper path', "pnpm exec bash '$PWD/scripts/ci/rstest-weighted-shard.sh' 1/1 unit"],
+]);
 const workspaceFile = 'pnpm-workspace.yaml';
 const runnerShardMutation = 'incomplete runner shard family';
 const newBrowserScriptMutation = 'new unlisted AKROS browser script';
@@ -35,6 +103,22 @@ const unitJob = 'workspace-unit';
 const artifactUnitJob = 'workspace-unit-artifacts';
 const browserJob = 'browser-integration';
 const playwrightTestCommand = 'playwright test';
+const weightedShardScript = 'scripts/ci/rstest-weighted-shard.sh';
+const absoluteWeightedShardScript = `$PWD/${weightedShardScript}`;
+const integrationShellSource = `\${BASH_SOURCE[0]}`;
+const promotionGenerator = '../../scripts/generate-ontos-module-contract.mts --vertical promotion --target dist';
+const integrationNodeRunner =
+  '--import ../../scripts/ci/integration-worker-setup.mts ../../node_modules/@rstest/core/bin/rstest.js';
+const creditlessPnpmScripts = new Set([
+  'typecheck',
+  'lint:effect-diagnostics',
+  'lint:effect-diagnostics:demo',
+  'api:check:ontos',
+  'handler-services:check',
+  'lint',
+  'shell:ui-candidates:check',
+  'module-entrypoints:check',
+]);
 const defaultInclude = ['**/*.{test,spec}.?(c|m)[jt]s?(x)'];
 const defaultExclude = ['**/node_modules/**', '**/dist/**', '**/.{idea,git,cache,output,temp}/**'];
 const akrosBrowserManualReason =
@@ -343,13 +427,94 @@ const stepDirectory = (workflow: Workflow, job: Workflow['jobs'][string], step: 
       '.',
   );
 
-// This is a deliberately bounded shell grammar, not a search for runner-looking text inside arbitrary shell.
-// Quotes preserve one argument; only newline, && and ; sequence executable simple commands in these inputs.
-const shellCommands = (text: string) => {
+const unwrapCommand = (input: readonly string[]) => {
+  let tokens = [...input];
+  const environment = new Set([
+    'ONTOS_PREPROPOSAL_STANDALONE=true',
+    'ONTOS_PREPROPOSAL_NATIVE=true',
+    'ONTOS_APPROVAL_NATIVE=true',
+  ]);
+  while (environment.has(tokens[0] ?? '')) {
+    tokens.shift();
+  }
+  if (tokens[0] === 'timeout') {
+    tokens.shift();
+    while (/^--(?:foreground|kill-after=\d+s)$/u.test(tokens[0] ?? '')) {
+      tokens.shift();
+    }
+    expect(tokens.shift(), 'Unsupported CI timeout wrapper').toMatch(/^\d+[sm]$/u);
+  }
+  if (tokens.slice(0, 3).join(' ') === `bash ${integrationShellSource} --shell-shard`) {
+    expect(tokens[3], 'Unsupported CI command shell-shard task').toMatch(/^\.\/apps\/shell-super-app#\d+\/\d+$/u);
+    tokens = tokens.slice(4);
+  }
+  if (tokens.slice(0, 3).join(' ') === 'mise exec --') {
+    tokens = tokens.slice(3);
+  }
+  return tokens;
+};
+
+// Derive the accepted grammar from ci-matrices{,.demo}.json, the workflow's literal test steps, their package
+// scripts and the executor's extracted terminal command, not from a blacklist of shell control words:
+//   sequence := simple-command (newline simple-command)*
+//   word := [A-Za-z0-9_./:@%=,+!#-]+ | single-quoted-literal | double-quoted-literal
+// A simple command may carry the three literal preproposal environment assignments, then the timeout wrapper
+// (integer s/m duration; --foreground / --kill-after=Ns), the integration --shell-shard adapter, and mise exec --,
+// in that order, exactly as unwrapCommand models them. Runner/pnpm options are parsed separately below.
+// Whitespace separates words; backslash-newline continues a line. Quotes may concatenate literal word parts.
+// Single-quoted words containing $ are rejected too, so literal paths cannot masquerade as expanded adapters.
+// Only "$PWD/scripts/ci/rstest-weighted-shard.sh" expands in ordinary commands; only the extracted integration
+// terminal command may additionally use "${BASH_SOURCE[0]}" and a leading exec (never a sequence).
+// Simple commands are pnpm, rstest, vitest, playwright, echo (no credit), the exact node/bash adapters below, and the
+// shared-contracts typecheck. No other shell executable, expansion, control operator or redirection is accepted.
+// These two exact package scripts are the only AND lists in the credited call graph today. They have a known
+// generator/typecheck prerequisite and a required-success RHS; a successful CI job therefore executed both.
+const understoodAndLists = new Set([
+  'node ../../scripts/generate-ontos-module-contract.mts --vertical promotion --target dist && rstest --project integration',
+  'ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json',
+]);
+const supportedDoubleQuote = (literal: string, terminalExec: boolean) =>
+  !/[`\\]/u.test(literal) &&
+  (!literal.includes('$') ||
+    literal === absoluteWeightedShardScript ||
+    (terminalExec && literal === integrationShellSource));
+const supportedQuote = (quote: string, literal: string, terminalExec: boolean) =>
+  quote === '"' ? supportedDoubleQuote(literal, terminalExec) : !literal.includes('$');
+const creditlessCommand = (executable: string, args: readonly string[]) =>
+  executable === 'echo' ||
+  (executable === 'node' && args.join(' ') === promotionGenerator) ||
+  (executable === 'ultramodern-create' &&
+    /^ultramodern typecheck --project tests\/(?:tsconfig|client-runtime-types\.tsconfig)\.json$/u.test(args.join(' ')));
+const supportedShellCommand = (command: readonly string[]) => {
+  const [executable = '', ...args] = unwrapCommand(command);
+  return (
+    ['pnpm', 'rstest', 'vitest', 'playwright'].includes(executable) ||
+    creditlessCommand(executable, args) ||
+    (executable === 'bash' && [weightedShardScript, absoluteWeightedShardScript].includes(args[0] ?? '')) ||
+    (executable === 'node' &&
+      (args.slice(0, 3).join(' ') === integrationNodeRunner ||
+        (args.length === 1 && /^tests\/browser\/[\w-]+\.mjs$/u.test(args[0] ?? ''))))
+  );
+};
+const validateShellCommands = (commands: string[][], text: string, terminalExec: boolean) => {
+  for (const command of commands) {
+    if (command[0] === 'exec') {
+      if (!terminalExec || commands.length !== 1) {
+        expect.fail(`Unsupported CI command control transfer in line: ${text}`);
+      }
+      command.shift();
+    }
+    expect(supportedShellCommand(command), `Unsupported CI command executable in line: ${text}`).toBe(true);
+  }
+};
+const shellCommands = (text: string, terminalExec = false) => {
+  const input = understoodAndLists.has(text.trim()) ? text.trim().replace(' && ', '\n') : text;
+  const unsupported = () => expect.fail(`Unsupported CI command syntax or executable in line: ${text}`);
   const commands: string[][] = [];
   let tokens: string[] = [];
   let token = '';
   let quoted = '';
+  let quoteStart = 0;
   let started = false;
   const finishToken = () => {
     if (started) {
@@ -365,29 +530,31 @@ const shellCommands = (text: string) => {
     }
     tokens = [];
   };
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index] ?? '';
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index] ?? '';
     if (quoted !== '') {
       if (char === quoted) {
+        const literal = input.slice(quoteStart + 1, index);
+        if (!supportedQuote(quoted, literal, terminalExec)) {
+          return unsupported();
+        }
         quoted = '';
       } else {
         token += char;
       }
     } else if (char === "'" || char === '"') {
       quoted = char;
+      quoteStart = index;
       started = true;
-    } else if (char === '\\' && text[index + 1] === '\n') {
+    } else if (char === '\\' && input[index + 1] === '\n') {
       index += 1;
-    } else if (char === '\n' || char === ';' || (char === '&' && text[index + 1] === '&')) {
+    } else if (char === '\n') {
       finishCommand();
-      if (char === '&') {
-        index += 1;
-      }
     } else if (/\s/u.test(char)) {
       finishToken();
     } else {
-      if (/[|&<>`]/u.test(char)) {
-        return expect.fail(`Unsupported CI command syntax: ${text}`);
+      if (!/[A-Za-z0-9_./:@%=,+!#-]/u.test(char)) {
+        return unsupported();
       }
       token += char;
       started = true;
@@ -395,6 +562,7 @@ const shellCommands = (text: string) => {
   }
   expect(quoted, `Unterminated CI command quote: ${text}`).toBe('');
   finishCommand();
+  validateShellCommands(commands, text, terminalExec);
   return commands;
 };
 const matrixDispatcher = `failed=()
@@ -412,29 +580,6 @@ for command in "\${failed[@]}"; do
   echo "::error title=Gate command failed::$command"
 done
 [[ \${#failed[@]} -eq 0 ]]`;
-const unwrapCommand = (input: readonly string[]) => {
-  let tokens = [...input];
-  while (/^[A-Z_][A-Z_0-9]*=[^$`]*$/u.test(tokens[0] ?? '')) {
-    tokens.shift();
-  }
-  if (tokens[0] === 'exec') {
-    tokens.shift();
-  }
-  if (tokens[0] === 'timeout') {
-    tokens.shift();
-    while (/^--(?:foreground|kill-after=\d+s)$/u.test(tokens[0] ?? '')) {
-      tokens.shift();
-    }
-    expect(tokens.shift(), 'Unsupported CI timeout wrapper').toMatch(/^\d+[sm]$/u);
-  }
-  if (tokens.slice(0, 3).join(' ') === `bash \${BASH_SOURCE[0]} --shell-shard`) {
-    tokens = tokens.slice(4);
-  }
-  if (tokens.slice(0, 3).join(' ') === 'mise exec --') {
-    tokens = tokens.slice(3);
-  }
-  return tokens;
-};
 const pnpmInvocation = (
   directory: string,
   args: readonly string[],
@@ -552,21 +697,69 @@ const runnerSelection = (input: readonly string[]) => {
   return selection;
 };
 // Mirror the pinned Playwright FullProjectInternal precedence and createFileMatcher rules, without importing
-// the config (which reads operator environment). Unsupported discovery expressions fail closed.
+// the config (which reads operator environment). Read name, projects, testDir, testMatch, testIgnore, grep and
+// grepInvert; either effective title filter grants no full-file credit. Only the following runtime-only options
+// used by today's config are ignored. Every other option fails closed, including unmodelled selectors such as
+// shard, testList, testListInverted, respectGitIgnore, dependencies, repeatEach or maxFailures.
+const playwrightRuntimeOptions = new Set([
+  'build',
+  'forbidOnly',
+  'fullyParallel',
+  'metadata',
+  'reporter',
+  'retries',
+  'use',
+  'webServer',
+  'workers',
+]);
+const playwrightSelectionOptions = new Set([
+  'name',
+  'projects',
+  'testDir',
+  'testMatch',
+  'testIgnore',
+  'grep',
+  'grepInvert',
+]);
 type PlaywrightPattern = string | RegExp;
 const playwrightProjects = (file: string, text: string) => {
   const source = parseSync(file, text);
   expect(source.errors, file).toEqual([]);
   const exported = source.program.body.find((node) => node.type === 'ExportDefaultDeclaration');
   const declaration = exported?.type === 'ExportDefaultDeclaration' ? exported.declaration : undefined;
+  if (
+    declaration?.type === 'CallExpression' &&
+    (declaration.arguments.length !== 1 ||
+      declaration.callee.type !== 'Identifier' ||
+      declaration.callee.name !== 'defineConfig')
+  ) {
+    return expect.fail(`${file}: unsupported Playwright config composition`);
+  }
   const config = declaration?.type === 'CallExpression' ? declaration.arguments[0] : declaration;
   if (config?.type !== 'ObjectExpression') {
     return expect.fail(`${file}: expected a literal Playwright config`);
   }
-  expect(
-    config.properties.some((entry) => entry.type === 'SpreadElement'),
-    file,
-  ).toBe(false);
+  const validateOptions = (object: ObjectExpression): void => {
+    const keys = new Set<string>();
+    for (const property of object.properties) {
+      const key = propertyName(property);
+      if (
+        property.type !== 'Property' ||
+        property.computed ||
+        property.method ||
+        property.kind !== 'init' ||
+        !Schema.is(Schema.String)(key) ||
+        keys.has(key) ||
+        (!playwrightSelectionOptions.has(key) && !playwrightRuntimeOptions.has(key))
+      ) {
+        expect.fail(
+          `${file}: unsupported Playwright collection option: ${String(key)}. Extend the census model before awarding credit.`,
+        );
+      }
+      keys.add(key);
+    }
+  };
+  validateOptions(config);
   const patterns = (node: Expression | undefined): PlaywrightPattern[] => {
     if (node === undefined) {
       return [];
@@ -587,13 +780,7 @@ const playwrightProjects = (file: string, text: string) => {
     }
     return expect.fail(`${file}: unsupported Playwright discovery expression ${text.slice(node.start, node.end)}`);
   };
-  const value = (project: ObjectExpression, key: string) => {
-    expect(
-      project.properties.some((entry) => entry.type === 'SpreadElement'),
-      file,
-    ).toBe(false);
-    return initializer(project, key) ?? initializer(config, key);
-  };
+  const value = (project: ObjectExpression, key: string) => initializer(project, key) ?? initializer(config, key);
   const string = (node: Expression | undefined, otherwise: string) => {
     if (node === undefined) {
       return otherwise;
@@ -617,15 +804,19 @@ const playwrightProjects = (file: string, text: string) => {
   } else {
     return expect.fail(`${file}: unsupported Playwright projects`);
   }
-  return projects.map((project) => ({
-    name: string(value(project, 'name'), ''),
-    testDir: string(value(project, 'testDir'), '.'),
-    testIgnore: patterns(value(project, 'testIgnore')),
-    testMatch:
-      value(project, 'testMatch') === undefined
-        ? ['**/*.@(spec|test).?(c|m)[jt]s?(x)']
-        : patterns(value(project, 'testMatch')),
-  }));
+  return projects.map((project) => {
+    validateOptions(project);
+    return {
+      name: string(value(project, 'name'), ''),
+      nameFiltered: value(project, 'grep') !== undefined || value(project, 'grepInvert') !== undefined,
+      testDir: string(value(project, 'testDir'), '.'),
+      testIgnore: patterns(value(project, 'testIgnore')),
+      testMatch:
+        value(project, 'testMatch') === undefined
+          ? ['**/*.@(spec|test).?(c|m)[jt]s?(x)']
+          : patterns(value(project, 'testMatch')),
+    };
+  });
 };
 // Use the invoked package's pinned matcher: Node's matchesGlob differs on dotfiles and minimatch options.
 interface PlaywrightUtilities {
@@ -725,7 +916,7 @@ const collectPlaywright = (invocation: NonNullable<ReturnType<typeof browserInvo
     ).toBe(true);
   }
   return projects
-    .filter((project) => names.length === 0 || names.includes(project.name))
+    .filter((project) => !project.nameFiltered && (names.length === 0 || names.includes(project.name)))
     .flatMap((project) => {
       const testDir = path.resolve(inputs.appRoot, root, project.testDir);
       const includes = playwrightMatcher(root, project.testMatch);
@@ -897,9 +1088,30 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
   const nameFiltered = new Map<string, Set<string>>();
   const runnerShards = new Map<string, { count: number; indices: Set<number> }>();
   const commands = {
-    runCommand(directory: string, command: string, seen: readonly string[] = []) {
-      for (const tokens of shellCommands(command)) {
+    runCommand(directory: string, command: string, seen: readonly string[] = [], terminalExec = false) {
+      for (const tokens of shellCommands(command, terminalExec)) {
         commands.runTokens(directory, tokens, seen);
+      }
+    },
+    runPnpm(directory: string, args: readonly string[], seen: readonly string[]): void {
+      const { targets, tokens } = pnpmInvocation(directory, args, packages);
+      const [verb, ...extra] = tokens;
+      if (verb === 'exec') {
+        for (const target of targets) {
+          commands.runTokens(target, extra, seen);
+        }
+      } else {
+        const [script = '', ...scriptArgs] = verb === 'run' ? extra : tokens;
+        if (/^test(?::[\w-]+)*$/u.test(script)) {
+          for (const target of targets) {
+            commands.runScript(target, script, scriptArgs, seen);
+          }
+        } else {
+          expect(
+            scriptArgs.length === 0 && creditlessPnpmScripts.has(script),
+            `Unsupported CI command: pnpm ${args.join(' ')}`,
+          ).toBe(true);
+        }
       }
     },
     runRunner(directory: string, input: readonly string[], awardCredit = true): void {
@@ -946,40 +1158,22 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
       }
     },
     runTokens(directory: string, input: readonly string[], seen: readonly string[]): void {
-      const [executable, ...args] = unwrapCommand(input);
+      const [executable = '', ...args] = unwrapCommand(input);
       if (executable === 'pnpm') {
-        const { targets, tokens } = pnpmInvocation(directory, args, packages);
-        const [verb, ...extra] = tokens;
-        if (verb === 'exec') {
-          for (const target of targets) {
-            commands.runTokens(target, extra, seen);
-          }
-        } else {
-          const [script = '', ...scriptArgs] = verb === 'run' ? extra : tokens;
-          if (/^test(?::[\w-]+)*$/u.test(script)) {
-            for (const target of targets) {
-              commands.runScript(target, script, scriptArgs, seen);
-            }
-          }
-        }
+        commands.runPnpm(directory, args, seen);
       } else if (executable === 'rstest' || executable === 'vitest') {
         commands.runRunner(directory, args);
-      } else if (
-        executable === 'node' &&
-        args.slice(0, 3).join(' ') ===
-          '--import ../../scripts/ci/integration-worker-setup.mts ../../node_modules/@rstest/core/bin/rstest.js'
-      ) {
+      } else if (executable === 'node' && args.slice(0, 3).join(' ') === integrationNodeRunner) {
         commands.runRunner(directory, args.slice(3));
-      } else if (
-        executable === 'bash' &&
-        ['scripts/ci/rstest-weighted-shard.sh', '$PWD/scripts/ci/rstest-weighted-shard.sh'].includes(args[0] ?? '')
-      ) {
+      } else if (executable === 'bash' && [weightedShardScript, absoluteWeightedShardScript].includes(args[0] ?? '')) {
         commands.runWeighted(directory, args.slice(1));
       } else if (executable === 'node' && /^tests\/browser\/[^/]+\.mjs$/u.test(args[0] ?? '')) {
         expect(args.length, 'Unsupported browser script arguments').toBe(1);
         collected.add(path.posix.join(directory, args[0] ?? ''));
+      } else {
+        expect(creditlessCommand(executable, args), `Unsupported CI command: ${input.join(' ')}`).toBe(true);
       }
-      // echo, non-test scripts and other executables never grant credit to runner-looking arguments.
+      // Only the explicitly understood checks/generator and literal echo commands grant no execution credit.
     },
     runWeighted(directory: string, args: readonly string[]) {
       const [shard = '', project = '', ...options] = args;
@@ -1004,7 +1198,7 @@ const checkCollection = (root: string, manualSuites: ReadonlyMap<string, string>
       if (shard !== undefined) {
         families.set(shard.family ?? '', [...(families.get(shard.family ?? '') ?? []), Number(shard.count)]);
       }
-      commands.runCommand('.', integrationCommand(executor, task));
+      commands.runCommand('.', integrationCommand(executor, task), [], true);
     }
     for (const [family, counts] of families) {
       const shards = tasks.filter((task) => task.startsWith(`${family}#`) || task.startsWith(`${family}:`));
@@ -1142,6 +1336,7 @@ it(`accounts for the bounded CI/manual census: ${censusScope}`, () => {
 });
 
 it.each([
+  ...[...unsupportedShellCommands.keys()].map((mutation) => [mutation, 'Unsupported CI command']),
   ['echo-only package command', uncollectedCensus],
   ['echo-only runner command', uncollectedCensus],
   ['removed matrix dispatch step', 'Missing matrix dispatch step'],
@@ -1232,6 +1427,10 @@ it.each([
       }
     };
     const changes = new Map<string, () => void>([
+      ...[...unsupportedShellCommands].map(([name, command]): [string, () => void] => [
+        name,
+        () => setCommands(command),
+      ]),
       [
         'echo-only package command',
         () => {
@@ -1347,6 +1546,11 @@ it.each([
     write(workflowFile, stringify(fixtureWorkflow));
     write(matrixFile, JSON.stringify(matrices));
     expect(() => checkCollection(root, new Map())).toThrow(failure);
+    const unsupportedCommand = unsupportedShellCommands.get(mutation);
+    if (unsupportedCommand !== undefined) {
+      // The diagnostic must name the actual rejected input, not merely report a downstream collection gap.
+      expect(() => checkCollection(root, new Map())).toThrow(unsupportedCommand);
+    }
     if (mutation === runnerShardMutation) {
       setCommands('pnpm exec rstest run --project unit --shard 1/2\npnpm exec rstest run --project unit --shard 2/2');
       write(matrixFile, JSON.stringify(matrices));
@@ -1392,6 +1596,9 @@ it.each([
   browserShardMutation,
   browserTitleMutation,
   browserInvertedTitleMutation,
+  ...browserConfigFilters.keys(),
+  ...unsupportedBrowserConfig.keys(),
+  unmodelledProjectOption,
 ])('rejects a scratch CI input with %s, then accepts the restored inputs', (mutation) => {
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'ontos-browser-collection-'));
   const root = path.join(scratch, 'app');
@@ -1439,6 +1646,7 @@ it.each([
       write(file, text);
     }
     check();
+    const configMutation = browserConfigMutation(mutation, readInput(configFile));
     if (mutation === 'invocation removed') {
       // Leave the browser matrix row and targeted login repeat intact.
       const original = readInput(workflowFile);
@@ -1464,25 +1672,32 @@ it.each([
       write(
         configFile,
         readInput(configFile).replace(
-          "name: 'chromium',",
+          chromiumAnchor,
           `name: 'chromium', testIgnore: ['**/${path.posix.basename(ignored ?? '')}'],`,
         ),
       );
     } else if (mutation === 'testMatch') {
       write(
         configFile,
-        readInput(configFile).replace("name: 'chromium',", "name: 'chromium', testMatch: '**/login.spec.ts',"),
+        readInput(configFile).replace(chromiumAnchor, "name: 'chromium', testMatch: '**/login.spec.ts',"),
       );
     } else if (mutation === 'project selection') {
       write(workflowFile, readInput(workflowFile).replace('test:e2e', 'test:e2e --project chromium'));
       write(
         configFile,
-        readInput(configFile).replace('projects: [', "projects: [{ name: 'firefox', testDir: './tests/unselected' },"),
+        readInput(configFile).replace(
+          projectArrayAnchor,
+          "projects: [{ name: 'firefox', testDir: './tests/unselected' },",
+        ),
       );
       write(
         `${shell}/tests/unselected/unselected.spec.ts`,
         "import { test } from '@playwright/test'; test('unselected project', () => {});",
       );
+    } else if (configMutation !== null) {
+      expect(configMutation).not.toBe(readInput(configFile));
+      write(configFile, configMutation);
+      expect(readInput(workflowFile)).toBe(originals.get(workflowFile));
     } else if (
       mutation === browserShardMutation ||
       mutation === browserTitleMutation ||
@@ -1510,9 +1725,7 @@ it.each([
       write(referrer, `${readInput(referrer)}\nnew URL('../not-in-testDir.spec.ts', import.meta.url);\n`);
       write(unexecuted, "import { test } from '@playwright/test'; test('URL is not execution', () => {});");
     }
-    expect(() => check()).toThrow(
-      mutation === browserShardMutation ? 'Unsupported Playwright collection option: --shard' : uncollectedBrowser,
-    );
+    expect(() => check()).toThrow(browserMutationFailure(mutation));
     for (const [file, text] of originals) {
       write(file, text);
     }
