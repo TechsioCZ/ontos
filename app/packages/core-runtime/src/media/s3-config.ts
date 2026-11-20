@@ -15,14 +15,14 @@ import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 /** The smallest part an S3 multipart upload accepts, except for its last part (an S3 protocol constant). */
 export const S3_MINIMUM_PART_BYTES = 5 * 1024 * 1024;
 /** The largest part an S3 multipart upload accepts (an S3 protocol constant). */
-export const S3_MAXIMUM_PART_BYTES = 5 * 1024 * 1024 * 1024;
+const S3_MAXIMUM_PART_BYTES = 5 * 1024 * 1024 * 1024;
 
-export const S3AddressingStyleSchema = Schema.Literals(['path', 'virtual-host']);
-export type S3AddressingStyle = typeof S3AddressingStyleSchema.Type;
+const S3AddressingStyleSchema = Schema.Literals(['path', 'virtual-host']);
+type S3AddressingStyle = typeof S3AddressingStyleSchema.Type;
 
 /** Whether the provider honours `If-None-Match: *` on writes. Stated by the deployment, never assumed. */
-export const S3ConditionalCreateSchema = Schema.Literals(['supported', 'unsupported']);
-export type S3ConditionalCreateMode = typeof S3ConditionalCreateSchema.Type;
+const S3ConditionalCreateSchema = Schema.Literals(['supported', 'unsupported']);
+type S3ConditionalCreateMode = typeof S3ConditionalCreateSchema.Type;
 
 export type S3ObjectStorageEnvironment = Readonly<
   Partial<

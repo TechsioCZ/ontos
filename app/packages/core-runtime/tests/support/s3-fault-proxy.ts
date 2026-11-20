@@ -14,7 +14,7 @@ type IncomingMessage = InstanceType<typeof http.IncomingMessage>;
 type ServerResponse = InstanceType<typeof http.ServerResponse>;
 type Socket = IncomingMessage['socket'];
 
-export type S3FaultKind =
+type S3FaultKind =
   /** Let the provider handle the request, then close the connection without delivering its answer. */
   | { readonly kind: 'drop-answer-after-commit' }
   /** Never answer (a hung provider, for the adapter's timeout). */
@@ -26,7 +26,7 @@ export type S3FaultKind =
   /** Deliver the status line, headers and this many body bytes of the provider's answer, then break the socket. */
   | { readonly after: number; readonly kind: 'truncate-body' };
 
-export interface S3FaultRule {
+interface S3FaultRule {
   readonly fault: S3FaultKind;
   readonly method: string;
   /** A request matches when its path and query contain this text. Default: any. */
@@ -37,7 +37,7 @@ export interface S3FaultRule {
   readonly times?: number;
 }
 
-export interface InjectedFault {
+interface InjectedFault {
   readonly fault: string;
   readonly method: string;
 }
