@@ -3,15 +3,17 @@
  * check against the holders Core reports. Core is the only writer of bindings; nothing here grants one.
  *
  * Every call is matched the way the gateway admits it: the calling module's installed manifest registers it
- * (`registeredWorkloadCalls`) and names its receiving operation as a requirement of the operation it serves
- * (`requirements`, `conditionalProviderAllows` in the Shell's gateway policy), and the installed receiver publishes it
- * (`registeredWorkloadCallReceiverIssue`).
+ * (`registeredWorkloadCalls`), one of its requirements names the receiving module, operation and version as the
+ * provider of the operation it serves (`conditionalProviderAllows` in the Shell's gateway policy), and the installed
+ * receiver publishes it (`registeredWorkloadCallReceiverIssue`).
  *
  * The route's own calls are its executor operations, the reads the adapters make for them and the recoveries Symmy's
  * code declares of them, each found in Symmy's installed manifest in the route's admission mode: a route whose deployed
- * Symmy declares no caller for one of them is refused. The nested calls of an operation are the calls its owner
- * registers under the workload the operation is served with and names as a requirement of exactly that operation, so a
- * route needs only what its own operations can call, at any depth.
+ * Symmy declares no caller for one of them is refused. The nested calls start from the requirements: every requirement
+ * the owner of a reached operation declares for exactly that operation needs one call the owner registers under the
+ * workload the operation is served with, to the required provider, so a requirement without its call is refused by
+ * name and a route needs only what its own operations can call, at any depth. A call the owner names as an intrinsic
+ * requirement, which the gateway admits from any of its operations, is followed when it is registered.
  *
  * The integration principal needs one published workload of every Symmy carrier and Shell read the route uses, and
  * the workload of every live call (the gateway checks that the original integration principal holds it). Every call,
@@ -52,6 +54,15 @@ interface RequiredOperation {
   readonly entrypointKey: string;
   readonly schemaVersion: string;
 }
+/** A provider operation as a requirement names it: its owning module, entrypoint and version. */
+interface Provider extends RequiredOperation {
+  readonly moduleId: string;
+}
+interface OperationRequirement {
+  readonly entrypointKey: string;
+  readonly key: string;
+  readonly provider: Provider;
+}
 /** The published parts of an installed module contract the derivation reads. */
 export interface SymmyRouteContract extends RegisteredWorkloadCallReceiver {
   readonly manifest: RegisteredWorkloadCallReceiver['manifest'] & {
@@ -59,8 +70,11 @@ export interface SymmyRouteContract extends RegisteredWorkloadCallReceiver {
     readonly registeredWorkloadCalls?: readonly Call[] | undefined;
     readonly requirements?:
       | {
-          readonly intrinsic: readonly { readonly requiredOperations: readonly RequiredOperation[] }[];
-          readonly operations: readonly { readonly entrypointKey: string; readonly provider: RequiredOperation }[];
+          readonly intrinsic: readonly {
+            readonly moduleId: string;
+            readonly requiredOperations: readonly RequiredOperation[];
+          }[];
+          readonly operations: readonly OperationRequirement[];
         }
       | undefined;
   };
@@ -80,21 +94,22 @@ export const symmyCallInMode =
       ? call.sourceActionKey === SYMMY_SYNC_ADMISSION && call.workerKey === undefined
       : call.workerKey === SYMMY_JOB_KEY && call.sourceActionKey === undefined);
 
+const sameVersion = (left: RequiredOperation, right: RequiredOperation) =>
+  left.entrypointKey === right.entrypointKey && left.schemaVersion === right.schemaVersion;
+const providerName = ({ moduleId, ...operation }: Provider) => `${moduleId} ${symmyOperationName(operation)}`;
+
 /**
- * Whether the caller names the call's receiving operation as a requirement of the operation it serves, or of every
- * operation (intrinsically). A requirement's provider entrypoint is owned by its provider module, so the entrypoint and
- * version name the receiving operation exactly.
+ * The requirements the caller declares for exactly the operation it serves, except those on a Core provider, which Core
+ * runs in-process with no registered call (`isCoreOperationProvider`: a `core.` module).
  */
-const namesRequirement = (caller: Contract, served: string, call: RequiredOperation) => {
-  const named = (operation: RequiredOperation) =>
-    operation.entrypointKey === call.entrypointKey && operation.schemaVersion === call.schemaVersion;
-  const { requirements } = caller.manifest;
-  return (
-    (requirements?.operations ?? []).some(
-      ({ entrypointKey, provider }) => entrypointKey === served && named(provider),
-    ) || (requirements?.intrinsic ?? []).some(({ requiredOperations }) => requiredOperations.some(named))
+const operationRequirements = (caller: Contract, served: string) =>
+  (caller.manifest.requirements?.operations ?? []).filter(
+    ({ entrypointKey, provider }) => entrypointKey === served && !provider.moduleId.startsWith('core.'),
   );
-};
+
+/** The installed module of the app a call is addressed to. */
+const receivingModule = (contracts: readonly Contract[], call: Call) =>
+  contracts.find((contract) => contract.deployment.appId === call.audience)?.manifest.module.id;
 
 /** The workloads a published operation admits: an Action's own carrier or a read's published carrier. */
 const publishedWorkloads = (contract: Contract | undefined, operation: SymmyRouteCallRef): readonly string[] => {
@@ -151,7 +166,9 @@ interface RouteCalls {
 
 /**
  * Checks one call against its installed receiver and the route's company, then follows the nested calls the receiver
- * makes while it serves the call's operation. A company reaches a call unless a call before it runs without one.
+ * makes while it serves the call's operation: one registered call for each requirement it declares for that operation,
+ * refused by name when it registers none or several, and each call it names as an intrinsic requirement. A company
+ * reaches a call unless a call before it runs without one.
  */
 const followCall = (
   contracts: readonly Contract[],
@@ -176,24 +193,51 @@ const followCall = (
       detail: `${symmyOperationName(call)} is published for a company, which this route does not pass to it`,
     });
   }
-  state.moduleKeys.add(receiver.manifest.module.id);
+  const moduleId = receiver.manifest.module.id;
+  state.moduleKeys.add(moduleId);
   state.calls.push({ call, live });
-  for (const nested of receiver.manifest.registeredWorkloadCalls ?? []) {
-    if (
-      nested.jobKey === SYMMY_JOB_KEY &&
-      nested.sourceWorkloadKey === call.workloadKey &&
-      (nested.allowRecoverySource === true) === !live &&
-      nested.workerKey === undefined &&
-      nested.sourceActionKey === undefined &&
-      nested.recoveryOf === undefined &&
-      namesRequirement(receiver, call.entrypointKey, nested)
-    ) {
-      followCall(contracts, state, { call: nested, company: company && call.legalEntityScope !== 'forbidden', live });
+  const nested = { company: company && call.legalEntityScope !== 'forbidden', live };
+  // The calls the gateway admits from this operation as served: the same job, workload and recovery mode.
+  const served = (receiver.manifest.registeredWorkloadCalls ?? []).filter(
+    (candidate) =>
+      candidate.jobKey === SYMMY_JOB_KEY &&
+      candidate.sourceWorkloadKey === call.workloadKey &&
+      (candidate.allowRecoverySource === true) === !live &&
+      candidate.workerKey === undefined &&
+      candidate.sourceActionKey === undefined &&
+      candidate.recoveryOf === undefined,
+  );
+  for (const requirement of operationRequirements(receiver, call.entrypointKey)) {
+    const required = `requirement ${requirement.key} of ${symmyOperationName(call)} (${providerName(requirement.provider)})`;
+    const [declared, ...others] = served.filter((candidate) => sameVersion(candidate, requirement.provider));
+    const reaches = declared === undefined ? undefined : receivingModule(contracts, declared);
+    if (declared === undefined || others.length > 0) {
+      state.refusals.push(
+        notDeclared(
+          `The installed ${moduleId} declares no single ${live ? '' : 'recovery '}call under ${call.workloadKey} for ${required}`,
+        ),
+      );
+    } else if (reaches !== undefined && reaches !== requirement.provider.moduleId) {
+      state.refusals.push(notDeclared(`The installed ${moduleId} calls ${reaches}, not the provider of ${required}`));
+    } else {
+      followCall(contracts, state, { ...nested, call: declared });
     }
+  }
+  for (const intrinsic of served.filter((candidate) =>
+    (receiver.manifest.requirements?.intrinsic ?? []).some(
+      (requirement) =>
+        requirement.moduleId === receivingModule(contracts, candidate) &&
+        requirement.requiredOperations.some((operation) => sameVersion(operation, candidate)),
+    ),
+  )) {
+    followCall(contracts, state, { ...nested, call: intrinsic });
   }
 };
 
-/** The route's own calls in Symmy's installed manifest, followed to every nested call of their operations. */
+/**
+ * The route's own calls in Symmy's installed manifest, each named by a requirement of the job worker or synchronous
+ * admission it is made from on its receiving module, operation and version, followed to every nested call.
+ */
 const symmyRouteCalls = (input: {
   readonly companyScoped: boolean;
   readonly contracts: readonly Contract[];
@@ -217,8 +261,7 @@ const symmyRouteCalls = (input: {
         : `the recovery of ${recoveryOf} by ${symmyOperationName(reference)}`;
     const [call, ...others] = declared.filter(
       (candidate) =>
-        candidate.entrypointKey === reference.entrypointKey &&
-        candidate.schemaVersion === reference.schemaVersion &&
+        sameVersion(candidate, reference) &&
         candidate.recoveryOf?.actionKey === recoveryOf &&
         (recoveryOf !== undefined || candidate.allowRecoverySource !== true),
     );
@@ -226,11 +269,22 @@ const symmyRouteCalls = (input: {
       state.refusals.push(
         notDeclared(`The installed ${SYMMY_MODULE} declares no single ${admission} call of ${label}`),
       );
-    } else if (namesRequirement(symmy, served, call)) {
-      followCall(input.contracts, state, { call, company: input.companyScoped, live: recoveryOf === undefined });
-    } else {
-      state.refusals.push(notDeclared(`The installed ${SYMMY_MODULE} names ${label} as no requirement of ${served}`));
+      return;
     }
+    // An uninstalled receiver is refused when the call is followed.
+    const moduleId = receivingModule(input.contracts, call);
+    if (
+      moduleId !== undefined &&
+      !operationRequirements(symmy, served).some(
+        ({ provider }) => provider.moduleId === moduleId && sameVersion(provider, call),
+      )
+    ) {
+      state.refusals.push(
+        notDeclared(`The installed ${SYMMY_MODULE} names ${label} on ${moduleId} as no requirement of ${served}`),
+      );
+      return;
+    }
+    followCall(input.contracts, state, { call, company: input.companyScoped, live: recoveryOf === undefined });
   };
   const recoveries: readonly Call[] = symmyIntegrationRegisteredWorkloadCalls;
   for (const operation of input.enrolled.filter(({ caller }) => caller === 'executor')) {
