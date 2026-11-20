@@ -66,6 +66,18 @@ export type MediaIngestUncertain = InstanceType<typeof MediaIngestUncertainValue
 export { MediaIngestUncertainValue as MediaIngestUncertain };
 
 /**
+ * A byte upload did not state its length. The body of a reserved asset has exactly the size the reservation fixed,
+ * so a request that cannot say how long its body is cannot be carried to the provider (a provider answers a body
+ * of unknown length with `411`), and no body is read for it. A caller error, never a product size limit.
+ */
+const MediaLengthRequiredValue = actionErrorSchema('MediaLengthRequired', {
+  code: Schema.Literal('media_length_required'),
+  ...safeReason,
+});
+export type MediaLengthRequired = InstanceType<typeof MediaLengthRequiredValue>;
+export { MediaLengthRequiredValue as MediaLengthRequired };
+
+/**
  * Every outcome a Core Media operation may fail with. The idempotency conflict is the Action runtime's
  * own error: Core Media reuses it rather than defining a second request-hash conflict.
  */
@@ -76,6 +88,7 @@ export type MediaFailure =
   | MediaForbidden
   | MediaIngestUncertain
   | MediaIntegrityFailed
+  | MediaLengthRequired
   | MediaNotReady
   | MediaUnavailable;
 
@@ -86,6 +99,7 @@ export const MediaFailureSchema = Schema.Union([
   MediaForbiddenValue,
   MediaIngestUncertainValue,
   MediaIntegrityFailedValue,
+  MediaLengthRequiredValue,
   MediaNotReadyValue,
   MediaUnavailableValue,
 ]);
@@ -93,7 +107,7 @@ export const isMediaFailure = Schema.is(MediaFailureSchema);
 
 /**
  * The HTTP status each failure keeps at a Core Media edge (ERRORS.md): a definite denial is 403, an absent or
- * foreign-tenant asset 404, a state or idempotency conflict 409, proven corruption 422, and uncertainty 503.
+ * foreign-tenant asset 404, a state or idempotency conflict 409, a body of unstated length 411, proven corruption 422, and uncertainty 503.
  * The record is keyed by tag, so a new failure cannot be added without choosing its status.
  */
 const MEDIA_FAILURE_STATUS = {
@@ -103,6 +117,7 @@ const MEDIA_FAILURE_STATUS = {
   MediaForbidden: 403,
   MediaIngestUncertain: 503,
   MediaIntegrityFailed: 422,
+  MediaLengthRequired: 411,
   MediaNotReady: 409,
   MediaUnavailable: 503,
 } as const satisfies Record<MediaFailure['_tag'], number>;

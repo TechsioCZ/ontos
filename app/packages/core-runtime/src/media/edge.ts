@@ -1,10 +1,17 @@
 /**
- * The surface a host edge needs to deliver the bytes of a Media Asset: the object storage port and its S3
+ * The surface a host edge needs to receive and to deliver the bytes of a Media Asset (the byte-source Read, the
+ * ingest, the confirm Action and its evidence on the way in; and on both ways the object storage port and its S3
  * adapter, the stored-object channel of the governed download Read, the verified byte stream, its response
- * headers and the integrity port. Core Media is Core-owned, not a MicroVertical: only the composing host (the
+ * headers and the integrity port). Core Media is Core-owned, not a MicroVertical: only the composing host (the
  * Shell) imports this.
  */
 export { assetDownloadRead } from '../generated-reads/asset-download.ts';
+export { assetByteSourceRead } from '../generated-reads/asset-byte-source.ts';
+export { MediaByteSource } from './byte-source-contract.ts';
+export type { MediaByteSourceOffer } from './byte-source-contract.ts';
+export { confirmAssetRequest, ingestMediaBytes, parseContentLength, uploadResponseHeaders } from './ingest.ts';
+export { StoredMediaObjectVerification } from './verification.ts';
+export { confirmAssetAction } from '../modules/actions/confirm-asset.action.ts';
 export { MediaDownloadSource } from './download-contract.ts';
 export { streamConfirmedBytes } from './download.ts';
 export { downloadResponseHeaders } from './download-headers.ts';

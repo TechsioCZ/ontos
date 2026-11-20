@@ -9,6 +9,7 @@ import {
   MediaForbidden,
   MediaIngestUncertain,
   MediaIntegrityFailed,
+  MediaLengthRequired,
   MediaNotReady,
   MediaUnavailable,
   isMediaFailure,
@@ -26,6 +27,7 @@ const everyFailure = {
   MediaForbidden: new MediaForbidden({ code: 'media_forbidden', reason }),
   MediaIngestUncertain: new MediaIngestUncertain({ code: 'media_ingest_uncertain', reason }),
   MediaIntegrityFailed: new MediaIntegrityFailed({ code: 'media_integrity_failed', reason }),
+  MediaLengthRequired: new MediaLengthRequired({ code: 'media_length_required', reason }),
   MediaNotReady: new MediaNotReady({ code: 'media_not_ready', reason }),
   MediaUnavailable: new MediaUnavailable({ code: 'media_unavailable', reason }),
 } satisfies Record<MediaFailure['_tag'], MediaFailure>;
@@ -46,6 +48,7 @@ it('maps every media failure to exactly one declared HTTP status, exhaustively',
     MediaForbidden: 403,
     MediaIngestUncertain: 503,
     MediaIntegrityFailed: 422,
+    MediaLengthRequired: 411,
     MediaNotReady: 409,
     MediaUnavailable: 503,
   });
