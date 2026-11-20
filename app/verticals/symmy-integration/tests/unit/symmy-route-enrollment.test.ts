@@ -2,22 +2,42 @@ import { Array as EffectArray, Option, Result, Schema, pipe } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import type { symmyJobRoutes } from '../../src/db/schema.ts';
+import {
+  addAddressOperation,
+  addContactOperation,
+  counterpartyProfileOperation,
+  createPartyOperation,
+  onboardOperation,
+  organizationIcoOperation,
+  retailProfileOperation,
+} from '../../src/persistence/symmy-customer-plan.ts';
+import { reviseOperation } from '../../src/persistence/symmy-price-batch-plan.ts';
+import { groupOperation, priceOperation } from '../../src/persistence/symmy-price-list-plan.ts';
+import {
+  createProductOperation,
+  createVariantOperation,
+  updateProductOperation,
+  variantFactsOperation,
+} from '../../src/persistence/symmy-product-plan.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
+import { symmyCallInMode } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
 import {
   SymmyRouteEnrollmentRequestSchema,
   decideSymmyRouteWrite,
   symmyCoreRefusals,
-  symmyExecutorCallsOf,
   symmyOutstandingRefusals,
   symmyPlannedRouteRow,
   symmyRelatedRouteRefusals,
   symmyRetentionRefusals,
+  symmyRouteEnrollmentLockKey,
   symmyRouteInventoryOf,
   symmyRouteRequestRefusals,
+  symmyRuntimePrerequisites,
 } from '../../src/ops/symmy-route-enrollment.ts';
 import type {
   SymmyEnrollmentRouteKey,
+  SymmyRouteChange,
   SymmyRouteEnrollmentRequest,
   SymmyRouteInventory,
 } from '../../src/ops/symmy-route-enrollment.ts';
@@ -58,9 +78,14 @@ const groupDefinition = operation(
 );
 const createPriceGroup = operation('pricing.price-group-catalog', 'pricing.price-group-catalog.create-price-group');
 const createParty = operation('party.registry', 'party.registry.create-party');
+const onboard = operation('party.registry', 'party.registry.counterparty-customer-onboard');
 const retailProfile = operation(
   'commerce.customer-context',
   'commerce.customer-context.ensure-retail-customer-profile',
+);
+const counterpartyProfile = operation(
+  'commerce.customer-context',
+  'commerce.customer-context.create-counterparty-purchasing-profile',
 );
 const customerPage = operation(
   'commerce.customer-context',
@@ -215,15 +240,18 @@ const storedRow = (enrollment: SymmyRouteEnrollmentRequest, changes: Partial<Rou
   lifecyclePolicy: enrollment.lifecyclePolicy ?? null,
   ...changes,
 });
+const enroll: SymmyRouteChange = { kind: 'enroll' };
+const replaceAt = (currentRevision: string): SymmyRouteChange => ({ currentRevision, kind: 'replace' });
+const deactivateAt = (currentRevision: string): SymmyRouteChange => ({ currentRevision, kind: 'deactivate' });
 const decided = (
   enrollment: SymmyRouteEnrollmentRequest,
   existing: { readonly byRouteId?: RouteRow; readonly bySelector?: RouteRow },
-  replace = false,
+  change: SymmyRouteChange = enroll,
 ) =>
   decideSymmyRouteWrite(
     enrollment,
     { byRouteId: Option.fromUndefinedOr(existing.byRouteId), bySelector: Option.fromUndefinedOr(existing.bySelector) },
-    replace,
+    change,
   );
 const refusalCodes = (decision: ReturnType<typeof decideSymmyRouteWrite>) =>
   Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : [];
@@ -239,18 +267,56 @@ describe('Symmy route inventories', () => {
     for (const routeKey of enrollable) {
       const inventory = inventoryOf(routeKey);
       for (const enrolled of inventory.operations.filter(({ caller }) => caller === 'executor')) {
-        expect([routeKey, symmyExecutorCallsOf(inventory.admission, enrolled).length]).toEqual([routeKey, 1]);
-        for (const reading of enrolled.reads ?? []) {
-          const reads = symmyIntegrationRegisteredWorkloadCalls.filter(
+        for (const reference of [enrolled, ...(enrolled.reads ?? [])]) {
+          const calls = symmyIntegrationRegisteredWorkloadCalls.filter(
             (call) =>
-              call.entrypointKey === reading.entrypointKey &&
-              call.schemaVersion === reading.schemaVersion &&
-              !('recoveryOf' in call) &&
-              (inventory.admission === 'sync' ? 'sourceActionKey' in call : 'workerKey' in call),
+              symmyCallInMode(inventory.admission)(call) &&
+              call.entrypointKey === reference.entrypointKey &&
+              call.schemaVersion === reference.schemaVersion &&
+              !('recoveryOf' in call),
           );
-          expect([routeKey, reading.entrypointKey, reads.length]).toEqual([routeKey, reading.entrypointKey, 1]);
+          expect([routeKey, reference.entrypointKey, calls.length]).toEqual([routeKey, reference.entrypointKey, 1]);
         }
       }
+    }
+  });
+
+  it('lists every operation a plan builder calls in its route inventory, at the builder version and entity kind', () => {
+    const built: readonly (readonly [
+      Enrollable,
+      { readonly entrypointKey: string; readonly moduleId: string; readonly schemaVersion: string },
+      string | undefined,
+    ])[] = [
+      ['productsBatch', createProductOperation, 'PRODUCT'],
+      ['productsBatch', updateProductOperation, 'PRODUCT'],
+      ['productsBatch', createVariantOperation, 'VARIANT'],
+      ['productsBatch', variantFactsOperation, 'VARIANT'],
+      ['productsBatch', priceOperation, 'PRICE'],
+      ['priceListsBatchUpsert', groupOperation, 'PRICE_GROUP'],
+      ['priceListsBatchUpsert', priceOperation, 'PRICE'],
+      ['priceListPricesBatch', priceOperation, 'PRICE'],
+      ['priceListPricesBatch', reviseOperation, 'PRICE'],
+      ['customersBatch', createPartyOperation, undefined],
+      ['customersBatch', onboardOperation, undefined],
+      ['customersBatch', addContactOperation, undefined],
+      ['customersBatch', retailProfileOperation, undefined],
+      ['customersBatch', counterpartyProfileOperation, undefined],
+      ['customersBatch', addAddressOperation, undefined],
+      ['customersBatch', organizationIcoOperation, undefined],
+    ];
+    for (const [routeKey, builderOperation, entityKind] of built) {
+      const listed = inventoryOf(routeKey).operations.filter(
+        (candidate) =>
+          candidate.caller === 'executor' &&
+          candidate.moduleId === builderOperation.moduleId &&
+          candidate.entrypointKey === builderOperation.entrypointKey &&
+          candidate.schemaVersion === builderOperation.schemaVersion,
+      );
+      expect([
+        routeKey,
+        builderOperation.entrypointKey,
+        listed.map(({ entityKind: listedKind }) => listedKind),
+      ]).toEqual([routeKey, builderOperation.entrypointKey, [entityKind]]);
     }
   });
 
@@ -373,9 +439,29 @@ describe('Symmy route request refusals', () => {
     ).toEqual([]);
   });
 
-  it('keeps a company-scoped call and a company read off a Tenant-only route', () => {
-    expect(codes(request('productsBatch', {}, ['legalEntityId']))).toEqual(['company_scope_required']);
-    expect(codes(request('adminRegions', {}, ['legalEntityId']))).toEqual(['company_scope_required']);
+  it('keeps the routes of one company off a Tenant-only route', () => {
+    for (const routeKey of ['adminCustomers', 'adminRegions', 'customersBatch'] as const) {
+      expect([routeKey, codes(request(routeKey, {}, ['legalEntityId']))]).toEqual([
+        routeKey,
+        ['company_scope_required'],
+      ]);
+    }
+  });
+
+  it('requires a customers route to enroll a complete person or organization plan', () => {
+    expect(codes(withConfiguration('customersBatch', { items: [item('CUSTOMER', [createParty])] }))).toEqual([
+      'required_operation_missing',
+    ]);
+    expect(codes(withConfiguration('customersBatch', { items: [item('CUSTOMER', [createParty, onboard])] }))).toEqual([
+      'required_operation_missing',
+    ]);
+    expect(
+      codes(
+        withConfiguration('customersBatch', {
+          items: [item('CUSTOMER', [createParty, onboard, counterpartyProfile])],
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it('refuses mixed source identities and a write route without a lifecycle policy', () => {
@@ -457,6 +543,18 @@ describe('Symmy route state refusals', () => {
       symmyRelatedRouteRefusals(products, inventoryOf('productsBatch'), [otherRoute]).refusals.map(({ code }) => code),
     ).toEqual(['source_identity_differs_from_counterpart']);
     const customers = withConfiguration('customersBatch', { sourceRouteId });
+    const otherCompany = storedRow(
+      request('adminCustomers', {
+        configuration: { items: [item('CUSTOMER', [customerPage])], sourceRouteId },
+        legalEntityId: peerRouteId,
+        routeId: peerRouteId,
+      }),
+    );
+    expect(
+      symmyRelatedRouteRefusals(customers, inventoryOf('customersBatch'), [otherCompany]).refusals.map(
+        ({ detail }) => detail,
+      ),
+    ).toEqual([`Route ${peerRouteId} (adminCustomers) of the same source names another legalEntityId`]);
     const customerRead = storedRow(
       request('adminCustomers', {
         configuration: { items: [item('CUSTOMER', [customerPage])], sourceRouteId },
@@ -533,36 +631,102 @@ describe('Symmy route state refusals', () => {
 });
 
 describe('Symmy route write decisions', () => {
-  it('inserts a new route and leaves an exact replay unchanged', () => {
+  it('inserts a new route and leaves an exact replay, a retried replacement included, unchanged', () => {
     for (const routeKey of ['productsBatch', 'customerGroupCustomersBatch'] as const) {
       const enrollment = request(routeKey);
       expect(decided(enrollment, {})).toEqual({ kind: 'insert' });
       const stored = storedRow(enrollment);
-      expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, true)).toEqual({ kind: 'unchanged' });
+      expect(decided(enrollment, { byRouteId: stored, bySelector: stored })).toEqual({ kind: 'unchanged' });
+      expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt('route-v0'))).toEqual({
+        kind: 'unchanged',
+      });
     }
   });
 
-  it('refuses drift unless a replacement with a new revision is asked for', () => {
+  it('refuses drift unless a replacement from the current revision to a new one is asked for', () => {
     const enrollment = request('productsBatch');
     const stored = storedRow(enrollment, { routeRevision: 'route-v0' });
     expect(refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }))).toEqual(['route_drift']);
-    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, true)).toEqual({
+    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt('route-v0'))).toEqual({
       changed: ['routeRevision'],
       kind: 'replace',
+      previousRevision: 'route-v0',
     });
     const sameRevision = storedRow(enrollment, { mappingVersion: 'map-v0' });
-    expect(refusalCodes(decided(enrollment, { byRouteId: sameRevision, bySelector: sameRevision }, true))).toEqual([
-      'revision_not_advanced',
-    ]);
+    expect(
+      refusalCodes(decided(enrollment, { byRouteId: sameRevision, bySelector: sameRevision }, replaceAt('route-v1'))),
+    ).toEqual(['revision_not_advanced']);
     const inactive = storedRow(enrollment, { active: false });
     expect(refusalCodes(decided(enrollment, { byRouteId: inactive, bySelector: inactive }))).toEqual(['route_drift']);
+  });
+
+  it('refuses a stale replacement that would reinstall an older configuration over a newer one', () => {
+    // route-v1 replaced route-v0, then route-v2 replaced route-v1: retrying the first replacement changes nothing.
+    const older = request('productsBatch');
+    const newer = storedRow(request('productsBatch', { mappingVersion: 'map-v2', routeRevision: 'route-v2' }));
+    expect(refusalCodes(decided(older, { byRouteId: newer, bySelector: newer }, replaceAt('route-v0')))).toEqual([
+      'revision_not_current',
+    ]);
+  });
+
+  it('deactivates a route only at its current revision, once, and only when it is enrolled', () => {
+    const enrollment = request('productsBatch');
+    const stored = storedRow(enrollment);
+    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt('route-v1'))).toEqual({
+      kind: 'deactivate',
+      revision: 'route-v1',
+    });
+    expect(
+      refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt('route-v0'))),
+    ).toEqual(['revision_not_current']);
+    const inactive = storedRow(enrollment, { active: false });
+    expect(decided(enrollment, { byRouteId: inactive, bySelector: inactive }, deactivateAt('route-v1'))).toEqual({
+      kind: 'unchanged',
+    });
+    expect(refusalCodes(decided(enrollment, {}, deactivateAt('route-v1')))).toEqual(['route_not_enrolled']);
   });
 
   it('never rebinds a route id or a selector to another route', () => {
     const enrollment = request('productsBatch');
     const other = storedRow(enrollment, { routeId: peerRouteId });
-    expect(refusalCodes(decided(enrollment, { bySelector: other }, true))).toEqual(['route_id_conflict']);
+    expect(refusalCodes(decided(enrollment, { bySelector: other }, replaceAt('route-v1')))).toEqual([
+      'route_id_conflict',
+    ]);
     const elsewhere = storedRow(enrollment, { routeKey: 'adminProducts' });
     expect(refusalCodes(decided(enrollment, { byRouteId: elsewhere }))).toEqual(['route_id_conflict']);
+  });
+
+  it('locks every enrollment of one Tenant, principal and source on one key, whatever the company', () => {
+    const products = request('productsBatch');
+    const key = symmyRouteEnrollmentLockKey(products);
+    expect(symmyRouteEnrollmentLockKey(request('productsBatch', { legalEntityId: peerRouteId }))).toBe(key);
+    expect(symmyRouteEnrollmentLockKey(request('adminProducts'))).toBe(key);
+    expect(symmyRouteEnrollmentLockKey(request('productsBatch', { principalId: peerRouteId }))).not.toBe(key);
+    expect(symmyRouteEnrollmentLockKey(request('customersBatch'))).not.toBe(key);
+    expect(symmyRouteEnrollmentLockKey(request('customerGroupCustomersBatch'))).toBe(
+      symmyRouteEnrollmentLockKey(request('customerGroupsBatch')),
+    );
+    expect(symmyRouteEnrollmentLockKey(request('adminRegions'))).toBe(
+      `symmy-route-enrollment:${tenantId}:${principalId}:adminRegions`,
+    );
+  });
+});
+
+const prerequisitesOf = (routeKey: Enrollable) =>
+  symmyRuntimePrerequisites(request(routeKey)).map(({ checked, configuration }) => `${configuration}:${checked}`);
+
+describe('Symmy route runtime prerequisites', () => {
+  it('names the Shell and Symmy configuration a route needs and what a sender observes without it', () => {
+    expect(prerequisitesOf('adminRegions')).toEqual(['ONTOS_SYMMY_REGIONS_PROJECTION:not_checked']);
+    expect(prerequisitesOf('priceLists')).toEqual(['ONTOS_SYMMY_PRICE_READ_SOURCES:not_checked']);
+    expect(prerequisitesOf('priceListPricesBatch')).toEqual([
+      'ONTOS_SYMMY_PRICE_READ_SOURCES:not_checked',
+      'ONTOS_SYMMY_JOB_RETENTION_POLICIES:operator_copy_only',
+    ]);
+    expect(prerequisitesOf('productsBatch')).toEqual(['ONTOS_SYMMY_JOB_RETENTION_POLICIES:operator_copy_only']);
+    expect(prerequisitesOf('adminProducts')).toEqual([]);
+    for (const prerequisite of symmyRuntimePrerequisites(request('adminRegions'))) {
+      expect(prerequisite.whenMissing).toContain('projection_not_configured');
+    }
   });
 });

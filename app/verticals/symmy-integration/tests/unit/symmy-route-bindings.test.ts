@@ -7,10 +7,11 @@ import {
   checkSymmyRouteBindings,
   deriveSymmyRouteBindings,
   symmyBindingWorkloads,
+  symmyCallInMode,
 } from '../../src/ops/symmy-route-bindings.ts';
 import type { SymmyRequiredBinding, SymmyRouteContract } from '../../src/ops/symmy-route-bindings.ts';
 import { symmyRouteInventoryOf } from '../../src/ops/symmy-route-enrollment.ts';
-import type { SymmyRouteInventory } from '../../src/ops/symmy-route-enrollment.ts';
+import type { SymmyEnrollmentRouteKey, SymmyRouteInventory } from '../../src/ops/symmy-route-enrollment.ts';
 
 const admit = 'integration.symmy-admit';
 const poll = 'integration.symmy-poll';
@@ -24,17 +25,27 @@ const systemId = '22222222-2222-4222-8222-222222222222';
 const otherSystemId = '33333333-3333-4333-8333-333333333333';
 
 type Surface = SymmyRouteContract['manifest']['publicSurface'];
+type Calls = NonNullable<SymmyRouteContract['manifest']['registeredWorkloadCalls']>;
+type Requirement = NonNullable<SymmyRouteContract['manifest']['requirements']>['operations'][number];
+/** The requirements by which an operation names the operations its calls reach, as an owner manifest declares them. */
+const requires = (entrypointKey: string, calls: readonly Calls[number][]): Requirement[] =>
+  calls.map((call) => ({
+    entrypointKey,
+    provider: { entrypointKey: call.entrypointKey, schemaVersion: call.schemaVersion },
+  }));
 const contract = (
   appId: string,
   moduleId: string,
   surface: Partial<Surface>,
-  calls: NonNullable<SymmyRouteContract['manifest']['registeredWorkloadCalls']> = [],
+  calls: Calls = [],
+  operations: readonly Requirement[] = [],
 ): SymmyRouteContract => ({
   deployment: { appId },
   manifest: {
     module: { id: moduleId },
     publicSurface: { actions: surface.actions ?? [], operationContracts: surface.operationContracts ?? [] },
     registeredWorkloadCalls: calls,
+    requirements: { intrinsic: [], operations },
   },
 });
 const carrier = (entrypointKey: string, workloads: readonly string[], declarationKey = `${entrypointKey}.read`) => ({
@@ -58,19 +69,29 @@ const receivingRead = (entrypointKey: string) =>
     .slice(0, 1)
     .map((call) => carrier(entrypointKey, [call.workloadKey], call.declarationKey));
 
-const symmy = contract('symmy-integration', 'integration.symmy', {
-  actions: [
+/** Symmy as installed: its carriers, the calls it declares and the job requirements naming them. */
+const symmyWith = (calls: Calls, operations: readonly Requirement[]) =>
+  contract(
+    'symmy-integration',
+    'integration.symmy',
     {
-      accessWorkload: { workloads: [admit] },
-      entrypoint: { entrypointKey: 'integration.symmy.admit-symmy-job' },
-      schemaVersion: '1',
+      actions: [
+        {
+          accessWorkload: { workloads: [admit] },
+          entrypoint: { entrypointKey: 'integration.symmy.admit-symmy-job' },
+          schemaVersion: '1',
+        },
+      ],
+      operationContracts: [
+        carrier('integration.symmy.api.symmy-route-context', [admit, poll]),
+        carrier('integration.symmy.api.symmy-job-status', [poll]),
+      ],
     },
-  ],
-  operationContracts: [
-    carrier('integration.symmy.api.symmy-route-context', [admit, poll]),
-    carrier('integration.symmy.api.symmy-job-status', [poll]),
-  ],
-});
+    calls,
+    operations,
+  );
+const jobCalls = symmyIntegrationRegisteredWorkloadCalls.filter(symmyCallInMode('job'));
+const symmy = symmyWith(symmyIntegrationRegisteredWorkloadCalls, requires(SYMMY_JOB_KEY, jobCalls));
 const nestedCall = {
   audience: 'price-group-catalog',
   declarationKey: 'pricing.price-group-catalog.nested.read',
@@ -100,6 +121,10 @@ const catalog = contract(
     ],
   },
   [nestedCall, nestedRecoveryCall],
+  [
+    ...requires('commerce.catalog.create-product', [nestedCall]),
+    ...requires('commerce.catalog.api.create-product-recovery', [nestedRecoveryCall]),
+  ],
 );
 const priceGroups = contract('price-group-catalog', 'pricing.price-group-catalog', {
   operationContracts: [
@@ -109,21 +134,26 @@ const priceGroups = contract('price-group-catalog', 'pricing.price-group-catalog
   ],
 });
 
-const products = (): SymmyRouteInventory => {
-  const found = symmyRouteInventoryOf('productsBatch');
+const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => {
+  const found = symmyRouteInventoryOf(routeKey);
   if ('code' in found || found._tag === 'None') {
-    throw new Error('expected the products inventory');
+    throw new Error(`expected the ${routeKey} inventory`);
   }
   return found.value;
 };
+const products = () => inventoryOf('productsBatch');
+const enrolledOf = (routeKey: SymmyEnrollmentRouteKey, entrypointKeys: readonly string[]) =>
+  inventoryOf(routeKey).operations.filter(({ entrypointKey }) => entrypointKeys.includes(entrypointKey));
 const enrolledProducts = () =>
-  products().operations.filter(
-    ({ entrypointKey }) =>
-      entrypointKey === 'commerce.catalog.create-product' ||
-      entrypointKey === 'pricing.price-group-catalog.api.price-group-source-associations',
-  );
+  enrolledOf('productsBatch', [
+    'commerce.catalog.create-product',
+    'pricing.price-group-catalog.api.price-group-source-associations',
+  ]);
+/** The worker call of the Catalog Product create, as Symmy declares it. */
+const createProduct = (call: Calls[number]) =>
+  call.entrypointKey === 'commerce.catalog.create-product' && 'workerKey' in call;
 const derive = (contracts: readonly SymmyRouteContract[]) =>
-  deriveSymmyRouteBindings({ contracts, enrolled: enrolledProducts(), inventory: products() });
+  deriveSymmyRouteBindings({ companyScoped: true, contracts, enrolled: enrolledProducts(), inventory: products() });
 const workloadsOf = (bindings: readonly SymmyRequiredBinding[], identity: SymmyRequiredBinding['identity']) =>
   bindings.filter((binding) => binding.identity === identity).map(({ workloads }) => workloads.join(' | '));
 
@@ -138,13 +168,13 @@ describe('Symmy route bindings', () => {
       poll,
       groupRead,
       productImport,
-      productRead,
       nestedWrite,
+      productRead,
     ]);
     expect(workloadsOf(plan.bindings, 'executor')).toEqual([
       productImport,
-      productRead,
       nestedWrite,
+      productRead,
       nestedRecovery,
       SYMMY_JOB_KEY,
     ]);
@@ -162,6 +192,113 @@ describe('Symmy route bindings', () => {
       'pricing.price-group-catalog.api.price-group-source-associations@1 is not published by pricing.price-group-catalog',
       expect.stringContaining('pricing.price-group-catalog.api.nested@1'),
       expect.stringContaining('pricing.price-group-catalog.api.nested-recovery@1'),
+    ]);
+  });
+
+  it('refuses a call the deployed Symmy does not declare, even when its receiver publishes it', () => {
+    const undeclared = symmyWith(
+      symmyIntegrationRegisteredWorkloadCalls.filter((call) => !createProduct(call)),
+      requires(SYMMY_JOB_KEY, jobCalls),
+    );
+    expect(derive([undeclared, catalog, priceGroups]).refusals).toEqual([
+      {
+        code: 'call_not_declared',
+        detail: 'The installed integration.symmy declares no single job call of commerce.catalog.create-product@2',
+      },
+    ]);
+    const unrequired = symmyWith(
+      symmyIntegrationRegisteredWorkloadCalls,
+      requires(
+        SYMMY_JOB_KEY,
+        jobCalls.filter((call) => !createProduct(call)),
+      ),
+    );
+    expect(derive([unrequired, catalog, priceGroups]).refusals).toEqual([
+      {
+        code: 'call_not_declared',
+        detail: `The installed integration.symmy names commerce.catalog.create-product@2 as no requirement of ${SYMMY_JOB_KEY}`,
+      },
+    ]);
+  });
+
+  it('asks only for the nested calls the owner names for the enrolled operation, not for its whole workload', () => {
+    const sourceWrite = 'commerce.customer-context.source-write';
+    const privacyCheck = {
+      audience: 'privacy',
+      declarationKey: 'privacy.core.source-processing-eligibility.read',
+      entrypointKey: 'privacy.core.api.source-processing-eligibility',
+      jobKey: SYMMY_JOB_KEY,
+      legalEntityScope: 'required' as const,
+      schemaVersion: '1',
+      sourceWorkloadKey: sourceWrite,
+      workloadKey: 'privacy.core.source-processing-check',
+    };
+    const compatibility = {
+      ...privacyCheck,
+      audience: 'price-group-catalog',
+      declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
+      entrypointKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
+      legalEntityScope: 'forbidden' as const,
+      workloadKey: groupRead,
+    };
+    const customerContext = contract(
+      'commerce-customer-context',
+      'commerce.customer-context',
+      {
+        actions: receivingAction('commerce.customer-context.apply-customer-group-membership-source'),
+        operationContracts: [
+          ...receivingRead('commerce.customer-context.api.customer-group-definition-source'),
+          ...receivingRead('commerce.customer-context.api.customer-group-membership-source-receipt'),
+        ],
+      },
+      [privacyCheck, compatibility],
+      [
+        ...requires('commerce.customer-context.apply-customer-group-membership-source', [privacyCheck]),
+        ...requires('commerce.customer-context.assign-customer-price-group', [compatibility]),
+      ],
+    );
+    const privacy = contract('privacy', 'privacy.core', {
+      operationContracts: [
+        carrier(privacyCheck.entrypointKey, [privacyCheck.workloadKey], privacyCheck.declarationKey),
+      ],
+    });
+    const compatibilityReceiver = contract('price-group-catalog', 'pricing.price-group-catalog', {
+      operationContracts: [carrier(compatibility.entrypointKey, [groupRead], compatibility.declarationKey)],
+    });
+    const membership = inventoryOf('customerGroupCustomersBatch');
+    const plan = deriveSymmyRouteBindings({
+      companyScoped: true,
+      contracts: [symmy, customerContext, privacy, compatibilityReceiver],
+      enrolled: membership.operations,
+      inventory: membership,
+    });
+    expect(plan.refusals).toEqual([]);
+    expect(plan.moduleKeys).toEqual(['commerce.customer-context', 'integration.symmy', 'privacy.core']);
+    expect(workloadsOf(plan.bindings, 'executor')).toEqual([
+      sourceWrite,
+      privacyCheck.workloadKey,
+      'commerce.customer-context.source-read',
+      SYMMY_JOB_KEY,
+    ]);
+    expect(symmyBindingWorkloads(plan.bindings)).not.toContain(groupRead);
+  });
+
+  it('refuses a company-scoped call on a route that passes no company to it', () => {
+    const pricing = contract('pricing', 'commerce.pricing', {
+      actions: receivingAction('commerce.pricing.define-price'),
+      operationContracts: receivingRead('commerce.pricing.api.price-source-result-lookup'),
+    });
+    const prices = (companyScoped: boolean) =>
+      deriveSymmyRouteBindings({
+        companyScoped,
+        contracts: [symmy, pricing],
+        enrolled: enrolledOf('productsBatch', ['commerce.pricing.define-price']),
+        inventory: products(),
+      }).refusals;
+    expect(prices(true)).toEqual([]);
+    expect(prices(false).map(({ code, detail }) => `${code}: ${detail}`)).toEqual([
+      'company_scope_required: commerce.pricing.define-price@2 is published for a company, which this route does not pass to it',
+      'company_scope_required: commerce.pricing.api.price-source-result-lookup@1 is published for a company, which this route does not pass to it',
     ]);
   });
 

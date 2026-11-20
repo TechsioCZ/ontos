@@ -1,29 +1,31 @@
 #!/usr/bin/env node
 /**
- * Operator command: enroll one Symmy route of one Tenant and company.
+ * Operator command: enroll, replace or deactivate one Symmy route of one Tenant and company.
  *
- *   pnpm --filter @app/symmy-integration ops:route-enrollment dry-run --request route.json
- *   pnpm --filter @app/symmy-integration ops:route-enrollment apply --request route.json [--replace]
+ *   pnpm --filter @app/symmy-integration ops:route-enrollment dry-run --request route.json [--replace <revision> | --deactivate <revision>]
+ *   pnpm --filter @app/symmy-integration ops:route-enrollment apply --request route.json --operator <ref> --reason <text> [--replace <revision> | --deactivate <revision>]
  *   pnpm --filter @app/symmy-integration ops:route-enrollment verify --request route.json
  *
- * The request is the reviewed route (`SymmyRouteEnrollmentRequestSchema`). The command connects with
- * DATABASE_ADMIN_URL (the route is writable only by the migration and operator login), reads the active Application
- * Composition from ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL and the retention configuration from
- * ONTOS_SYMMY_JOB_RETENTION_POLICIES. It prints every refusal, or the receipt with the bindings the route needs and
- * the system principal that runs each executor workload. It grants no binding and calls no owner.
+ * The request is the reviewed route (`SymmyRouteEnrollmentRequestSchema`). --replace and --deactivate name the revision
+ * the operator read as the route's current one; the change is refused once the route is at another. An apply records
+ * the operator reference and reason with the change. The command connects with DATABASE_ADMIN_URL (the route is
+ * writable only by the migration and operator login), reads the active Application Composition from
+ * ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL and the retention configuration from ONTOS_SYMMY_JOB_RETENTION_POLICIES. It
+ * prints every refusal, or the receipt with the bindings the route needs, the system principal that runs each executor
+ * workload and the runtime configuration it cannot check. It grants no binding and calls no owner.
  */
 import { DatabaseConfig, parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { CoreDatabaseLive } from '@app/core-runtime/db/client';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
+import { Config, Console, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
 import { SymmyRouteEnrollmentRefused } from '../src/ops/symmy-route-enrollment-refused.ts';
 import { SymmyRouteEnrollmentReceiptSchema, runSymmyRouteEnrollment } from '../src/ops/symmy-route-enrollment-store.ts';
 import { SymmyRouteEnrollmentUnavailable } from '../src/ops/symmy-route-enrollment-unavailable.ts';
-import type { SymmyRouteEnrollmentMode } from '../src/ops/symmy-route-enrollment-store.ts';
+import type { SymmyRouteChange } from '../src/ops/symmy-route-enrollment.ts';
 
 const adminUnavailable = (cause: unknown) =>
   new SymmyRouteEnrollmentUnavailable({
@@ -62,9 +64,23 @@ const CompositionLive = ActiveApplicationCompositionConfigLive.pipe(
 const EnrollmentLive = Layer.mergeAll(CoreDatabaseLive.pipe(Layer.provide(AdminDatabaseConfigLive)), CompositionLive);
 
 const requestFlag = Flag.String('request').pipe(Flag.withDescription('Path of the reviewed route request JSON'));
-const replaceFlag = Flag.Boolean('replace').pipe(
-  Flag.withDescription('Replace the enrolled route of this selector; refused while it has outstanding jobs'),
+const replaceFlag = Flag.String('replace').pipe(
+  Flag.withDescription(
+    'Replace the enrolled route of this selector, which is at this revision; refused while it has outstanding jobs',
+  ),
+  Flag.optional,
 );
+const deactivateFlag = Flag.String('deactivate').pipe(
+  Flag.withDescription(
+    'Deactivate the enrolled route of this selector, which is at this revision; refused while it has outstanding jobs',
+  ),
+  Flag.optional,
+);
+const changeFlags = { deactivate: deactivateFlag, replace: replaceFlag, request: requestFlag };
+const operatorFlag = Flag.String('operator').pipe(
+  Flag.withDescription('Reference of the operator applying the change, recorded with it'),
+);
+const reasonFlag = Flag.String('reason').pipe(Flag.withDescription('Why the change is applied, recorded with it'));
 
 const encodeReceipt = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteEnrollmentReceiptSchema));
 const isRefused = Schema.is(SymmyRouteEnrollmentRefused);
@@ -75,31 +91,70 @@ const reportFailure = (failure: SymmyRouteEnrollmentRefused | SymmyRouteEnrollme
     ? Effect.forEach(failure.refusals, ({ code, detail }) => Console.error(`${code}: ${detail}`), { discard: true })
     : Console.error(failure.reason);
 
+/** The change the flags ask for: at most one of a replacement and a deactivation, each at its current revision. */
+const changeOf = (flags: {
+  readonly deactivate: Option.Option<string>;
+  readonly replace: Option.Option<string>;
+}): Effect.Effect<SymmyRouteChange, SymmyRouteEnrollmentRefused> => {
+  if (Option.isSome(flags.replace) && Option.isSome(flags.deactivate)) {
+    return Effect.fail(
+      new SymmyRouteEnrollmentRefused({
+        refusals: [{ code: 'invalid_request', detail: 'A run replaces or deactivates a route, never both' }],
+      }),
+    );
+  }
+  return Effect.succeed(
+    Option.match(flags.replace, {
+      onNone: () =>
+        Option.match(flags.deactivate, {
+          onNone: (): SymmyRouteChange => ({ kind: 'enroll' }),
+          onSome: (currentRevision): SymmyRouteChange => ({ currentRevision, kind: 'deactivate' }),
+        }),
+      onSome: (currentRevision): SymmyRouteChange => ({ currentRevision, kind: 'replace' }),
+    }),
+  );
+};
+
 const enroll = Effect.fn('SymmyRouteEnrollmentCommand.enroll')(function* enroll(
-  mode: SymmyRouteEnrollmentMode,
   path: string,
-  replace: boolean,
+  change: SymmyRouteChange,
+  run: Parameters<typeof runSymmyRouteEnrollment>[0]['run'],
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const text = yield* fileSystem.readFileString(path);
   const request = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text);
-  const receipt = yield* runSymmyRouteEnrollment({ mode, replace, request }).pipe(Effect.tapError(reportFailure));
+  const receipt = yield* runSymmyRouteEnrollment({ change, request, run }).pipe(Effect.tapError(reportFailure));
   yield* Console.log(yield* encodeReceipt(receipt));
 });
 
-const writeCommand = (mode: Exclude<SymmyRouteEnrollmentMode, 'verify'>, description: string) =>
-  Command.make(mode, { replace: replaceFlag, request: requestFlag }, ({ replace, request }) =>
-    enroll(mode, request, replace),
-  ).pipe(
-    Command.withDescription(description),
-    Command.provide(() => EnrollmentLive),
-  );
-
 const cli = Command.make('symmy-route-enrollment').pipe(
   Command.withSubcommands([
-    writeCommand('dry-run', 'Check the route against Core, the composition and the retention policies'),
-    writeCommand('apply', 'Check, write and read back the route; an identical route stays unchanged'),
-    Command.make('verify', { request: requestFlag }, ({ request }) => enroll('verify', request, false)).pipe(
+    Command.make('dry-run', changeFlags, (flags) =>
+      changeOf(flags).pipe(
+        Effect.tapError(reportFailure),
+        Effect.flatMap((change) => enroll(flags.request, change, { mode: 'dry-run' })),
+      ),
+    ).pipe(
+      Command.withDescription('Check the change against Core, the composition and the retention policies'),
+      Command.provide(() => EnrollmentLive),
+    ),
+    Command.make('apply', { ...changeFlags, operator: operatorFlag, reason: reasonFlag }, (flags) =>
+      changeOf(flags).pipe(
+        Effect.tapError(reportFailure),
+        Effect.flatMap((change) =>
+          enroll(flags.request, change, {
+            attribution: { operatorRef: flags.operator, reason: flags.reason },
+            mode: 'apply',
+          }),
+        ),
+      ),
+    ).pipe(
+      Command.withDescription('Check, write, read back and record the change; an identical route stays unchanged'),
+      Command.provide(() => EnrollmentLive),
+    ),
+    Command.make('verify', { request: requestFlag }, ({ request }) =>
+      enroll(request, { kind: 'enroll' }, { mode: 'verify' }),
+    ).pipe(
       Command.withDescription('Check that the enrolled route equals the request and its facts still hold'),
       Command.provide(() => EnrollmentLive),
     ),

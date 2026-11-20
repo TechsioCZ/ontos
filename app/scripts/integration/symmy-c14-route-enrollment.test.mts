@@ -31,6 +31,7 @@ import {
 } from './support/symmy-c14-product-runtime.mts';
 
 const workerKey = 'integration.symmy.execute-symmy-job';
+const operatorRef = 'operator:internal-c14';
 const catalogModule = 'commerce.catalog';
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -45,6 +46,9 @@ const ReceiptSchema = Schema.fromJsonString(
 );
 const AcceptedSchema = Schema.Struct({ jobId: JobIdSchema, status: Schema.Literal('queued') });
 const JobSchema = Schema.Struct({ jobId: JobIdSchema, status: Schema.String });
+const RecordsSchema = Schema.Array(
+  Schema.Struct({ change: Schema.String, operator_ref: Schema.String, route_id: RouteIdSchema }),
+);
 const ProductsSchema = Schema.Struct({
   products: Schema.Array(Schema.Struct({ sourceRecordId: Schema.String.pipe(Schema.brand('SourceRecordId')) })),
 });
@@ -85,7 +89,21 @@ const runEnrollmentCommand = Effect.fn('SymmyC14RouteEnrollment.command')(functi
   yield* fs.writeFileString(requestPath, JSON.stringify(request));
   const child = yield* ChildProcess.make(
     'mise',
-    ['exec', '--', 'pnpm', '--silent', 'run', 'ops:route-enrollment', 'apply', '--request', requestPath],
+    [
+      'exec',
+      '--',
+      'pnpm',
+      '--silent',
+      'run',
+      'ops:route-enrollment',
+      'apply',
+      '--request',
+      requestPath,
+      '--operator',
+      operatorRef,
+      '--reason',
+      'INTERNAL_C14 enrolls the products routes of a fresh Tenant',
+    ],
     {
       cwd: `${c14AppRoot}/verticals/symmy-integration`,
       env: environment,
@@ -292,6 +310,15 @@ it.live(
           outcome: 'unchanged',
           routeId: productsRouteId,
         });
+        // Each applied enrollment is recorded once with its operator; the unchanged replay records nothing.
+        const recorded =
+          yield* admin`select change, operator_ref, route_id from symmy_integration.route_enrollment_records where tenant_id=${tenantId} order by recorded_at, record_id`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(RecordsSchema)),
+          );
+        expect(recorded).toEqual([
+          { change: 'enroll', operator_ref: operatorRef, route_id: productsRouteId },
+          { change: 'enroll', operator_ref: operatorRef, route_id: productsReadRouteId },
+        ]);
 
         const [catalogArtifacts, symmyArtifacts] = yield* Effect.all([
           buildProductOwner(catalog),

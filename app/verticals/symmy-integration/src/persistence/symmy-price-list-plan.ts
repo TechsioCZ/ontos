@@ -14,7 +14,7 @@ import type {
 } from '../../shared/domain/symmy-price-list-batch.ts';
 import { uuidFromDigest } from './derived-identity.ts';
 
-const groupOperation = {
+export const groupOperation = {
   entrypointKey: 'pricing.price-group-catalog.create-price-group',
   moduleId: 'pricing.price-group-catalog',
   schemaVersion: '1',

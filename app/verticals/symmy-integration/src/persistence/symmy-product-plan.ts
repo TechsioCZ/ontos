@@ -15,22 +15,22 @@ import { enrolledItem, instant, priceContextOf, priceOperation } from './symmy-p
 import type { Digest, PriceContext } from './symmy-price-list-plan.ts';
 
 const catalogModule = 'commerce.catalog';
-const createProductOperation = {
+export const createProductOperation = {
   entrypointKey: 'commerce.catalog.create-product',
   moduleId: catalogModule,
   schemaVersion: '2',
 } as const;
-const createVariantOperation = {
+export const createVariantOperation = {
   entrypointKey: 'commerce.catalog.create-variant',
   moduleId: catalogModule,
   schemaVersion: '2',
 } as const;
-const updateProductOperation = {
+export const updateProductOperation = {
   entrypointKey: 'commerce.catalog.update-product',
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
-const variantFactsOperation = {
+export const variantFactsOperation = {
   entrypointKey: 'commerce.catalog.set-variant-localized-facts',
   moduleId: catalogModule,
   schemaVersion: '1',

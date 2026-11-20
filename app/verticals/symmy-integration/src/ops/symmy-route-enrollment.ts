@@ -8,11 +8,15 @@
  * - every route kind has an operation inventory except the stock route, which waits on its Inventory backend;
  * - the configuration names owner operations only (never an executable intent), each one in the route's inventory
  *   (what the route's admission plan and executor call and what its Shell dispatch reads), with every required one;
- * - an operation whose published call needs a company is never enrolled on a Tenant-only route;
+ * - a route that reads or writes one company's data names that company, and a customers route enrolls at least one
+ *   complete customer plan;
  * - the routes of one source share the logical source identity their readers and writers compare;
  * - the lifecycle policy is one the retention configuration names for exactly this route;
- * - an exact replay changes nothing, any other difference is refused unless the operator asks to replace the route,
- *   and a replacement is refused while the route has outstanding work.
+ * - an exact replay changes nothing, any other difference is refused unless the operator asks to replace the route at
+ *   its current revision, and a replacement or deactivation is refused while the route has outstanding work.
+ *
+ * The owner operations come from the plan builders that call them, so a builder and its route inventory never name two
+ * versions of one operation.
  */
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
@@ -28,7 +32,23 @@ import {
 import type { SymmyJobRetentionPolicy } from '../../shared/domain/symmy-job-retention.ts';
 import { SymmyDecodedSourceSelectorSchema } from '../../shared/domain/symmy-source-selector.ts';
 import type { symmyJobRoutes } from '../db/schema.ts';
-import { symmyIntegrationRegisteredWorkloadCalls } from '../registered-workload-calls.ts';
+import {
+  addAddressOperation,
+  addContactOperation,
+  counterpartyProfileOperation,
+  createPartyOperation,
+  onboardOperation,
+  organizationIcoOperation,
+  retailProfileOperation,
+} from '../persistence/symmy-customer-plan.ts';
+import { reviseOperation } from '../persistence/symmy-price-batch-plan.ts';
+import { groupOperation, priceOperation } from '../persistence/symmy-price-list-plan.ts';
+import {
+  createProductOperation,
+  createVariantOperation,
+  updateProductOperation,
+  variantFactsOperation,
+} from '../persistence/symmy-product-plan.ts';
 import { SymmyRouteEnrollmentRefused } from './symmy-route-enrollment-refused.ts';
 import type { SymmyRouteEnrollmentRefusal, SymmyRouteEnrollmentRefusalCode } from './symmy-route-enrollment-refused.ts';
 
@@ -39,9 +59,7 @@ const pricingModule = 'commerce.pricing';
 const priceGroupModule = 'pricing.price-group-catalog';
 const partyModule = 'party.registry';
 const customerModule = 'commerce.customer-context';
-const definePrice = 'commerce.pricing.define-price';
-const revisePrice = 'commerce.pricing.revise-price';
-const priceWrites: ReadonlySet<string> = new Set([definePrice, revisePrice]);
+const priceWrites: ReadonlySet<string> = new Set([priceOperation.entrypointKey, reviseOperation.entrypointKey]);
 
 const RouteKeySchema = SymmyRouteContextRequestSchema.fields.routeKey;
 export type SymmyEnrollmentRouteKey = typeof RouteKeySchema.Type;
@@ -81,6 +99,10 @@ export interface SymmyRouteCallRef {
   readonly entrypointKey: string;
   readonly schemaVersion: string;
 }
+/** One owner operation, as a plan builder calls it. */
+export interface SymmyOwnerOperation extends SymmyRouteCallRef {
+  readonly moduleId: string;
+}
 export interface SymmyRouteInventoryOperation extends SymmyRouteCallRef {
   readonly caller: typeof SymmyRouteCallerSchema.Type;
   /** The item entity kind the admission plan reads an executor operation from. */
@@ -101,8 +123,10 @@ export interface SymmyRouteInventory {
   /** How the route admits work: a durable job, a synchronous admission, or none (a read). */
   readonly admission: 'job' | 'read' | 'sync';
   readonly admissionReads?: readonly SymmyRouteAdmissionRead[];
-  /** The route reads a company's data and is unusable without one. */
+  /** The route reads or writes a company's data and is unusable without one. */
   readonly companyRequired?: boolean;
+  /** The complete owner plans of which the route enrolls at least one, each serving a request alone. */
+  readonly completePlans?: readonly (readonly SymmyOwnerOperation[])[];
   readonly family?: SourceFamily;
   readonly operations: readonly SymmyRouteInventoryOperation[];
   /** The route is one per selected Customer Group: it names a route code and the selector it resolves to. */
@@ -111,9 +135,7 @@ export interface SymmyRouteInventory {
   readonly uniformEntityKind?: boolean;
 }
 const executor = (
-  moduleId: string,
-  entrypointKey: string,
-  schemaVersion: string,
+  { entrypointKey, moduleId, schemaVersion }: SymmyOwnerOperation,
   options: {
     readonly entityKind?: string;
     readonly reads?: readonly SymmyRouteCallRef[];
@@ -145,6 +167,12 @@ const shellRead = (moduleId: string, entrypointKey: string, required = false): S
 const read = (entrypointKey: string): SymmyRouteCallRef => ({ entrypointKey, schemaVersion: '1' });
 const catalogSourceProducts = read('commerce.catalog.api.catalog-source-products');
 const priceGroupAssociations = read('pricing.price-group-catalog.api.price-group-source-associations');
+/** The Customer Group operations the synchronous admission and the membership adapter call; no plan builder names them. */
+const customerGroupOperation = (entrypointKey: string): SymmyOwnerOperation => ({
+  entrypointKey,
+  moduleId: customerModule,
+  schemaVersion: '1',
+});
 
 /**
  * The route-specific operation inventories, each read from the code that plans, executes and dispatches the route:
@@ -159,15 +187,18 @@ const priceGroupAssociations = read('pricing.price-group-catalog.api.price-group
  * - priceListPricesBatch: the define and revise `buildSymmyPriceBatchPlan` looks up; the current definition and
  *   association reads of `verifyBatchPriceGroup`; the association read the Shell requires (`requireSourcedPriceGroup`).
  * - customersBatch: the Party and Customer Context operations `buildSymmyCustomerPlan` looks up on the entity kind of
- *   its Party create; the current profile read before a company ICO change (`currentOrganizationIcoTarget`); the
- *   Privacy intake check the admission makes with the integration principal (`requireSymmyCustomerIntakePrivacy`).
+ *   its Party create, which builds no plan without the route's company and needs a person plan (Party create, Retail
+ *   profile) or an organization plan (Party create, Counterparty onboarding and profile) (`enrolledSource`); the
+ *   current profile read before a company ICO change (`currentOrganizationIcoTarget`); the Privacy intake check the
+ *   admission makes with the integration principal (`requireSymmyCustomerIntakePrivacy`).
  * - customerGroupsBatch: the Customer Group create and update a synchronous admission executes (`syncIntentAllowed`).
  * - customerGroupCustomersBatch: the membership apply of one selected Customer Group and the group definition read
  *   the adapter makes before it (`currentMembershipDefinition`).
  * - adminProducts, adminCustomers, priceLists, adminRegions: the reads `SymmyGovernedDispatch.read` and its
  *   projections require (`requireRouteRead`, `requireReadOperation`) or use when the route enrolls them
- *   (`routeAllows`). priceLists also lends its price reads to a REVISE of priceListPricesBatch
- *   (`readSymmyPriceBatchFacts`).
+ *   (`routeAllows`). The customer page read is published for a company only (its `legalEntityScope: 'required'`)
+ *   and so is the regions projection (`route.legalEntityId === undefined` answers projection_not_configured).
+ *   priceLists also lends its price reads to a REVISE of priceListPricesBatch (`readSymmyPriceBatchFacts`).
  *
  * The job read (GET jobs/{id}) has no route: it is the poll workload every job route requires of its key.
  */
@@ -176,6 +207,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     'adminCustomers',
     {
       admission: 'read',
+      companyRequired: true,
       family: 'customers',
       operations: [
         shellRead(customerModule, 'commerce.customer-context.api.customer-profile-source-page', true),
@@ -214,7 +246,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'job',
       family: 'customerGroups',
       operations: [
-        executor(customerModule, 'commerce.customer-context.apply-customer-group-membership-source', '1', {
+        executor(customerGroupOperation('commerce.customer-context.apply-customer-group-membership-source'), {
           reads: [read('commerce.customer-context.api.customer-group-definition-source')],
           required: true,
         }),
@@ -228,8 +260,8 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'sync',
       family: 'customerGroups',
       operations: [
-        executor(customerModule, 'commerce.customer-context.create-customer-group', '1', { required: true }),
-        executor(customerModule, 'commerce.customer-context.update-customer-group', '1'),
+        executor(customerGroupOperation('commerce.customer-context.create-customer-group'), { required: true }),
+        executor(customerGroupOperation('commerce.customer-context.update-customer-group')),
       ],
     },
   ],
@@ -238,17 +270,20 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     {
       admission: 'job',
       admissionReads: [{ ...read('privacy.core.api.source-processing-eligibility'), moduleId: 'privacy.core' }],
+      companyRequired: true,
+      completePlans: [
+        [createPartyOperation, retailProfileOperation],
+        [createPartyOperation, onboardOperation, counterpartyProfileOperation],
+      ],
       family: 'customers',
       operations: [
-        executor(partyModule, 'party.registry.create-party', '1', { required: true }),
-        executor(partyModule, 'party.registry.counterparty-customer-onboard', '1'),
-        executor(partyModule, 'party.registry.add-contact-point', '1'),
-        executor(customerModule, 'commerce.customer-context.ensure-retail-customer-profile', '1'),
-        executor(customerModule, 'commerce.customer-context.create-counterparty-purchasing-profile', '1'),
-        executor(customerModule, 'commerce.customer-context.add-saved-address', '1'),
-        executor(customerModule, 'commerce.customer-context.change-organization-customer-profile-ico', '1', {
-          reads: [read('commerce.customer-context.api.customer-profile-source')],
-        }),
+        executor(createPartyOperation, { required: true }),
+        executor(onboardOperation),
+        executor(addContactOperation),
+        executor(retailProfileOperation),
+        executor(counterpartyProfileOperation),
+        executor(addAddressOperation),
+        executor(organizationIcoOperation, { reads: [read('commerce.customer-context.api.customer-profile-source')] }),
       ],
       uniformEntityKind: true,
     },
@@ -259,11 +294,8 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'job',
       family: 'priceLists',
       operations: [
-        executor(pricingModule, definePrice, '2', {
-          entityKind: 'PRICE',
-          reads: [priceGroupAssociations],
-        }),
-        executor(pricingModule, revisePrice, '2', {
+        executor(priceOperation, { entityKind: 'PRICE', reads: [priceGroupAssociations] }),
+        executor(reviseOperation, {
           entityKind: 'PRICE',
           reads: [read('commerce.pricing.api.price-definition'), priceGroupAssociations],
         }),
@@ -290,15 +322,12 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'job',
       family: 'priceLists',
       operations: [
-        executor(priceGroupModule, 'pricing.price-group-catalog.create-price-group', '1', {
+        executor(groupOperation, {
           entityKind: 'PRICE_GROUP',
           reads: [read('pricing.price-group-catalog.api.price-group-catalog-head')],
           required: true,
         }),
-        executor(pricingModule, definePrice, '2', {
-          entityKind: 'PRICE',
-          reads: [priceGroupAssociations],
-        }),
+        executor(priceOperation, { entityKind: 'PRICE', reads: [priceGroupAssociations] }),
       ],
     },
   ],
@@ -308,33 +337,18 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'job',
       family: 'products',
       operations: [
-        executor(catalogModule, 'commerce.catalog.create-product', '2', {
-          entityKind: 'PRODUCT',
-          reads: [catalogSourceProducts],
-          required: true,
-        }),
-        executor(catalogModule, 'commerce.catalog.update-product', '1', {
-          entityKind: 'PRODUCT',
-          reads: [catalogSourceProducts],
-        }),
-        executor(catalogModule, 'commerce.catalog.create-variant', '2', {
-          entityKind: 'VARIANT',
-          reads: [catalogSourceProducts],
-        }),
-        executor(catalogModule, 'commerce.catalog.set-variant-localized-facts', '1', {
-          entityKind: 'VARIANT',
-          reads: [catalogSourceProducts],
-        }),
-        executor(pricingModule, definePrice, '2', { entityKind: 'PRICE' }),
+        executor(createProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts], required: true }),
+        executor(updateProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
+        executor(createVariantOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
+        executor(variantFactsOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
+        executor(priceOperation, { entityKind: 'PRICE' }),
         shellRead(priceGroupModule, priceGroupAssociations.entrypointKey),
       ],
     },
   ],
 ]);
 
-type EnrolledOperation = SymmyFixtureExecutionPlan['items'][number]['effects'][number]['operation'];
-type OperationKey = Pick<EnrolledOperation, 'entrypointKey' | 'moduleId' | 'schemaVersion'>;
-const sameOperation = (left: OperationKey, right: OperationKey) =>
+const sameOperation = (left: SymmyOwnerOperation, right: SymmyOwnerOperation) =>
   left.moduleId === right.moduleId &&
   left.entrypointKey === right.entrypointKey &&
   left.schemaVersion === right.schemaVersion;
@@ -365,15 +379,20 @@ export const symmyEnrolledInventory = (inventory: SymmyRouteInventory, configura
     enrolledOperations(configuration).some((enrolled) => sameOperation(enrolled.operation, operation)),
   );
 
-/** The published call an executor operation makes in the route's admission mode, if Symmy registers exactly one. */
-export const symmyExecutorCallsOf = (admission: SymmyRouteInventory['admission'], operation: SymmyRouteCallRef) =>
-  symmyIntegrationRegisteredWorkloadCalls.filter(
-    (call) =>
-      call.entrypointKey === operation.entrypointKey &&
-      call.schemaVersion === operation.schemaVersion &&
-      !('recoveryOf' in call) &&
-      (admission === 'sync' ? 'sourceActionKey' in call : 'workerKey' in call),
+/** A route with complete plans enrolls every operation of at least one of them. */
+const completePlanRefusals = (
+  routeKey: SymmyEnrollmentRouteKey,
+  inventory: SymmyRouteInventory,
+  enrolled: ReturnType<typeof enrolledOperations>,
+) => {
+  const plans = inventory.completePlans ?? [];
+  return refuseWhen(
+    plans.length > 0 &&
+      !plans.some((plan) => plan.every((needed) => enrolled.some(({ operation }) => sameOperation(operation, needed)))),
+    'required_operation_missing',
+    `${routeKey} enrolls no complete plan: ${plans.map((plan) => plan.map(symmyOperationName).join(' + ')).join(' or ')}`,
   );
+};
 
 const selectorRefusals = (request: SymmyRouteEnrollmentRequest, inventory: SymmyRouteInventory) => {
   const { selector } = request.configuration;
@@ -465,6 +484,7 @@ export const symmyRouteRequestRefusals = (
       'required_operation_missing',
       `${request.routeKey} admits writes and enrolls no owner write`,
     ),
+    ...completePlanRefusals(request.routeKey, inventory, enrolled),
     ...refuseWhen(
       writesPrices !== (configuration.priceSource !== undefined && configuration.pricingSourceSystem !== undefined) ||
         (!writesPrices && (configuration.priceSource !== undefined || configuration.pricingSourceSystem !== undefined)),
@@ -474,18 +494,7 @@ export const symmyRouteRequestRefusals = (
     ...refuseWhen(
       request.legalEntityId === undefined && inventory.companyRequired === true,
       'company_scope_required',
-      `${request.routeKey} reads the data of one company and cannot be enrolled on a Tenant-only route`,
-    ),
-    ...symmyEnrolledInventory(inventory, configuration).flatMap((operation) =>
-      refuseWhen(
-        request.legalEntityId === undefined &&
-          operation.caller === 'executor' &&
-          symmyExecutorCallsOf(inventory.admission, operation).some(
-            ({ legalEntityScope }) => legalEntityScope === 'required',
-          ),
-        'company_scope_required',
-        `${symmyOperationName(operation)} is published for a company and cannot be enrolled on a Tenant-only route`,
-      ),
+      `${request.routeKey} reads or writes the data of one company and cannot be enrolled on a Tenant-only route`,
     ),
     ...refuseWhen(
       configuration.items.some(
@@ -511,9 +520,11 @@ export const symmyRouteRequestRefusals = (
 /** The fields of a source family's logical identity, as its readers and writers compare them. */
 const familyFields = {
   customerGroups: ['issuerId', 'sourceNamespace', 'sourceRouteId', 'sourceRouteRevision', 'sourceMappingVersion'],
+  // The customer reader reads the profiles of its route's company, which the writer creates for its own company.
   customers: [
     'entityKind',
     'issuerId',
+    'legalEntityId',
     'sourceNamespace',
     'sourceRouteId',
     'sourceRouteRevision',
@@ -533,10 +544,11 @@ export const symmySourceFamilyPeers = (routeKey: SymmyEnrollmentRouteKey): reado
   );
 };
 
-/** Issuer, namespace, record type and logical source route, as the owners record them and the readers compare. */
+/** Issuer, namespace, record type, company and logical source route, as the owners record them and the readers compare. */
 interface SymmyLogicalSourceIdentity {
   readonly entityKind: string;
   readonly issuerId: string;
+  readonly legalEntityId: string | null;
   readonly sourceMappingVersion: string;
   readonly sourceNamespace: string;
   readonly sourceRouteId: string;
@@ -545,6 +557,7 @@ interface SymmyLogicalSourceIdentity {
 /** A route row or request as the logical source comparison needs it. */
 export interface SymmyEnrolledSource {
   readonly configuration: SymmyFixtureExecutionPlan;
+  readonly legalEntityId: string | null;
   readonly mappingVersion: string;
   readonly routeId: string;
   readonly routeKey: SymmyEnrollmentRouteKey;
@@ -552,6 +565,7 @@ export interface SymmyEnrolledSource {
 }
 const logicalSourceIdentity = ({
   configuration,
+  legalEntityId,
   mappingVersion,
   routeId,
   routeRevision,
@@ -562,6 +576,7 @@ const logicalSourceIdentity = ({
   return {
     entityKind: source.entityKind,
     issuerId: named.issuerId,
+    legalEntityId,
     sourceMappingVersion: configuration.sourceMappingVersion ?? mappingVersion,
     sourceNamespace: named.sourceNamespace,
     sourceRouteId: configuration.sourceRouteId ?? routeId,
@@ -685,48 +700,98 @@ export const symmyPlannedRouteRow = (request: SymmyRouteEnrollmentRequest) => ({
   tenantId: request.tenantId,
 });
 
+/**
+ * What the operator asks of the route: enroll it as requested, or replace or deactivate it at the revision the operator
+ * read as current, so a retried or stale change never undoes a newer one.
+ */
+export type SymmyRouteChange =
+  | { readonly kind: 'enroll' }
+  | { readonly currentRevision: string; readonly kind: 'deactivate' | 'replace' };
+
+/** The decided change, with the revision of the enrolled route it changes. */
 export type SymmyRouteEnrollmentWrite =
+  | { readonly kind: 'deactivate'; readonly revision: string }
   | { readonly kind: 'insert' }
-  | { readonly changed: readonly SymmyRouteField[]; readonly kind: 'replace' }
+  | { readonly changed: readonly SymmyRouteField[]; readonly kind: 'replace'; readonly previousRevision: string }
   | { readonly kind: 'unchanged' };
 
-const conflict = (detail: string) =>
-  new SymmyRouteEnrollmentRefused({ refusals: [refusal('route_id_conflict', detail)] });
+const refused = (code: SymmyRouteEnrollmentRefusalCode, detail: string) =>
+  new SymmyRouteEnrollmentRefused({ refusals: [refusal(code, detail)] });
 
 /**
- * What one enrollment does with the routes already holding its selector (Tenant, principal, company, route kind and
- * code) or its route id. A replacement is decided here only as allowed; the store refuses it while work is outstanding.
+ * What one change does with the routes already holding its selector (Tenant, principal, company, route kind and code)
+ * or its route id, decided under the enrollment lock. A replacement or deactivation is decided here only as allowed;
+ * the store refuses it while work is outstanding. A replay of an applied change is unchanged.
  */
 export const decideSymmyRouteWrite = (
   request: SymmyRouteEnrollmentRequest,
   existing: { readonly byRouteId: Option.Option<RouteRow>; readonly bySelector: Option.Option<RouteRow> },
-  replace: boolean,
+  change: SymmyRouteChange,
 ): SymmyRouteEnrollmentWrite | SymmyRouteEnrollmentRefused => {
   if (Option.isNone(existing.bySelector)) {
+    if (change.kind !== 'enroll') {
+      return refused('route_not_enrolled', `No route ${request.routeId} holds this selector`);
+    }
     return Option.isSome(existing.byRouteId)
-      ? conflict(`Route id ${request.routeId} is already enrolled for another selector`)
+      ? refused('route_id_conflict', `Route id ${request.routeId} is already enrolled for another selector`)
       : { kind: 'insert' };
   }
   const current = existing.bySelector.value;
   if (current.routeId !== request.routeId) {
-    return conflict(`The selector is enrolled as route ${current.routeId}; a route id is never rebound`);
+    return refused(
+      'route_id_conflict',
+      `The selector is enrolled as route ${current.routeId}; a route id is never rebound`,
+    );
+  }
+  const stale =
+    change.kind !== 'enroll' && current.routeRevision !== change.currentRevision
+      ? Option.some(
+          refused(
+            'revision_not_current',
+            `Route ${current.routeId} is at revision ${current.routeRevision}, not ${change.currentRevision}`,
+          ),
+        )
+      : Option.none();
+  if (change.kind === 'deactivate') {
+    if (Option.isSome(stale)) {
+      return stale.value;
+    }
+    return current.active ? { kind: 'deactivate', revision: current.routeRevision } : { kind: 'unchanged' };
   }
   const changed = symmyRouteDifferences(request, current);
   if (changed.length === 0) {
     return { kind: 'unchanged' };
   }
-  if (!replace) {
-    return new SymmyRouteEnrollmentRefused({
-      refusals: [refusal('route_drift', `Route ${current.routeId} is enrolled with another ${changed.join(', ')}`)],
-    });
+  if (change.kind === 'enroll') {
+    return refused(
+      'route_drift',
+      `Route ${current.routeId} at revision ${current.routeRevision} is enrolled with another ${changed.join(', ')}`,
+    );
+  }
+  if (Option.isSome(stale)) {
+    return stale.value;
   }
   if (current.routeRevision === request.routeRevision) {
-    return new SymmyRouteEnrollmentRefused({
-      refusals: [refusal('revision_not_advanced', 'A replacement names a new route revision')],
-    });
+    return refused('revision_not_advanced', 'A replacement names a new route revision');
   }
-  return { changed, kind: 'replace' };
+  return { changed, kind: 'replace', previousRevision: current.routeRevision };
 };
+
+/**
+ * The key every apply transaction locks first: the Tenant, the integration principal and the route's source family (its
+ * route kind when it has none), never the company. The route lookup resolves a route across companies and the routes
+ * of one source compare their logical source, so both checks then read every enrollment of the same key committed
+ * before them, including routes that did not exist when the transaction began.
+ */
+export const symmyRouteEnrollmentLockKey = (
+  request: Pick<SymmyRouteEnrollmentRequest, 'principalId' | 'routeKey' | 'tenantId'>,
+) =>
+  [
+    'symmy-route-enrollment',
+    request.tenantId,
+    request.principalId,
+    symmyRouteInventories.get(request.routeKey)?.family ?? request.routeKey,
+  ].join(':');
 
 /** The Core facts a route depends on, as their owners' readers report them. */
 export const symmyCoreRefusals = (facts: {
@@ -804,12 +869,86 @@ export const symmyRelatedRouteRefusals = (
           `Route ${routeId} (${routeKey}) of the same source has no readable configuration`,
         ),
       ),
-      ...symmyFamilyRefusals(request, readable),
+      ...symmyFamilyRefusals({ ...request, legalEntityId: request.legalEntityId ?? null }, readable),
     ],
   };
 };
 
 const RETENTION_ACTION = 'integration.symmy.execute-symmy-retention';
+
+/**
+ * Runtime configuration a route depends on that the command cannot read, because it is the Shell's or Symmy's own
+ * process configuration: what it is, which process reads it, whether the command saw it, and what a sender observes
+ * while the running process lacks the entry for this route.
+ */
+export const SymmyRuntimePrerequisiteSchema = Schema.Struct({
+  checked: Schema.Literals(['not_checked', 'operator_copy_only']),
+  configuration: Schema.Literals([
+    'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
+    'ONTOS_SYMMY_PRICE_READ_SOURCES',
+    'ONTOS_SYMMY_REGIONS_PROJECTION',
+  ]),
+  runtime: Schema.Literals(['shell', 'symmy-integration']),
+  whenMissing: Schema.String,
+});
+type SymmyRuntimePrerequisite = typeof SymmyRuntimePrerequisiteSchema.Type;
+
+/**
+ * The runtime prerequisites of one route: the regions projection (`SymmyGovernedDispatch.read`), the price read source
+ * of the principal's priceLists route (`configuredPriceSource`, read for a price list page and for a REVISE price by
+ * `readSymmyPriceBatchFacts`), and the retention policy every write is admitted under (`requireLifecyclePolicy`).
+ */
+export const symmyRuntimePrerequisites = (
+  request: SymmyRouteEnrollmentRequest,
+): readonly SymmyRuntimePrerequisite[] => [
+  ...(request.routeKey === 'adminRegions'
+    ? [
+        {
+          checked: 'not_checked',
+          configuration: 'ONTOS_SYMMY_REGIONS_PROJECTION',
+          runtime: 'shell',
+          whenMissing: 'GET admin/regions answers 422 SymmyUnsupportedProblem projection_not_configured',
+        } as const,
+      ]
+    : []),
+  ...(request.routeKey === 'priceLists'
+    ? [
+        {
+          checked: 'not_checked',
+          configuration: 'ONTOS_SYMMY_PRICE_READ_SOURCES',
+          runtime: 'shell',
+          whenMissing:
+            'GET price-lists answers its lists without prices (unsupported_fields: prices) and 422 SymmyUnsupportedProblem projection_not_configured when it pages prices',
+        } as const,
+      ]
+    : []),
+  ...(request.routeKey === 'priceListPricesBatch'
+    ? [
+        {
+          checked: 'not_checked',
+          configuration: 'ONTOS_SYMMY_PRICE_READ_SOURCES',
+          runtime: 'shell',
+          whenMissing:
+            "A batch with a REVISE price answers 422 SymmyUnsupportedProblem projection_not_configured; the entry names the principal's priceLists route",
+        } as const,
+      ]
+    : []),
+  ...(request.lifecyclePolicy === undefined
+    ? []
+    : [
+        {
+          checked: 'operator_copy_only',
+          configuration: 'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
+          runtime: 'symmy-integration',
+          whenMissing: `Every write is refused as route denied, which the Shell answers ${
+            symmyRouteInventories.get(request.routeKey)?.admission === 'sync'
+              ? 'as 503 SymmyUnavailableProblem'
+              : 'as 403 gateway forbidden'
+          }, and ${RETENTION_ACTION} cannot erase what the route admitted`,
+        } as const,
+      ]),
+];
+
 /**
  * Work a replacement would strand: jobs with an effect that has not settled and whose intents retention has not
  * erased, and synchronous admissions whose intents retention has not erased. A blocked effect never settles by
