@@ -54,6 +54,7 @@ import {
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { OperationalScopeResolver } from '../../src/operations/context.ts';
+import type { SpiceDbEnvironment } from '../../src/permissions/config.ts';
 import {
   ContextAccess,
   toContextPermissionAccessObjectId,
@@ -165,12 +166,13 @@ const scriptedAnswer = <Response>(answer: () => Promise<Response> | undefined) =
 
 const attachmentDatabase = `ontos_test_party_gateway_${'a'.repeat(32)}`;
 
-const fixtureConfiguration = (port: number, database: string) => ({
+const fixtureConfiguration = (port: number, database: string, spiceDbEnvironment: SpiceDbEnvironment) => ({
   actionKeys: ['commerce.catalog.activate-local-override', 'commerce.catalog.change-local-override'],
   adminConnectionString: Redacted.make(`postgresql://unit_admin:unit@127.0.0.1:${port}/${database}`),
   authenticationNamespaceId: 'fixture-manager-unit',
   compositionRevision: 'a'.repeat(64),
   runtimeConnectionString: Redacted.make(`postgresql://${fixtureRuntimeRole}:unit@127.0.0.1:${port}/${database}`),
+  spiceDbEnvironment,
 });
 
 /** The native PostgreSQL and SpiceDB endpoints this file's fixtures connect to. */
@@ -185,7 +187,8 @@ class NativeFixtureEndpoints extends Context.Service<
   }
 >()('@app/core-runtime/tests/unit/live-operation-fixture.test/NativeFixtureEndpoints') {}
 
-const NativeFixtureEndpointsLive = Layer.effectContext(
+const NativeFixtureEndpointsLive = Layer.effect(
+  NativeFixtureEndpoints,
   Effect.gen(function* nativeFixtureEndpoints() {
     const databasePort = yield* serveScriptedPostgres(answerFixtureStatement, {
       closed: (session) => {
@@ -203,24 +206,20 @@ const NativeFixtureEndpointsLive = Layer.effectContext(
       checkPermission: (request) => scriptedAnswer(() => transport.checkPermission(request)),
       writeRelationships: (request) => scriptedAnswer(() => transport.writeRelationships(request)),
     });
-    return Context.make(NativeFixtureEndpoints, {
-      attachmentConfiguration: fixtureConfiguration(databasePort, attachmentDatabase),
-      configuration: fixtureConfiguration(databasePort, 'unit'),
+    const spiceDbEnvironment = {
+      SPICEDB_CA_CERT: spiceDb.caCertificate,
+      SPICEDB_ENDPOINT: spiceDb.endpoint,
+      SPICEDB_PRESHARED_KEY: fixturePreSharedKey,
+    };
+    return {
+      attachmentConfiguration: fixtureConfiguration(databasePort, attachmentDatabase, spiceDbEnvironment),
+      configuration: fixtureConfiguration(databasePort, 'unit', spiceDbEnvironment),
       connectionAs: (role: string, database = 'unit') =>
         Redacted.make(`postgresql://${role}:unit@127.0.0.1:${databasePort}/${database}`),
       spiceDbEndpoint: spiceDb.endpoint,
-    }).pipe(
-      Context.add(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromUnknown({
-          SPICEDB_CA_CERT: spiceDb.caCertificate,
-          SPICEDB_ENDPOINT: spiceDb.endpoint,
-          SPICEDB_PRESHARED_KEY: fixturePreSharedKey,
-        }),
-      ),
-    );
+    };
   }),
-).pipe(Layer.provide(NodeServices.layer));
+).pipe(Layer.provide(NodeServices.layer), Layer.merge(ConfigProvider.layer(ConfigProvider.fromUnknown({}))));
 
 const commerceProvisioningNamespace = 'ontos.commerce.portal.better-auth.v1';
 const namespaceResourceType = 'identity_namespace';
@@ -1928,6 +1927,7 @@ it.layer(
         configuration: creator.runtimeHandoff.configuration,
         handoff: creator.runtimeHandoff,
         runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+        spiceDbEnvironment: attachmentConfiguration.spiceDbEnvironment,
       });
       expect(runtime.manager).toEqual(creator.manager);
       expect(runtime.tenantId).toBe(creator.tenantId);
@@ -1955,6 +1955,7 @@ it.layer(
           configuration: creator.runtimeHandoff.configuration,
           handoff: creator.runtimeHandoff,
           runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+          spiceDbEnvironment: attachmentConfiguration.spiceDbEnvironment,
         });
         const beforeUpdate = transport.updateRows.mock.calls.length;
         const beforeInsert = transport.insert.mock.calls.length;
@@ -1991,6 +1992,7 @@ it.layer(
             configuration: original.configuration,
             handoff,
             runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+            spiceDbEnvironment: attachmentConfiguration.spiceDbEnvironment,
           }),
         );
         expect(Result.isFailure(result)).toBe(true);
@@ -2009,6 +2011,7 @@ it.layer(
             configuration: original.configuration,
             handoff: original,
             runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+            spiceDbEnvironment: attachmentConfiguration.spiceDbEnvironment,
           }),
         );
         expect(Result.isFailure(result)).toBe(true);
@@ -2060,6 +2063,7 @@ it.layer(
             configuration: creator.runtimeHandoff.configuration,
             handoff: creator.runtimeHandoff,
             runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+            spiceDbEnvironment: attachmentConfiguration.spiceDbEnvironment,
           }),
         );
         assert(Predicate.isTagged(failure, 'LiveOperationFixtureError'));
@@ -2083,6 +2087,7 @@ it.layer(
             configuration: creator.runtimeHandoff.configuration,
             handoff: creator.runtimeHandoff,
             runtimeConnectionString: attachmentConfiguration.runtimeConnectionString,
+            spiceDbEnvironment: attachmentConfiguration.spiceDbEnvironment,
           }),
         );
         assert(Predicate.isTagged(failure, 'LiveOperationFixtureError'));

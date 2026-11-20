@@ -133,7 +133,7 @@ export const loadSpiceDbConfig = Effect.fn('Config.loadSpiceDbConfig')(function*
 ): Effect.fn.Return<SpiceDbConfigValue, SpiceDbConfigError> {
   const environmentProvider =
     options.environment === undefined
-      ? yield* ConfigProvider.ConfigProvider
+      ? ConfigProvider.fromEnv({ preserveEmptyStrings: true })
       : ConfigProvider.fromUnknown(options.environment, {
           preserveEmptyStrings: true,
         });

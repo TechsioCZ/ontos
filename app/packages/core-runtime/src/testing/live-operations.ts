@@ -80,6 +80,7 @@ import {
   makeOperationalScopeResolver,
 } from '../operations/context.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
+import type { SpiceDbEnvironment } from '../permissions/config.ts';
 import {
   ContextAccess,
   makeContextAccessLive,
@@ -208,6 +209,8 @@ interface LiveOperationFixtureRuntimeBindings {
   readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
   readonly expectedDeployment?: typeof OntosDeploymentIdentitySchema.Type;
   readonly ownerRegistration?: VerticalRuntimeRegistration;
+  /** In-process configuration only; omitted means load the process environment as usual. */
+  readonly spiceDbEnvironment?: SpiceDbEnvironment;
 }
 
 export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded &
@@ -1574,9 +1577,11 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       return yield* fixtureFailure('Legal Entity-only fixture Action keys must be included in actionKeys');
     }
     const databaseIdentities = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
-    const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
-      Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
-    );
+    const spiceDb = yield* loadSpiceDbConfig(
+      input.spiceDbEnvironment === undefined
+        ? { envPath: '/dev/null' }
+        : { environment: input.spiceDbEnvironment, envPath: '/dev/null' },
+    ).pipe(Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)));
     const { bootstrapConnectionString, runtimeConnectionString } = configuration;
     const adminConnectionString =
       configuration.adminConnectionString ??
@@ -1873,7 +1878,11 @@ export const makeLiveOperationFixtureRuntime = Effect.fn('LiveOperations.attachR
       return yield* fixtureFailure('Runtime fixture native identity is unsafe or foreign');
     }
     yield* verifyRuntimeFixtureState(executor, runtimeHandoff);
-    const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
+    const spiceDb = yield* loadSpiceDbConfig(
+      input.spiceDbEnvironment === undefined
+        ? { envPath: '/dev/null' }
+        : { environment: input.spiceDbEnvironment, envPath: '/dev/null' },
+    );
     if (!spiceDb.endpoint.startsWith('localhost:')) {
       return yield* fixtureFailure('Runtime fixture requires disposable localhost services');
     }
