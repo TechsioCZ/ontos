@@ -64,6 +64,8 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   readonly activeBinding?: boolean;
   readonly allowedOwnerOperations?: typeof response.allowedOwnerOperations;
   readonly catalog?: ShellInstalledCatalog;
+  /** The owner answers a route enrolled for no company. */
+  readonly companyless?: boolean;
   readonly replayIdempotencyDigest?: string;
   readonly responseTenant?: string;
 }) {
@@ -79,8 +81,9 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
       body: await incoming.text(),
       url: incoming.url,
     });
+    const { legalEntityId: _company, ...companylessRoute } = response;
     const ownerResponse = {
-      ...response,
+      ...(options.companyless === true ? companylessRoute : response),
       allowedOwnerOperations: options.allowedOwnerOperations ?? response.allowedOwnerOperations,
       tenantId: options.responseTenant ?? response.tenantId,
     };
@@ -439,6 +442,7 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
     const issue = (input: {
       readonly catalog: ShellInstalledCatalog;
       readonly company?: string;
+      readonly companyless?: boolean;
       readonly entrypointKeys: readonly string[];
       readonly routeKey: 'customerGroupsBatch' | 'customersBatch';
     }) =>
@@ -446,6 +450,7 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
         const current = yield* fixture({
           allowedOwnerOperations: enrolled(input.entrypointKeys),
           catalog: input.catalog,
+          companyless: input.companyless === true,
         });
         const assertion = yield* Effect.gen(function* admissionRoute() {
           const proof = yield* acquireSymmyRouteScopeProof({
@@ -454,11 +459,11 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
             routeRequest: { routeKey: input.routeKey },
             sourcePurpose: 'admit',
           });
-          return yield* issueSymmyRouteScopeAssertion(proof, {
-            audience: 'commerce-customer-context',
-            legalEntityId: input.company ?? legalEntityId,
-            principal,
-          });
+          const target = { audience: 'commerce-customer-context', principal };
+          return yield* issueSymmyRouteScopeAssertion(
+            proof,
+            input.companyless === true ? target : { ...target, legalEntityId: input.company ?? legalEntityId },
+          );
         }).pipe(Effect.provide(current.layer));
         return yield* Effect.promise(() =>
           jwtVerify(assertion.token, current.publicKey, {
@@ -485,7 +490,8 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
       tenantId: principal.tenantId,
     });
     // Another admission route; the group route without the definition read, though it enrolls a published write;
-    // another company on the group route; and a definition read published only for historical reads.
+    // another company on the group route; a group route enrolled for no company, whose assertion would carry no route
+    // scope; and a definition read published only for historical reads.
     for (const refusedInput of [
       { catalog, entrypointKeys: groupRoute, routeKey: 'customersBatch' },
       {
@@ -499,6 +505,7 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
         entrypointKeys: groupRoute,
         routeKey: 'customerGroupsBatch',
       },
+      { catalog, companyless: true, entrypointKeys: groupRoute, routeKey: 'customerGroupsBatch' },
       { catalog: yield* publish('historical_read'), entrypointKeys: groupRoute, routeKey: 'customerGroupsBatch' },
     ] as const) {
       const refused = yield* Effect.flip(issue(refusedInput));

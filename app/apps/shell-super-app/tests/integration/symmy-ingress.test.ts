@@ -1581,8 +1581,10 @@ it.effect('fences the public customer groups on the owner definitions and return
   Effect.gen(function* governedSynchronousItems() {
     const results = [yield* groupItem(1), yield* groupItem(2)];
     const commerceBaseUrl = moduleReleaseApiBaseUrl('commerce-customer-context', 'fixture-build');
+    const { legalEntityId: _company, ...companylessRoute } = internalRoute;
+    let companyless = false;
     const groupRoute = (definitionRead: boolean) => ({
-      ...internalRoute,
+      ...(companyless ? companylessRoute : internalRoute),
       allowedOwnerOperations: [
         groupOperation('commerce.customer-context.create-customer-group'),
         groupOperation('commerce.customer-context.update-customer-group'),
@@ -1629,6 +1631,7 @@ it.effect('fences the public customer groups on the owner definitions and return
     let definitionRead = true;
     const paths: string[] = [];
     const bodies: Schema.Json[] = [];
+    const audiences: string[] = [];
     const ownerFetch: typeof fetch = async (input, init) => {
       const request = new Request(input, init);
       const path = new URL(request.url).pathname;
@@ -1647,10 +1650,13 @@ it.effect('fences the public customer groups on the owner definitions and return
       Effect.sync(() =>
         start({
           acquireOwnerAssertion: ({ audience }) =>
-            Effect.succeed({
-              apiBaseUrl: audience === 'commerce-customer-context' ? commerceBaseUrl : apiBaseUrl,
-              assertion: Redacted.make(`fresh-${audience}-assertion`),
-              compositionRevision: revision,
+            Effect.sync(() => {
+              audiences.push(audience);
+              return {
+                apiBaseUrl: audience === 'commerce-customer-context' ? commerceBaseUrl : apiBaseUrl,
+                assertion: Redacted.make(`fresh-${audience}-assertion`),
+                compositionRevision: revision,
+              };
             }),
           dispatch: makeSymmyGovernedDispatch(Effect.succeed('internal-sync-correlation')),
           ownerFetch,
@@ -1712,6 +1718,15 @@ it.effect('fences the public customer groups on the owner definitions and return
     paths.length = 0;
     expect((yield* post()).status).toBe(403);
     expect(paths).toEqual([`${releasePath}/reads/symmy-route-context`]);
+    // Commerce holds every group under one company: a route enrolled for none never asks for a Commerce assertion,
+    // which would carry no route scope.
+    definitionRead = true;
+    companyless = true;
+    paths.length = 0;
+    audiences.length = 0;
+    expect((yield* post()).status).toBe(403);
+    expect(paths).toEqual([`${releasePath}/reads/symmy-route-context`]);
+    expect(audiences).not.toContain('commerce-customer-context');
   }),
 );
 
