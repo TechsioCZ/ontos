@@ -2587,6 +2587,11 @@ const coreMediaIntegrityRecorderUnconfiguredLive = Layer.succeed(MediaIntegrityR
   record: (finding) =>
     logMediaRecovery({ category: 'unresolved', operation: 'integrity', ref: mediaRecoveryRef(finding.storageKey) }),
 });
+
+/** The download route with its composed dependencies: the object store and the (unconfigured) integrity recorder. */
+const coreMediaDownloadHandlersLive = coreMediaDownloadGroupLive.pipe(
+  Layer.provide(Layer.mergeAll(coreMediaObjectStorageLive, coreMediaIntegrityRecorderUnconfiguredLive)),
+);
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.effect(Tracer.Tracer, Tracer.Tracer),
@@ -3054,9 +3059,7 @@ export const makeShellAuthenticationApiRuntime = (
     // @ontos-core-read asset-metadata
     coreReadAssetMetadataGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
-    coreMediaDownloadGroupLive.pipe(
-      Layer.provide(Layer.mergeAll(coreMediaObjectStorageLive, coreMediaIntegrityRecorderUnconfiguredLive)),
-    ),
+    coreMediaDownloadHandlersLive,
     externalIdentityGroupLive,
     accessAdminHandlersLive,
     SymmyIngressHandlersLive.pipe(

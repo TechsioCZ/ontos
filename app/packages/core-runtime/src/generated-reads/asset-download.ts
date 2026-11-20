@@ -16,7 +16,6 @@ import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '../reads/errors.ts';
 
 export { AssetDownloadAuthorizationSchema, AssetDownloadRequestSchema } from '../media/download-contract.ts';
-export type { AssetDownloadAuthorization, AssetDownloadRequest } from '../media/download-contract.ts';
 
 /*
  * The decision to deliver the exact original bytes of one Media Asset. It is its own capability, never implied by
