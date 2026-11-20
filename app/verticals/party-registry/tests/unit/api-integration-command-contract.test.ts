@@ -7,6 +7,7 @@ import { expect, it } from 'effect-rstest';
 import { FenceLegacyIcoAuthorityActionApi } from '../../shared/apis/fence-legacy-ico-authority-action.ts';
 import { partyRegistryCommandsApi, PartyCommandAliasWriteRejectedProblemSchema } from '../../shared/command-api.ts';
 import { CreateCrmClientPartyActionApi } from '../../shared/apis/create-crm-client-party-action.ts';
+import { EnrollRetailCustomerActionApi } from '../../shared/apis/enroll-retail-customer-action.ts';
 
 const ref = (id: string) => ({
   moduleId: 'party.registry',
@@ -28,6 +29,7 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
       const endpoints = [
         ...Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints),
         CreateCrmClientPartyActionApi.groups.createCrmClientPartyAction.endpoints.execute,
+        EnrollRetailCustomerActionApi.groups.enrollRetailCustomerAction.endpoints.execute,
         ...Object.values(FenceLegacyIcoAuthorityActionApi.groups.fenceLegacyIcoAuthorityAction.endpoints),
       ];
       expect(endpoints.length).toBe(actions.length);
@@ -35,6 +37,12 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
         actions.map((slug) => `/party-registry/actions/${slug}`).toSorted(),
       );
       for (const slug of actions) {
+        if (slug === 'enroll-retail-customer') {
+          expect(EnrollRetailCustomerActionApi.groups.enrollRetailCustomerAction.endpoints.execute.path).toBe(
+            `/party-registry/actions/${slug}`,
+          );
+          continue;
+        }
         if (slug === 'create-crm-client-party') {
           expect(CreateCrmClientPartyActionApi.groups.createCrmClientPartyAction.endpoints.execute.path).toBe(
             `/party-registry/actions/${slug}`,

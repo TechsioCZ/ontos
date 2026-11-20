@@ -29,6 +29,9 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
 import { partyRegistryCorsAllowedHeaders, partyRegistryCorsAllowedMethods } from '../../api/read-server-support.ts';
 import { partyRegistryApi, partyRegistryReadinessSchema } from '../../shared/api.ts';
+import { RetailEnrollmentSubjectSchema } from '../../shared/actions/accept-retail-enrollment-evidence.ts';
+import { EnrollRetailCustomerPayloadSchema } from '../../shared/actions/enroll-retail-customer.ts';
+import { OwnedRetailPartyResultRequestSchema } from '../../shared/apis/owned-retail-party-result.ts';
 import { PartyDetailAuthenticationProblemSchema } from '../../shared/apis/party-detail.ts';
 import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
 import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
@@ -425,8 +428,29 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
         );
         expect(actionCalls).toBe(0);
         expect(redemptionCalls).toBe(0);
+        const retailSubject = yield* Schema.decodeUnknownEffect(RetailEnrollmentSubjectSchema)({
+          authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
+          candidateEvidenceRef: 'ab100000-0000-4000-8000-000000000001',
+          enrollmentAttemptId: 'ab200000-0000-4000-8000-000000000001',
+          journey: 'RETAIL_SELF_ENROLLMENT',
+          providerOwnerInvocationId: 'ab300000-0000-4000-8000-000000000001',
+          providerSubjectId: 'runtime-assembly-retail-subject',
+          sellingLegalEntityId: 'a5000000-0000-4000-8000-000000000001',
+          tenantId: principal.tenantId,
+        });
+        const retailEnrollmentPayload = yield* Schema.decodeUnknownEffect(EnrollRetailCustomerPayloadSchema)({
+          email: 'retail-runtime@example.test',
+          evidence: { ...retailSubject, emailOwnership: 'VERIFIED' },
+          originalInvocationId: 'ab400000-0000-4000-8000-000000000001',
+        });
+        const ownedRetailRequest = yield* Schema.decodeUnknownEffect(OwnedRetailPartyResultRequestSchema)({
+          evidence: retailSubject,
+          idempotencyKey: 'runtime-assembly:owned-retail-create',
+        });
         const manualPayloads = {
+          '/reads/owned-retail-party-result': ownedRetailRequest,
           '/reads/privacy-measure-execution': { idempotencyKey: 'runtime-test:1' },
+          '/party-registry/actions/enroll-retail-customer': retailEnrollmentPayload,
           '/party-registry/actions/execute-privacy-measure': {
             handoff: {
               contentScopeRefs: ['party.registry.counterparty.lifecycle'],
