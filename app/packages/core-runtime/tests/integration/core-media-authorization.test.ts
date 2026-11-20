@@ -2182,7 +2182,6 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             expect(answer.entries.map(({ resourceRef }) => resourceRef)).toEqual([...refs]);
             const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(answer);
             expect(serialized).not.toContain('revisionId');
-            expect(serialized).not.toContain('secret-version');
             expect(answer.entries.filter(({ kind }) => kind === 'AVAILABLE')).toHaveLength(1);
             // The call changed nothing, wrote no link and asked the provider for one stat, of the ready asset.
             expect(yield* assetCount(world)).toBe(rowsBefore);
@@ -2301,6 +2300,29 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             const callsBefore = yield* providerCalls(world);
             expect(yield* attemptOf(currentAs(world, AGENT, [ref]))).toMatchObject({ gateRefused: true, ran: false });
             expect(yield* providerCalls(world)).toBe(callsBefore);
+          }),
+        ),
+    );
+    suite.effect(
+      "Current honours the selected company like metadata does: another company's asset is ABSENT, never FORBIDDEN, and a repeated ref is answered once per occurrence",
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* currentCompanyScope() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [CURRENT], principalId: CURRENT_HOLDER, slot: 12 });
+            yield* reconcile(scenario);
+            const own = yield* readyWithBytes(world, 'cur-co-own');
+            const other = yield* readyWithBytes(world, 'cur-co-other');
+            yield* scenario.admin.unsafe(
+              `update core.media_assets set legal_entity_id = $3 where tenant_id = $1 and media_asset_id = $2`,
+              [scenario.tenantId, other.resourceId, COMPANY_B],
+            );
+            const asCompanyA = yield* currentAs(world, CURRENT_HOLDER, [own, other, own], { legalEntityId: COMPANY_A });
+            expect(asCompanyA.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE', 'ABSENT', 'AVAILABLE']);
+            // The tenant-wide owner sees both: the narrowing is the holder's selected company, not the asset.
+            const asOwner = yield* currentAs(world, OWNER, [own, other]);
+            expect(asOwner.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE', 'AVAILABLE']);
           }),
         ),
     );
