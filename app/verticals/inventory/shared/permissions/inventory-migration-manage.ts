@@ -12,6 +12,12 @@ export const inventoryMigrationManagePermission = defineBusinessPermission({
   key: 'inventory.migration.manage',
   meaning: 'Inventory Migration Manage business permission.',
   owningCapability: 'commerce.inventory',
-  protectedEntrypoints: ['commerce.inventory.select-inventory-backend', 'commerce.inventory.import-source-assertion'],
+  protectedEntrypoints: [
+    'commerce.inventory.select-inventory-backend',
+    'commerce.inventory.import-source-assertion',
+    'commerce.inventory.register-stock-item',
+    'commerce.inventory.create-stock-location',
+    'commerce.inventory.establish-stock-position',
+  ],
   schemaVersion: '1',
 });

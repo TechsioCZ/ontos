@@ -12,6 +12,7 @@ import { correctCatalogToStockBindingAction } from './src/actions/correct-catalo
 import { correctExternalStockCorrelationAction } from './src/actions/correct-external-stock-correlation.action.ts';
 import { correctStockPositionAction } from './src/actions/correct-stock-position.action.ts';
 import { createInventoryReservationAction } from './src/actions/create-inventory-reservation.action.ts';
+import { createStockLocationAction } from './src/actions/create-stock-location.action.ts';
 import { currentRelevantStockPositionSetRead } from './src/api/current-relevant-stock-position-set.read.ts';
 import { currentStockEvidenceForAvailabilityRead } from './src/api/current-stock-evidence-for-availability.read.ts';
 import { endCatalogToStockBindingAction } from './src/actions/end-catalog-to-stock-binding.action.ts';
@@ -20,6 +21,7 @@ import { endStockSharingEligibilityAction } from './src/actions/end-stock-sharin
 import { establishCatalogToStockBindingAction } from './src/actions/establish-catalog-to-stock-binding.action.ts';
 import { establishCommitmentProtectionAction } from './src/actions/establish-commitment-protection.action.ts';
 import { establishExternalStockCorrelationAction } from './src/actions/establish-external-stock-correlation.action.ts';
+import { establishStockPositionAction } from './src/actions/establish-stock-position.action.ts';
 import { establishStockSharingEligibilityAction } from './src/actions/establish-stock-sharing-eligibility.action.ts';
 import { executeCommitmentProtectionEstablishmentWorker } from './src/workers/execute-commitment-protection-establishment.worker.ts';
 import { executeInventoryReservationCreateWorker } from './src/workers/execute-inventory-reservation-create.worker.ts';
@@ -33,6 +35,7 @@ import { inventoryReconciliationEvidenceRead } from './src/api/inventory-reconci
 import { inventoryReservationDetailRead } from './src/api/inventory-reservation-detail.read.ts';
 import { inventorySourceImportReceiptRead } from './src/api/inventory-source-import-receipt.read.ts';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
+import { registerStockItemAction } from './src/actions/register-stock-item.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
 import { reservationConfirmationVerificationRead } from './src/api/reservation-confirmation-verification.read.ts';
 import { resolveInventorySourceConflictAction } from './src/actions/resolve-inventory-source-conflict.action.ts';
@@ -51,15 +54,18 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     correctExternalStockCorrelationAction,
     correctStockPositionAction,
     createInventoryReservationAction,
+    createStockLocationAction,
     endCatalogToStockBindingAction,
     endExternalStockCorrelationAction,
     endStockSharingEligibilityAction,
     establishCatalogToStockBindingAction,
     establishCommitmentProtectionAction,
     establishExternalStockCorrelationAction,
+    establishStockPositionAction,
     establishStockSharingEligibilityAction,
     importSourceAssertionAction,
     recoverInventoryEffectAction,
+    registerStockItemAction,
     releaseInventoryReservationAction,
     resolveInventorySourceConflictAction,
     selectInventoryBackendAction,

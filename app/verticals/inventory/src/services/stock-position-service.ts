@@ -19,7 +19,7 @@ import type {
 } from '../../shared/domain/stock-position.ts';
 import type { StockPositionRef } from '../../shared/resources/stock-position.ts';
 import type { StockPositionPersistence } from '../persistence/stock-position-repository.ts';
-import { StockPositionPersistenceUnavailable } from '../persistence/stock-position-repository.ts';
+import { StockPositionPersistenceUnavailable } from '../../shared/domain/stock-position-persistence-unavailable.ts';
 import type { InventoryBackendConfigurationPersistence } from '../persistence/inventory-backend-configuration-repository.ts';
 import type { StockPositionAllocationReadUnavailable } from './stock-position-allocation-read-unavailable.ts';
 
@@ -102,6 +102,66 @@ export interface StockPositionServiceDependencies {
   readonly persistence: StockPositionPersistence;
 }
 
+const assertSelectedOwner = (
+  backendConfigurationReader: SelectedInventoryBackendConfigurationReader,
+  position: StockPosition,
+) =>
+  backendConfigurationReader.findCurrent(position.scope.customerConfigurationId).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.fail(ownerMismatch(position)),
+        onSome: (configuration) =>
+          isSelectedOwner(position, configuration) ? Effect.void : Effect.fail(ownerMismatch(position)),
+      }),
+    ),
+  );
+
+/**
+ * Establishes one Current Stock Position for a scope that has none, owned by the selected Inventory Backend
+ * configuration. It needs no Reservation Allocation reader: a new Position has no Allocations.
+ */
+export const stockPositionEstablishment = (
+  persistence: StockPositionPersistence,
+  backendConfigurationReader: SelectedInventoryBackendConfigurationReader,
+) =>
+  Effect.fn('StockPositionService.establish')(function* establishStockPosition(input: CreateStockPositionInput) {
+    const current = yield* persistence.findCurrent(input.scope);
+    if (Option.isSome(current)) {
+      return yield* new StockPositionRejected({
+        code: 'stock_position_rejected',
+        positionRef: current.value.ref,
+        reason: 'POSITION_SCOPE_ALREADY_CURRENT',
+      });
+    }
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
+    const crypto = yield* Crypto.Crypto;
+    const positionId = yield* crypto.randomUUIDv4().pipe(
+      Effect.mapError(
+        (cause) =>
+          new StockPositionPersistenceUnavailable({
+            code: 'stock_position_persistence_unavailable',
+            reason: `Stock Position identity is unavailable: ${String(cause)}`,
+          }),
+      ),
+    );
+    const candidate = yield* Schema.decodeEffect(StockPositionSchema)({
+      createdAt,
+      endedAt: null,
+      lifecycle: 'CURRENT',
+      onHand: input.onHand,
+      ref: {
+        moduleId: 'commerce.inventory',
+        resourceId: positionId,
+        resourceType: 'commerce.inventory.stock-position',
+        tenantId: input.scope.stockItemRef.tenantId,
+      },
+      revision: 1,
+      scope: input.scope,
+    }).pipe(Effect.mapError((cause) => invalid(input, cause)));
+    yield* assertSelectedOwner(backendConfigurationReader, candidate);
+    return yield* persistence.create(candidate);
+  });
+
 /** Owner-local orchestration over one Core-installed transaction scope. */
 // oxlint-disable-next-line effect-native/no-dependency-parameters, effect-native/no-wide-factory-signature -- The generated Core transaction factory supplies these owner-local collaborators together; expires: 2027-03-31.
 export const makeStockPositionService = ({
@@ -109,17 +169,6 @@ export const makeStockPositionService = ({
   backendConfigurationReader,
   persistence,
 }: StockPositionServiceDependencies): StockPositionServiceContract => {
-  const assertSelectedOwner = (position: StockPosition) =>
-    backendConfigurationReader.findCurrent(position.scope.customerConfigurationId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(ownerMismatch(position)),
-          onSome: (configuration) =>
-            isSelectedOwner(position, configuration) ? Effect.void : Effect.fail(ownerMismatch(position)),
-        }),
-      ),
-    );
-
   const readPosition = Effect.fn('StockPositionService.readPosition')(function* readCurrentOwnerPosition(
     ref: StockPositionRef,
   ) {
@@ -131,49 +180,11 @@ export const makeStockPositionService = ({
         }),
       ),
     );
-    yield* assertSelectedOwner(position);
+    yield* assertSelectedOwner(backendConfigurationReader, position);
     return position;
   });
 
-  const establish: StockPositionServiceContract['establish'] = Effect.fn('StockPositionService.establish')(
-    function* establishStockPosition(input) {
-      const current = yield* persistence.findCurrent(input.scope);
-      if (Option.isSome(current)) {
-        return yield* new StockPositionRejected({
-          code: 'stock_position_rejected',
-          positionRef: current.value.ref,
-          reason: 'POSITION_SCOPE_ALREADY_CURRENT',
-        });
-      }
-      const createdAt = DateTime.formatIso(yield* DateTime.now);
-      const crypto = yield* Crypto.Crypto;
-      const positionId = yield* crypto.randomUUIDv4().pipe(
-        Effect.mapError(
-          (cause) =>
-            new StockPositionPersistenceUnavailable({
-              code: 'stock_position_persistence_unavailable',
-              reason: `Stock Position identity is unavailable: ${String(cause)}`,
-            }),
-        ),
-      );
-      const candidate = yield* Schema.decodeEffect(StockPositionSchema)({
-        createdAt,
-        endedAt: null,
-        lifecycle: 'CURRENT',
-        onHand: input.onHand,
-        ref: {
-          moduleId: 'commerce.inventory',
-          resourceId: positionId,
-          resourceType: 'commerce.inventory.stock-position',
-          tenantId: input.scope.stockItemRef.tenantId,
-        },
-        revision: 1,
-        scope: input.scope,
-      }).pipe(Effect.mapError((cause) => invalid(input, cause)));
-      yield* assertSelectedOwner(candidate);
-      return yield* persistence.create(candidate);
-    },
-  );
+  const establish = stockPositionEstablishment(persistence, backendConfigurationReader);
 
   const read: StockPositionServiceContract['read'] = Effect.fn('StockPositionService.read')(
     function* readStockPosition(ref) {
@@ -192,7 +203,7 @@ export const makeStockPositionService = ({
     function* saveOnHand(ref, onHand) {
       const current = yield* readPosition(ref);
       const next = yield* recordOnHandEvidence(current, onHand);
-      yield* assertSelectedOwner(next);
+      yield* assertSelectedOwner(backendConfigurationReader, next);
       return yield* persistence.save({ expectedRevision: current.revision, next });
     },
   );

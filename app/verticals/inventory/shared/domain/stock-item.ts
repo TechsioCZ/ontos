@@ -86,6 +86,7 @@ export class StockItemRejected extends Schema.TaggedError<StockItemRejected>()('
     'stock_item_not_found',
     'stock_item_retired',
     'stock_unit_mismatch',
+    'tenant_scope_mismatch',
   ]),
   stockItemId: Schema.optionalKey(StockItemIdSchema),
 }) {}

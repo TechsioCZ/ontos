@@ -33,6 +33,12 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
         en: 'Create an inventory reservation',
       },
     },
+    'create-stock-location': {
+      title: {
+        cs: 'Vytvořit skladové umístění',
+        en: 'Create a stock location',
+      },
+    },
     'end-catalog-to-stock-binding': {
       destructive: true,
       title: {
@@ -67,6 +73,12 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
         en: 'Establish an external stock correlation',
       },
     },
+    'establish-stock-position': {
+      title: {
+        cs: 'Založit skladovou pozici',
+        en: 'Establish a stock position',
+      },
+    },
     'establish-stock-sharing-eligibility': {
       title: {
         cs: 'Povolit sdílení zásob',
@@ -80,6 +92,12 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
       },
     },
     'recover-inventory-effect': 'hidden',
+    'register-stock-item': {
+      title: {
+        cs: 'Založit skladovou položku',
+        en: 'Register a stock item',
+      },
+    },
     'release-inventory-reservation': {
       title: {
         cs: 'Uvolnit skladovou rezervaci',

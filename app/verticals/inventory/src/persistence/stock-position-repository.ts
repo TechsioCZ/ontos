@@ -5,6 +5,7 @@ import type { Effect as EffectType } from 'effect';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import { StockPositionRejected, StockPositionSchema } from '../../shared/domain/stock-position.ts';
+import { StockPositionPersistenceUnavailable } from '../../shared/domain/stock-position-persistence-unavailable.ts';
 import type {
   StockPosition,
   StockPositionOnHandEvidence,
@@ -18,14 +19,6 @@ type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, n
 type StockPositionRow = typeof inventoryStockPositions.$inferSelect;
 const INVENTORY_MODULE_ID = 'commerce.inventory' as const;
 const STOCK_POSITION_RESOURCE_TYPE = 'commerce.inventory.stock-position' as const;
-
-export class StockPositionPersistenceUnavailable extends Schema.TaggedError<StockPositionPersistenceUnavailable>()(
-  'StockPositionPersistenceUnavailable',
-  {
-    code: Schema.Literal('stock_position_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
 
 type StockPositionPersistenceError = StockPositionRejected | StockPositionPersistenceUnavailable;
 
