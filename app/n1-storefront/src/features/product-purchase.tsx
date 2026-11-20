@@ -63,10 +63,11 @@ export const ProductPurchase = ({
   const purchasable = canPurchaseSelection(selection, cart);
   const showQuantityError = purchasable && !exhausted && invalidQuantity;
   const purchaseDisabled = !purchasable || invalidQuantity;
+  const purchaseDecision = cart?.loaded === true ? purchaseDisabled : "pending";
   const guidance = purchaseGuidance(d, purchasable, current.stock === "unavailable");
   const guidanceId = guidance === null ? undefined : "purchase-unavailable";
   const addToCart = () => {
-    if (!purchasable || invalidQuantity || current.priceMinor === null || cart === null) {
+    if (purchaseDisabled || current.priceMinor === null || cart === null) {
       return;
     }
     const entry = {
@@ -97,7 +98,14 @@ export const ProductPurchase = ({
   };
   if (selectionRequired) {
     return (
-      <Button density="compact" disabled size="md" theme="solid" variant="secondary">
+      <Button
+        data-purchase-disabled={purchaseDecision}
+        density="compact"
+        disabled
+        size="md"
+        theme="solid"
+        variant="secondary"
+      >
         {d.selectVariantAction}
       </Button>
     );
@@ -145,6 +153,7 @@ export const ProductPurchase = ({
         </div>
         <Button
           aria-describedby={guidanceId}
+          data-purchase-disabled={purchaseDecision}
           density="compact"
           disabled={purchaseDisabled}
           onClick={addToCart}

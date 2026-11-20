@@ -24,6 +24,7 @@ import {
   Queue,
   Result as ParseResult,
   Schema,
+  SchemaIssue,
   Runtime,
 } from 'effect';
 import { Argument, Command, Flag } from 'effect/cli';
@@ -95,11 +96,24 @@ const Result = Schema.Struct({
   outcome: Schema.Literals(['VALID', 'REJECTED', 'PLACED', 'REPLAYED']),
   shippingPriceMinor: Schema.Int,
 });
+// The outside proof checks only the fields it uses, not the storefront's whole contract.
+const minor = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const CheckoutResponse = Schema.Struct({
   ...Result.fields,
-  shippingPriceMinor: Schema.Union([Schema.Int, Schema.Null]),
-  totalMinor: Schema.Union([Schema.Int, Schema.Null]),
-  totalVatMinor: Schema.Union([Schema.Int, Schema.Null]),
+  lines: Schema.Array(Schema.Struct({ ...ResultLine.fields, lineTotalMinor: Schema.Union([minor, Schema.Null]) })),
+  shippingPriceMinor: Schema.Union([minor, Schema.Null]),
+  status: Schema.Union([Schema.String, Schema.Null]),
+  totalMinor: Schema.Union([minor, Schema.Null]),
+  totalVatMinor: Schema.Union([minor, Schema.Null]),
+});
+const QuoteProof = Schema.Struct({
+  ...CheckoutResponse.fields,
+  issues: Issues.check(Schema.isMaxLength(0)),
+  lines: Schema.Array(Schema.Struct({ ...ResultLine.fields, lineTotalMinor: minor })).check(Schema.isMinLength(1)),
+  outcome: Schema.Literal('VALID'),
+  shippingPriceMinor: minor,
+  totalMinor: minor,
+  totalVatMinor: minor,
 });
 const Recovery = Schema.Struct({ result: Result, state: Schema.Literal('confirmed') });
 const Cart = Schema.Struct({
@@ -171,7 +185,9 @@ interface Quote {
   result: typeof Result.Type;
 }
 type Fixture = Selection & { quote: Quote };
-const evidence = (value: typeof CheckoutResponse.Type | typeof CartResponse.Type) => ({
+const evidence = (
+  value: Pick<typeof CheckoutResponse.Type, 'issues' | 'outcome' | 'totalMinor' | 'totalVatMinor'>,
+) => ({
   issueCodes: value.issues.map(({ code }) => (issueCodes.has(code) ? code : 'UNKNOWN_ISSUE')),
   outcome: value.outcome,
   totalMinor: value.totalMinor,
@@ -182,10 +198,17 @@ const readCart = (body: string) => {
   assert.ok(ParseResult.isSuccess(decoded), 'Invalid cart quote contract');
   return decoded.success;
 };
-const readCheckout = (body: string) => {
+const checkoutFailure = (error: Schema.SchemaError, save: Save) => {
+  // Report schema paths only: upstream values and error messages are not evidence.
+  const fields = SchemaIssue.makeFormatterStandardSchemaV1()(error.issue)
+    .issues.map(({ path: keys }) => keys?.map(String).join('.') ?? 'response')
+    .join(', ');
+  save('checkout-contract.json', { message: `Invalid checkout field: ${fields}` });
+  return assert.fail('Invalid checkout contract');
+};
+const readCheckout = (body: string, save: Save) => {
   const decoded = Schema.decodeUnknownResult(Schema.fromJsonString(CheckoutResponse))(body);
-  assert.ok(ParseResult.isSuccess(decoded), 'Invalid checkout contract');
-  return decoded.success;
+  return ParseResult.isSuccess(decoded) ? decoded.success : checkoutFailure(decoded.failure, save);
 };
 const recognizedRejection = (issues: typeof Issues.Type) =>
   assert.ok(issues.length > 0 && issues.every(({ code }) => issueCodes.has(code)), 'Unrecognized business rejection');
@@ -377,11 +400,15 @@ const browserProof = ({
           const response = await pending;
           save('quote-response.json', { status: response.status() });
           assert.ok(response.ok(), 'Checkout quote HTTP failure');
-          const result = readCheckout(await response.text());
+          const result = readCheckout(await response.text(), save);
           save('quote-response.json', { status: response.status(), ...evidence(result) });
           if (result.outcome === 'REJECTED') {
             recognizedRejection(result.issues);
             return await choose(index + 1);
+          }
+          const proof = Schema.decodeUnknownResult(QuoteProof)(result);
+          if (ParseResult.isFailure(proof)) {
+            checkoutFailure(proof.failure, save);
           }
           const quote = {
             request: ParseResult.getOrThrow(Schema.decodeUnknownResult(Request)(response.request().postDataJSON())),
@@ -456,23 +483,16 @@ const browserProof = ({
           if (!isProduct) {
             return await choose(index + 1);
           }
-          // The storefront explicitly asks for a variant on a parent product. Its linked variants are candidates.
-          if ((await page.getByRole('button', { exact: true, name: 'Vyberte variantu' }).count()) === 1) {
-            assert.ok((await page.locator('a[href*="variantId="]').count()) > 0, 'Variant selection has no variants');
-            return await choose(index + 1);
-          }
-          const stock = page.locator('.n1-product-stock-desktop');
-          const availability = (await stock.count()) === 1 ? await stock.textContent() : '';
-          // Only positively available offers are fixtures. Unknown availability and sold-out stock
-          // are legitimate business states, independent of whether their Add control exists or is enabled.
-          if (!/^(?:Skladem|Poslední kusy)(?:\s|$)/u.test(availability?.trim() ?? '')) {
-            return await choose(index + 1);
-          }
           phase = 'purchase-control';
-          const add = page.getByRole('button', { exact: true, name: 'Přidat do košíku' });
+          // The component publishes its own disabled decision after cart restoration; pending is not a refusal.
+          // Linked variants were discovered above, so a parent requiring selection is skipped by the same rule.
+          const add = page.locator('button[data-purchase-disabled="true"], button[data-purchase-disabled="false"]');
+          await add.waitFor({ state: 'attached' });
           assert.equal(await add.count(), 1, 'Expected exactly one purchase control');
-          // Playwright's real actionability wait includes cart hydration enabling the button.
-          // On an available offer, missing, duplicate or permanently disabled controls are errors.
+          if ((await add.getAttribute('data-purchase-disabled')) === 'true') {
+            return await choose(index + 1);
+          }
+          // An offer the storefront permits must really be actionable and add its minimum quantity.
           await add.click({ trial: true });
           const quantity = page.getByRole('spinbutton');
           const minimum = await quantity.getAttribute('aria-valuemin');
@@ -526,7 +546,9 @@ const browserProof = ({
         const http = await pending;
         assert.ok(http.ok(), 'Placement uncertain/refused; use cleanup identity, DO NOT rerun place');
         const intent = ParseResult.getOrThrow(Schema.decodeUnknownResult(Request)(http.request().postDataJSON()));
-        const placed = ParseResult.getOrThrow(Schema.decodeUnknownResult(Result)(readCheckout(await http.text())));
+        const placed = ParseResult.getOrThrow(
+          Schema.decodeUnknownResult(Result)(readCheckout(await http.text(), save)),
+        );
         const identity = {
           clientRequestId: intent.clientRequestId,
           orderId: placed.orderId,

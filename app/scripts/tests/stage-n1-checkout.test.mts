@@ -17,7 +17,7 @@ const scope = {
   legalEntityId: '11111111-1111-4111-8111-111111111111',
   marketId: 'stage',
   tenantId: '22222222-2222-4222-8222-222222222222',
-};
+} satisfies (typeof CheckoutRequestSchema.Type)['scope'];
 const CART_PATH = '/api/cart-quote';
 const CHECKOUT_PATH = '/api/checkout';
 const STATUS_PATH = '/api/checkout/status';
@@ -28,6 +28,15 @@ const UNKNOWN_FIRST = 'unknown-first';
 const UNKNOWN_MISSING_ADD = 'unknown-missing-add';
 const CART_SENTINEL_MODE = 'cart-sentinel';
 const CHECKOUT_SENTINEL_MODE = 'checkout-sentinel';
+const NO_PRICE = 'Cena není dostupná';
+const ALL_NO_PRICE = 'all-no-price';
+const ALL_BELOW_MINIMUM = 'all-below-minimum';
+const NEGATIVE_QUOTE_LINE_TOTAL = 'negative-quote-line-total';
+const malformedQuoteFields = new Map([
+  ['missing-quote-status', 'status'],
+  ['missing-quote-line-total', 'lineTotalMinor'],
+  [NEGATIVE_QUOTE_LINE_TOTAL, 'lineTotalMinor'],
+]);
 const PRODUCT_CAP = 'product-cap';
 const EXPECTED_TCP = 'Expected loopback TCP';
 const SECOND_PRODUCT = '/cs/produkt/second';
@@ -40,7 +49,7 @@ const product = (id: string) =>
   document(`
 <div class="n1-product-stock-desktop">Skladem</div>
 <input type="number" role="spinbutton" aria-valuemin="1" value="1">
-<button id="add">Přidat do košíku</button><output id="added"></output>
+<button id="add" data-purchase-disabled="false">Přidat do košíku</button><output id="added"></output>
 <script>
 add.onclick = () => {
   localStorage.setItem('n1-cart-v1:stage', JSON.stringify({ scope: ${json(scope)}, entries: [{
@@ -64,30 +73,56 @@ const boundedCatalogue = (mode: string, url: URL): string | null => {
   }
   return document(
     url.pathname.startsWith('/cs/produkt/')
-      ? '<div class="n1-product-stock-desktop">Vyprodáno</div><button disabled>Vyprodáno</button>'
+      ? '<div class="n1-product-stock-desktop">Vyprodáno</div><button data-purchase-disabled="true" disabled>Vyprodáno</button>'
       : '',
   );
 };
 const unknownProduct = document(
-  '<div class="n1-product-stock-desktop">Dostupnost nelze ověřit</div><button disabled>Přidat do košíku</button>',
+  '<div class="n1-product-stock-desktop">Dostupnost nelze ověřit</div><button data-purchase-disabled="true" disabled>Přidat do košíku</button>',
 );
+const unavailableProduct = (label: string) =>
+  document(`
+<div class="n1-product-stock-desktop">Skladem</div><p>${label}</p>
+<button data-purchase-disabled="true" disabled>Přidat do košíku</button>`);
+const skippedFirst = new Map([
+  [UNKNOWN_FIRST, unknownProduct],
+  [ALL_UNKNOWN, unknownProduct],
+  [UNKNOWN_MISSING_ADD, unknownProduct],
+  ['no-price-first', unavailableProduct(NO_PRICE)],
+  ['below-minimum-first', unavailableProduct('Skladem 2 ks, minimální odběr 5 ks')],
+]);
 const firstProduct = (mode: string) =>
-  [UNKNOWN_FIRST, ALL_UNKNOWN, UNKNOWN_MISSING_ADD].includes(mode) ? unknownProduct : product('first');
+  skippedFirst.get(mode) ??
+  (mode === ALL_NO_PRICE || mode === ALL_BELOW_MINIMUM
+    ? unavailableProduct(mode === ALL_NO_PRICE ? NO_PRICE : 'Minimální odběr 5 ks')
+    : product('first'));
 const selectedProduct = (mode: string) => {
   const html = product('second');
-  const addMarkup = '<button id="add">';
-  const disabled = html.replace(addMarkup, '<button id="add" disabled>');
+  const addMarkup = '<button id="add" data-purchase-disabled="false">';
+  const disabled = html.replace(addMarkup, '<button id="add" data-purchase-disabled="false" disabled>');
   return (
     new Map([
       [ALL_UNKNOWN, unknownProduct],
-      [UNKNOWN_MISSING_ADD, unknownProduct.replace('<button disabled>Přidat do košíku</button>', '')],
+      [
+        UNKNOWN_MISSING_ADD,
+        unknownProduct.replace('<button data-purchase-disabled="true" disabled>Přidat do košíku</button>', ''),
+      ],
       ['limited', html.replace('Skladem', 'Poslední kusy 2 ks')],
+      ['no-stock-label', html.replace('<div class="n1-product-stock-desktop">Skladem</div>', '')],
+      ['dead-cart', html.replace('add.onclick = () => {', 'add.onclick = () => { return;')],
+      [ALL_NO_PRICE, unavailableProduct(NO_PRICE)],
+      [ALL_BELOW_MINIMUM, unavailableProduct('Skladem 2 ks, minimální odběr 5 ks')],
       ['dead-add', disabled],
       ['missing-add', html.replace(`${addMarkup}Přidat do košíku</button>`, '<span id="add"></span>')],
-      ['duplicate-add', html.replace(addMarkup, `<button>Přidat do košíku</button>${addMarkup}`)],
+      ['duplicate-add', html.replace(addMarkup, `${addMarkup}Přidat do košíku</button>${addMarkup}`)],
       [
         'hydrating',
-        disabled.replace('</script>', `fetch('/hydration-ready').then(() => { add.disabled = false; });</script>`),
+        disabled
+          .replace('data-purchase-disabled="false"', 'data-purchase-disabled="pending"')
+          .replace(
+            '</script>',
+            `fetch('/hydration-ready').then(() => { add.disabled = false; add.dataset.purchaseDisabled = 'false'; });</script>`,
+          ),
       ],
     ]).get(mode) ?? html
   );
@@ -150,12 +185,67 @@ form.onsubmit = async (event) => {
   }
 };
 </script>`);
+const checkoutFixture = (value: Schema.Json) => Schema.decodeUnknownSync(CheckoutResultSchema)(value);
+const checkoutResponse = (value: Schema.Json) => HttpServerResponse.jsonUnsafe(checkoutFixture(value));
+const corruptCheckoutResponse = (value: Schema.Json) => {
+  expect(() => checkoutFixture(value)).toThrow();
+  return HttpServerResponse.jsonUnsafe(value);
+};
+const quoteResponse = (input: typeof CheckoutRequestSchema.Type, mode: string) => {
+  const rejected = input.shippingMethod === 'PPL';
+  const value = {
+    issues: rejected ? [{ code: 'NOT_AVAILABLE' }] : [],
+    lines: rejected
+      ? []
+      : [
+          {
+            lineTotalMinor: 100,
+            name: 'Fixture',
+            productId: 'second',
+            quantity: 1,
+            sku: 'fixture',
+            unitPriceMinor: 100,
+            variantId: 'blue',
+          },
+        ],
+    orderId: null,
+    orderNumber: null,
+    outcome: rejected ? 'REJECTED' : 'VALID',
+    scope,
+    shippingPriceMinor: rejected ? null : 0,
+    status: null,
+    totalMinor: rejected ? null : 100,
+    totalVatMinor: rejected ? null : 17,
+  } satisfies typeof CheckoutResultSchema.Encoded;
+  const fixture = checkoutFixture(value);
+  if (!rejected && malformedQuoteFields.has(mode)) {
+    const field = malformedQuoteFields.get(mode);
+    const malformed =
+      field === 'status'
+        ? Object.fromEntries(Object.entries(fixture).filter(([key]) => key !== field))
+        : {
+            ...fixture,
+            lines: fixture.lines.map((line) =>
+              mode === NEGATIVE_QUOTE_LINE_TOTAL
+                ? { ...line, lineTotalMinor: -1 }
+                : Object.fromEntries(Object.entries(line).filter(([key]) => key !== field)),
+            ),
+          };
+    // Deliberate wire corruption starts from a decoded fixture, never an unchecked success payload.
+    return corruptCheckoutResponse(malformed);
+  }
+  return checkoutResponse(fixture);
+};
 const checkoutDocument = (mode: string) =>
   mode === 'no-shipping' ? checkout.replaceAll(/<input type="radio"[^>]*>/gu, '') : checkout;
 const probe = path.resolve(import.meta.dirname, '../ops/stage-n1-checkout.mts');
 const playwrightModule = createRequire(new URL('../../apps/shell-super-app/package.json', import.meta.url)).resolve(
   '@playwright/test',
 );
+
+it('rejects checkout fixture drift before serving it', () => {
+  expect(() => checkoutResponse({ outcome: 'VALID' })).toThrow();
+});
 
 it.effect('fails loudly with only an allowlisted category when Chromium is missing', () =>
   Effect.gen(function* missingCheckoutBrowser() {
@@ -184,8 +274,17 @@ for (const scenario of [
   { mode: 'sequence', status: 0 },
   { mode: UNKNOWN_FIRST, status: 0 },
   { mode: ALL_UNKNOWN, status: 3 },
-  { mode: UNKNOWN_MISSING_ADD, status: 3 },
+  { mode: UNKNOWN_MISSING_ADD, status: 1 },
   { mode: 'limited', status: 0 },
+  { mode: 'no-stock-label', status: 0 },
+  { mode: 'no-price-first', status: 0 },
+  { mode: 'below-minimum-first', status: 0 },
+  { mode: ALL_NO_PRICE, status: 3 },
+  { mode: ALL_BELOW_MINIMUM, status: 3 },
+  { mode: 'dead-cart', status: 1 },
+  { mode: 'missing-quote-status', status: 1 },
+  { mode: 'missing-quote-line-total', status: 1 },
+  { mode: NEGATIVE_QUOTE_LINE_TOTAL, status: 1 },
   { mode: 'empty', status: 3 },
   { mode: 'all-rejected', status: 3 },
   { mode: CART_SENTINEL_MODE, status: 1 },
@@ -234,36 +333,9 @@ for (const scenario of [
           posts.push({ path: url.pathname, selection: input.shippingMethod });
           expect(input.mode).toBe('quote');
           if (scenario.mode === CHECKOUT_SENTINEL_MODE) {
-            return HttpServerResponse.text(json({ unexpected: sentinel }), { contentType: 'application/json' });
+            return corruptCheckoutResponse({ unexpected: sentinel });
           }
-          const rejected = input.shippingMethod === 'PPL';
-          const value = {
-            issues: rejected ? [{ code: 'NOT_AVAILABLE' }] : [],
-            lines: rejected
-              ? []
-              : [
-                  {
-                    lineTotalMinor: 100,
-                    name: 'Fixture',
-                    productId: 'second',
-                    quantity: 1,
-                    sku: 'fixture',
-                    unitPriceMinor: 100,
-                    variantId: 'blue',
-                  },
-                ],
-            orderId: null,
-            orderNumber: null,
-            outcome: rejected ? 'REJECTED' : 'VALID',
-            scope,
-            shippingPriceMinor: rejected ? null : 0,
-            status: null,
-            totalMinor: rejected ? null : 100,
-            totalVatMinor: rejected ? null : 17,
-          };
-          return HttpServerResponse.text(Schema.encodeUnknownSync(Schema.fromJsonString(CheckoutResultSchema))(value), {
-            contentType: 'application/json',
-          });
+          return quoteResponse(input, scenario.mode);
         }
         visited.push(url.pathname);
         const bounded = boundedCatalogue(scenario.mode, url);
@@ -279,7 +351,7 @@ for (const scenario of [
             url.searchParams.has('variantId')
               ? selectedProduct(scenario.mode)
               : document(
-                  '<button disabled>Vyberte variantu</button><a href="/cs/produkt/second?variantId=blue">Modrá</a>',
+                  '<button data-purchase-disabled="true" disabled>Vyberte variantu</button><a href="/cs/produkt/second?variantId=blue">Modrá</a>',
                 ),
           ],
           ['/cs/kosik', cart],
@@ -318,7 +390,7 @@ for (const scenario of [
         expect(summary).toContain('"state":"passed"');
         expect(summary).toContain(scenario.mode === 'kept' ? 'currently-served-n1-build' : 'packaged-n1-build');
         expect(posts).toEqual([
-          ...(scenario.mode === UNKNOWN_FIRST ? [] : [{ path: CART_PATH, selection: 'first' }]),
+          ...(skippedFirst.has(scenario.mode) ? [] : [{ path: CART_PATH, selection: 'first' }]),
           { path: CART_PATH, selection: 'second' },
           { path: CHECKOUT_PATH, selection: 'PPL' },
           { path: CHECKOUT_PATH, selection: 'OSOBNI_ODBER' },
@@ -328,6 +400,11 @@ for (const scenario of [
         expect(`${result.stdout}\n${result.stderr}`).toContain('NO_PURCHASABLE_FIXTURE');
       } else {
         expect(summary).toContain('quote-broken');
+      }
+      const missingField = malformedQuoteFields.get(scenario.mode);
+      if (missingField !== undefined) {
+        const fieldPath = missingField === 'status' ? missingField : `lines.0.${missingField}`;
+        expect(contents.join('\n')).toContain(`Invalid checkout field: ${fieldPath}`);
       }
       if (scenario.mode === CART_SENTINEL_MODE) {
         expect(posts).toEqual([{ path: CART_PATH, selection: 'first' }]);
@@ -342,7 +419,7 @@ for (const scenario of [
       if (scenario.mode === 'mismatch') {
         expect(posts).toEqual([]);
       }
-      if (scenario.mode === UNKNOWN_FIRST) {
+      if (skippedFirst.has(scenario.mode) && scenario.status === 0) {
         expect(visited).toContain('/cs/produkt/first');
         expect(visited).toContain(SECOND_PRODUCT);
       }
@@ -419,14 +496,25 @@ it.live('retains only cleanup identifiers before sending a place request that ne
           yield* Deferred.succeed(sent, input);
           return yield* Deferred.await(release).pipe(Effect.as(HttpServerResponse.empty()));
         }
-        return HttpServerResponse.jsonUnsafe({
+        return checkoutResponse({
           issues: [],
-          lines: [{ productId: 'second', quantity: 1, unitPriceMinor: 100, variantId: 'blue' }],
+          lines: [
+            {
+              lineTotalMinor: 100,
+              name: 'Fixture',
+              productId: 'second',
+              quantity: 1,
+              sku: 'fixture',
+              unitPriceMinor: 100,
+              variantId: 'blue',
+            },
+          ],
           orderId: null,
           orderNumber: null,
           outcome: 'VALID',
           scope,
           shippingPriceMinor: 0,
+          status: null,
           totalMinor: 100,
           totalVatMinor: 17,
         });
@@ -495,12 +583,23 @@ for (const journalWritable of [true, false]) {
         const recoveries: unknown[] = [];
         const placed = {
           issues: [],
-          lines: [{ productId: 'second', quantity: 1, unitPriceMinor: 100, variantId: 'blue' }],
+          lines: [
+            {
+              lineTotalMinor: 100,
+              name: 'Fixture',
+              productId: 'second',
+              quantity: 1,
+              sku: 'fixture',
+              unitPriceMinor: 100,
+              variantId: 'blue',
+            },
+          ],
           orderId: 'fixture-order',
           orderNumber: 'TEST-001',
           outcome: 'PLACED',
           scope,
           shippingPriceMinor: 0,
+          status: 'CONFIRMED',
           totalMinor: 100,
           totalVatMinor: 17,
         };
@@ -520,14 +619,14 @@ for (const journalWritable of [true, false]) {
             }
             if (request.url === STATUS_PATH) {
               recoveries.push(body);
-              return HttpServerResponse.jsonUnsafe({ result: placed, state: 'confirmed' });
+              return HttpServerResponse.jsonUnsafe({ result: checkoutFixture(placed), state: 'confirmed' });
             }
             const input = yield* Schema.decodeUnknownEffect(CheckoutRequestSchema)(body);
             if (input.mode === 'place') {
               placements.push(input);
-              return HttpServerResponse.jsonUnsafe(placed);
+              return checkoutResponse(placed);
             }
-            return HttpServerResponse.jsonUnsafe({
+            return checkoutResponse({
               ...placed,
               orderId: null,
               orderNumber: null,

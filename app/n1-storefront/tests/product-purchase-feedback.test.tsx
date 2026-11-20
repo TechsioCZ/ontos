@@ -7,6 +7,7 @@ import { Effect } from "effect";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { ProductPurchase } from "../src/features/product-purchase";
 import { selectProductDetail } from "../src/features/product-selection";
 import { CartProvider } from "../src/features/cart-provider";
@@ -158,6 +159,62 @@ afterEach(async () => {
 });
 
 describe("product purchase feedback", () => {
+  it("leaves the purchase decision pending until the cart has restored", () => {
+    const html = renderToStaticMarkup(
+      <CartProvider imageHosts={[]} scope={scope}>
+        <ProductPurchase
+          dictionary={d}
+          locale="cs"
+          product={product}
+          selection={selectProductDetail(product, "unselected")}
+        />
+      </CartProvider>,
+    );
+    expect(html).toContain('data-purchase-disabled="pending"');
+  });
+  it.live.each([
+    { disabled: false, name: "priced stock", selected: product },
+    { disabled: true, name: "missing price", selected: { ...product, priceMinor: null } },
+    { disabled: true, name: "stock below minimum", selected: { ...product, minimumQuantity: 5 } },
+    { disabled: true, name: "unknown stock", selected: { ...product, stock: "unknown" } },
+    { disabled: true, name: "sold out", selected: { ...product, stock: "unavailable" } },
+    {
+      disabled: true,
+      name: "variant required",
+      selected: {
+        ...product,
+        variants: [{ ...product, attributes: "M", id: "size-m", name: "M" }],
+      },
+    },
+  ] satisfies { disabled: boolean; name: string; selected: ProductDetailModel }[])(
+    "publishes the real purchase decision for $name",
+    ({ disabled, selected }) =>
+      Effect.gen(function* publishedPurchaseDecision() {
+        seed([]);
+        yield* Effect.promise(() =>
+          act(async () => {
+            root.render(
+              <ToastProvider>
+                <CartProvider imageHosts={[]} scope={scope}>
+                  <ProductPurchase
+                    dictionary={d}
+                    locale="cs"
+                    product={selected}
+                    selection={selectProductDetail(selected, "unselected")}
+                  />
+                </CartProvider>
+              </ToastProvider>,
+            );
+          }),
+        );
+        yield* idle;
+        const control = container.querySelector<HTMLButtonElement>("[data-purchase-disabled]");
+        expect({
+          decision: control?.dataset.purchaseDisabled,
+          disabled: control?.disabled,
+        }).toEqual({ decision: String(disabled), disabled });
+      }),
+  );
   it.live.each([
     { allowed: false, existing: 0, minimum: 11, stock: 10 },
     { allowed: false, existing: 10, minimum: 1, stock: 10 },
