@@ -28,8 +28,10 @@ const definitionSource = create.source.schema.fields;
  *
  * A synchronous admission stores the plan it admitted, not the outcomes of its effects, and an exact retry of a key
  * reads no current definition again. An effect the owner committed is answered from the owner's receipt: indeterminate while
- * that read is unavailable, never a wrong result. An effect Core shows never committed is executed again from the
- * pinned original command. A key whose admission retention purged is refused.
+ * that read is unavailable, never a wrong result. The pinned original command is executed again only while the route may
+ * still execute new effects and Core either recorded no invocation for an effect that was never acknowledged, or still
+ * holds its invocation as received or running; an invocation Core recorded as rejected or failed is not executed again and
+ * answers indeterminate. A key whose admission retention purged is refused.
  */
 export const SymmyCustomerGroupRowSchema = Schema.Struct({
   businessCode: create.businessCode,
