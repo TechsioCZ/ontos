@@ -99,6 +99,10 @@ export const symmyCallInMode =
       ? call.sourceActionKey === SYMMY_SYNC_ADMISSION && call.workerKey === undefined
       : call.workerKey === SYMMY_JOB_KEY && call.sourceActionKey === undefined);
 
+/** How many registered calls serve a requirement, of which exactly one is needed. */
+const registeredCalls = (count: number, kind: string) =>
+  count === 0 ? `no ${kind}call` : `${String(count)} ${kind}calls, where one is needed,`;
+
 const sameVersion = (left: RequiredOperation, right: RequiredOperation) =>
   left.entrypointKey === right.entrypointKey && left.schemaVersion === right.schemaVersion;
 const providerName = ({ moduleId, ...operation }: Provider) => `${moduleId} ${symmyOperationName(operation)}`;
@@ -214,19 +218,20 @@ const followCall = (
       candidate.recoveryOf === undefined,
   );
   for (const requirement of operationRequirements(receiver, call.entrypointKey)) {
-    const required = `requirement ${requirement.key} of ${symmyOperationName(call)} (${providerName(requirement.provider)})`;
-    const [declared, ...others] = served.filter((candidate) => sameVersion(candidate, requirement.provider));
-    const reaches = declared === undefined ? undefined : receivingModule(contracts, declared);
-    if (declared === undefined || others.length > 0) {
+    const required = `The installed ${moduleId} requires ${providerName(requirement.provider)} for ${symmyOperationName(call)} (requirement ${requirement.key})`;
+    const declared = served.filter((candidate) => sameVersion(candidate, requirement.provider));
+    const [only] = declared;
+    const reaches = only === undefined ? undefined : receivingModule(contracts, only);
+    if (only === undefined || declared.length > 1) {
       state.refusals.push(
         notDeclared(
-          `The installed ${moduleId} declares no single ${live ? '' : 'recovery '}call under ${call.workloadKey} for ${required}`,
+          `${required} and registers ${registeredCalls(declared.length, live ? '' : 'recovery ')} to it under ${call.workloadKey}`,
         ),
       );
     } else if (reaches !== undefined && reaches !== requirement.provider.moduleId) {
-      state.refusals.push(notDeclared(`The installed ${moduleId} calls ${reaches}, not the provider of ${required}`));
+      state.refusals.push(notDeclared(`${required}, and its registered call reaches ${reaches}`));
     } else {
-      followCall(contracts, state, { ...nested, call: declared });
+      followCall(contracts, state, { ...nested, call: only });
     }
   }
   for (const intrinsic of served.filter((candidate) =>
@@ -260,20 +265,24 @@ const symmyRouteCalls = (input: {
   const inMode = symmyCallInMode(admission);
   const served = admission === 'sync' ? SYMMY_SYNC_ADMISSION : SYMMY_JOB_KEY;
   const declared = (symmy.manifest.registeredWorkloadCalls ?? []).filter(inMode);
+  const modeCall = `${admission} `;
   const own = (reference: SymmyRouteCallRef, recoveryOf?: string) => {
     const label =
       recoveryOf === undefined
         ? symmyOperationName(reference)
         : `the recovery of ${recoveryOf} by ${symmyOperationName(reference)}`;
-    const [call, ...others] = declared.filter(
+    const candidates = declared.filter(
       (candidate) =>
         sameVersion(candidate, reference) &&
         candidate.recoveryOf?.actionKey === recoveryOf &&
         (recoveryOf !== undefined || candidate.allowRecoverySource !== true),
     );
-    if (call === undefined || others.length > 0) {
+    const [call] = candidates;
+    if (call === undefined || candidates.length > 1) {
       state.refusals.push(
-        notDeclared(`The installed ${SYMMY_MODULE} declares no single ${admission} call of ${label}`),
+        notDeclared(
+          `The installed ${SYMMY_MODULE} registers ${registeredCalls(candidates.length, modeCall)} of ${label}`,
+        ),
       );
       return;
     }
@@ -342,7 +351,11 @@ export const deriveSymmyRouteBindings = (input: {
       bindings.push({ identity: 'integration', purpose, workloads: [first, ...rest] });
     }
   }
-  const reads = [...enrolled.filter(({ caller }) => caller === 'integration'), ...(inventory.admissionReads ?? [])];
+  const reads = [
+    ...enrolled.filter(({ caller }) => caller === 'integration'),
+    ...(inventory.admissionReads ?? []),
+    ...enrolled.flatMap(({ integrationReads }) => integrationReads ?? []),
+  ];
   for (const operation of reads) {
     const [first, ...rest] = publishedWorkloads(byModule(operation.moduleId), operation);
     if (first === undefined) {
@@ -376,8 +389,9 @@ export const symmyBindingWorkloads = (bindings: readonly SymmyRequiredBinding[])
 ];
 
 /**
- * Checks each required binding by name against Core's holders: the integration principal (of kind integration) holds
- * one workload of each of its bindings, and exactly one active system principal holds each executor workload.
+ * Checks each required binding by name against Core's holders: the integration principal (of kind integration, and the
+ * principal an API key authenticates as) holds one workload of each of its bindings, and exactly one active system
+ * principal holds each executor workload, the same one for every workload, as the Symmy worker runs as one identity.
  * Returns the refusals, each naming the missing or ambiguous binding, and the executor of each workload.
  */
 export const checkSymmyRouteBindings = (input: {
@@ -386,15 +400,21 @@ export const checkSymmyRouteBindings = (input: {
   readonly principalId: string;
 }) => {
   const holdersOf = (workloadKey: string) => input.holders.get(workloadKey) ?? [];
-  const otherKind = [...input.holders.values()]
-    .flat()
-    .find(({ kind, principalId }) => principalId === input.principalId && kind !== 'integration');
+  const held = [...input.holders.values()].flat().filter(({ principalId }) => principalId === input.principalId);
+  const otherKind = held.find(({ kind }) => kind !== 'integration');
   const refusals: SymmyRouteEnrollmentRefusal[] = Option.match(Option.fromUndefinedOr(otherKind), {
     onNone: () => [],
     onSome: ({ kind }) => [
       { code: 'integration_principal_not_integration', detail: `The route principal is a ${kind} principal` },
     ],
   });
+  if (held.length > 0 && !held.some(({ apiKey }) => apiKey)) {
+    refusals.push({
+      code: 'integration_api_key_missing',
+      detail:
+        'No active, unrevoked API-key binding of the staff namespace authenticates as the route principal, so the Shell resolves no x-api-key to it',
+    });
+  }
   const executors = new Map<string, string>();
   for (const binding of input.bindings) {
     const [workloadKey] = binding.workloads;
@@ -428,6 +448,16 @@ export const checkSymmyRouteBindings = (input: {
     } else {
       executors.set(workloadKey, system.principalId);
     }
+  }
+  if (new Set(executors.values()).size > 1) {
+    refusals.push({
+      code: 'executor_principals_differ',
+      detail: `The Symmy worker runs as one system principal, and these workloads are held by different ones: ${[
+        ...executors,
+      ]
+        .map(([workloadKey, principalId]) => `${workloadKey} by ${principalId}`)
+        .join(', ')}`,
+    });
   }
   return { executors, refusals };
 };

@@ -12,7 +12,16 @@
  * writable only by the migration and operator login), reads the active Application Composition from
  * ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL and the retention configuration from ONTOS_SYMMY_JOB_RETENTION_POLICIES. It
  * prints every refusal, or the receipt with the bindings the route needs, the system principal that runs each executor
- * workload and the runtime configuration it cannot check. It grants no binding and calls no owner.
+ * workload and the runtime configuration it cannot check. It grants no binding and calls no owner. A deactivation
+ * checks nothing but the stored route and its token, so it stops a route of any kind.
+ *
+ * What main enrolls today, checked by deriving each route's bindings from the manifests of all main modules:
+ * productsBatch, adminProducts, priceListsBatchUpsert, priceListPricesBatch, priceLists, customerGroupsBatch,
+ * adminCustomers and adminRegions. It refuses customersBatch and customerGroupCustomersBatch with call_not_declared,
+ * naming each requirement that Privacy, Party or Commerce customer context declares on their paths without
+ * registering the call that serves it (declaring module, operation, provider module, entrypoint and version), which
+ * only those owners can change; and inventoryStockBatch with stock_route_pending_inventory_setup until its Inventory
+ * backend and positions are set up.
  */
 import { parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';

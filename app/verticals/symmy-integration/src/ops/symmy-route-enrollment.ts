@@ -14,7 +14,8 @@
  * - the lifecycle policy is one the retention configuration names for exactly this route;
  * - an exact replay changes nothing, any other difference is refused unless the operator asks to replace the route at
  *   the change token it read, and a replacement is refused while the route has outstanding work;
- * - a route that revises prices has the price list read route the Shell reads a REVISE through, with its price reads.
+ * - a route that revises prices has the price list read route of its own company, which the Shell reads a REVISE
+ *   through, with its price reads.
  *
  * The owner operations come from the plan builders that call them, so a builder and its route inventory never name two
  * versions of one operation.
@@ -115,6 +116,8 @@ export interface SymmyRouteInventoryOperation extends SymmyRouteCallRef {
   readonly caller: typeof SymmyRouteCallerSchema.Type;
   /** The item entity kind the admission plan reads an executor operation from. */
   readonly entityKind?: string;
+  /** Published reads the Shell makes with the integration principal's assertion before it admits this operation. */
+  readonly integrationReads?: readonly SymmyRouteAdmissionRead[];
   readonly moduleId: string;
   /** Registered reads the executor makes for this operation, besides its own call and the recoveries of it. */
   readonly reads?: readonly SymmyRouteCallRef[];
@@ -146,6 +149,7 @@ const executor = (
   { entrypointKey, moduleId, schemaVersion }: SymmyOwnerOperation,
   options: {
     readonly entityKind?: string;
+    readonly integrationReads?: readonly SymmyRouteAdmissionRead[];
     readonly reads?: readonly SymmyRouteCallRef[];
     readonly required?: boolean;
   } = {},
@@ -159,6 +163,9 @@ const executor = (
   };
   if (options.entityKind !== undefined) {
     Object.assign(operation, { entityKind: options.entityKind });
+  }
+  if (options.integrationReads !== undefined) {
+    Object.assign(operation, { integrationReads: options.integrationReads });
   }
   if (options.reads !== undefined) {
     Object.assign(operation, { reads: options.reads });
@@ -193,7 +200,9 @@ const customerGroupOperation = (entrypointKey: string): SymmyOwnerOperation => (
  *   head read before a create (`readCatalogHead`) and the association read that resolves a created list
  *   (`readCreatedPriceGroup`).
  * - priceListPricesBatch: the define and revise `buildSymmyPriceBatchPlan` looks up; the current definition and
- *   association reads of `verifyBatchPriceGroup`; the association read the Shell requires (`requireSourcedPriceGroup`).
+ *   association reads of `verifyBatchPriceGroup`; the association read the Shell requires (`requireSourcedPriceGroup`);
+ *   the schedule and source price reads the Shell makes for a REVISE in the scope of the priceLists route
+ *   (`readSymmyPriceBatchFacts`).
  * - customersBatch: the Party and Customer Context operations `buildSymmyCustomerPlan` looks up on the entity kind of
  *   its Party create, which builds no plan without the route's company and needs a person plan (Party create, Retail
  *   profile) or an organization plan (Party create, Counterparty onboarding and profile) (`enrolledSource`); the
@@ -305,6 +314,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
         executor(priceOperation, { entityKind: 'PRICE', reads: [priceGroupAssociations] }),
         executor(reviseOperation, {
           entityKind: 'PRICE',
+          integrationReads: revisionReads,
           reads: [read('commerce.pricing.api.price-definition'), priceGroupAssociations],
         }),
         shellRead(priceGroupModule, priceGroupAssociations.entrypointKey, true),
@@ -718,13 +728,15 @@ export const symmyPlannedRouteRow = (request: SymmyRouteEnrollmentRequest) => ({
 
 /**
  * What the operator asks of the route: enroll it as requested, or replace or deactivate it at the change token the
- * operator read from the stored route. The database raises a route's token by one with every change, deactivation and
- * reactivation included, and never hands it out again, so a change prepared against a state that has changed since is
- * refused, even when the route went back to the configuration and revision the operator saw.
+ * operator read from the stored route. The database gives the route a new token with every change, deactivation and
+ * reactivation included, from a sequence that never hands one out twice, so a change prepared against a state that has
+ * changed since is refused, even when the route went back to the configuration and revision the operator saw, or was
+ * deleted and enrolled again.
  */
 export type SymmyRouteChange =
-  | { readonly kind: 'enroll' }
-  | { readonly expectedChangeToken: number; readonly kind: 'deactivate' | 'replace' };
+  | { readonly expectedChangeToken: number; readonly kind: 'deactivate' }
+  | { readonly expectedChangeToken: number; readonly kind: 'replace' }
+  | { readonly kind: 'enroll' };
 
 /** The revision and change token of the stored route a change starts from. */
 export interface SymmyRouteVersion {
@@ -860,45 +872,64 @@ const enrolls = (configuration: SymmyFixtureExecutionPlan, operation: SymmyOwner
   enrolledOperations(configuration).some((enrolled) => sameOperation(enrolled.operation, operation));
 
 /**
- * The Shell admits a REVISE price only through the principal's active priceLists route and its price schedule and
- * source price reads (`readSymmyPriceBatchFacts`): a prices route that revises needs that route with both reads, and a
- * priceLists route keeps both while an active prices route of the principal revises.
+ * The Shell admits a REVISE price only through the principal's active priceLists route, its price schedule and source
+ * price reads and the price read source configured for its company (`readSymmyPriceBatchFacts`), which reads the
+ * prices of that company: a prices route that revises needs that route in its own company with both reads, and a
+ * priceLists route keeps both, in the company of every active prices route of the principal that revises.
  */
 const revisionSupportRefusals = (
   request: SymmyRouteEnrollmentRequest,
   peers: readonly SymmyEnrolledSource[],
 ): readonly SymmyRouteEnrollmentRefusal[] => {
+  const company = request.legalEntityId ?? null;
   if (request.routeKey === 'priceListPricesBatch' && enrolls(request.configuration, reviseOperation)) {
     const lists = peers.filter(({ routeKey }) => routeKey === 'priceLists');
-    return lists.length === 0
-      ? [
-          refusal(
+    return [
+      ...refuseWhen(
+        company === null,
+        'company_scope_required',
+        'A REVISE price is read for one company, which this prices route does not name',
+      ),
+      ...refuseWhen(
+        lists.length === 0,
+        'price_revision_reads_missing',
+        'A REVISE price is read through the active priceLists route of this principal, and none is enrolled',
+      ),
+      ...lists.flatMap(({ configuration, legalEntityId, routeId }) => [
+        ...refuseWhen(
+          legalEntityId !== company,
+          'price_revision_company_differs',
+          `Route ${routeId} (priceLists) reads the prices of company ${legalEntityId ?? 'none'}, not of ${company ?? 'none'}, which this route revises`,
+        ),
+        ...revisionReads.flatMap((needed) =>
+          refuseWhen(
+            !enrolls(configuration, needed),
             'price_revision_reads_missing',
-            'A REVISE price is read through the active priceLists route of this principal, and none is enrolled',
+            `Route ${routeId} (priceLists) does not enroll ${symmyOperationName(needed)}, which a REVISE price reads`,
           ),
-        ]
-      : lists.flatMap(({ configuration, routeId }) =>
-          revisionReads.flatMap((needed) =>
-            refuseWhen(
-              !enrolls(configuration, needed),
-              'price_revision_reads_missing',
-              `Route ${routeId} (priceLists) does not enroll ${symmyOperationName(needed)}, which a REVISE price reads`,
-            ),
-          ),
-        );
+        ),
+      ]),
+    ];
   }
   if (request.routeKey !== 'priceLists') {
     return [];
   }
-  return peers.flatMap(({ configuration, routeId, routeKey }) =>
+  return peers.flatMap(({ configuration, legalEntityId, routeId, routeKey }) =>
     routeKey === 'priceListPricesBatch' && enrolls(configuration, reviseOperation)
-      ? revisionReads.flatMap((needed) =>
-          refuseWhen(
-            !enrolls(request.configuration, needed),
-            'price_revision_reads_missing',
-            `Route ${routeId} (priceListPricesBatch) revises prices, which are read through ${symmyOperationName(needed)} of this route`,
+      ? [
+          ...refuseWhen(
+            legalEntityId !== company,
+            'price_revision_company_differs',
+            `Route ${routeId} (priceListPricesBatch) revises the prices of company ${legalEntityId ?? 'none'}, which this route, of ${company ?? 'none'}, does not read`,
           ),
-        )
+          ...revisionReads.flatMap((needed) =>
+            refuseWhen(
+              !enrolls(request.configuration, needed),
+              'price_revision_reads_missing',
+              `Route ${routeId} (priceListPricesBatch) revises prices, which are read through ${symmyOperationName(needed)} of this route`,
+            ),
+          ),
+        ]
       : [],
   );
 };
