@@ -90,6 +90,7 @@ import {
   Option,
   pipe,
   Predicate,
+  Random,
   Redacted,
   References,
   Schema,
@@ -2643,10 +2644,14 @@ const coreMediaUploadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'c
         asset: offered.value,
         body: request.stream,
         confirm: (verification) =>
-          Clock.currentTimeNanos.pipe(
-            Effect.flatMap((attempt) => {
-              // Each request is its own fresh decision of the confirm capability; the asset row arbitrates.
-              const confirmation = confirmAssetRequest(mediaAssetRef, `${correlationId}\0${attempt}`);
+          Effect.all([Clock.currentTimeNanos, Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+            Effect.flatMap(([nanos, first, second]) => {
+              // Each request is its own fresh decision of the confirm capability, even when two requests share a
+              // correlation and a clock reading; the asset row arbitrates, never the key.
+              const confirmation = confirmAssetRequest(
+                mediaAssetRef,
+                `${correlationId}\0${nanos}\0${first}\0${second}`,
+              );
               return actions.runAction({
                 payload: confirmation.payload,
                 principal,
