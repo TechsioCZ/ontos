@@ -95,6 +95,8 @@ import { PrivacyMeasureExecutionApi } from './shared/apis/privacy-measure-execut
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { resolveDuplicateCandidateCreateAction } from './src/actions/resolve-duplicate-candidate-create.action.ts';
 import { resolveDuplicateCandidateMatchAction } from './src/actions/resolve-duplicate-candidate-match.action.ts';
+import { RetailCustomerProfileApi } from './shared/apis/retail-customer-profile.ts';
+import { retailCustomerProfileRead } from './src/api/retail-customer-profile.read.ts';
 import { SearchLabelsApi } from './shared/apis/search-labels.ts';
 import { SourceCounterpartyAdmissionApi } from './shared/apis/source-counterparty-admission.ts';
 import { sourceCounterpartyAdmissionRead } from './src/api/source-counterparty-admission.read.ts';
@@ -111,6 +113,7 @@ import { updateContactPointAction } from './src/actions/update-contact-point.act
 import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
+import { updateRetailCustomerProfileAction } from './src/actions/update-retail-customer-profile.action.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
 import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
@@ -221,6 +224,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       updatePartyAction,
       updatePartyOfficialIdentifierAction,
       updatePartyRelationshipAction,
+      updateRetailCustomerProfileAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -257,6 +261,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
       'party-source-effect-receipt': PartySourceEffectReceiptApi,
       'person-engagement-profile': PersonEngagementProfileApi,
       'privacy-measure-execution': PrivacyMeasureExecutionApi,
+      'retail-customer-profile': RetailCustomerProfileApi,
       'search-labels': SearchLabelsApi,
       'source-counterparty-admission': SourceCounterpartyAdmissionApi,
       'source-party-search': SourcePartySearchApi,
@@ -360,6 +365,11 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         apiKey: 'party-source-effect-receipt',
         operationKey: 'partySourceEffectReceipt.execute',
         registration: partySourceEffectReceiptRead,
+      },
+      {
+        apiKey: 'retail-customer-profile',
+        operationKey: 'retailCustomerProfile.execute',
+        registration: retailCustomerProfileRead,
       },
       {
         apiKey: 'source-counterparty-admission',
@@ -850,6 +860,7 @@ export const partyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput =
     partyContactPointDetailRead,
     partyDetailRead,
     partySourceEffectReceiptRead,
+    retailCustomerProfileRead,
     sourceCounterpartyAdmissionRead,
     sourcePartySearchRead,
     sourcePersonAdmissionRead,

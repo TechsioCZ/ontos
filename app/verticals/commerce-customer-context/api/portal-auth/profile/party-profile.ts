@@ -1,38 +1,128 @@
+import type { OperationalScope } from '@app/core-runtime/operations/context';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import {
-  AddContactPointPayloadSchema,
-  PartyCommandConflictProblemSchema,
-  UpdateContactPointPayloadSchema,
-  UpdatePartyPayloadSchema,
+  RetailCustomerIdentityViewSchema,
+  RetailCustomerProfileViewSchema,
+  RetailCustomerProfilePolicyConflictProblemSchema,
+  RetailCustomerProfileDomainConflictProblemSchema,
+  UpdateRetailCustomerProfileActionConflictProblemSchema,
+  UpdateRetailCustomerProfileActionInvalidProblemSchema,
 } from '@app/party-registry/api';
-import type { PartyContactPointsResponse, PartyDetailResponse } from '@app/party-registry/api';
-import { normalizeContactPhone } from '@app/party-registry/domain/contact-phone-normalization';
+import type {
+  PartyContactPointsResponse,
+  PartyDetailResponse,
+  RetailCustomerProfileAttestation,
+} from '@app/party-registry/api';
 import {
-  addContactPointWithAuthorization,
-  executePartyContactPointsWithAuthorization,
-  executePartyDetailWithAuthorization,
-  updateContactPointWithAuthorization,
-  updatePartyWithAuthorization,
+  executeRetailCustomerProfileWithAuthorization,
+  executeUpdateRetailCustomerProfileWithAuthorization,
 } from '@app/party-registry/api/client';
+import { normalizeContactPhone } from '@app/party-registry/domain/contact-phone-normalization';
 import type { PartyRef } from '@app/party-registry/resources/party';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Crypto, DateTime, Effect, Option, Predicate, Redacted, Result, Schema } from 'effect';
+import { Crypto, Effect, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
-import { acquireRetailPartyGateway } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
-import type { RetailPartyCandidateOwnerInput } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { CustomerOwnProfile, UpdateCustomerOwnProfile } from '../../../shared/portal-auth/profile-api.ts';
 import { profileConflict, profileInvalid, profileUnavailable } from './problems.ts';
 
 type Contact = PartyContactPointsResponse['items'][number];
-type ProfileCommandError = Effect.Error<ReturnType<typeof updatePartyWithAuthorization>>;
-export interface CustomerPartyProfileScope extends Pick<
-  RetailPartyCandidateOwnerInput,
-  'compositionRevision' | 'legalEntityId' | 'requestCorrelation' | 'tenantId'
-> {
+export interface CustomerPartyProfileScope {
+  readonly admittedScope: OperationalScope;
+  readonly attestation: RetailCustomerProfileAttestation;
+  readonly compositionRevision: string;
+  readonly legalEntityId: string;
   readonly partyId: string;
+  readonly requestCorrelation: string;
+  readonly tenantId: string;
 }
-const sameParty = (left: PartyRef, right: PartyRef) =>
-  left.tenantId === right.tenantId && left.resourceId === right.resourceId;
+const sameParty = (scope: CustomerPartyProfileScope, party: PartyRef) =>
+  party.tenantId === scope.tenantId && party.resourceId === scope.partyId;
+
+/** Fresh assertion delegation preserves the admitted source workload and selling company. */
+const acquireOwnProfileGateway = Effect.fn('CustomerOwnProfile.acquireGateway')(function* acquire(
+  scope: CustomerPartyProfileScope,
+) {
+  if (
+    scope.admittedScope.tenantId !== scope.tenantId ||
+    scope.admittedScope.legalEntityId !== scope.legalEntityId ||
+    scope.attestation.tenantId !== scope.tenantId ||
+    scope.attestation.sellingLegalEntityId !== scope.legalEntityId ||
+    scope.attestation.partyId !== scope.partyId
+  ) {
+    return yield* Effect.fail(profileUnavailable());
+  }
+  const crypto = yield* Crypto.Crypto;
+  const issued = yield* acquireDelegatedGatewayContext(
+    {
+      audience: 'party-registry',
+      callingAppId: 'commerce-customer-context',
+      legalEntityScope: 'subject',
+      requestCorrelation: scope.requestCorrelation,
+      subject: { _tag: 'Assertion', scope: scope.admittedScope },
+    },
+    crypto,
+  ).pipe(Effect.mapError(profileUnavailable));
+  if (issued.compositionRevision !== scope.compositionRevision) {
+    return yield* Effect.fail(profileUnavailable());
+  }
+  return issued;
+});
+
+/** Canonical identity validation is independent of names and contact availability. */
+export const readDirectCustomerParty = Effect.fn('CustomerOwnProfile.readDirectParty')(function* read(
+  scope: CustomerPartyProfileScope,
+) {
+  const gateway = yield* acquireOwnProfileGateway(scope);
+  const result = yield* executeRetailCustomerProfileWithAuthorization(
+    { attestation: scope.attestation, view: 'IDENTITY' },
+    gateway.authorization,
+    scope.requestCorrelation,
+    { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
+  ).pipe(
+    Effect.mapError((failure) =>
+      Schema.is(
+        Schema.Union([
+          RetailCustomerProfilePolicyConflictProblemSchema,
+          RetailCustomerProfileDomainConflictProblemSchema,
+        ]),
+      )(failure)
+        ? profileConflict()
+        : profileUnavailable(),
+    ),
+  );
+  if (!Schema.is(RetailCustomerIdentityViewSchema)(result) || !sameParty(scope, result.partyRef)) {
+    return yield* Effect.fail(profileConflict());
+  }
+  return { partyRef: result.partyRef };
+});
+
+export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty')(function* read(
+  scope: CustomerPartyProfileScope,
+) {
+  const gateway = yield* acquireOwnProfileGateway(scope);
+  const result = yield* executeRetailCustomerProfileWithAuthorization(
+    { attestation: scope.attestation, view: 'PROFILE' },
+    gateway.authorization,
+    scope.requestCorrelation,
+    { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
+  ).pipe(
+    Effect.mapError((failure) =>
+      Schema.is(
+        Schema.Union([
+          RetailCustomerProfilePolicyConflictProblemSchema,
+          RetailCustomerProfileDomainConflictProblemSchema,
+        ]),
+      )(failure)
+        ? profileConflict()
+        : profileUnavailable(),
+    ),
+  );
+  if (!Schema.is(RetailCustomerProfileViewSchema)(result) || !sameParty(scope, result.partyRef)) {
+    return yield* Effect.fail(profileUnavailable());
+  }
+  return { partyRef: result.partyRef, profile: result.profile };
+});
 
 /** Stable preference selection, not a browser-chosen contact reference. */
 export const selectProfileContact = (items: readonly Contact[], type: 'EMAIL' | 'PHONE') =>
@@ -95,55 +185,6 @@ export const projectCustomerOwnProfile = (
   });
 };
 
-/** The account's own Party, read directly. A merge, alias or archive needs owner reconciliation, not a successor. */
-export const readDirectCustomerParty = Effect.fn('CustomerOwnProfile.readDirectParty')(function* readDirectParty(
-  scope: CustomerPartyProfileScope,
-) {
-  const partyRef: PartyRef = {
-    moduleId: 'party.registry',
-    resourceId: scope.partyId,
-    resourceType: 'party.registry.party',
-    tenantId: scope.tenantId,
-  };
-  const gateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
-  const detail = yield* executePartyDetailWithAuthorization(
-    { partyRef },
-    Redacted.value(gateway.credential),
-    scope.requestCorrelation,
-    gateway.options,
-  ).pipe(Effect.mapError(profileUnavailable));
-  if (
-    !sameParty(detail.party.partyRef, partyRef) ||
-    detail.resolution.kind !== 'DIRECT' ||
-    !sameParty(detail.resolution.requestedPartyRef, partyRef) ||
-    !sameParty(detail.resolution.canonicalPartyRef, partyRef) ||
-    detail.resolution.aliasChain.length !== 0 ||
-    detail.party.partyType !== 'PERSON' ||
-    Option.isSome(detail.party.archivedAt)
-  ) {
-    return yield* Effect.fail(profileConflict());
-  }
-  return { detail, partyRef };
-});
-
-export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty')(function* readParty(
-  scope: CustomerPartyProfileScope,
-) {
-  const { detail, partyRef } = yield* readDirectCustomerParty(scope);
-  const contactGateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
-  const contacts = yield* executePartyContactPointsWithAuthorization(
-    { includeHistorical: false, partyRef },
-    Redacted.value(contactGateway.credential),
-    scope.requestCorrelation,
-    contactGateway.options,
-  ).pipe(Effect.mapError(profileUnavailable));
-  if (contacts.items.some((item) => !sameParty(item.partyRef, partyRef))) {
-    return yield* Effect.fail(profileUnavailable());
-  }
-  const profile = yield* Effect.fromResult(projectCustomerOwnProfile(detail, contacts));
-  return { contacts, detail, partyRef, profile };
-});
-
 /** Party derives the visible name from sparse personal-name facts; omission never clears a surname. */
 export const customerPersonalNameFields = Effect.fn('CustomerOwnProfile.personalNameFields')(function* nameFields(
   displayName: string,
@@ -157,129 +198,38 @@ export const customerPersonalNameFields = Effect.fn('CustomerOwnProfile.personal
   return rest.length === 0 ? { firstName } : { firstName, lastName: rest.join(' ') };
 });
 
-/** Native expected revisions guard edits; each submission is one attempt, never an automatic retry. */
-export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updateParty')(function* updateParty(
+/** A single atomic native Party command; no automatic retry or sequence of independently committed changes. */
+export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updateParty')(function* update(
   scope: CustomerPartyProfileScope,
   input: UpdateCustomerOwnProfile,
-  before: Effect.Success<ReturnType<typeof readCustomerPartyProfile>>,
+  before: { readonly profile: CustomerOwnProfile },
 ) {
   if (before.profile.version !== input.version) {
     return yield* Effect.fail(profileConflict());
   }
-  let nameFields: Effect.Success<ReturnType<typeof customerPersonalNameFields>> | undefined;
-  if (input.displayName !== before.profile.displayName) {
-    const { lastName } = before.detail.party;
-    if (lastName === undefined) {
-      return yield* Effect.fail(profileUnavailable());
-    }
-    nameFields = yield* customerPersonalNameFields(input.displayName, lastName);
+  if (input.phone !== '' && !normalizeContactPhone(input.phone, input.phone.startsWith('+') ? undefined : 'CZ').ok) {
+    return yield* Effect.fail(profileInvalid());
   }
-  const requestedDisplayName =
-    nameFields === undefined
-      ? input.displayName
-      : [nameFields.firstName, nameFields.lastName].filter((part) => part !== undefined).join(' ');
-  // Validate the complete phone intent before any native command can commit a different field.
-  // Empty means removal; nonempty values use the owner's exact national/international rules.
-  if (input.phone !== '') {
-    const normalization = normalizeContactPhone(input.phone, input.phone.startsWith('+') ? undefined : 'CZ');
-    if (!normalization.ok) {
-      return yield* Effect.fail(profileInvalid());
-    }
-  }
-  const validFrom = DateTime.formatIso(yield* DateTime.now);
-  const evidenceReference = `commerce.customer-profile:${scope.requestCorrelation}`;
-  const provenance = {
-    authoritative: false,
-    evidenceReference,
-    method: 'DECLARED_BY_PARTY',
-    source: 'PARTY_DECLARATION',
-  } as const;
-  const command = Effect.fn('CustomerOwnProfile.nativeCommand')(function* nativeCommand(
-    execute: (
-      authorization: Redacted.Redacted,
-      options: Parameters<typeof updatePartyWithAuthorization>[2],
-    ) => Effect.Effect<unknown, ProfileCommandError>,
-  ) {
-    const gateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
-    const crypto = yield* Crypto.Crypto;
-    const result = yield* execute(gateway.credential, {
-      ...gateway.options,
-      correlationId: scope.requestCorrelation,
-      idempotencyKey: yield* crypto.randomUUIDv4().pipe(Effect.mapError(profileUnavailable)),
-    }).pipe(
-      Effect.mapError((failure) =>
-        Schema.is(PartyCommandConflictProblemSchema)(failure) ? profileConflict() : profileUnavailable(),
-      ),
-    );
-    if (Predicate.isTagged(result, 'ActionProposalAccepted')) {
-      return yield* Effect.fail(profileUnavailable());
-    }
-    return result;
-  });
-  if (input.displayName !== before.profile.displayName) {
-    const payload = yield* Schema.decodeEffect(UpdatePartyPayloadSchema)({
-      ...nameFields,
-      expectedRevision: before.detail.party.revision,
-      partyRef: before.partyRef,
-      provenanceMethod: 'DECLARED_BY_PARTY',
-      provenanceSource: 'commerce.customer-context',
-      validFrom,
-    }).pipe(Effect.mapError(profileUnavailable));
-    yield* command((credential, options) => updatePartyWithAuthorization(payload, Redacted.value(credential), options));
-  }
-  yield* Effect.forEach(
-    ['PHONE', 'EMAIL'] as const,
-    Effect.fn('CustomerOwnProfile.updateContact')(function* updateContact(type) {
-      const value = type === 'PHONE' ? input.phone : input.contactEmail;
-      if (value === (type === 'PHONE' ? before.profile.phone : before.profile.contactEmail)) {
-        return;
+  const gateway = yield* acquireOwnProfileGateway(scope);
+  const crypto = yield* Crypto.Crypto;
+  const idempotencyKey = yield* crypto.randomUUIDv4().pipe(Effect.mapError(profileUnavailable));
+  const result = yield* executeUpdateRetailCustomerProfileWithAuthorization(
+    { attestation: scope.attestation, update: input },
+    gateway.authorization,
+    scope.requestCorrelation,
+    { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision, idempotencyKey },
+  ).pipe(
+    Effect.mapError((failure) => {
+      if (Schema.is(UpdateRetailCustomerProfileActionConflictProblemSchema)(failure)) {
+        return profileConflict();
       }
-      const current = selectProfileContact(before.contacts.items, type);
-      const channel = { preferred: true, type, value };
-      const contactPoint = type === 'PHONE' && !value.startsWith('+') ? { countryCode: 'CZ', ...channel } : channel;
-      const replacement = {
-        contactPoint,
-        privacyClassification: 'PERSONAL',
-        provenance,
-        validFrom,
-      };
-      if (current === undefined) {
-        if (value === '') {
-          return;
-        }
-        const payload = yield* Schema.decodeUnknownEffect(AddContactPointPayloadSchema)({
-          ...replacement,
-          partyRef: before.partyRef,
-        }).pipe(Effect.mapError(profileUnavailable));
-        yield* command((authorization, options) =>
-          addContactPointWithAuthorization(payload, Redacted.value(authorization), options),
-        );
-      } else {
-        const correction = {
-          evidenceReferences: [evidenceReference],
-          reason: 'Customer corrected their own contact through an admitted Commerce portal session',
-          type: 'CORRECT_CONTACT_POINT',
-        } as const;
-        const payload = yield* Schema.decodeUnknownEffect(UpdateContactPointPayloadSchema)({
-          change: value === '' ? correction : { ...correction, replacement },
-          contactPointRef: current.contactPointRef,
-          expectedRevision: current.revision,
-          provenance,
-        }).pipe(Effect.mapError(profileUnavailable));
-        yield* command((authorization, options) =>
-          updateContactPointWithAuthorization(payload, Redacted.value(authorization), options),
-        );
-      }
+      return Schema.is(UpdateRetailCustomerProfileActionInvalidProblemSchema)(failure)
+        ? profileInvalid()
+        : profileUnavailable();
     }),
-    { concurrency: 1, discard: true },
   );
-  const after = yield* readCustomerPartyProfile(scope);
-  if (
-    after.profile.displayName !== requestedDisplayName ||
-    after.profile.phone !== input.phone ||
-    after.profile.contactEmail !== input.contactEmail
-  ) {
-    return yield* Effect.fail(profileConflict());
+  if (Predicate.isTagged(result, 'ActionProposalAccepted') || !sameParty(scope, result.partyRef)) {
+    return yield* Effect.fail(profileUnavailable());
   }
-  return after.profile;
+  return result.profile;
 });

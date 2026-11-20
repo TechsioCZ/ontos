@@ -262,6 +262,16 @@ export {
   executeEnrollRetailCustomerWithAuthorization,
 } from './enroll-retail-customer-action-client.ts';
 export type { EnrollRetailCustomerActionClientOptions } from './enroll-retail-customer-action-client.ts';
+export {
+  executeUpdateRetailCustomerProfile,
+  executeUpdateRetailCustomerProfileWithAuthorization,
+} from './update-retail-customer-profile-action-client.ts';
+export type { UpdateRetailCustomerProfileActionClientOptions } from './update-retail-customer-profile-action-client.ts';
+export {
+  executeRetailCustomerProfile,
+  executeRetailCustomerProfileWithAuthorization,
+} from './retail-customer-profile-client.ts';
+export type { RetailCustomerProfileClientOptions } from './retail-customer-profile-client.ts';
 // </generated-action-http-client-exports>
 export {
   executeOwnedRetailPartyResult,

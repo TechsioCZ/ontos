@@ -1,0 +1,3 @@
+ALTER TABLE "party"."party_corrections" DROP CONSTRAINT "party_corrections_action_invocation_uk";--> statement-breakpoint
+CREATE UNIQUE INDEX "party_corrections_action_invocation_non_contact_uk" ON "party"."party_corrections" ("tenant_id","action_invocation_id") WHERE "contact_point_id" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "party_corrections_action_invocation_contact_uk" ON "party"."party_corrections" ("tenant_id","action_invocation_id","contact_point_id") WHERE "contact_point_id" is not null;

@@ -354,7 +354,7 @@ const sameCanonicalContact = (row: PartyContactPointRecord, command: AddContactP
   return normalizedAddressKey(command.contactPoint.address) === storedAddressKey(row);
 };
 
-const lockParty = (transaction: PartyScopedTransaction, tenantId: string, partyId: string) =>
+export const lockParty = (transaction: PartyScopedTransaction, tenantId: string, partyId: string) =>
   transaction
     .select({ partyId: parties.partyId })
     .from(parties)

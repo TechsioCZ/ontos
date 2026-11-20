@@ -81,9 +81,8 @@ const changeOwnProfile = Effect.fn('UpdateOwnCustomerProfileAction.change')(func
   const scope = yield* ownPortalScope(
     {
       compositionRevision: attempt.compositionRevision,
-      legalEntityId: attempt.scope.legalEntityId,
-      partyId: attempt.payload.session.partyId,
-      tenantId: attempt.scope.tenantId,
+      scope: attempt.scope,
+      session: attempt.payload.session,
     },
     profileUnavailable,
   );

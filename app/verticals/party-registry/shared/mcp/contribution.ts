@@ -93,6 +93,7 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     },
     'update-contact-point': { title: { cs: 'Upravit kontakt subjektu', en: 'Update a party contact' } },
     'update-party': { title: { cs: 'Upravit subjekt', en: 'Update a party' } },
+    'update-retail-customer-profile': OntosMcpHidden,
     'update-party-official-identifier': {
       title: { cs: 'Upravit úřední identifikátor subjektu', en: 'Update a party official identifier' },
     },
@@ -168,6 +169,7 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'party-source-effect-receipt': OntosMcpHidden,
     'person-engagement-profile': { title: { cs: 'Profil spolupráce s osobou', en: 'Person engagement profile' } },
+    'retail-customer-profile': OntosMcpHidden,
     'privacy-measure-execution': {
       title: { cs: 'Stav opatření ochrany osobních údajů', en: 'Privacy measure execution status' },
     },
