@@ -8,6 +8,8 @@ import {
   currentEntryOf,
 } from '../../src/media/current-contract.ts';
 import { MediaByteSizeSchema } from '../../src/media/public-contract.ts';
+import { assetCurrentRead } from '../../src/generated-reads/asset-current.ts';
+import { coreOperations } from '../../src/sdk/core-operations.ts';
 import { mediaAssetRefFor, TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
 import type { MediaStatOutcome } from '../../src/media/verified-read.ts';
 
@@ -72,4 +74,16 @@ it('refuses a response whose AVAILABLE entry names another ref, a revision other
     }),
   ).toThrow();
   expect(() => decode({ entries: [{ kind: 'FORBIDDEN', resourceRef: ref }] })).toThrow();
+});
+
+it('is published as one Core operation whose provider is exactly the Current read and whose schemas are the contract', () => {
+  const { entrypoint, schemaVersion } = assetCurrentRead.descriptor;
+  expect(coreOperations.assetCurrent.provider).toEqual({
+    entrypointKey: entrypoint.entrypointKey,
+    moduleId: 'core.media',
+    schemaVersion,
+  });
+  expect(coreOperations.assetCurrent.request).toBe(AssetCurrentRequestSchema);
+  expect(coreOperations.assetCurrent.response).toBe(AssetCurrentResponseSchema);
+  expect(coreOperations.assetCurrent.kind).toBe('read');
 });
