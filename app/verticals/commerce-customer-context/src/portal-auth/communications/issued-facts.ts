@@ -1,6 +1,5 @@
-import { Context, Effect, Layer } from 'effect';
+import { Context } from 'effect';
 
-import { CommercePortalAuthRecoveryStoreService } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 import type { CommercePortalAuthRecoveryStore } from '../../../api/portal-auth/provider/recovery/store-service.ts';
 
 /**
@@ -16,16 +15,3 @@ export type IssuedFactsService = Pick<
 export class CommercePortalAuthIssuedFacts extends Context.Service<CommercePortalAuthIssuedFacts, IssuedFactsService>()(
   '@app/commerce-customer-context/portal-auth/communications/issued-facts/CommercePortalAuthIssuedFacts',
 ) {}
-
-/** The facts read from the realm's own recovery store: no second source of truth. */
-export const issuedFactsOverRecoveryStoreLayer = Layer.effect(
-  CommercePortalAuthIssuedFacts,
-  Effect.gen(function* makeIssuedFacts() {
-    const store = yield* CommercePortalAuthRecoveryStoreService;
-    return {
-      locateOtpChallenge: store.locateOtpChallenge,
-      peekEmailVerificationLedger: store.peekEmailVerificationLedger,
-      peekPasswordResetLedger: store.peekPasswordResetLedger,
-    } satisfies IssuedFactsService;
-  }),
-);

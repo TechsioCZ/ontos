@@ -42,7 +42,6 @@ export const SourceStopReasonSchema = Schema.Literals([
   'SOURCE_REVOKED',
   'SOURCE_SUPERSEDED',
 ]);
-export type SourceStopReason = typeof SourceStopReasonSchema.Type;
 
 /** Reference to a Privacy purpose; resolved by the Privacy gate, never interpreted by the catalog. */
 export const PrivacyPurposeKeySchema = lowerDottedText.pipe(Schema.brand('CommunicationPrivacyPurposeKey'));
