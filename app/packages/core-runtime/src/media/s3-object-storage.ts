@@ -239,12 +239,24 @@ const objectUrl = (
   return url;
 };
 
+const PRINTABLE_ASCII = /^[\u0020-\u007E]+$/u;
+const UNTYPED_CONTENT = 'application/octet-stream';
+
+/**
+ * The recorded media type is caller-stated text. Outside printable ASCII it cannot travel as a signed header (the
+ * transport would refuse or re-encode it), so the provider is told the neutral type. The recorded type stays on the
+ * row and is what the download edge answers with: the provider's copy is never served.
+ */
+const providerContentType = (contentType: string) =>
+  PRINTABLE_ASCII.test(contentType) ? contentType : UNTYPED_CONTENT;
+
 /** Signs and sends one request. A non-2xx answer is returned as the response: the caller maps it. */
 const send = Effect.fn('S3ObjectStorage.send')(function* send(wiring: Wiring, input: SendInput) {
   const { client, config, crypto } = wiring;
   const body = input.body ?? EMPTY_BODY;
   const payloadSha256 = yield* payloadDigest(crypto, body);
-  const contentHeaders = input.contentType === undefined ? {} : { 'content-type': input.contentType };
+  const contentType = input.contentType === undefined ? undefined : providerContentType(input.contentType);
+  const contentHeaders = contentType === undefined ? {} : { 'content-type': contentType };
   const headers = signS3Request({
     accessKeyId: config.accessKeyId,
     headers: { ...contentHeaders, ...input.headers },
@@ -256,7 +268,7 @@ const send = Effect.fn('S3ObjectStorage.send')(function* send(wiring: Wiring, in
     url: input.url,
   });
   const base = HttpClientRequest.make(input.method)(input.url.href).pipe(HttpClientRequest.setHeaders(headers));
-  const request = input.body === undefined ? base : HttpClientRequest.bodyUint8Array(base, body, input.contentType);
+  const request = input.body === undefined ? base : HttpClientRequest.bodyUint8Array(base, body, contentType);
   return yield* client.execute(request).pipe(
     Effect.mapError((fault) => transportFailure(input.operation, fault)),
     // The provider is a third party: its client span would carry the bucket and key, its headers a trace.
