@@ -110,9 +110,10 @@ export type Continuation =
   | { readonly kind: 'STOP'; readonly reasons: readonly RecoveryStopReason[] };
 
 /**
- * The verdict of a continuation (`FIRST_ATTEMPT` or `CONTINUE`) once the Current gates answered, over the history the step read
- * AFTER it asked them: stopped gates stop, and a history that now blocks (an effect that became unknown or was contradicted,
- * an acceptance) skips. This is a READ-SIDE pre-check only. The authority is the routine of the NEXT scoped transaction:
+ * The verdict of a continuation (`FIRST_ATTEMPT` or `CONTINUE`) once the Current gates answered, over the facts the caller
+ * passes (the step passes the history it read BEFORE it asked the gates, so a reconciliation that landed since is not seen
+ * here): stopped gates stop, and facts that block (an effect that became unknown or was contradicted, an acceptance) skip.
+ * This is a READ-SIDE pre-check only. The authority is the routine of the NEXT scoped transaction:
  * `worker_begin_attempt` / `worker_begin_retry_attempt` re-check, under the intent's advisory lock, that the intent is pending,
  * no proven stop exists, the attempt is the very next number after exactly the attempt it follows, no provider conflict is
  * unresolved, no attempt or observation proves an acceptance and the retry basis exists (`worker_link_retry_attempt`, which also

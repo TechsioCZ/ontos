@@ -748,7 +748,9 @@ const documentGate = Effect.fn('Communications.documentGate')(function* gate(
 
 /**
  * Phases 1b and 1c: ask the other owners with no connection held, then record the stop, the halt or the next attempt. The
- * evaluation of the continuation is made AFTER the gates answered, so it is Current relative to every reconciliation evidence.
+ * continuation is evaluated AFTER the gates answered, but over the history the step read in phase 1a (BEFORE the gates), so it
+ * is a read-side pre-check only. The authority over a reconciliation that lands in between is the `worker_begin_attempt` /
+ * `worker_begin_retry_attempt` routines of the next scoped transaction, which re-check the history under the intent's lock.
  */
 const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* decide(
   input: StepInput,
