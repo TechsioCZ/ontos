@@ -94,4 +94,20 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media recovery
       expect(/\b(?:delete|remove|purge)\w*\s*:/iu.test(code)).toBe(false);
     }),
   );
+
+  suite.effect('lets the S3 adapter send one HTTP DELETE only: the abort of its own unfinished multipart upload', () =>
+    Effect.gen(function* adapter() {
+      const [fileSystem, path] = yield* Effect.all([FileSystem.FileSystem, Path.Path], { concurrency: 2 });
+      const root = yield* path.fromFileUrl(new URL('../../src/media/', import.meta.url));
+      const code = withoutComments(yield* fileSystem.readFileString(path.join(root, 's3-object-storage.ts')));
+      const deletes = [...code.matchAll(/method:\s*'DELETE'(?!\s*\|)/gu)];
+      expect(deletes).toHaveLength(1);
+      // The one DELETE names the multipart upload id: it can never address an object key on its own.
+      const [declaration] = deletes;
+      const call = code.slice(Math.max(0, (declaration?.index ?? 0) - 40), (declaration?.index ?? 0) + 200);
+      expect(call).toContain('Operations.abort');
+      expect(call).toContain('{ uploadId }');
+      expect(/\bDeleteObject|\bdeleteObjects?\b|\?delete\b/iu.test(code)).toBe(false);
+    }),
+  );
 });
