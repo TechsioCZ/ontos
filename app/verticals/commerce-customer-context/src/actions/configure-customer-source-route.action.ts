@@ -14,11 +14,6 @@ import type { ConfigureCustomerSourceRoutePayload } from '../../shared/domain/cu
 import type { CustomerSourceRouteServices } from '../persistence/customer-source-route-persistence.ts';
 import { customerSourceRouteServices } from '../persistence/customer-source-route-persistence.ts';
 
-export {
-  ConfigureCustomerSourceRoutePayloadSchema,
-  ConfigureCustomerSourceRouteResultSchema,
-} from '../../shared/domain/customer-source-route.ts';
-
 const MODULE_KEY = 'commerce.customer-context' as const;
 const domainEvents = {} as const;
 
@@ -29,6 +24,12 @@ const domainEvents = {} as const;
  * only the stored route and changes nothing but its active flag. Each decision is a compare-and-set against
  * the stored route generation, an identical route is a no-op, and an existing route never changes the source
  * identity it was configured for.
+ *
+ * Limitation: a source recovers the receipt of an effect whose reply it lost only under the route's current
+ * active revision. Pausing or revising a route while the source still has imports in flight leaves such a
+ * reply unrecoverable until the route is active again at that revision; nothing committed is lost, and
+ * restoring the route restores recovery. An administrator changes a route only after the source's
+ * outstanding work has settled.
  */
 export const handleConfigureCustomerSourceRoute = Effect.fn('ConfigureCustomerSourceRoute.handle')(
   function* configureCustomerSourceRoute(

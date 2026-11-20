@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { ReadRuntime, runAction, makeActiveApplicationCompositionService } from '@app/core-runtime';
+import {
+  OperationContextDenied,
+  ReadPermissionDenied,
+  ReadRuntime,
+  failClosedOwnerAuthorizationOverlay,
+  makeActiveApplicationCompositionService,
+  runAction,
+} from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
@@ -11,7 +18,12 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Array as EffectArray, Context, Effect, Exit, Layer, Match, Option, Order, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
-import { accessWorkloadBindings, principals, tenants } from '../../../../packages/core-runtime/src/db/schema.ts';
+import {
+  accessWorkloadBindings,
+  legalEntities,
+  principals,
+  tenants,
+} from '../../../../packages/core-runtime/src/db/schema.ts';
 import {
   ConfigureCustomerSourceRoutePayloadSchema,
   ConfigureCustomerSourceRouteResultSchema,
@@ -32,15 +44,14 @@ import { customerSourceRouteRead } from '../../src/api/customer-source-route.rea
 import {
   commerceCustomerContextRelations,
   customerGroupDefinitionSourceRoutes,
-  customerGroupMembershipSourceReceipts,
   customerGroupMembershipSourceRoutes,
   customerProfileSourceRoutes,
   customerSourceRouteHistory,
-  savedAddressSourceReceipts,
   savedAddressSourceRoutes,
 } from '../../src/database/schema.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { makeCommerceCustomerContextDeniedAccess } from '../support/live-access-authority.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -79,7 +90,9 @@ type RouteKind = Route['_tag'];
 /**
  * One disposable owner database with a live human administrator and the Core enrollment a real Tenant holds for
  * Commerce source traffic: one system principal bound to the source-write workload and two integration
- * principals bound to the source-read workload. Nothing else is granted.
+ * principals bound to the source-read workload. Nothing else is granted. The fixture's gate answers every
+ * capability alike, so a suite that refuses one principal names it on `deniedAccess`, as a live gate with no
+ * matching assignment would refuse it.
  */
 const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
   const snapshot = yield* enrollmentApplicationCompositionSnapshot;
@@ -110,6 +123,7 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
       access: 'allowed',
       actionExecutor: 'manager-only',
       actionKeys: [configureCustomerSourceRouteAction.descriptor.actionKey],
+      additionalLegalEntity: 'same-tenant',
       adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
       allowedAudiences: ['commerce-customer-context'],
       applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
@@ -122,7 +136,8 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
     }),
     (resource) => resource.close().pipe(Effect.orDie),
   );
-  const runtimeContext = yield* Layer.build(fixture.layer);
+  const deniedAccess = makeCommerceCustomerContextDeniedAccess(failClosedOwnerAuthorizationOverlay);
+  const runtimeContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
   const { legalEntityId, tenantId } = fixture;
   const bindWorkload = (tenant: string, principalId: string, workloadKey: string) =>
     core.insert(accessWorkloadBindings).values({
@@ -172,12 +187,12 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
     decide({ _tag: 'CONFIGURE', expectedGeneration, reason, route });
   const pause = (routeKind: RouteKind, routeId: string, expectedGeneration: number, reason = 'Pause imports') =>
     decide({ _tag: 'PAUSE', expectedGeneration, reason, routeId, routeKind });
-  const readRoute = (request: typeof CustomerSourceRouteRequestSchema.Encoded) =>
+  const readRoute = (request: typeof CustomerSourceRouteRequestSchema.Encoded, actor = principal) =>
     Schema.decodeEffect(CustomerSourceRouteRequestSchema)(request).pipe(
       Effect.flatMap((input) =>
         Context.get(runtimeContext, ReadRuntime).runRead({
           input,
-          principal,
+          principal: actor,
           registration: customerSourceRouteRead,
           transport: { correlationId: randomUUID(), targetModuleKey: 'commerce.customer-context' },
         }),
@@ -208,6 +223,7 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
     bindWorkload,
     configure,
     core,
+    deniedAccess,
     enroll,
     fixture,
     legalEntityId,
@@ -223,7 +239,7 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
 });
 
 // INTERNAL_CONTRACT only: these facts are not a claim about any external system's current payload.
-const groupRoute = (principalId: string, revision = '1') => ({
+const groupRoute = (principalId: string, sourceReaderPrincipalIds: readonly string[] = [], revision = '1') => ({
   _tag: 'GROUP_DEFINITION' as const,
   active: true,
   issuer: 'internal-ebs',
@@ -231,8 +247,9 @@ const groupRoute = (principalId: string, revision = '1') => ({
   namespace: 'customer-groups',
   principalId,
   route: { id: 'internal-group-route', revision },
+  sourceReaderPrincipalIds,
 });
-const profileRoute = (principalId: string, sourceReaderPrincipalIds: readonly string[], revision = '1') => ({
+const profileRoute = (principalId: string, sourceReaderPrincipalIds: readonly string[]) => ({
   _tag: 'PROFILE' as const,
   active: true,
   issuer: 'internal-ebs',
@@ -240,10 +257,10 @@ const profileRoute = (principalId: string, sourceReaderPrincipalIds: readonly st
   namespace: 'customers',
   principalId,
   recordType: 'customer',
-  route: { id: 'internal-profile-route', revision },
+  route: { id: 'internal-profile-route', revision: '1' },
   sourceReaderPrincipalIds,
 });
-const membershipRoute = (principalId: string, revision = '1') => ({
+const membershipRoute = (principalId: string) => ({
   _tag: 'MEMBERSHIP' as const,
   active: true,
   allowComplete: true,
@@ -254,10 +271,10 @@ const membershipRoute = (principalId: string, revision = '1') => ({
   },
   issuer: 'internal-ebs',
   principalId,
-  route: { id: 'internal-membership-route', revision },
+  route: { id: 'internal-membership-route', revision: '1' },
   sourceNamespace: 'customer-group-memberships',
 });
-const addressRoute = (principalId: string, revision = '1') => ({
+const addressRoute = (principalId: string) => ({
   _tag: 'SAVED_ADDRESS' as const,
   active: true,
   issuer: 'internal-ebs',
@@ -265,9 +282,22 @@ const addressRoute = (principalId: string, revision = '1') => ({
   namespace: 'customer-addresses',
   principalId,
   recordType: 'address',
-  route: { id: 'internal-address-route', revision },
+  route: { id: 'internal-address-route', revision: '1' },
 });
 const bind = 'Bind the internal EBS route';
+/** One Saved Address source assertion through the internal address route. */
+const addressSource = (effectId: string) => ({
+  effectId,
+  identity: {
+    issuer: 'internal-ebs',
+    namespace: 'customer-addresses',
+    recordId: `address-${effectId}`,
+    recordType: 'address',
+    routeRef: 'internal-address-route',
+  },
+  mappingRevision: '1',
+  routeRevision: '1',
+});
 
 it.live(
   'grants a source route only to principals Core enrolls for it, under a generation no stale decision overwrites',
@@ -294,6 +324,24 @@ it.live(
         const ineligible = resultOf({ _tag: 'REJECTED', currentGeneration: null, reason: 'PRINCIPAL_INELIGIBLE' });
         const groupPage = (cursor: number | null, limit = 10) =>
           readRoute({ cursor, limit, routeId: 'internal-group-route', routeKind: 'GROUP_DEFINITION' });
+        const historyOf = (routeId: string) =>
+          admin
+            .select()
+            .from(customerSourceRouteHistory)
+            .where(
+              and(eq(customerSourceRouteHistory.tenantId, tenantId), eq(customerSourceRouteHistory.routeId, routeId)),
+            )
+            .orderBy(asc(customerSourceRouteHistory.generation));
+        const storedGroups = () =>
+          admin
+            .select()
+            .from(customerGroupDefinitionSourceRoutes)
+            .where(
+              and(
+                eq(customerGroupDefinitionSourceRoutes.tenantId, tenantId),
+                eq(customerGroupDefinitionSourceRoutes.routeId, 'internal-group-route'),
+              ),
+            );
 
         // The human administrator, an integration reader, an unknown id and another Tenant's enrolled writer are
         // never the writer of this Tenant's route.
@@ -309,9 +357,11 @@ it.live(
         for (const candidate of [fixture.manager.principalId, reader, randomUUID(), foreignWriter]) {
           expect(yield* configure(null, bind, groupRoute(candidate))).toEqual(ineligible);
         }
-        // A Profile reader must be an integration principal of this Tenant bound to the source-read workload.
+        // A Profile or Group definition reader must be an integration principal of this Tenant bound to the
+        // source-read workload.
         for (const readers of [[writer], [fixture.manager.principalId], [reader, randomUUID()]]) {
           expect(yield* configure(null, bind, profileRoute(writer, readers))).toEqual(ineligible);
+          expect(yield* configure(null, bind, groupRoute(writer, readers))).toEqual(ineligible);
         }
         // Nothing is stored yet, so nothing can be paused and the administrator sees no route.
         expect(yield* pause('GROUP_DEFINITION', 'internal-group-route', 1)).toEqual(
@@ -336,13 +386,19 @@ it.live(
         expect(yield* configure(1, 'Another issuer', { ...route, issuer: 'another-ebs' })).toEqual(
           resultOf({ _tag: 'REJECTED', currentGeneration: 1, reason: 'SOURCE_IDENTITY_IMMUTABLE' }),
         );
+        // A pause changes the active flag and the generation, and nothing else the route states.
+        const [active] = yield* storedGroups();
         expect(yield* pause('GROUP_DEFINITION', route.route.id, 1, 'Pause')).toEqual(
           resultOf({ _tag: 'PAUSED', generation: 2 }),
         );
+        const [inactive] = yield* storedGroups();
+        expect(inactive).toEqual({ ...active, active: false, generation: 2 });
         // Pausing a paused route changes nothing and records no generation.
         expect(yield* pause('GROUP_DEFINITION', route.route.id, 2, 'Pause again')).toEqual(
           resultOf({ _tag: 'PAUSED', generation: 2 }),
         );
+        expect(yield* storedGroups()).toEqual([inactive]);
+        expect(yield* historyOf(route.route.id)).toHaveLength(2);
         expect(yield* configure(2, 'Resume', route)).toEqual(resultOf({ _tag: 'CONFIGURED', generation: 3, route }));
         // A -> B -> A: the route equals what generation 1 stored, yet a decision taken against generation 1 is stale.
         expect(yield* pause('GROUP_DEFINITION', route.route.id, 1, 'Late pause')).toEqual(
@@ -373,6 +429,9 @@ it.live(
               routeKind: route._tag,
             },
           )}::jsonb)`,
+          sql`select * from commerce_customer_context.read_customer_source_route(${tenantId}::uuid,${otherEntity}::uuid,${json(
+            { cursor: null, limit: 10, routeId: route.route.id, routeKind: route._tag },
+          )}::jsonb)`,
         ]) {
           expect(Exit.isFailure(yield* owner(statement).pipe(Effect.exit))).toBe(true);
         }
@@ -387,17 +446,19 @@ it.live(
           resultOf({ _tag: 'PAUSED', generation: 4 }),
         );
         yield* revokeWorkload(secondWriter, SOURCE_WRITE);
-        // Once Core revokes the writer's enrollment, the route can no longer be resumed for it.
+        expect(yield* configure(4, 'Resume once one writer is enrolled', route)).toEqual(
+          resultOf({ _tag: 'CONFIGURED', generation: 5, route }),
+        );
+        // Once Core revokes the writer's enrollment, the stored route cannot be revised for it, yet it can be paused.
         yield* revokeWorkload(writer, SOURCE_WRITE);
-        expect(yield* configure(4, 'Resume without enrollment', route)).toEqual(
-          resultOf({ _tag: 'REJECTED', currentGeneration: 4, reason: 'PRINCIPAL_INELIGIBLE' }),
+        expect(yield* configure(5, 'Revise without enrollment', groupRoute(writer, [], '2'))).toEqual(
+          resultOf({ _tag: 'REJECTED', currentGeneration: 5, reason: 'PRINCIPAL_INELIGIBLE' }),
+        );
+        expect(yield* pause('GROUP_DEFINITION', route.route.id, 5, 'Pause the unenrolled writer')).toEqual(
+          resultOf({ _tag: 'PAUSED', generation: 6 }),
         );
 
-        const history = yield* admin
-          .select()
-          .from(customerSourceRouteHistory)
-          .where(eq(customerSourceRouteHistory.tenantId, tenantId))
-          .orderBy(asc(customerSourceRouteHistory.generation));
+        const history = yield* historyOf(route.route.id);
         expect(
           history.map(({ currentRoute, generation, previousRoute, reason, routeId, routeKind }) => ({
             currentRoute,
@@ -418,21 +479,18 @@ it.live(
               previousRoute: route,
               reason: 'Pause during the ambiguous enrollment',
             },
+            { currentRoute: route, generation: 5, previousRoute: paused, reason: 'Resume once one writer is enrolled' },
+            { currentRoute: paused, generation: 6, previousRoute: route, reason: 'Pause the unenrolled writer' },
           ].map((entry) => ({ ...entry, routeId: route.route.id, routeKind: route._tag })),
         );
         expect(new Set(history.map(({ actingPrincipalId }) => actingPrincipalId))).toEqual(
           new Set([fixture.manager.principalId]),
         );
-        expect(new Set(history.map(({ actionInvocationId }) => actionInvocationId)).size).toBe(4);
-        expect(
-          yield* admin
-            .select()
-            .from(customerGroupDefinitionSourceRoutes)
-            .where(eq(customerGroupDefinitionSourceRoutes.tenantId, tenantId)),
-        ).toEqual([
+        expect(new Set(history.map(({ actionInvocationId }) => actionInvocationId)).size).toBe(6);
+        expect(yield* storedGroups()).toEqual([
           {
             active: false,
-            generation: 4,
+            generation: 6,
             issuer: route.issuer,
             legalEntityId,
             mappingRevision: route.mappingRevision,
@@ -440,6 +498,7 @@ it.live(
             principalId: writer,
             routeId: route.route.id,
             routeRevision: route.route.revision,
+            sourceReaderPrincipalIds: [],
             tenantId,
           },
         ]);
@@ -458,7 +517,15 @@ it.live(
         });
         expect(storedOf(yield* groupPage(null, 2))).toEqual(
           Option.some({
-            generation: 4,
+            generation: 6,
+            history: [entry(6, 'Pause the unenrolled writer'), entry(5, 'Resume once one writer is enrolled')],
+            nextCursor: Option.some(5),
+            route: storedRouteOf(paused),
+          }),
+        );
+        expect(storedOf(yield* groupPage(5, 2))).toEqual(
+          Option.some({
+            generation: 6,
             history: [entry(4, 'Pause during the ambiguous enrollment'), entry(3, 'Resume')],
             nextCursor: Option.some(3),
             route: storedRouteOf(paused),
@@ -466,7 +533,7 @@ it.live(
         );
         expect(storedOf(yield* groupPage(3, 2))).toEqual(
           Option.some({
-            generation: 4,
+            generation: 6,
             history: [entry(2, 'Pause'), entry(1, bind)],
             nextCursor: Option.none(),
             route: storedRouteOf(paused),
@@ -507,23 +574,25 @@ it.live(
         expect(yield* configure(2, 'Repair with the agreed mapping', legacy)).toEqual(
           resultOf({ _tag: 'CONFIGURED', generation: 3, route: legacy }),
         );
-        const legacyHistory = yield* admin
-          .select()
-          .from(customerSourceRouteHistory)
-          .where(
-            and(
-              eq(customerSourceRouteHistory.tenantId, tenantId),
-              eq(customerSourceRouteHistory.routeId, 'legacy-group-route'),
-            ),
-          )
-          .orderBy(asc(customerSourceRouteHistory.generation));
-        expect(legacyHistory).toMatchObject([
+        expect(yield* historyOf('legacy-group-route')).toMatchObject([
           { currentRoute: { ...legacyStored, active: false }, generation: 2, previousRoute: legacyStored },
           { currentRoute: legacy, generation: 3, previousRoute: { ...legacyStored, active: false } },
         ]);
 
-        // The other three registries: Profile readers are a set, and no route ever moves to another source.
+        // Readers are a set, for a Group definition route as for a Profile route.
         const readers = EffectArray.sort([reader, secondReader], Order.String);
+        const readable = { ...legacy, sourceReaderPrincipalIds: readers };
+        expect(
+          yield* configure(3, 'Name the readers', {
+            ...legacy,
+            sourceReaderPrincipalIds: EffectArray.reverse(readers),
+          }),
+        ).toEqual(resultOf({ _tag: 'CONFIGURED', generation: 4, route: readable }));
+        expect(yield* configure(4, 'Same readers, another order', readable)).toEqual(
+          resultOf({ _tag: 'UNCHANGED', generation: 4, route: readable }),
+        );
+
+        // The other three registries: Profile readers are a set, and no route ever moves to another source.
         const profile = profileRoute(writer, readers);
         expect(yield* configure(null, bind, profileRoute(writer, EffectArray.reverse(readers)))).toEqual(
           resultOf({ _tag: 'CONFIGURED', generation: 1, route: profile }),
@@ -550,6 +619,14 @@ it.live(
           .from(customerProfileSourceRoutes)
           .where(eq(customerProfileSourceRoutes.tenantId, tenantId));
         expect(storedProfile).toMatchObject({ generation: 1, principalId: writer, sourceReaderPrincipalIds: readers });
+        // A stored reader Core no longer binds makes the route unchangeable for it, yet the route can be paused.
+        yield* revokeWorkload(secondReader, SOURCE_READ);
+        expect(yield* configure(1, 'Keep the unbound reader', { ...profile, active: false })).toEqual(
+          resultOf({ _tag: 'REJECTED', currentGeneration: 1, reason: 'PRINCIPAL_INELIGIBLE' }),
+        );
+        expect(yield* pause('PROFILE', profile.route.id, 1, 'Pause the unbound reader')).toEqual(
+          resultOf({ _tag: 'PAUSED', generation: 2 }),
+        );
         expect(
           yield* admin
             .select()
@@ -593,24 +670,109 @@ it.live(
     ).pipe(Effect.provide(services)),
 );
 
+it.live('shows a stored route only to an administrator of its own company and Tenant, and audits every read', () =>
+  Effect.scoped(
+    Effect.gen(function* administratorRouteRead() {
+      const { configure, core, deniedAccess, fixture, legalEntityId, readRoute, tenantId, writer } = yield* setup();
+      const route = groupRoute(writer);
+      expect(yield* configure(null, bind, route)).toEqual(resultOf({ _tag: 'CONFIGURED', generation: 1, route }));
+      const request = { cursor: null, limit: 10, routeId: route.route.id, routeKind: route._tag };
+      const { accessDeclaration, evidencePolicy } = customerSourceRouteRead.descriptor;
+      const routeReads = fixture
+        .evidence(core)
+        .pipe(
+          Effect.map(({ accesses }) =>
+            accesses.filter(({ evidencePolicyKey }) => evidencePolicyKey === evidencePolicy.policyKey),
+          ),
+        );
+      const audited = {
+        evidencePolicyKey: evidencePolicy.policyKey,
+        legalEntityId,
+        servingModuleKey: 'commerce.customer-context',
+        tenantId,
+      };
+
+      // The administrator reads the route, and Core records the read with what it returned.
+      expect(
+        Option.map(storedOf(yield* readRoute(request)), ({ generation, route: stored }) => ({ generation, stored })),
+      ).toEqual(Option.some({ generation: 1, stored: storedRouteOf(route) }));
+      expect(yield* routeReads).toEqual([
+        expect.objectContaining({
+          ...audited,
+          outcome: 'allowed',
+          outcomeCode: 'read_allowed',
+          principalId: fixture.manager.principalId,
+          resultCount: 1,
+        }),
+      ]);
+
+      // A member of the company without the administration assignment is refused, and the refusal is recorded.
+      expect(accessDeclaration?.key).toBe('commerce.customer-context.customer-source-route.read');
+      deniedAccess.deny(fixture.reader.principalId, accessDeclaration?.key ?? '');
+      const member = yield* Effect.flip(readRoute(request, { ...fixture.reader, legalEntityId }));
+      expect(Schema.is(ReadPermissionDenied)(member)).toBe(true);
+      expect(yield* routeReads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            ...audited,
+            outcome: 'denied',
+            outcomeCode: 'read_permission_denied',
+            principalId: fixture.reader.principalId,
+            resultCount: 0,
+          }),
+        ]),
+      );
+
+      // Each company holds its own routes: under another company of the same Tenant the administrator sees none.
+      const otherCompany = yield* Effect.fromNullishOr(fixture.secondaryLegalEntity).pipe(Effect.orDie);
+      expect(yield* readRoute(request, otherCompany.manager)).toEqual(responseOf({ _tag: 'ABSENT' }));
+      expect(yield* routeReads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            ...audited,
+            legalEntityId: otherCompany.legalEntityId,
+            outcome: 'allowed',
+            principalId: fixture.manager.principalId,
+            resultCount: 0,
+          }),
+        ]),
+      );
+
+      // The administrator cannot read under another Tenant's company, nor as a principal of another Tenant.
+      const foreignTenant = randomUUID();
+      const foreignCompany = randomUUID();
+      yield* core.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Foreign Tenant',
+        slug: `foreign-${foreignTenant}`,
+        status: 'active',
+        tenantId: foreignTenant,
+      });
+      yield* core.insert(legalEntities).values({
+        legalEntityId: foreignCompany,
+        legalName: 'Foreign company',
+        registrationCountry: 'CZ',
+        registrationNumber: foreignCompany,
+        status: 'active',
+        tenantId: foreignTenant,
+      });
+      for (const outsider of [
+        { ...fixture.manager, legalEntityId: foreignCompany },
+        { ...fixture.manager, legalEntityId: foreignCompany, tenantId: foreignTenant },
+      ]) {
+        expect(Schema.is(OperationContextDenied)(yield* Effect.flip(readRoute(request, outsider)))).toBe(true);
+      }
+      expect(yield* routeReads).toHaveLength(3);
+    }),
+  ).pipe(Effect.provide(services)),
+);
+
 it.live(
-  'recovers a receipt only for the writer that committed it, under the route generation it was written with, and nothing live',
+  'a paused route admits no source write of any kind, and a Group definition reader reads only current definitions',
   () =>
     Effect.scoped(
-      Effect.gen(function* receiptBoundRecovery() {
-        const {
-          admin,
-          bindWorkload,
-          configure,
-          enroll,
-          legalEntityId,
-          owner,
-          pause,
-          reader,
-          revokeWorkload,
-          tenantId,
-          writer: writerA,
-        } = yield* setup();
+      Effect.gen(function* pausedRouteAndGroupReader() {
+        const { configure, legalEntityId, owner, pause, reader, secondReader, tenantId, writer } = yield* setup();
         // Business times come from the database clock that also stamps the owner's records.
         const isoNow = owner(
           sql`select to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now`,
@@ -620,8 +782,8 @@ it.live(
           readonly revision: string;
         }
 
-        // The owner routines the source Actions and recovery Reads run, called as the given principal. The live fixture
-        // runs Actions only for human session actors, so the source writes are driven at this owner boundary.
+        // The owner routines the source Actions and the Group definition Read run, called as the given principal. The
+        // live fixture runs Actions only for human session actors, so the source writes are driven at this boundary.
         const groupIntent = (effectId: string, recordId: string, sourceCode: string, route: SourceRoute) => ({
           businessCode: `INTERNAL_${sourceCode}`,
           description: 'Source-managed fixture Group',
@@ -734,20 +896,6 @@ it.live(
             })),
           );
         });
-        const readProfile = (principalId: string, source: ProfileSource, route: SourceRoute, mode = 'RECEIPT') =>
-          owner(
-            sql`select outcome, result from commerce_customer_context.read_customer_profile_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${json(
-              {
-                effectId: source.effectId,
-                issuer: source.issuer,
-                mappingRevision: source.mappingRevision,
-                mode,
-                namespace: source.namespace,
-                recordType: source.recordType,
-                route,
-              },
-            )}::jsonb)`,
-          );
 
         const membershipCommand = (
           effectiveAt: string,
@@ -788,235 +936,85 @@ it.live(
           owner(
             sql`select outcome, result from commerce_customer_context.apply_customer_group_membership_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,clock_timestamp(),${json(command)}::jsonb)`,
           );
-        const recoverMembership = (principalId: string, command: MembershipCommand, route: SourceRoute) =>
-          owner(
-            sql`select outcome, result from commerce_customer_context.read_customer_group_membership_source_receipt(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${json(
-              { effectId: command.source.effectId, manager: command.manager, profile: command.profile, route },
-            )}::jsonb)`,
-          );
-
-        const addressProfile = { kind: 'RETAIL', profileRef: { resourceId: randomUUID(), tenantId } };
-        const addressSource = (effectId: string, route: SourceRoute) => ({
-          effectId,
-          identity: {
-            issuer: 'internal-ebs',
-            namespace: 'customer-addresses',
-            recordId: `address-${effectId}`,
-            recordType: 'address',
-            routeRef: route.id,
-          },
-          mappingRevision: '1',
-          routeRevision: route.revision,
-        });
-        type AddressSource = ReturnType<typeof addressSource>;
-        const addressInvocation = (source: AddressSource, actionInvocationId: string) => ({
-          actionInvocationId,
-          actionKey: 'commerce.customer-context.add-saved-address',
-          mode: 'RECEIPT',
-          profile: addressProfile,
-          requestHash: 'a'.repeat(64),
-          source,
-        });
-        // The receipt the add-saved-address Action records for its original writer. The address-book Action chain is not
-        // driven here, so the receipt row is stated as that Action records it; recovery reads only the receipt.
-        const recordAddressReceipt = (principalId: string, source: AddressSource, actionInvocationId: string) =>
-          admin.insert(savedAddressSourceReceipts).values({
-            actionInvocationId,
-            actionKey: 'commerce.customer-context.add-saved-address',
-            actorPrincipalId: principalId,
-            effectId: source.effectId,
-            issuer: source.identity.issuer,
-            legalEntityId,
-            namespace: source.identity.namespace,
-            recordedAuthContextRef: `internal-fixture-context-${actionInvocationId}`,
-            requestHash: 'a'.repeat(64),
-            result: { actionInvocationId, profile: addressProfile },
-            source,
-            tenantId,
-          });
-        const readAddress = (principalId: string, source: AddressSource, actionInvocationId: string) =>
-          owner(
-            sql`select outcome, result from commerce_customer_context.read_saved_address_source_receipt(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${principalId}::uuid,null,${json(
-              addressInvocation(source, actionInvocationId),
-            )}::jsonb)`,
-          );
-        const authorizeAddress = (principalId: string, source: AddressSource) =>
+        // Saved Address authorization is checked before any address is written, so it shows the route's answer alone.
+        const authorizeAddress = (principalId: string, effectId: string) =>
           owner(
             sql`select outcome from commerce_customer_context.authorize_saved_address_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,'commerce.customer-context.add-saved-address',${'a'.repeat(64)},${json(
-              addressInvocation(source, randomUUID()),
+              {
+                operation: 'ADD',
+                profile: { kind: 'RETAIL', profileRef: { resourceId: randomUUID(), tenantId } },
+                source: addressSource(effectId),
+              },
             )}::jsonb)`,
           );
 
-        // Every route binds writer A through revision 1; the Profile route also names reader R.
-        const first = {
-          address: addressRoute(writerA),
-          group: groupRoute(writerA),
-          membership: membershipRoute(writerA),
-          profile: profileRoute(writerA, [reader]),
+        // Every route binds the writer; the Group definition route also names one reader.
+        const routes = {
+          address: addressRoute(writer),
+          group: groupRoute(writer, [reader]),
+          membership: membershipRoute(writer),
+          profile: profileRoute(writer, []),
         };
-        for (const route of Object.values(first)) {
+        for (const route of Object.values(routes)) {
           expect(yield* configure(null, bind, route)).toEqual(resultOf({ _tag: 'CONFIGURED', generation: 1, route }));
-        }
-
-        // A commits one effect of each kind through revision 1.
-        const groupA = groupIntent('group-create-a', '77', 'LOYAL', first.group.route);
-        const createdA = yield* writeGroup(writerA, groupA);
-        expect(createdA).toMatchObject({ outcome: 'CREATED' });
-        const profileA = profileSource('profile-a', 'C-A', first.profile.route);
-        const ensuredA = yield* ensureProfile(writerA, profileA);
-        expect(ensuredA).toMatchObject({ payload: { sourceEffect: { effectId: 'profile-a', replayed: false } } });
-        const membershipA = membershipCommand(
-          yield* isoNow,
-          'membership-a',
-          createdA.groupId,
-          ensuredA.profileId,
-          first.membership.route,
-        );
-        expect(yield* applyMembership(writerA, membershipA)).toMatchObject({ outcome: 'APPLIED' });
-        const addressA = addressSource('address-a', first.address.route);
-        const addressInvocationA = randomUUID();
-        yield* recordAddressReceipt(writerA, addressA, addressInvocationA);
-        // Under current route authority the Profile recovery also names the live Profile.
-        expect(yield* readProfile(writerA, profileA, first.profile.route)).toMatchObject({
-          outcome: 'AVAILABLE',
-          result: { _tag: 'RECEIPT', current: expect.anything() },
-        });
-
-        // Core replaces A with B, the administrator revises every route to B through revision 2 and drops reader R,
-        // and A is enrolled again: it still holds the workload, but no route names it any more.
-        yield* revokeWorkload(writerA, SOURCE_WRITE);
-        const writerB = yield* enroll(tenantId, 'system', SOURCE_WRITE);
-        const second = {
-          address: addressRoute(writerB, '2'),
-          group: groupRoute(writerB, '2'),
-          membership: membershipRoute(writerB, '2'),
-          profile: profileRoute(writerB, [], '2'),
-        };
-        for (const route of Object.values(second)) {
-          expect(yield* configure(1, 'Replace the writer', route)).toEqual(
-            resultOf({ _tag: 'CONFIGURED', generation: 2, route }),
-          );
-        }
-        yield* bindWorkload(tenantId, writerA, SOURCE_WRITE);
-
-        // B commits a later effect of each kind through revision 2; A can no longer write through either revision.
-        const groupB = groupIntent('group-create-b', '78', 'VIP', second.group.route);
-        const createdB = yield* writeGroup(writerB, groupB);
-        expect(createdB).toMatchObject({ outcome: 'CREATED' });
-        const profileB = profileSource('profile-b', 'C-B', second.profile.route);
-        const ensuredB = yield* ensureProfile(writerB, profileB);
-        expect(ensuredB).toMatchObject({ payload: { sourceEffect: { effectId: 'profile-b', replayed: false } } });
-        const membershipB = membershipCommand(
-          yield* isoNow,
-          'membership-b',
-          createdB.groupId,
-          ensuredB.profileId,
-          second.membership.route,
-        );
-        expect(yield* applyMembership(writerB, membershipB)).toMatchObject({ outcome: 'APPLIED' });
-        const addressB = addressSource('address-b', second.address.route);
-        const addressInvocationB = randomUUID();
-        yield* recordAddressReceipt(writerB, addressB, addressInvocationB);
-        for (const route of [first.group.route, second.group.route]) {
-          expect(yield* writeGroup(writerA, groupIntent('group-create-a2', '79', 'GOLD', route))).toMatchObject({
-            outcome: 'SOURCE_AUTHORITY_DENIED',
-          });
-        }
-        expect(
-          yield* admin
-            .select()
-            .from(customerGroupMembershipSourceReceipts)
-            .where(eq(customerGroupMembershipSourceReceipts.tenantId, tenantId))
-            .pipe(Effect.map((rows) => rows.map(({ actorPrincipalId, effectId }) => ({ actorPrincipalId, effectId })))),
-        ).toEqual(
-          expect.arrayContaining([
-            { actorPrincipalId: writerA, effectId: 'membership-a' },
-            { actorPrincipalId: writerB, effectId: 'membership-b' },
-          ]),
-        );
-
-        // Every route is paused while two system principals hold the source-write workload.
-        for (const route of Object.values(second)) {
-          expect(yield* pause(route._tag, route.route.id, 2)).toEqual(resultOf({ _tag: 'PAUSED', generation: 3 }));
-        }
-
-        // Fresh writes stay denied for both writers.
-        expect(
-          yield* writeGroup(writerB, groupIntent('group-create-b2', '80', 'SILVER', second.group.route)),
-        ).toMatchObject({ outcome: 'SOURCE_AUTHORITY_DENIED' });
-        expect(yield* ensureProfile(writerB, profileSource('profile-b2', 'C-B2', second.profile.route))).toMatchObject({
-          outcome: 'SOURCE_AUTHORITY_DENIED',
-        });
-        expect(
-          yield* applyMembership(writerB, {
-            ...membershipB,
-            source: { ...membershipB.source, effectId: 'membership-b2' },
-          }),
-        ).toMatchObject({ outcome: 'SOURCE_AUTHORITY_DENIED' });
-        for (const [principalId, source] of [
-          [writerA, addressSource('address-a2', first.address.route)],
-          [writerB, addressSource('address-b2', second.address.route)],
-        ] as const) {
-          expect(yield* authorizeAddress(principalId, source)).toMatchObject({ outcome: 'SOURCE_AUTHORITY_DENIED' });
         }
         const denied = { outcome: 'SOURCE_AUTHORITY_DENIED' };
 
-        // GROUP_DEFINITION: each writer recovers its own receipt under the revision it wrote it with; nothing else.
-        expect(yield* readGroup(writerA, groupA, first.group.route)).toMatchObject({
+        // While the routes are active the writer writes through each of them.
+        const group = groupIntent('group-create', '77', 'LOYAL', routes.group.route);
+        const created = yield* writeGroup(writer, group);
+        expect(created).toMatchObject({ outcome: 'CREATED' });
+        const ensured = yield* ensureProfile(writer, profileSource('profile-create', 'C-1', routes.profile.route));
+        expect(ensured).toMatchObject({ payload: { sourceEffect: { effectId: 'profile-create', replayed: false } } });
+        const membership = membershipCommand(
+          yield* isoNow,
+          'membership-assign',
+          created.groupId,
+          ensured.profileId,
+          routes.membership.route,
+        );
+        expect(yield* applyMembership(writer, membership)).toMatchObject({ outcome: 'APPLIED' });
+        // The route admits the writer; the request then fails only on its target, a Profile this source never bound.
+        expect(yield* authorizeAddress(writer, 'address-add')).toMatchObject({ outcome: 'TARGET_INELIGIBLE' });
+
+        // The writer reads the current definition and recovers its receipt; the reader the route names reads the
+        // current definition and no receipt; a principal Core binds to source reads that the route does not name
+        // reads nothing.
+        expect(yield* readGroup(writer, group, routes.group.route, 'CURRENT')).toMatchObject({
+          outcome: 'FOUND',
+          result: { _tag: 'CURRENT' },
+        });
+        expect(yield* readGroup(writer, group, routes.group.route)).toMatchObject({
           outcome: 'FOUND',
           result: { _tag: 'RECEIPT', created: true, operation: 'CREATE' },
         });
-        expect(yield* readGroup(writerB, groupB, second.group.route)).toMatchObject({ outcome: 'FOUND' });
-        expect(yield* readGroup(writerA, groupB, second.group.route)).toMatchObject(denied);
-        expect(yield* readGroup(writerA, groupB, first.group.route)).toMatchObject({ outcome: 'NOT_FOUND' });
-        expect(yield* readGroup(writerB, groupA, first.group.route)).toMatchObject(denied);
-        expect(yield* readGroup(reader, groupA, first.group.route)).toMatchObject(denied);
-        expect(yield* readGroup(writerA, groupA, first.group.route, 'CURRENT')).toMatchObject(denied);
-
-        // PROFILE: the recovered receipt comes without the live Profile; the former reader recovers nothing.
-        const recoveredA = yield* readProfile(writerA, profileA, first.profile.route);
-        expect(recoveredA).toMatchObject({
-          outcome: 'AVAILABLE',
-          result: { _tag: 'RECEIPT', receipt: { actorPrincipalId: writerA, intent: { source: profileA } } },
+        expect(yield* readGroup(reader, group, routes.group.route, 'CURRENT')).toMatchObject({
+          outcome: 'FOUND',
+          result: { _tag: 'CURRENT' },
         });
-        expect(recoveredA).not.toHaveProperty('result.current');
-        const recoveredB = yield* readProfile(writerB, profileB, second.profile.route);
-        expect(recoveredB).toMatchObject({ outcome: 'AVAILABLE', result: { receipt: { actorPrincipalId: writerB } } });
-        expect(recoveredB).not.toHaveProperty('result.current');
-        expect(yield* readProfile(writerA, profileB, second.profile.route)).toMatchObject(denied);
-        expect(yield* readProfile(writerA, profileB, first.profile.route)).toMatchObject({ outcome: 'NOT_FOUND' });
-        for (const [source, route] of [
-          [profileA, first.profile.route],
-          [profileB, second.profile.route],
-        ] as const) {
-          expect(yield* readProfile(reader, source, route)).toMatchObject(denied);
-          expect(yield* readProfile(reader, source, route, 'CURRENT')).toMatchObject(denied);
+        expect(yield* readGroup(reader, group, routes.group.route)).toMatchObject(denied);
+        for (const mode of ['CURRENT', 'RECEIPT']) {
+          expect(yield* readGroup(secondReader, group, routes.group.route, mode)).toMatchObject(denied);
         }
 
-        // MEMBERSHIP: the receipt records no route, so authority is the revision its writer held for this exact source.
-        expect(yield* recoverMembership(writerA, membershipA, first.membership.route)).toMatchObject({
-          outcome: 'FOUND',
-        });
-        expect(yield* recoverMembership(writerB, membershipB, second.membership.route)).toMatchObject({
-          outcome: 'FOUND',
-        });
-        expect(yield* recoverMembership(writerA, membershipB, second.membership.route)).toMatchObject(denied);
-        expect(yield* recoverMembership(writerA, membershipB, first.membership.route)).toMatchObject({
-          outcome: 'TARGET_NOT_FOUND',
-        });
-        expect(yield* recoverMembership(reader, membershipA, first.membership.route)).toMatchObject(denied);
-
-        // SAVED_ADDRESS: the original writer recovers exactly its own invocation's receipt.
-        expect(yield* readAddress(writerA, addressA, addressInvocationA)).toMatchObject({
-          outcome: 'AVAILABLE',
-          result: { _tag: 'RECEIPT', receipt: { actionInvocationId: addressInvocationA, profile: addressProfile } },
-        });
-        expect(yield* readAddress(writerB, addressB, addressInvocationB)).toMatchObject({ outcome: 'AVAILABLE' });
-        expect(yield* readAddress(writerA, addressB, addressInvocationB)).toMatchObject(denied);
+        // Each route is paused; no fresh write of its kind is admitted any more, and its reader reads nothing.
+        for (const route of Object.values(routes)) {
+          expect(yield* pause(route._tag, route.route.id, 1)).toEqual(resultOf({ _tag: 'PAUSED', generation: 2 }));
+        }
+        expect(yield* writeGroup(writer, groupIntent('group-create-2', '78', 'VIP', routes.group.route))).toMatchObject(
+          denied,
+        );
         expect(
-          yield* readAddress(writerA, addressSource('address-b', first.address.route), addressInvocationB),
-        ).toMatchObject({ outcome: 'NOT_FOUND' });
-        expect(yield* readAddress(reader, addressA, addressInvocationA)).toMatchObject(denied);
+          yield* ensureProfile(writer, profileSource('profile-create-2', 'C-2', routes.profile.route)),
+        ).toMatchObject(denied);
+        expect(
+          yield* applyMembership(writer, {
+            ...membership,
+            source: { ...membership.source, effectId: 'membership-assign-2' },
+          }),
+        ).toMatchObject(denied);
+        expect(yield* authorizeAddress(writer, 'address-add-2')).toMatchObject(denied);
+        expect(yield* readGroup(reader, group, routes.group.route, 'CURRENT')).toMatchObject(denied);
       }),
     ).pipe(Effect.provide(services)),
 );

@@ -155,3 +155,18 @@ repeating the external effect, and an owner whose answer was lost is settled by 
 read rather than a second dispatch. The `provider.account.create` transition is reconcile-only
 there — its credential-carrying dispatch belongs to the start route alone — and a transition this
 deployment registers no owner effect for halts the journey with the Attempt untouched.
+
+## Commerce source routes
+
+A source system writes Customer Profiles, Customer Group definitions, Group Memberships and Saved
+Addresses only through an active source route of the matching kind. An administrator establishes,
+changes or pauses a route with the `commerce.customer-context.configure-customer-source-route`
+Action, and reads it, with the generation a decision must name and its decision history, through the
+`customer-source-route` Read. Every principal a configured route names must be one Core enrolls for
+the route's workload.
+
+A source recovers the receipt of an effect whose reply it lost only under the route's current active
+revision. Pausing or revising a route while the source still has imports in flight leaves such a reply
+unrecoverable until the route is active again at that revision. Nothing committed is lost, and
+restoring the route restores recovery. Change a route only after the source's outstanding work has
+settled.

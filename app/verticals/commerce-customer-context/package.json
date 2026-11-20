@@ -208,6 +208,7 @@
     "./api/change-organization-customer-profile-ico-action/client": "./src/api/change-organization-customer-profile-ico-action-client.ts",
     "./api/migrate-organization-customer-profile-ico-action/client": "./src/api/migrate-organization-customer-profile-ico-action-client.ts",
     "./testing/customer-profile-source-reader": "./src/testing/customer-profile-source-reader.ts",
+    "./testing/customer-group-definition-source-reader": "./src/testing/customer-group-definition-source-reader.ts",
     "./actions/apply-customer-group-membership-source": "./shared/actions/apply-customer-group-membership-source.ts",
     "./actions/assign-customer-group": "./shared/actions/assign-customer-group.ts",
     "./actions/remove-customer-group": "./shared/actions/remove-customer-group.ts",
