@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
@@ -86,6 +86,39 @@ describe('The enrollment verification issuance and its replay (#1406)', () => {
       expect(decision).toMatchObject({ success: 'ISSUE' });
       expect(Option.isSome(reserved)).toBe(true);
     }).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
+  );
+
+  it.effect(
+    'REGRESSION: a request this process submitted whose answer was lost is never NOT_SUBMITTED: a replay issues no second link',
+    () =>
+      Effect.gen(function* lostAnswer() {
+        const handoff = yield* CommercePortalAuthProtectedHandoff;
+        const replay = yield* CommercePortalAuthVerificationReplay;
+        const issuanceRef = yield* enrollmentVerificationIssuanceRef(INVOCATION);
+        const issuedAt = DateTime.makeUnsafe('2026-11-19T10:00:00.000Z');
+        // the first creation held the issuance and submitted; Communications admitted the request but the caller saw "unavailable"
+        yield* handoff.hold(
+          {
+            endpoint: Redacted.make('fictional@example.test'),
+            issuance: {
+              expiresAt: DateTime.add(issuedAt, { hours: 1 }),
+              flow: 'verify-email',
+              issuanceRef,
+              issuedAt,
+              providerSubjectId: SUBJECT,
+            },
+            secret: Redacted.make('https://fictional.example.test/verify'),
+          },
+          { supersede: true },
+        );
+        const decision = yield* replay.begin({
+          ownerInvocationId: INVOCATION,
+          providerSubjectId: SUBJECT,
+          replay: true,
+        });
+        expect(decision).toBe('NO_NEW_ISSUANCE');
+        expect(Option.isNone(yield* handoff.takeReservation('verify-email', SUBJECT))).toBe(true);
+      }).pipe(Effect.provide(replayWith('NOT_SUBMITTED')), Effect.provide(commercePortalAuthPlatformCryptoLive)),
   );
 
   for (const outcome of ['IN_PROGRESS', 'ACCEPTED', 'UNCERTAIN', 'NON_ACCEPTANCE_PROVEN'] as const) {

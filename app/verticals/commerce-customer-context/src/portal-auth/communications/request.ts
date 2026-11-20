@@ -27,8 +27,9 @@ const encodeRequest = Schema.encodeEffect(CommunicationRequestSchema);
  * as references, the instant Auth bound them, the trusted scope and one safe reference. There is no field that could hold
  * a token, link, one-time code, password or address, and the idempotency key derives from the issuance reference alone.
  *
- * Expiry is not a request field: Communications asks Auth for the issuance state at the decision and again at the last
- * stoppable handoff, so an expired, consumed or revoked issuance stops there with a reason and nothing is extended.
+ * The request states the issuance's expiry as `occurrence.validUntil` (the instant Auth's own issuance stops being usable);
+ * Communications stops a handoff past it. Beyond that it still asks Auth for the issuance state at the decision and again at
+ * the last stoppable handoff, so a consumed or revoked issuance stops there with a reason and nothing is extended.
  */
 export const portalAuthCommunicationRequest = (
   issuance: PortalAuthIssuance,
@@ -44,7 +45,13 @@ export const portalAuthCommunicationRequest = (
       correlationId: issuance.issuanceRef,
       key: portalAuthIdempotencyKey(issuance.flow, issuance.issuanceRef),
     },
-    occurrence: { occurrenceId: issuance.issuanceRef, revision: 1 },
+    // the issuance's own expiry as Auth holds it: the source says when its occurrence stops being actionable, Communications
+    // stops a handoff past it and never extends it
+    occurrence: {
+      occurrenceId: issuance.issuanceRef,
+      revision: 1,
+      validUntil: DateTime.formatIso(issuance.expiresAt),
+    },
     originalRecipients: [
       {
         originalContact: {

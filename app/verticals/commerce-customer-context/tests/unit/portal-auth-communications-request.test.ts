@@ -1,5 +1,6 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -47,7 +48,12 @@ describe('The Communication Request of a Portal Auth issuance (#1406)', () => {
           const decoded = decodeRequest(request);
           expect(decoded.source.moduleKey).toBe('commerce.customer-context');
           expect(decoded.purpose).toBe(portalAuthCommunicationPurposeOf(flow));
-          expect(decoded.occurrence).toStrictEqual({ occurrenceId: `pa-${flow}-1`, revision: 1 });
+          expect(decoded.occurrence.occurrenceId).toBe(`pa-${flow}-1`);
+          expect(decoded.occurrence.revision).toBe(1);
+          // the issuance's own expiry, exactly as Auth holds it: never callback time plus a policy lifetime
+          expect(DateTime.formatIso(Option.getOrThrow(Option.fromNullishOr(decoded.occurrence.validUntil)))).toBe(
+            '2026-11-19T10:15:00.000Z',
+          );
           expect(decoded.scope).toStrictEqual({ tenantId: TENANT });
           expect(decoded.originalRecipients).toHaveLength(1);
           expect(decoded.originalRecipients[0]?.recipientRef).toMatchObject({
@@ -88,6 +94,19 @@ describe('The Communication Request of a Portal Auth issuance (#1406)', () => {
         });
         expect(decodeRequest(withEntity).scope.legalEntityId).toBe('33333333-3333-4333-8333-333333333333');
         expect(() => decodeRequest({ ...withEntity, secret: 'x' })).toThrow();
+      }),
+  );
+
+  it.effect(
+    'REGRESSION: a retry of the same issuance is byte-identical (validAt and validUntil derive from the issuance, never from now)',
+    () =>
+      Effect.gen(function* stableRetry() {
+        const issuance = issuanceOf('verify-email');
+        const first = yield* portalAuthCommunicationRequest(issuance, { tenantId: TENANT });
+        yield* TestClock.adjust('5 minutes');
+        const retry = yield* portalAuthCommunicationRequest(issuance, { tenantId: TENANT });
+        expect(JSON.stringify(retry)).toBe(JSON.stringify(first));
+        expect(first.originalRecipients[0]?.validAt).toBe('2026-11-19T10:00:00.000Z');
       }),
   );
 

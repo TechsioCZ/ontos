@@ -6,7 +6,9 @@ import { VerificationReplayUnavailable } from './verification-replay-unavailable
 /**
  * What Communications currently proves about the message of one issuance, as the SOURCE learns it (the outcome feed of
  * #1402), reduced to what an enrollment replay needs:
- * - NOT_SUBMITTED: Communications has no request for the issuance, so no message can exist for it;
+ * - NOT_SUBMITTED: Communications has NO admitted request for the issuance, so no message can exist for it. A reader MUST answer
+ *   any other outcome as soon as the request was admitted (decided, stored), even when the submitting caller only saw a
+ *   timeout or an unavailable answer: the admitted request is the fact, not the caller's view of the call;
  * - IN_PROGRESS / ACCEPTED: the message is prepared, handed over or provider-accepted; the effect exists or is on its way;
  * - UNCERTAIN: the provider effect is UNKNOWN (a timeout, an unreadable answer); it is reconciled, never resent;
  * - NON_ACCEPTANCE_PROVEN: the provider provably did not accept; the SAME intent may continue under its approved recovery rule;

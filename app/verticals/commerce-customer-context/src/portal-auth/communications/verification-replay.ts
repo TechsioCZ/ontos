@@ -1,4 +1,4 @@
-import { Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import type { PlatformError } from 'effect';
 
 import { withCause } from '../../../api/portal-auth/problems-support.ts';
@@ -14,7 +14,9 @@ import { VerificationReplayUnavailable } from './verification-replay-unavailable
  * under a fixed namespace, so a replay of the same invocation names the SAME issuance and therefore the same Communication
  * Request, intent and last outcome. A replay may never send a second message or issue a second link on mere uncertainty:
  *
- * - NOT_SUBMITTED: Communications has no request for the issuance, so nothing was ever sent; the same issuance is issued;
+ * - NOT_SUBMITTED: Communications has NO request for the issuance (any ADMITTED request is never NOT_SUBMITTED, whatever the
+ *   caller saw: a timeout does not un-admit it) and this process never submitted one, so nothing was ever sent; the same
+ *   issuance is issued. A request this process submitted (held, answer lost) is uncertain, not NOT_SUBMITTED;
  * - IN_PROGRESS, ACCEPTED, UNCERTAIN, NON_ACCEPTANCE_PROVEN: a message exists or is being continued under the approved
  *   recovery rule of the SAME intent; the replay sends nothing and issues nothing (an uncertain effect is reconciled, a
  *   proven non-acceptance continues the same intent, never a new link);
@@ -95,7 +97,13 @@ export const makeVerificationReplay = Effect.fn('CommercePortalAuthVerificationR
         }
         const outcome = yield* outcomes.outcomeOf({ flow: VERIFY_EMAIL, issuanceRef });
         if (outcome === 'NOT_SUBMITTED') {
-          return yield* reserve({ issuanceRef, ownerInvocationId, providerSubjectId });
+          // The request is held in this process before Communications is asked, so a held issuance means a submission WAS made:
+          // the caller may have seen a timeout for a request Communications nevertheless admitted, which `NOT_SUBMITTED` (no
+          // request admitted) cannot yet show. That is uncertainty, never proof that nothing was submitted.
+          const held = yield* handoff.issuanceOf(issuanceRef);
+          return Option.isSome(held)
+            ? NO_NEW_ISSUANCE
+            : yield* reserve({ issuanceRef, ownerInvocationId, providerSubjectId });
         }
         if (outcome === 'STOPPED') {
           // nothing leaves for this issuance and a replay never repairs it: the Attempt stays retryable, truthfully unfinished
