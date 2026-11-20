@@ -94,12 +94,15 @@ it('never imports Communications source from lean Core, staff Auth or the Shell'
  * The one reviewed relationship that reaches Communications through a package dependency: Privacy's owner inventory asks
  * Communications for owner coverage through the Communications-owned, published Owner Coverage contract (#1410). Privacy
  * owns the governed call; its package never imports Communications source, the Communication Request contract package or the
- * email provider, and its production code reaches Communications only through the published descriptor.
+ * email provider, and its production code reaches Communications only through the published descriptors: the Owner Coverage
+ * contract and the owner execution receipt Read it asks for a dispatched Privacy Measure (#1410).
  */
 const REVIEWED_COMMUNICATIONS_DEPENDENT = 'verticals/privacy';
 const PUBLISHED_OWNER_COVERAGE_DESCRIPTOR = '/api/privacy-owner-coverage';
+const PUBLISHED_OWNER_RECEIPT_CLIENT = '/api/privacy-owner-execution-outcome/client';
+const PUBLISHED_PRODUCTION_SUBPATHS = [PUBLISHED_OWNER_COVERAGE_DESCRIPTOR, PUBLISHED_OWNER_RECEIPT_CLIENT] as const;
 const PUBLISHED_OWNER_COVERAGE_SUBPATHS = [
-  PUBLISHED_OWNER_COVERAGE_DESCRIPTOR,
+  ...PUBLISHED_PRODUCTION_SUBPATHS,
   '/privacy-owner/coverage',
   '/privacy-owner/inventory',
   '/privacy-owner/outcome',
@@ -139,10 +142,10 @@ it('limits the reviewed Privacy dependency to the published Owner Coverage contr
   // Production code reaches Communications only through the published descriptor; test doubles may also use the
   // published Owner Coverage assessment, inventory and outcome vocabulary.
   expect(
-    unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/src`, [PUBLISHED_OWNER_COVERAGE_DESCRIPTOR]),
+    unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/src`, PUBLISHED_PRODUCTION_SUBPATHS),
   ).toEqual([]);
   expect(
-    unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/shared`, [PUBLISHED_OWNER_COVERAGE_DESCRIPTOR]),
+    unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/shared`, PUBLISHED_PRODUCTION_SUBPATHS),
   ).toEqual([]);
   expect(
     unpublishedCommunicationsUses(`${REVIEWED_COMMUNICATIONS_DEPENDENT}/tests`, PUBLISHED_OWNER_COVERAGE_SUBPATHS),
