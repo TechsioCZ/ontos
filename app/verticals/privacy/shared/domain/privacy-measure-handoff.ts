@@ -1,3 +1,4 @@
+import { PrivacyMeasureOwnerScopeSchema } from './privacy-owner-scope.ts';
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Effect, Schema } from 'effect';
 
@@ -20,6 +21,7 @@ export const PrivacyMeasureHandoffSchema = Schema.Struct({
   idempotencyKey: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyIdempotencyKey'))),
   kind: PrivacyMeasureKindSchema,
   measureId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyMeasureId'))),
+  ownerScope: Schema.optionalKey(PrivacyMeasureOwnerScopeSchema),
   owningCapability: Ref,
   preconditionRefs: Schema.Array(Ref).check(Schema.isMaxLength(128)),
   requestedAt: Timestamp,
@@ -131,6 +133,29 @@ const overlaps = (left: readonly string[], right: readonly string[]): boolean =>
   return left.some((reference) => rightRefs.has(reference));
 };
 
+/** Nothing at all for a handoff without an owner scope, so every existing owner's fingerprint is unchanged. */
+const ownerScopeFingerprint = ({ ownerScope }: PrivacyMeasureHandoff): readonly string[] =>
+  ownerScope === undefined
+    ? []
+    : [
+        stableKey([
+          ownerScope.controllerRef,
+          ownerScope.requestedScopeRef,
+          stableKey(ownerScope.requestedScopePartRefs.toSorted()),
+          stableKey(
+            ownerScope.trustedLookups
+              .map((lookup) =>
+                stableKey(
+                  Object.entries(lookup)
+                    .toSorted(([left], [right]) => left.localeCompare(right))
+                    .flatMap(([key, value]) => [key, String(value)]),
+                ),
+              )
+              .toSorted(),
+          ),
+        ]),
+      ];
+
 const handoffFingerprint = (handoff: PrivacyMeasureHandoff): string =>
   stableKey([
     stableKey(handoff.contentScopeRefs.toSorted()),
@@ -151,6 +176,7 @@ const handoffFingerprint = (handoff: PrivacyMeasureHandoff): string =>
     handoff.subjectRef,
     handoff.taskId,
     handoff.tenantId,
+    ...ownerScopeFingerprint(handoff),
   ]);
 
 export class PrivacyMeasureInvariantError extends Schema.TaggedError<PrivacyMeasureInvariantError>()(
@@ -292,6 +318,9 @@ const normalizeOwnerOutcome = (outcome: OwnerExecutionOutcome, attempt: number):
 /** Rejects ambiguous handoffs before any owner Action can be invoked. */
 export const validatePrivacyMeasureHandoff = (handoff: PrivacyMeasureHandoff): readonly string[] => {
   const errors: string[] = [];
+  if (handoff.owningCapability === 'communications.core' && handoff.ownerScope === undefined) {
+    errors.push('A Communications measure must carry its exact owner scope');
+  }
   if (handoff.resourceRefs.length === 0) {
     errors.push('A measure must name at least one Resource');
   }
