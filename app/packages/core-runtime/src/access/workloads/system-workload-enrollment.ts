@@ -1,5 +1,5 @@
-import { and, asc, eq } from 'drizzle-orm';
-import { Effect, Match, Option, Result } from 'effect';
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import { DateTime, Effect, Option, Result } from 'effect';
 
 import {
   IdentityLifecycleConflictError,
@@ -8,28 +8,33 @@ import {
 } from '../../auth/principal-management-errors.ts';
 import { accessWorkloadBindings, principals, tenantModuleStates, tenants } from '../../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
-import type { OntosRegisteredWorkloadCall } from '../../modules/registered-workload-calls.ts';
-import type { AccessIntentError } from '../intent/errors.ts';
+import { registeredWorkloadCallReceiverIssue } from '../../modules/registered-workload-calls.ts';
+import type {
+  OntosRegisteredWorkloadCallInput,
+  RegisteredWorkloadCallReceiver,
+} from '../../modules/registered-workload-calls.ts';
 
 /*
  * A Tenant's system Principal for one system workload a module declares (`systemWorkloads` in its manifest): the
  * identity Core resolves for that module's own work in that Tenant (`readScopedSystemWorkloadEnrollment`,
- * `SystemPrincipalContextResolver.resolveEnrolled`). Only `core.identity.change-system-workload-enrollment`
- * creates such a Principal, always together with its one binding, and ends it. The writer of kind `system` lives
- * here and nowhere else: `core.identity.create-non-human-principal` never creates one.
+ * `SystemPrincipalContextResolver.resolveEnrolled`). Only `core.identity.change-system-workload-enrollment` creates
+ * such a Principal, binds its workloads and ends it, through the writers below: the generic binding store refuses a
+ * Principal of kind `system` (`binding-store.ts`), `core.identity.change-principal-status` refuses one, and
+ * `core.identity.create-non-human-principal` never creates one.
  */
 
-/** One active system Principal holding an active binding of the workload. */
+/** A system Principal holding an active binding of the workload: active or disabled, never archived. */
 export interface SystemWorkloadEnrollmentHolder {
   readonly bindingId: string;
   readonly bindingIncarnation: string;
   readonly principalId: string;
+  readonly status: 'active' | 'disabled';
 }
 
 /**
- * The Tenant's one active holder of the workload, or none. The reader fails closed on two, so a change never chooses
- * between two holders: an enrollment creates one only when none is active and otherwise keeps the active one
- * unchanged, and an end ends the active one.
+ * The Tenant's one holder of the workload, or none. The reader fails closed on two, so a change never chooses between
+ * two holders: an enrollment creates one only when none holds the workload and otherwise keeps the holder, and an end
+ * ends the holder.
  */
 export const soleSystemWorkloadHolder = (
   holders: readonly SystemWorkloadEnrollmentHolder[],
@@ -51,22 +56,29 @@ export const declaresSystemWorkload = (
   workloadKey: string,
 ): boolean => (contract.manifest.systemWorkloads ?? []).some((declared) => declared === workloadKey);
 
-export type EnrolledWorkloadCall = Pick<OntosRegisteredWorkloadCall, 'audience' | 'entrypointKey' | 'schemaVersion'>;
+type IdentityCall = Pick<
+  OntosRegisteredWorkloadCallInput,
+  | 'audience'
+  | 'declarationKey'
+  | 'entrypointKey'
+  | 'jobKey'
+  | 'legalEntityScope'
+  | 'schemaVersion'
+  | 'sourceWorkloadKey'
+  | 'workloadKey'
+>;
+
+export type EnrolledWorkloadCall = Pick<IdentityCall, 'audience' | 'entrypointKey' | 'schemaVersion'>;
 
 /**
- * The owner operations the module's published registered-workload calls perform as this enrollment, once each: the
- * calls its job of this key makes and the calls received under this workload. Ending the enrollment stops them for
- * the Tenant. Work the module has queued or started is the module's own state, which Core does not see.
+ * The calls the module's published registered-workload calls declare for this workload, once each: the calls its job
+ * of this key makes and the calls received under this workload. A list for the operator of what this identity served,
+ * never a confirmation that any of them ran as it or has stopped.
  */
 export const enrolledWorkloadCalls = (
   contract: {
     readonly manifest: {
-      readonly registeredWorkloadCalls?:
-        | readonly Pick<
-            OntosRegisteredWorkloadCall,
-            'audience' | 'entrypointKey' | 'jobKey' | 'schemaVersion' | 'workloadKey'
-          >[]
-        | undefined;
+      readonly registeredWorkloadCalls?: readonly IdentityCall[] | undefined;
     };
   },
   workloadKey: string,
@@ -81,6 +93,103 @@ export const enrolledWorkloadCalls = (
   return [...calls.entries()].toSorted(([left], [right]) => left.localeCompare(right)).map(([, call]) => call);
 };
 
+/** The published parts of an installed contract the worker identity is derived from. */
+export interface SystemWorkloadContract extends RegisteredWorkloadCallReceiver {
+  readonly manifest: RegisteredWorkloadCallReceiver['manifest'] & {
+    readonly module: { readonly id: string };
+    readonly registeredWorkloadCalls?: readonly IdentityCall[] | undefined;
+  };
+}
+
+/** One declared call that no installed receiver active for the Tenant serves yet, and why. */
+export interface PendingSystemWorkloadCall extends EnrolledWorkloadCall {
+  readonly reason: string;
+}
+
+/** An owner workload of the identity none of whose declared calls can be served yet: it stays unbound. */
+export interface PendingSystemWorkload {
+  readonly calls: readonly PendingSystemWorkloadCall[];
+  readonly workloadKey: string;
+}
+
+/** The owner workloads one system workload's worker runs its calls under in a Tenant. */
+export interface SystemWorkloadIdentity {
+  /** Each served by at least one declared call to a receiver installed, publishing it and active for the Tenant. */
+  readonly bindable: readonly string[];
+  readonly pending: readonly PendingSystemWorkload[];
+}
+
+const byKey = (left: string, right: string) => left.localeCompare(right);
+
+/**
+ * The module's whole declared worker identity for one of its system workloads, beside the workload key itself: the
+ * owner workload of every registered call the module's own published contract declares for that job (`jobKey`), and,
+ * from each call a receiver serves, the owner workload of every call that receiver publishes for the same job from
+ * that workload (`sourceWorkloadKey`), as the gateway admits a follow-up the worker's own identity makes. A call counts
+ * only where its receiver is installed, publishes it (`registeredWorkloadCallReceiverIssue`, as the route enrollment
+ * command checks) and is active for the Tenant; a workload none of whose calls counts is pending, by call and reason.
+ * Nothing a caller names and no call declared for another job is part of it.
+ */
+export const systemWorkloadIdentity = (input: {
+  readonly activeModuleKeys: ReadonlySet<string>;
+  readonly contracts: readonly SystemWorkloadContract[];
+  readonly moduleKey: string;
+  readonly workloadKey: string;
+}): SystemWorkloadIdentity => {
+  const served = new Set<string>();
+  const unserved = new Map<string, Map<string, PendingSystemWorkloadCall>>();
+  const visited = new Set<string>();
+  const follow = (call: IdentityCall): void => {
+    const label = [call.audience, call.entrypointKey, call.schemaVersion, call.declarationKey, call.workloadKey].join(
+      ' ',
+    );
+    if (call.workloadKey === input.workloadKey || visited.has(label)) {
+      return;
+    }
+    visited.add(label);
+    const receiver = input.contracts.find((contract) => contract.deployment.appId === call.audience);
+    const unpublished = registeredWorkloadCallReceiverIssue(call, receiver);
+    const reason =
+      unpublished ??
+      (receiver === undefined || input.activeModuleKeys.has(receiver.manifest.module.id)
+        ? undefined
+        : `${receiver.manifest.module.id} is not active for this tenant`);
+    if (receiver === undefined || reason !== undefined) {
+      const calls = unserved.get(call.workloadKey) ?? new Map<string, PendingSystemWorkloadCall>();
+      calls.set(label, {
+        audience: call.audience,
+        entrypointKey: call.entrypointKey,
+        reason: reason ?? `${call.audience} is not installed`,
+        schemaVersion: call.schemaVersion,
+      });
+      unserved.set(call.workloadKey, calls);
+      return;
+    }
+    served.add(call.workloadKey);
+    for (const nested of receiver.manifest.registeredWorkloadCalls ?? []) {
+      if (nested.jobKey === input.workloadKey && nested.sourceWorkloadKey === call.workloadKey) {
+        follow(nested);
+      }
+    }
+  };
+  const owner = input.contracts.find((contract) => contract.manifest.module.id === input.moduleKey);
+  for (const call of owner?.manifest.registeredWorkloadCalls ?? []) {
+    if (call.jobKey === input.workloadKey && call.sourceWorkloadKey === undefined) {
+      follow(call);
+    }
+  }
+  return {
+    bindable: [...served].toSorted(byKey),
+    pending: [...unserved.entries()]
+      .filter(([workloadKey]) => !served.has(workloadKey))
+      .toSorted(([left], [right]) => byKey(left, right))
+      .map(([workloadKey, calls]) => ({
+        calls: [...calls.entries()].toSorted(([left], [right]) => byKey(left, right)).map(([, call]) => call),
+        workloadKey,
+      })),
+  };
+};
+
 export const enrollmentUnavailable = (cause?: unknown) => {
   const failure = new IdentityPersistenceUnavailableError({
     code: 'identity_persistence_unavailable',
@@ -93,19 +202,6 @@ export const enrollmentUnavailable = (cause?: unknown) => {
 };
 
 const invalid = (reason: string) => new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason });
-
-/** A binding store refusal is a lost race or an unavailable store, never a silent success. */
-export const enrollmentStoreFailure = (failure: AccessIntentError) =>
-  Match.value(failure).pipe(
-    Match.tagsExhaustive({
-      AccessIntentConflictError: () =>
-        new IdentityLifecycleConflictError({
-          code: 'identity_lifecycle_conflict',
-          reason: 'The system workload enrollment changed concurrently',
-        }),
-      AccessIntentUnavailableError: enrollmentUnavailable,
-    }),
-  );
 
 /**
  * Serializes every enrollment change of one Tenant, and each with that Tenant's module state changes, which lock the
@@ -128,27 +224,23 @@ export const lockActiveTenantForEnrollment = (
       Effect.asVoid,
     );
 
-/** A module is active for a Tenant only while its stored state is `active`; no stored state is not active. */
-export const requireActiveTenantModule = (
+/** The modules active for the Tenant: a module is active only while its stored state is `active`. */
+export const readActiveTenantModuleKeys = (
   transaction: ScopedTransactionExecutor,
-  moduleKey: string,
-): Effect.Effect<void, IdentityPersistenceUnavailableError | IdentityTargetInvalidError> =>
+): Effect.Effect<ReadonlySet<string>, IdentityPersistenceUnavailableError> =>
   transaction
-    .select({ state: tenantModuleStates.state })
+    .select({ moduleKey: tenantModuleStates.moduleKey })
     .from(tenantModuleStates)
-    .where(
-      and(eq(tenantModuleStates.tenantId, transaction.scope.tenantId), eq(tenantModuleStates.moduleKey, moduleKey)),
-    )
+    .where(and(eq(tenantModuleStates.tenantId, transaction.scope.tenantId), eq(tenantModuleStates.state, 'active')))
     .pipe(
       Effect.mapError(enrollmentUnavailable),
-      Effect.filterOrFail(
-        ([module]) => module?.state === 'active',
-        () => invalid('The module is not active for this tenant'),
-      ),
-      Effect.asVoid,
+      Effect.map((rows) => new Set(rows.map(({ moduleKey }) => moduleKey))),
     );
 
-/** The Tenant's active system Principals holding an active binding of the workload; two are enough to refuse. */
+/**
+ * The Tenant's system Principals that are not archived and hold an active binding of the workload; two are enough to
+ * refuse. A disabled one still holds the enrollment, so an enrollment never creates a second beside it.
+ */
 export const readSystemWorkloadEnrollmentHolders = (
   transaction: ScopedTransactionExecutor,
   workloadKey: string,
@@ -158,6 +250,7 @@ export const readSystemWorkloadEnrollmentHolders = (
       bindingId: accessWorkloadBindings.bindingId,
       bindingIncarnation: accessWorkloadBindings.incarnation,
       principalId: principals.principalId,
+      status: principals.status,
     })
     .from(accessWorkloadBindings)
     .innerJoin(
@@ -173,11 +266,38 @@ export const readSystemWorkloadEnrollmentHolders = (
         eq(accessWorkloadBindings.workloadKey, workloadKey),
         eq(accessWorkloadBindings.status, 'active'),
         eq(principals.kind, 'system'),
-        eq(principals.status, 'active'),
+        inArray(principals.status, ['active', 'disabled']),
       ),
     )
     .orderBy(asc(principals.principalId))
     .limit(2)
+    .pipe(
+      Effect.mapError(enrollmentUnavailable),
+      Effect.map((rows) => rows.flatMap((row) => (row.status === 'archived' ? [] : [{ ...row, status: row.status }]))),
+    );
+
+/** One active binding an enrollment holds. */
+export interface SystemWorkloadBinding {
+  readonly incarnation: string;
+  readonly workloadKey: string;
+}
+
+/** Every active binding the enrollment's system Principal holds, by workload key. */
+export const readSystemWorkloadPrincipalBindings = (
+  transaction: ScopedTransactionExecutor,
+  principalId: string,
+): Effect.Effect<readonly SystemWorkloadBinding[], IdentityPersistenceUnavailableError> =>
+  transaction
+    .select({ incarnation: accessWorkloadBindings.incarnation, workloadKey: accessWorkloadBindings.workloadKey })
+    .from(accessWorkloadBindings)
+    .where(
+      and(
+        eq(accessWorkloadBindings.tenantId, transaction.scope.tenantId),
+        eq(accessWorkloadBindings.principalId, principalId),
+        eq(accessWorkloadBindings.status, 'active'),
+      ),
+    )
+    .orderBy(asc(accessWorkloadBindings.workloadKey))
     .pipe(Effect.mapError(enrollmentUnavailable));
 
 /** Core's only writer of a Principal of kind `system`: one per enrollment, named after its workload. */
@@ -197,5 +317,95 @@ export const insertSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment
       return yield* enrollmentUnavailable();
     }
     return created.principalId;
+  },
+);
+
+/** One binding the enrollment writes: a fresh binding id and incarnation for one workload key. */
+export interface NewSystemWorkloadBinding {
+  readonly bindingId: string;
+  readonly incarnation: string;
+  readonly workloadKey: string;
+}
+
+/**
+ * Core's only writer of a system Principal's bindings: binds each key, with its fresh binding id and incarnation, to
+ * the enrollment's Principal in the enrollment's own transaction, which holds the Tenant row lock and has read what the
+ * Principal already holds.
+ */
+export const bindSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.bindSystemWorkloadPrincipal')(
+  function* bindSystemWorkloadPrincipal(
+    transaction: ScopedTransactionExecutor,
+    principalId: string,
+    bindings: readonly NewSystemWorkloadBinding[],
+  ) {
+    if (bindings.length === 0) {
+      return [];
+    }
+    const createdAt = DateTime.toDateUtc(yield* DateTime.now);
+    const bound: readonly SystemWorkloadBinding[] = yield* transaction
+      .insert(accessWorkloadBindings)
+      .values(
+        bindings.map(({ bindingId, incarnation, workloadKey }) => ({
+          bindingId,
+          createdAt,
+          incarnation,
+          principalId,
+          revokedAt: null,
+          status: 'active' as const,
+          tenantId: transaction.scope.tenantId,
+          workloadKey,
+        })),
+      )
+      .returning({ incarnation: accessWorkloadBindings.incarnation, workloadKey: accessWorkloadBindings.workloadKey })
+      .pipe(Effect.mapError(enrollmentUnavailable));
+    return bound.toSorted((left, right) => byKey(left.workloadKey, right.workloadKey));
+  },
+);
+
+/** Revokes every active binding the enrollment's system Principal holds and names each one. */
+export const revokeSystemWorkloadPrincipalBindings = Effect.fn(
+  'SystemWorkloadEnrollment.revokeSystemWorkloadPrincipalBindings',
+)(function* revokeSystemWorkloadPrincipalBindings(transaction: ScopedTransactionExecutor, principalId: string) {
+  const revoked: readonly SystemWorkloadBinding[] = yield* transaction
+    .update(accessWorkloadBindings)
+    .set({ revokedAt: DateTime.toDateUtc(yield* DateTime.now), status: 'revoked' })
+    .where(
+      and(
+        eq(accessWorkloadBindings.tenantId, transaction.scope.tenantId),
+        eq(accessWorkloadBindings.principalId, principalId),
+        eq(accessWorkloadBindings.status, 'active'),
+      ),
+    )
+    .returning({ incarnation: accessWorkloadBindings.incarnation, workloadKey: accessWorkloadBindings.workloadKey })
+    .pipe(Effect.mapError(enrollmentUnavailable));
+  return revoked.toSorted((left, right) => byKey(left.workloadKey, right.workloadKey));
+});
+
+/**
+ * Archives the ended enrollment's system Principal, active or disabled. Archived is final in Core's Principal
+ * lifecycle, so a later enrollment creates a new Principal and this one never holds a workload again.
+ */
+export const archiveSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.archiveSystemWorkloadPrincipal')(
+  function* archiveSystemWorkloadPrincipal(transaction: ScopedTransactionExecutor, principalId: string) {
+    const [archived] = yield* transaction
+      .update(principals)
+      .set({ disabledAt: null, status: 'archived' })
+      .where(
+        and(
+          eq(principals.tenantId, transaction.scope.tenantId),
+          eq(principals.principalId, principalId),
+          eq(principals.kind, 'system'),
+          inArray(principals.status, ['active', 'disabled']),
+        ),
+      )
+      .returning({ principalId: principals.principalId })
+      .pipe(Effect.mapError(enrollmentUnavailable));
+    if (archived === undefined) {
+      return yield* new IdentityLifecycleConflictError({
+        code: 'identity_lifecycle_conflict',
+        reason: 'The system principal of the enrollment changed concurrently',
+      });
+    }
+    return yield* Effect.void;
   },
 );
