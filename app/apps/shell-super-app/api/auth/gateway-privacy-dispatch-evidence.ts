@@ -11,7 +11,10 @@ import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { MeasureExecutionEligibilityRequestSchema } from '@app/privacy/api/measure-execution-eligibility';
 import { RecordOwnerExecutionOutcomePayloadSchema } from '@app/privacy/api/record-owner-execution-outcome-action';
 import type { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import { validatePrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import {
+  OwnerExecutionReceiptRequestSchema,
+  validatePrivacyMeasureHandoff,
+} from '@app/privacy/domain/privacy-measure-handoff';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
@@ -19,7 +22,6 @@ import {
 } from '@app/privacy/outbox/privacy-measure-dispatched';
 import type { GatewayPrivacyDispatchSubjectSchema, PrivacyDispatchConsumer } from '@app/shared-contracts';
 import {
-  PrivacyOwnerExecutionReceiptRequestSchema,
   decodeGatewayContextProtectedHeader,
   decodeSupportedGatewayContextClaims,
   privacyDispatchConsumerOfOperation,
@@ -53,6 +55,7 @@ const metadataFields = RegisteredGatewayPrivacyDispatchSchema.fields;
 const privacyModule = outboxProducerModuleKey;
 const privacyApp = 'privacy';
 const symmyModule = 'integration.symmy';
+const communicationsModule = 'communications.core';
 const dispatchActionKey = 'privacy.core.dispatch-privacy-measure';
 const rowSchema = Schema.Struct({
   claimActive: Schema.Boolean,
@@ -106,6 +109,12 @@ const isSymmyExecutableHandoff = (handoff: Handoff): boolean => {
     content === `${resource}#integration.symmy.job-intent`
   );
 };
+/** A Communications measure targets exactly the owner's own opaque content references (`communications.core.<kind>:<id>`). */
+const isCommunicationsContentRef = (reference: string): boolean =>
+  /^communications\.core\.[a-z][a-z-]*:\S+$/u.test(reference);
+const isCommunicationsOwnedHandoff = (handoff: Handoff): boolean =>
+  handoff.resourceRefs.every(isCommunicationsContentRef);
+
 /**
  * What every consumer shares: a valid handoff of the trusted tenant, addressed to this consumer and identical to the
  * immutable dispatched event. A consumer's own resource vocabulary is checked by the consumer's own Read, not here, except
@@ -120,6 +129,7 @@ export const isSupportedHandoff = (
   handoff.tenantId === event.tenantId &&
   handoff.owningCapability === consumer.moduleKey &&
   (consumer.moduleKey !== symmyModule || isSymmyExecutableHandoff(handoff)) &&
+  (consumer.moduleKey !== communicationsModule || isCommunicationsOwnedHandoff(handoff)) &&
   handoff.measureId === event.measureId &&
   computeCanonicalValueHash(handoff) === computeCanonicalValueHash(event.handoff);
 const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(input: {
@@ -283,10 +293,8 @@ export const requestHash = Effect.fn('PrivacyDispatchEvidence.requestHash')(func
       ).pipe(Effect.map(computeCanonicalValueHash)),
     ),
     Match.tag('CommunicationsReceipt', (receipt) =>
-      Schema.decodeUnknownEffect(PrivacyOwnerExecutionReceiptRequestSchema)(
-        receipt.attempt === undefined
-          ? { idempotencyKey: handoff.idempotencyKey }
-          : { attempt: receipt.attempt, idempotencyKey: handoff.idempotencyKey },
+      Schema.decodeUnknownEffect(OwnerExecutionReceiptRequestSchema)(
+        receipt.attempt === undefined ? { handoff } : { attempt: receipt.attempt, handoff },
       ).pipe(Effect.map(computeCanonicalValueHash)),
     ),
     Match.tag('PrivacyEligibility', () =>

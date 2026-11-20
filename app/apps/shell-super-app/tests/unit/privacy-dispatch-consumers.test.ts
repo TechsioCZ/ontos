@@ -1,8 +1,9 @@
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { privacyDispatchConsumers, privacyDispatchOperationContract } from '@app/shared-contracts';
 import type { PrivacyDispatchConsumer } from '@app/shared-contracts';
-import { Effect, Option, Result } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -46,12 +47,26 @@ const symmyHandoff: PrivacyMeasureHandoff = {
   owningCapability: 'integration.symmy',
   resourceRefs: [`integration.symmy.job:${uuid}`],
 };
-const communicationsHandoff: PrivacyMeasureHandoff = {
+const communicationsHandoff: PrivacyMeasureHandoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
   ...baseHandoff,
   contentScopeRefs: ['communications.core.history'],
+  ownerScope: {
+    controllerRef: 'controller-1',
+    requestedScopePartRefs: ['communications.core.history'],
+    requestedScopeRef: 'scope-1',
+    trustedLookups: [
+      {
+        _tag: 'SUBJECT_REFERENCE',
+        lookupRef: 'lookup-1',
+        moduleId: 'party.registry',
+        resourceId: 'party-1',
+        resourceType: 'party',
+      },
+    ],
+  },
   owningCapability: 'communications.core',
   resourceRefs: ['communications.core.intent:intent-1'],
-};
+});
 const eventOf = (handoff: PrivacyMeasureHandoff, measureId = 'measure-1') => ({ handoff, measureId, tenantId });
 const supported = (consumer: PrivacyDispatchConsumer, handoff: PrivacyMeasureHandoff, event = eventOf(handoff)) =>
   isSupportedHandoff(consumer, handoff, event);
@@ -70,8 +85,18 @@ it('admits a handoff only for the consumer it is addressed to', () => {
   expect(
     supported(communications, communicationsHandoff, eventOf({ ...communicationsHandoff, taskId: 'other-task' })),
   ).toBe(false);
-  // an invalid measure is not evidence even for the consumer it names
+  // an invalid measure is not evidence even for the consumer it names, and neither is one without its exact owner scope
   expect(supported(communications, { ...communicationsHandoff, resourceRefs: [] })).toBe(false);
+  const { ownerScope: _scope, ...unscoped } = communicationsHandoff;
+  expect(supported(communications, unscoped)).toBe(false);
+  // Communications targets only its own opaque content references
+  for (const resourceRefs of [
+    ['party.registry|party|le|x'],
+    ['communications.core.intent:'],
+    ['other:communications.core.intent:1'],
+  ]) {
+    expect(supported(communications, { ...communicationsHandoff, resourceRefs })).toBe(false);
+  }
 });
 
 it('lets a Communications worker carry only Communications operations and never Symmy execution', () => {
@@ -119,14 +144,23 @@ it.effect('binds the Communications receipt request hash to the exact idempotenc
   Effect.gen(function* receiptHash() {
     const withoutAttempt = yield* requestHash({ _tag: 'CommunicationsReceipt' }, communicationsHandoff);
     const withAttempt = yield* requestHash({ _tag: 'CommunicationsReceipt', attempt: 2 }, communicationsHandoff);
-    expect(withoutAttempt).toBe(computeCanonicalValueHash({ idempotencyKey: 'privacy-idempotency-1' }));
-    expect(withAttempt).toBe(computeCanonicalValueHash({ attempt: 2, idempotencyKey: 'privacy-idempotency-1' }));
+    expect(withoutAttempt).toBe(computeCanonicalValueHash({ handoff: communicationsHandoff }));
+    expect(withAttempt).toBe(computeCanonicalValueHash({ attempt: 2, handoff: communicationsHandoff }));
     expect(withAttempt).not.toBe(withoutAttempt);
     const other = yield* requestHash(
       { _tag: 'CommunicationsReceipt', attempt: 2 },
       { ...communicationsHandoff, idempotencyKey: 'privacy-idempotency-2' },
     );
     expect(other).not.toBe(withAttempt);
+    // the request is bound to the exact handoff, scope included: another owner scope is another request
+    const rescoped = yield* requestHash(
+      { _tag: 'CommunicationsReceipt', attempt: 2 },
+      Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
+        ...communicationsHandoff,
+        ownerScope: { ...communicationsHandoff.ownerScope, controllerRef: 'another-controller' },
+      }),
+    );
+    expect(rescoped).not.toBe(withAttempt);
     expect(
       Result.isFailure(
         yield* Effect.result(requestHash({ _tag: 'CommunicationsReceipt', attempt: 0 }, communicationsHandoff)),
