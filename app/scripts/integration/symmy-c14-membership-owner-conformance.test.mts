@@ -44,10 +44,15 @@ import {
   startProductWorker,
   SymmyC14ProductFixtureUnavailable,
 } from './support/symmy-c14-product-runtime.mts';
-import { internalSyncSource, makeInternalGroupCreatePlan } from './support/symmy-c14-sync-plans.mts';
+import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 const planJson = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
+const groupOperation = (entrypointKey: string) => ({
+  entrypointKey,
+  moduleId: 'commerce.customer-context',
+  schemaVersion: '1',
+});
 const receiptSchema = Schema.Struct({
   jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
   status: Schema.Literal('queued'),
@@ -108,16 +113,10 @@ it.live(
         const groupRecordId = 'INTERNAL_C14_GROUP/source key:Žluťoučký';
         const selectedRouteCode = 'INTERNAL_C14_SELECTED_GROUP_ROUTE';
         const groupSource = {
-          definitionEvidence: { kind: 'SOURCE_RECORD' as const, reference: groupRecordId, revision: '1' },
-          effectId: yield* uuid,
           issuer: internalSyncSource.issuerId,
           mappingRevision: internalSyncSource.mappingVersion,
           namespace: internalSyncSource.namespace,
-          order: 1,
-          recordId: groupRecordId,
-          revision: '1',
           route: { id: sourceRouteId, revision: internalSyncSource.routeRevision },
-          sourceCode: 'INTERNAL_C14_DIFFERENT_SOURCE_CODE',
         };
         yield* seedCustomerGroupSourceAuthority({
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -154,22 +153,29 @@ it.live(
             tenantId,
           },
         });
-        const groupPlan = yield* makeInternalGroupCreatePlan(
-          { occurrenceId: yield* uuid, recordId: groupRecordId },
-          {
-            businessCode: 'INTERNAL_C14_MEMBERSHIP_GROUP',
-            description: 'Explicit internal native Membership classification',
-            initialState: 'ACTIVE',
-            meaningKey: 'internal-c14.membership-classification',
-            membershipCriteria: 'Explicitly named internal native customer profiles',
-            name: 'Internal native Membership Group',
-            purpose: 'Internal selected source classification',
-            reason: 'INTERNAL_C14 explicit source Group producer',
-            source: groupSource,
-          },
-        );
+        // The group route enrolls the create and the definition read that fences each public group on the owner.
         const groupConfiguration = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
-          ...Schema.encodeSync(SymmyInternalExecutionPlanSchema)(groupPlan),
+          items: [
+            {
+              effects: [
+                {
+                  effectKey: 'customer-group-create',
+                  operation: groupOperation('commerce.customer-context.create-customer-group'),
+                },
+                {
+                  effectKey: 'customer-group-definition-read',
+                  operation: groupOperation('commerce.customer-context.api.customer-group-definition-source'),
+                },
+              ],
+              itemKey: 'customer-group',
+              source: {
+                entityKind: 'CUSTOMER_GROUP',
+                issuerId: groupSource.issuer,
+                sourceNamespace: groupSource.namespace,
+                sourceRecordId: groupRecordId,
+              },
+            },
+          ],
           sourceRouteId,
         });
         const groupPolicy = { policyId: 'INTERNAL_C14_MEMBERSHIP_GROUP_RETENTION', revision: '1' };
@@ -200,8 +206,17 @@ it.live(
         const headers = { 'x-api-key': Redacted.value(fixture.providerKey.secret) };
         const groupResponse = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customer-groups/batch`, {
           body: yield* HttpBody.json({
-            contractVersion: 'INTERNAL_C14',
-            plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(groupPlan),
+            customerGroups: [
+              {
+                businessCode: 'INTERNAL_C14_MEMBERSHIP_GROUP',
+                code: groupRecordId,
+                description: 'Explicit internal native Membership classification',
+                meaningKey: 'internal-c14.membership-classification',
+                membershipCriteria: 'Explicitly named internal native customer profiles',
+                name: 'Internal native Membership Group',
+                purpose: 'Internal selected source classification',
+              },
+            ],
           }),
           headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_MEMBERSHIP_GROUP_CREATE' },
         });
@@ -212,7 +227,7 @@ it.live(
         }
         const groupResult = yield* groupResponse.json;
         expect(groupResult).toMatchObject({
-          items: [{ effects: [{ status: 'accepted_change' }], outcome: 'accepted' }],
+          items: [{ code: groupRecordId, effects: [{ status: 'accepted_change' }], outcome: 'accepted' }],
         });
         const observationInput = {
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
