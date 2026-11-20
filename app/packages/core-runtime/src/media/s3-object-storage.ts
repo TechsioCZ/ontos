@@ -1,4 +1,4 @@
-import { Crypto, DateTime, Duration, Effect, Exit, Option, Stream } from 'effect';
+import { Crypto, DateTime, Duration, Effect, Option, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 import type { HttpClientError, HttpClientResponse } from 'effect/http';
@@ -18,7 +18,7 @@ import type {
   ObjectStorageService,
   PutObjectRequest,
 } from './object-storage.ts';
-import { S3_MINIMUM_PART_BYTES } from './s3-config.ts';
+import { S3_MAXIMUM_PART_BYTES, S3_MINIMUM_PART_BYTES } from './s3-config.ts';
 import type { S3ObjectStorageConfigValue } from './s3-config.ts';
 import { EMPTY_PAYLOAD_SHA256, signS3Request } from './s3-signing.ts';
 import type { MediaStorageKey } from './storage-key.ts';
@@ -39,7 +39,9 @@ import type { MediaStorageKey } from './storage-key.ts';
  * - report an ETag as a version: `versionRef` is the provider's `x-amz-version-id` and nothing else.
  *
  * Bytes are sent in parts of one bounded size. An object that fits one part is one `PutObject`, anything larger
- * is a multipart upload, so memory is bounded by two parts and no request needs a stream body (which neither the
+ * is a multipart upload, so memory is bounded by about three parts (the one being sent, the next one and the
+ * one being filled), sized from the declared object size and never allocated ahead of the bytes actually
+ * received, and no request needs a stream body (which neither the
  * Fetch client nor workerd can frame with a length). The body is read to the end of a part before it is sent,
  * and a failing body aborts the multipart upload (or never sends the single request), so nothing is readable
  * under the key.
@@ -118,18 +120,17 @@ const appendTo = (buffer: PartBuffer, chunk: Uint8Array, partSize: number): void
   buffer.length = needed;
 };
 
+const freshPart = (): PartBuffer => ({ bytes: new Uint8Array(0), length: 0 });
+
 /**
  * The body re-cut into parts of exactly `partSize` bytes, except for the last. Each part is copied into one
- * buffer that starts at the size the caller expects (`sizeHint`) and never exceeds `partSize`. The state is
- * rebuilt for every run of the stream.
+ * buffer that grows with the bytes received and never exceeds `partSize`: nothing is allocated for bytes that
+ * have not arrived, whatever size was declared. The state is rebuilt for every run of the stream.
  */
 export const cutIntoParts = <Failure>(
   body: Stream.Stream<Uint8Array, Failure>,
   partSize: number,
-  sizeHint?: number,
 ): Stream.Stream<PartBytes, Failure> => {
-  const initialCapacity = Math.max(1, Math.min(partSize, sizeHint ?? partSize));
-  const fresh = (): PartBuffer => ({ bytes: new Uint8Array(initialCapacity), length: 0 });
   const take = (current: PartBuffer, chunk: Uint8Array) => {
     const emitted: PartBytes[] = [];
     let state = current;
@@ -140,13 +141,13 @@ export const cutIntoParts = <Failure>(
       offset += taken;
       if (state.length === partSize) {
         emitted.push(state.bytes);
-        state = fresh();
+        state = freshPart();
       }
     }
     return [state, emitted] as const;
   };
   return body.pipe(
-    Stream.mapAccum(fresh, take, {
+    Stream.mapAccum(freshPart, take, {
       onHalt: (state) => (state.length === 0 ? [] : [state.bytes.subarray(0, state.length)]),
     }),
   );
@@ -434,12 +435,16 @@ const completeUpload = Effect.fn('S3ObjectStorage.completeUpload')(function* com
     operation: Operations.complete,
     url: objectUrl(wiring.config, key, { uploadId: upload.uploadId }),
   });
-  return yield* expectSuccess(Operations.complete, response, wiring.config.conditionalCreate === 'supported', (ok) =>
+  const createOnly = wiring.config.conditionalCreate === 'supported';
+  return yield* expectSuccess(Operations.complete, response, createOnly, (ok) =>
     readAnswer(Operations.complete, ok).pipe(
       // A 200 can still carry an error document: the object exists only when the answer says so.
       Effect.filterOrFail(
         (text) => !text.includes('<Error>'),
-        (text) => mapStatus(Operations.complete, 500, safeCode(text), false),
+        (text) => {
+          const code = safeCode(text);
+          return mapStatus(Operations.complete, code === 'PreconditionFailed' ? 412 : 500, code, createOnly);
+        },
       ),
       Effect.as(statOf(upload.total, versionRefOf(ok))),
     ),
@@ -456,7 +461,6 @@ const abortUpload = (wiring: Wiring, key: MediaStorageKey, uploadId: string) =>
     Effect.flatMap(drain),
     Effect.tapError(() => Effect.logWarning('Object storage could not abort an unfinished upload')),
     Effect.ignore,
-    Effect.uninterruptible,
   );
 
 /** What a put has sent so far. `held` is the one part kept back until the next one proves it is not the last. */
@@ -512,18 +516,9 @@ const finishPut = Effect.fn('S3ObjectStorage.finishPut')(function* finishPut(
   return yield* completeUpload(wiring, target.key, { etags, total, uploadId });
 });
 
-/** Aborts the multipart upload a failed or interrupted put left behind, whatever the reason it ended. */
-const abortLeftover = Effect.fn('S3ObjectStorage.abortLeftover')(function* abortLeftover(
-  wiring: Wiring,
-  key: MediaStorageKey,
-  progress: UploadProgress,
-  exit: Exit.Exit<unknown, unknown>,
-) {
-  const { uploadId } = progress;
-  if (Exit.isFailure(exit) && uploadId !== null) {
-    yield* abortUpload(wiring, key, uploadId);
-  }
-});
+/** The multipart upload a failed or interrupted put left behind, if one was started. */
+const abortLeftover = (wiring: Wiring, key: MediaStorageKey, progress: UploadProgress) =>
+  progress.uploadId === null ? Effect.void : abortUpload(wiring, key, progress.uploadId);
 
 const put = Effect.fn('S3ObjectStorage.put')(function* put<BodyError>(
   wiring: Wiring,
@@ -537,10 +532,17 @@ const put = Effect.fn('S3ObjectStorage.put')(function* put<BodyError>(
   }
   const progress: UploadProgress = { etags: [], held: null, total: 0, uploadId: null };
   const partSize = partSizeFor(wiring.config.partSizeBytes, request.byteSize);
-  const parts = cutIntoParts(request.body, partSize, request.byteSize);
+  if (partSize > S3_MAXIMUM_PART_BYTES) {
+    return yield* serverError('put: the declared size needs parts larger than the provider allows');
+  }
+  const parts = cutIntoParts(request.body, partSize);
   return yield* Stream.runForEach(parts, (part) => acceptPart(wiring, request, progress, part)).pipe(
     Effect.andThen(() => finishPut(wiring, request, progress)),
-    Effect.onExit((exit) => abortLeftover(wiring, request.key, progress, exit)),
+    // A failure aborts inside the caller's budget (the abort is interruptible); an interruption must not be held
+    // up by a provider that may be the reason for it, so its abort runs detached.
+    Effect.tapError(() => abortLeftover(wiring, request.key, progress)),
+    Effect.tapDefect(() => abortLeftover(wiring, request.key, progress)),
+    Effect.onInterrupt(() => Effect.forkDetach(abortLeftover(wiring, request.key, progress))),
   );
 });
 
