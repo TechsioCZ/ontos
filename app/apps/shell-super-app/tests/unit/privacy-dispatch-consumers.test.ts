@@ -1,5 +1,8 @@
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
-import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
+import {
+  OwnerExecutionReceiptRequestSchema,
+  PrivacyMeasureHandoffSchema,
+} from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { privacyDispatchConsumers, privacyDispatchOperationContract } from '@app/shared-contracts';
 import type { PrivacyDispatchConsumer } from '@app/shared-contracts';
@@ -167,6 +170,57 @@ it.effect('binds the Communications receipt request hash to the exact idempotenc
       ),
     ).toBe(true);
   }),
+);
+
+it.effect(
+  'hashes a real owner scope exactly as it arrives on the wire, blocker assessment and every lookup kind included',
+  () =>
+    Effect.gen(function* wireEquality() {
+      const withScope = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
+        ...communicationsHandoff,
+        ownerScope: {
+          blockerAssessment: {
+            assessedByRef: 'privacy-assessment-1',
+            blockers: [
+              { blockerRef: 'hold-1', contentRefs: ['communications.core.intent:intent-1'], kind: 'LEGAL_HOLD' },
+            ],
+          },
+          controllerRef: 'controller-1',
+          requestedScopePartRefs: ['communications.core.history', 'communications.core.requests'],
+          requestedScopeRef: 'scope-1',
+          trustedLookups: [
+            {
+              _tag: 'SUBJECT_REFERENCE',
+              lookupRef: 'lookup-1',
+              moduleId: 'party.registry',
+              resourceId: 'p-1',
+              resourceType: 'party',
+            },
+            {
+              _tag: 'CONTACT_REFERENCE',
+              lookupRef: 'lookup-2',
+              moduleId: 'party.registry',
+              resourceId: 'c-1',
+              resourceType: 'contact',
+            },
+            { _tag: 'ACTOR_PRINCIPAL', lookupRef: 'lookup-3', principalId: '80000000-0000-4000-8000-000000000001' },
+          ],
+        },
+      });
+      for (const attempt of [undefined, 2]) {
+        // what the owner receives is the JSON the Shell attests: decoding it must give the very request that was hashed
+        const request = attempt === undefined ? { handoff: withScope } : { attempt, handoff: withScope };
+        const text = Schema.encodeSync(Schema.fromJsonString(OwnerExecutionReceiptRequestSchema))(request);
+        const wire = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(text);
+        const received = Schema.decodeUnknownSync(Schema.fromJsonString(OwnerExecutionReceiptRequestSchema))(text);
+        const attested = yield* requestHash(
+          attempt === undefined ? { _tag: 'CommunicationsReceipt' } : { _tag: 'CommunicationsReceipt', attempt },
+          withScope,
+        );
+        expect(computeCanonicalValueHash(received)).toBe(attested);
+        expect(computeCanonicalValueHash(wire)).toBe(attested);
+      }
+    }),
 );
 
 const factsOf = (

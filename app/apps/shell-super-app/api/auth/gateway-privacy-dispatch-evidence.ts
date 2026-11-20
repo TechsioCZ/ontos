@@ -55,7 +55,6 @@ const metadataFields = RegisteredGatewayPrivacyDispatchSchema.fields;
 const privacyModule = outboxProducerModuleKey;
 const privacyApp = 'privacy';
 const symmyModule = 'integration.symmy';
-const communicationsModule = 'communications.core';
 const dispatchActionKey = 'privacy.core.dispatch-privacy-measure';
 const rowSchema = Schema.Struct({
   claimActive: Schema.Boolean,
@@ -109,12 +108,6 @@ const isSymmyExecutableHandoff = (handoff: Handoff): boolean => {
     content === `${resource}#integration.symmy.job-intent`
   );
 };
-/** A Communications measure targets exactly the owner's own opaque content references (`communications.core.<kind>:<id>`). */
-const isCommunicationsContentRef = (reference: string): boolean =>
-  /^communications\.core\.[a-z][a-z-]*:\S+$/u.test(reference);
-const isCommunicationsOwnedHandoff = (handoff: Handoff): boolean =>
-  handoff.resourceRefs.every(isCommunicationsContentRef);
-
 /**
  * What every consumer shares: a valid handoff of the trusted tenant, addressed to this consumer and identical to the
  * immutable dispatched event. A consumer's own resource vocabulary is checked by the consumer's own Read, not here, except
@@ -129,7 +122,6 @@ export const isSupportedHandoff = (
   handoff.tenantId === event.tenantId &&
   handoff.owningCapability === consumer.moduleKey &&
   (consumer.moduleKey !== symmyModule || isSymmyExecutableHandoff(handoff)) &&
-  (consumer.moduleKey !== communicationsModule || isCommunicationsOwnedHandoff(handoff)) &&
   handoff.measureId === event.measureId &&
   computeCanonicalValueHash(handoff) === computeCanonicalValueHash(event.handoff);
 const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(input: {
