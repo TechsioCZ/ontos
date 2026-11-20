@@ -53,8 +53,9 @@ AS $$
   SELECT p_route
     || jsonb_build_object('principalId',(p_route->>'principalId')::uuid::text)
     || CASE WHEN p_route->>'_tag' IN ('PROFILE','GROUP_DEFINITION') THEN jsonb_build_object('sourceReaderPrincipalIds',(
-         SELECT coalesce(jsonb_agg(r.reader::uuid::text ORDER BY r.reader::uuid),'[]'::jsonb)
-         FROM jsonb_array_elements_text(p_route->'sourceReaderPrincipalIds') AS r(reader)))
+         SELECT coalesce(jsonb_agg(d.reader::text ORDER BY d.reader),'[]'::jsonb)
+         FROM (SELECT DISTINCT r.reader::uuid AS reader
+               FROM jsonb_array_elements_text(p_route->'sourceReaderPrincipalIds') AS r(reader)) AS d))
        ELSE '{}'::jsonb END;
 $$;
 --> statement-breakpoint
