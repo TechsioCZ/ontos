@@ -378,9 +378,12 @@ const BASE_FRESH_ROW_TASKS = new Map([
 ]);
 /** A concrete changed path a glob of that list matches. */
 const samplePath = (glob: string) => glob.replaceAll('**', 'sample').replaceAll('*', 'sample');
-/** What the base planned beside those rows for a migration input the root package owns: the root suite. */
+/**
+ * What the base planned beside those rows for a migration input the root package owns: the root suite, every root
+ * shard the owner rows name (ci-workflows.test.mts proves one shard per root file).
+ */
 const ROOT_TASKS = [
-  ...Array.from({ length: 27 }, (_, index) => `root:${index + 1}/27`),
+  ...ownerTasks(templates.integration).filter((task) => task.startsWith('root:')),
   'whole:customer-readback',
   'whole:customer-roundtrip',
   'whole:organization',
