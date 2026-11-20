@@ -20,10 +20,8 @@ import {
   INTERNAL_WORKLOAD_PLATFORM_ROLE,
   principalManagementRepositoryFromTransaction,
 } from '../auth/principal-management.ts';
-import {
-  registerSystemWorkload,
-  SystemPrincipalContextResolverFromCoreDatabase,
-} from '../auth/system-principal-context.ts';
+import { SystemPrincipalContextResolverFromCoreDatabase } from '../auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../auth/system-workload-registration.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import {

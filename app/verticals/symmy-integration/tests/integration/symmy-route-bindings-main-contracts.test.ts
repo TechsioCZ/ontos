@@ -87,17 +87,21 @@ const mainReadScopes = overMainTopology(
 );
 
 /**
- * The binding plan of a company route of this kind that enrolls only the operations every enrollment of it enrolls:
- * any enrollment of the route reaches these calls and reads.
+ * The binding plan of a route of this kind, of a company unless named otherwise, that enrolls only the operations every
+ * enrollment of it enrolls: any enrollment of the route reaches these calls and reads.
  */
-const requiredOnlyPlan = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyRouteContract[]) => {
+const requiredOnlyPlan = (
+  routeKey: SymmyEnrollmentRouteKey,
+  contracts: readonly SymmyRouteContract[],
+  companyScoped = true,
+) => {
   const found = symmyRouteInventoryOf(routeKey);
-  if (!Option.isOption(found) || Option.isNone(found)) {
+  if (Option.isNone(found)) {
     throw new Error(`expected the ${routeKey} inventory`);
   }
   const inventory = found.value;
   return deriveSymmyRouteBindings({
-    companyScoped: true,
+    companyScoped,
     contracts,
     enrolled: inventory.operations.filter(({ required }) => required),
     inventory,
@@ -118,7 +122,7 @@ const intakeProfileRecovery =
   'call_not_declared: The installed privacy.core requires commerce.customer-context commerce.customer-context.api.customer-profile-organization-ico-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-profile) and registers no recovery call to it under privacy.core.source-processing-check';
 
 it.effect(
-  "refuses the customers and membership routes on main's contracts by each requirement whose owner registers no call, and enrolls the customer groups route with its definition read",
+  "refuses the customers and membership routes on main's contracts by each requirement whose owner registers no call, and enrolls the customer groups route with its definition read and the stock route without a company",
   () =>
     Effect.gen(function* refusedOnMain() {
       const contracts = yield* mainContracts;
@@ -147,6 +151,53 @@ it.effect(
         purpose: 'commerce.customer-context.api.customer-group-definition-source@1',
         workloads: ['commerce.customer-context.source-read'],
       });
+      // The stock route admits through Symmy's synchronous admission, imports through Inventory and recovers through
+      // its receipt read, all without a company; Inventory publishes the import for none, so no binding of either
+      // identity needs a company registration.
+      const stock = requiredOnlyPlan('inventoryStockBatch', contracts, false);
+      expect(stock.refusals).toEqual([]);
+      expect(stock.moduleKeys).toEqual(['commerce.inventory', 'integration.symmy']);
+      expect(stock.bindings).toEqual([
+        {
+          companyScoped: false,
+          identity: 'integration',
+          purpose: 'route context',
+          workloads: ['integration.symmy-admit', 'integration.symmy-poll'],
+        },
+        {
+          companyScoped: false,
+          identity: 'integration',
+          purpose: 'synchronous admission',
+          workloads: ['integration.symmy-admit'],
+        },
+        {
+          companyScoped: false,
+          identity: 'integration',
+          purpose: 'synchronous receipt',
+          workloads: ['integration.symmy-admit'],
+        },
+        {
+          companyScoped: false,
+          identity: 'integration',
+          purpose: 'commerce.inventory.import-source-assertion@1',
+          workloads: ['commerce.inventory.source-write'],
+        },
+        {
+          companyScoped: false,
+          identity: 'executor',
+          purpose: 'commerce.inventory.import-source-assertion@1',
+          workloads: ['commerce.inventory.source-write'],
+        },
+        {
+          companyScoped: false,
+          identity: 'executor',
+          purpose: 'commerce.inventory.api.inventory-source-import-receipt@1',
+          workloads: ['commerce.inventory.source-read'],
+        },
+      ]);
+      expect(requiredOnly('inventoryStockBatch', contracts)).toEqual([
+        'company_scope_forbidden: commerce.inventory.import-source-assertion@1 is published without a company, which the synchronous admission of this route passes to it',
+      ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   60_000,
 );

@@ -9,11 +9,13 @@
  *
  * The route's own calls are its executor operations, the reads the adapters make for them and the recoveries Symmy's
  * code declares of them, each found in Symmy's installed manifest in the route's admission mode: a route whose deployed
- * Symmy declares no caller for one of them is refused. The nested calls start from the requirements: every requirement
- * the owner of a reached operation declares for exactly that operation needs one call the owner registers under the
- * workload the operation is served with, to the required provider, so a requirement without its call is refused by
- * name and a route needs only what its own operations can call, at any depth. A call the owner names as an intrinsic
- * requirement, which the gateway admits from any of its operations, is followed when it is registered.
+ * Symmy declares no caller for one of them is refused. A synchronous admission makes its calls with the route's
+ * company, so a company route is refused a live call published without one. The nested calls start from the
+ * requirements: every requirement the owner of a reached operation declares for exactly that operation needs one call
+ * the owner registers under the workload the operation is served with, to the required provider, so a requirement
+ * without its call is refused by name and a route needs only what its own operations can call, at any depth. A call the
+ * owner names as an intrinsic requirement, which the gateway admits from any of its operations, is followed when it is
+ * registered.
  *
  * The integration principal needs one published workload of every Symmy carrier and Shell read the route uses, and
  * the workload of every live call (the gateway checks that the original integration principal holds it). Every call,
@@ -313,6 +315,20 @@ const symmyRouteCalls = (input: {
           `The installed ${SYMMY_MODULE} registers ${registeredCalls(candidates.length, modeCall)} of ${label}`,
         ),
       );
+      return;
+    }
+    // The synchronous admission passes the route's company to every call it makes (`makeSyncAdapterInput`), and the
+    // gateway admits a call published without a company only without one (`receivingOperationContractAllows`).
+    if (
+      admission === 'sync' &&
+      input.companyScoped &&
+      recoveryOf === undefined &&
+      call.legalEntityScope === 'forbidden'
+    ) {
+      state.refusals.push({
+        code: 'company_scope_forbidden',
+        detail: `${label} is published without a company, which the synchronous admission of this route passes to it`,
+      });
       return;
     }
     // An uninstalled receiver is refused when the call is followed.

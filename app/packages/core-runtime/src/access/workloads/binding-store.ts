@@ -49,7 +49,7 @@ const insertValues = (binding: RegisterWorkloadBindingInput) => ({
 });
 
 const writeBindingRows = (
-  transaction: CoreTransaction,
+  transaction: Pick<CoreTransaction, 'insert'>,
   bindings: readonly RegisterWorkloadBindingInput[],
 ): Effect.Effect<void, AccessIntentError> =>
   bindings.length === 0
@@ -61,6 +61,40 @@ const writeBindingRows = (
         // so a re-run never revives what an administrator ended (D27).
         .onConflictDoNothing()
         .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid);
+
+/**
+ * Registers active bindings inside a transaction the caller opened in its own scope, refusing a command that names
+ * another tenant. A Core Action that changes a system workload enrollment writes its binding this way, in the same
+ * transaction as the Principal it binds.
+ */
+export const registerWorkloadBindingsIn = (
+  transaction: Pick<CoreTransaction, 'insert'>,
+  scope: OperationalScope,
+  input: RegisterWorkloadBindingsInput,
+): Effect.Effect<void, AccessIntentError> => {
+  const issue = commandIssue(scope, input.bindings);
+  return issue === null
+    ? writeBindingRows(transaction, input.bindings)
+    : Effect.fail(intentConflict('access_intent_scope_mismatch', issue));
+};
+
+/** Ends one active binding of the caller's scope inside the transaction the caller opened; a revoked one stays. */
+export const revokeWorkloadBindingIn = (
+  transaction: Pick<CoreTransaction, 'update'>,
+  scope: OperationalScope,
+  input: RevokeWorkloadBindingInput,
+): Effect.Effect<void, AccessIntentError> =>
+  transaction
+    .update(accessWorkloadBindings)
+    .set({ revokedAt: input.revokedAt, status: 'revoked' })
+    .where(
+      and(
+        eq(accessWorkloadBindings.tenantId, scope.tenantId),
+        eq(accessWorkloadBindings.bindingId, input.bindingId),
+        eq(accessWorkloadBindings.status, 'active'),
+      ),
+    )
+    .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid);
 
 /**
  * Registers active bindings in the caller's own scope, refusing a command that names another tenant.
@@ -95,19 +129,7 @@ export const makeAccessWorkloadBindingDrizzleStore = (
   )(function* revokeBindingEffect(scope: OperationalScope, input: RevokeWorkloadBindingInput) {
     yield* runScoped(database, scope, OWNER_UNIQUE_CONSTRAINTS, (transaction) =>
       lockWorkloadAuthority(transaction, scope).pipe(
-        Effect.andThen(() =>
-          transaction
-            .update(accessWorkloadBindings)
-            .set({ revokedAt: input.revokedAt, status: 'revoked' })
-            .where(
-              and(
-                eq(accessWorkloadBindings.tenantId, scope.tenantId),
-                eq(accessWorkloadBindings.bindingId, input.bindingId),
-                eq(accessWorkloadBindings.status, 'active'),
-              ),
-            )
-            .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid),
-        ),
+        Effect.andThen(() => revokeWorkloadBindingIn(transaction, scope, input)),
       ),
     );
   });

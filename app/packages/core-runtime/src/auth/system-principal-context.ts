@@ -10,7 +10,8 @@ import { SystemPrincipalContextDeniedError } from './system-principal-context-de
 import { SystemPrincipalContextInvalidError } from './system-principal-context-invalid-error.ts';
 import { trustResolvedSystemPrincipalContext } from './system-principal-context-provenance.ts';
 import { SystemPrincipalContextUnavailableError } from './system-principal-context-unavailable-error.ts';
-import { SystemWorkloadRegistrationInvalidError } from './system-workload-registration-invalid-error.ts';
+import { isRegisteredSystemWorkload, systemWorkloadPart } from './system-workload-registration.ts';
+import type { SystemWorkloadRegistration } from './system-workload-registration.ts';
 
 export { SystemPrincipalContextDeniedError } from './system-principal-context-denied-error.ts';
 export { SystemPrincipalContextInvalidError } from './system-principal-context-invalid-error.ts';
@@ -21,39 +22,7 @@ export type SystemPrincipalContextError =
   | SystemPrincipalContextInvalidError
   | SystemPrincipalContextUnavailableError;
 
-const registrationProvenance = Symbol('SystemWorkloadRegistration');
-
-export interface SystemWorkloadRegistration {
-  readonly allowServicePrincipal: boolean;
-  readonly jobKey: string;
-  readonly [registrationProvenance]?: true;
-}
 const invalidWorkloadRegistrationReason = 'The trusted system workload registration is invalid';
-const safePart = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/u;
-
-const rejectInvalidSystemWorkloadRegistration = (): never => {
-  const failure = new SystemWorkloadRegistrationInvalidError({
-    code: 'system_workload_registration_invalid',
-    message: 'System workload job key is invalid',
-  });
-  Object.setPrototypeOf(failure, TypeError.prototype);
-  throw failure;
-};
-
-export const registerSystemWorkload = (input: {
-  readonly allowServicePrincipal?: boolean;
-  readonly jobKey: string;
-}): SystemWorkloadRegistration => {
-  if (!safePart.test(input.jobKey)) {
-    return rejectInvalidSystemWorkloadRegistration();
-  }
-  const registration: SystemWorkloadRegistration = {
-    allowServicePrincipal: input.allowServicePrincipal === true,
-    jobKey: input.jobKey,
-  };
-  Object.defineProperty(registration, registrationProvenance, { value: true });
-  return Object.freeze(registration);
-};
 
 /** Returns a registered admission's native auth reference without constructing an authenticated principal. */
 export const registeredAdmissionAuthContextRef = Effect.fn('registeredAdmissionAuthContextRef')(
@@ -62,7 +31,7 @@ export const registeredAdmissionAuthContextRef = Effect.fn('registeredAdmissionA
     actionInvocationId: string,
   ): Effect.fn.Return<string, SystemPrincipalContextInvalidError> {
     if (
-      registration[registrationProvenance] !== true ||
+      !isRegisteredSystemWorkload(registration) ||
       !Schema.is(Schema.String.check(Schema.isUUID()))(actionInvocationId)
     ) {
       return yield* new SystemPrincipalContextInvalidError({
@@ -194,8 +163,8 @@ export const systemPrincipalContextResolverFromRepository = <Result extends Syst
       readonly tenantId: string;
     }): Effect.fn.Return<TrustedPrincipalContext, SystemPrincipalContextError> {
       if (
-        input.registration[registrationProvenance] !== true ||
-        !safePart.test(input.runReference) ||
+        !isRegisteredSystemWorkload(input.registration) ||
+        !systemWorkloadPart.test(input.runReference) ||
         !Schema.is(Schema.String.check(Schema.isUUID()))(input.tenantId) ||
         !Schema.is(Schema.String.check(Schema.isUUID()))(input.principalId)
       ) {
@@ -247,8 +216,8 @@ export const systemPrincipalContextResolverFromRepository = <Result extends Syst
       readonly tenantId: string;
     }): Effect.fn.Return<TrustedPrincipalContext, SystemPrincipalContextError> {
       if (
-        input.registration[registrationProvenance] !== true ||
-        !safePart.test(input.runReference) ||
+        !isRegisteredSystemWorkload(input.registration) ||
+        !systemWorkloadPart.test(input.runReference) ||
         !Schema.is(Schema.String.check(Schema.isUUID()))(input.tenantId)
       ) {
         return yield* new SystemPrincipalContextInvalidError({
