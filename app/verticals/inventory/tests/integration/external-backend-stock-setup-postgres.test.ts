@@ -11,9 +11,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
-import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { PgClient } from '@effect/sql-pg';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { and, eq, sql } from 'drizzle-orm';
 import {
@@ -30,7 +28,6 @@ import {
   Schema,
 } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -61,6 +58,7 @@ import {
 import { SelectInventoryBackendPayloadSchema } from '../../shared/actions/select-inventory-backend.ts';
 import { inventoryApi } from '../../shared/api.ts';
 import { EstablishStockPositionActionIneligibleProblemSchema } from '../../shared/apis/establish-stock-position-action.ts';
+import { ImportSourceAssertionActionCommitIndeterminateProblemSchema } from '../../shared/apis/import-source-assertion-action.ts';
 import { InventorySourceImportReceiptResponseSchema } from '../../shared/apis/inventory-source-import-receipt.ts';
 import {
   RegisterStockItemActionConflictProblemSchema,
@@ -149,12 +147,6 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
     );
     const ownerRuntimeLayer = fixture.layer.pipe(Layer.provide(importSourceAssertionOwnerAuthorizationOverlayLive));
     const { tenantId } = fixture;
-    const coreEvidenceServices = yield* Layer.build(
-      PgClient.layer({ url: Redacted.make(connections.admin.connectionString) }).pipe(
-        Layer.provideMerge(Reactivity.layer),
-      ),
-    );
-    const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(coreEvidenceServices));
 
     const keyPair = yield* Effect.sync(() => generateKeyPairSync('ed25519'));
     const kid = 'inventory-external-backend-setup';
@@ -565,33 +557,28 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
       receivedAt: observedAt,
       sourceReference: 'erp-stock:snapshot:1',
     });
-    const importKey = yield* nextId;
-    const imported = yield* run(
+    // The import commits but its acknowledgement is lost: the caller holds only the public problem's invocation.
+    fixture.faultNextTransaction('lost-ack');
+    const lostImport = yield* run(
       requireExecutionResult(
         ImportSourceAssertionResultSchema,
         executeImportSourceAssertionWithAuthorization(
           { authorizationTargetRef: stockPosition.ref, items: [proposal] },
           yield* authorization(),
           yield* nextId,
-          yield* options(importKey),
+          yield* options(),
         ),
       ),
-    );
-    expect(imported.items).toMatchObject([{ assertionId: proposal.assertionId, status: 'ACCEPTED' }]);
+    ).pipe(Effect.flip);
+    assert(Schema.is(ImportSourceAssertionActionCommitIndeterminateProblemSchema)(lostImport));
+    expect(lostImport).toMatchObject({ resolution: 'RESOLVE_COMMIT', retryCommand: false, status: 503 });
 
-    // 7. The accepted row is readable through Inventory's public receipt read, with its ERP provenance. The
-    // original invocation is Core's record of the import's own idempotency key: the key a recovering caller
-    // holds and the gateway's registered recovery resolves; no Inventory row is read for it.
-    const original = (yield* fixture.evidence(coreEvidenceExecutor)).invocations.filter(
-      ({ actionKey, idempotencyKey }) =>
-        actionKey === importSourceAssertionAction.descriptor.actionKey && idempotencyKey === importKey,
-    );
-    expect(original).toHaveLength(1);
-    assert(original[0] !== undefined);
+    // 7. The caller recovers the accepted row through Inventory's public receipt read with that invocation,
+    // with its ERP provenance.
     const receipt = yield* run(
       executeInventorySourceImportReceiptWithAuthorization(
         {
-          actionInvocationId: InventorySourceImportActionInvocationIdSchema.make(original[0].actionInvocationId),
+          actionInvocationId: InventorySourceImportActionInvocationIdSchema.make(lostImport.invocationId),
           itemIndex: 0,
           proposal,
         },
