@@ -1,18 +1,35 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { NodeCrypto } from '@effect/platform-node';
-import { Config, ConfigProvider, Crypto, DateTime, Effect, Layer, Option, Schema, Stream } from 'effect';
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Crypto,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+  Stream,
+} from 'effect';
 import type { Scope } from 'effect';
 import { Hex } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
-import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
+import { TenantMediaAssetKeySchema, mediaAssetRefFor } from '../../src/media/identity.ts';
 import { ObjectStorage } from '../../src/media/object-storage.ts';
 import type { ObjectStorageService } from '../../src/media/object-storage.ts';
 import { ObjectStorageConfigError, loadS3ObjectStorageConfig } from '../../src/media/s3-config.ts';
 import type { S3ObjectStorageConfigValue } from '../../src/media/s3-config.ts';
 import { makeS3ObjectStorage } from '../../src/media/s3-object-storage.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
+import { AssetDownloadAuthorizationSchema } from '../../src/media/download-contract.ts';
+import { MediaDownloadAborted, streamConfirmedBytes } from '../../src/media/download.ts';
+import { MediaIntegrityFailed, MediaUnavailable } from '../../src/media/errors.ts';
+import { MediaIntegrityRecorder } from '../../src/media/integrity-recorder.ts';
 import { verifyReadyMediaAsset } from '../../src/media/verified-read.ts';
 import type { MediaVerifiableAsset } from '../../src/media/verified-read.ts';
 import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
@@ -214,6 +231,103 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
           expect(outcome.finding.recorded.contentSha256).toBe(digestOf(original));
         }
       }),
+    );
+  },
+);
+
+const freshIdentity = Effect.gen(function* freshIdentityEffect() {
+  return yield* Schema.decodeUnknownEffect(TenantMediaAssetKeySchema)({
+    mediaAssetId: yield* nextUuid,
+    tenantId: yield* nextUuid,
+  }).pipe(Effect.orDie);
+});
+
+/** A recorder that only counts the findings it was handed. */
+const countingRecorder = (count: Ref.Ref<number>): typeof MediaIntegrityRecorder.Service => ({
+  record: () => Ref.update(count, (value) => value + 1),
+});
+
+const failureOf = <Value, Failure>(exit: Exit.Exit<Value, Failure>) =>
+  Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
+
+/** The download of a stored object through the REAL S3 adapter: the byte half of the governed download. */
+it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestServices: true })(
+  'core media download bytes through the S3 adapter (emulator)',
+  (suite) => {
+    suite.effect(
+      'delivers exactly the confirmed bytes, aborts corrupt ones without a clean end and records only proven corruption',
+      (ctx) =>
+        Effect.scoped(
+          withProxy(ctx, (proxy, base) =>
+            Effect.gen(function* downloadThroughS3() {
+              const storage = yield* makeS3ObjectStorage({
+                ...base,
+                endpoint: proxy.origin,
+                requestTimeoutMillis: Option.some(400),
+              });
+              const overwriting = yield* makeS3ObjectStorage({ ...base, conditionalCreate: 'unsupported' });
+              const identity = yield* freshIdentity;
+              const key = deriveMediaStorageKey(identity);
+              const original = patterned(SIZE, MIB, 11);
+              const contentSha256 = yield* digestOfStream(original);
+              yield* storage.put({ body: original, byteSize: SIZE, contentType: 'application/octet-stream', key });
+              const row = readyRow(storage, key, { byteSize: SIZE, contentSha256 });
+              const authorization = yield* Schema.decodeUnknownEffect(AssetDownloadAuthorizationSchema)({
+                byteSize: SIZE,
+                contentSha256,
+                displayFilename: 'contract.pdf',
+                mediaAssetRef: mediaAssetRefFor(identity),
+                mimeType: 'application/octet-stream',
+              }).pipe(Effect.orDie);
+              const recorded = yield* Ref.make(0);
+              const recorder = countingRecorder(recorded);
+              const download = (current: MediaVerifiableAsset = row) =>
+                streamConfirmedBytes(current, authorization).pipe(
+                  Effect.provideService(ObjectStorage, storage),
+                  Effect.provideService(MediaIntegrityRecorder, recorder),
+                );
+
+              // The confirmed bytes, in full, with a clean end.
+              const delivered = yield* download();
+              const chunks = yield* Stream.runCollect(delivered.body);
+              expect(digestOf(Buffer.concat(chunks))).toBe(contentSha256);
+              expect(Buffer.concat(chunks).byteLength).toBe(SIZE);
+
+              // CONTROLLED FAULT: a connection cut mid-body is an aborted body and proves nothing.
+              proxy.setRules([{ fault: { after: MIB, kind: 'truncate-body' }, method: 'GET' }]);
+              const cut = yield* download();
+              const cutExit = yield* Effect.exit(Stream.runDrain(cut.body));
+              expect(Schema.is(MediaDownloadAborted)(failureOf(cutExit))).toBe(true);
+              expect(failureOf(cutExit)).toMatchObject({ reason: 'unavailable' });
+              // CONTROLLED FAULT: the provider is unreachable before the first byte: an unavailable request.
+              proxy.setRules([{ fault: { kind: 'reset-before' }, method: 'GET' }]);
+              expect(Schema.is(MediaUnavailable)(failureOf(yield* Effect.exit(download())))).toBe(true);
+              expect(yield* Ref.get(recorded)).toBe(0);
+
+              // The same bytes still verify after the faults: nothing was promoted or changed.
+              const again = yield* download();
+              expect(digestOf(Buffer.concat(yield* Stream.runCollect(again.body)))).toBe(contentSha256);
+
+              // Out-of-band replacement with same-size bytes: the body aborts, never ending cleanly, and it is recorded.
+              const tampered = patterned(SIZE, MIB, 12);
+              yield* overwriting.put({ body: tampered, byteSize: SIZE, contentType: 'application/octet-stream', key });
+              const corrupt = yield* download();
+              const corruptExit = yield* Effect.exit(Stream.runDrain(corrupt.body));
+              expect(Schema.is(MediaDownloadAborted)(failureOf(corruptExit))).toBe(true);
+              expect(failureOf(corruptExit)).toMatchObject({ reason: 'integrity_failed' });
+              expect(yield* Ref.get(recorded)).toBe(1);
+
+              // Another size of a completely read object is proven corruption too: refused before any byte.
+              yield* overwriting.put({
+                body: Stream.make(encoder.encode('another, longer object body')),
+                contentType: 'text/plain',
+                key,
+              });
+              expect(Schema.is(MediaIntegrityFailed)(failureOf(yield* Effect.exit(download())))).toBe(true);
+              expect(yield* Ref.get(recorded)).toBe(2);
+            }),
+          ),
+        ),
     );
   },
 );
