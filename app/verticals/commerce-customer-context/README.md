@@ -163,7 +163,8 @@ Addresses only through an active source route of the matching kind. An administr
 changes or pauses a route with the `commerce.customer-context.configure-customer-source-route`
 Action, and reads it, with the generation a decision must name and its decision history, through the
 `customer-source-route` Read. Every principal a configured route names must be one Core enrolls for
-the route's workload.
+the route's workload and registers for the route's legal entity, the one company Core's gate then
+admits it in; any other is `PRINCIPAL_INELIGIBLE`.
 
 The owner routine compares the stored route generation with the one the administrator read (none
 for a route that must not exist yet) before anything else it decides. A mismatch writes nothing, so

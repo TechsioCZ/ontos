@@ -1,9 +1,10 @@
 import { defineScopedRoutine, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import {
+  readActiveWorkloadBindingHolders,
   readScopedSystemWorkloadEnrollment,
-  readWorkerWorkloadPrincipalEligibility,
 } from '@app/core-runtime/access/enforcement';
+import type { WorkloadBindingHolder } from '@app/core-runtime/access/enforcement';
 import { Effect, Match, Option, Schema } from 'effect';
 import {
   CustomerSourceRouteRequestSchema,
@@ -116,44 +117,71 @@ export interface CustomerSourceRouteServices {
   ) => Effect.Effect<CustomerSourceRouteDecision, CustomerSourceRouteUnavailable>;
 }
 
+/**
+ * The principals Core admits for a route in its legal entity, from Core's enrollment and the holders of both source
+ * workloads read with that legal entity. A route belongs to one legal entity, and Core's company gate admits a workload
+ * there only through an active registration for it (D6): the enrolled writer, which runs source writes as a verified
+ * gateway workload, through the registration of that very source-write binding; a requested reader, an integration
+ * principal that reads directly, through one of any of its active bindings. Anyone else is not enrolled, so the
+ * routine answers PRINCIPAL_INELIGIBLE.
+ */
+export const customerSourceRouteEnrollment = (input: {
+  readonly readers: readonly WorkloadBindingHolder[];
+  readonly requestedReaders: readonly string[];
+  readonly writer: Option.Option<{ readonly principalId: string }>;
+  readonly writers: readonly WorkloadBindingHolder[];
+}) => ({
+  // Core answers a principal id in lower case; a route may state it in any case.
+  enrolledReaderPrincipalIds: input.requestedReaders.filter((principalId) =>
+    input.readers.some(
+      (holder) =>
+        holder.principalId === principalId.toLowerCase() &&
+        holder.kind === 'integration' &&
+        (holder.companyRegistration === 'binding' || holder.companyRegistration === 'other_binding'),
+    ),
+  ),
+  enrolledWriterPrincipalId: input.writer.pipe(
+    Option.filter(({ principalId }) =>
+      input.writers.some((holder) => holder.principalId === principalId && holder.companyRegistration === 'binding'),
+    ),
+    Option.map(({ principalId }) => principalId),
+    Option.getOrNull,
+  ),
+});
+
 /** The routines read and write the one registry row under the trusted Tenant and legal entity, in one transaction. */
 export const customerSourceRouteServices: ReadServiceFactory<CustomerSourceRouteServices> = (transaction) => {
+  /** Core's holders of a workload, each with where it is registered for the route's legal entity (D6). */
+  const holdersOf = (workloadKey: string) =>
+    readActiveWorkloadBindingHolders(
+      transaction,
+      transaction.scope.tenantId,
+      workloadKey,
+      transaction.scope.legalEntityId,
+    ).pipe(Effect.mapError(unavailable));
+
   /**
    * Core's enrollment for the route, read in this transaction after the route's lock is held: the Tenant's one
-   * enrolled system principal of the source-write workload, and those requested Profile or Group definition
-   * readers Core binds as active integration principals to the source-read workload. The routine compares the
-   * route with them.
+   * enrolled system principal of the source-write workload, and the holders of both source workloads with where each
+   * is registered for the route's legal entity. The routine compares the route with the principals they admit.
    */
   const enrolledPrincipals = Effect.fn('CustomerSourceRoute.enrolledPrincipals')(function* enrolledPrincipals(
     route: CustomerSourceRoute,
   ) {
-    const writer = yield* readScopedSystemWorkloadEnrollment(transaction, SOURCE_WRITE_WORKLOAD).pipe(
-      Effect.mapError(unavailable),
+    const requestedReaders = Match.value(route).pipe(
+      Match.tag('PROFILE', 'GROUP_DEFINITION', ({ sourceReaderPrincipalIds }) => sourceReaderPrincipalIds),
+      Match.orElse(() => []),
     );
-    const readers = yield* Effect.forEach(
-      Match.value(route).pipe(
-        Match.tag('PROFILE', 'GROUP_DEFINITION', ({ sourceReaderPrincipalIds }) => sourceReaderPrincipalIds),
-        Match.orElse(() => []),
-      ),
-      (principalId) =>
-        readWorkerWorkloadPrincipalEligibility(transaction, transaction.scope.tenantId, {
-          kind: 'integration',
-          principalId,
-          workloadKey: SOURCE_READ_WORKLOAD,
-        }).pipe(
-          Effect.mapError(unavailable),
-          Effect.map((eligible) => (eligible ? [principalId] : [])),
-        ),
-      // One owner transaction: its reads run one after another.
+    // One owner transaction: its reads run one after another, and a route naming no reader reads no reader.
+    const [writer, writers, readers] = yield* Effect.all(
+      [
+        readScopedSystemWorkloadEnrollment(transaction, SOURCE_WRITE_WORKLOAD).pipe(Effect.mapError(unavailable)),
+        holdersOf(SOURCE_WRITE_WORKLOAD),
+        requestedReaders.length === 0 ? Effect.succeed([]) : holdersOf(SOURCE_READ_WORKLOAD),
+      ],
       { concurrency: 1 },
     );
-    return {
-      enrolledReaderPrincipalIds: readers.flat(),
-      enrolledWriterPrincipalId: writer.pipe(
-        Option.map(({ principalId }) => principalId),
-        Option.getOrNull,
-      ),
-    };
+    return customerSourceRouteEnrollment({ readers, requestedReaders, writer, writers });
   });
 
   /** CONFIGURE: lock the route, then read Core's enrollment for it in this transaction, before the routine decides. */

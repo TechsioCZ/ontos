@@ -23,7 +23,8 @@ const domainEvents = {} as const;
  * routine compares each decision with the stored route generation before anything else it decides; a mismatch writes
  * nothing, so a second create-only request for an existing route is refused even when it states the same route. Only
  * then does a pause clear the route's active flag, or a configuration require every principal it names to be one Core
- * enrolls for the route's workload and its source identity to stay the one the route was configured for; an identical
+ * enrolls for the route's workload and registers for the route's legal entity (D6), and its source identity to stay
+ * the one the route was configured for; an identical
  * route is UNCHANGED, with no new generation. A configuration whose read of Core's enrollment fails or is ambiguous
  * (two enrolled writers) is answered unavailable before the routine runs, and writes nothing. An exact replay of the
  * same idempotency key is answered by the Action runtime with the original result.

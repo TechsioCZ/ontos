@@ -20,6 +20,7 @@ import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import {
   accessWorkloadBindings,
+  accessWorkloadCompanyBindings,
   legalEntities,
   principals,
   tenants,
@@ -91,9 +92,10 @@ type RouteKind = Route['_tag'];
 /**
  * One disposable owner database with a live human administrator and the Core enrollment a real Tenant holds for
  * Commerce source traffic: one system principal bound to the source-write workload and two integration
- * principals bound to the source-read workload. Nothing else is granted. The fixture's gate answers every
- * capability alike, so a suite that refuses one principal names it on `deniedAccess`, as a live gate with no
- * matching assignment would refuse it.
+ * principals bound to the source-read workload, each binding registered for the route's legal entity, the company
+ * Core's gate admits a workload in only through such a registration (D6). Nothing else is granted. The fixture's
+ * gate answers every capability alike, so a suite that refuses one principal names it on `deniedAccess`, as a live
+ * gate with no matching assignment would refuse it.
  */
 const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
   const snapshot = yield* enrollmentApplicationCompositionSnapshot;
@@ -140,9 +142,26 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
   const deniedAccess = makeCommerceCustomerContextDeniedAccess(failClosedOwnerAuthorizationOverlay);
   const runtimeContext = yield* Layer.build(fixture.layer.pipe(Layer.provide(deniedAccess.layer)));
   const { legalEntityId, tenantId } = fixture;
-  const bindWorkload = (tenant: string, principalId: string, workloadKey: string) =>
-    core.insert(accessWorkloadBindings).values({
-      bindingId: randomUUID(),
+  /** One company registration of a workload binding, the row Core's registration writer stores (D6). */
+  const registerWorkload = (tenant: string, workloadBindingId: string, company: string) =>
+    core.insert(accessWorkloadCompanyBindings).values({
+      companyBindingId: randomUUID(),
+      incarnation: randomUUID(),
+      legalEntityId: company,
+      status: 'active',
+      tenantId: tenant,
+      workloadBindingId,
+    });
+  /** One workload binding and, unless none is named, its registration for the company it serves. */
+  const bindWorkload = Effect.fn('CustomerSourceRouteTest.bindWorkload')(function* bindWorkload(
+    tenant: string,
+    principalId: string,
+    workloadKey: string,
+    company: string | null,
+  ) {
+    const bindingId = randomUUID();
+    yield* core.insert(accessWorkloadBindings).values({
+      bindingId,
       incarnation: randomUUID(),
       principalId,
       revokedAt: null,
@@ -150,6 +169,11 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
       tenantId: tenant,
       workloadKey,
     });
+    if (company !== null) {
+      yield* registerWorkload(tenant, bindingId, company);
+    }
+    return bindingId;
+  });
   const revokeWorkload = (principalId: string, workloadKey: string) =>
     core
       .update(accessWorkloadBindings)
@@ -165,17 +189,18 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
     tenant: string,
     kind: 'integration' | 'system',
     workloadKey: string,
+    company: string | null,
   ) {
     const principalId = randomUUID();
     yield* core
       .insert(principals)
       .values({ displayName: 'Commerce source workload', kind, principalId, status: 'active', tenantId: tenant });
-    yield* bindWorkload(tenant, principalId, workloadKey);
+    yield* bindWorkload(tenant, principalId, workloadKey, company);
     return principalId;
   });
-  const writer = yield* enroll(tenantId, 'system', SOURCE_WRITE);
-  const reader = yield* enroll(tenantId, 'integration', SOURCE_READ);
-  const secondReader = yield* enroll(tenantId, 'integration', SOURCE_READ);
+  const writer = yield* enroll(tenantId, 'system', SOURCE_WRITE, legalEntityId);
+  const reader = yield* enroll(tenantId, 'integration', SOURCE_READ, legalEntityId);
+  const secondReader = yield* enroll(tenantId, 'integration', SOURCE_READ, legalEntityId);
   const principal = { ...fixture.manager, legalEntityId };
   /**
    * One decision exactly as the Action's HTTP runner hands it over: the wire payload, which the runtime decodes, and
@@ -235,6 +260,7 @@ const setup = Effect.fn('CustomerSourceRouteTest.setup')(function* setup() {
     pause,
     reader,
     readRoute,
+    registerWorkload,
     revokeWorkload,
     secondReader,
     tenantId,
@@ -324,6 +350,7 @@ it.live(
           pause,
           reader,
           readRoute,
+          registerWorkload,
           revokeWorkload,
           secondReader,
           tenantId,
@@ -361,13 +388,24 @@ it.live(
           status: 'active',
           tenantId: foreignTenant,
         });
-        const foreignWriter = yield* enroll(foreignTenant, 'system', SOURCE_WRITE);
+        const foreignWriter = yield* enroll(foreignTenant, 'system', SOURCE_WRITE, null);
         for (const candidate of [fixture.manager.principalId, reader, randomUUID(), foreignWriter]) {
           expect(yield* configure(null, bind, groupRoute(candidate))).toEqual(ineligible);
         }
         // A Profile or Group definition reader must be an integration principal of this Tenant bound to the
         // source-read workload.
         for (const readers of [[writer], [fixture.manager.principalId], [reader, randomUUID()]]) {
+          expect(yield* configure(null, bind, profileRoute(writer, readers))).toEqual(ineligible);
+          expect(yield* configure(null, bind, groupRoute(writer, readers))).toEqual(ineligible);
+        }
+        // Bound to the source-read workload but registered for no company, or for another company of the Tenant, a
+        // reader is refused too: Core's gate admits it in this route's legal entity only through a registration (D6).
+        const otherCompany = yield* Effect.fromOption(
+          Option.fromNullishOr(fixture.secondaryLegalEntity?.legalEntityId),
+        ).pipe(Effect.orDie);
+        const unregisteredReader = yield* enroll(tenantId, 'integration', SOURCE_READ, null);
+        const otherCompanyReader = yield* enroll(tenantId, 'integration', SOURCE_READ, otherCompany);
+        for (const readers of [[unregisteredReader], [otherCompanyReader], [reader, unregisteredReader]]) {
           expect(yield* configure(null, bind, profileRoute(writer, readers))).toEqual(ineligible);
           expect(yield* configure(null, bind, groupRoute(writer, readers))).toEqual(ineligible);
         }
@@ -464,7 +502,7 @@ it.live(
         // With two system principals enrolled for source writes Core reports the enrollment as ambiguous, so a
         // configuration is answered unavailable before the owner routine runs; a pause needs no enrollment and still
         // succeeds.
-        const secondWriter = yield* enroll(tenantId, 'system', SOURCE_WRITE);
+        const secondWriter = yield* enroll(tenantId, 'system', SOURCE_WRITE, legalEntityId);
         const ambiguous = yield* Effect.flip(configure(3, 'Resume under an ambiguous enrollment', route));
         expect(Schema.is(CustomerSourceRouteUnavailable)(ambiguous)).toBe(true);
         expect(ambiguous).toMatchObject({ code: 'PERSISTENCE_UNAVAILABLE' });
@@ -573,8 +611,8 @@ it.live(
           }),
         );
 
-        // Core enrolls the writer again for the remaining routes.
-        yield* bindWorkload(tenantId, writer, SOURCE_WRITE);
+        // Core binds the writer again for the remaining routes, at first registered for no company.
+        const rebound = yield* bindWorkload(tenantId, writer, SOURCE_WRITE, null);
         // A route stored before this Action existed may lack its mapping revision. The administrator sees it without
         // one, pauses it without restating it, and repairs it with the mapping revision they supply; the owner never
         // invents one.
@@ -604,6 +642,12 @@ it.live(
         expect(yield* configure(1, 'Repair against a stale view', legacy)).toEqual(
           resultOf({ _tag: 'REJECTED', currentGeneration: 2, reason: 'EXPECTATION_MISMATCH' }),
         );
+        // A writer bound to source writes but registered for no company is refused here as Core's gate would refuse
+        // its source writes in this legal entity; registered for it, the writer may repair the route.
+        expect(yield* configure(2, 'Repair before the writer serves this company', legacy)).toEqual(
+          resultOf({ _tag: 'REJECTED', currentGeneration: 2, reason: 'PRINCIPAL_INELIGIBLE' }),
+        );
+        yield* registerWorkload(tenantId, rebound, legalEntityId);
         expect(yield* configure(2, 'Repair with the agreed mapping', legacy)).toEqual(
           resultOf({ _tag: 'CONFIGURED', generation: 3, route: legacy }),
         );
