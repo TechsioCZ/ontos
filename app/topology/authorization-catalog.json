@@ -10719,6 +10719,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.inventory.catalog-variant-on-hand-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "stock",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.catalog-variant-on-hand-page",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.inventory.commitment-protection.establish",
             "kind": "action",
             "modes": [
