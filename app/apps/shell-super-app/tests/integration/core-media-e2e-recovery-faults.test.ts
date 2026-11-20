@@ -78,7 +78,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'a provider outage during a download is a request-level UNAVAILABLE, never absence, and changes no status (CONTROLLED FAULT INJECTION: connection reset, forced 404, truncated body)',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* providerOutageOnDownload() {
               const { faults } = yield* requireFaultInjection(ctx, world);
@@ -138,8 +138,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'bytes that do not match the declared identity never become ready: the upload ends failed or unconfirmed, nothing downloads, and no hash is published',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* mismatchedUpload() {
               const uploader = person(world, 'uploader');
@@ -177,8 +177,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'a ready asset whose stored bytes are replaced is never delivered as ready bytes (CONTROLLED FAULT INJECTION: out-of-band replacement at the emulator)',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* corruptedAfterReady() {
               const uploader = person(world, 'uploader');
@@ -213,8 +213,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'a database that refuses the confirm write after the bytes are stored ends unconfirmed and retryable, and the retry completes the one asset (CONTROLLED FAULT INJECTION: a trigger refuses the ready write)',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* databaseRefusesConfirm() {
               const uploader = person(world, 'uploader');
@@ -251,7 +251,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'a reconnect decides the confirm capability afresh: after the real revoke the retry is refused, and a new grant lets it complete (CONTROLLED FAULT INJECTION: answer lost and read-back unreachable)',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* reconnectWithFreshAuthorization() {
               const { faults } = yield* requireFaultInjection(ctx, world);
@@ -288,7 +288,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'concurrent recovery of one uncertain upload ends with exactly one confirmed asset and only typed answers (CONTROLLED FAULT INJECTION: answer lost and read-back unreachable)',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* concurrentRecovery() {
               const { faults } = yield* requireFaultInjection(ctx, world);

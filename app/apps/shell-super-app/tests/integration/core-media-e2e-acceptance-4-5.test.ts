@@ -79,8 +79,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
   (suite) => {
     suite.effect(
       'row 4: DENIED, metadata-only and a foreign tenant keep both the metadata and the bytes back, through the real gate',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* denied() {
               const uploader = person(world, 'uploader');
@@ -125,8 +125,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
         ),
     );
 
-    suite.effect('row 4: a download-only grant is not a metadata grant, and a rename grant is neither', () =>
-      withMediaE2eWorld(platform, (world) =>
+    suite.effect('row 4: a download-only grant is not a metadata grant, and a rename grant is neither', (ctx) =>
+      withMediaE2eWorld(ctx, platform, (world) =>
         Effect.scoped(
           Effect.gen(function* separateCapabilities() {
             const uploader = person(world, 'uploader');
@@ -150,8 +150,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'row 4: NEEDS_APPROVAL parks a rename of a proposer, and an owner rename changes only the display name',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* approvalAndRename() {
               const uploader = person(world, 'uploader');
@@ -199,8 +199,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'row 4: a stale permission is no grant: after the real revoke the next metadata read and download fail, and a new grant restores them',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* staleGrant() {
               const uploader = person(world, 'uploader');
@@ -229,8 +229,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'row 4: a transfer already authorized may finish after the revoke, and the very next request, a resumed range included, fails',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* transferOutlivesRevoke() {
               const uploader = person(world, 'uploader');
@@ -291,7 +291,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'row 4: SpiceDB UNAVAILABLE keeps both the metadata and the bytes back and changes nothing (CONTROLLED FAULT INJECTION: engine partition)',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* engineUnavailable() {
               const injection = yield* requireFaultInjection(ctx, world);
@@ -325,8 +325,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'row 5: a new upload never updates or overwrites an earlier asset, not even when it is aimed at it',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* newUploadLeavesEarlierAlone() {
               const uploader = person(world, 'uploader');

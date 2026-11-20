@@ -76,8 +76,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
   (suite) => {
     suite.effect(
       'row 2: an authorized download returns the very bytes that were stored, and the documented size and SHA-256',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* happyPath() {
               const uploader = person(world, 'uploader');
@@ -141,8 +141,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'row 1: two files with the same name and the same bytes are two assets and nothing merges by name',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* sameName() {
               const uploader = person(world, 'uploader');
@@ -185,8 +185,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
     suite.effect(
       'row 3: repeating the same attempt does not double the effect; a conflicting repeat and a replayed byte hop are refused',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* retry() {
               const uploader = person(world, 'uploader');
@@ -237,7 +237,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'row 3: when the provider answer is lost after the write, the edge reads the stored bytes back and completes the one asset as the original intent (CONTROLLED FAULT INJECTION)',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* reconciled() {
               const uploader = person(world, 'uploader');
@@ -268,7 +268,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'row 3: an outcome that stays uncertain is never reported as success, and the retry of the same attempt completes the one asset (CONTROLLED FAULT INJECTION: answer lost and read-back unreachable)',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* uncertain() {
               const uploader = person(world, 'uploader');
@@ -295,6 +295,12 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect((yield* rowOf(world, id))?.processing_status).not.toBe('ready');
               proxy.setRules([]);
               expect((yield* downloadOf(edge, reader, id)).status).not.toBe(200);
+
+              // A client that no longer holds the bytes cannot finish the attempt by sending nothing: an empty body is
+              // not the declared identity, so there is no confirm-without-bytes route and none is needed here.
+              const withoutBytes = yield* putBytes(edge, uploader, id, new Uint8Array(0));
+              expect(withoutBytes.status).not.toBe(200);
+              expect((yield* rowOf(world, id))?.processing_status).not.toBe('ready');
 
               // The retry of the same attempt checks the stored bytes against the original intent and completes the
               // same asset: still exactly one.
