@@ -156,31 +156,34 @@ const lockEnrollment = defineScopedRoutine({
   schema: 'symmy_integration',
 });
 const membershipRoutine = { ownerModuleKey: 'integration.symmy', schema: 'symmy_integration' } as const;
-/** Reserves the next membership order of one lineage; the lock it takes lasts until the admission commits. */
+/**
+ * Reserves the next membership order of one lineage for one admission, named by its route and idempotency digest; the
+ * lock it takes lasts until the admission commits. The reservation keeps the time it issues only when the admission
+ * states that time itself (the public customers of a group), never beside a time an internal plan states.
+ */
 const reserveMembershipOrder = defineScopedRoutine({
   ...membershipRoutine,
   name: 'reserve_symmy_membership_order',
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'text' },
     { source: 'input', type: 'text' },
     { source: 'input', type: 'text' },
     { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'boolean' },
   ],
   resultSchema: Schema.Struct({ effective_at: Schema.String, source_order: Schema.Int }),
   routineKey: 'symmy-membership.reserve-order',
 });
-/**
- * Records the lineage order of every membership effect the admitted job pinned, with the effective time only when the
- * admission stated it itself (the public customers of a group), never a time an internal plan stated.
- */
+/** Binds every membership effect the admitted job pinned to the reservation its own admission made for its order. */
 const recordMembershipOrders = defineScopedRoutine({
   ...membershipRoutine,
   name: 'record_symmy_membership_orders',
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'boolean' },
   ],
   resultSchema: Schema.Struct({ recorded: Schema.Int }),
   routineKey: 'symmy-membership.record-orders',
@@ -611,53 +614,79 @@ const sourceAuthority = (route: typeof symmyJobRoutes.$inferSelect, template: Sy
   return { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision };
 };
 
-/** Reserves the next order of one membership lineage inside the admission transaction, under its lock. */
+/** The admission a membership order is reserved for: the route and the idempotency digest its job is admitted under. */
+interface MembershipAdmission {
+  readonly idempotencyDigest: string;
+  readonly routeId: string;
+}
+
+/**
+ * Reserves the next order of one membership lineage for this admission inside its transaction, under its lock. Only
+ * the job this admission inserts can record it.
+ */
 const reserveLineageOrder =
-  (transaction: ScopedTransactionExecutor) =>
+  (transaction: ScopedTransactionExecutor, admission: MembershipAdmission, dated: boolean) =>
   ({ issuer, namespace, profileId }: SymmyGroupMembershipLineage) =>
-    transaction.invoke(reserveMembershipOrder, [issuer, namespace, profileId]).pipe(
-      Effect.mapError(unavailable),
-      Effect.flatMap(([reserved]) =>
-        reserved === undefined
-          ? Effect.fail(unavailable())
-          : Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(reserved.effective_at).pipe(
-              Effect.mapError(unavailable),
-              Effect.map((effectiveAt) => ({ effectiveAt, order: reserved.source_order })),
-            ),
-      ),
-    );
+    transaction
+      .invoke(reserveMembershipOrder, [
+        admission.routeId,
+        admission.idempotencyDigest,
+        issuer,
+        namespace,
+        profileId,
+        dated,
+      ])
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap(([reserved]) =>
+          reserved === undefined
+            ? Effect.fail(unavailable())
+            : Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(reserved.effective_at).pipe(
+                Effect.mapError(unavailable),
+                Effect.map((effectiveAt) => ({ effectiveAt, order: reserved.source_order })),
+              ),
+        ),
+      );
 
 /**
  * The membership plan of the selected group. Each customer's lineage order is reserved inside this admission
  * transaction, which makes no owner call, and is recorded with the job it admits: a replay reads the saved plan.
  */
 const membershipPlanSource = Effect.fn('SymmyJobStore.membershipPlanSource')(function* membershipPlanSource(
-  context: { scope: OperationalScope; transaction: ScopedTransactionExecutor },
+  context: AdmissionPlanContext,
   route: typeof symmyJobRoutes.$inferSelect,
   input: SymmyJobAdmissionRequest & { readonly groupCustomers: SymmyGroupCustomerRows },
   template: SymmyFixtureExecutionPlan,
 ) {
-  const { scope, transaction } = context;
+  const { idempotencyDigest, scope, transaction } = context;
   return yield* buildSymmyGroupMembershipPlan({
     admittedRouteId: route.routeId,
     authority: sourceAuthority(route, template),
     digest: hash,
     idempotencyKey: input.idempotencyKey,
     legalEntityId: scope.legalEntityId,
-    reserve: reserveLineageOrder(transaction),
+    // A public membership states the time its reservation issues.
+    reserve: reserveLineageOrder(transaction, { idempotencyDigest, routeId: route.routeId }, true),
     rows: input.groupCustomers,
     template,
     tenantId: scope.tenantId,
   });
 });
 
+/** The admission transaction, its scope and the idempotency digest the job it admits is inserted under. */
+interface AdmissionPlanContext {
+  readonly idempotencyDigest: string;
+  readonly scope: OperationalScope;
+  readonly transaction: ScopedTransactionExecutor;
+}
+
 const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(function* prepareAdmissionPlan(
-  context: { scope: OperationalScope; transaction: ScopedTransactionExecutor },
+  context: AdmissionPlanContext,
   route: typeof symmyJobRoutes.$inferSelect,
   input: SymmyJobAdmissionRequest,
   template: SymmyFixtureExecutionPlan | null,
 ) {
-  const { scope, transaction } = context;
+  const { idempotencyDigest, scope, transaction } = context;
   const isPolicyFixture = Schema.is(SymmyPolicyFixtureRouteKeySchema)(input.routeKey);
   if (
     isPolicyFixture &&
@@ -705,7 +734,9 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
             authority: sourceAuthority(route, template),
             legalEntityId: scope.legalEntityId,
             plan: configured,
-            reserve: reserveLineageOrder(transaction),
+            // A plan membership keeps the time the plan states.
+            reserve: reserveLineageOrder(transaction, { idempotencyDigest, routeId: route.routeId }, false),
+            routeKey: input.routeKey,
             template,
             tenantId: scope.tenantId,
           })
@@ -1396,7 +1427,12 @@ export const symmyJobStoreFactory = (
       if (!permitsNewAdmission(route, scope, fixtureId)) {
         return yield* routeDenied();
       }
-      const preparedPlan = yield* prepareAdmissionPlan({ scope, transaction }, route, input, template);
+      const preparedPlan = yield* prepareAdmissionPlan(
+        { idempotencyDigest, scope, transaction },
+        route,
+        input,
+        template,
+      );
       yield* authorizeNewJob(preparedPlan, input.routeKey, admissionInvocationId, beforeInsert);
       // The shared route lock retains the exact enrollment while typed effect bookkeeping is pinned.
       // All inserts, native Action receipt and outbox admission commit in the same Core operation.
@@ -1452,9 +1488,7 @@ export const symmyJobStoreFactory = (
               ),
             )
             .pipe(Effect.mapError(unavailable));
-          yield* transaction
-            .invoke(recordMembershipOrders, [inserted.jobId, input.groupCustomers !== undefined])
-            .pipe(Effect.mapError(unavailable));
+          yield* transaction.invoke(recordMembershipOrders, [inserted.jobId]).pipe(Effect.mapError(unavailable));
         }
         return {
           executionReady: inserted.executionPlan !== null,

@@ -1243,7 +1243,7 @@
     {
       "type": "uuid",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
@@ -1274,7 +1274,33 @@
       "default": null,
       "generated": null,
       "identity": null,
+      "name": "idempotency_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "membership_source_orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
       "name": "lineage_digest",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "membership_source_orders"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "route_id",
       "entityType": "columns",
       "schema": "symmy_integration",
       "table": "membership_source_orders"
@@ -1638,6 +1664,25 @@
       "onUpdate": "NO ACTION",
       "onDelete": "RESTRICT",
       "name": "symmy_membership_source_orders_effect_fk",
+      "entityType": "fks",
+      "schema": "symmy_integration",
+      "table": "membership_source_orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "route_id"
+      ],
+      "schemaTo": "symmy_integration",
+      "tableTo": "job_routes",
+      "columnsTo": [
+        "tenant_id",
+        "route_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "symmy_membership_source_orders_route_fk",
       "entityType": "fks",
       "schema": "symmy_integration",
       "table": "membership_source_orders"
@@ -2098,6 +2143,13 @@
       "entityType": "checks",
       "schema": "symmy_integration",
       "table": "job_routes"
+    },
+    {
+      "value": "\"idempotency_digest\" ~ '^[0-9a-f]{64}$'",
+      "name": "symmy_membership_source_orders_admission_ck",
+      "entityType": "checks",
+      "schema": "symmy_integration",
+      "table": "membership_source_orders"
     },
     {
       "value": "\"lineage_digest\" ~ '^[0-9a-f]{64}$'",

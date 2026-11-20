@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 
 import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
-import { Array as EffectArray, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyGroupCustomerRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
-import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
+import {
+  SymmyFixtureExecutionPlanSchema,
+  SymmyInternalExecutionPlanSchema,
+} from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import {
   buildSymmyGroupMembershipPlan,
@@ -128,7 +131,6 @@ const AssignmentIntentSchema = Schema.Struct({
 const assignmentOf = (plan: SymmyFixtureExecutionPlan, index: number) =>
   Schema.decodeUnknownSync(AssignmentIntentSchema)(plan.items[index]?.effects[0]?.intent).payload;
 const lower = 'abcdef00-6666-4666-8666-666666666666';
-type PlanItem = SymmyFixtureExecutionPlan['items'][number];
 /** The assertion the first membership of a plan states. */
 const assertion = (plan: Option.Option<SymmyFixtureExecutionPlan>) =>
   assignmentOf(Option.getOrThrow(plan), 0).source.assertionId;
@@ -247,46 +249,69 @@ const membershipOperation = {
   moduleId: 'commerce.customer-context',
   schemaVersion: '1',
 };
-/** A membership as an internal plan states it, with the order the plan carries. */
+/**
+ * A membership as an internal plan states it, with the order the plan carries, in the plan item `item`: it cites that
+ * item's source record and occurrence and targets the profile it assigns, as the membership adapter requires.
+ */
 const planMembership = (
   effectKey: string,
   resourceId: string,
   options: {
     readonly group?: ReturnType<typeof groupRef>;
     readonly issuer?: string;
+    readonly item?: number;
     readonly managerTenant?: string;
     readonly namespace?: string;
+    readonly operation?: 'ASSIGN' | 'REMOVE';
     readonly order?: number;
     readonly profileTenant?: string;
     readonly route?: { readonly id: string; readonly revision: string };
   } = {},
-) => ({
-  effectKey,
-  intent: {
-    _tag: 'CustomerGroupMembership',
-    payload: {
-      effectiveAt: '2026-11-20T09:00:00.000Z',
-      groupRef: options.group ?? wholesale,
-      manager: {
-        factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
-        issuer: options.issuer ?? 'route-issuer',
-        sourceNamespace: options.namespace ?? 'route-memberships',
-        tenantId: options.managerTenant ?? tenantId,
-      },
-      operation: 'ASSIGN',
-      profile: profile(resourceId, options.profileTenant).profile,
-      reason: 'Internal plan membership',
-      route: options.route ?? { id: routeId, revision: 'route-1' },
-      source: {
-        assertionId: `assertion-${effectKey}`,
-        effectId: 'ASSIGNED_BY_NATIVE_ADMISSION',
-        order: options.order ?? 7,
-        sourceRecordId: `record-${effectKey}`,
+) => {
+  const { profileRef } = profile(resourceId, options.profileTenant).profile;
+  const item = options.item ?? 0;
+  const removal =
+    options.operation === 'REMOVE'
+      ? {
+          expectedRevision: 1,
+          membershipRef: {
+            moduleId: 'commerce.customer-context',
+            resourceId: '88888888-8888-4888-8888-888888888888',
+            resourceType: 'commerce.customer-context.customer-group-membership',
+            tenantId,
+          },
+        }
+      : {};
+  return {
+    effectKey,
+    intent: {
+      _tag: 'CustomerGroupMembership',
+      payload: {
+        effectiveAt: '2026-11-20T09:00:00.000Z',
+        groupRef: options.group ?? wholesale,
+        manager: {
+          factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+          issuer: options.issuer ?? 'route-issuer',
+          sourceNamespace: options.namespace ?? 'route-memberships',
+          tenantId: options.managerTenant ?? tenantId,
+        },
+        operation: options.operation ?? 'ASSIGN',
+        profile: { profileKind: 'RETAIL', profileRef },
+        reason: 'Internal plan membership',
+        route: options.route ?? { id: routeId, revision: 'route-1' },
+        source: {
+          assertionId: `occurrence-${item}`,
+          effectId: 'ASSIGNED_BY_NATIVE_ADMISSION',
+          order: options.order ?? 7,
+          sourceRecordId: `record-${item}`,
+        },
+        ...removal,
       },
     },
-  },
-  operation: membershipOperation,
-});
+    operation: membershipOperation,
+    originalTarget: profileRef,
+  };
+};
 /** An owner effect that is not a membership: the ledger never touches it. */
 const priceAssignment = {
   effectKey: 'price-group-assignment',
@@ -324,33 +349,38 @@ const priceAssignment = {
     schemaVersion: '1',
   },
 };
-/** An internal plan: one item per list of effects. */
+/** An internal plan: one item per list of effects, each of one membership source record and occurrence. */
+const planItems = (...items: readonly (readonly unknown[])[]) =>
+  items.map((effects, index) => ({
+    effects,
+    itemKey: `item-${index}`,
+    source: {
+      entityKind: 'CUSTOMER_GROUP_MEMBERSHIP',
+      issuerId: 'route-issuer',
+      sourceNamespace: 'route-memberships',
+      sourceRecordId: `record-${index}`,
+    },
+    sourceOccurrenceId: `occurrence-${index}`,
+  }));
 const planOf = (...items: readonly (readonly unknown[])[]) =>
-  Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
-    items: items.map((effects, index) => ({
-      effects,
-      itemKey: `item-${index}`,
-      source: {
-        entityKind: 'CUSTOMER',
-        issuerId: 'route-issuer',
-        sourceNamespace: 'route-customers',
-        sourceRecordId: `customer-${index}`,
-      },
-      sourceOccurrenceId: `occurrence-${index}`,
-    })),
-  });
+  Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({ items: planItems(...items) });
 /** The enrollment of a route that selects no customer group. */
 const { selector: _selector, ...unselected } = templateFor(wholesale, 'symmy-wholesale');
 const orderPlan = (
   book: Ledger,
   plan: SymmyFixtureExecutionPlan,
-  options: { readonly template?: SymmyFixtureExecutionPlan; readonly withoutLegalEntity?: boolean } = {},
+  options: {
+    readonly routeKey?: 'customerGroupCustomersBatch' | 'customersBatch' | 'productsBatch';
+    readonly template?: SymmyFixtureExecutionPlan;
+    readonly withoutLegalEntity?: boolean;
+  } = {},
 ) =>
   orderSymmyPlanMemberships({
     authority,
     legalEntityId: options.withoutLegalEntity === true ? noLegalEntity : legalEntityId,
     plan,
     reserve: book.reserve,
+    routeKey: options.routeKey ?? (options.template === unselected ? 'customersBatch' : 'customerGroupCustomersBatch'),
     template: options.template ?? templateFor(wholesale, 'symmy-wholesale'),
     tenantId,
   });
@@ -377,7 +407,7 @@ describe('Symmy membership order of an internal plan', () => {
     }),
   );
 
-  it.effect('reserves each lineage once in canonical order and orders its memberships as the plan states them', () =>
+  it.effect('reserves the lineages in canonical order and one order per membership, as the plan states them', () =>
     Effect.gen(function* consecutiveLineageOrders() {
       const book = ledger();
       const later = 'ffffffff-6666-4666-8666-666666666666';
@@ -386,17 +416,23 @@ describe('Symmy membership order of an internal plan', () => {
         book,
         planOf(
           [planMembership('later', later, { order: 1 })],
-          [planMembership('first', lower, { order: 1 }), planMembership('second', lower, { group: retail, order: 1 })],
+          [
+            planMembership('first', lower, { item: 1, order: 1 }),
+            planMembership('second', lower, { group: retail, item: 1, order: 1 }),
+          ],
         ),
         { template: unselected },
       );
       expect(Option.getOrThrow(ordered)).toEqual(
         planOf(
           [planMembership('later', later, { order: 1 })],
-          [planMembership('first', lower, { order: 1 }), planMembership('second', lower, { group: retail, order: 2 })],
+          [
+            planMembership('first', lower, { item: 1, order: 1 }),
+            planMembership('second', lower, { group: retail, item: 1, order: 2 }),
+          ],
         ),
       );
-      expect(book.reserved.map(({ profileId }) => profileId)).toEqual([lower, later]);
+      expect(book.reserved.map(({ profileId }) => profileId)).toEqual([lower, lower, later]);
     }),
   );
 
@@ -449,50 +485,93 @@ describe('Symmy membership order of an internal plan', () => {
     }),
   );
 
+  it.effect('refuses a membership the worker could never deliver and reserves nothing', () =>
+    Effect.gen(function* refusesUndeliverable() {
+      const book = ledger();
+      const valid = planMembership('valid', lower);
+      const { originalTarget: _target, ...untargeted } = valid;
+      const [item] = planItems([valid]);
+      const { sourceOccurrenceId: _occurrence, ...withoutOccurrence } = item;
+      for (const [label, plan, routeKey] of [
+        ['no target', planOf([untargeted]), undefined],
+        [
+          'another target',
+          planOf([{ ...valid, originalTarget: profile(admittedRouteId).profile.profileRef }]),
+          undefined,
+        ],
+        [
+          'another operation',
+          planOf([{ ...valid, operation: { ...membershipOperation, entrypointKey: 'commerce.customer-context.x' } }]),
+          undefined,
+        ],
+        [
+          'another occurrence',
+          Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+            items: [{ ...item, sourceOccurrenceId: 'occurrence-1' }],
+          }),
+          undefined,
+        ],
+        [
+          'no occurrence',
+          Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({ items: [withoutOccurrence] }),
+          undefined,
+        ],
+        [
+          'another source record',
+          Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+            items: [{ ...item, source: { ...item.source, sourceRecordId: 'record-1' } }],
+          }),
+          undefined,
+        ],
+        [
+          'a removal on the selected group route',
+          planOf([planMembership('valid', lower, { operation: 'REMOVE' })]),
+          undefined,
+        ],
+        ['a route the adapter refuses memberships on', planOf([valid]), 'productsBatch'],
+      ] as const) {
+        expect(Option.isNone(yield* orderPlan(book, plan, routeKey === undefined ? {} : { routeKey })), label).toBe(
+          true,
+        );
+      }
+      expect(book.reserved).toEqual([]);
+      // The same membership, deliverable, takes its order.
+      expect(Option.isSome(yield* orderPlan(book, planOf([valid])))).toBe(true);
+      expect(book.reserved).toHaveLength(1);
+    }),
+  );
+
   it.effect('orders a membership after one it depends on, even one the plan lists later', () =>
     Effect.gen(function* dependencyOrder() {
       const book = ledger();
       const dependsOn = [{ effectKey: 'assigned-first', itemKey: 'item-1' }];
       const ordered = yield* orderPlan(
         book,
-        planOf([{ ...planMembership('assigned-second', lower), dependsOn }], [planMembership('assigned-first', lower)]),
+        planOf(
+          [{ ...planMembership('assigned-second', lower), dependsOn }],
+          [planMembership('assigned-first', lower, { item: 1 })],
+        ),
       );
       expect(Option.getOrThrow(ordered)).toEqual(
         planOf(
           [{ ...planMembership('assigned-second', lower, { order: 2 }), dependsOn }],
-          [planMembership('assigned-first', lower, { order: 1 })],
+          [planMembership('assigned-first', lower, { item: 1, order: 1 })],
         ),
       );
     }),
   );
 
-  it.effect('refuses dependencies that form a cycle and reserves nothing', () =>
-    Effect.gen(function* refusesCycle() {
-      const book = ledger();
-      const forward = planOf(
-        [{ ...planMembership('one', lower), dependsOn: [{ effectKey: 'two', itemKey: 'item-1' }] }],
-        [planMembership('two', lower)],
-      );
-      const [dependent] = forward.items;
-      const [dependentEffect] = dependent.effects;
-      const cyclic: SymmyFixtureExecutionPlan = {
-        ...forward,
-        items: EffectArray.map<SymmyFixtureExecutionPlan['items'], PlanItem>((item) =>
-          item.itemKey === dependent.itemKey
-            ? item
-            : {
-                ...item,
-                effects: EffectArray.map<PlanItem['effects'], PlanItem['effects'][number]>((effect) => ({
-                  ...effect,
-                  dependsOn: [{ effectKey: dependentEffect.effectKey, itemKey: dependent.itemKey }],
-                }))(item.effects),
-              },
-        )(forward.items),
-      };
-      // The admission's own plan decoder refuses this graph; the ordering refuses it as well.
-      expect(Schema.is(SymmyFixtureExecutionPlanSchema)(cyclic)).toBe(false);
-      expect(Option.isNone(yield* orderPlan(book, cyclic))).toBe(true);
-      expect(book.reserved).toEqual([]);
-    }),
-  );
+  it('admits no plan whose dependencies form a cycle or name an effect it lacks, so the ordering never meets one', () => {
+    const cyclic = planItems(
+      [{ ...planMembership('one', lower), dependsOn: [{ effectKey: 'two', itemKey: 'item-1' }] }],
+      [{ ...planMembership('two', lower, { item: 1 }), dependsOn: [{ effectKey: 'one', itemKey: 'item-0' }] }],
+    );
+    const dangling = planItems([
+      { ...planMembership('one', lower), dependsOn: [{ effectKey: 'two', itemKey: 'item-1' }] },
+    ]);
+    for (const items of [cyclic, dangling]) {
+      expect(Schema.is(SymmyFixtureExecutionPlanSchema)({ items })).toBe(false);
+      expect(Schema.is(SymmyInternalExecutionPlanSchema)({ items })).toBe(false);
+    }
+  });
 });

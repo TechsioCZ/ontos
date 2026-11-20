@@ -11,6 +11,7 @@ import type { SymmyGroupCustomerRows } from '../../shared/domain/symmy-customer-
 import { symmyGroupMembershipOccurrenceSeed } from '../../shared/domain/symmy-group-membership-occurrence.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
+import type { SymmyDurableRouteKey } from '../db/schema.ts';
 import { uuidFromDigest } from './derived-identity.ts';
 import type { SymmyCustomerSourceAuthority } from './symmy-customer-plan.ts';
 import type { Digest } from './symmy-price-list-plan.ts';
@@ -26,7 +27,7 @@ type PlanEffect = PlanItem['effects'][number];
 type MembershipIntent = Extract<NonNullable<PlanEffect['intent']>, { readonly _tag: 'CustomerGroupMembership' }>;
 type MembershipPayload = MembershipIntent['payload'];
 
-/** Whether an effect is the owner's membership write. */
+/** Whether an effect is the owner's membership write, the one operation the membership adapter executes. */
 const isMembershipWrite = ({ operation }: Pick<PlanEffect, 'operation'>) =>
   operation.moduleId === applyOperation.moduleId &&
   operation.entrypointKey === applyOperation.entrypointKey &&
@@ -232,36 +233,49 @@ const namedGroup = (payload: MembershipPayload) =>
 
 const effectIdentity = (itemKey: string, effectKey: string) => `${itemKey}\u0000${effectKey}`;
 
+interface PlanNode {
+  readonly dependencies: ReadonlySet<string>;
+  readonly effect: PlanEffect;
+  readonly identity: string;
+  readonly item: PlanItem;
+}
+
 /**
  * The plan's effects in its one deterministic dependency order: each effect after every effect it depends on, and
- * otherwise in the order the plan lists them. None when the dependencies form a cycle.
+ * otherwise in the order the plan lists them. Every plan decoder admits only an acyclic graph whose dependencies name
+ * effects of the plan (symmyPlanDependenciesValid), so every effect is placed once.
  */
 const dependencyOrder = (plan: SymmyFixtureExecutionPlan) => {
-  const nodes = plan.items.flatMap(({ effects, itemKey }) =>
-    effects.map((effect) => ({
-      dependencies: (effect.dependsOn ?? []).map((dependency) =>
-        Schema.is(Schema.String)(dependency)
-          ? effectIdentity(itemKey, dependency)
-          : effectIdentity(dependency.itemKey, dependency.effectKey),
+  const nodes: readonly PlanNode[] = plan.items.flatMap((item) =>
+    item.effects.map((effect) => ({
+      dependencies: new Set(
+        (effect.dependsOn ?? []).map((dependency) =>
+          Schema.is(Schema.String)(dependency)
+            ? effectIdentity(item.itemKey, dependency)
+            : effectIdentity(dependency.itemKey, dependency.effectKey),
+        ),
       ),
       effect,
-      identity: effectIdentity(itemKey, effect.effectKey),
+      identity: effectIdentity(item.itemKey, effect.effectKey),
+      item,
     })),
   );
-  const placed = new Set<string>();
-  const ordered: { readonly effect: PlanEffect; readonly identity: string }[] = [];
-  for (const _node of nodes) {
-    const next = nodes.find(
-      ({ dependencies, identity }) =>
-        !placed.has(identity) && dependencies.every((dependency) => placed.has(dependency)),
-    );
-    if (next === undefined) {
-      return Option.none<typeof ordered>();
+  const visited = new Set<string>();
+  const ordered: PlanNode[] = [];
+  const place = (node: PlanNode): void => {
+    if (visited.has(node.identity)) {
+      return;
     }
-    placed.add(next.identity);
-    ordered.push(next);
+    visited.add(node.identity);
+    for (const dependency of nodes.filter(({ identity }) => node.dependencies.has(identity))) {
+      place(dependency);
+    }
+    ordered.push(node);
+  };
+  for (const node of nodes) {
+    place(node);
   }
-  return Option.some(ordered);
+  return ordered;
 };
 
 /** The effect with the given order of its lineage in place of the order the plan carries. */
@@ -276,8 +290,13 @@ export interface SymmyPlanMembershipOrderInput<ReserveFailure> {
   /** The legal entity of the membership owner. It comes from the route scope, never from the plan. */
   readonly legalEntityId: string | undefined;
   readonly plan: SymmyFixtureExecutionPlan;
-  /** Reserves the next order of one lineage inside the admission transaction, exactly as for the public customers. */
+  /**
+   * Reserves the next order of one lineage inside the admission transaction, exactly as for the public customers. It
+   * is called once per membership, so every order the plan pins is one the ledger issued.
+   */
   readonly reserve: (lineage: SymmyGroupMembershipLineage) => Effect.Effect<SymmyGroupMembershipOrder, ReserveFailure>;
+  /** The admitted route: the membership adapter executes a membership on the customer routes only. */
+  readonly routeKey: SymmyDurableRouteKey;
   /** The admitted route's enrollment: the membership sources it enrolls and the group it selects. */
   readonly template: SymmyFixtureExecutionPlan;
   readonly tenantId: string;
@@ -286,27 +305,28 @@ export interface SymmyPlanMembershipOrderInput<ReserveFailure> {
 /**
  * Gives every customer group membership an internal plan or a route template states the order the lineage ledger
  * reserves, as for the public customers: the same lineage of the canonical profile and the manager, the same
- * reservation and lock, in the same canonical order. The order the plan carries is never read: it is replaced, so no
- * caller places a membership outside the ledger. Memberships of one lineage take consecutive orders from its one
- * reservation in the plan's dependency order, so no membership waits for one that depends on it.
+ * reservation and lock, with the lineages taken in the same canonical order. The order the plan carries is never read:
+ * it is replaced, so no caller places a membership outside the ledger. The memberships of one lineage take its next
+ * orders, one reservation each, in the plan's dependency order, so no membership waits for one that depends on it.
  *
  * A plan without a membership reserves nothing and is returned as it is. There is no plan, and nothing is reserved,
- * for dependencies that form a cycle, for a route without a legal entity, and for a membership whose profile is not
- * a UUID of the route's tenant or that names a manager the route does not enroll for the membership write, another
- * source route than the admitted route's, or, on a route that selects a customer group, any other group.
+ * for a route without a legal entity and for any membership the worker could never deliver, since its order would
+ * hold every later order of its lineage back: one whose profile is not a UUID of the route's tenant, that names a
+ * manager the route does not enroll for the membership write or another source route than the admitted route's; one
+ * the membership adapter refuses: on a route other than the customer routes, through another operation than the
+ * membership write, without its profile as the effect's target, or with another source record, occurrence or
+ * manager than its plan item states; and, on a route that selects a customer group, anything but an assignment to
+ * that group.
  */
 export const orderSymmyPlanMemberships = Effect.fn('SymmyGroupMembershipPlan.orderPlanMemberships')(
   function* orderSymmyPlanMemberships<ReserveFailure>(input: SymmyPlanMembershipOrderInput<ReserveFailure>) {
-    const { authority, legalEntityId, plan, reserve, template, tenantId } = input;
-    const ordered = dependencyOrder(plan);
-    if (Option.isNone(ordered)) {
-      return Option.none<SymmyFixtureExecutionPlan>();
-    }
-    const memberships = ordered.value.flatMap(({ effect, identity }) =>
+    const { authority, legalEntityId, plan, reserve, routeKey, template, tenantId } = input;
+    const memberships = dependencyOrder(plan).flatMap(({ effect, identity, item }) =>
       Option.toArray(membershipOf(effect)).map((intent) => ({
         effect,
         identity,
         intent,
+        item,
         lineage: membershipLineage(intent.payload),
       })),
     );
@@ -315,6 +335,7 @@ export const orderSymmyPlanMemberships = Effect.fn('SymmyGroupMembershipPlan.ord
     }
     const managers = template.items.flatMap(({ effects, source }) => (effects.some(isMembershipWrite) ? [source] : []));
     const { selector } = template;
+    const selectsGroup = selector?.kind === 'CUSTOMER_GROUP';
     const enrolled = (payload: MembershipPayload) =>
       payload.profile.profileRef.tenantId === tenantId &&
       isUuid(payload.profile.profileRef.resourceId) &&
@@ -325,26 +346,39 @@ export const orderSymmyPlanMemberships = Effect.fn('SymmyGroupMembershipPlan.ord
       ) &&
       payload.route.id === authority.routeId &&
       payload.route.revision === authority.routeRevision &&
-      (selector?.kind !== 'CUSTOMER_GROUP' || sameResource(namedGroup(payload), selector.target));
-    if (legalEntityId === undefined || memberships.some(({ intent }) => !enrolled(intent.payload))) {
+      (!selectsGroup || sameResource(namedGroup(payload), selector.target));
+    // What the membership adapter checks before it calls the owner, so an admitted membership can be delivered.
+    const executable = ({ effect, intent: { payload }, item }: (typeof memberships)[number]) =>
+      (routeKey === 'customersBatch' ||
+        (routeKey === 'customerGroupCustomersBatch' && selectsGroup && payload.operation === 'ASSIGN')) &&
+      isMembershipWrite(effect) &&
+      sameResource(effect.originalTarget, payload.profile.profileRef) &&
+      item.sourceOccurrenceId === payload.source.assertionId &&
+      item.source.sourceRecordId === payload.source.sourceRecordId &&
+      item.source.issuerId === payload.manager.issuer &&
+      item.source.sourceNamespace === payload.manager.sourceNamespace;
+    if (
+      legalEntityId === undefined ||
+      memberships.some((membership) => !enrolled(membership.intent.payload) || !executable(membership))
+    ) {
       return Option.none<SymmyFixtureExecutionPlan>();
     }
     const lineages = EffectArray.dedupeWith(
       memberships.map(({ lineage }) => lineage),
       sameLineage,
     ).toSorted(lineageOrder);
-    const reservations = yield* Effect.forEach(
+    const reserved = yield* Effect.forEach(
       lineages,
-      (lineage) => reserve(lineage).pipe(Effect.map(({ order }) => ({ first: order, lineage }))),
+      (lineage) =>
+        Effect.forEach(
+          memberships.filter((membership) => sameLineage(membership.lineage, lineage)),
+          ({ effect, identity, intent }) =>
+            reserve(lineage).pipe(Effect.map(({ order }) => [identity, withOrder(effect, intent, order)] as const)),
+          { concurrency: 1 },
+        ),
       { concurrency: 1 },
     );
-    const reordered = new Map<string, PlanEffect>();
-    for (const { first, lineage } of reservations) {
-      const ofLineage = memberships.filter((membership) => sameLineage(membership.lineage, lineage));
-      for (const [offset, { effect, identity, intent }] of ofLineage.entries()) {
-        reordered.set(identity, withOrder(effect, intent, first + offset));
-      }
-    }
+    const reordered = new Map<string, PlanEffect>(reserved.flat());
     return Option.some({
       ...plan,
       items: EffectArray.map<SymmyFixtureExecutionPlan['items'], PlanItem>((item) => ({

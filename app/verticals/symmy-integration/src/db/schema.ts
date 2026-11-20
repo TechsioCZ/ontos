@@ -298,18 +298,21 @@ export const symmyJobEffects = symmyIntegrationSchema.table.withRLS(
 
 /**
  * The owner orders the memberships of one source manager per profile, whatever group they name, and refuses an older
- * order. One row is the order an admission reserved for one admitted membership effect. Its lineage is a digest of
- * the tenant, legal entity, source issuer, namespace and canonical profile, so no profile reference outlives the
- * erasure of the effect it orders. The effective time is the one the admission itself stated for a public membership;
- * a time an internal plan stated is not recorded, so it never moves another membership's time. Rows are written and
- * read only through the Symmy order routines.
+ * order. One row is the order one admission reserved for one lineage, named by the route and idempotency digest its
+ * job is admitted under; that job records which of its membership effects takes it. Its lineage is a digest of the
+ * tenant, legal entity, source issuer, namespace and canonical profile, so no profile reference outlives the erasure
+ * of the effect it orders. The effective time is the one the reservation issued for a public membership; beside a
+ * time an internal plan states none is kept, so it never moves another membership's time. Rows are written and read
+ * only through the Symmy order routines.
  */
 export const symmyMembershipSourceOrders = symmyIntegrationSchema.table.withRLS(
   'membership_source_orders',
   {
-    effectId: uuid('effect_id').notNull(),
+    effectId: uuid('effect_id'),
     effectiveAt: timestamp('effective_at', { withTimezone: true }),
+    idempotencyDigest: text('idempotency_digest').notNull(),
     lineageDigest: text('lineage_digest').notNull(),
+    routeId: uuid('route_id').notNull(),
     sourceOrder: integer('source_order').notNull(),
     tenantId: uuid('tenant_id').notNull(),
   },
@@ -324,6 +327,12 @@ export const symmyMembershipSourceOrders = symmyIntegrationSchema.table.withRLS(
       foreignColumns: [symmyJobEffects.tenantId, symmyJobEffects.effectId],
       name: 'symmy_membership_source_orders_effect_fk',
     }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.routeId],
+      foreignColumns: [symmyJobRoutes.tenantId, symmyJobRoutes.routeId],
+      name: 'symmy_membership_source_orders_route_fk',
+    }).onDelete('restrict'),
+    check('symmy_membership_source_orders_admission_ck', sql`${table.idempotencyDigest} ~ '^[0-9a-f]{64}$'`),
     check('symmy_membership_source_orders_lineage_ck', sql`${table.lineageDigest} ~ '^[0-9a-f]{64}$'`),
     check('symmy_membership_source_orders_order_ck', sql`${table.sourceOrder} >= 1`),
     ...tenantRlsPolicies('symmy_membership_source_orders_tenant', table.tenantId),

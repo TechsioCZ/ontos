@@ -134,7 +134,10 @@ const recordReceipt = defineScopedRoutine({
   resultSchema: changed,
   routineKey: 'symmy-job.record-owner-receipt',
 });
-/** Whether every earlier membership order of the effect's lineage has settled. An effect without one never waits. */
+/**
+ * Whether every earlier membership order of the effect's lineage that can still reach the owner has settled. An effect
+ * that is not a membership has no lineage; a membership without an order of its lineage is refused, never delivered.
+ */
 const membershipOrderReady = defineScopedRoutine({
   ...routineBase,
   name: 'symmy_membership_order_ready',
