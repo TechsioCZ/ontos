@@ -1158,8 +1158,13 @@ const notEnded = (row: { readonly status: string; readonly validUntil?: Date | u
  * Core's revocation and a first approval lock the grant before the person's rows. A reconnect does not follow that
  * order: approving a draft locks the draft, then the person's rows, then the older active grant of the same client it
  * supersedes. The run may hold that older grant while it waits for the draft or the person's row, so the two can
- * deadlock; PostgreSQL then aborts one of them, and when it is the run, nothing of the file is written and the same
- * file is run again. A writer that adds a binding, a personal key or an agent connection to a Principal references that
+ * deadlock; PostgreSQL then aborts one of them, and when it is the run, its move transaction writes nothing and the same
+ * file is run again. An approval during the run ends in one of four ways. A draft the run locked is denied by the run,
+ * and its approval finds no draft left. A draft the run read while a first approval held its lock: the run waits on
+ * that lock, reads the grant as `active` with its binding once the approval commits, and ends it as an administrator
+ * revocation. The approval of a draft created after this locking read waits for the person's row and then finds the
+ * person archived. Only a draft created after this locking read and approved before the run locks the Principal leaves
+ * a binding no grant the run read names, so the run refuses the file as another credential. A writer that adds a binding, a personal key or an agent connection to a Principal references that
  * row: its foreign key takes a KEY SHARE lock, which FOR UPDATE excludes, and the external identity writer locks the
  * row FOR UPDATE itself. None of them takes the People lock, so this row lock is what keeps every one of them out
  * between this run's decision and its commit: they wait, then find the Principal archived. The existing bindings and
@@ -1847,7 +1852,7 @@ const writeRetirement = Effect.fn('StageContextBootstrap.writeRetirement')(funct
     connections.map(({ connectionId }) => connectionId).join(',') === retirement.connectionIds.join(',');
   if (!witnessed) {
     return yield* failure(
-      'A binding, connected app or agent connection of a retired stage Principal changed after the run decided; nothing of the file is written',
+      'A binding, connected app or agent connection of a retired stage Principal changed after the run decided; the move transaction writes nothing',
     );
   }
   if (retirement.archive) {
@@ -1890,8 +1895,10 @@ interface PlannedRetirements {
  * Every attached login and retired Principal of one operator file, in ONE transaction: each tenant's People lock,
  * then every leaver's connected apps, Principal row, bindings and connections, then each tenant's administrators' Principal
  * rows and the membership rows of those who stay, then the decision time, then every refusal decided from what the transaction reads, and only then every
- * write. A refusal writes nothing, and a run that stops after the commit is completed by running the same file again,
- * which finds each move already made and reconciles its tenants. It returns every connected app of the people it
+ * write. A refusal rolls this move transaction back, so it writes nothing of any move; what the Shell ran before it, the
+ * read-only pre-step's deletion of Better Auth tokens and consent and the reconciliation of the file's Better Auth
+ * accounts, can already have run. A run that stops after the commit is completed by running the same file again, which
+ * finds each move already made and reconciles its tenants. It returns every connected app of the people it
  * retires, those it ended and those that had ended, so the Shell can drop the Better Auth tokens of each.
  */
 const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveLoginsEffect(
@@ -2026,9 +2033,11 @@ export interface StageContextBootstrapRun {
 }
 
 /**
- * Every connected app of a tenant's people of the file whose departure an earlier run of it completed: the person is
- * archived, every binding of theirs is revoked and one of them is the login's (the exact replay
- * `stageCredentialEndingOf` accepts), and no app of theirs is still live. Anybody else is left to the run.
+ * Every connected app of a tenant's people of the file whose departure an earlier run of it completed: a person the file
+ * names who is archived, with every binding revoked, one of them the login's, and nothing live (the exact replay
+ * `stageCredentialEndingOf` accepts). A retirement is ONE transaction that also archives the Principal, so an archived
+ * Principal of the file whose bindings are all revoked has completed it; no receipt records a departure. Anybody else is
+ * left to the run.
  */
 const completedRetirementsOfTenant = Effect.fn('StageContextBootstrap.completedRetirementsOfTenant')(
   function* completedRetirementsOfTenantEffect(
@@ -2115,12 +2124,14 @@ const completedRetirementsOfTenant = Effect.fn('StageContextBootstrap.completedR
 );
 
 /**
- * Every connected app of the people of the file whose departure an earlier run of it already completed, read in a
- * transaction of its own that writes and locks nothing, before the run. The Shell finishes the clean-up after such a
- * departure (the Better Auth tokens and consent) from it, so a run that stopped between its
- * commit and that clean-up is finished by the same file even when the run itself then refuses the file for something
- * else in it, such as a login it attached whose Principal has since connected an app. The run's own rules, the exact
- * replay of a departure and of an attachment included, are unchanged.
+ * The read-only pre-step: every connected app of the people the file names whose departure an earlier run of it
+ * completed (archived, every binding revoked, one of them the login's, nothing live), read in a transaction of its own
+ * that writes and locks nothing, before the run. From it the Shell deletes only the Better Auth tokens and consent of
+ * those grants, by grant id: every one of them has ended, so the deletion is idempotent, and harmless even for a
+ * Principal archived by other means. A run that stopped between its commit and that clean-up is so finished by the same
+ * file even when the run itself then refuses the file for something else in it, such as a login it attached whose
+ * Principal has since connected an app. The run's own rules, the exact replay of a departure and of an attachment
+ * included, are unchanged.
  */
 export const completedStageRetirementsOf = Effect.fn('StageContextBootstrap.completedStageRetirementsOf')(
   function* completedStageRetirementsOfEffect(

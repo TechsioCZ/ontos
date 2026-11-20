@@ -446,9 +446,13 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
       ),
     { concurrency: 1 },
   );
-  // A departure an earlier run of this file committed is finished first, whatever the run then decides about the rest
-  // of the file: a run that stopped before its clean-up is completed even when, say, a login it attached has since
-  // connected an app of its own and the attachment's exact replay refuses the file.
+  // The read-only pre-step finishes a departure an earlier run of this file committed first, whatever the run then
+  // decides about the rest of the file: a run that stopped before its clean-up is completed even when, say, a login it
+  // attached has since connected an app of its own and the attachment's exact replay refuses the file. A person of the
+  // file who is archived with every binding revoked, one of them the login's, and nothing live has completed it, since a
+  // retirement is one transaction that also archives the Principal; only the tokens and consent of their ended grants
+  // are deleted, by grant id, which is idempotent and harmless even for a Principal archived by other means. This and
+  // the Better Auth accounts below run before Core's move transaction, so a refused file may already have done them.
   yield* finishStageConnectedAppEndings(
     yield* completedStageRetirementsOf(retiredPrincipalIdentities, {
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
