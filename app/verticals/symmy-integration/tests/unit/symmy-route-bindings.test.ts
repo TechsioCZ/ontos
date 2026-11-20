@@ -1,4 +1,5 @@
 import type { WorkloadBindingHolder } from '@app/core-runtime/access/enforcement';
+import { Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
@@ -27,11 +28,29 @@ const otherSystemId = '33333333-3333-4333-8333-333333333333';
 type Surface = SymmyRouteContract['manifest']['publicSurface'];
 type Calls = NonNullable<SymmyRouteContract['manifest']['registeredWorkloadCalls']>;
 type Requirement = NonNullable<SymmyRouteContract['manifest']['requirements']>['operations'][number];
+/** The installed module of each app a test call is addressed to. */
+const modules = new Map([
+  ['assortment', 'commerce.assortment'],
+  ['catalog', 'commerce.catalog'],
+  ['commerce-customer-context', 'commerce.customer-context'],
+  ['commerce-market-catalog', 'commerce.market-catalog'],
+  ['inventory', 'commerce.inventory'],
+  ['party-registry', 'party.registry'],
+  ['price-group-catalog', 'pricing.price-group-catalog'],
+  ['pricing', 'commerce.pricing'],
+  ['privacy', 'privacy.core'],
+  ['tax', 'commerce.tax'],
+]);
 /** The requirements by which an operation names the operations its calls reach, as an owner manifest declares them. */
 const requires = (entrypointKey: string, calls: readonly Calls[number][]): Requirement[] =>
   calls.map((call) => ({
     entrypointKey,
-    provider: { entrypointKey: call.entrypointKey, schemaVersion: call.schemaVersion },
+    key: `${entrypointKey}.requirement.${call.entrypointKey}`,
+    provider: {
+      entrypointKey: call.entrypointKey,
+      moduleId: modules.get(call.audience) ?? call.audience,
+      schemaVersion: call.schemaVersion,
+    },
   }));
 const contract = (
   appId: string,
@@ -136,7 +155,7 @@ const priceGroups = contract('price-group-catalog', 'pricing.price-group-catalog
 
 const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => {
   const found = symmyRouteInventoryOf(routeKey);
-  if ('code' in found || found._tag === 'None') {
+  if (!Option.isOption(found) || Option.isNone(found)) {
     throw new Error(`expected the ${routeKey} inventory`);
   }
   return found.value;
@@ -152,6 +171,14 @@ const enrolledProducts = () =>
 /** The worker call of the Catalog Product create, as Symmy declares it. */
 const createProduct = (call: Calls[number]) =>
   call.entrypointKey === 'commerce.catalog.create-product' && 'workerKey' in call;
+/** The bindings of a products route that enrolls only the Pricing define. */
+const definePrices = (contracts: readonly SymmyRouteContract[]) =>
+  deriveSymmyRouteBindings({
+    companyScoped: true,
+    contracts,
+    enrolled: enrolledOf('productsBatch', ['commerce.pricing.define-price']),
+    inventory: products(),
+  });
 const derive = (contracts: readonly SymmyRouteContract[]) =>
   deriveSymmyRouteBindings({ companyScoped: true, contracts, enrolled: enrolledProducts(), inventory: products() });
 const workloadsOf = (bindings: readonly SymmyRequiredBinding[], identity: SymmyRequiredBinding['identity']) =>
@@ -216,7 +243,7 @@ describe('Symmy route bindings', () => {
     expect(derive([unrequired, catalog, priceGroups]).refusals).toEqual([
       {
         code: 'call_not_declared',
-        detail: `The installed integration.symmy names commerce.catalog.create-product@2 as no requirement of ${SYMMY_JOB_KEY}`,
+        detail: `The installed integration.symmy names commerce.catalog.create-product@2 on commerce.catalog as no requirement of ${SYMMY_JOB_KEY}`,
       },
     ]);
   });
@@ -281,6 +308,95 @@ describe('Symmy route bindings', () => {
       SYMMY_JOB_KEY,
     ]);
     expect(symmyBindingWorkloads(plan.bindings)).not.toContain(groupRead);
+  });
+
+  it('refuses by name a requirement of a reached operation its owner registers no call for', () => {
+    // Pricing requires its market read for define-price but omits the call to it.
+    const sourceWrite = 'commerce.pricing.source-write';
+    const marketRead = {
+      audience: 'commerce-market-catalog',
+      declarationKey: 'commerce.market-catalog.market-catalog.read',
+      entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
+      jobKey: SYMMY_JOB_KEY,
+      legalEntityScope: 'required' as const,
+      schemaVersion: '1',
+      sourceWorkloadKey: sourceWrite,
+      workloadKey: 'commerce.market-catalog.source-read',
+    };
+    const marketRequirement: Requirement = {
+      entrypointKey: 'commerce.pricing.define-price',
+      key: 'commerce.pricing.requirement.define-price-market',
+      provider: { entrypointKey: marketRead.entrypointKey, moduleId: 'commerce.market-catalog', schemaVersion: '1' },
+    };
+    const pricing = (calls: Calls) =>
+      contract(
+        'pricing',
+        'commerce.pricing',
+        {
+          actions: receivingAction('commerce.pricing.define-price'),
+          operationContracts: receivingRead('commerce.pricing.api.price-source-result-lookup'),
+        },
+        calls,
+        [marketRequirement],
+      );
+    const market = contract('commerce-market-catalog', 'commerce.market-catalog', {
+      operationContracts: [carrier(marketRead.entrypointKey, [marketRead.workloadKey], marketRead.declarationKey)],
+    });
+    const declared = definePrices([symmy, pricing([marketRead]), market]);
+    expect(declared.refusals).toEqual([]);
+    expect(workloadsOf(declared.bindings, 'executor')).toContain(marketRead.workloadKey);
+    expect(definePrices([symmy, pricing([]), market]).refusals).toEqual([
+      {
+        code: 'call_not_declared',
+        detail: `The installed commerce.pricing declares no single call under ${sourceWrite} for requirement commerce.pricing.requirement.define-price-market of commerce.pricing.define-price@2 (commerce.market-catalog commerce.market-catalog.api.current-market-catalog@1)`,
+      },
+    ]);
+    // The call must reach the module the requirement names, not only its operation.
+    const elsewhere = contract('commerce-market-catalog', 'commerce.other-market', {
+      operationContracts: [carrier(marketRead.entrypointKey, [marketRead.workloadKey], marketRead.declarationKey)],
+    });
+    expect(definePrices([symmy, pricing([marketRead]), elsewhere]).refusals.map(({ detail }) => detail)).toEqual([
+      'The installed commerce.pricing calls commerce.other-market, not the provider of requirement commerce.pricing.requirement.define-price-market of commerce.pricing.define-price@2 (commerce.market-catalog commerce.market-catalog.api.current-market-catalog@1)',
+    ]);
+
+    // Commerce customer context requires the organization-business check of a membership write but omits the call.
+    const membershipWrite = 'commerce.customer-context.source-write';
+    const organizationCheck: Requirement = {
+      entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
+      key: 'commerce.customer-context.requirement.org-membership-write-privacy',
+      provider: {
+        entrypointKey: 'privacy.core.api.organization-business-applicability',
+        moduleId: 'privacy.core',
+        schemaVersion: '1',
+      },
+    };
+    const customerContext = contract(
+      'commerce-customer-context',
+      'commerce.customer-context',
+      {
+        actions: receivingAction('commerce.customer-context.apply-customer-group-membership-source'),
+        operationContracts: [
+          ...receivingRead('commerce.customer-context.api.customer-group-definition-source'),
+          ...receivingRead('commerce.customer-context.api.customer-group-membership-source-receipt'),
+        ],
+      },
+      [],
+      [organizationCheck],
+    );
+    const membership = inventoryOf('customerGroupCustomersBatch');
+    expect(
+      deriveSymmyRouteBindings({
+        companyScoped: true,
+        contracts: [symmy, customerContext],
+        enrolled: membership.operations,
+        inventory: membership,
+      }).refusals,
+    ).toEqual([
+      {
+        code: 'call_not_declared',
+        detail: `The installed commerce.customer-context declares no single call under ${membershipWrite} for requirement commerce.customer-context.requirement.org-membership-write-privacy of commerce.customer-context.apply-customer-group-membership-source@1 (privacy.core privacy.core.api.organization-business-applicability@1)`,
+      },
+    ]);
   });
 
   it('refuses a company-scoped call on a route that passes no company to it', () => {
