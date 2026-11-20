@@ -30,6 +30,7 @@ export const CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH =
   'verticals/commerce-customer-context/src/handlers/private-contract.ts';
 
 export const PRIVACY_VERTICAL_PATH = 'verticals/privacy';
+export const COMMUNICATIONS_MANIFEST_PATH = 'verticals/communications/package.json';
 
 export const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
 
@@ -867,6 +868,16 @@ export const readPricingSourceTree = (root: string, folder: string) => {
   return Effect.promise(async () => await readSources(path.join(root, folder)));
 };
 
+/**
+ * The Communications manifest that publishes its Owner Coverage module-api contract. Privacy's owner inventory declares
+ * its governed call against that published subpath, so a fixture that judges Privacy's seam needs this one file.
+ */
+export const readCommunicationsPublishedManifest = (root: string) =>
+  Effect.promise(
+    async () =>
+      [[COMMUNICATIONS_MANIFEST_PATH, await readFile(path.join(root, COMMUNICATIONS_MANIFEST_PATH), 'utf-8')]] as const,
+  );
+
 export const PROTECTED_READ_AUTHORIZATION = "  authorization: { kind: 'protected' },";
 
 export const NON_PROTECTED_READ_AUTHORIZATION = "  authorization: { kind: 'authenticated_principal' },";
@@ -1293,7 +1304,10 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
       ],
     }),
   );
-  const sources = yield* readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH);
+  const sources = [
+    ...(yield* readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH)),
+    ...(yield* readCommunicationsPublishedManifest(workspace)),
+  ];
   for (const [file, source] of sources) {
     yield* write(root, file, source);
   }

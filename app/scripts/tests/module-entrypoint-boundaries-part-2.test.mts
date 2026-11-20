@@ -90,6 +90,7 @@ import {
   generatedPartyCommandClientSource,
   assertPublishedPartyUsage,
   partyOutboxSource,
+  readCommunicationsPublishedManifest,
   readPricingSourceTree,
   makePortalPublicRoleFixture,
   makeActualCatalogSelectionFixture,
@@ -1493,7 +1494,12 @@ it.live('binds actual governed Action HTTP runners across formatting and an auth
 it.live('accepts the reviewed Privacy notice-presentation GET companion only as its exact pinned text', () =>
   Effect.gen(function* actualPrivacyNoticePresentationCompanion() {
     const root = path.resolve(import.meta.dirname, '../..');
-    const sources = new Map(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH));
+    // The Privacy owner inventory declares its governed call against Communications' published Owner Coverage operation,
+    // so that module's manifest belongs to the source set the seam is judged against.
+    const sources = new Map([
+      ...(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH)),
+      ...(yield* readCommunicationsPublishedManifest(root)),
+    ]);
     const shared = 'verticals/privacy/shared/api.ts';
     const contractFile = 'verticals/privacy/shared/apis/notice-presentation.ts';
     const serverFile = 'verticals/privacy/api/notice-presentation-read-server.ts';
