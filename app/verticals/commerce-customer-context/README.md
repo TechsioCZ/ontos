@@ -155,3 +155,28 @@ repeating the external effect, and an owner whose answer was lost is settled by 
 read rather than a second dispatch. The `provider.account.create` transition is reconcile-only
 there — its credential-carrying dispatch belongs to the start route alone — and a transition this
 deployment registers no owner effect for halts the journey with the Attempt untouched.
+
+## Commerce source routes
+
+A source system writes Customer Profiles, Customer Group definitions, Group Memberships and Saved
+Addresses only through an active source route of the matching kind. An administrator establishes,
+changes or pauses a route with the `commerce.customer-context.configure-customer-source-route`
+Action, and reads it, with the generation a decision must name and its decision history, through the
+`customer-source-route` Read. Every principal a configured route names must be one Core enrolls for
+the route's workload.
+
+The owner routine compares the stored route generation with the one the administrator read (none
+for a route that must not exist yet) before anything else it decides. A mismatch writes nothing, so
+a second create-only request for an existing route is refused even when it states the same route.
+Only then does a pause clear the active flag, or a configuration check its principals, its source
+identity and whether it changes anything; an identical route is `UNCHANGED`, with no new
+generation. A configuration whose read of Core's enrollment fails or is ambiguous (two enrolled
+writers) is answered unavailable before the routine runs, and writes nothing. An exact replay of
+the same idempotency key is answered by the Action runtime with the original result.
+
+Limitation: pausing a route blocks recovery through that route of a receipt whose reply the source
+lost. A Profile, Group definition or Membership receipt can still be recovered through another
+active route of the same source that satisfies its recovery routine's checks. A Saved Address
+receipt is pinned to its original route, route revision, mapping revision and writer: it is
+recovered only while that route is active at those revisions with that writer. Nothing committed is
+lost. Change a route only after the source's outstanding work has settled.

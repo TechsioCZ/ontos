@@ -70,6 +70,7 @@ import { CommerceQuantityResolutionApi } from './shared/apis/commerce-quantity-r
 import { commerceQuantityRuleAssignmentResourceDescriptor } from './shared/resources/commerce-quantity-rule-assignment.ts';
 import { commerceQuantityRuleResourceDescriptor } from './shared/resources/commerce-quantity-rule.ts';
 import { completePurchaseProposalBasisAction } from './src/actions/complete-purchase-proposal-basis.action.ts';
+import { configureCustomerSourceRouteAction } from './src/actions/configure-customer-source-route.action.ts';
 import { consumeOrderPurchaseApprovalAction } from './src/actions/consume-order-purchase-approval.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
 import { CounterpartyAccessInvitationReadApi } from './shared/apis/counterparty-access-invitation-read.ts';
@@ -124,6 +125,8 @@ import { customerProfileSourcePartiesRead } from './src/api/customer-profile-sou
 import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { CustomerProfileTradingGateApi } from './shared/apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './shared/apis/customer-record-visibility.ts';
+import { CustomerSourceRouteApi } from './shared/apis/customer-source-route.ts';
+import { customerSourceRouteRead } from './src/api/customer-source-route.read.ts';
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
 import { DeliveryDestinationResolutionApi } from './shared/apis/delivery-destination-resolution.ts';
 import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
@@ -343,6 +346,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       clearDefaultBillingAddressAction,
       clearDefaultDeliveryDestinationAction,
       completePurchaseProposalBasisAction,
+      configureCustomerSourceRouteAction,
       consumeOrderPurchaseApprovalAction,
       consumePurchaseApprovalAction,
       createApprovalHierarchyAction,
@@ -438,6 +442,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'customer-profile-source-parties': CustomerProfileSourcePartiesApi,
       'customer-profile-trading-gate': CustomerProfileTradingGateApi,
       'customer-record-visibility': CustomerRecordVisibilityApi,
+      'customer-source-route': CustomerSourceRouteApi,
       'delivery-destination-resolution': DeliveryDestinationResolutionApi,
       'effective-customer-group-membership-set-v1': EffectiveCustomerGroupMembershipSetV1Api,
       'effective-customer-group-memberships': EffectiveCustomerGroupMembershipsApi,
@@ -622,6 +627,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'customer-profile-source',
         operationKey: 'customerProfileSource.execute',
         registration: customerProfileSourceRead,
+      },
+      {
+        apiKey: 'customer-source-route',
+        operationKey: 'customerSourceRoute.execute',
+        registration: customerSourceRouteRead,
       },
       {
         apiKey: 'effective-customer-group-membership-set-v1',

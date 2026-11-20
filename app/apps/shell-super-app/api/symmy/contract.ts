@@ -269,8 +269,6 @@ export const symmyWriteOptions = {
     ...authenticationHeaders,
     'idempotency-key': Schema.optionalKey(SymmyClientIdempotencyKeySchema),
   }),
-  payload: SymmyInternalWritePayloadSchema,
-  success: SymmyFixtureItemResultsSchema,
 };
 export const symmySubmitOptions = {
   ...base,

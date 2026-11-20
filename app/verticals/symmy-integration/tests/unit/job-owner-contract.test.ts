@@ -123,10 +123,46 @@ describe('Symmy internal job owner contracts', () => {
         parseSyncAdmission({ fixtureId: 'fixture-safe', idempotencyKey: 'stock-key', routeKey: 'inventoryStockBatch' }),
       ),
     ).toBe(true);
+    // The customer groups route takes only its public groups, never a fixture.
     expect(
-      Result.isSuccess(
+      Result.isFailure(
         parseSyncAdmission({ fixtureId: 'fixture-safe', idempotencyKey: 'group-key', routeKey: 'customerGroupsBatch' }),
       ),
     ).toBe(true);
+  });
+
+  it('admits the public customer groups only on the group route, with definition facts only beside them', () => {
+    const group = {
+      businessCode: 'WHOLESALE_BUYERS',
+      code: 'symmy-wholesale',
+      description: 'Customers the source classifies as wholesale buyers',
+      meaningKey: 'symmy.wholesale-buyers',
+      membershipCriteria: 'The source explicitly assigns each wholesale buyer',
+      name: 'Wholesale buyers',
+      purpose: 'Wholesale buyer classification',
+    };
+    const groups = {
+      customerGroups: [group],
+      groupFacts: [],
+      idempotencyKey: 'group-key',
+      routeKey: 'customerGroupsBatch',
+    };
+    expect(Result.isSuccess(parseSyncAdmission(groups))).toBe(true);
+    // The replay of a saved admission carries the groups alone: the facts fence only a new admission.
+    const { groupFacts: _facts, ...withoutFacts } = groups;
+    expect(Result.isSuccess(parseSyncAdmission(withoutFacts))).toBe(true);
+    const { customerGroups: _groups, ...factsOnly } = groups;
+    expect(Result.isFailure(parseSyncAdmission(factsOnly))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, routeKey: 'inventoryStockBatch' }))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [] }))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [group, group] }))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [{ ...group, code: ' padded' }] }))).toBe(
+      true,
+    );
+    expect(
+      Result.isFailure(parseSyncAdmission({ ...groups, customerGroups: [{ ...group, businessCode: 'lower' }] })),
+    ).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, contractVersion: 'INTERNAL_C14' }))).toBe(true);
+    expect(Result.isFailure(parseSyncAdmission({ ...groups, fixtureId: 'fixture-safe' }))).toBe(true);
   });
 });

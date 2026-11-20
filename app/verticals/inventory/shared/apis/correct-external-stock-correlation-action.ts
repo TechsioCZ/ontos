@@ -3,6 +3,7 @@
 // @ontos-action-http-slug correct-external-stock-correlation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/correct-external-stock-correlation.ts';
 
 export { CorrectExternalStockCorrelationPayloadSchema } from '../actions/correct-external-stock-correlation.ts';
-const CorrectExternalStockCorrelationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CorrectExternalStockCorrelationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CorrectExternalStockCorrelationActionInvalidProblem',
@@ -146,7 +145,6 @@ export const correctExternalStockCorrelationActionGroupDefinition = HttpApiGroup
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/correct-external-stock-correlation', {
       error: actionErrors,
-      headers: CorrectExternalStockCorrelationActionHeadersSchema,
       payload: Schema.toEncoded(CorrectExternalStockCorrelationPayloadSchema),
       success: [ActionProposalAcceptedSchema, CorrectExternalStockCorrelationResultSchema],
     }),

@@ -17,6 +17,7 @@ import { CorrectCatalogToStockBindingActionApi } from './apis/correct-catalog-to
 import { CorrectExternalStockCorrelationActionApi } from './apis/correct-external-stock-correlation-action.ts';
 import { CorrectStockPositionActionApi } from './apis/correct-stock-position-action.ts';
 import { CreateInventoryReservationActionApi } from './apis/create-inventory-reservation-action.ts';
+import { CreateStockLocationActionApi } from './apis/create-stock-location-action.ts';
 import { CurrentRelevantStockPositionSetApi } from './apis/current-relevant-stock-position-set.ts';
 import { CurrentStockEvidenceForAvailabilityApi } from './apis/current-stock-evidence-for-availability.ts';
 import { EndCatalogToStockBindingActionApi } from './apis/end-catalog-to-stock-binding-action.ts';
@@ -25,6 +26,7 @@ import { EndStockSharingEligibilityActionApi } from './apis/end-stock-sharing-el
 import { EstablishCatalogToStockBindingActionApi } from './apis/establish-catalog-to-stock-binding-action.ts';
 import { EstablishCommitmentProtectionActionApi } from './apis/establish-commitment-protection-action.ts';
 import { EstablishExternalStockCorrelationActionApi } from './apis/establish-external-stock-correlation-action.ts';
+import { EstablishStockPositionActionApi } from './apis/establish-stock-position-action.ts';
 import { EstablishStockSharingEligibilityActionApi } from './apis/establish-stock-sharing-eligibility-action.ts';
 import { ImportSourceAssertionActionApi } from './apis/import-source-assertion-action.ts';
 import { InventoryBackendConfigurationCurrentApi } from './apis/inventory-backend-configuration-current.ts';
@@ -34,6 +36,7 @@ import { InventoryReservationDetailApi } from './apis/inventory-reservation-deta
 import { InventorySourceConflictDetailApi } from './apis/inventory-source-conflict-detail.ts';
 import { InventorySourceImportReceiptApi } from './apis/inventory-source-import-receipt.ts';
 import { RecoverInventoryEffectActionApi } from './apis/recover-inventory-effect-action.ts';
+import { RegisterStockItemActionApi } from './apis/register-stock-item-action.ts';
 import { ReleaseInventoryReservationActionApi } from './apis/release-inventory-reservation-action.ts';
 import { ReservationConfirmationVerificationApi } from './apis/reservation-confirmation-verification.ts';
 import { ResolveInventorySourceConflictActionApi } from './apis/resolve-inventory-source-conflict-action.ts';
@@ -75,6 +78,7 @@ type InventoryApiGroups = GroupsOf<
   | typeof CorrectExternalStockCorrelationActionApi
   | typeof CorrectStockPositionActionApi
   | typeof CreateInventoryReservationActionApi
+  | typeof CreateStockLocationActionApi
   | typeof CurrentRelevantStockPositionSetApi
   | typeof CurrentStockEvidenceForAvailabilityApi
   | typeof EndCatalogToStockBindingActionApi
@@ -83,6 +87,7 @@ type InventoryApiGroups = GroupsOf<
   | typeof EstablishCatalogToStockBindingActionApi
   | typeof EstablishCommitmentProtectionActionApi
   | typeof EstablishExternalStockCorrelationActionApi
+  | typeof EstablishStockPositionActionApi
   | typeof EstablishStockSharingEligibilityActionApi
   | typeof ImportSourceAssertionActionApi
   | typeof InventoryBackendConfigurationCurrentApi
@@ -92,6 +97,7 @@ type InventoryApiGroups = GroupsOf<
   | typeof InventorySourceConflictDetailApi
   | typeof InventorySourceImportReceiptApi
   | typeof RecoverInventoryEffectActionApi
+  | typeof RegisterStockItemActionApi
   | typeof ReleaseInventoryReservationActionApi
   | typeof ReservationConfirmationVerificationApi
   | typeof ResolveInventorySourceConflictActionApi
@@ -116,6 +122,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(CorrectExternalStockCorrelationActionApi)
   .addHttpApi(CorrectStockPositionActionApi)
   .addHttpApi(CreateInventoryReservationActionApi)
+  .addHttpApi(CreateStockLocationActionApi)
   .addHttpApi(CurrentRelevantStockPositionSetApi)
   .addHttpApi(CurrentStockEvidenceForAvailabilityApi)
   .addHttpApi(EndCatalogToStockBindingActionApi)
@@ -124,6 +131,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(EstablishCatalogToStockBindingActionApi)
   .addHttpApi(EstablishCommitmentProtectionActionApi)
   .addHttpApi(EstablishExternalStockCorrelationActionApi)
+  .addHttpApi(EstablishStockPositionActionApi)
   .addHttpApi(EstablishStockSharingEligibilityActionApi)
   .addHttpApi(ImportSourceAssertionActionApi)
   .addHttpApi(InventoryBackendConfigurationCurrentApi)
@@ -133,6 +141,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(InventorySourceConflictDetailApi)
   .addHttpApi(InventorySourceImportReceiptApi)
   .addHttpApi(RecoverInventoryEffectActionApi)
+  .addHttpApi(RegisterStockItemActionApi)
   .addHttpApi(ReleaseInventoryReservationActionApi)
   .addHttpApi(ReservationConfirmationVerificationApi)
   .addHttpApi(ResolveInventorySourceConflictActionApi)

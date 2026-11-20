@@ -3,6 +3,7 @@
 // @ontos-action-http-slug correct-stock-position
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/correct-stock-position.ts';
 
 export { CorrectStockPositionPayloadSchema } from '../actions/correct-stock-position.ts';
-const CorrectStockPositionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CorrectStockPositionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CorrectStockPositionActionInvalidProblem',
@@ -150,7 +149,6 @@ export const correctStockPositionActionGroupDefinition = HttpApiGroup.make('corr
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/correct-stock-position', {
       error: actionErrors,
-      headers: CorrectStockPositionActionHeadersSchema,
       payload: Schema.toEncoded(CorrectStockPositionPayloadSchema),
       success: [ActionProposalAcceptedSchema, CorrectStockPositionResultSchema],
     }),

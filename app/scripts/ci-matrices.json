@@ -135,12 +135,12 @@
       "tasks": [
         "./apps/shell-super-app#12/24",
         "whole:organization",
-        "root:10/27",
+        "root:10/28",
         "./packages/core-runtime#3/8",
         "./verticals/commerce-customer-context#2/56",
         "./verticals/party-registry#3/4",
         "./verticals/payment#2/4",
-        "root:23/27",
+        "root:24/28",
         "./verticals/commerce-customer-context#12/56",
         "./apps/shell-super-app#20/24",
         "./verticals/commerce-customer-context#35/56",
@@ -165,7 +165,7 @@
         "./verticals/tax#1/4",
         "./verticals/commerce-customer-context#55/56",
         "./verticals/commerce-customer-context#25/56",
-        "root:14/27",
+        "root:14/28",
         "./verticals/commerce-customer-context#18/56",
         "./verticals/legal-agreements",
         "./verticals/commerce-customer-context#40/56"
@@ -178,7 +178,7 @@
       "lanes": 2,
       "tasks": [
         "./verticals/commerce-customer-context#33/56",
-        "root:27/27",
+        "root:28/28",
         "whole:preproposal-basis",
         "./verticals/pricing#4/4",
         "./verticals/commerce-customer-context#56/56",
@@ -190,9 +190,9 @@
         "./verticals/commerce-customer-context#50/56",
         "./verticals/storefront-registry#1/1",
         "./verticals/assortment#4/4",
-        "root:18/27",
+        "root:18/28",
         "./verticals/commerce-customer-context#29/56",
-        "root:25/27"
+        "root:26/28"
       ],
       "proof-packages": [
         "@app/shell-super-app",
@@ -216,7 +216,7 @@
         "./verticals/merchandise",
         "./verticals/commerce-market-catalog#3/4",
         "./apps/shell-super-app#11/24",
-        "root:1/27",
+        "root:1/28",
         "./apps/shell-super-app#24/24",
         "whole:party-migrations",
         "./verticals/commerce-order#2/2",
@@ -239,9 +239,10 @@
       "tasks": [
         "./verticals/commerce-customer-context#19/56",
         "./apps/shell-super-app#18/24",
-        "root:16/27",
+        "root:16/28",
         "./verticals/pricing#3/4",
-        "root:17/27",
+        "root:17/28",
+        "root:21/28",
         "whole:privacy",
         "./verticals/party-registry#1/4",
         "./packages/core-runtime#8/8",
@@ -249,11 +250,11 @@
         "./verticals/symmy-integration#4/4",
         "./verticals/tax#4/4",
         "./verticals/commerce-customer-context#7/56",
-        "root:3/27",
+        "root:3/28",
         "./verticals/facility-operations",
         "./verticals/assortment#2/4",
         "./verticals/commerce-customer-context#38/56",
-        "root:20/27"
+        "root:20/28"
       ]
     },
     {
@@ -264,19 +265,19 @@
       "tasks": [
         "./apps/shell-super-app#21/24",
         "./packages/core-runtime#2/8",
-        "root:13/27",
+        "root:13/28",
         "./apps/shell-super-app#1/24",
         "./verticals/payment#4/4",
         "./verticals/catalog#3/4",
-        "root:6/27",
+        "root:6/28",
         "whole:customer-context-migrations",
         "./verticals/commerce-customer-context#1/56",
-        "root:21/27",
+        "root:22/28",
         "whole:core-runtime-migrations",
         "./verticals/commerce-customer-context#13/56",
         "./verticals/payment-term-catalog#3/3",
         "./verticals/crm",
-        "root:12/27",
+        "root:12/28",
         "./packages/email-delivery"
       ]
     },
@@ -299,7 +300,7 @@
         "./verticals/commerce-customer-context#32/56",
         "./verticals/commerce-customer-context#54/56",
         "./verticals/commerce-market-catalog#2/4",
-        "root:4/27",
+        "root:4/28",
         "./verticals/commerce-customer-context#39/56"
       ]
     },
@@ -314,11 +315,11 @@
         "./verticals/commerce-customer-context#5/56",
         "./packages/core-runtime#5/8",
         "./apps/shell-super-app#23/24",
-        "root:2/27",
+        "root:2/28",
         "./apps/shell-super-app#17/24",
         "./apps/shell-super-app#5/24",
         "./verticals/privacy#2/8",
-        "root:5/27",
+        "root:5/28",
         "./verticals/price-group-catalog#4/4",
         "./verticals/payment-term-catalog#2/3"
       ]
@@ -329,7 +330,7 @@
       "native-composition": true,
       "lanes": 2,
       "tasks": [
-        "root:9/27",
+        "root:9/28",
         "./apps/shell-super-app#16/24",
         "./apps/shell-super-app#10/24",
         "./verticals/commerce-customer-context#52/56",
@@ -337,13 +338,13 @@
         "./verticals/commerce-customer-context#17/56",
         "./packages/core-runtime#4/8",
         "./verticals/pricing#2/4",
-        "root:26/27",
+        "root:27/28",
         "./verticals/promotion",
         "./verticals/privacy#4/8",
         "./verticals/symmy-integration#3/4",
         "./verticals/tax#2/4",
         "./verticals/property-leasing",
-        "root:7/27"
+        "root:7/28"
       ]
     },
     {
@@ -380,7 +381,7 @@
         "./apps/shell-super-app#19/24",
         "./verticals/inventory#2/4",
         "./verticals/payment#3/4",
-        "root:24/27",
+        "root:25/28",
         "whole:migrator-owner-access",
         "./verticals/commerce-customer-context#8/56",
         "./verticals/inventory#4/4",
@@ -388,8 +389,8 @@
         "./verticals/commerce-customer-context#47/56",
         "./verticals/privacy#7/8",
         "./apps/shell-super-app#6/24",
-        "root:8/27",
-        "root:19/27"
+        "root:8/28",
+        "root:19/28"
       ],
       "proof-packages": [
         "@app/shell-super-app",
@@ -409,8 +410,8 @@
       "lanes": 2,
       "tasks": [
         "./verticals/commerce-customer-context#51/56",
-        "root:15/27",
-        "root:11/27",
+        "root:15/28",
+        "root:11/28",
         "./verticals/commerce-market-catalog#1/4",
         "./verticals/commerce-customer-context#24/56",
         "whole:customer-readback",
@@ -445,7 +446,7 @@
         "./verticals/commerce-customer-context#34/56",
         "whole:party-worker",
         "./verticals/sales-pipeline",
-        "root:22/27",
+        "root:23/28",
         "./verticals/tagging"
       ]
     },

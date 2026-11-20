@@ -62,7 +62,10 @@ const request = {
 
 const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   readonly activeBinding?: boolean;
+  readonly allowedOwnerOperations?: typeof response.allowedOwnerOperations;
   readonly catalog?: ShellInstalledCatalog;
+  /** The owner answers a route enrolled for no company. */
+  readonly companyless?: boolean;
   readonly replayIdempotencyDigest?: string;
   readonly responseTenant?: string;
 }) {
@@ -78,7 +81,12 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
       body: await incoming.text(),
       url: incoming.url,
     });
-    const ownerResponse = { ...response, tenantId: options.responseTenant ?? response.tenantId };
+    const { legalEntityId: _company, ...companylessRoute } = response;
+    const ownerResponse = {
+      ...(options.companyless === true ? companylessRoute : response),
+      allowedOwnerOperations: options.allowedOwnerOperations ?? response.allowedOwnerOperations,
+      tenantId: options.responseTenant ?? response.tenantId,
+    };
     if (options.replayIdempotencyDigest !== undefined) {
       Object.assign(ownerResponse, {
         allowedOwnerOperations: [],
@@ -105,7 +113,10 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     currentTimeSeconds: Effect.succeed(1_700_000_000),
     generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
     loadAdmission: Effect.succeed({
-      audiences: new Map([['symmy-integration', 'native-route-build']]),
+      audiences: new Map([
+        ['commerce-customer-context', 'native-route-build'],
+        ['symmy-integration', 'native-route-build'],
+      ]),
       revision: options.catalog?.composition.revision ?? compositionRevision,
     }),
     loadConfig: Effect.succeed({
@@ -359,6 +370,146 @@ it.effect('signs only exact admission Actions and the approved v1 sync lookup fo
         }),
       );
       expect(retainedToken.payload['routeScope']).toMatchObject({ operations, replayIdempotencyDigest, routeKey });
+    }
+  }),
+);
+
+it.effect('signs on the customer groups admission route only its enrolled Commerce definition read', () =>
+  Effect.gen(function* admissionDefinitionRead() {
+    const moduleId = 'commerce.customer-context';
+    const definitionRead = 'commerce.customer-context.api.customer-group-definition-source';
+    const otherRead = 'commerce.customer-context.api.customer-profile-source-page';
+    const groupCreate = 'commerce.customer-context.create-customer-group';
+    const commerce = makeModuleContractFixture({ appId: 'commerce-customer-context', moduleId });
+    // The catalog publishes the group create as a write and the definition read with the access under test.
+    const publish = (definitionAccess: 'historical_read' | 'read') =>
+      Effect.gen(function* publishedCommerce() {
+        const snapshot = yield* makeCompositionSnapshot([
+          {
+            ...commerce,
+            manifest: {
+              ...commerce.manifest,
+              publicSurface: {
+                ...commerce.manifest.publicSurface,
+                actions: [
+                  {
+                    accessWorkload: {
+                      reason: 'Exact source group write',
+                      workloads: ['commerce.customer-context.source-write'],
+                    },
+                    actionKey: groupCreate,
+                    auditProfile: 'standard',
+                    entrypoint: defineTenantModuleEntrypoint({
+                      access: 'write',
+                      authorization: { kind: 'protected' },
+                      entrypointKey: groupCreate,
+                      moduleKey: moduleId,
+                      role: 'action',
+                    }),
+                    idempotency: 'required',
+                    legalEntityScope: 'required',
+                    owningModuleId: moduleId,
+                    schemaVersion: '1',
+                  },
+                ],
+                api: [
+                  { key: 'commerce.customer-context.api.reads', operationKeys: ['read0.execute', 'read1.execute'] },
+                ],
+                operationContracts: [
+                  { access: definitionAccess, entrypointKey: definitionRead },
+                  { access: 'read' as const, entrypointKey: otherRead },
+                ].map(({ access, entrypointKey }, index) => ({
+                  apiKey: 'commerce.customer-context.api.reads',
+                  entrypoint: defineTenantModuleEntrypoint({
+                    access,
+                    authorization: { kind: 'protected' },
+                    entrypointKey,
+                    moduleKey: moduleId,
+                    role: 'api',
+                  }),
+                  operationKey: `read${index}.execute`,
+                  schemaVersion: '1',
+                })),
+              },
+            },
+          },
+        ]);
+        const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+        return { ...catalog, composition: snapshot.composition };
+      });
+    const enrolled = (entrypointKeys: readonly string[]) =>
+      entrypointKeys.map((entrypointKey) => ({ entrypointKey, moduleId, schemaVersion: '1' }));
+    const issue = (input: {
+      readonly catalog: ShellInstalledCatalog;
+      readonly company?: string;
+      readonly companyless?: boolean;
+      readonly entrypointKeys: readonly string[];
+      readonly routeKey: 'customerGroupsBatch' | 'customersBatch';
+    }) =>
+      Effect.gen(function* issueCommerceRead() {
+        const current = yield* fixture({
+          allowedOwnerOperations: enrolled(input.entrypointKeys),
+          catalog: input.catalog,
+          companyless: input.companyless === true,
+        });
+        const assertion = yield* Effect.gen(function* admissionRoute() {
+          const proof = yield* acquireSymmyRouteScopeProof({
+            ...request,
+            compositionRevision: input.catalog.composition.revision,
+            routeRequest: { routeKey: input.routeKey },
+            sourcePurpose: 'admit',
+          });
+          const target = { audience: 'commerce-customer-context', principal };
+          return yield* issueSymmyRouteScopeAssertion(
+            proof,
+            input.companyless === true ? target : { ...target, legalEntityId: input.company ?? legalEntityId },
+          );
+        }).pipe(Effect.provide(current.layer));
+        return yield* Effect.promise(() =>
+          jwtVerify(assertion.token, current.publicKey, {
+            algorithms: ['EdDSA'],
+            audience: 'commerce-customer-context',
+            currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+            issuer: 'https://shell.test',
+          }),
+        );
+      });
+    const catalog = yield* publish('read');
+    const groupRoute = [groupCreate, 'commerce.customer-context.update-customer-group', definitionRead, otherRead];
+    // Two enrollment items name the definition read; the assertion names it once.
+    const signed = yield* issue({
+      catalog,
+      entrypointKeys: [...groupRoute, definitionRead],
+      routeKey: 'customerGroupsBatch',
+    });
+    expect(signed.payload['routeScope']).toMatchObject({
+      legalEntityId,
+      operations: [{ entrypointKey: definitionRead, schemaVersion: '1' }],
+      principalId: principal.principalId,
+      routeKey: 'customerGroupsBatch',
+      tenantId: principal.tenantId,
+    });
+    // Another admission route; the group route without the definition read, though it enrolls a published write;
+    // another company on the group route; a group route enrolled for no company, whose assertion would carry no route
+    // scope; and a definition read published only for historical reads.
+    for (const refusedInput of [
+      { catalog, entrypointKeys: groupRoute, routeKey: 'customersBatch' },
+      {
+        catalog,
+        entrypointKeys: groupRoute.filter((entrypointKey) => entrypointKey !== definitionRead),
+        routeKey: 'customerGroupsBatch',
+      },
+      {
+        catalog,
+        company: '90000000-0000-4000-8000-000000000001',
+        entrypointKeys: groupRoute,
+        routeKey: 'customerGroupsBatch',
+      },
+      { catalog, companyless: true, entrypointKeys: groupRoute, routeKey: 'customerGroupsBatch' },
+      { catalog: yield* publish('historical_read'), entrypointKeys: groupRoute, routeKey: 'customerGroupsBatch' },
+    ] as const) {
+      const refused = yield* Effect.flip(issue(refusedInput));
+      expect(refused).toMatchObject({ code: 'forbidden' });
     }
   }),
 );

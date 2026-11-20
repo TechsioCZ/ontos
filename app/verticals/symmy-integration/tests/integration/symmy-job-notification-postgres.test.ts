@@ -6,6 +6,7 @@ import { PgClient } from '@effect/sql-pg';
 import { and, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
@@ -518,11 +519,16 @@ it.effect(
         .insert(symmyJobRoutes)
         .values({ ...registeredRoute, routeId: syncRouteId, routeKey: 'customerGroupsBatch' });
       const syncAdmissionId = crypto.randomUUID();
+      // The store keeps only the digest of the key a retry states.
+      const syncKey = 'INTERNAL_SYNC_PURGED_GROUP_KEY';
+      const syncKeyDigest = Hex.encode(
+        new Uint8Array(yield* Effect.promise(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(syncKey)))),
+      );
       yield* admin.insert(symmySyncAdmissions).values({
         admissionId: syncAdmissionId,
         admittedAt: sql`clock_timestamp()-interval '1 second'`,
         executionPlan: sql`${JSON.stringify(retained.executionPlan)}::jsonb`,
-        idempotencyDigest: 'a'.repeat(64),
+        idempotencyDigest: syncKeyDigest,
         intentDigest: 'b'.repeat(64),
         lifecyclePolicy: null,
         mappingVersion: 'v1',
@@ -572,6 +578,20 @@ it.effect(
         revision: syncPolicy.revision,
       });
       expect(retainedSync?.retentionReceipt?.authorityReceiptRef).toBe(authority.authorityReceiptRef);
+      // The exact retry of the purged key on its still-configured group route is refused by the route lookup, as its
+      // admission refuses it, before the Shell reads any owner definition; another key resolves the configured route.
+      const groupRouteContext = (replayIdempotencyKey: string) =>
+        transaction((executor) =>
+          symmyJobStoreFactory(executor, scope).pipe(
+            Effect.flatMap((ownerStore) =>
+              ownerStore.routeContext({ replayIdempotencyKey, routeKey: 'customerGroupsBatch' }),
+            ),
+          ),
+        );
+      expect(yield* Effect.flip(groupRouteContext(syncKey))).toMatchObject({ code: 'route_denied' });
+      const freshGroupRoute = yield* groupRouteContext('INTERNAL_SYNC_FRESH_GROUP_KEY');
+      expect(freshGroupRoute).toMatchObject({ routeId: syncRouteId });
+      expect(freshGroupRoute.replayIdempotencyDigest).toBeUndefined();
       const jobs = yield* admin
         .select({ id: symmyImportJobs.jobId })
         .from(symmyImportJobs)

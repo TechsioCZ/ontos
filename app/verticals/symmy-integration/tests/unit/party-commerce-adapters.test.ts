@@ -94,7 +94,13 @@ import {
   SymmyPartyCommerceIntentSchema,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { SymmyPinnedJobPlanSchema, SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
+import { AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
+import { SymmyEffectAdapters } from '../../src/services/symmy-effect-adapters.service.ts';
 import type { SymmyEffectAdapterInput } from '../../src/services/symmy-effect-adapters.service.ts';
+import {
+  executeSymmySyncAdmission,
+  SymmySyncOriginalInvocationFacts,
+} from '../../src/services/symmy-sync-execution.service.ts';
 import {
   makeSymmyPartyCommerceAdapters,
   prepareSymmyPartyCommerceRequestHash,
@@ -139,24 +145,31 @@ const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
   const bodies: Body[] = [];
   const sent: Request[] = [];
   const queued: OwnerReply[] = [];
-  let fallback = Option.none<OwnerReply>();
+  let fallback = Option.none<(body: Body) => OwnerReply>();
   const decodeBody = Schema.decodeUnknownOption(Schema.fromJsonString(schemas.body));
   const encodeSuccess = Schema.encodeSync(schemas.success);
   const succeeding =
     (value: () => Success): OwnerReply =>
     () =>
       Response.json(encodeSuccess(value()));
+  /** A reply queued once answers first; otherwise the standing reply is chosen for this request. */
+  const replyTo = (body: Body) =>
+    Option.orElse(Option.fromNullishOr(queued.shift()), () => fallback.pipe(Option.map((select) => select(body))));
   const endpoint = {
     /** Answers every later request with the owner's response computed when the request arrives. */
     answer: (value: () => Success) => {
-      fallback = Option.some(succeeding(value));
+      fallback = Option.some(() => succeeding(value));
+    },
+    /** Answers every later request with the reply its decoded request selects, whatever order requests arrive in. */
+    answerBy: (select: (body: Body) => OwnerReply) => {
+      fallback = Option.some(select);
     },
     bodies,
     fail: <Problem extends { readonly status: number }, Encoded>(
       schema: Schema.Codec<Problem, Encoded>,
       problem: Problem,
     ) => {
-      fallback = Option.some(problemReply(schema, problem));
+      fallback = Option.some(() => problemReply(schema, problem));
     },
     failOnce: <Problem extends { readonly status: number }, Encoded>(
       schema: Schema.Codec<Problem, Encoded>,
@@ -171,7 +184,7 @@ const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
       sent.push(request);
       return Option.flatMap(decodeBody(text), (body) => {
         bodies.push(body);
-        return Option.orElse(Option.fromNullishOr(queued.shift()), () => fallback);
+        return replyTo(body);
       });
     },
     reset: () => {
@@ -182,12 +195,14 @@ const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
     },
     sent,
     succeed: (value: Success) => {
-      fallback = Option.some(succeeding(() => value));
+      fallback = Option.some(() => succeeding(() => value));
     },
+    /** The owner's success response to one request, for `answerBy`. */
     succeedOnce: (value: Success) => {
       queued.push(succeeding(() => value));
       return endpoint;
     },
+    success: (value: Success): OwnerReply => succeeding(() => value),
     write: schemas.write,
   };
   return endpoint;
@@ -1852,6 +1867,168 @@ it.effect('settles the native group meaning-change refusal as conflict without r
     return yield* Effect.void;
   }).pipe(asSymmyWorker),
 );
+
+const groupReplayEffectId = '10000000-0000-4000-8000-000000000031';
+const groupReplayItemId = '10000000-0000-4000-8000-000000000033';
+const groupReplayPayload = {
+  businessCode: 'INTERNAL_SYNC_GROUP',
+  description: 'Explicit internal group',
+  initialState: 'ACTIVE',
+  meaningKey: 'internal.sync-group',
+  membershipCriteria: 'Explicitly named internal customers',
+  name: 'Internal sync group',
+  purpose: 'Internal classification',
+  reason: 'Explicit source definition',
+  source: {
+    definitionEvidence: { kind: 'SOURCE_RECORD', reference: 'group-1', revision: 'source-1' },
+    effectId: groupReplayEffectId,
+    issuer: 'internal-symmy',
+    mappingRevision: 'mapping-1',
+    namespace: 'groups',
+    order: 1,
+    recordId: 'group-1',
+    revision: 'source-1',
+    route: { id: routeId, revision: 'route-1' },
+    sourceCode: 'group-1',
+  },
+};
+/** The exact retry of a synchronous group admission whose create committed. */
+const replayedGroupAdmission = Schema.decodeUnknownSync(AdmitSymmySyncResultSchema)({
+  admissionId: '10000000-0000-4000-8000-000000000032',
+  legalEntityId: sellingLegalEntityId,
+  plan: {
+    items: [
+      {
+        effects: [
+          {
+            authContextRef: fixtureAuthContextRef,
+            effectKey: 'customer-group-create',
+            executorBindingIncarnation: '10000000-0000-4000-8000-000000000007',
+            executorPrincipalId,
+            intent: { _tag: 'CustomerGroupCreate', payload: groupReplayPayload },
+            itemId: groupReplayItemId,
+            ref: {
+              effectId: groupReplayEffectId,
+              mappingVersion: 'mapping-1',
+              occurrence: {
+                occurrenceId: 'group-occurrence-1',
+                record: {
+                  entityKind: 'CUSTOMER_GROUP',
+                  issuerId: 'internal-symmy',
+                  route: { integrationRouteId: routeId, tenantId },
+                  sourceNamespace: 'groups',
+                  sourceRecordId: 'group-1',
+                },
+              },
+              operation: {
+                entrypointKey: 'commerce.customer-context.create-customer-group',
+                moduleId: 'commerce.customer-context',
+                schemaVersion: '1',
+              },
+              routeRevision: 'route-1',
+            },
+            requestHash: 'a'.repeat(64),
+          },
+        ],
+        itemId: groupReplayItemId,
+        itemKey: 'customer-group-0',
+        unsupportedBranches: [],
+      },
+    ],
+  },
+  replayed: true,
+  tenantId,
+});
+const groupReplayGroup = {
+  businessCode: groupReplayPayload.businessCode,
+  currentDefinition: {
+    changeKind: 'CREATED',
+    description: groupReplayPayload.description,
+    membershipCriteria: groupReplayPayload.membershipCriteria,
+    name: groupReplayPayload.name,
+    purpose: groupReplayPayload.purpose,
+    reason: groupReplayPayload.reason,
+    recordedAt: '2026-11-07T00:00:00.000Z',
+    revision: 1,
+  },
+  currentState: 'ACTIVE',
+  definitionHistory: [],
+  groupRef: {
+    moduleId: 'commerce.customer-context',
+    resourceId: '10000000-0000-4000-8000-000000000034',
+    resourceType: 'commerce.customer-context.customer-group',
+    tenantId,
+  },
+  lifecycleHistory: [],
+  meaningKey: groupReplayPayload.meaningKey,
+  revision: 1,
+};
+const groupReplayReceipt = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceResponseSchema)({
+  _tag: 'RECEIPT',
+  created: true,
+  group: groupReplayGroup,
+  operation: 'CREATE',
+  originalIntent: groupReplayPayload,
+  source: groupReplayPayload.source,
+});
+/** What a current definition read would answer for the same group: never the answer to an exact retry. */
+const groupReplayCurrent = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceResponseSchema)({
+  _tag: 'CURRENT',
+  group: groupReplayGroup,
+  source: groupReplayPayload.source,
+});
+const replayGroupAdmission = Effect.gen(function* replayGroupAdmission() {
+  const adapters = yield* makeSymmyPartyCommerceAdapters;
+  return yield* executeSymmySyncAdmission(replayedGroupAdmission, symmyWorkerCompositionRevision).pipe(
+    Effect.provideService(SymmyEffectAdapters, { adapters }),
+    Effect.provideService(SymmySyncOriginalInvocationFacts, {
+      read: () => Effect.succeed(Option.some({ actionInvocationId: invocationId, status: 'succeeded' })),
+    }),
+  );
+});
+const definitionsUnavailable = problemReply(
+  CustomerGroupDefinitionSourceUnavailableProblemSchema,
+  CustomerGroupDefinitionSourceUnavailableProblemSchema.make({
+    detail: 'Group definitions unavailable',
+    retryable: true,
+    status: 503,
+    title: 'Unavailable',
+    type: 'about:blank',
+  }),
+);
+// A synchronous admission stores no effect outcome: its exact retry asks Commerce for the receipt of each effect.
+describe('exact synchronous Group retry', () => {
+  it.effect('is answered from the Commerce receipt while a current definition read would be unavailable', () =>
+    Effect.gen(function* receiptWithoutCurrentRead() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      // Commerce answers each read by its mode: the receipt read answers, a current definition read is unavailable.
+      peer.groupDefinition.answerBy(({ mode }) =>
+        mode === 'RECEIPT' ? peer.groupDefinition.success(groupReplayReceipt) : definitionsUnavailable,
+      );
+      const result = yield* replayGroupAdmission;
+      expect(result.items[0].effects).toEqual([
+        { effectId: groupReplayEffectId, owner: 'commerce.customer-context', status: 'accepted_change' },
+      ]);
+      expect(peer.groupDefinition.bodies.map(({ mode }) => mode)).toEqual(['RECEIPT']);
+    }).pipe(overSymmyPeers),
+  );
+  it.effect('answers indeterminate, never a wrong result, while the Commerce receipt read is unavailable', () =>
+    Effect.gen(function* receiptUnavailable() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      // The receipt read is unavailable; a current definition read would answer the group as it now stands.
+      peer.groupDefinition.answerBy(({ mode }) =>
+        mode === 'RECEIPT' ? definitionsUnavailable : peer.groupDefinition.success(groupReplayCurrent),
+      );
+      const result = yield* replayGroupAdmission;
+      expect(result.items[0].effects).toEqual([
+        { effectId: groupReplayEffectId, owner: 'commerce.customer-context', status: 'indeterminate' },
+      ]);
+      expect(peer.groupDefinition.bodies.map(({ mode }) => mode)).toEqual(['RECEIPT']);
+    }).pipe(overSymmyPeers),
+  );
+});
 
 it.effect('never settles a successful native ACK without the actual succeeded Core identity', () =>
   Effect.gen(function* absentNativeFact() {

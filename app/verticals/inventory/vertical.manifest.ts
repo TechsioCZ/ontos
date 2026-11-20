@@ -35,6 +35,7 @@ import { correctCatalogToStockBindingAction } from './src/actions/correct-catalo
 import { correctExternalStockCorrelationAction } from './src/actions/correct-external-stock-correlation.action.ts';
 import { correctStockPositionAction } from './src/actions/correct-stock-position.action.ts';
 import { createInventoryReservationAction } from './src/actions/create-inventory-reservation.action.ts';
+import { createStockLocationAction } from './src/actions/create-stock-location.action.ts';
 import { CurrentRelevantStockPositionSetApi } from './shared/apis/current-relevant-stock-position-set.ts';
 import { CurrentStockEvidenceForAvailabilityApi } from './shared/apis/current-stock-evidence-for-availability.ts';
 import { endCatalogToStockBindingAction } from './src/actions/end-catalog-to-stock-binding.action.ts';
@@ -43,11 +44,12 @@ import { endStockSharingEligibilityAction } from './src/actions/end-stock-sharin
 import { establishCatalogToStockBindingAction } from './src/actions/establish-catalog-to-stock-binding.action.ts';
 import { establishCommitmentProtectionAction } from './src/actions/establish-commitment-protection.action.ts';
 import { establishExternalStockCorrelationAction } from './src/actions/establish-external-stock-correlation.action.ts';
+import { establishStockPositionAction } from './src/actions/establish-stock-position.action.ts';
 import { establishStockSharingEligibilityAction } from './src/actions/establish-stock-sharing-eligibility.action.ts';
 import { externalStockCorrelationResourceDescriptor } from './shared/resources/external-stock-correlation.ts';
 import { importedCommittedObligationResourceDescriptor } from './shared/resources/imported-committed-obligation.ts';
-import { ImportSourceAssertionActionApi } from './shared/apis/import-source-assertion-action.ts';
 import { importSourceAssertionAction } from './src/actions/import-source-assertion.action.ts';
+import { ImportSourceAssertionActionApi } from './shared/apis/import-source-assertion-action.ts';
 import { InventoryBackendConfigurationCurrentApi } from './shared/apis/inventory-backend-configuration-current.ts';
 import { inventoryBackendConfigurationResourceDescriptor } from './shared/resources/inventory-backend-configuration.ts';
 import { InventoryEffectOutcomeApi } from './shared/apis/inventory-effect-outcome.ts';
@@ -59,6 +61,7 @@ import { inventorySourceConflictResourceDescriptor } from './shared/resources/in
 import { InventorySourceImportReceiptApi } from './shared/apis/inventory-source-import-receipt.ts';
 import { inventorySourceImportReceiptRead } from './src/api/inventory-source-import-receipt.read.ts';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
+import { registerStockItemAction } from './src/actions/register-stock-item.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
 import { reservationConfirmationResourceDescriptor } from './shared/resources/reservation-confirmation.ts';
 import { ReservationConfirmationVerificationApi } from './shared/apis/reservation-confirmation-verification.ts';
@@ -111,15 +114,18 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       correctExternalStockCorrelationAction,
       correctStockPositionAction,
       createInventoryReservationAction,
+      createStockLocationAction,
       endCatalogToStockBindingAction,
       endExternalStockCorrelationAction,
       endStockSharingEligibilityAction,
       establishCatalogToStockBindingAction,
       establishCommitmentProtectionAction,
       establishExternalStockCorrelationAction,
+      establishStockPositionAction,
       establishStockSharingEligibilityAction,
       importSourceAssertionAction,
       recoverInventoryEffectAction,
+      registerStockItemAction,
       releaseInventoryReservationAction,
       resolveInventorySourceConflictAction,
       selectInventoryBackendAction,

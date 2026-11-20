@@ -140,6 +140,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
       },
     },
     'complete-purchase-proposal-basis': 'hidden',
+    // Introduced by main #1529; hidden until its agent tool text is designed.
+    'configure-customer-source-route': OntosMcpHidden,
     'consume-order-purchase-approval': 'hidden',
     'consume-purchase-approval': 'hidden',
     'create-approval-hierarchy': {
@@ -548,6 +550,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
       },
     },
     'customer-record-visibility': 'hidden',
+    // Introduced by main #1529; hidden until its agent tool text is designed.
+    'customer-source-route': OntosMcpHidden,
     'delivery-destination-resolution': 'hidden',
     'effective-customer-group-membership-set-v1': 'hidden',
     'effective-customer-group-memberships': {

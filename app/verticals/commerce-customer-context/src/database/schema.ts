@@ -40,6 +40,7 @@ type DatabaseJsonObject = Readonly<Record<string, DatabaseJsonValue>>;
 export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'customer_profile_ico_migration_history',
   'saved_address_source_routes',
+  'customer_source_route_history',
   'saved_address_source_bindings',
   'saved_address_source_receipts',
   'purchase_proposal_bases',
@@ -1385,6 +1386,7 @@ export const customerGroupMembershipSourceRoutes = commerceCustomerContextSchema
     completenessContractCoverage: text('completeness_contract_coverage'),
     completenessContractRef: text('completeness_contract_ref'),
     completenessContractRevision: text('completeness_contract_revision'),
+    generation: integer('generation').default(1).notNull(),
     issuer: text('issuer').notNull(),
     principalId: uuid('principal_id').notNull(),
     routeId: text('route_id').notNull(),
@@ -1396,6 +1398,7 @@ export const customerGroupMembershipSourceRoutes = commerceCustomerContextSchema
       columns: [table.tenantId, table.legalEntityId, table.routeId],
       name: 'ccc_membership_source_routes_pk',
     }),
+    positiveRevision('ccc_membership_source_route_generation_ck', table.generation),
     trimmed('ccc_membership_source_route_id_ck', table.routeId),
     trimmed('ccc_membership_source_route_revision_ck', table.routeRevision),
     trimmed('ccc_membership_source_route_issuer_ck', table.issuer),
@@ -2886,18 +2889,28 @@ export const customerGroupDefinitionSourceRoutes = commerceCustomerContextSchema
   {
     ...scopeColumns(),
     active: boolean('active').default(false).notNull(),
+    generation: integer('generation').default(1).notNull(),
     issuer: text('issuer').notNull(),
     mappingRevision: text('mapping_revision'),
     namespace: text('namespace').notNull(),
     principalId: uuid('principal_id').notNull(),
     routeId: text('route_id').notNull(),
     routeRevision: text('route_revision').notNull(),
+    sourceReaderPrincipalIds: uuid('source_reader_principal_ids')
+      .array()
+      .default(sql`ARRAY[]::uuid[]`)
+      .notNull(),
   },
   (table) => [
     primaryKey({
       columns: [table.tenantId, table.legalEntityId, table.routeId],
       name: 'ccc_group_def_source_routes_pk',
     }),
+    positiveRevision('ccc_group_def_source_route_generation_ck', table.generation),
+    check(
+      'ccc_group_def_source_readers_ck',
+      sql`cardinality(${table.sourceReaderPrincipalIds}) <= 32 and array_position(${table.sourceReaderPrincipalIds}, null) is null`,
+    ),
     optionalTrimmed('ccc_group_def_source_route_mapping_ck', table.mappingRevision),
     trimmed('ccc_group_def_source_route_id_ck', table.routeId),
     trimmed('ccc_group_def_source_route_revision_ck', table.routeRevision),
@@ -2976,6 +2989,7 @@ export const customerProfileSourceRoutes = commerceCustomerContextSchema.table.w
   {
     ...scopeColumns(),
     active: boolean('active').default(false).notNull(),
+    generation: integer('generation').default(1).notNull(),
     issuer: text('issuer').notNull(),
     mappingRevision: text('mapping_revision').notNull(),
     namespace: text('namespace').notNull(),
@@ -2990,6 +3004,7 @@ export const customerProfileSourceRoutes = commerceCustomerContextSchema.table.w
   },
   (table) => [
     primaryKey({ columns: [table.tenantId, table.legalEntityId, table.routeId], name: 'ccc_profile_source_routes_pk' }),
+    positiveRevision('ccc_profile_source_route_generation_ck', table.generation),
     check(
       'ccc_profile_source_readers_ck',
       sql`cardinality(${table.sourceReaderPrincipalIds}) <= 32 and array_position(${table.sourceReaderPrincipalIds}, null) is null`,
@@ -3187,6 +3202,7 @@ export const savedAddressSourceRoutes = commerceCustomerContextSchema.table.with
   {
     ...scopeColumns(),
     active: boolean('active').default(false).notNull(),
+    generation: integer('generation').default(1).notNull(),
     issuer: text('issuer').notNull(),
     mappingRevision: text('mapping_revision').notNull(),
     namespace: text('namespace').notNull(),
@@ -3200,6 +3216,7 @@ export const savedAddressSourceRoutes = commerceCustomerContextSchema.table.with
       columns: [table.tenantId, table.legalEntityId, table.routeRef],
       name: 'ccc_saved_address_source_routes_pk',
     }),
+    positiveRevision('ccc_saved_address_source_route_generation_ck', table.generation),
     trimmed('ccc_saved_address_source_route_ref_ck', table.routeRef),
     trimmed('ccc_saved_address_source_route_revision_ck', table.routeRevision),
     trimmed('ccc_saved_address_source_route_mapping_ck', table.mappingRevision),
@@ -3207,6 +3224,45 @@ export const savedAddressSourceRoutes = commerceCustomerContextSchema.table.with
     trimmed('ccc_saved_address_source_route_namespace_ck', table.namespace),
     trimmed('ccc_saved_address_source_route_type_ck', table.recordType),
     ...scopedPolicies('ccc_saved_address_source_routes_scope', table),
+  ],
+);
+
+/**
+ * Append-only audit record of every Commerce source route generation: the stored route document before and
+ * after the change, with the acting principal, Action invocation and reason. No source authorization reads it.
+ */
+export const customerSourceRouteHistory = commerceCustomerContextSchema.table.withRLS(
+  'customer_source_route_history',
+  {
+    ...scopeColumns(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    currentRoute: jsonb('current_route').$type<DatabaseJsonObject>().notNull(),
+    generation: integer('generation').notNull(),
+    previousRoute: jsonb('previous_route').$type<DatabaseJsonObject>(),
+    reason: text('reason').notNull(),
+    recordedAt: recordedAt(),
+    routeId: text('route_id').notNull(),
+    routeKind: text('route_kind').notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.routeKind, table.routeId, table.generation],
+      name: 'ccc_source_route_history_pk',
+    }),
+    unique('ccc_source_route_history_invocation_uk').on(table.tenantId, table.legalEntityId, table.actionInvocationId),
+    check(
+      'ccc_source_route_history_kind_ck',
+      sql`${table.routeKind} in ('PROFILE', 'GROUP_DEFINITION', 'MEMBERSHIP', 'SAVED_ADDRESS')`,
+    ),
+    check(
+      'ccc_source_route_history_document_ck',
+      sql`jsonb_typeof(${table.currentRoute}) = 'object' and (${table.previousRoute} is null or jsonb_typeof(${table.previousRoute}) = 'object')`,
+    ),
+    positiveRevision('ccc_source_route_history_generation_ck', table.generation),
+    trimmed('ccc_source_route_history_route_ck', table.routeId),
+    trimmed('ccc_source_route_history_reason_ck', table.reason),
+    ...scopedPolicies('ccc_source_route_history_scope', table),
   ],
 );
 export const savedAddressSourceBindings = commerceCustomerContextSchema.table.withRLS(
@@ -3352,6 +3408,7 @@ const commerceCustomerContextDatabaseSchema = {
   customerProfileSourceReceipts,
   customerProfileSourceRoutes,
   customerSettingRevisions,
+  customerSourceRouteHistory,
   demoNewsletterChoices,
   gatewayAssertionRedemptions,
   guestRetailAttributions,
@@ -3385,6 +3442,7 @@ const commerceCustomerContextDatabaseSchema = {
 export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   customerProfileIcoMigrationHistory,
   savedAddressSourceRoutes,
+  customerSourceRouteHistory,
   savedAddressSourceBindings,
   savedAddressSourceReceipts,
   customerPriceGroupAssignmentReceipts,

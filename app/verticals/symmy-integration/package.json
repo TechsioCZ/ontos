@@ -40,6 +40,7 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:test": "pnpm test:integration",
     "db:verify": "node scripts/verify-db-schema.mts",
+    "ops:route-enrollment": "node scripts/route-enrollment.mts",
     "dev": "node ../../scripts/prepare-dev-module-contract.mts symmy-integration && ultramodern dev",
     "serve": "ultramodern serve",
     "test:integration": "rstest --project integration",

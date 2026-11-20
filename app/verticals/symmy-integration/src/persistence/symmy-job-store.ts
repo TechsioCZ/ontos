@@ -45,6 +45,8 @@ import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-co
 import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
 import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batch.ts';
 import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
+import { SymmyCustomerGroupRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
+import type { SymmyCustomerGroupRows } from '../../shared/domain/symmy-customer-group-batch.ts';
 import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts';
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
@@ -54,12 +56,14 @@ import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
 import { buildSymmyCustomerPlan } from './symmy-customer-plan.ts';
+import { buildSymmyCustomerGroupPlan } from './symmy-customer-group-plan.ts';
 import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyProductPlan } from './symmy-product-plan.ts';
 import { buildSymmyStockPlan } from './symmy-stock-plan.ts';
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
+import type { AdmitSymmySyncPayload } from '../../shared/actions/admit-symmy-sync.ts';
 import type { SymmyDecodedSourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import {
   mapSymmyPolicyFixtureIntent,
@@ -76,6 +80,7 @@ export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()
 export interface SymmyJobAdmissionRequest {
   readonly code?: string;
   readonly contractVersion?: 'INTERNAL_C14';
+  readonly customerGroups?: SymmyCustomerGroupRows;
   readonly customers?: SymmyCustomerRows;
   readonly fixtureId?: string;
   readonly idempotencyKey: string;
@@ -286,6 +291,13 @@ const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(funct
   }
   if (input.customers !== undefined) {
     return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerRowsSchema))(input.customers).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
+  if (input.customerGroups !== undefined) {
+    // What the owner held for each code is a fence read when the request arrived, not caller intent.
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerGroupRowsSchema))(input.customerGroups).pipe(
       Effect.mapError(unavailable),
       Effect.map(Option.some),
     );
@@ -911,27 +923,42 @@ const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(fun
   }
   return result;
 });
+/**
+ * The context of a key's saved sync admission on a route whose plan is withdrawn or, for the customer groups route,
+ * still configured: a group admission is answered from what it saved, never from a new owner read. A key whose
+ * admission retention purged is refused here, as its admission refuses it, before any owner read.
+ */
 const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRoute')(function* qualifyRetainedSyncRoute(
   transaction: ScopedTransactionExecutor,
   row: typeof symmyJobRoutes.$inferSelect,
   digest: string,
 ): Effect.fn.Return<Option.Option<ConfiguredRouteContext>, SymmyJobStoreError> {
-  if (row.fixturePlan !== null || !isSyncAdmissionRoute(row.routeKey) || row.routeCode !== null) {
+  if (
+    (row.fixturePlan !== null && row.routeKey !== 'customerGroupsBatch') ||
+    !isSyncAdmissionRoute(row.routeKey) ||
+    row.routeCode !== null
+  ) {
     return Option.none();
   }
   const [saved, duplicate] = yield* transaction
-    .select({ executionPlan: symmySyncAdmissions.executionPlan })
+    .select({
+      executionPlan: symmySyncAdmissions.executionPlan,
+      retentionReceipt: symmySyncAdmissions.retentionReceipt,
+    })
     .from(symmySyncAdmissions)
-    .where(and(syncAdmissionKey(row, row.routeKey, digest), isNull(symmySyncAdmissions.retentionReceipt)))
+    .where(syncAdmissionKey(row, row.routeKey, digest))
     .limit(2)
     .pipe(Effect.mapError(unavailable));
   if (saved === undefined || duplicate !== undefined) {
     return Option.none();
   }
+  if (saved.retentionReceipt !== null) {
+    return yield* routeDenied();
+  }
   const original = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(saved.executionPlan).pipe(
     Effect.mapError(unavailable),
   );
-  return Option.some(yield* retainedRouteContext(row, original, digest));
+  return Option.some(yield* retainedRouteContext(row, original, digest, yield* decodeRouteTemplate(row)));
 });
 const qualifyRetainedJobRoute = Effect.fn('SymmyJobStore.qualifyRetainedJobRoute')(function* qualifyRetainedJobRoute(
   transaction: ScopedTransactionExecutor,
@@ -1038,42 +1065,60 @@ const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')
   return Option.some(result);
 });
 
+/** The plan a synchronous admission pins: the one of its public customer groups or of its stock rows. */
+const syncPlanSource = Effect.fn('SymmyJobStore.syncPlanSource')(function* syncPlanSource(
+  route: typeof symmyJobRoutes.$inferSelect,
+  input: AdmitSymmySyncPayload,
+  template: SymmyFixtureExecutionPlan,
+) {
+  if (input.customerGroups !== undefined) {
+    const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
+    return yield* buildSymmyCustomerGroupPlan({
+      authority: { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision },
+      digest: hash,
+      facts: input.groupFacts,
+      idempotencyKey: input.idempotencyKey,
+      rows: input.customerGroups,
+      template,
+    });
+  }
+  if (input.stock === undefined) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
+  // A stock row is admitted for the enrolled positions only. One row outside them rejects the whole
+  // request before any plan is pinned, so no owner call is made for any row.
+  return yield* buildSymmyStockPlan({
+    digest: hash,
+    idempotencyKey: input.idempotencyKey,
+    receivedAt: yield* DateTime.now,
+    rows: input.stock,
+    template,
+  });
+});
+
 const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* prepareSyncPlan(
   route: typeof symmyJobRoutes.$inferSelect,
-  input: SymmyJobAdmissionRequest,
+  input: AdmitSymmySyncPayload,
   scope: OperationalScope,
   template: SymmyFixtureExecutionPlan | null,
 ) {
-  if (template === null || !permitsNewAdmission(route, scope, input.fixtureId ?? 'INTERNAL_C14')) {
+  if (template === null || !permitsNewAdmission(route, scope, 'INTERNAL_C14')) {
     return yield* routeDenied();
   }
   const isStockRoute = input.routeKey === 'inventoryStockBatch';
   if (isStockRoute !== (input.stock !== undefined) || (isStockRoute && template.inventoryBackendId === undefined)) {
     return yield* routeDenied();
   }
-  yield* requireLifecyclePolicy(
-    route,
-    input.plan !== undefined ||
-      input.stock !== undefined ||
-      template.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)),
-  );
-  if (input.plan !== undefined && !inputPlanAllowed(template, input.plan, scope)) {
+  if ((input.routeKey === 'customerGroupsBatch') !== (input.customerGroups !== undefined)) {
     return yield* routeDenied();
   }
-  // A stock row is admitted for the enrolled positions only. One row outside them rejects the whole
-  // request before any plan is pinned, so no owner call is made for any row.
-  const source =
-    input.stock === undefined
-      ? Option.some(input.plan ?? template)
-      : yield* buildSymmyStockPlan({
-          digest: hash,
-          idempotencyKey: input.idempotencyKey,
-          receivedAt: yield* DateTime.now,
-          rows: input.stock,
-          template,
-        });
+  // Public groups and stock rows are caller payload the admission retains.
+  yield* requireLifecyclePolicy(route, true);
+  const source = yield* syncPlanSource(route, input, template);
   if (Option.isNone(source)) {
-    return yield* new SymmyJobStoreError({ code: 'stock_assertion_denied' });
+    return yield* new SymmyJobStoreError({
+      code: input.stock === undefined ? 'route_denied' : 'stock_assertion_denied',
+    });
   }
   const plan = configuredPlan(source.value, template);
   if (plan.items.some(({ effects }) => effects.some(({ intent }) => !syncIntentAllowed(input.routeKey, intent)))) {
@@ -1128,7 +1173,7 @@ interface SymmyJobStore {
     beforeInsert?: BeforeJobInsert<R>,
   ) => Effect.Effect<SymmyJobAdmissionReceipt, SymmyJobStoreError, R>;
   readonly admitSync: (
-    input: SymmyJobAdmissionRequest,
+    input: AdmitSymmySyncPayload,
     admissionId: string,
   ) => Effect.Effect<SymmySyncAdmissionReceipt, SymmyJobStoreError>;
   readonly poll: (jobId: string) => Effect.Effect<Option.Option<SymmyJobPollResult>, SymmyJobStoreError>;
@@ -1311,13 +1356,12 @@ export const symmyJobStoreFactory = (
       );
     }),
     admitSync: Effect.fn('SymmyJobStore.admitSync')(function* admitSync(
-      input: SymmyJobAdmissionRequest,
+      input: AdmitSymmySyncPayload,
       admissionId: string,
     ) {
       if (!isSyncAdmissionRoute(input.routeKey)) {
         return yield* routeDenied();
       }
-      const fixtureId = input.fixtureId ?? 'INTERNAL_C14';
       const rows = yield* transaction
         .select()
         .from(symmyJobRoutes)
@@ -1341,7 +1385,7 @@ export const symmyJobStoreFactory = (
       }
       yield* lockRoute(transaction, route);
       const [template, callerIntent] = yield* Effect.all(
-        [decodeRouteTemplate(route), encodeCallerIntent(input, fixtureId)],
+        [decodeRouteTemplate(route), encodeCallerIntent(input, 'INTERNAL_C14')],
         { concurrency: 2 },
       );
       const [keyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
@@ -1546,6 +1590,19 @@ export const symmyJobStoreFactory = (
         )
         .limit(2)
         .pipe(Effect.mapError(unavailable));
+      // A group key that already has a saved admission resolves to it first, so its retry reads no owner.
+      const [groupRow, competingGroupRoute] = rows;
+      if (
+        input.routeKey === 'customerGroupsBatch' &&
+        input.replayIdempotencyKey !== undefined &&
+        groupRow !== undefined &&
+        competingGroupRoute === undefined
+      ) {
+        const saved = yield* qualifyRetainedSyncRoute(transaction, groupRow, yield* hash(input.replayIdempotencyKey));
+        if (Option.isSome(saved)) {
+          return saved.value;
+        }
+      }
       const checked = yield* Effect.forEach(rows, (row) => qualifyConfiguredRoute({ decoded, scope }, row), {
         concurrency: 1,
       });

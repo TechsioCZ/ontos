@@ -7,7 +7,7 @@
     "anti-slop/no-object-parameters": 3,
     "anti-slop/no-reflect-get": 1,
     "anti-slop/no-runtime-typeof": 6,
-    "anti-slop/no-unknown-parameters": 50,
+    "anti-slop/no-unknown-parameters": 49,
     "anti-slop/no-unknown-returns": 1,
     "anti-slop/no-unsafe-dictionary-type": 12,
     "anti-slop/require-safety-comment-for-type-assertion": 3,

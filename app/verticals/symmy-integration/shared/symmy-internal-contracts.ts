@@ -38,3 +38,9 @@ export {
   symmyCustomerRecordSeed,
 } from './domain/symmy-customer-batch.ts';
 export type { SymmyCustomerRow, SymmyCustomerRows } from './domain/symmy-customer-batch.ts';
+export {
+  SymmyCustomerGroupDefinitionFactsSchema,
+  SymmyCustomerGroupRowSchema,
+  SymmyCustomerGroupRowsSchema,
+} from './domain/symmy-customer-group-batch.ts';
+export type { SymmyCustomerGroupDefinitionFacts, SymmyCustomerGroupRows } from './domain/symmy-customer-group-batch.ts';

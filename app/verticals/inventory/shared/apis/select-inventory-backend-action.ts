@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug select-inventory-backend
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -10,10 +11,6 @@ import {
 } from '../actions/select-inventory-backend.ts';
 
 export { SelectInventoryBackendPayloadSchema } from '../actions/select-inventory-backend.ts';
-
-const SelectInventoryBackendActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
 
 export const SelectInventoryBackendActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SelectInventoryBackendActionInvalidProblem',
@@ -144,7 +141,6 @@ export const selectInventoryBackendActionGroupDefinition = HttpApiGroup.make('se
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/select-inventory-backend', {
       error: actionErrors,
-      headers: SelectInventoryBackendActionHeadersSchema,
       payload: Schema.toEncoded(SelectInventoryBackendPayloadSchema),
       success: SelectInventoryBackendResultSchema,
     }),

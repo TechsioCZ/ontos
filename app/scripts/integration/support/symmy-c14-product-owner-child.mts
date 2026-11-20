@@ -195,8 +195,9 @@ const serve = Effect.scoped(
       const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
       const path = new URL(request.url).pathname;
       const faultActive = Option.isSome(faultMarker) && (yield* fs.exists(faultMarker.value));
-      // This is a test transport outage, never an owner acceptance or a replacement authorization gate.
-      if (faultActive && faultPath.read !== null && path.endsWith(faultPath.read)) {
+      // This is a test transport outage, never an owner acceptance or a replacement authorization gate. It begins
+      // with the lost write: a read before it, such as the current definitions a new admission is fenced on, passes.
+      if (faultActive && faultPath.read !== null && path.endsWith(faultPath.read) && (yield* Ref.get(lost))) {
         return HttpServerResponse.empty({ status: 503 });
       }
       const response = yield* Effect.tryPromise({

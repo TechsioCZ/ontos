@@ -136,6 +136,77 @@ export const inventoryPublicActionContracts = [
     scopeSubject: 'External source assertion for one exact Stock Position',
   },
   {
+    authority: 'Inventory owns Stock Item identity; Catalog owns the exact Selection meaning and Unit it carries.',
+    boundaries: ['OWNER_CONTRACT_ONLY', 'EXACT_BINDING', 'EXACT_QUANTITY_AND_UNIT'],
+    businessIntent: 'Register the one Stock Item for an exact Catalog Selection meaning and its exact Unit.',
+    idempotency: {
+      identity: 'One owner-scoped registration mutation identity per exact Catalog Selection meaning.',
+      recovery:
+        'A meaning that already has a Current Stock Item, also one a concurrent registration just committed, is refused with exact_selection_meaning_already_registered and that stockItemId; no second Item is created.',
+      retry: 'Retry the same identity and payload; the committed registration is replayed.',
+    },
+    inputPrecision: 'Exact Catalog Selection meaning (kind and id) and exact Catalog Product Unit reference.',
+    key: 'commerce.inventory.register-stock-item',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'RegisterStockItemResultSchema',
+      vocabulary: ['REGISTERED', 'REJECTED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: [
+      'Bind the returned Stock Item to its exact Catalog Selection.',
+      'Correlate external item keys only to the returned Stock Item.',
+    ],
+    scopeSubject: 'Exact Catalog Selection meaning -> Stock Item',
+  },
+  {
+    authority: 'Inventory owns Stock Location identity; the operator declares its operational scope.',
+    boundaries: ['OWNER_CONTRACT_ONLY', 'DISTINCT_MUTATION_IDENTITY'],
+    businessIntent: 'Create one ACTIVE Stock Location for an explicitly declared physical site or logical aggregate.',
+    idempotency: {
+      identity: 'One owner-scoped creation mutation identity per intended Stock Location.',
+      recovery:
+        'A lost response is resolved through the original identity; a new identity creates another Location, also for identical site facts, by design.',
+      retry: 'Retry the same identity and payload; the committed creation is replayed.',
+    },
+    inputPrecision: 'Display name, operational scope with its physical-site evidence keys, optional address evidence.',
+    key: 'commerce.inventory.create-stock-location',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'CreateStockLocationResultSchema',
+      vocabulary: ['CREATED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: ['Correlate external location keys only to the returned Stock Location.'],
+    scopeSubject: 'Stock Location',
+  },
+  {
+    authority: 'Inventory owns Stock Position identity; ON_HAND authority is the selected Inventory Backend.',
+    boundaries: ['ONE_CONFIGURATION_ONE_BACKEND', 'OWNER_CONTRACT_ONLY', 'EXACT_QUANTITY_AND_UNIT'],
+    businessIntent:
+      'Establish the one Current Stock Position for an exact Stock Item, Location and Unit with UNKNOWN ON_HAND.',
+    idempotency: {
+      identity: 'One owner-scoped establishment mutation identity per Customer Configuration, Stock Item and Location.',
+      recovery:
+        'A scope that already has a Current Position, also one a concurrent establishment just committed, is refused with POSITION_SCOPE_ALREADY_CURRENT and that positionRef; no quantity is written.',
+      retry: 'Retry the same identity and payload; the committed establishment is replayed.',
+    },
+    inputPrecision:
+      'Exact Customer Configuration, CURRENT Stock Item, ACTIVE Stock Location, Unit and selected backend configuration.',
+    key: 'commerce.inventory.establish-stock-position',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'EstablishStockPositionResultSchema',
+      vocabulary: ['ESTABLISHED', 'REJECTED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: [
+      'ON_HAND stays UNKNOWN until the selected backend supplies owner evidence.',
+      'Import source assertions only for the returned Position under its selected backend.',
+    ],
+    scopeSubject: 'Exact Stock Item + Stock Location under one Customer Configuration',
+  },
+  {
     authority: 'Inventory resolves its durable source conflict; no provider write is exposed.',
     boundaries: ['OWNER_CONTRACT_ONLY', 'TYPED_SOURCE_COVERAGE', 'NO_AUTOMATIC_BACKEND_FALLBACK'],
     businessIntent: 'Resolve one exact Inventory source conflict using owner-qualified evidence.',

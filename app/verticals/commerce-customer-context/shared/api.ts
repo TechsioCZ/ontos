@@ -43,6 +43,7 @@ import { ClearDefaultDeliveryDestinationActionApi } from './apis/clear-default-d
 import { CommerceQuantityPolicyCurrentApi } from './apis/commerce-quantity-policy-current.ts';
 import { CommerceQuantityResolutionApi } from './apis/commerce-quantity-resolution.ts';
 import { CompletePurchaseProposalBasisActionApi } from './apis/complete-purchase-proposal-basis-action.ts';
+import { ConfigureCustomerSourceRouteActionApi } from './apis/configure-customer-source-route-action.ts';
 import { ConsumeOrderPurchaseApprovalActionApi } from './apis/consume-order-purchase-approval-action.ts';
 import { ConsumePurchaseApprovalActionApi } from './apis/consume-purchase-approval-action.ts';
 import { CounterpartyAccessInvitationReadApi } from './apis/counterparty-access-invitation-read.ts';
@@ -79,6 +80,7 @@ import { CustomerProfileSourcePageApi } from './apis/customer-profile-source-pag
 import { CustomerProfileSourcePartiesApi } from './apis/customer-profile-source-parties.ts';
 import { CustomerProfileTradingGateApi } from './apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './apis/customer-record-visibility.ts';
+import { CustomerSourceRouteApi } from './apis/customer-source-route.ts';
 import { DecidePurchaseApprovalRequestActionApi } from './apis/decide-purchase-approval-request-action.ts';
 import { DeliveryDestinationResolutionApi } from './apis/delivery-destination-resolution.ts';
 import { EffectiveCustomerGroupMembershipsApi } from './apis/effective-customer-group-memberships.ts';
@@ -388,6 +390,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof CommerceQuantityPolicyCurrentApi
   | typeof CommerceQuantityResolutionApi
   | typeof CompletePurchaseProposalBasisActionApi
+  | typeof ConfigureCustomerSourceRouteActionApi
   | typeof ConsumeOrderPurchaseApprovalActionApi
   | typeof ConsumePurchaseApprovalActionApi
   | typeof CounterpartyAccessInvitationReadApi
@@ -422,6 +425,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof CustomerProfileSourcePartiesApi
   | typeof CustomerProfileTradingGateApi
   | typeof CustomerRecordVisibilityApi
+  | typeof CustomerSourceRouteApi
   | typeof DecidePurchaseApprovalRequestActionApi
   | typeof DeliveryDestinationResolutionApi
   | typeof EffectiveCustomerGroupMembershipsApi
@@ -551,6 +555,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(CommerceQuantityPolicyCurrentApi)
   .addHttpApi(CommerceQuantityResolutionApi)
   .addHttpApi(CompletePurchaseProposalBasisActionApi)
+  .addHttpApi(ConfigureCustomerSourceRouteActionApi)
   .addHttpApi(ConsumeOrderPurchaseApprovalActionApi)
   .addHttpApi(ConsumePurchaseApprovalActionApi)
   .addHttpApi(CounterpartyAccessInvitationReadApi)
@@ -587,6 +592,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(CustomerProfileSourcePartiesApi)
   .addHttpApi(CustomerProfileTradingGateApi)
   .addHttpApi(CustomerRecordVisibilityApi)
+  .addHttpApi(CustomerSourceRouteApi)
   .addHttpApi(DecidePurchaseApprovalRequestActionApi)
   .addHttpApi(DeliveryDestinationResolutionApi)
   .addHttpApi(EffectiveCustomerGroupMembershipsApi)

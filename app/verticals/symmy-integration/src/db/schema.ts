@@ -43,11 +43,22 @@ export const SYMMY_INTEGRATION_TABLES = [
   'job_retention_tombstones',
   'job_routes',
   'privacy_measure_executions',
+  'route_enrollment_records',
   'sync_admission_attempts',
   'sync_admissions',
 ] as const;
 
 export const symmyIntegrationSchema = pgSchema(SYMMY_INTEGRATION_SCHEMA_NAME);
+
+/**
+ * The change tokens of every route row (`advance_route_change_token`). It never cycles and only the migration's role
+ * may use it, so no token is handed out twice: not to two states of one route, nor to a route deleted and enrolled
+ * again. Its largest value is the largest the integer column holds.
+ */
+export const symmyRouteChangeTokens = symmyIntegrationSchema.sequence('job_route_change_tokens', {
+  maxValue: '2147483647',
+});
+
 // Assertion redemption happens before a Tenant scope can be trusted.
 export const gatewayAssertionRedemptions = symmyIntegrationSchema.table(
   'gateway_assertion_redemptions',
@@ -87,6 +98,13 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
   'job_routes',
   {
     active: boolean('active').notNull(),
+    /**
+     * Replaced with every change of the row by a token of `symmyRouteChangeTokens`, which never hands one out twice
+     * (`advance_route_change_token`): an operator replaces or deactivates the route at the token it read.
+     */
+    changeToken: integer('change_token')
+      .default(sql`nextval('symmy_integration.job_route_change_tokens'::regclass)`)
+      .notNull(),
     fixtureIds: text('fixture_ids').array().notNull(),
     fixturePlan: jsonb('fixture_plan').$type<SymmyFixtureExecutionPlan>(),
     legalEntityId: uuid('legal_entity_id'),
@@ -151,6 +169,52 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
       sql`char_length(${table.routeRevision}) between 1 and 80 and char_length(${table.mappingVersion}) between 1 and 80`,
     ),
     ...tenantRlsPolicies('symmy_job_routes_tenant', table.tenantId),
+  ],
+);
+
+/**
+ * Who enrolled, replaced or deactivated a route, and why: one append-only record per change, written by the operator
+ * command in the transaction of the change, with the revision and change token the route had before and after it.
+ * `stated_operator_ref` and `reason` are what the operator states, unauthenticated; `database_session_user` is the
+ * database login that wrote the change, which the record trigger stamps. The runtime role holds no privilege on it.
+ */
+export const symmyRouteEnrollmentRecords = symmyIntegrationSchema.table.withRLS(
+  'route_enrollment_records',
+  {
+    change: text('change', { enum: ['enroll', 'replace', 'deactivate'] }).notNull(),
+    changeToken: integer('change_token').notNull(),
+    databaseSessionUser: text('database_session_user')
+      .default(sql`session_user`)
+      .notNull(),
+    legalEntityId: uuid('legal_entity_id'),
+    previousChangeToken: integer('previous_change_token'),
+    previousRevision: text('previous_revision'),
+    reason: text('reason').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+    recordId: uuid('record_id').defaultRandom().primaryKey(),
+    routeId: uuid('route_id').notNull(),
+    routeKey: text('route_key', { enum: durableRoutes }).notNull(),
+    routeRevision: text('route_revision').notNull(),
+    statedOperatorRef: text('stated_operator_ref').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    index('symmy_route_enrollment_records_route_idx').on(table.tenantId, table.routeId, table.recordedAt),
+    check(
+      'symmy_route_enrollment_records_change_ck',
+      sql`${table.change} in ('enroll', 'replace', 'deactivate')
+        and (${table.change} = 'enroll') = (${table.previousRevision} is null)
+        and (${table.change} = 'enroll') = (${table.previousChangeToken} is null)
+        and (${table.previousChangeToken} is null or ${table.changeToken} <> ${table.previousChangeToken})
+        and ${table.changeToken} >= 1
+        and (${table.change} <> 'deactivate' or ${table.previousRevision} = ${table.routeRevision})`,
+    ),
+    check(
+      'symmy_route_enrollment_records_text_ck',
+      sql`char_length(${table.statedOperatorRef}) between 1 and 200 and char_length(${table.reason}) between 1 and 500
+        and char_length(${table.routeRevision}) between 1 and 80
+        and (${table.previousRevision} is null or char_length(${table.previousRevision}) between 1 and 80)`,
+    ),
   ],
 );
 
@@ -322,6 +386,7 @@ export const symmyIntegrationRelations = defineRelations({
   symmyJobPrivacyExecutions,
   symmyJobRetentionTombstones,
   symmyJobRoutes,
+  symmyRouteEnrollmentRecords,
   symmySyncAdmissionAttempts,
   symmySyncAdmissions,
 });

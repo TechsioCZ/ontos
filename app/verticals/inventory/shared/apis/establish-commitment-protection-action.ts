@@ -3,6 +3,7 @@
 // @ontos-action-http-slug establish-commitment-protection
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/establish-commitment-protection.ts';
 
 export { EstablishCommitmentProtectionPayloadSchema } from '../actions/establish-commitment-protection.ts';
-const EstablishCommitmentProtectionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const EstablishCommitmentProtectionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EstablishCommitmentProtectionActionInvalidProblem',
@@ -152,7 +151,6 @@ export const establishCommitmentProtectionActionGroupDefinition = HttpApiGroup.m
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/establish-commitment-protection', {
       error: actionErrors,
-      headers: EstablishCommitmentProtectionActionHeadersSchema,
       payload: Schema.toEncoded(EstablishCommitmentProtectionPayloadSchema),
       success: [ActionProposalAcceptedSchema, EstablishCommitmentProtectionResultSchema],
     }),

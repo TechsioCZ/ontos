@@ -207,6 +207,50 @@ export const readSymmyRouteScope = Effect.fn('SymmyRouteScope.read')(function* r
   );
 });
 
+type InstalledContract = ShellInstalledCatalog['contracts'][number];
+/**
+ * The one owner read an admission route makes before it admits: the customer groups route reads Commerce's
+ * definition of each group code it names, which fences the plan. No other admission route reaches an owner read.
+ */
+const admissionDefinitionRead = {
+  entrypointKey: 'commerce.customer-context.api.customer-group-definition-source',
+  moduleId: 'commerce.customer-context',
+  routeKey: 'customerGroupsBatch',
+  schemaVersion: '1',
+} as const;
+/**
+ * The owner reads of the destination that an assertion for this route proof may name. A read proof names every
+ * enrolled, published read. An admission proof names at most the one definition read, once however many enrollment
+ * items name it, only for a route enrolled for a company, since an assertion without one carries no route scope, and
+ * only where the destination publishes it as a current read.
+ */
+const ownerReadOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
+  if (facts.sourcePurpose === 'admit') {
+    const { entrypointKey, moduleId, routeKey, schemaVersion } = admissionDefinitionRead;
+    return facts.routeKey === routeKey &&
+      route.legalEntityId !== undefined &&
+      destination.manifest.module.id === moduleId &&
+      route.allowedOwnerOperations.some(
+        (operation) =>
+          operation.moduleId === moduleId &&
+          operation.entrypointKey === entrypointKey &&
+          operation.schemaVersion === schemaVersion,
+      ) &&
+      gatewayPublishedOperationAccess(destination, entrypointKey, schemaVersion) === 'read'
+      ? [{ entrypointKey, schemaVersion }]
+      : [];
+  }
+  return route.allowedOwnerOperations.flatMap((operation) => {
+    if (operation.moduleId !== destination.manifest.module.id) {
+      return [];
+    }
+    const access = gatewayPublishedOperationAccess(destination, operation.entrypointKey, operation.schemaVersion);
+    return access === 'read' || access === 'historical_read'
+      ? [{ entrypointKey: operation.entrypointKey, schemaVersion: operation.schemaVersion }]
+      : [];
+  });
+};
+
 export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projectPrincipal')(function* project(
   proof: SymmyRouteScopeProof,
   input: { readonly audience: string; readonly legalEntityId?: string; readonly principal: TrustedPrincipalContext },
@@ -228,25 +272,13 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   }
   if (input.audience !== symmyAudience) {
     const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
-    if (
-      facts.sourcePurpose !== 'read' ||
-      destination === undefined ||
-      !route.allowedOwnerOperations.some(
-        (operation) =>
-          operation.moduleId === destination.manifest.module.id &&
-          ['read', 'historical_read'].some(
-            (access) =>
-              gatewayPublishedOperationAccess(destination, operation.entrypointKey, operation.schemaVersion) === access,
-          ),
-      )
-    ) {
+    if (destination === undefined || ownerReadOperations(destination, route, facts).length === 0) {
       return yield* delegationForbidden('symmy_route_not_admitted')();
     }
   }
   return route.legalEntityId === undefined ? principal : { ...principal, legalEntityId: route.legalEntityId };
 });
 
-type InstalledContract = ShellInstalledCatalog['contracts'][number];
 const symmyAdmissionActions: ReadonlySet<string> = new Set([
   'integration.symmy.admit-symmy-job',
   'integration.symmy.admit-symmy-sync',
@@ -283,15 +315,7 @@ const routeScopeOperations = (destination: InstalledContract, route: Route, fact
         : [],
     );
   }
-  return route.allowedOwnerOperations.flatMap((operation) => {
-    if (operation.moduleId !== destination.manifest.module.id) {
-      return [];
-    }
-    const access = gatewayPublishedOperationAccess(destination, operation.entrypointKey, operation.schemaVersion);
-    return access === 'read' || access === 'historical_read'
-      ? [{ entrypointKey: operation.entrypointKey, schemaVersion: operation.schemaVersion }]
-      : [];
-  });
+  return ownerReadOperations(destination, route, facts);
 };
 
 /**

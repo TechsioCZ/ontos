@@ -117,6 +117,9 @@ export type { SubjectInspectionCatalog, SubjectInspectionPorts } from './inspect
 export { SubjectAccessInspectionLive, makeSubjectAccessInspection } from './inspection.ts';
 
 export { readScopedSystemWorkloadEnrollment } from '../workloads/system-enrollment.ts';
+export { readWorkerWorkloadPrincipalEligibility } from '../../outbox/workload-principal-eligibility.ts';
+export { readActiveWorkloadBindingHolders } from '../workloads/binding-holders.ts';
+export type { WorkloadBindingHolder } from '../workloads/binding-holders.ts';
 
 export { computeActionRequestHash, computeCanonicalValueHash } from '../../actions/repository.ts';
 export { readScopedOriginalActionInvocation } from '../workloads/original-action-invocation.ts';

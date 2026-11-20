@@ -1,11 +1,10 @@
-import { findPostgresFailure } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { StockItemRejected, StockItemSchema } from '../../shared/domain/stock-item.ts';
 import type { ExactCatalogSelectionMeaningId, StockItem, StockItemInstant } from '../../shared/domain/stock-item.ts';
-import { StockItemPersistenceUnavailable } from './stock-item-persistence-error.ts';
+import { StockItemPersistenceUnavailable } from '../../shared/domain/stock-item-persistence-unavailable.ts';
 import { inventoryStockItems } from './stock-item-table.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
@@ -40,23 +39,6 @@ const unavailable = (cause?: unknown): StockItemPersistenceUnavailable => {
   return failure;
 };
 
-const uniqueViolationSqlState = ['23', '505'].join('');
-
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- The SQL driver cause is opaque until Core's approved PostgreSQL decoder parses it.
-export const mapStockItemWriteError = (error: unknown): StockItemRepositoryError =>
-  Option.isSome(
-    findPostgresFailure(
-      error,
-      ({ code, constraint }) =>
-        code === uniqueViolationSqlState && constraint === 'inventory_stock_items_exact_meaning_uk',
-    ),
-  )
-    ? new StockItemRejected({
-        code: 'stock_item_rejected',
-        reason: 'exact_selection_meaning_already_registered',
-      })
-    : unavailable(error);
-
 const decodeStockItem = Schema.decodeUnknownEffect(StockItemSchema);
 const instantAsDate = (instant: StockItemInstant): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 
@@ -84,23 +66,97 @@ const toDomain = (row: typeof inventoryStockItems.$inferSelect) =>
     },
   }).pipe(Effect.mapError(unavailable));
 
+const findCurrentByMeaning = (
+  transaction: ScopedTransaction,
+  tenantId: string,
+  exactSelectionMeaningId: ExactCatalogSelectionMeaningId,
+) =>
+  transaction
+    .select()
+    .from(inventoryStockItems)
+    .where(
+      and(
+        eq(inventoryStockItems.tenantId, tenantId),
+        eq(inventoryStockItems.exactSelectionMeaningId, exactSelectionMeaningId),
+        eq(inventoryStockItems.lifecycleState, 'CURRENT'),
+      ),
+    )
+    .limit(1)
+    .pipe(
+      Effect.mapError(unavailable),
+      Effect.flatMap(([row]) => (row === undefined ? Effect.succeedNone : toDomain(row).pipe(Effect.asSome))),
+    );
+
+/** Insert attempts while a concurrent registration of the meaning keeps committing and retiring first. */
+const MAX_REGISTRATION_INSERT_ATTEMPTS = 3;
+
+const insertUnlessCurrent = (transaction: ScopedTransaction, item: StockItem) =>
+  transaction
+    .insert(inventoryStockItems)
+    .values({
+      createdAt: instantAsDate(item.createdAt),
+      exactSelectionKind: item.exactSelectionMeaning.kind,
+      exactSelectionMeaningId: item.exactSelectionMeaning.id,
+      lifecycleState: item.lifecycle,
+      retiredAt: item.retiredAt === null ? null : instantAsDate(item.retiredAt),
+      revision: item.revision,
+      stockItemId: item.stockItemRef.resourceId,
+      stockUnitModuleId: item.unitRef.moduleId,
+      stockUnitResourceId: item.unitRef.resourceId,
+      stockUnitResourceType: item.unitRef.resourceType,
+      stockUnitTenantId: item.unitRef.tenantId,
+      tenantId: item.stockItemRef.tenantId,
+    })
+    .onConflictDoNothing({
+      target: [inventoryStockItems.tenantId, inventoryStockItems.exactSelectionMeaningId],
+      where: sql`${sql.identifier(inventoryStockItems.lifecycleState.name)} = 'CURRENT'`,
+    })
+    .returning()
+    .pipe(Effect.mapError(unavailable));
+
+/**
+ * Inserts `item` unless the meaning already has a Current Item, which it then refuses naming. The conflict
+ * holds no lock on that Item, so a retirement can commit before it is read: with no Current Item left, the
+ * insert runs again in the same transaction, at most `MAX_REGISTRATION_INSERT_ATTEMPTS` times in all.
+ */
+const insertCurrent = (
+  transaction: ScopedTransaction,
+  item: StockItem,
+  remainingAttempts: number,
+): Effect.Effect<StockItem, StockItemRepositoryError> =>
+  insertUnlessCurrent(transaction, item).pipe(
+    Effect.flatMap(([row]) =>
+      row === undefined
+        ? findCurrentByMeaning(transaction, item.stockItemRef.tenantId, item.exactSelectionMeaning.id).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () =>
+                  remainingAttempts > 1
+                    ? insertCurrent(transaction, item, remainingAttempts - 1)
+                    : Effect.fail(
+                        unavailable(
+                          'Stock Item registration kept losing to registrations retired before they were read',
+                        ),
+                      ),
+                onSome: (existing) =>
+                  Effect.fail(
+                    new StockItemRejected({
+                      code: 'stock_item_rejected',
+                      exactSelectionMeaningId: existing.exactSelectionMeaning.id,
+                      reason: 'exact_selection_meaning_already_registered',
+                      stockItemId: existing.stockItemRef.resourceId,
+                    }),
+                  ),
+              }),
+            ),
+          )
+        : toDomain(row),
+    ),
+  );
+
 export const makeDrizzleStockItemRepository = (transaction: ScopedTransaction): StockItemRepositoryService => ({
   findByExactSelectionMeaning: (tenantId, exactSelectionMeaningId) =>
-    transaction
-      .select()
-      .from(inventoryStockItems)
-      .where(
-        and(
-          eq(inventoryStockItems.tenantId, tenantId),
-          eq(inventoryStockItems.exactSelectionMeaningId, exactSelectionMeaningId),
-          eq(inventoryStockItems.lifecycleState, 'CURRENT'),
-        ),
-      )
-      .limit(1)
-      .pipe(
-        Effect.mapError(unavailable),
-        Effect.flatMap(([row]) => (row === undefined ? Effect.succeedNone : toDomain(row).pipe(Effect.asSome))),
-      ),
+    findCurrentByMeaning(transaction, tenantId, exactSelectionMeaningId),
   findById: (tenantId, stockItemId) =>
     transaction
       .select()
@@ -111,28 +167,7 @@ export const makeDrizzleStockItemRepository = (transaction: ScopedTransaction): 
         Effect.mapError(unavailable),
         Effect.flatMap(([row]) => (row === undefined ? Effect.succeedNone : toDomain(row).pipe(Effect.asSome))),
       ),
-  insert: (item) =>
-    transaction
-      .insert(inventoryStockItems)
-      .values({
-        createdAt: instantAsDate(item.createdAt),
-        exactSelectionKind: item.exactSelectionMeaning.kind,
-        exactSelectionMeaningId: item.exactSelectionMeaning.id,
-        lifecycleState: item.lifecycle,
-        retiredAt: item.retiredAt === null ? null : instantAsDate(item.retiredAt),
-        revision: item.revision,
-        stockItemId: item.stockItemRef.resourceId,
-        stockUnitModuleId: item.unitRef.moduleId,
-        stockUnitResourceId: item.unitRef.resourceId,
-        stockUnitResourceType: item.unitRef.resourceType,
-        stockUnitTenantId: item.unitRef.tenantId,
-        tenantId: item.stockItemRef.tenantId,
-      })
-      .returning()
-      .pipe(
-        Effect.mapError(mapStockItemWriteError),
-        Effect.flatMap(([row]) => (row === undefined ? Effect.fail(unavailable()) : toDomain(row))),
-      ),
+  insert: (item) => insertCurrent(transaction, item, MAX_REGISTRATION_INSERT_ATTEMPTS),
   retire: (item, retiredAt) =>
     transaction
       .update(inventoryStockItems)
@@ -147,7 +182,7 @@ export const makeDrizzleStockItemRepository = (transaction: ScopedTransaction): 
       )
       .returning()
       .pipe(
-        Effect.mapError(mapStockItemWriteError),
+        Effect.mapError(unavailable),
         Effect.flatMap(([row]): Effect.Effect<StockItem, StockItemRepositoryError> =>
           row === undefined
             ? Effect.fail(
