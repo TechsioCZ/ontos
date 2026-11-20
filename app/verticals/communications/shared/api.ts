@@ -16,6 +16,8 @@ import { MessageHistoryDetailApi } from './apis/message-history-detail.ts';
 import { MessageHistoryListApi } from './apis/message-history-list.ts';
 import { PrepareTemplateRevisionActionApi } from './apis/prepare-template-revision-action.ts';
 import { PrivacyOwnerCoverageApi } from './apis/privacy-owner-coverage.ts';
+import { PrivacyOwnerExecutionOutcomeApi } from './apis/privacy-owner-execution-outcome.ts';
+import { RecordOwnerExecutionEvidenceActionApi } from './apis/record-owner-execution-evidence-action.ts';
 import { SetLanguagePolicyActionApi } from './apis/set-language-policy-action.ts';
 import { SubmitCommunicationRequestActionApi } from './apis/submit-communication-request-action.ts';
 // </generated-governed-http-api-imports>
@@ -51,6 +53,8 @@ export const communicationsApi = HttpApi.make('CommunicationsApi')
   .addHttpApi(MessageHistoryListApi)
   .addHttpApi(PrepareTemplateRevisionActionApi)
   .addHttpApi(PrivacyOwnerCoverageApi)
+  .addHttpApi(PrivacyOwnerExecutionOutcomeApi)
+  .addHttpApi(RecordOwnerExecutionEvidenceActionApi)
   .addHttpApi(SetLanguagePolicyActionApi)
   .addHttpApi(SubmitCommunicationRequestActionApi)
   // </generated-governed-http-api-additions>

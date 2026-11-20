@@ -51,6 +51,8 @@ import { messageHistoryDetailReadApiLive } from './message-history-detail-read-s
 import { messageHistoryListReadApiLive } from './message-history-list-read-server.ts';
 import { prepareTemplateRevisionActionApiLive } from './prepare-template-revision-action-server.ts';
 import { privacyOwnerCoverageReadApiLive } from './privacy-owner-coverage-read-server.ts';
+import { privacyOwnerExecutionOutcomeReadApiLive } from './privacy-owner-execution-outcome-read-server.ts';
+import { recordOwnerExecutionEvidenceActionApiLive } from './record-owner-execution-evidence-action-server.ts';
 import { setLanguagePolicyActionApiLive } from './set-language-policy-action-server.ts';
 import { submitCommunicationRequestActionApiLive } from './submit-communication-request-action-server.ts';
 // </generated-governed-http-handler-imports>
@@ -170,14 +172,13 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   prepareTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   privacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  privacyOwnerExecutionOutcomeReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  recordOwnerExecutionEvidenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   setLanguagePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   submitCommunicationRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(
-    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
-  ),
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

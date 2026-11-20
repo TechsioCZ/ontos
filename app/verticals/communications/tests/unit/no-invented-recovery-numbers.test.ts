@@ -29,6 +29,10 @@ const relativeOf = (file: string) => path.relative(root, file);
 
 /** The only file that configures a retry: the Core Outbox worker definition requires its own technical redrive policy. */
 const CORE_REDRIVE_WORKER = 'src/workers/prepare-message-handoff.worker.ts';
+// The Privacy handoff worker is the one other Core worker definition: it governs redelivery of the same Privacy message to the
+// same idempotent record step (the generated defaults, no number of its own) and is never read by any recovery code.
+const CORE_HANDOFF_RECORD_WORKER = 'src/workers/receive-privacy-measure.worker.ts';
+const CORE_WORKER_DEFINITIONS = [CORE_REDRIVE_WORKER, CORE_HANDOFF_RECORD_WORKER];
 
 const NUMERIC_LIMIT_AFTER =
   /\b(?:attempts?|retr(?:y|ies)|tries|submitted|attemptNumber|maxAttempts|limit)\w*(?:\.length)?\s*(?:>=|<=|===|!==|==|>|<)\s*\d/iu;
@@ -86,7 +90,7 @@ describe('no invented recovery numbers (#1403)', () => {
     ],
   ])('hard-codes %s nowhere in the sources', (_name, pattern) => {
     const offenders = scanned
-      .filter((file) => relativeOf(file) !== CORE_REDRIVE_WORKER)
+      .filter((file) => !CORE_WORKER_DEFINITIONS.includes(relativeOf(file)))
       .filter((file) => pattern.test(codeOf(file)))
       .map(relativeOf);
     expect(offenders).toEqual([]);
@@ -96,12 +100,12 @@ describe('no invented recovery numbers (#1403)', () => {
     expect(codeOf(path.join(root, CORE_REDRIVE_WORKER))).toMatch(/retryPolicy:\s*\{/u);
     // it governs redelivery of the same message to the same idempotent step; it is not read by any recovery code
     const readers = scanned.filter((file) => /\bretryPolicy\b/u.test(codeOf(file))).map(relativeOf);
-    expect(readers).toEqual([CORE_REDRIVE_WORKER]);
+    expect(readers).toEqual(CORE_WORKER_DEFINITIONS);
   });
 
-  it('introduces no queue, worker or schedule of its own for recovery: one Outbox worker, the existing pre-handoff step', () => {
+  it('introduces no queue, worker or schedule of its own for recovery: the existing pre-handoff step and the Privacy handoff record step', () => {
     const workers = scanned.filter((file) => /defineOutboxWorker\(/u.test(codeOf(file))).map(relativeOf);
-    expect(workers).toEqual([CORE_REDRIVE_WORKER]);
+    expect(workers).toEqual(CORE_WORKER_DEFINITIONS);
   });
 
   it('lets an owner limit exist only as approved catalog data, and the recovery code only compares against it', () => {

@@ -14176,6 +14176,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "communications.core.owner-execution-evidence.record",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "owner-execution-evidence",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.record-owner-execution-evidence",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "communications.core.privacy-owner-coverage.read",
             "kind": "read",
             "modes": [
@@ -14197,6 +14225,40 @@
               "kind": "protected"
             },
             "entrypointKey": "communications.core.api.privacy-owner-coverage",
+            "moduleKey": "communications.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "privacy"
+            ],
+            "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.privacy-owner-execution-outcome.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "privacy-owner-execution-outcome",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.privacy-owner-execution-outcome",
             "moduleKey": "communications.core",
             "role": "api",
             "scope": "tenant"
@@ -19310,6 +19372,7 @@
           "actor": {
             "callers": [
               "commerce-customer-context",
+              "communications",
               "party-registry",
               "symmy-integration"
             ],

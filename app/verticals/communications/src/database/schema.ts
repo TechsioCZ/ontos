@@ -833,6 +833,100 @@ export const intentResendLinks = communicationsSchema.table.withRLS(
   ],
 );
 
+/**
+ * The owner's record that Privacy handed over ONE measure (#1410): one row per Privacy idempotency key, written ONCE by
+ * `worker_record_privacy_measure_handoff` and never changed. It holds only Privacy's opaque identities (measure, task,
+ * source decision and its revision, the idempotency key), the handoff fingerprint and the digest of the exact owner scope
+ * the handoff carried, the Communications record links the measure targets, the Action
+ * invocation that delivered it (a correlation id) and a system write time. No subject, lookup, address, actor or free text
+ * is stored: the exact scope is held only as a digest.
+ */
+export const privacyMeasureHandoffs = communicationsSchema.table.withRLS(
+  'privacy_measure_handoffs',
+  {
+    handoffFingerprint: text('handoff_fingerprint').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    measureId: text('measure_id').notNull(),
+    originatorInvocationId: uuid('originator_invocation_id').notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+    scopeDigest: text('scope_digest').notNull(),
+    sourceDecisionRef: text('source_decision_ref').notNull(),
+    sourceDecisionRevision: integer('source_decision_revision').notNull(),
+    targetContentRefs: jsonb('target_content_refs').$type<string[]>().notNull(),
+    taskId: text('task_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.idempotencyKey], name: 'communications_privacy_handoffs_pk' }),
+    check(
+      'communications_privacy_handoffs_identity_ck',
+      sql`btrim(${table.idempotencyKey}) <> '' and btrim(${table.measureId}) <> '' and btrim(${table.taskId}) <> '' and btrim(${table.sourceDecisionRef}) <> ''`,
+    ),
+    check('communications_privacy_handoffs_revision_ck', sql`${table.sourceDecisionRevision} >= 1`),
+    check('communications_privacy_handoffs_fingerprint_ck', sql`${table.handoffFingerprint} ~ '^[0-9a-f]{64}$'`),
+    check('communications_privacy_handoffs_scope_ck', sql`${table.scopeDigest} ~ '^[0-9a-f]{64}$'`),
+    // the records the measure targets: a non-empty array of reference strings, never an object, a number or free text
+    check(
+      'communications_privacy_handoffs_targets_ck',
+      sql`jsonb_typeof(${table.targetContentRefs}) = 'array' and jsonb_array_length(${table.targetContentRefs}) > 0 and not jsonb_path_exists(${table.targetContentRefs}, '$[*] ? (@.type() != "string" || @ == "")')`,
+    ),
+    ...tenantRlsPolicies('privacy_measure_handoffs', table.tenantId),
+  ],
+);
+
+/**
+ * A human-confirmed evidence record about the execution of a Privacy measure (#1410). This table only RECORDS evidence;
+ * nothing here executes anything. Each row belongs to the handoff of its idempotency key, carries the phase and one closed
+ * result per target content ref, the digest of the scope the evidence is about and the Action invocation of the authorized
+ * human who confirmed it. The human's identity stays in Core's audit and is never copied here. Written only by
+ * `record_privacy_execution_evidence` and never changed.
+ */
+export const privacyExecutionEvidence = communicationsSchema.table.withRLS(
+  'privacy_execution_evidence',
+  {
+    confirmationInvocationId: uuid('confirmation_invocation_id').notNull(),
+    evidenceRef: text('evidence_ref').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    phase: text('phase').$type<'COMPLETED' | 'IN_PROGRESS' | 'RECEIVED'>().notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    results: jsonb('results')
+      .$type<
+        {
+          contentRef: string;
+          result:
+            | 'ANONYMIZED'
+            | 'FAILED_AFTER_POSSIBLE_MUTATION'
+            | 'FAILED_BEFORE_ANY_MUTATION'
+            | 'NOT_EXECUTED'
+            | 'RECTIFIED'
+            | 'REMOVED'
+            | 'RESTRICTED';
+        }[]
+      >()
+      .notNull(),
+    scopeDigest: text('scope_digest').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.evidenceRef], name: 'communications_privacy_evidence_pk' }),
+    foreignKey({
+      columns: [table.tenantId, table.idempotencyKey],
+      foreignColumns: [privacyMeasureHandoffs.tenantId, privacyMeasureHandoffs.idempotencyKey],
+      name: 'communications_privacy_evidence_handoff_fk',
+    }).onDelete('restrict'),
+    index('communications_privacy_evidence_handoff_idx').on(table.tenantId, table.idempotencyKey),
+    check('communications_privacy_evidence_identity_ck', sql`btrim(${table.evidenceRef}) <> ''`),
+    check('communications_privacy_evidence_phase_ck', sql`${table.phase} in ('RECEIVED', 'IN_PROGRESS', 'COMPLETED')`),
+    check('communications_privacy_evidence_scope_ck', sql`${table.scopeDigest} ~ '^[0-9a-f]{64}$'`),
+    // a result is one closed value per content ref and nothing else; the phase RECEIVED has no result yet
+    check(
+      'communications_privacy_evidence_results_ck',
+      sql`jsonb_typeof(${table.results}) = 'array' and (${table.phase} <> 'RECEIVED' or jsonb_array_length(${table.results}) = 0) and not jsonb_path_exists(${table.results}, '$[*] ? (@.type() != "object" || !exists(@.contentRef ? (@.type() == "string" && @ != "")) || !exists(@.result ? (@ == "ANONYMIZED" || @ == "FAILED_AFTER_POSSIBLE_MUTATION" || @ == "FAILED_BEFORE_ANY_MUTATION" || @ == "NOT_EXECUTED" || @ == "RECTIFIED" || @ == "REMOVED" || @ == "RESTRICTED")) || exists(@.keyvalue() ? (@.key != "contentRef" && @.key != "result")))')`,
+    ),
+    ...tenantRlsPolicies('privacy_execution_evidence', table.tenantId),
+  ],
+);
+
 /** Every owner table, so the verifier and the schema contract test reach each one through its typed reference. */
 export const COMMUNICATIONS_TABLES = [
   gatewayAssertionRedemptions,
@@ -854,6 +948,8 @@ export const COMMUNICATIONS_TABLES = [
   intentDocumentPins,
   attemptRetryLinks,
   intentResendLinks,
+  privacyMeasureHandoffs,
+  privacyExecutionEvidence,
 ] as const;
 
 export const COMMUNICATIONS_TABLE_INVENTORY = [
@@ -876,6 +972,8 @@ export const COMMUNICATIONS_TABLE_INVENTORY = [
   'intent_document_pins',
   'attempt_retry_links',
   'intent_resend_links',
+  'privacy_measure_handoffs',
+  'privacy_execution_evidence',
 ] as const;
 
 /** Relational Queries v2 entry point for this owner. */
@@ -891,6 +989,8 @@ export const communicationsRelations = defineRelations({
   intentRecoveryEvaluations,
   intentResendLinks,
   messageIntents,
+  privacyExecutionEvidence,
+  privacyMeasureHandoffs,
   providerObservationConflictResolutions,
   providerObservationConflicts,
   providerObservations,

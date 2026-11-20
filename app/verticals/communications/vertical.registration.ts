@@ -13,6 +13,9 @@ import { messageHistoryListRead } from './src/api/message-history-list.read.ts';
 import { prepareMessageHandoffWorker } from './src/workers/prepare-message-handoff.worker.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 import { privacyOwnerCoverageRead } from './src/api/privacy-owner-coverage.read.ts';
+import { privacyOwnerExecutionOutcomeRead } from './src/api/privacy-owner-execution-outcome.read.ts';
+import { receivePrivacyMeasureWorker } from './src/workers/receive-privacy-measure.worker.ts';
+import { recordOwnerExecutionEvidenceAction } from './src/actions/record-owner-execution-evidence.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
 // </generated-module-registration-imports>
@@ -24,6 +27,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     deactivateTemplateRevisionAction,
     invalidateTemplateRevisionAction,
     prepareTemplateRevisionAction,
+    recordOwnerExecutionEvidenceAction,
     setLanguagePolicyAction,
     submitCommunicationRequestAction,
     // </generated-module-registration-actions>
@@ -35,6 +39,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
       'message-history-detail': () => import('./src/api/message-history-detail-client.ts'),
       'message-history-list': () => import('./src/api/message-history-list-client.ts'),
       'privacy-owner-coverage': () => import('./src/api/privacy-owner-coverage-client.ts'),
+      'privacy-owner-execution-outcome': () => import('./src/api/privacy-owner-execution-outcome-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -58,6 +63,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   outboxWorkers: [
     // <generated-module-registration-workers>
     prepareMessageHandoffWorker,
+    receivePrivacyMeasureWorker,
     // </generated-module-registration-workers>
   ],
   reads: [
@@ -66,6 +72,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     messageHistoryDetailRead,
     messageHistoryListRead,
     privacyOwnerCoverageRead,
+    privacyOwnerExecutionOutcomeRead,
     // </generated-module-registration-reads>
   ],
 });

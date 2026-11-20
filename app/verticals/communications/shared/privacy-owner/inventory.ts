@@ -354,6 +354,11 @@ export const inventoryCategory = (id: InventoryCategoryId): InventoryCategory =>
  */
 export const TABLES_WITHOUT_PERSONAL_DATA: Readonly<Record<string, string>> = Object.freeze({
   gateway_assertion_redemptions: 'REPLAY_IDENTITY_ONLY_NO_SUBJECT_OR_ACTOR',
+  // Privacy measure handoff and execution evidence (#1410): no subject, lookup, actor or content is stored. The exact owner scope the
+  // handoff carried is held only as a digest, the records the measure targets are links to owner records, and the Action
+  // invocation ids are correlation only (the human who confirmed stays in Core's audit).
+  privacy_execution_evidence: 'OPAQUE_PRIVACY_MEASURE_IDENTITY_RECORD_LINKS_AND_DIGESTS_ONLY',
+  privacy_measure_handoffs: 'OPAQUE_PRIVACY_MEASURE_IDENTITY_RECORD_LINKS_AND_DIGESTS_ONLY',
 });
 
 /**

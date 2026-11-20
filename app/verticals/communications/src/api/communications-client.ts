@@ -36,6 +36,11 @@ export {
   executeSubmitCommunicationRequestWithAuthorization,
 } from './submit-communication-request-action-client.ts';
 export type { SubmitCommunicationRequestActionClientOptions } from './submit-communication-request-action-client.ts';
+export {
+  executeRecordOwnerExecutionEvidence,
+  executeRecordOwnerExecutionEvidenceWithAuthorization,
+} from './record-owner-execution-evidence-action-client.ts';
+export type { RecordOwnerExecutionEvidenceActionClientOptions } from './record-owner-execution-evidence-action-client.ts';
 // </generated-action-http-client-exports>
 
 export class CommunicationsApiClient extends Context.Service<

@@ -303,18 +303,23 @@ describe('Communication Request intake over the public Action boundary (#1401, A
     expect(Object.keys(encoded)).not.toContain('recipientAddress');
   });
 
-  it('[AC-09 ADR-0013] the owner worker consumes ONLY its own pre-handoff topic: no source event is ever a request, no backfill code exists', () => {
+  it('[AC-09 ADR-0013] the owner consumes only its own pre-handoff topic and Privacy measure dispatch: no source event is ever a request, no backfill code exists', () => {
     const subscriptions = outboxWorkers.map(({ descriptor }) => [descriptor.producerModuleKey, descriptor.topic]);
-    expect(subscriptions).toEqual([['communications.core', 'communications.core.message-intent-prepared.v1']]);
-    // The consumer is Communications itself, for its own self-outbox only: it subscribes to no producer's event, so a
-    // source event can never be turned into a send, and `matched_at` of the first-match rule only ever concerns messages
-    // observed after this consumer exists. The activation order (worker registered before the first producer) is documented
-    // on the worker; Core's own runtime tests (`outbox:test`) prove that a later consumer receives no earlier message.
-    const [worker] = outboxWorkers;
+    expect(subscriptions).toEqual([
+      ['communications.core', 'communications.core.message-intent-prepared.v1'],
+      ['privacy.core', 'privacy.measure.dispatched'],
+    ]);
+    // The pre-handoff worker's consumer is Communications itself, for its own self-outbox only, and the one other worker
+    // consumes the Privacy measure dispatch to record the handoff of a measure: it subscribes to no business producer's
+    // event, so a source event can never be turned into a send, and `matched_at` of the first-match rule only ever concerns
+    // messages observed after a consumer exists. The activation order (worker registered before the first producer) is
+    // documented on the worker; Core's own runtime tests (`outbox:test`) prove that a later consumer receives no earlier message.
+    const [worker, privacyWorker] = outboxWorkers;
     expect(worker?.descriptor.consumerModuleKey).toBe('communications.core');
     expect(worker?.descriptor.consumerModuleKey).toBe(worker?.descriptor.producerModuleKey);
     expect(worker?.descriptor.workerKey).toBe('communications.core.prepare-message-handoff');
-    // No replay, redrive or backfill entry point exists in the owner: its worker list is exactly the one pre-handoff worker.
-    expect(outboxWorkers).toHaveLength(1);
+    expect(privacyWorker?.descriptor.workerKey).toBe('communications.core.receive-privacy-measure');
+    // No replay, redrive or backfill entry point exists in the owner: its worker list is exactly these two workers.
+    expect(outboxWorkers).toHaveLength(2);
   });
 });

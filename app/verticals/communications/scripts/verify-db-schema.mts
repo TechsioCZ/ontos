@@ -42,6 +42,8 @@ const routineWrittenTables = [
   'intent_recovery_evaluations',
   'intent_document_pins',
   'attempt_retry_links',
+  'privacy_measure_handoffs',
+  'privacy_execution_evidence',
 ];
 const closableTable = 'template_activations';
 // The only columns the runtime role may update: closing an open activation, once. Every other column is immutable.
@@ -52,6 +54,8 @@ const closedHistoryTrigger = 'communications_template_activations_closed_append_
 const scopedRoutines = [
   'ingest_provider_observation',
   'read_language_policy_snapshot',
+  'read_privacy_measure_handoff',
+  'record_privacy_execution_evidence',
   'worker_begin_attempt',
   'worker_begin_retry_attempt',
   'worker_close_unanswered_attempt',
@@ -60,6 +64,7 @@ const scopedRoutines = [
   'worker_pin_document',
   'worker_read_intent',
   'worker_read_template_snapshot',
+  'worker_record_privacy_measure_handoff',
   'worker_record_recovery_evaluation',
   'worker_record_stop',
   'worker_resolve_observation_conflict',
@@ -77,6 +82,8 @@ const intakeAppendOnlyTriggers = [
   'communications_conflict_resolutions_append_only',
   'communications_recovery_evaluations_append_only',
   'communications_document_pins_append_only',
+  'communications_privacy_evidence_append_only',
+  'communications_privacy_handoffs_append_only',
   'communications_resend_links_append_only',
   'communications_retry_links_append_only',
 ];
@@ -134,6 +141,7 @@ const verifyHandoffContract = Effect.fn('Communications.verifyHandoffContract')(
 /** Every constraint the history contract depends on, with the fragments its definition must contain (and the exact text of a unique key). */
 const OBSERVATIONS = 'provider_observations';
 const KIND_LITERALS = ["'ACCEPTANCE_PROVEN'", "'DELIVERY_FAILED'", "'DELIVERY_PROVEN'", "'NON_ACCEPTANCE_PROVEN'"];
+const HEX_DIGEST_PATTERN = '[0-9a-f]{64}';
 const ATTEMPT_FOREIGN_KEY = 'FOREIGN KEY (tenant_id, intent_id, attempt_id)';
 const historyConstraints: readonly {
   readonly contains?: readonly string[];
@@ -192,7 +200,7 @@ const historyConstraints: readonly {
     table: 'provider_observation_conflicts',
   },
   {
-    contains: ['[0-9a-f]{64}'],
+    contains: [HEX_DIGEST_PATTERN],
     name: 'communications_observation_conflicts_fingerprint_ck',
     table: 'provider_observation_conflicts',
   },
@@ -323,6 +331,68 @@ const historyConstraints: readonly {
     table: 'intent_document_pins',
   },
   { contains: ["'ATTACHMENT'", "'LINK'"], name: 'communications_document_pins_form_ck', table: 'intent_document_pins' },
+  {
+    // a handed-over measure is one per Privacy idempotency key, with closed digests and a non-empty list of target refs
+    exact: 'PRIMARY KEY (tenant_id, idempotency_key)',
+    name: 'communications_privacy_handoffs_pk',
+    table: 'privacy_measure_handoffs',
+  },
+  {
+    contains: ['source_decision_revision >= 1'],
+    name: 'communications_privacy_handoffs_revision_ck',
+    table: 'privacy_measure_handoffs',
+  },
+  {
+    contains: ['handoff_fingerprint', HEX_DIGEST_PATTERN],
+    name: 'communications_privacy_handoffs_fingerprint_ck',
+    table: 'privacy_measure_handoffs',
+  },
+  {
+    contains: ['scope_digest', HEX_DIGEST_PATTERN],
+    name: 'communications_privacy_handoffs_scope_ck',
+    table: 'privacy_measure_handoffs',
+  },
+  {
+    contains: ["'array'", 'jsonb_array_length(target_content_refs) > 0', 'jsonb_path_exists(target_content_refs'],
+    name: 'communications_privacy_handoffs_targets_ck',
+    table: 'privacy_measure_handoffs',
+  },
+  {
+    // evidence is one per evidence ref, belongs to the handoff of its idempotency key, and its phase and results are closed
+    exact: 'PRIMARY KEY (tenant_id, evidence_ref)',
+    name: 'communications_privacy_evidence_pk',
+    table: 'privacy_execution_evidence',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, idempotency_key)', 'REFERENCES communications.privacy_measure_handoffs'],
+    name: 'communications_privacy_evidence_handoff_fk',
+    table: 'privacy_execution_evidence',
+  },
+  {
+    contains: ["'RECEIVED'", "'IN_PROGRESS'", "'COMPLETED'"],
+    name: 'communications_privacy_evidence_phase_ck',
+    table: 'privacy_execution_evidence',
+  },
+  {
+    contains: ['scope_digest', HEX_DIGEST_PATTERN],
+    name: 'communications_privacy_evidence_scope_ck',
+    table: 'privacy_execution_evidence',
+  },
+  {
+    contains: [
+      "'RECEIVED'",
+      'jsonb_array_length(results) = 0',
+      '"ANONYMIZED"',
+      '"FAILED_AFTER_POSSIBLE_MUTATION"',
+      '"FAILED_BEFORE_ANY_MUTATION"',
+      '"NOT_EXECUTED"',
+      '"RECTIFIED"',
+      '"REMOVED"',
+      '"RESTRICTED"',
+    ],
+    name: 'communications_privacy_evidence_results_ck',
+    table: 'privacy_execution_evidence',
+  },
 ];
 
 /** The history routines and guards: the definer or invoker nature each one must have, and the pinned search path of all. */
@@ -331,7 +401,10 @@ const historyRoutines: readonly { readonly definer: boolean; readonly name: stri
   { definer: true, name: 'worker_begin_retry_attempt' },
   { definer: true, name: 'worker_close_unanswered_attempt' },
   { definer: true, name: 'worker_link_retry_attempt' },
+  { definer: true, name: 'read_privacy_measure_handoff' },
+  { definer: true, name: 'record_privacy_execution_evidence' },
   { definer: true, name: 'worker_pin_document' },
+  { definer: true, name: 'worker_record_privacy_measure_handoff' },
   { definer: true, name: 'worker_record_recovery_evaluation' },
   { definer: true, name: 'worker_resolve_observation_conflict' },
   // the guard runs as the caller, under the Tenant's own row-level security: it must never be a definer

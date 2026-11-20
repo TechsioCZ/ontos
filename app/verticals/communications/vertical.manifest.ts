@@ -16,6 +16,9 @@ import { messageHistoryListRead } from './src/api/message-history-list.read.ts';
 import { prepareTemplateRevisionAction } from './src/actions/prepare-template-revision.action.ts';
 import { PrivacyOwnerCoverageApi } from './shared/apis/privacy-owner-coverage.ts';
 import { privacyOwnerCoverageRead } from './src/api/privacy-owner-coverage.read.ts';
+import { PrivacyOwnerExecutionOutcomeApi } from './shared/apis/privacy-owner-execution-outcome.ts';
+import { privacyOwnerExecutionOutcomeRead } from './src/api/privacy-owner-execution-outcome.read.ts';
+import { recordOwnerExecutionEvidenceAction } from './src/actions/record-owner-execution-evidence.action.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
 // </generated-module-manifest-imports>
@@ -34,6 +37,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
+  originatorActions: ['privacy.core.dispatch-privacy-measure'],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
@@ -41,6 +45,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
       deactivateTemplateRevisionAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,
+      recordOwnerExecutionEvidenceAction,
       setLanguagePolicyAction,
       submitCommunicationRequestAction,
       // </generated-module-manifest-actions>
@@ -51,6 +56,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
       'message-history-detail': MessageHistoryDetailApi,
       'message-history-list': MessageHistoryListApi,
       'privacy-owner-coverage': PrivacyOwnerCoverageApi,
+      'privacy-owner-execution-outcome': PrivacyOwnerExecutionOutcomeApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -75,6 +81,11 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
         apiKey: 'privacy-owner-coverage',
         operationKey: 'privacyOwnerCoverage.execute',
         registration: privacyOwnerCoverageRead,
+      },
+      {
+        apiKey: 'privacy-owner-execution-outcome',
+        operationKey: 'privacyOwnerExecutionOutcome.execute',
+        registration: privacyOwnerExecutionOutcomeRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],
@@ -119,7 +130,22 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
   requirements: {
     coreCapabilities: [],
     intrinsic: [],
-    operations: [],
+    operations: [
+      {
+        condition: 'communications.core.condition.persisted-original-privacy-owner-outcome',
+        entrypointKey: 'communications.core.receive-privacy-measure',
+        evidence: [
+          'communications.core.evidence.privacy.original-owner-outcome',
+          'communications.core.evidence.privacy.exact-execution-correlation',
+        ],
+        key: 'communications.core.requirement.privacy-report-owner-outcome',
+        provider: {
+          entrypointKey: 'privacy.core.record-owner-execution-outcome',
+          moduleId: 'privacy.core',
+          schemaVersion: '1',
+        },
+      },
+    ],
     schemaVersion: '1',
   },
 });

@@ -185,10 +185,34 @@ describe('No automatic destructive mechanism (#1410 AC-05 AC-12, PRIV-COM-05/06/
     ).toEqual([]);
   });
 
-  it('registers exactly one worker, the pre-handoff worker: no expiry, retention, cleanup or disposition worker exists', () => {
+  it('registers exactly two workers, the pre-handoff worker and the Privacy handoff recorder: no expiry, retention, cleanup or disposition worker exists', () => {
     expect(outboxWorkers.map((worker) => worker.descriptor.workerKey)).toEqual([
       'communications.core.prepare-message-handoff',
+      'communications.core.receive-privacy-measure',
     ]);
+  });
+
+  it('keeps the Privacy measure worker, receipt Read, evidence Action and their stores to append-only records', () => {
+    const files = [
+      'src/workers/receive-privacy-measure.worker.ts',
+      'src/api/privacy-owner-execution-outcome.read.ts',
+      'src/actions/record-owner-execution-evidence.action.ts',
+      'src/services/privacy-owner-execution-receipt.service.ts',
+      'src/services/owner-execution-evidence.service.ts',
+      'src/services/privacy-measure-reporter.ts',
+      'src/services/privacy-measure-handoff-record.ts',
+      'src/persistence/privacy-measure-records.ts',
+      'shared/privacy-owner/measure-handoff.ts',
+      'shared/owner-execution-evidence.ts',
+    ];
+    for (const file of files) {
+      expect(scanFile(file), file).toEqual([]);
+      // no direct table write at all: the only writes are the two scoped append-only routines (a tenant-scoped insert-only record)
+      expect(
+        /\.(?:insert|update|delete)\(|\.execute\(|drizzle-orm/u.test(readFileSync(path.join(root, file), 'utf-8')),
+        file,
+      ).toBe(false);
+    }
   });
 
   it('keeps the retention hook and the owner contract free of any write capability', () => {

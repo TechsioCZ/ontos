@@ -194,3 +194,54 @@ export const workerPinDocumentRoutine = defineScopedRoutine({
   routineKey: 'communications.worker-pin-document',
   schema: ROUTINE_SCHEMA,
 });
+
+/**
+ * The Privacy Measure handoff and evidence routines (#1410, migration `enforce-privacy-measure-evidence`). Same rules as above:
+ * no executor, the Core-verified Tenant is the first argument, and every answer is one jsonb document the owner decodes. The
+ * tables are append-only: nothing here updates or removes a row, and nothing here executes a measure.
+ */
+export const workerRecordPrivacyMeasureHandoffRoutine = defineScopedRoutine({
+  name: 'worker_record_privacy_measure_handoff',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    tenant,
+    input('text'),
+    input('text'),
+    input('text'),
+    input('text'),
+    input('integer'),
+    input('text'),
+    input('text'),
+    input('jsonb'),
+    input('uuid'),
+  ] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-record-privacy-measure-handoff',
+  schema: ROUTINE_SCHEMA,
+});
+
+export const readPrivacyMeasureHandoffRoutine = defineScopedRoutine({
+  name: 'read_privacy_measure_handoff',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [tenant, input('text')] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.read-privacy-measure-handoff',
+  schema: ROUTINE_SCHEMA,
+});
+
+export const recordPrivacyExecutionEvidenceRoutine = defineScopedRoutine({
+  name: 'record_privacy_execution_evidence',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    tenant,
+    input('text'),
+    input('text'),
+    input('text'),
+    input('jsonb'),
+    input('text'),
+    input('uuid'),
+  ] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.record-privacy-execution-evidence',
+  schema: ROUTINE_SCHEMA,
+});

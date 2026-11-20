@@ -21,7 +21,7 @@ describe('Communications database schema contract', () => {
     expect(configs.every((config) => config.schema === COMMUNICATIONS_SCHEMA_NAME)).toBe(true);
   });
 
-  it('declares the replay ledger, the template tables, the language mode history, the intake tables, the history tables and the recovery tables, and no table of a later lane', () => {
+  it('declares the replay ledger, the template tables, the language mode history, the intake tables, the history tables, the recovery tables and the Privacy measure tables, and no table of a later lane', () => {
     expect(COMMUNICATIONS_TABLE_INVENTORY).toEqual([
       'gateway_assertion_redemptions',
       'template_types',
@@ -42,6 +42,8 @@ describe('Communications database schema contract', () => {
       'intent_document_pins',
       'attempt_retry_links',
       'intent_resend_links',
+      'privacy_measure_handoffs',
+      'privacy_execution_evidence',
     ]);
   });
 
@@ -370,5 +372,85 @@ describe('Communications message history schema contract (#1402)', () => {
     for (const table of ['delivery_attempts', 'attempt_retry_links']) {
       expect(columnsOf(table).filter((name) => /recipient|language|template|endpoint|address/u.test(name))).toEqual([]);
     }
+  });
+});
+
+describe('Communications Privacy measure evidence schema contract (#1410)', () => {
+  const byName = Object.fromEntries(configs.map((config) => [config.name, config]));
+  const columnsOf = (table: string) => byName[table]?.columns.map((column) => column.name).toSorted() ?? [];
+  const foreignKeysOf = (table: string) =>
+    byName[table]?.foreignKeys.map((key) => [
+      key.getName(),
+      key.reference().columns.map((column) => column.name),
+      key.reference().foreignColumns.map((column) => column.name),
+      key.onDelete,
+    ]);
+
+  it('enforces Tenant isolation on both tables with the tenant in every key', () => {
+    for (const name of ['privacy_measure_handoffs', 'privacy_execution_evidence']) {
+      expect(byName[name]?.enableRLS).toBe(true);
+      expect(byName[name]?.policies).toHaveLength(4);
+      expect(byName[name]?.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
+    }
+    expect(
+      byName['privacy_measure_handoffs']?.primaryKeys.map((key) => key.columns.map((column) => column.name)),
+    ).toEqual([['tenant_id', 'idempotency_key']]);
+    expect(
+      byName['privacy_execution_evidence']?.primaryKeys.map((key) => key.columns.map((column) => column.name)),
+    ).toEqual([['tenant_id', 'evidence_ref']]);
+  });
+
+  it('stores only Privacy identities, digests, record links, a correlation id and a system time: no subject, lookup, address, actor or free text', () => {
+    expect(columnsOf('privacy_measure_handoffs')).toEqual([
+      'handoff_fingerprint',
+      'idempotency_key',
+      'measure_id',
+      'originator_invocation_id',
+      'received_at',
+      'scope_digest',
+      'source_decision_ref',
+      'source_decision_revision',
+      'target_content_refs',
+      'task_id',
+      'tenant_id',
+    ]);
+    expect(columnsOf('privacy_execution_evidence')).toEqual([
+      'confirmation_invocation_id',
+      'evidence_ref',
+      'idempotency_key',
+      'phase',
+      'recorded_at',
+      'results',
+      'scope_digest',
+      'tenant_id',
+    ]);
+  });
+
+  it('ties every piece of evidence to the handoff of its idempotency key and refuses to delete either', () => {
+    expect(foreignKeysOf('privacy_execution_evidence')).toEqual([
+      [
+        'communications_privacy_evidence_handoff_fk',
+        ['tenant_id', 'idempotency_key'],
+        ['tenant_id', 'idempotency_key'],
+        'restrict',
+      ],
+    ]);
+    expect(foreignKeysOf('privacy_measure_handoffs')).toEqual([]);
+  });
+
+  it('closes digests, revision, targets, phase and results with checks', () => {
+    expect(byName['privacy_measure_handoffs']?.checks.map((check) => check.name).toSorted()).toEqual([
+      'communications_privacy_handoffs_fingerprint_ck',
+      'communications_privacy_handoffs_identity_ck',
+      'communications_privacy_handoffs_revision_ck',
+      'communications_privacy_handoffs_scope_ck',
+      'communications_privacy_handoffs_targets_ck',
+    ]);
+    expect(byName['privacy_execution_evidence']?.checks.map((check) => check.name).toSorted()).toEqual([
+      'communications_privacy_evidence_identity_ck',
+      'communications_privacy_evidence_phase_ck',
+      'communications_privacy_evidence_results_ck',
+      'communications_privacy_evidence_scope_ck',
+    ]);
   });
 });
