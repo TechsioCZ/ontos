@@ -23,6 +23,8 @@ export const CustomerGroupSourceAuthorityFixtureRouteSchema = Schema.Struct({
   principalId: Schema.toEncoded(PrincipalIdSchema),
   routeId: CustomerGroupDefinitionSourceSchema.fields.route.fields.id,
   routeRevision: CustomerGroupDefinitionSourceSchema.fields.route.fields.revision,
+  /** The integration principals that may read the route's current definitions; absent, the route names none. */
+  sourceReaderPrincipalIds: Schema.optionalKey(Schema.Array(Schema.toEncoded(PrincipalIdSchema))),
   tenantId: Schema.toEncoded(TenantIdSchema),
 });
 export type CustomerGroupSourceAuthorityFixtureRoute = typeof CustomerGroupSourceAuthorityFixtureRouteSchema.Type;
@@ -73,6 +75,12 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
       ],
       { concurrency: 3 },
     ).pipe(Effect.mapError(unavailable));
+    const readers = route.sourceReaderPrincipalIds ?? [];
+    const readerScopes = yield* Effect.all(
+      readers.map((principalId) =>
+        stageScopeOf({ legalEntityId: route.legalEntityId, principalId, tenantId: route.tenantId }),
+      ),
+    ).pipe(Effect.mapError(unavailable));
     // Installer inspection scopes supply RLS coordinates; no admitted scope escapes this fixture.
     const reactivity = yield* Reactivity.make;
     const client = yield* PgClient.make({ url: input.adminConnectionString }).pipe(
@@ -111,7 +119,7 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
           }
           const repository = makeOperationalScopeRepository({ executor: transaction });
           yield* Effect.forEach(
-            [operatorScope, targetScope],
+            [operatorScope, targetScope, ...readerScopes],
             Effect.fn('CustomerGroupSourceAuthorityFixture.verifyScope')(function* verifyScope(inspectionScope) {
               const persisted = yield* repository.load(inspectionScope);
               if (
@@ -131,9 +139,12 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
             adminConnectionString: input.adminConnectionString,
             purpose: 'implementation-1096-registered-workload-gateway',
           });
-          yield* transaction.insert(customerGroupDefinitionSourceRoutes).values(route).onConflictDoNothing();
+          yield* transaction
+            .insert(customerGroupDefinitionSourceRoutes)
+            .values({ ...route, sourceReaderPrincipalIds: [...readers] })
+            .onConflictDoNothing();
           const [stored] = yield* transaction
-            .select({ routeId: customerGroupDefinitionSourceRoutes.routeId })
+            .select({ readers: customerGroupDefinitionSourceRoutes.sourceReaderPrincipalIds })
             .from(customerGroupDefinitionSourceRoutes)
             .where(
               and(
@@ -148,7 +159,11 @@ export const seedCustomerGroupSourceAuthority = Effect.fn('CustomerGroupSourceAu
                 eq(customerGroupDefinitionSourceRoutes.active, route.active),
               ),
             );
-          if (stored === undefined) {
+          if (
+            stored === undefined ||
+            stored.readers.length !== readers.length ||
+            stored.readers.some((reader, index) => reader !== readers[index])
+          ) {
             return yield* unavailable();
           }
           return yield* Effect.void;
