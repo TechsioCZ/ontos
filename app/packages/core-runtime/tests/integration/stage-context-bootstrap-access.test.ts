@@ -422,8 +422,9 @@ const directoryRow = (tenantId: string, principalId: string) =>
 
 /**
  * One connected app of a person as the product leaves it: the OAuth grant that acts as them and its `oauth_grant`
- * binding, naming each other. A connection the person revoked in the product is a `revoked` grant whose binding the
- * revocation only disabled; a live one is `active` on both and was last used yesterday.
+ * binding, naming each other. A connection revoked in the product is a `revoked` grant whose binding the revocation
+ * only disabled, by the person with reason `user` unless `revokedBy` names an administrator's revocation; a live one is
+ * `active` on both and was last used yesterday. Seeding writes no audit event.
  */
 const connectedApp = (
   stage: Stage,
@@ -432,15 +433,18 @@ const connectedApp = (
     readonly grant: string;
     readonly live: boolean;
     readonly person: string;
+    /** Who revoked a connection that is not live, and why; the person with reason `user` when absent. */
+    readonly revokedBy?: { readonly by: string; readonly reason: 'admin' | 'user' };
     /** Another tenant and company than the case's own, for a person of the destination tenant. */
     readonly where?: { readonly legalEntityId: string; readonly tenantId: string };
   },
 ) => {
   const { legalEntityId, tenantId } = input.where ?? { legalEntityId: company, tenantId: stage.tenantId };
   const client = input.grant.slice(-3);
+  const revokedBy = input.revokedBy ?? { by: input.person, reason: 'user' };
   const ended = input.live
     ? { at: 'null', by: 'null', reason: 'null', status: 'active' }
-    : { at: "now() - interval '2 days'", by: `'${input.person}'`, reason: "'user'", status: 'revoked' };
+    : { at: "now() - interval '2 days'", by: `'${revokedBy.by}'`, reason: `'${revokedBy.reason}'`, status: 'revoked' };
   return [
     `insert into core.oauth_connection_grants
        (grant_id, tenant_id, legal_entity_id, user_id, user_principal_id, acting_principal_id, acting_kind, client_id,
@@ -473,6 +477,63 @@ const grantRowsOf = (stage: Stage, principalId: string) =>
         order by 1`,
     )
     .pipe(Effect.orDie);
+
+/** Every `oauth.connection.revoked` event of the case's tenant, by grant: every column the product's writer fills. */
+const revocationEventsOf = (stage: Stage) =>
+  stage.admin
+    .unsafe<{
+      readonly actor: string | null;
+      readonly audit_profile: string;
+      readonly auth_binding: string | null;
+      readonly auth_context_ref: string | null;
+      readonly auth_method: string;
+      readonly company: string;
+      readonly evidence: unknown;
+      readonly grant: string | null;
+      readonly invocation: string | null;
+      readonly outcome: string;
+      readonly outcome_code: string;
+      readonly outcome_stage: string;
+      readonly target_module_key: string | null;
+      readonly target_resource_type: string | null;
+    }>(
+      `select target_resource_id as grant, principal_id::text as actor, legal_entity_id::text as company,
+              auth_method, auth_binding_id::text as auth_binding, auth_context_ref,
+              action_invocation_id::text as invocation, outcome, outcome_code, outcome_stage, audit_profile,
+              target_module_key, target_resource_type, evidence_json as evidence
+         from core.audit_events where tenant_id = '${stage.tenantId}' and event_type = 'oauth.connection.revoked'
+        order by 1`,
+    )
+    .pipe(Effect.orDie);
+
+/**
+ * The event the run records for a connected app it moved from `active` to `revoked`: the product's administrator
+ * revocation (`finishRevocation`), by the acting owner in the app's company, reason `admin`, with the bootstrap's note.
+ */
+const revocationEvent = (app: { readonly grant: string; readonly person: string }) => ({
+  actor: owner,
+  audit_profile: 'sensitive',
+  auth_binding: null,
+  auth_context_ref: null,
+  auth_method: 'session',
+  company,
+  evidence: {
+    clientId: `https://client-${app.grant.slice(-3)}.example/metadata`,
+    clientName: `Client ${app.grant.slice(-3)}`,
+    grantId: app.grant,
+    note: STAGE_RETIREMENT_REASON,
+    reason: 'admin',
+    revokedByPrincipalId: owner,
+    userPrincipalId: app.person,
+  },
+  grant: app.grant,
+  invocation: null,
+  outcome: 'succeeded',
+  outcome_code: 'admin',
+  outcome_stage: 'execution',
+  target_module_key: 'core.identity',
+  target_resource_type: 'oauth_connection_grant',
+});
 
 /** The person's bindings by kind: how many there are of each status and revision. */
 const bindingSummaryOf = (stage: Stage, principalId: string) =>
@@ -1520,22 +1581,15 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             expect(yield* refusalOf(stage, operatorFile, everyone)).toMatch(/fresh Principal and staff binding/u);
             const completed = yield* stage.completed(operatorFile.retiredPrincipals).pipe(failClosed);
             expect(
-              completed.map(({ endedByThisRun, grantId, principalId, revokedByAdministrator, tenantId: at }) => ({
+              completed.map(({ endedByThisRun, grantId, principalId, tenantId: at }) => ({
                 at,
                 endedByThisRun,
                 grantId,
                 principalId,
-                revokedByAdministrator,
               })),
-            ).toEqual([
-              {
-                at: tenantId,
-                endedByThisRun: false,
-                grantId: uid(150),
-                principalId: colleague,
-                revokedByAdministrator: owner,
-              },
-            ]);
+            ).toEqual([{ at: tenantId, endedByThisRun: false, grantId: uid(150), principalId: colleague }]);
+            // The run recorded its revocation once, in its own transaction; the refused file and this read add none.
+            expect(yield* revocationEventsOf(stage)).toEqual([revocationEvent({ grant: uid(150), person: colleague })]);
           }),
         ),
       ),
@@ -1761,22 +1815,22 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             const operatorFile = { ...emptyRun, retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
             const run = yield* stage.reconcile(operatorFile).pipe(failClosed);
             // The run reports every connected app of the leaver and ended exactly the live one.
-            // Only the app this run revoked as an administrator is owed the product's revocation event, by the owner.
             expect(
-              run.connectedApps.map(({ endedByThisRun, grantId, principalId, revokedByAdministrator }) => ({
+              run.connectedApps.map(({ endedByThisRun, grantId, principalId }) => ({
                 endedByThisRun,
                 grantId,
                 principalId,
-                revokedByAdministrator,
               })),
             ).toEqual(
               [...revokedApps, liveApp].map(({ grant, live }) => ({
                 endedByThisRun: live,
                 grantId: grant,
                 principalId: colleague,
-                revokedByAdministrator: live ? owner : null,
               })),
             );
+            // The run recorded the product's revocation event of exactly the app it moved from active to revoked, by
+            // the owner, in the transaction that revoked it; the five the person revoked get none.
+            expect(yield* revocationEventsOf(stage)).toEqual([revocationEvent(liveApp)]);
             // The live connection ended as an administrator ends somebody else's, attributed to the acting owner; the
             // five the person revoked keep their own history.
             expect(yield* grantRowsOf(stage, colleague)).toEqual([
@@ -1807,16 +1861,11 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             const settled = yield* peopleRowsOf(stage, [colleague]);
             const grantsSettled = yield* grantRowsOf(stage, colleague);
             const again = yield* stage.reconcile(operatorFile).pipe(failClosed);
-            // The replay still names who revoked the live one, so a run that stopped before the Shell recorded it does.
-            expect(
-              again.connectedApps.map(({ endedByThisRun, revokedByAdministrator }) => ({
-                endedByThisRun,
-                revokedByAdministrator,
-              })),
-            ).toEqual([
-              ...revokedApps.map(() => ({ endedByThisRun: false, revokedByAdministrator: null })),
-              { endedByThisRun: false, revokedByAdministrator: owner },
-            ]);
+            // The replay ends nothing, so it records nothing: the one event stays the only one.
+            expect(again.connectedApps.map(({ endedByThisRun }) => endedByThisRun)).toEqual(
+              [...revokedApps, liveApp].map(() => false),
+            );
+            expect(yield* revocationEventsOf(stage)).toEqual([revocationEvent(liveApp)]);
             // Before the run, the same departure is read as completed and hands over the same apps.
             const completed = yield* stage.completed(operatorFile.retiredPrincipals).pipe(failClosed);
             expect(completed.map(({ grantId }) => grantId)).toEqual(again.connectedApps.map(({ grantId }) => grantId));
@@ -1857,10 +1906,12 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             const untouched = yield* peopleRowsOf(stage, [owner, colleague]);
             const operatorFile = { ...emptyRun, retiredPrincipals: [leaving(tenantId, unassigned, 'unassigned')] };
             const run = yield* stage.reconcile(operatorFile).pipe(failClosed);
-            // Nothing was live, so nothing is ended; each disabled grant binding is revoked with the login's.
+            // Nothing was live, so nothing is ended and nothing recorded; each disabled grant binding is revoked with
+            // the login's.
             expect(run.connectedApps.map(({ endedByThisRun, grantId }) => ({ endedByThisRun, grantId }))).toEqual(
               apps.map(({ grant }) => ({ endedByThisRun: false, grantId: grant })),
             );
+            expect(yield* revocationEventsOf(stage)).toEqual([]);
             expect(yield* grantRowsOf(stage, unassigned)).toEqual(grantsBefore);
             expect(yield* bindingSummaryOf(stage, unassigned)).toEqual([
               { count: 3, revision: 2, status: 'revoked', subject: 'oauth_grant' },
@@ -1915,6 +1966,7 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             expect(refused).toContain(`company ${company}`);
             expect(yield* grantRowsOf(stage, colleague)).toEqual(grantsBefore);
             expect(yield* bindingSummaryOf(stage, colleague)).toEqual(bindingsBefore);
+            expect(yield* revocationEventsOf(stage)).toEqual([]);
             // The owner's company membership resumed, the owner administers the company and the same file ends the app.
             yield* seed(
               stage,
@@ -1930,6 +1982,55 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
               { count: 1, revision: 2, status: 'revoked', subject: 'oauth_grant' },
               { count: 1, revision: 2, status: 'revoked', subject: 'user' },
             ]);
+            expect(yield* revocationEventsOf(stage)).toEqual([revocationEvent(liveApp)]);
+          }),
+        ),
+      ),
+  );
+
+  suite.effect(
+    'records no event for an older administrator revocation that never had one, only for the app the run itself ends',
+    () =>
+      withStage((stage) =>
+        onDatabaseClock(
+          stage,
+          Effect.gen(function* recordsOnlyItsOwnRevocation() {
+            const { tenantId } = stage;
+            yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+            // The owner revoked one of the colleague's connections as an administrator two days ago, and no event of it
+            // was ever written; the other connection is still live.
+            const olderApp = {
+              binding: uid(256),
+              grant: uid(255),
+              live: false,
+              person: colleague,
+              revokedBy: { by: owner, reason: 'admin' as const },
+            };
+            const liveApp = { binding: uid(258), grant: uid(257), live: true, person: colleague };
+            yield* seed(
+              stage,
+              directoryRow(tenantId, colleague),
+              ...connectedApp(stage, olderApp),
+              ...connectedApp(stage, liveApp),
+            );
+            expect(yield* revocationEventsOf(stage)).toEqual([]);
+            const operatorFile = { ...emptyRun, retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
+            const run = yield* stage.reconcile(operatorFile).pipe(failClosed);
+            expect(run.connectedApps.map(({ endedByThisRun, grantId }) => ({ endedByThisRun, grantId }))).toEqual([
+              { endedByThisRun: false, grantId: olderApp.grant },
+              { endedByThisRun: true, grantId: liveApp.grant },
+            ]);
+            expect(yield* grantRowsOf(stage, colleague)).toEqual([
+              { id: olderApp.grant, reason: 'admin', revoked_by: owner, status: 'revoked' },
+              { id: liveApp.grant, reason: 'admin', revoked_by: owner, status: 'revoked' },
+            ]);
+            // Only the grant this run moved from active to revoked is recorded; the older administrator revocation, as
+            // revoked and as attributed as the new one, is not the run's and gets no event, on a first run or later.
+            expect(yield* revocationEventsOf(stage)).toEqual([revocationEvent(liveApp)]);
+            yield* stage.reconcile(operatorFile).pipe(failClosed);
+            const completed = yield* stage.completed(operatorFile.retiredPrincipals).pipe(failClosed);
+            expect(completed.map(({ grantId }) => grantId)).toEqual([olderApp.grant, liveApp.grant]);
+            expect(yield* revocationEventsOf(stage)).toEqual([revocationEvent(liveApp)]);
           }),
         ),
       ),

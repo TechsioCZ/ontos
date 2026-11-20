@@ -31,6 +31,7 @@ import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { AccessCatalogModule } from '../authorization/access-declaration.ts';
 import { companyMembershipManagementFromTransaction } from '../auth/company-membership-management.ts';
+import { oauthAuthenticationAuditRow } from '../auth/oauth-authentication-audit-contract.ts';
 import { transitionOAuthGrant } from '../auth/oauth-grant-registry-live.ts';
 // The installation run owns the runtime connection: every scope it installs is a session-setting one.
 import { CoreDatabase } from '../db/client.ts';
@@ -1015,28 +1016,65 @@ export const stageCredentialEndingOf = (input: {
 
 /**
  * One connected app of a person the file retires, `status` as the run found it: `endedByThisRun` when this run ended
- * it, otherwise it had ended. `revokedByAdministrator` names who revoked it as a company administrator (`revoked`, reason
- * `admin`) as it stands after the run: the acting owner for an active grant this run ended, or whoever such an ending
- * recorded before; `null` for any other ending. The Shell records the product's `oauth.connection.revoked` event for
- * such an app when none names it yet.
+ * it, otherwise it had ended. The run records the product's `oauth.connection.revoked` event of every grant it moves
+ * from `active` to `revoked` in its own transaction; after the commit the Shell only deletes the Better Auth tokens and
+ * consent of each app by grant id.
  */
 export interface StageRetiredConnectedApp extends StageConnectedApp {
   readonly endedByThisRun: boolean;
-  readonly revokedByAdministrator: string | null;
 }
 
-/** A connected app as it stands after a run that ended it as `endedBy`, or left it as it was found. */
-const retiredConnectedAppOf = (app: StageConnectedApp, endedBy?: string): StageRetiredConnectedApp => {
-  if (endedBy !== undefined) {
-    // An active grant the run ended is revoked by the acting owner with reason `admin`; a draft is denied.
-    return { ...app, endedByThisRun: true, revokedByAdministrator: app.status === 'active' ? endedBy : null };
-  }
-  return {
-    ...app,
-    endedByThisRun: false,
-    revokedByAdministrator: app.status === 'revoked' && app.revokeReason === 'admin' ? app.revokedByPrincipalId : null,
-  };
-};
+/**
+ * Records one connected app the run moved from `active` to `revoked` as the product records a company administrator's
+ * revocation (`finishRevocation`): the product's own row builder, the acting owner as actor in the app's company,
+ * reason `admin` and a note naming the stage accounts bootstrap. It runs in the run's transaction on the runtime role,
+ * which writes `core.audit_events` as the product's audit writer does, so the event commits with the revocation or
+ * not at all.
+ */
+const recordAdministratorRevocation = Effect.fn('StageContextBootstrap.recordAdministratorRevocation')(
+  function* recordAdministratorRevocationEffect(
+    transaction: CoreTransaction,
+    app: StageConnectedApp,
+    context: { readonly enrollment: DatabaseIdentityEnrollment; readonly ownerId: string },
+  ) {
+    const auditRow = oauthAuthenticationAuditRow({
+      authBindingId: null,
+      authMethod: 'session',
+      eventType: 'oauth.connection.revoked',
+      evidence: { note: STAGE_RETIREMENT_REASON, reason: 'admin', revokedByPrincipalId: context.ownerId },
+      grant: {
+        clientId: app.clientId,
+        clientName: app.clientName,
+        grantId: app.grantId,
+        legalEntityId: app.legalEntityId,
+        tenantId: app.tenantId,
+        userPrincipalId: app.userPrincipalId,
+      },
+      outcome: 'succeeded',
+      outcomeCode: 'admin',
+      principalId: context.ownerId,
+    }).pipe(
+      Effect.mapError((cause) =>
+        failure(
+          `The revocation of the connected app ${app.clientName} (${app.clientId}) of a retired stage Principal could not be recorded`,
+          cause,
+        ),
+      ),
+    );
+    // The owner acts in the app's company, as the administrator's revocation in the product does.
+    const [row, companyScope] = yield* Effect.all(
+      [
+        auditRow,
+        operatorScopeOf({ legalEntityId: app.legalEntityId, ownerId: context.ownerId, tenantId: app.tenantId }),
+      ],
+      { concurrency: 1 },
+    );
+    yield* installOperationalScope(transaction, companyScope, context.enrollment).pipe(
+      Effect.mapError(bootstrapFailureFromCause),
+    );
+    yield* transaction.insert(auditEvents).values(row).pipe(Effect.mapError(bootstrapFailureFromCause));
+  },
+);
 
 /** Everything one departure writes, decided before anything of the run is written. */
 interface PrincipalRetirement {
@@ -1758,7 +1796,11 @@ const writeRetirement = Effect.fn('StageContextBootstrap.writeRetirement')(funct
         revokeReason: status === 'revoked' ? 'admin' : null,
         status,
       }).pipe(
-        Effect.map(Option.exists((grant) => grant.status === status)),
+        Effect.map((grant) => ({
+          app,
+          ended: Option.exists(grant, ({ status: now }) => now === status),
+          revokedFromActive: app.status === 'active' && Option.exists(grant, ({ status: now }) => now === 'revoked'),
+        })),
         Effect.mapError((cause) =>
           failure(
             `The connected app ${app.clientName} (${app.clientId}) of a retired stage Principal could not be ended`,
@@ -1797,7 +1839,7 @@ const writeRetirement = Effect.fn('StageContextBootstrap.writeRetirement')(funct
   ).pipe(Effect.mapError(bootstrapFailureFromCause));
   const witnessed =
     revoked.length === retirement.bindings.length &&
-    ended.every(Boolean) &&
+    ended.every((transition) => transition.ended) &&
     unrevoked.length === 0 &&
     connections.map(({ connectionId }) => connectionId).join(',') === retirement.connectionIds.join(',');
   if (!witnessed) {
@@ -1818,6 +1860,17 @@ const writeRetirement = Effect.fn('StageContextBootstrap.writeRetirement')(funct
       )
       .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
+  // Exactly the grants this run moved from `active` to `revoked` are recorded, in this transaction: a draft it denied
+  // is no revocation, a grant that had ended keeps whatever its own ending recorded, and a replay ends nothing.
+  yield* Effect.forEach(
+    ended.flatMap(({ app, revokedFromActive }) => (revokedFromActive ? [app] : [])),
+    (app) =>
+      recordAdministratorRevocation(transaction, app, {
+        enrollment: context.enrollment,
+        ownerId: retirement.scope.principalId,
+      }),
+    { concurrency: 1, discard: true },
+  );
   return yield* Effect.void;
 });
 
@@ -1950,12 +2003,8 @@ const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveL
       discard: true,
     },
   );
-  const endedBy = new Map(
-    plans.flatMap(({ retirement }) =>
-      retirement.connectedApps.map(({ grantId }) => [grantId, retirement.scope.principalId] as const),
-    ),
-  );
-  return connectedApps.map((app) => retiredConnectedAppOf(app, endedBy.get(app.grantId)));
+  const ended = new Set(plans.flatMap(({ retirement }) => retirement.connectedApps.map(({ grantId }) => grantId)));
+  return connectedApps.map((app): StageRetiredConnectedApp => ({ ...app, endedByThisRun: ended.has(app.grantId) }));
 });
 
 const runTenantTransaction = <Value, Requirements>(
@@ -2051,7 +2100,7 @@ const completedRetirementsOfTenant = Effect.fn('StageContextBootstrap.completedR
           Effect.option,
           Effect.map((ending) =>
             Option.isSome(ending) && ending.value.replay && ending.value.connectedApps.length === 0
-              ? own.map((app) => retiredConnectedAppOf(app))
+              ? own.map((app): StageRetiredConnectedApp => ({ ...app, endedByThisRun: false }))
               : [],
           ),
         );
@@ -2065,7 +2114,7 @@ const completedRetirementsOfTenant = Effect.fn('StageContextBootstrap.completedR
 /**
  * Every connected app of the people of the file whose departure an earlier run of it already completed, read in a
  * transaction of its own that writes and locks nothing, before the run. The Shell finishes the clean-up after such a
- * departure (the Better Auth tokens and consent, and the revocation event) from it, so a run that stopped between its
+ * departure (the Better Auth tokens and consent) from it, so a run that stopped between its
  * commit and that clean-up is finished by the same file even when the run itself then refuses the file for something
  * else in it, such as a login it attached whose Principal has since connected an app. The run's own rules, the exact
  * replay of a departure and of an attachment included, are unchanged.
@@ -2098,60 +2147,6 @@ export const completedStageRetirementsOf = Effect.fn('StageContextBootstrap.comp
       ),
     );
     return completed.flat();
-  },
-);
-
-/** The grants among `grantIds` that an `oauth.connection.revoked` event of one company names. */
-const recordedRevocationsInCompany = Effect.fn('StageContextBootstrap.recordedRevocationsInCompany')(
-  function* recordedRevocationsInCompanyEffect(
-    transaction: CoreTransaction,
-    company: { readonly grantIds: readonly string[]; readonly legalEntityId: string; readonly tenantId: string },
-  ) {
-    const grantIdOf = sql<string>`${auditEvents.evidenceJson} ->> 'grantId'`;
-    // The observation scope the product's audit writer records in.
-    yield* transaction.execute(
-      sql`select set_config('ontos.tenant_id', ${company.tenantId}, true), set_config('ontos.legal_entity_id', ${company.legalEntityId}, true)`,
-    );
-    return yield* transaction
-      .select({ grantId: grantIdOf })
-      .from(auditEvents)
-      .where(
-        and(
-          eq(auditEvents.tenantId, company.tenantId),
-          eq(auditEvents.legalEntityId, company.legalEntityId),
-          eq(auditEvents.eventType, 'oauth.connection.revoked'),
-          inArray(grantIdOf, [...company.grantIds]),
-        ),
-      );
-  },
-  Effect.mapError(bootstrapFailureFromCause),
-);
-
-/** The company a connected app acts in, as one key. */
-const companyKeyOf = ({ legalEntityId, tenantId }: Pick<StageConnectedApp, 'legalEntityId' | 'tenantId'>) =>
-  `${tenantId}:${legalEntityId}`;
-
-/**
- * The grants among `apps` whose revocation the product's audit already records: an `oauth.connection.revoked` event
- * naming the grant, in the company the product's audit writer records it in. The Shell writes that event for a
- * connected app an administrator revoked only when this finds none, so the same file run again never writes it twice.
- */
-export const recordedConnectionRevocationsOf = Effect.fn('StageContextBootstrap.recordedConnectionRevocationsOf')(
-  function* recordedConnectionRevocationsOfEffect(
-    apps: readonly Pick<StageConnectedApp, 'grantId' | 'legalEntityId' | 'tenantId'>[],
-  ): Effect.fn.Return<ReadonlySet<string>, StageContextBootstrapError, CoreDatabase> {
-    const { executor } = yield* CoreDatabase;
-    const companies = [...new Map(apps.map((app) => [companyKeyOf(app), app] as const)).values()].map((first) => ({
-      grantIds: apps.flatMap((app) => (companyKeyOf(app) === companyKeyOf(first) ? [app.grantId] : [])),
-      legalEntityId: first.legalEntityId,
-      tenantId: first.tenantId,
-    }));
-    const recorded = yield* Effect.forEach(
-      companies,
-      (company) => runTenantTransaction(executor, (transaction) => recordedRevocationsInCompany(transaction, company)),
-      { concurrency: 1 },
-    );
-    return new Set(recorded.flat().map(({ grantId }) => grantId));
   },
 );
 

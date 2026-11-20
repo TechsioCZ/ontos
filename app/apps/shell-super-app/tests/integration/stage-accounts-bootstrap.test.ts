@@ -1,11 +1,4 @@
-import {
-  SHARED_RUNTIME_IDENTITY,
-  DatabaseConfig,
-  OAuthAuthenticationAuditLive,
-  loadDatabaseConnectionPair,
-} from '@app/core-runtime';
-import { CoreDatabaseLive } from '@app/core-runtime/db/client';
-import { STAGE_RETIREMENT_REASON } from '@app/core-runtime/install/stage-context-bootstrap';
+import { SHARED_RUNTIME_IDENTITY, DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import type { StageRetiredConnectedApp } from '@app/core-runtime/install/stage-context-bootstrap';
 import { randomUUID } from 'node:crypto';
 
@@ -301,23 +294,15 @@ describe('stage-accounts-bootstrap', () => {
     10_000,
   );
   it.live(
-    "finishes an ended connected app by grant id, leaves the same login's surviving app alone and records the revocation once",
+    "finishes an ended connected app by grant id and leaves the same login's surviving app alone, again and again",
     () =>
       Effect.scoped(
         Effect.gen(function* finishesConnectedAppEndings() {
           const connections = yield* loadDatabaseConnectionPair();
-          const authContext = yield* Layer.build(
+          const context = yield* Layer.build(
             AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, connections.admin))),
           );
-          // The product's own audit writer, over the runtime connection the stage run writes Core with.
-          const coreContext = yield* Layer.build(
-            OAuthAuthenticationAuditLive.pipe(
-              Layer.provideMerge(CoreDatabaseLive),
-              Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
-            ),
-          );
-          const context = Context.merge(authContext, coreContext);
-          const database = Context.get(authContext, AuthDatabase).executor;
+          const database = Context.get(context, AuthDatabase).executor;
           const tenantId = randomUUID();
           const legalEntityId = randomUUID();
           const owner = randomUUID();
@@ -329,7 +314,6 @@ describe('stage-accounts-bootstrap', () => {
           const endedGrant = randomUUID();
           const survivingGrant = randomUUID();
           const cleanup = Effect.gen(function* cleanupConnectedAppFixture() {
-            yield* database.execute(sql`delete from core.audit_events where tenant_id = ${tenantId}`);
             yield* database.execute(sql`delete from core.principals where tenant_id = ${tenantId}`);
             yield* database.execute(sql`delete from core.legal_entities where tenant_id = ${tenantId}`);
             yield* database.execute(sql`delete from core.tenants where tenant_id = ${tenantId}`);
@@ -401,19 +385,8 @@ describe('stage-accounts-bootstrap', () => {
               ],
               { concurrency: 1 },
             );
-          const revocationsOf = (grantId: string) =>
-            database.execute<{
-              readonly evidence: unknown;
-              readonly outcome_code: string;
-              readonly principal_id: string;
-            }>(
-              sql`select principal_id::text as principal_id, outcome_code, evidence_json as evidence from core.audit_events
-                    where tenant_id = ${tenantId} and event_type = 'oauth.connection.revoked'
-                      and evidence_json ->> 'grantId' = ${grantId}`,
-              'objects',
-            );
           const surviving = yield* tokensOf(survivingGrant);
-          // The app the departure ended, as the run hands it over: revoked by the acting owner as an administrator.
+          // The app the departure ended, as the run hands it over.
           const ended: StageRetiredConnectedApp = {
             authBindingId: randomUUID(),
             clientId,
@@ -423,7 +396,6 @@ describe('stage-accounts-bootstrap', () => {
             lastUsedAt: null,
             legalEntityId,
             principalId: leaver,
-            revokedByAdministrator: owner,
             revokedByPrincipalId: null,
             revokeReason: null,
             status: 'active',
@@ -434,27 +406,10 @@ describe('stage-accounts-bootstrap', () => {
           expect(yield* tokensOf(endedGrant)).toEqual([[], [], []]);
           expect(yield* tokensOf(survivingGrant)).toEqual(surviving);
           expect(surviving.map((rows) => rows.length)).toEqual([1, 1, 1]);
-          const recorded = yield* revocationsOf(endedGrant);
-          expect(recorded).toEqual([
-            {
-              evidence: expect.objectContaining({
-                clientId,
-                grantId: endedGrant,
-                note: STAGE_RETIREMENT_REASON,
-                reason: 'admin',
-                revokedByPrincipalId: owner,
-                userPrincipalId: leaver,
-              }),
-              outcome_code: 'admin',
-              principal_id: owner,
-            },
-          ]);
-          // The same clean-up again, as a rerun of the file performs it, deletes and records nothing more.
+          // The same clean-up again, as a rerun of the file performs it, deletes nothing more.
           yield* finishStageConnectedAppEndings([ended]).pipe(Effect.provide(context));
           expect(yield* tokensOf(endedGrant)).toEqual([[], [], []]);
           expect(yield* tokensOf(survivingGrant)).toEqual(surviving);
-          expect(yield* revocationsOf(endedGrant)).toEqual(recorded);
-          expect(yield* revocationsOf(survivingGrant)).toEqual([]);
         }),
       ),
   );
