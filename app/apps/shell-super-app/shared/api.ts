@@ -16,6 +16,7 @@ import {
   symmySubmitOptions,
   symmyWriteOptions,
 } from '../api/symmy/contract.ts';
+import { SymmyAuthentication } from '../api/symmy/authentication.ts';
 import { SymmyDefectBoundary } from '../api/symmy/defect-boundary.ts';
 import { PaymentNotificationBoundary } from '../api/payment-gateway/notification-boundary.ts';
 import { PaymentNotificationsGroup } from '../api/payment-gateway/notification-contract.ts';
@@ -104,7 +105,7 @@ const sellerVatDeclarationsFixtureBatchEndpoint = HttpApiEndpoint.post(
   symmyFixtureSubmitOptions,
 );
 
-type SymmyIngressEndpoints = HttpApiEndpoint.AddMiddleware<
+type SymmyAuthenticatedEndpoints = HttpApiEndpoint.AddMiddleware<
   HttpApiEndpoint.AddMiddleware<
     | typeof adminCustomersEndpoint
     | typeof adminProductsEndpoint
@@ -122,8 +123,9 @@ type SymmyIngressEndpoints = HttpApiEndpoint.AddMiddleware<
     | typeof sellerVatDeclarationsFixtureBatchEndpoint,
     SymmySchemaError
   >,
-  SymmyDefectBoundary
+  SymmyAuthentication
 >;
+type SymmyIngressEndpoints = HttpApiEndpoint.AddMiddleware<SymmyAuthenticatedEndpoints, SymmyDefectBoundary>;
 
 export interface SymmyIngressGroupContract extends HttpApiGroup.HttpApiGroup<'symmy', SymmyIngressEndpoints> {
   readonly identifier: 'symmy';
@@ -152,6 +154,7 @@ export const SymmyIngressGroup: SymmyIngressGroupContract = HttpApiGroup.make('s
     sellerVatDeclarationsFixtureBatchEndpoint,
   )
   .middleware(SymmySchemaError)
+  .middleware(SymmyAuthentication)
   .middleware(SymmyDefectBoundary);
 
 // The BFF entry and its handlers use this canonical server contract. Browser clients use browser-api.ts.

@@ -89,7 +89,7 @@ export const symmyUnsupportedProblem = (reason: typeof SymmyUnsupportedProblemSc
     type: 'https://ontos.dev/problems/symmy-unsupported',
   });
 
-const ingressProblems = [
+export const ingressProblems = [
   GatewayAuthenticationRequiredProblemSchema,
   GatewayForbiddenProblemSchema,
   GatewayRateLimitedProblemSchema,

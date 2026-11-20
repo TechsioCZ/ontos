@@ -143,6 +143,7 @@ import {
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { ModuleApiTransportLive } from '../src/module-api/transport.ts';
 import {
+  admitSymmyCaller,
   SymmyHostMount,
   SymmyHostMountLive,
   SymmyIngress,
@@ -151,6 +152,8 @@ import {
   SymmyIngressTransportLive,
 } from './symmy/transport.ts';
 import { symmyUnavailableProblem } from './symmy/contract.ts';
+import { SymmyAdmittedCaller } from './symmy/admitted-caller.ts';
+import { SymmyAuthentication } from './symmy/authentication.ts';
 import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
 import {
   PaymentGatewayHostMountLive,
@@ -2128,6 +2131,18 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
   };
 });
 
+/** Every Symmy handler receives its admitted caller from here, before any part of its request is decoded. */
+export const SymmyIngressAuthenticationLive = Layer.effect(
+  SymmyAuthentication,
+  Effect.gen(function* configureSymmyAuthentication() {
+    const ingress = yield* SymmyIngress;
+    return {
+      apiKey: (httpEffect, { credential }) =>
+        httpEffect.pipe(Effect.provideServiceEffect(SymmyAdmittedCaller, admitSymmyCaller(ingress, credential))),
+    };
+  }),
+);
+
 export const SymmyIngressDefectLive = Layer.succeed(
   SymmyDefectBoundary,
   Effect.fn('SymmyIngress.sanitizeDefect')(function* sanitizeSymmyIngressDefect(operation) {
@@ -2865,7 +2880,7 @@ export const makeShellAuthenticationApiRuntime = (
     SymmyIngressHandlersLive.pipe(
       Layer.provide(
         Layer.mergeAll(
-          symmyIngressLive,
+          SymmyIngressAuthenticationLive.pipe(Layer.provideMerge(symmyIngressLive)),
           SymmyIngressSchemaErrorLive,
           SymmyIngressDefectLive,
           symmyOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer)),

@@ -29,7 +29,7 @@ import {
 import { AdmitSymmyJobPayloadSchema } from '@app/symmy-integration/api/admit-symmy-job-action';
 import { assert, expect, it } from 'effect-rstest';
 
-import { SymmyIngressDefectLive } from '../../api/index.ts';
+import { SymmyIngressAuthenticationLive, SymmyIngressDefectLive } from '../../api/index.ts';
 import {
   SymmyFixtureJobIdSchema,
   symmyFixtureJobNotFoundProblem,
@@ -388,7 +388,7 @@ const start = ({
   const symmy = SymmyIngressHandlersLive.pipe(
     Layer.provide(
       Layer.mergeAll(
-        ingress,
+        SymmyIngressAuthenticationLive.pipe(Layer.provideMerge(ingress)),
         SymmyIngressSchemaErrorLive,
         SymmyIngressDefectLive,
         logger,
@@ -715,7 +715,7 @@ it.effect('rejects the internal plan, authority overrides and credentials nested
     const reflected = yield* submit({ products: [{ ...product, name: `Private ${validKey}` }] });
     expect(reflected.status).toBe(400);
     expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
-    expect(server.authAttempts).toEqual([]);
+    expect(server.authAttempts).toEqual(Array.from({ length: 12 }, () => validKey));
   }),
 );
 
@@ -738,7 +738,7 @@ it.effect(
       expect((yield* submit({ products: [{ name: 'P', variants: [{ localized: texts(33) }] }] })).status).toBe(400);
       const priced = { name: 'P', variants: [{ prices: [{ amount: '1', currencyCode: 'CZK' }] }] };
       expect((yield* submit({ products: Array.from({ length: 9 }, () => priced) })).status).toBe(400);
-      expect(server.authAttempts).toEqual([]);
+      expect(server.authAttempts).toEqual([validKey, validKey]);
     }),
 );
 
@@ -2645,6 +2645,54 @@ it.effect('rejects missing, invalid and wrong-kind API keys before dispatch', ()
   }),
 );
 
+it.effect('authenticates and admits the caller of every route before decoding or mapping its request', () =>
+  Effect.gen(function* authenticatesBeforeDecoding() {
+    const forwarded: SymmyIngressRequest[] = [];
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        start({
+          observe: (request) => {
+            forwarded.push(request);
+          },
+        }),
+      ),
+      (fixture) => Effect.promise(fixture.dispose),
+    );
+    /** A body, query or job id that the route decoders answer with 400 once the caller is admitted. */
+    const send = (definition: { readonly method: string; readonly path: string }, key?: string) => {
+      const credential = key === undefined ? {} : { 'x-api-key': key };
+      const path = definition.path.replace('{code}', groupCode).replace('{id}', 'not-a-job-id');
+      return Effect.promise(() =>
+        definition.method === 'POST'
+          ? server.request(path, {
+              body: '{"unexpected":true}',
+              headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, ...credential },
+              method: 'POST',
+            })
+          : server.request(`${path}?audience=outside-module`, { headers: credential, method: definition.method }),
+      );
+    };
+    const routes = Object.values({ ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES });
+    for (const definition of routes) {
+      for (const key of [undefined, 'wrong-key']) {
+        const unauthenticated = yield* send(definition, key);
+        expect(unauthenticated.status).toBe(401);
+        expect(unauthenticated.headers.get('www-authenticate')).toContain('ApiKey');
+        expect(unauthenticated.headers.get('cache-control')).toBe('no-store');
+        expect(yield* Effect.promise(() => unauthenticated.json())).toEqual(invalid);
+      }
+      expect((yield* send(definition, wrongKindKey)).status).toBe(403);
+      const admitted = yield* send(definition, validKey);
+      expect(admitted.status).toBe(400);
+      expect(yield* Effect.promise(() => admitted.json())).toMatchObject({
+        type: 'https://ontos.dev/problems/symmy-invalid',
+      });
+    }
+    expect(server.authAttempts).toEqual(routes.flatMap(() => ['wrong-key', wrongKindKey, validKey]));
+    expect(forwarded).toEqual([]);
+  }),
+);
+
 it.effect('keeps job progress separate from whether completed items succeeded', () =>
   Effect.gen(function* distinguishesFixtureJobProgress() {
     const accepted = yield* decodeSymmyItemOutcome({
@@ -2871,7 +2919,7 @@ it.effect('fails closed by default and rejects caller-provided authority in fixt
       }),
     );
     expect(invalidQuery.status).toBe(400);
-    expect(server.authAttempts).toEqual([validKey, validKey, validKey]);
+    expect(server.authAttempts).toEqual([validKey, validKey, validKey, validKey, validKey]);
   }),
 );
 
@@ -2893,7 +2941,7 @@ it.effect('requires an exact idempotency key and rejects reflected credentials b
     );
     expect(reflected.status).toBe(400);
     expect(yield* Effect.promise(() => reflected.text())).not.toContain(validKey);
-    expect(server.authAttempts).toEqual([]);
+    expect(server.authAttempts).toEqual([validKey, validKey, validKey, validKey]);
   }),
 );
 
