@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 
 import { COMMERCE_PORTAL_AUTH_POLICY } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthEnrollmentApi } from '../../shared/portal-auth/enrollment-api.ts';
+import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 
 const currentEnrollment = CommercePortalAuthEnrollmentApi.groups.portalAuthEnrollment.endpoints;
@@ -38,6 +39,14 @@ it.effect.each([
   }),
 );
 
+it.effect.each(Object.values(CommercePortalAuthSessionApi.groups.portalAuthSession.endpoints))(
+  'declares owner session-cookie transport for the portal session endpoint $method $path',
+  (endpoint) =>
+    Effect.sync(() => {
+      expect(cookiesFor(endpoint.method, endpoint.path)).toStrictEqual(expectedCookies);
+    }),
+);
+
 it.effect.each([
   { method: 'POST', path: '/api/portal-auth/enrollment/current' },
   { method: 'GET', path: '/api/portal-auth/enrollment/current/resume' },
@@ -45,6 +54,9 @@ it.effect.each([
   { method: 'GET', path: '/api/portal-auth/enrollment/current/extra' },
   { method: 'POST', path: '/api/portal-auth/enrollment/start' },
   { method: 'POST', path: '/actions/terminate-portal-enrollment' },
+  { method: 'POST', path: '/api/portal-auth/customer-address-book' },
+  { method: 'GET', path: '/api/portal-auth/customer-address-book/extra' },
+  { method: 'GET', path: '/api/portal-auth/customer-address-book-other' },
 ])('keeps cookie transport closed for undeclared methods and routes: $method $path', ({ method, path }) =>
   Effect.sync(() => {
     expect(cookiesFor(method, path)).toStrictEqual([]);
