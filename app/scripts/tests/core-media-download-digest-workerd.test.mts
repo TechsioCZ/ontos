@@ -89,6 +89,10 @@ const patterned = (totalBytes: number) => {
       chunk[index] = Math.floor(state / 16_777_216);
     }
     chunks.push(chunk);
+    if (chunks.length === 1) {
+      // An empty chunk is a legal read result: it must change neither the size nor the digest.
+      chunks.push(new Uint8Array(0));
+    }
     offset += size;
   }
   return chunks;
