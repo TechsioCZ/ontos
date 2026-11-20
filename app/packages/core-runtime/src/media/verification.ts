@@ -29,7 +29,7 @@ const UnverifiableReasonSchema = Schema.Literals([
 ]);
 type UnverifiableReason = typeof UnverifiableReasonSchema.Type;
 
-const MediaProviderIdSchema = Schema.String.pipe(Schema.brand('MediaProviderId'));
+export const MediaProviderIdSchema = Schema.String.pipe(Schema.brand('MediaProviderId'));
 
 const EvidenceBaseFields = {
   providerId: MediaProviderIdSchema,
@@ -80,7 +80,8 @@ const isObjectMissing = Schema.is(ObjectStorageObjectMissing);
 const unverifiableOf = (failure: ObjectStorageFailure) =>
   unverifiable(isObjectMissing(failure) ? 'object_missing' : 'provider_failure');
 
-const sameObject = (before: ObjectStat, after: ObjectStat): boolean =>
+/** Whether two stats describe the same stored object: equal length and equal technical version pin. */
+export const isSameStoredObject = (before: ObjectStat, after: ObjectStat): boolean =>
   before.byteSize === after.byteSize && before.versionRef === after.versionRef;
 
 /**
@@ -109,7 +110,7 @@ export const verifyStoredMediaObject = Effect.fn('MediaVerification.verify')(fun
       return yield* unverifiable('framing_inconsistent');
     }
     const after = yield* storage.stat(input.storageKey).pipe(Effect.mapError(unverifiableOf));
-    if (!sameObject(opened.stat, after)) {
+    if (!isSameStoredObject(opened.stat, after)) {
       return yield* unverifiable('object_changed');
     }
     if (observed.byteSize !== input.expected.byteSize) {
