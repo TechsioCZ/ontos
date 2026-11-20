@@ -371,6 +371,42 @@ it.effect('streams a verified object chunk by chunk and ends cleanly only after 
   }),
 );
 
+it.effect('never releases the last chunk before the verdict: corrupt bytes never make a complete body', () =>
+  Effect.gen(function* withheld() {
+    const tampered = encoder.encode('THE CONFIRMED BYTES OF ONE ASSET');
+    const storage = yield* withStored(tampered);
+    const chunked: ObjectStorageService = {
+      ...storage.service,
+      get: () =>
+        Effect.succeed({
+          body: Stream.fromIterable([tampered.slice(0, 10), tampered.slice(10, 20), tampered.slice(20)]),
+          stat: { byteSize: tampered.byteLength },
+        }),
+    };
+    const opened = yield* openVerifiedMediaStream(readyAsset()).pipe(Effect.provideService(ObjectStorage, chunked));
+    const received: Uint8Array[] = [];
+    const exit = yield* Effect.exit(Stream.runForEach(opened.body, (chunk) => Effect.sync(() => received.push(chunk))));
+    expect(Exit.isFailure(exit)).toBe(true);
+    // The two chunks before the last were delivered; the last one was held back, so the body is short.
+    expect(received.map((chunk) => chunk.byteLength)).toEqual([10, 10]);
+    // A verified object releases the held chunk after the verdict, in order.
+    const good = yield* withStored(content);
+    const goodChunked: ObjectStorageService = {
+      ...good.service,
+      get: () =>
+        Effect.succeed({
+          body: Stream.fromIterable([content.slice(0, 10), content.slice(10)]),
+          stat: { byteSize: content.byteLength },
+        }),
+    };
+    const reopened = yield* openVerifiedMediaStream(readyAsset()).pipe(
+      Effect.provideService(ObjectStorage, goodChunked),
+    );
+    const all = yield* Stream.runCollect(reopened.body);
+    expect(all.map((chunk) => chunk.byteLength)).toEqual([10, content.byteLength - 10]);
+  }),
+);
+
 it.effect('pulls the provider lazily: one chunk taken is one chunk read, nothing is buffered whole', () =>
   Effect.gen(function* lazy() {
     const storage = yield* withStored(content);
