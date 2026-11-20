@@ -20,11 +20,6 @@ const update = UpdateCustomerGroupPayloadSchema.fields;
 const definitionSource = create.source.schema.fields;
 const [membershipAssignment] = ApplyCustomerGroupMembershipSourcePayloadSchema.members;
 
-const distinctBy =
-  <Row>(key: (row: Row) => string, message: string) =>
-  (rows: readonly Row[]): true | string =>
-    new Set(rows.map(key)).size === rows.length || message;
-
 /**
  * One source-managed customer group as the owner admission receives it. `code` is the stable Symmy group code: the
  * source record and the source code the Commerce owner binds to one group. Every other field is the owner's own
@@ -44,7 +39,10 @@ export type SymmyCustomerGroupRow = typeof SymmyCustomerGroupRowSchema.Type;
 
 export const SymmyCustomerGroupRowsSchema = Schema.NonEmptyArray(SymmyCustomerGroupRowSchema).check(
   Schema.isMaxLength(SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS),
-  Schema.makeFilter(distinctBy(({ code }: SymmyCustomerGroupRow) => code, 'Each customer group code appears once')),
+  Schema.makeFilter(
+    (rows: readonly SymmyCustomerGroupRow[]) =>
+      new Set(rows.map(({ code }) => code)).size === rows.length || 'Each customer group code appears once',
+  ),
 );
 export type SymmyCustomerGroupRows = typeof SymmyCustomerGroupRowsSchema.Type;
 
@@ -66,7 +64,8 @@ export type SymmyCustomerGroupDefinitionFact = typeof SymmyCustomerGroupDefiniti
 export const SymmyCustomerGroupDefinitionFactsSchema = Schema.Array(SymmyCustomerGroupDefinitionFactSchema).check(
   Schema.isMaxLength(SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS),
   Schema.makeFilter(
-    distinctBy(({ code }: SymmyCustomerGroupDefinitionFact) => code, 'Each customer group code has one fact'),
+    (facts: readonly SymmyCustomerGroupDefinitionFact[]) =>
+      new Set(facts.map(({ code }) => code)).size === facts.length || 'Each customer group code has one fact',
   ),
 );
 export type SymmyCustomerGroupDefinitionFacts = typeof SymmyCustomerGroupDefinitionFactsSchema.Type;
@@ -94,10 +93,9 @@ export type SymmyGroupCustomerRow = typeof SymmyGroupCustomerRowSchema.Type;
 export const SymmyGroupCustomerRowsSchema = Schema.NonEmptyArray(SymmyGroupCustomerRowSchema).check(
   Schema.isMaxLength(SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS),
   Schema.makeFilter(
-    distinctBy(
-      ({ profile }: SymmyGroupCustomerRow) => canonicalSymmyProfileId(profile.profileRef.resourceId),
+    (rows: readonly SymmyGroupCustomerRow[]) =>
+      new Set(rows.map(({ profile }) => canonicalSymmyProfileId(profile.profileRef.resourceId))).size === rows.length ||
       'Each customer profile appears once',
-    ),
   ),
 );
 export type SymmyGroupCustomerRows = typeof SymmyGroupCustomerRowsSchema.Type;
