@@ -487,7 +487,7 @@ describe('#1394 Communication Decision service', () => {
     }).pipe(Effect.provide(communicationDecisionLayer(registry))),
   );
 
-  it.effect('the production composition approves nothing', () =>
+  it.effect('the production composition approves no purpose but the three Portal Auth ones', () =>
     Effect.gen(function* productionApprovesNothing() {
       const service = yield* CommunicationDecisionService;
       const decision = yield* service.decide(fixtureRequest(), fixtureContext([original]));

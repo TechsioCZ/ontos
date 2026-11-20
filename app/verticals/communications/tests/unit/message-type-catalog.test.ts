@@ -3,7 +3,11 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 import { approvedTypesDecisionLayer, CommunicationDecisionService } from '../../src/domain/catalog/decision-service.ts';
-import { TransactionalMessageTypeSchema } from '../../src/domain/catalog/message-type.ts';
+import {
+  recoveryPolicyOf,
+  resendPolicyOf,
+  TransactionalMessageTypeSchema,
+} from '../../src/domain/catalog/message-type.ts';
 import {
   extendMessageTypeRegistry,
   findMessageTypeByPurpose,
@@ -51,10 +55,28 @@ const decideAll = (registry: Parameters<typeof decideOrThrow>[0], purposes: read
   purposes.map((purpose) => decideOrThrow(registry, fixtureRequest({ purpose }), fixtureContext([original])));
 
 describe('#1394 Rule: the catalog approves types explicitly', () => {
-  it('ships no production type, and the approved list is a valid registry (module-load assertion for CI)', () => {
-    expect(approvedMessageTypes).toEqual([]);
+  it('ships exactly the three Portal Auth types (#1406), and the approved list is a valid registry (module-load assertion for CI)', () => {
+    expect(approvedMessageTypes.map(({ purpose }) => purpose)).toEqual([
+      'commerce.customer-context.portal-auth.verify-email',
+      'commerce.customer-context.portal-auth.reset-password',
+      'commerce.customer-context.portal-auth.otp',
+    ]);
     // Fails CI when a later owner activation adds an invalid type to the approved list.
     expect(Result.isSuccess(buildMessageTypeRegistry(approvedMessageTypes))).toBe(true);
+  });
+
+  it('AUTH-COM-01/13: every Portal Auth type is owned by Auth alone, required, recovery NONE, resend NOT_ALLOWED and without documents', () => {
+    for (const type of approvedMessageTypes) {
+      expect(type.sourceOwner).toBe('commerce.customer-context');
+      expect(type.requiredness).toBe('REQUIRED');
+      expect(recoveryPolicyOf(type)).toEqual({ kind: 'NONE' });
+      expect(resendPolicyOf(type)).toBe('NOT_ALLOWED');
+      expect(type.documents).toBeUndefined();
+      expect(type.eligibleSourceStates).toEqual(['commerce.customer-context.portal-auth.issuance-current']);
+      expect(
+        type.result.kind === 'MESSAGE_INTENTS' && type.result.slots.map(({ source }) => source.evidenceKinds),
+      ).toEqual([['HISTORICAL_SNAPSHOT']]);
+    }
   });
 
   it('BR-01: a registry never offers a type for a purpose it does not approve', () => {

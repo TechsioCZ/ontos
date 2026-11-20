@@ -97,7 +97,7 @@ describe('Language mode snapshot over its routine (own sub-transaction)', () => 
 });
 
 describe('The production composition fails closed (#1401)', () => {
-  it.effect('approves no type, so every purpose is an unknown purpose', () =>
+  it.effect('approves only the three Portal Auth types, so every other purpose is an unknown purpose', () =>
     Effect.gen(function* emptyCatalog() {
       const catalog = yield* MessageTypeCatalog;
       const evaluator = yield* CommunicationDecisionService;
