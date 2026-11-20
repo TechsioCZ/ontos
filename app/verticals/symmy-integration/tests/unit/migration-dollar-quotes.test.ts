@@ -7,8 +7,27 @@ import { expect, it } from 'effect-rstest';
 /**
  * Why a statement of a migration cannot be parsed for its dollar quotes: a `$` that opens no dollar quote, positional
  * parameter or identifier part, or a dollar quote whose closing tag never follows in the same statement. Comments,
- * quoted literals and the bodies of dollar quotes are skipped as PostgreSQL's lexer skips them.
+ * quoted literals and the bodies of dollar quotes are skipped as PostgreSQL's lexer skips them; its block comments
+ * nest, so a comment ends only where its outermost opening is closed.
  */
+/** Where the block comment opened at `start` ends, past its outermost close, or none when it never closes. */
+const blockCommentEnd = (statement: string, start: number): number | undefined => {
+  let depth = 1;
+  let index = start + 2;
+  while (depth > 0 && index < statement.length) {
+    if (statement.startsWith('/*', index)) {
+      depth += 1;
+      index += 2;
+    } else if (statement.startsWith('*/', index)) {
+      depth -= 1;
+      index += 2;
+    } else {
+      index += 1;
+    }
+  }
+  return depth === 0 ? index : undefined;
+};
+
 const dollarQuoteDefects = (statement: string): readonly string[] => {
   const defects: string[] = [];
   const tag = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/uy;
@@ -20,11 +39,11 @@ const dollarQuoteDefects = (statement: string): readonly string[] => {
       const end = statement.indexOf('\n', index);
       index = end === -1 ? statement.length : end + 1;
     } else if (character === '/' && next === '*') {
-      const end = statement.indexOf('*/', index + 2);
-      if (end === -1) {
+      const end = blockCommentEnd(statement, index);
+      if (end === undefined) {
         return [...defects, `a comment opened at offset ${String(index)} is never closed`];
       }
-      index = end + 2;
+      index = end;
     } else if (character === "'" || character === '"') {
       let end = statement.indexOf(character, index + 1);
       while (end !== -1 && statement.charAt(end + 1) === character) {
@@ -92,5 +111,15 @@ it.layer(NodeFileSystem.layer)('Symmy migration dollar quotes', (suite) => {
           ),
         ).toEqual([]);
       }),
+  );
+
+  suite.effect('skips a nested block comment whole, as PostgreSQL ends it only at its outermost close', () =>
+    Effect.sync(() => {
+      // The first */ closes the inner comment, so the $$ before the second */ is comment text and the body never closes.
+      expect(dollarQuoteDefects('AS /* outer /* inner */ $$ */ $$ SELECT 1;')).toEqual([
+        '$$ opened at offset 30 is never closed in its statement',
+      ]);
+      expect(dollarQuoteDefects('AS /* outer /* inner */ $$ */ $$ SELECT 1; $$;')).toEqual([]);
+    }),
   );
 });
