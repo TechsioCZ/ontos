@@ -1,4 +1,4 @@
-/** Bound each newline-delimited message in the executable Catalog TEST fixture. */
+/** Bound each newline-delimited wire message, including its delimiter, in the executable Catalog TEST fixture. */
 export const priceGroupCurrentInputGuard = () => {
   let bytes = 0;
   let rejected = false;
@@ -7,14 +7,13 @@ export const priceGroupCurrentInputGuard = () => {
       return false;
     }
     for (const byte of chunk) {
+      bytes += 1;
+      if (bytes > 262_144) {
+        rejected = true;
+        return false;
+      }
       if (byte === 10) {
         bytes = 0;
-      } else {
-        bytes += 1;
-        if (bytes > 262_144) {
-          rejected = true;
-          return false;
-        }
       }
     }
     return true;
