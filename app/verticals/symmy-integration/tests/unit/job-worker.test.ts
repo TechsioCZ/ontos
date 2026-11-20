@@ -1,10 +1,11 @@
-import { OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerDeferred, OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
 import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
 import { NodeCrypto } from '@effect/platform-node';
 import type { OutboxWorkerHandlerContext, ScopedRoutineInvoker } from '@app/core-runtime';
 import { trustResolvedSystemPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { FetchHttpClient } from 'effect/http';
 import { SymmyJobNotification, SymmyJobNotificationError } from '../../src/services/symmy-job-notification.service.ts';
 import { SymmyJobNotificationStore } from '../../src/services/symmy-job-notification-store.ts';
@@ -463,13 +464,17 @@ describe('Symmy durable execution and original-effect recovery', () => {
   );
 
   it.effect(
-    'holds an effect behind an unsettled earlier membership order without claiming it or calling an owner',
+    'defers an effect behind an unsettled earlier membership order without claiming it, calling an owner or spending an attempt',
     () =>
       Effect.gen(function* laterOrderWaits() {
         const fixture = harness();
         fixture.orderReady(false);
+        const now = DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-20T10:00:00.000Z'));
+        yield* TestClock.setTime(now);
         const failure = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
-        expect(failure).toMatchObject({ code: 'symmy_job_worker_unavailable' });
+        // A deferral, not a failure: the delivery wakes after an earlier attempt's lease and keeps its retry budget.
+        expect(Schema.is(OutboxWorkerDeferred)(failure)).toBe(true);
+        expect(failure).toMatchObject({ wakeAtMs: now + 30_000 });
         expect(fixture.executed).toHaveLength(0);
         expect(fixture.recovered).toHaveLength(0);
         expect(fixture.job()).toEqual(initialJob);

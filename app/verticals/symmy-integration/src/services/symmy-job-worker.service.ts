@@ -44,6 +44,11 @@ export {
 const owner = 'integration.symmy';
 const topic = 'integration.symmy.job-admitted.v1';
 const submitWorkloadKey = 'integration.symmy-admit';
+/**
+ * How long a membership waits for an earlier order of its lineage before it looks again: the 30 second lease an
+ * attempt of the earlier one holds its effect for.
+ */
+const membershipOrderWaitMs = 30_000;
 const sameEffect = Schema.toEquivalence(SymmyPinnedEffectSchema);
 const sameOperation = (left: SymmyEffectAdapter['operation'], right: SymmyEffectAdapter['operation']) =>
   left.moduleId === right.moduleId &&
@@ -478,12 +483,13 @@ const processEffect = Effect.fn('SymmyJobWorker.processEffect')(function* proces
     return yield* symmyJobWorkerUnavailable();
   }
   const persistence = yield* SymmyJobExecutionPersistence;
-  // The owner refuses an older membership order of a lineage, so a later order waits for every earlier one to settle.
+  // The owner refuses an older membership order of a lineage, so a later order waits, unclaimed, for every earlier
+  // one to settle.
   const ordered = yield* inScope(context, (scope) =>
     persistence.storeFor(scope.routineInvoker).membershipOrderReady(saved.effect.ref.effectId),
   );
   if (!ordered) {
-    return yield* symmyJobWorkerUnavailable();
+    return 'waiting' as const;
   }
   const dependencyRejected = dependencies.some(
     ({ outcome }) =>
@@ -624,17 +630,23 @@ interface ExecutionWave {
   readonly current: SymmyExecutionJob;
   readonly done: boolean;
   readonly firstFailure: Option.Option<SymmyJobWorkerError>;
+  /** A membership waits for an earlier order of its lineage. */
+  readonly waiting: boolean;
 }
+type WaveProgress = Pick<ExecutionWave, 'firstFailure' | 'waiting'>;
 const executeReadyEffect = Effect.fn('SymmyJobWorker.executeReadyEffect')(function* ready(
   context: OutboxWorkerHandlerContext,
   current: SymmyExecutionJob,
-  firstFailure: Option.Option<SymmyJobWorkerError>,
+  progress: WaveProgress,
   saved: SymmyExecutionJob['effects'][number],
 ) {
   return yield* processEffect(context, current, saved).pipe(
     Effect.match({
-      onFailure: (error) => Option.orElse(firstFailure, () => Option.some(error)),
-      onSuccess: () => firstFailure,
+      onFailure: (error): WaveProgress => ({
+        ...progress,
+        firstFailure: Option.orElse(progress.firstFailure, () => Option.some(error)),
+      }),
+      onSuccess: (outcome): WaveProgress => (outcome === 'waiting' ? { ...progress, waiting: true } : progress),
     }),
   );
 });
@@ -655,10 +667,10 @@ const executeWave = Effect.fn('SymmyJobWorker.executeWave')(function* wave(
   if (ready.length === 0) {
     return { ...state, done: true };
   }
-  const firstFailure = yield* Effect.reduce(
+  const progress = yield* Effect.reduce(
     ready,
-    () => state.firstFailure,
-    (failure, saved) => executeReadyEffect(context, state.current, failure, saved),
+    (): WaveProgress => ({ firstFailure: state.firstFailure, waiting: state.waiting }),
+    (soFar, saved) => executeReadyEffect(context, state.current, soFar, saved),
   );
   const persistence = yield* SymmyJobExecutionPersistence;
   const refreshed = yield* inScope(context, (scope) => persistence.storeFor(scope.routineInvoker).load(jobId));
@@ -669,7 +681,7 @@ const executeWave = Effect.fn('SymmyJobWorker.executeWave')(function* wave(
     attempted: new Set([...state.attempted, ...ready.map(({ effect }) => effect.ref.effectId)]),
     current: refreshed.value,
     done: false,
-    firstFailure,
+    ...progress,
   };
 });
 
@@ -692,6 +704,7 @@ const executeJob = Effect.fn('SymmyJobWorker.execute')(function* execute(
       current: job.value,
       done: false,
       firstFailure: Option.none<SymmyJobWorkerError>(),
+      waiting: false,
     }),
     (state) => executeWave(context, payload.jobId, state),
   );
@@ -699,6 +712,12 @@ const executeJob = Effect.fn('SymmyJobWorker.execute')(function* execute(
     return yield* final.firstFailure.value;
   }
   if (final.current.effects.some(({ state }) => state !== 'settled')) {
+    // Waiting for an earlier membership order is not a failed attempt: the delivery is deferred, as for a notification
+    // not yet due, and spends none of its retry budget.
+    if (final.waiting) {
+      const now = yield* Clock.currentTimeMillis;
+      return yield* new OutboxWorkerDeferred({ wakeAtMs: now + membershipOrderWaitMs });
+    }
     return yield* symmyJobWorkerUnavailable();
   }
   yield* notifyCompletion(context, final.current);
