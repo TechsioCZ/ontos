@@ -450,6 +450,7 @@ const symmyProblem = JSON.stringify({
   title: 'Gateway authentication required',
   type: 'https://ontos.dev/problems/gateway-authentication-required',
 });
+const NO_API_KEY_CHALLENGE = 'answered without the ApiKey challenge';
 const symmyAnswer = {
   body: `${symmyProblem}\n`,
   challenge: 'ApiKey realm="ontos-gateway"',
@@ -490,7 +491,10 @@ it('finds the API key challenge among several and never mistakes a parameter for
   ).toEqual([]);
   expect(
     symmyIngressAnswerProblems({ ...symmyAnswer, challenge: 'Bearer realm="staff", apikey="ontos-gateway"' }),
-  ).toEqual([{ problem: 'answered without the ApiKey challenge', reason: 'content' }]);
+  ).toEqual([{ problem: NO_API_KEY_CHALLENGE, reason: 'content' }]);
+  expect(
+    symmyIngressAnswerProblems({ ...symmyAnswer, challenge: 'Bearer realm="staff", apikey = "ontos-gateway"' }),
+  ).toEqual([{ problem: NO_API_KEY_CHALLENGE, reason: 'content' }]);
 });
 
 it('refuses a Symmy ingress problem body that lacks the title and detail the gateway sends', () => {
@@ -509,7 +513,7 @@ it('reports each wrong part of a 401 Symmy ingress answer on its own', () => {
     ),
   ).toEqual(['content']);
   expect(symmyIngressAnswerProblems({ ...symmyAnswer, challenge: 'Bearer realm="x"' })).toEqual([
-    { problem: 'answered without the ApiKey challenge', reason: 'content' },
+    { problem: NO_API_KEY_CHALLENGE, reason: 'content' },
   ]);
   expect(
     symmyIngressAnswerProblems({ ...symmyAnswer, body: symmyProblem.slice(0, 40) }).map(({ reason }) => reason),
