@@ -1,4 +1,4 @@
-import { PrivacyMeasureOwnerScopeSchema } from './privacy-owner-scope.ts';
+import { normalizeOwnerScope, PrivacyMeasureOwnerScopeSchema } from './privacy-owner-scope.ts';
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Effect, Schema } from 'effect';
 
@@ -144,7 +144,26 @@ const overlaps = (left: readonly string[], right: readonly string[]): boolean =>
   return left.some((reference) => rightRefs.has(reference));
 };
 
-/** Nothing at all for a handoff without an owner scope, so every existing owner's fingerprint is unchanged. */
+/**
+ * The handoff with every reference set in its canonical order (their order carries no meaning), so the coordinator that
+ * dispatches it and an owner that attests it encode and fingerprint the very same text.
+ */
+export const normalizePrivacyMeasureHandoff = (handoff: PrivacyMeasureHandoff): PrivacyMeasureHandoff => {
+  const { ownerScope, ...rest } = handoff;
+  const normalized: PrivacyMeasureHandoff = {
+    ...rest,
+    contentScopeRefs: handoff.contentScopeRefs.toSorted(),
+    expectedEvidenceRefs: handoff.expectedEvidenceRefs.toSorted(),
+    preconditionRefs: handoff.preconditionRefs.toSorted(),
+    resourceRefs: handoff.resourceRefs.toSorted(),
+  };
+  return ownerScope === undefined ? normalized : { ...normalized, ownerScope: normalizeOwnerScope(ownerScope) };
+};
+
+/**
+ * Nothing at all for a handoff without an owner scope, so every existing owner's fingerprint is unchanged. The blocker
+ * assessment adds its own part only when the scope carries one, so a scope without it fingerprints exactly as before.
+ */
 const ownerScopeFingerprint = ({ ownerScope }: PrivacyMeasureHandoff): readonly string[] =>
   ownerScope === undefined
     ? []
@@ -165,6 +184,20 @@ const ownerScopeFingerprint = ({ ownerScope }: PrivacyMeasureHandoff): readonly 
               .toSorted(),
           ),
         ]),
+        ...(ownerScope.blockerAssessment === undefined
+          ? []
+          : [
+              stableKey([
+                ownerScope.blockerAssessment.assessedByRef,
+                stableKey(
+                  ownerScope.blockerAssessment.blockers
+                    .map(({ blockerRef, contentRefs, kind }) =>
+                      stableKey([blockerRef, kind, stableKey(contentRefs.toSorted())]),
+                    )
+                    .toSorted(),
+                ),
+              ]),
+            ]),
       ];
 
 const handoffFingerprint = (handoff: PrivacyMeasureHandoff): string =>
@@ -326,11 +359,19 @@ const normalizeOwnerOutcome = (outcome: OwnerExecutionOutcome, attempt: number):
   remainingResourceRefs: unique(outcome.remainingResourceRefs),
 });
 
+/** A Communications measure targets exactly the owner's own opaque content references (`communications.core.<kind>:<id>`). */
+export const isCommunicationsContentRef = (reference: string): boolean =>
+  /^communications\.core\.[a-z][a-z-]*:\S+$/u.test(reference);
+
 /** Rejects ambiguous handoffs before any owner Action can be invoked. */
 export const validatePrivacyMeasureHandoff = (handoff: PrivacyMeasureHandoff): readonly string[] => {
   const errors: string[] = [];
   if (handoff.owningCapability === 'communications.core' && handoff.ownerScope === undefined) {
     errors.push('A Communications measure must carry its exact owner scope');
+  }
+  if (handoff.owningCapability === 'communications.core' && !handoff.resourceRefs.every(isCommunicationsContentRef)) {
+    // Refused at dispatch, by name: a measure whose targets the owner cannot read must never end unreported and unexplained.
+    errors.push('A Communications measure must target only Communications content references');
   }
   if (handoff.resourceRefs.length === 0) {
     errors.push('A measure must name at least one Resource');

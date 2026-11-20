@@ -7,6 +7,7 @@ import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import {
+  normalizePrivacyMeasureHandoff,
   OwnerExecutionAuthorityResultSchema,
   PrivacyMeasureHandoffSchema,
   validateOwnerExecutionAuthorityResult,
@@ -34,21 +35,6 @@ const unavailable = (cause?: unknown) =>
 const conflict = (reason: string) =>
   new PrivacyOperationPersistenceError({ code: 'privacy_operation_conflict', reason });
 
-const sortedOwnerScope = (
-  ownerScope: PrivacyMeasureHandoff['ownerScope'],
-): Pick<PrivacyMeasureHandoff, 'ownerScope'> =>
-  ownerScope === undefined
-    ? {}
-    : {
-        ownerScope: {
-          ...ownerScope,
-          requestedScopePartRefs: ownerScope.requestedScopePartRefs.toSorted(),
-          trustedLookups: ownerScope.trustedLookups.toSorted((left, right) =>
-            left.lookupRef.localeCompare(right.lookupRef),
-          ),
-        },
-      };
-
 const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHandoffSchema));
 
 /**
@@ -57,16 +43,7 @@ const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHa
  */
 export const fingerprintCommunicationsOwnerHandoff = Effect.fn('Privacy.CommunicationsOwnerReceipt.fingerprint')(
   function* fingerprint(handoff: PrivacyMeasureHandoff, crypto: Crypto.Crypto) {
-    const { ownerScope, ...rest } = handoff;
-    const normalized: PrivacyMeasureHandoff = {
-      ...rest,
-      contentScopeRefs: handoff.contentScopeRefs.toSorted(),
-      expectedEvidenceRefs: handoff.expectedEvidenceRefs.toSorted(),
-      preconditionRefs: handoff.preconditionRefs.toSorted(),
-      resourceRefs: handoff.resourceRefs.toSorted(),
-      ...sortedOwnerScope(ownerScope),
-    };
-    const encoded = yield* encodeHandoff(normalized).pipe(Effect.mapError(unavailable));
+    const encoded = yield* encodeHandoff(normalizePrivacyMeasureHandoff(handoff)).pipe(Effect.mapError(unavailable));
     return Hex.encode(
       yield* crypto.digest('SHA-256', new TextEncoder().encode(encoded)).pipe(Effect.mapError(unavailable)),
     );
