@@ -334,6 +334,12 @@ const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =
     if (Option.isNone(target) || target.value.kind === 'human') {
       return yield* invalid('The target is not a tenant-local non-human principal');
     }
+    // A system Principal lives exactly as long as its system workload enrollment, which alone ends it
+    // (`core.identity.change-system-workload-enrollment`): a status change here would let a second one be enrolled
+    // beside it and then revive it.
+    if (target.value.kind === 'system') {
+      return yield* invalid('A system principal changes only through its system workload enrollment');
+    }
     if (target.value.status !== input.expectedStatus) {
       return yield* conflict('The principal status changed concurrently');
     }

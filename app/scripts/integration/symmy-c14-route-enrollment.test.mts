@@ -13,7 +13,19 @@ import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-j
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
-import { Config, Duration, Effect, FileSystem, Layer, Match, Redacted, Schema, Stream } from 'effect';
+import {
+  Array as EffectArray,
+  Config,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Match,
+  Order,
+  Redacted,
+  Schema,
+  Stream,
+} from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
@@ -201,16 +213,16 @@ it.live(
           'commerce.pricing.source-write',
           'commerce.market-catalog.source-read',
         ];
-        // The owner workloads the Symmy executor calls under: binding them is not yet governed on main, so they stay
-        // test SQL. The system Principal itself and its job key come from Core's enrollment Action below.
-        const systemOwnerWorkloads = [
+        // The owner workloads the products route's executor calls under, which the enrollment below binds to the
+        // system Principal: the integration Principal's bindings stay test SQL, the system Principal has none.
+        const executorWorkloads = [
           'commerce.catalog.symmy-product-import',
           'commerce.catalog.symmy-product-read',
           'commerce.catalog.symmy-variant-localized-facts',
           'commerce.catalog.symmy-variant-localized-facts-recovery',
-          'commerce.pricing.source-write',
-          'commerce.pricing.source-read',
           'commerce.market-catalog.source-read',
+          'commerce.pricing.source-read',
+          'commerce.pricing.source-write',
         ];
         const bindWorkloads = Effect.fn('SymmyC14RouteEnrollment.bindWorkloads')(function* bindWorkloads(
           principal: { readonly principalId: string },
@@ -236,7 +248,9 @@ it.live(
         yield* moduleKey.acknowledgeBinding;
 
         // The Tenant's administrator enrolls the Tenant's system Principal for the Symmy job through Core's Action, in
-        // the staff session the Shell issued for that human: a replay with the same key answers the same enrollment.
+        // the staff session the Shell issued for that human: it holds the job key and every owner workload Symmy's
+        // published contract declares for that job on a receiver installed and active here, and a replay with the same
+        // key answers the same enrollment. Nothing else binds the system Principal.
         yield* grantTestTenantRoleAccess({
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           holders: [{ capabilityKeys: [enrollmentCapability], principalId: issuer.principalId }],
@@ -270,7 +284,24 @@ it.live(
           ),
         );
         expect(yield* shell.changeFixtureSystemWorkloadEnrollment(enrollmentRequest)).toEqual(enrollment);
-        yield* bindWorkloads(enrollment, systemOwnerWorkloads);
+        const held = enrollment.held.map(({ workloadKey }) => workloadKey);
+        expect(held).toEqual(expect.arrayContaining([workerKey, ...executorWorkloads]));
+        expect(enrollment.added).toEqual(enrollment.held);
+        // The receivers this composition does not install stay pending, each named by its declared call.
+        expect(enrollment.pending.map(({ workloadKey }) => workloadKey)).toEqual([
+          'commerce.assortment.symmy-fixture-rule-import',
+          'commerce.tax.symmy-seller-vat-fixture-import',
+        ]);
+        const systemBindings =
+          yield* admin`select workload_key from core.access_workload_bindings where tenant_id=${tenantId} and principal_id=${enrollment.principalId} and status='active'`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ workload_key: Schema.String })))),
+          );
+        expect(
+          EffectArray.sort(
+            systemBindings.map(({ workload_key }) => workload_key),
+            Order.String,
+          ),
+        ).toEqual(EffectArray.sort(held, Order.String));
 
         // The operator enrolls the products route pair through the command; nothing writes the routes otherwise.
         const productsRouteId = randomUUID();

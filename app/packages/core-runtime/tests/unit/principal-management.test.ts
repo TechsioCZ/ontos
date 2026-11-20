@@ -85,6 +85,31 @@ it.effect('rejects human principal administration and managed keys targeting hum
     expect(Predicate.isTagged(bindingError, 'IdentityTargetInvalidError')).toBe(true);
   }),
 );
+it.effect('leaves every status of a system principal to its system workload enrollment', () =>
+  Effect.gen(function* refusesSystemPrincipalStatusChanges() {
+    // Disabling, reactivating or archiving a system Principal here would let a second one be enrolled beside it.
+    for (const [expectedStatus, newStatus] of [
+      ['active', 'disabled'],
+      ['disabled', 'active'],
+      ['active', 'archived'],
+    ] as const) {
+      const refusal = yield* Effect.flip(
+        changePrincipalStatus({ expectedStatus, newStatus, principalId, reason: 'Pause the worker', tenantId }).pipe(
+          provideRepository(
+            repository({
+              loadPrincipal: () => Effect.succeedSome({ kind: 'system', status: expectedStatus }),
+              updatePrincipalStatus: () => unconfigured('updatePrincipalStatus'),
+            }),
+          ),
+        ),
+      );
+      expect(Predicate.isTagged(refusal, 'IdentityTargetInvalidError')).toBe(true);
+      expect(refusal).toMatchObject({
+        reason: 'A system principal changes only through its system workload enrollment',
+      });
+    }
+  }),
+);
 it.effect('enforces expected state, terminal revocation, and revocation reasons', () =>
   Effect.gen(function* enforcesBindingLifecycle() {
     const conflictError = yield* Effect.flip(
