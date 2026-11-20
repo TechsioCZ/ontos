@@ -3,7 +3,8 @@
 // chosen one, finds nobody or fails for now, the choice stays chosen and labelled in the real picker, Uložit stays
 // enabled, and the save sends the chosen contact's full reference. A newer name of the chosen contact replaces the kept
 // one. When the directory refuses the user, nothing it returned stays chosen, on offer or in the version the form last
-// saved, also when a save lands after the refusal, so leaving asks nothing. The picker's own clear action, named after
+// saved, also when a save lands after the refusal, so leaving asks nothing; a save still running, also one started from
+// the leave question, still decides, and an activity parked for approval is not proposed again for the same contact. The picker's own clear action, named after
 // the contact it drops, drops the contact and keeps the rest of the form; a failed search describes the picker. Before
 // a contact and a summary exist, Uložit is held back. The real
 // page, picker, router and i18n run; the owner's Records and Action, Work Tasks Records and the Party Registry
@@ -38,7 +39,7 @@ import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-actio
 import csResource from '../../locales/cs/crm-activities.json';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
-import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
+import { ActionProposalAcceptedSchema, ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { RecordsPage } from '../../src/routes/[lang]/aktivity/page.tsx';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
@@ -177,6 +178,13 @@ const answerFor = (query: string) =>
 
 /** Whether the owner's Action holds each command it took until the test releases it. */
 let holdSaves = false;
+/** Whether the owner's Action parks each command for approval instead of recording it. */
+let proposeSaves = false;
+const parked = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+  _tag: 'ActionProposalAccepted',
+  expiresAt: '2026-11-10T12:00:00.000Z',
+  proposalId: '60000000-0000-4000-8000-000000000001',
+});
 let saveRelease = Deferred.makeUnsafe<boolean>();
 const releaseSave = () => Deferred.doneUnsafe(saveRelease, Effect.succeed(true));
 
@@ -212,7 +220,7 @@ const network = browserNetwork(
           commands.push(payload);
         }).pipe(
           Effect.andThen(Effect.suspend(() => (holdSaves ? Deferred.await(saveRelease) : Effect.void))),
-          Effect.as(recorded),
+          Effect.map(() => (proposeSaves ? parked : recorded)),
         ),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
@@ -338,6 +346,41 @@ const leavesWithoutAsking = (router: PageRouter) =>
     expect(router.state.location.href).toBe('/cs');
   });
 
+/** The Uložit of the unsaved-changes question. */
+const leaveSaveButton = () =>
+  Option.getOrThrow(
+    Option.fromUndefinedOr(
+      [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find(
+        (candidate) => candidate.textContent?.trim() === labels.save,
+      ),
+    ),
+  );
+
+/**
+ * Records every text the page puts on screen from now on, so a contact shown for a single render before the page
+ * goes away is seen too.
+ */
+const shownFromNow = () => {
+  const shown: string[] = [];
+  const observer = new MutationObserver((records) => {
+    for (const change of records) {
+      shown.push(
+        change.type === 'characterData'
+          ? (change.target.textContent ?? '')
+          : [...change.addedNodes].map((node) => node.textContent ?? '').join(' '),
+      );
+    }
+  });
+  observer.observe(document.body, { characterData: true, childList: true, subtree: true });
+  return {
+    stop: () => {
+      shown.push(...observer.takeRecords().map((change) => change.target.textContent ?? ''));
+      observer.disconnect();
+      return shown;
+    },
+  };
+};
+
 /** The choice as the user sees it: chosen in the native control, labelled in the trigger, Uložit enabled. */
 const expectKept = () => {
   expect(contactSelect().value).toBe(kept.ref.resourceId);
@@ -348,6 +391,7 @@ const expectKept = () => {
 beforeEach(() => {
   lateRelease = Deferred.makeUnsafe<boolean>();
   holdSaves = false;
+  proposeSaves = false;
   saveRelease = Deferred.makeUnsafe<boolean>();
   gatewayRefusesDirectory = false;
   queries.length = 0;
@@ -634,6 +678,80 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
       yield* search('Novák');
       expect(contactSelect().value).toBe(kept.ref.resourceId);
       expect(contactShown()).toBe('Kavárna Dolce Vita');
+      expect(commands).toHaveLength(1);
+    }),
+  );
+  suite.effect('a refusal while a second save runs leaves "Zahodit změny" nothing of the refused contact', () =>
+    Effect.gen(function* discardDuringSecondSave() {
+      const router = yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      yield* waitUntil(
+        () => text().includes(copy(`${key}.saved`)) && element<HTMLInputElement>('#activity-summary').value === '',
+      );
+      // The first activity is recorded with Dolce; the second one is on its way when the directory refuses the user.
+      yield* typeInto('#activity-summary', 'Druhý hovor');
+      holdSaves = true;
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 2);
+      yield* ask('Zákaz');
+      yield* waitUntil(() => contactSelect().value === '' && !findButton().disabled);
+
+      const shown = shownFromNow();
+      yield* acted(() => {
+        void router.navigate({ to: '/cs' });
+      });
+      yield* waitUntil(() => buttons(labels.discard).length > 0);
+      yield* acted(() => button(labels.discard).click());
+      yield* waitUntil(() => router.state.location.href === '/cs');
+      // Discarding went back to the recorded version without the refused contact, not even for a moment.
+      expect(shown.stop().filter((line) => line.includes('Kavárna Dolce'))).toEqual([]);
+      expect(commands).toHaveLength(2);
+    }),
+  );
+
+  suite.effect('Uložit in the leave question survives a refusal while its save runs and then leaves', () =>
+    Effect.gen(function* leaveSaveDuringRefusal() {
+      const router = yield* chooseDolce;
+      holdSaves = true;
+      yield* acted(() => {
+        void router.navigate({ to: '/cs' });
+      });
+      yield* waitUntil(() => buttons(labels.discard).length > 0);
+      yield* acted(() => leaveSaveButton().click());
+      yield* waitUntil(() => commands.length === 1);
+
+      yield* ask('Zákaz');
+      yield* waitUntil(() => contactSelect().value === '' && !findButton().disabled);
+      // The save still runs: the question waits for it.
+      expect(buttons(labels.discard)).toHaveLength(1);
+      expect(router.state.location.href).toBe('/cs/aktivity');
+
+      releaseSave();
+      // Recorded: the summary is not left behind to be sent again, and the person leaves as asked.
+      yield* waitUntil(() => router.state.location.href === '/cs');
+      expect(commands).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('a draft parked for approval is not sent again after a refusal and the same contact chosen again', () =>
+    Effect.gen(function* proposalSurvivesRefusal() {
+      proposeSaves = true;
+      yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 1);
+      yield* networkIdle;
+      yield* waitUntil(() => saveButton().disabled);
+
+      yield* search('Zákaz');
+      expect(contactSelect().value).toBe('');
+      yield* search('Dolce');
+      yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+      expect(element<HTMLInputElement>('#activity-summary').value).toBe('Domluvená ochutnávka');
+      // The same activity is already waiting for approval: Uložit holds it back.
+      expect(saveButton().disabled).toBe(true);
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
       expect(commands).toHaveLength(1);
     }),
   );

@@ -336,6 +336,76 @@ describe('explicit draft save', () => {
     }),
   );
 
+  it.effect(
+    'revise takes a part out of the draft, the confirmed version and a running save without starting over',
+    () =>
+      Effect.gen(function* revised() {
+        const { controller, reply, sent } = yield* setup();
+        const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
+        controller.change(draft('Kept Secret'));
+        controller.save();
+        const answered: string[] = [];
+        controller.afterSave((status) => {
+          answered.push(status);
+        });
+        // The form loses access to the secret while the save is on its way: the save still decides.
+        controller.revise(withoutSecret);
+        expect(controller.status()).toBe('saving');
+        yield* reply(0, 'saved');
+        expect(answered).toEqual(['saved']);
+        expect(controller.status()).toBe('saved');
+        // What the save confirmed, and so what discarding goes back to, holds no secret.
+        expect(controller.confirmed()).toEqual(draft('Kept'));
+        controller.change(draft('Kept'));
+        expect(controller.status()).toBe('saved');
+
+        // A saved version is revised too: discarding a later edit does not bring the secret back.
+        controller.change(draft('Mine Secret'));
+        controller.save();
+        yield* reply(1, 'saved');
+        controller.change(draft('Mine Secret, edited'));
+        controller.revise(withoutSecret);
+        expect(controller.confirmed()).toEqual(draft('Mine'));
+        expect(controller.status()).toBe('dirty');
+        controller.discard();
+        controller.change(draft('Mine'));
+        expect(controller.status()).toBe('idle');
+        expect(sent).toEqual(['Kept Secret', 'Mine Secret']);
+      }),
+  );
+
+  it.effect(
+    'revise keeps a draft parked for approval, so choosing the same draft again does not propose it twice',
+    () =>
+      Effect.gen(function* revisedProposal() {
+        const { controller, reply, sent } = yield* setup();
+        controller.change(draft('Plan Secret'));
+        controller.save();
+        yield* reply(0, 'proposed');
+        controller.revise((value) => draft(value.name.replace(' Secret', '')));
+        // The draft lost its secret: it is no longer the one handed over.
+        expect(controller.status()).toBe('dirty');
+        controller.change(draft('Plan Secret'));
+        expect(controller.status()).toBe('proposed');
+        controller.save();
+        yield* Effect.yieldNow;
+        expect(sent).toEqual(['Plan Secret']);
+      }),
+  );
+
+  it.effect('a revision made while a save runs also applies to what a partly successful save wrote', () =>
+    Effect.gen(function* revisedPartly() {
+      const { controller, reply } = yield* setup();
+      controller.change(draft('Written Secret, missing'));
+      controller.save();
+      controller.revise((value) => draft(value.name.replace(' Secret', '')));
+      controller.confirm(draft('Written Secret'));
+      yield* reply(0, 'failed');
+      expect(controller.status()).toBe('error');
+      expect(controller.confirmed()).toEqual(draft('Written'));
+    }),
+  );
+
   it.effect('a disposed controller sends nothing and a save still running decides nothing', () =>
     Effect.gen(function* disposed() {
       const { controller, reply, sent } = yield* setup();

@@ -14,10 +14,10 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { DraftSave, SaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { constVoid } from 'effect/Function';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
@@ -89,26 +89,32 @@ export const preloadPage = modulePagePreload((props) =>
   activities.preload({ legalEntityId: props.context?.legalEntityId ?? '', resourceId: resourceIdOf(props.search) }),
 );
 
+type CounterpartyRef = Counterparty['ref'];
+
 /**
- * The activity as typed: the chosen contact, the follow-up task and the summary. The form owns the chosen contact: a
- * later search only offers others, so the contact stays chosen until the user picks another one, clears it, or the
+ * The activity as typed: the chosen contact's reference, the follow-up task and the summary. The draft holds what the
+ * command sends and nothing the directory describes, so no version of it keeps a contact's name or roles. A later
+ * search only offers other contacts: the contact stays chosen until the user picks another one, clears it, or the
  * contact directory refuses the user.
  */
 interface ActivityDraft {
-  readonly counterparty: Counterparty | null;
+  readonly counterpartyRef: CounterpartyRef | null;
   readonly summary: string;
   readonly taskId: readonly string[];
 }
 
-const blankActivity: ActivityDraft = { counterparty: null, summary: '', taskId: [] };
+const blankActivity: ActivityDraft = { counterpartyRef: null, summary: '', taskId: [] };
 
-/** Two drafts are the same when they would record the same activity: a contact's newer name changes nothing. */
+/** Two drafts are the same when they would record the same activity. */
 const sameActivity = (left: ActivityDraft, right: ActivityDraft) =>
   left.summary === right.summary &&
-  left.counterparty?.ref.resourceId === right.counterparty?.ref.resourceId &&
+  left.counterpartyRef?.resourceId === right.counterpartyRef?.resourceId &&
   left.taskId.join(',') === right.taskId.join(',');
 
-const withoutContact = (draft: ActivityDraft): ActivityDraft => ({ ...draft, counterparty: null });
+const withoutContact = (draft: ActivityDraft): ActivityDraft => ({ ...draft, counterpartyRef: null });
+
+/** The activity after the recorded one: same contact and follow-up, an empty summary. */
+const nextActivity = (draft: ActivityDraft): ActivityDraft => ({ ...draft, summary: '' });
 
 /**
  * The lookup was refused rather than unavailable: the login expired (401), or the Shell's gateway or the contact
@@ -119,18 +125,6 @@ const refusedLookup = (error: SearchError) =>
 
 /** How the picker and its clear action name a contact. */
 const contactName = (contact: Counterparty) => contact.party.title ?? contact.ref.resourceId;
-
-/**
- * A newer answer about the chosen contact replaces the kept one, so a later search that omits the contact still shows
- * its current name.
- */
-const withNewerContact =
-  (result: Counterparties) =>
-  (draft: ActivityDraft): ActivityDraft => ({
-    ...draft,
-    counterparty:
-      result.find((item) => item.ref.resourceId === draft.counterparty?.ref.resourceId) ?? draft.counterparty,
-  });
 
 const useRelationshipsRecords = (input: ActivitiesInput) => {
   const { language, t } = useModernI18n();
@@ -165,20 +159,25 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
   const tasksFailure = canWrite && tasksSnapshot.state === 'failed' ? failureText(tasksSnapshot.error) : '';
   // The activity as typed: only Uložit sends it.
   const [draft, setDraft] = useState<ActivityDraft>(blankActivity);
-  const { counterparty, summary, taskId } = draft;
-  const counterpartyId = counterparty === null ? [] : [counterparty.ref.resourceId];
+  const { summary, taskId } = draft;
+  const counterpartyId = draft.counterpartyRef === null ? [] : [draft.counterpartyRef.resourceId];
   const setSummary = (next: string) => setDraft((current) => ({ ...current, summary: next }));
   const setTaskId = (next: readonly string[]) => setDraft((current) => ({ ...current, taskId: next }));
   const [query, setQuery] = useState('');
+  /** The latest search's hits: what the picker offers besides the chosen contact. */
   const [counterparties, setCounterparties] = useState<Counterparties>([]);
+  /** The chosen contact as the directory last described it: the one contact the form keeps beyond the latest hits. */
+  const [contact, setContact] = useState<Counterparty | null>(null);
+  const chosen = contact !== null && contact.ref.resourceId === draft.counterpartyRef?.resourceId ? contact : null;
   // The picker's items are its complete collection: the latest search's hits plus the chosen contact they omit.
   const contactChoices =
-    counterparty === null || counterparties.some((item) => item.ref.resourceId === counterparty.ref.resourceId)
+    chosen === null || counterparties.some((item) => item.ref.resourceId === chosen.ref.resourceId)
       ? counterparties
-      : [counterparty, ...counterparties];
+      : [chosen, ...counterparties];
   const setCounterpartyId = (next: readonly string[]) => {
-    const chosen = contactChoices.find((item) => item.ref.resourceId === next[0]) ?? null;
-    setDraft((current) => ({ ...current, counterparty: chosen }));
+    const picked = contactChoices.find((item) => item.ref.resourceId === next[0]) ?? null;
+    setContact(picked);
+    setDraft((current) => ({ ...current, counterpartyRef: picked?.ref ?? null }));
   };
   const [card, setCard] = useState<Card>();
   const [pending, setPending] = useState(false);
@@ -188,76 +187,6 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
   const retry = () => {
     setMessage('');
     void browserRuntime.runPromise(activities.refresh(input));
-  };
-  /** The form's save state as of the latest render, for a refusal that lands later. */
-  const latestRecord = useRef<DraftSave<ActivityDraft>>(undefined);
-  /** Counts the directory's refusals, so a save that ends after one keeps no contact. */
-  const refusals = useRef(0);
-  /**
-   * The latest entry each search returned per contact since the last refusal, so a save that ends keeps the chosen
-   * contact's newest name instead of the copy it sent.
-   */
-  const newestContacts = useRef(new Map<string, Counterparty>());
-  const newest = (value: ActivityDraft): ActivityDraft => ({
-    ...value,
-    counterparty:
-      value.counterparty === null
-        ? null
-        : (newestContacts.current.get(value.counterparty.ref.resourceId) ?? value.counterparty),
-  });
-  /** Whether a save of the form runs; when it ends it settles a refusal that came meanwhile. */
-  const saving = useRef(false);
-  /** What the last save that ran ended in; the save status alone cannot tell once a refusal changed the draft. */
-  const lastOutcome = useRef<SaveOutcome | null>(null);
-  /**
-   * The directory refused the user: nothing it returned earlier stays chosen, on offer or in the version the form last
-   * saved, so neither "Zahodit změny" nor the unsaved-changes check brings the contact back.
-   */
-  const refuseContacts = (error: SearchError) => {
-    refusals.current += 1;
-    newestContacts.current.clear();
-    setSearchFailure('');
-    setDraft(withoutContact);
-    setMessage(
-      Predicate.hasProperty(error, 'status') && error.status === 401 ? t(`${key}.signedOut`) : t(`${key}.forbidden`),
-    );
-    const { current } = latestRecord;
-    if (!saving.current && current !== undefined) {
-      current.adopt(withoutContact(current.confirmed));
-    }
-  };
-  const searchFailed = (error: SearchError) => {
-    setPending(false);
-    // No earlier hit stays on offer after a failed search.
-    setCounterparties([]);
-    const proposal = pendingProposalMessage(error);
-    if (proposal !== undefined) {
-      setMessage(proposal);
-    } else if (refusedLookup(error)) {
-      refuseContacts(error);
-    } else {
-      // The lookup failed for now: the chosen contact stays chosen and the form says the search did not run.
-      setSearchFailure(t(`${key}.searchUnavailable`));
-    }
-  };
-  const searchFound = (result: Counterparties) => {
-    for (const item of result) {
-      newestContacts.current.set(item.ref.resourceId, item);
-    }
-    setCounterparties(result);
-    setSearchFailure('');
-    setDraft(withNewerContact(result));
-    setPending(false);
-  };
-  // Find stays disabled while a search runs, so every answer is the answer to the only search outstanding.
-  const findCounterparty = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      requestId.pipe(
-        Effect.flatMap((id) => loadCounterpartiesClient({ query }, id)),
-        Effect.match({ onFailure: searchFailed, onSuccess: searchFound }),
-      ),
-    );
   };
   const showCard = (activity: Activity) => {
     if (activity.counterpartyRef === undefined) {
@@ -289,8 +218,8 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     );
   };
   const send = (value: ActivityDraft): Effect.Effect<SaveOutcome> => {
-    const { counterparty: chosen } = value;
-    if (records === undefined || chosen === null) {
+    const { counterpartyRef: sentContact } = value;
+    if (records === undefined || sentContact === null) {
       return Effect.succeed('failed');
     }
     const task = tasks.find((item) => item.ref.resourceId === value.taskId[0]);
@@ -313,7 +242,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
           {
             command: {
               _tag: 'RecordActivity',
-              counterpartyRef: chosen.ref,
+              counterpartyRef: sentContact,
               kind: 'CALL',
               occurredAt: DateTime.makeUnsafe('2026-10-05T10:00:00Z'),
               ownerPrincipalRef: records.actorPrincipalRef,
@@ -350,69 +279,84 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
   const record = useDraftSave<ActivityDraft, never>({
     equals: sameActivity,
     initial: blankActivity,
-    isValid: (value) => value.summary.trim() !== '' && value.counterparty !== null,
+    isValid: (value) => value.summary.trim() !== '' && value.counterpartyRef !== null,
     runtime: browserRuntime,
-    save: (value) =>
-      send(value).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            lastOutcome.current = outcome;
-          }),
-        ),
-      ),
+    save: send,
     value: draft,
   });
-  useEffect(() => {
-    latestRecord.current = record;
-  }, [record]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  // Uložit in the save bar and in the leave question: a recorded activity keeps the contact and the follow-up for the
+  // next one and its summary starts empty, unless the summary was edited while the save ran.
+  const save = () => {
+    setMessage('');
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        setDraft(nextActivity);
+        record.revise(nextActivity);
+      }
+    });
+  };
   const guard = useUnsavedChangesGuard({
-    draft: record,
+    draft: { ...record, save },
     navigation: blocker,
     onDiscard: () => {
       setDraft(record.confirmed);
     },
   });
-  // A recorded activity keeps the contact and the follow-up for the next one; its summary starts empty. A refusal of the
-  // contact directory while the save ran drops the contact from what the save leaves behind.
-  const handleSave = () => {
-    const sent = draft;
-    const refusedBefore = refusals.current;
-    setMessage('');
-    saving.current = true;
-    lastOutcome.current = null;
-    record.save();
-    record.afterSave((status) => {
-      saving.current = false;
-      if (refusals.current === refusedBefore) {
-        if (status === 'saved') {
-          const next = { ...newest(sent), summary: '' };
-          setDraft(next);
-          record.adopt(next);
-        }
-        return;
-      }
-      if (lastOutcome.current === 'saved') {
-        // Recorded, but the contact is refused now: the next activity starts without it.
-        const recorded = withoutContact(sent);
-        const next = { ...recorded, summary: '' };
-        setDraft((current) => (sameActivity(current, recorded) ? next : current));
-        record.adopt(next);
-        return;
-      }
-      // Nothing was recorded: the confirmed version stays, without the refused contact.
-      record.adopt(withoutContact(record.confirmed));
-    });
+  /**
+   * The directory refused the user: nothing it returned stays chosen, on offer, in the version "Zahodit změny" goes
+   * back to or in what a running save confirms. A draft parked for approval keeps only the contact's reference, so the
+   * same activity is not proposed twice.
+   */
+  const refuseContacts = (error: SearchError) => {
+    setSearchFailure('');
+    setContact(null);
+    setDraft(withoutContact);
+    record.revise(withoutContact);
+    setMessage(
+      Predicate.hasProperty(error, 'status') && error.status === 401 ? t(`${key}.signedOut`) : t(`${key}.forbidden`),
+    );
+  };
+  const searchFailed = (error: SearchError) => {
+    setPending(false);
+    // No earlier hit stays on offer after a failed search.
+    setCounterparties([]);
+    const proposal = pendingProposalMessage(error);
+    if (proposal !== undefined) {
+      setMessage(proposal);
+    } else if (refusedLookup(error)) {
+      refuseContacts(error);
+    } else {
+      // The lookup failed for now: the chosen contact stays chosen and the form says the search did not run.
+      setSearchFailure(t(`${key}.searchUnavailable`));
+    }
+  };
+  const searchFound = (result: Counterparties) => {
+    setCounterparties(result);
+    // A newer answer about the chosen contact replaces the kept one, so a later search that omits it shows its name.
+    setContact((current) => result.find((item) => item.ref.resourceId === current?.ref.resourceId) ?? current);
+    setSearchFailure('');
+    setPending(false);
+  };
+  // Find stays disabled while a search runs, so every answer is the answer to the only search outstanding.
+  const findCounterparty = () => {
+    setPending(true);
+    void browserRuntime.runPromise(
+      requestId.pipe(
+        Effect.flatMap((id) => loadCounterpartiesClient({ query }, id)),
+        Effect.match({ onFailure: searchFailed, onSuccess: searchFound }),
+      ),
+    );
   };
   const partyItems = contactChoices.map((item) => selectItem(item.ref.resourceId, contactName(item)));
   const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
   return {
     card,
-    clearContactLabel: t(`${key}.clearContact`, { name: counterparty === null ? '' : contactName(counterparty) }),
+    clearContactLabel: t(`${key}.clearContact`, { name: chosen === null ? '' : contactName(chosen) }),
     counterpartyId,
     findCounterparty,
     guard,
-    handleSave,
     key,
     language,
     loadFailed: snapshot.state === 'failed',
@@ -423,6 +367,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     record,
     records,
     retry,
+    save,
     searchFailure,
     setCounterpartyId,
     setQuery,
@@ -443,7 +388,6 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
     counterpartyId,
     findCounterparty,
     guard,
-    handleSave,
     key,
     language,
     loadFailed,
@@ -454,6 +398,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
     record,
     records,
     retry,
+    save,
     searchFailure,
     setCounterpartyId,
     setQuery,
@@ -691,7 +636,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                     <SaveBar
                       labels={saveLabelsFor(language)}
                       onReloadLatest={constVoid}
-                      onSave={handleSave}
+                      onSave={save}
                       size="sm"
                       status={record.status}
                     />

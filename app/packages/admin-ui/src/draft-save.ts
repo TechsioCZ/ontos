@@ -1,6 +1,6 @@
 // Explicit save for edit forms of existing records: the form keeps its draft and nothing is sent until `save()`.
 import { Effect, Equal, Exit, Option, Predicate, Schema } from 'effect';
-import { constVoid } from 'effect/Function';
+import { constVoid, identity } from 'effect/Function';
 import type { Fiber, ManagedRuntime } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
@@ -83,6 +83,8 @@ export class DraftSaveController<V, R = never> {
   private readonly waiting = new Set<(status: SaveState) => void>();
   /** The draft last accepted for approval. It is not saved, and it is never sent again. */
   private proposed: Option.Option<V> = Option.none();
+  /** The revisions made while the running save runs: what it confirms is its draft with them applied. */
+  private revisedSinceStart: (value: V) => V = identity;
   private saved: V;
   private state: SaveState = 'idle';
 
@@ -184,7 +186,28 @@ export class DraftSaveController<V, R = never> {
    * The draft stays unsaved; from here on it is compared with `value`, so taking a written field back is a change.
    */
   readonly confirm = (value: V): void => {
-    this.saved = value;
+    this.saved = this.revisedSinceStart(value);
+  };
+
+  /**
+   * The form takes something out of every version it holds, such as a choice the user has lost access to, or starts
+   * the next entry from the one it just saved: `revision` applies to the draft, to the confirmed version that
+   * discarding goes back to, and to the draft a running save confirms when it ends. Nothing starts over: a running
+   * save still decides, its waiting callers are still answered, and the draft parked for approval stays as it was
+   * handed over, so the same draft is still not sent again. The form puts the same change into its own draft.
+   */
+  readonly revise = (revision: (value: V) => V): void => {
+    this.latest = revision(this.latest);
+    this.saved = revision(this.saved);
+    const earlier = this.revisedSinceStart;
+    this.revisedSinceStart = (value) => revision(earlier(value));
+    // A running save, an error and a conflict keep their status; "saved" stays while the draft is still the saved one.
+    if (this.disposed || this.inFlight || this.state === 'error' || this.state === 'conflict') {
+      return;
+    }
+    if (this.state !== 'saved' || !this.same(this.latest, this.saved)) {
+      this.setState(this.restingState());
+    }
   };
 
   /** The draft the server last confirmed (or the version this controller started from). */
@@ -204,16 +227,18 @@ export class DraftSaveController<V, R = never> {
     if (this.disposed) {
       return;
     }
+    // The sent draft as the form holds it now, after the revisions made while it was on its way.
+    const revised = this.revisedSinceStart(value);
     if (outcome === 'saved' || outcome === 'proposed') {
       if (outcome === 'saved') {
-        this.saved = value;
+        this.saved = revised;
         this.proposed = Option.none();
       } else {
         // Parked for approval: the confirmed version stays, and this draft is never sent again.
         this.proposed = Option.some(value);
       }
       // Edits made while this save ran stay an unsaved draft: they wait for the next click.
-      this.setState(this.same(this.latest, value) ? outcome : this.restingState());
+      this.setState(this.same(this.latest, revised) ? outcome : this.restingState());
     } else {
       this.setState(outcome === 'conflict' ? 'conflict' : 'error');
     }
@@ -263,6 +288,7 @@ export class DraftSaveController<V, R = never> {
 
   private start(value: V): void {
     this.inFlight = true;
+    this.revisedSinceStart = identity;
     this.setState('saving');
     this.fork(
       Effect.exit(Effect.suspend(() => this.options.save(value))).pipe(
@@ -313,6 +339,8 @@ export interface DraftSave<V> extends SavableDraft {
    * keeps its draft and base revision instead of taking revalidated page data.
    */
   readonly pending: boolean;
+  /** `DraftSaveController.revise`: changes every version the draft holds without starting over. */
+  readonly revise: (revision: (value: V) => V) => void;
 }
 
 export interface UseDraftSaveOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
@@ -470,6 +498,7 @@ const draftSaveOf = <V, R>(
   confirmed: controller.confirmed(),
   dirty: draftUnsaved(status),
   pending: draftPending(status),
+  revise: controller.revise,
   save: controller.save,
   status,
 });

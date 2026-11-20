@@ -13,4 +13,5 @@ hidden
 icon-[mdi--account-group-outline]
 outline
 rounded-lg
+running
 visible
