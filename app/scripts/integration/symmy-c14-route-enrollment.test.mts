@@ -42,12 +42,16 @@ const services = NodeChildProcessSpawner.layer.pipe(
 const RouteIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyEnrolledRouteId'));
 const JobIdSchema = SymmyJobStatusResponseSchema.members[0].fields.jobId;
 const ReceiptSchema = Schema.fromJsonString(
-  Schema.Struct({ outcome: Schema.Literals(['enrolled', 'unchanged']), routeId: RouteIdSchema }),
+  Schema.Struct({
+    changeToken: Schema.Literal(1),
+    outcome: Schema.Literals(['enrolled', 'unchanged']),
+    routeId: RouteIdSchema,
+  }),
 );
 const AcceptedSchema = Schema.Struct({ jobId: JobIdSchema, status: Schema.Literal('queued') });
 const JobSchema = Schema.Struct({ jobId: JobIdSchema, status: Schema.String });
 const RecordsSchema = Schema.Array(
-  Schema.Struct({ change: Schema.String, operator_ref: Schema.String, route_id: RouteIdSchema }),
+  Schema.Struct({ change: Schema.String, route_id: RouteIdSchema, stated_operator_ref: Schema.String }),
 );
 const ProductsSchema = Schema.Struct({
   products: Schema.Array(Schema.Struct({ sourceRecordId: Schema.String.pipe(Schema.brand('SourceRecordId')) })),
@@ -299,25 +303,28 @@ it.live(
           routeKey: 'adminProducts',
         };
         expect(yield* runEnrollmentCommand(environment, productsRoute)).toEqual({
+          changeToken: 1,
           outcome: 'enrolled',
           routeId: productsRouteId,
         });
         expect(yield* runEnrollmentCommand(environment, readRoute)).toEqual({
+          changeToken: 1,
           outcome: 'enrolled',
           routeId: productsReadRouteId,
         });
         expect(yield* runEnrollmentCommand(environment, productsRoute)).toEqual({
+          changeToken: 1,
           outcome: 'unchanged',
           routeId: productsRouteId,
         });
         // Each applied enrollment is recorded once with its operator; the unchanged replay records nothing.
         const recorded =
-          yield* admin`select change, operator_ref, route_id from symmy_integration.route_enrollment_records where tenant_id=${tenantId} order by recorded_at, record_id`.pipe(
+          yield* admin`select change, route_id, stated_operator_ref from symmy_integration.route_enrollment_records where tenant_id=${tenantId} order by recorded_at, record_id`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(RecordsSchema)),
           );
         expect(recorded).toEqual([
-          { change: 'enroll', operator_ref: operatorRef, route_id: productsRouteId },
-          { change: 'enroll', operator_ref: operatorRef, route_id: productsReadRouteId },
+          { change: 'enroll', route_id: productsRouteId, stated_operator_ref: operatorRef },
+          { change: 'enroll', route_id: productsReadRouteId, stated_operator_ref: operatorRef },
         ]);
 
         const [catalogArtifacts, symmyArtifacts] = yield* Effect.all([

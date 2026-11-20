@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "cf39ff19-a0a7-4879-9b88-cf09ca7ee293",
+  "id": "2cc6f627-6e7c-42fc-8097-252d768c8c59",
   "prevIds": [
     "371a743d-3579-4a13-9222-4143b3aa2c53"
   ],
@@ -1098,6 +1098,19 @@
       "table": "job_routes"
     },
     {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "change_token",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "job_routes"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -1254,6 +1267,32 @@
       "table": "route_enrollment_records"
     },
     {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "change_token",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "route_enrollment_records"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "session_user",
+      "generated": null,
+      "identity": null,
+      "name": "database_session_user",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "route_enrollment_records"
+    },
+    {
       "type": "uuid",
       "typeSchema": null,
       "notNull": false,
@@ -1267,14 +1306,14 @@
       "table": "route_enrollment_records"
     },
     {
-      "type": "text",
+      "type": "integer",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "operator_ref",
+      "name": "previous_change_token",
       "entityType": "columns",
       "schema": "symmy_integration",
       "table": "route_enrollment_records"
@@ -1366,6 +1405,19 @@
       "generated": null,
       "identity": null,
       "name": "route_revision",
+      "entityType": "columns",
+      "schema": "symmy_integration",
+      "table": "route_enrollment_records"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stated_operator_ref",
       "entityType": "columns",
       "schema": "symmy_integration",
       "table": "route_enrollment_records"
@@ -2180,14 +2232,14 @@
       "table": "job_routes"
     },
     {
-      "value": "\"change\" in ('enroll', 'replace', 'deactivate')\n        and (\"change\" = 'enroll') = (\"previous_revision\" is null)\n        and (\"change\" <> 'deactivate' or \"previous_revision\" = \"route_revision\")",
+      "value": "\"change\" in ('enroll', 'replace', 'deactivate')\n        and (\"change\" = 'enroll') = (\"previous_revision\" is null)\n        and (\"change\" = 'enroll') = (\"previous_change_token\" is null)\n        and (\"previous_change_token\" is null or \"change_token\" = \"previous_change_token\" + 1)\n        and \"change_token\" >= 1\n        and (\"change\" <> 'deactivate' or \"previous_revision\" = \"route_revision\")",
       "name": "symmy_route_enrollment_records_change_ck",
       "entityType": "checks",
       "schema": "symmy_integration",
       "table": "route_enrollment_records"
     },
     {
-      "value": "char_length(\"operator_ref\") between 1 and 200 and char_length(\"reason\") between 1 and 500\n        and char_length(\"route_revision\") between 1 and 80\n        and (\"previous_revision\" is null or char_length(\"previous_revision\") between 1 and 80)",
+      "value": "char_length(\"stated_operator_ref\") between 1 and 200 and char_length(\"reason\") between 1 and 500\n        and char_length(\"route_revision\") between 1 and 80\n        and (\"previous_revision\" is null or char_length(\"previous_revision\") between 1 and 80)",
       "name": "symmy_route_enrollment_records_text_ck",
       "entityType": "checks",
       "schema": "symmy_integration",

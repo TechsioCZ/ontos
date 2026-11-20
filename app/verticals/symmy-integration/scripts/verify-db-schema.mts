@@ -91,7 +91,9 @@ const verification = Effect.gen(function* verifySymmySchema() {
   }
   const [runtime] = yield* client<{
     readonly journal_exists: boolean;
-    readonly record_append_only_trigger_enabled: boolean;
+    readonly record_guard_trigger_enabled: boolean;
+    readonly record_truncate_trigger_enabled: boolean;
+    readonly route_change_token_trigger_enabled: boolean;
     readonly route_gate_trigger_enabled: boolean;
     readonly schema_create: boolean;
     readonly schema_usage: boolean;
@@ -104,23 +106,38 @@ const verification = Effect.gen(function* verifySymmySchema() {
           and t.tgfoid = to_regprocedure('symmy_integration.publish_route_execution_gate()'))
         as route_gate_trigger_enabled,
       exists(select 1 from pg_catalog.pg_trigger t
+        where t.tgrelid = 'symmy_integration.job_routes'::regclass
+          and t.tgname = 'symmy_job_routes_change_token' and t.tgenabled = 'O'
+          and t.tgtype = 23 -- row-level BEFORE INSERT and UPDATE
+          and t.tgfoid = to_regprocedure('symmy_integration.advance_route_change_token()'))
+        as route_change_token_trigger_enabled,
+      exists(select 1 from pg_catalog.pg_trigger t
         where t.tgrelid = 'symmy_integration.route_enrollment_records'::regclass
-          and t.tgname = 'symmy_route_enrollment_records_append_only' and t.tgenabled = 'O'
-          and t.tgtype = 27 -- row-level BEFORE UPDATE and DELETE
-          and t.tgfoid = to_regprocedure('symmy_integration.reject_route_enrollment_record_change()'))
-        as record_append_only_trigger_enabled,
+          and t.tgname = 'symmy_route_enrollment_records_guard' and t.tgenabled = 'O'
+          and t.tgtype = 31 -- row-level BEFORE INSERT, UPDATE and DELETE
+          and t.tgfoid = to_regprocedure('symmy_integration.guard_route_enrollment_record()'))
+        as record_guard_trigger_enabled,
+      exists(select 1 from pg_catalog.pg_trigger t
+        where t.tgrelid = 'symmy_integration.route_enrollment_records'::regclass
+          and t.tgname = 'symmy_route_enrollment_records_no_truncate' and t.tgenabled = 'O'
+          and t.tgtype = 34 -- statement-level BEFORE TRUNCATE
+          and t.tgfoid = to_regprocedure('symmy_integration.guard_route_enrollment_record()'))
+        as record_truncate_trigger_enabled,
       has_schema_privilege('ontos_runtime', 'symmy_integration', 'CREATE') as schema_create,
       has_schema_privilege('ontos_runtime', 'symmy_integration', 'USAGE') as schema_usage
   `;
   if (
     !runtime?.journal_exists ||
     !runtime.route_gate_trigger_enabled ||
-    !runtime.record_append_only_trigger_enabled ||
+    !runtime.route_change_token_trigger_enabled ||
+    !runtime.record_guard_trigger_enabled ||
+    !runtime.record_truncate_trigger_enabled ||
     !runtime.schema_usage ||
     runtime.schema_create
   ) {
     yield* new SymmySchemaVerificationError({
-      reason: 'Symmy migration journal, route gate or record trigger, or runtime schema privileges mismatch',
+      reason:
+        'Symmy migration journal, route gate, change token or record triggers, or runtime schema privileges mismatch',
     });
   }
   const routines = yield* client<{
@@ -140,11 +157,13 @@ const verification = Effect.gen(function* verifySymmySchema() {
     where n.nspname = 'symmy_integration' order by p.proname
   `;
   const routineNames = [
+    'advance_route_change_token',
     'can_execute_symmy_job_effect',
     'claim_symmy_job_effect',
     'claim_symmy_job_notification',
     'erase_symmy_effect_payload',
     'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
     'lock_symmy_enrollment_snapshot',
     'lock_symmy_privacy_execution',
     'mark_symmy_job_effect_blocked',
@@ -165,7 +184,6 @@ const verification = Effect.gen(function* verifySymmySchema() {
     'record_symmy_owner_request',
     'record_symmy_privacy_execution',
     'record_symmy_resolved_effect',
-    'reject_route_enrollment_record_change',
     'settle_symmy_job_effect',
     'settle_symmy_job_notification',
     'symmy_original_route_active',
@@ -184,7 +202,8 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'symmy_original_route_active',
             'erase_symmy_effect_payload',
             'erase_symmy_plan_payload',
-            'reject_route_enrollment_record_change',
+            'guard_route_enrollment_record',
+            'advance_route_change_token',
           ].includes(routine.name) ||
         routine.definer !==
           ![
@@ -194,7 +213,8 @@ const verification = Effect.gen(function* verifySymmySchema() {
             'symmy_original_route_active',
             'erase_symmy_effect_payload',
             'erase_symmy_plan_payload',
-            'reject_route_enrollment_record_change',
+            'guard_route_enrollment_record',
+            'advance_route_change_token',
           ].includes(routine.name),
     )
   ) {
