@@ -149,12 +149,12 @@ DECLARE
   v_generation integer;
   v_next integer;
 BEGIN
-  IF CASE p_input->>'_tag'
+  IF (CASE p_input->>'_tag'
       WHEN 'CONFIGURE' THEN coalesce(jsonb_typeof(p_input->'expectedGeneration'),'') NOT IN ('number','null')
         OR jsonb_typeof(p_input->'enrolledReaderPrincipalIds') IS DISTINCT FROM 'array'
         OR coalesce(jsonb_typeof(p_input->'enrolledWriterPrincipalId'),'') NOT IN ('string','null')
       WHEN 'PAUSE' THEN jsonb_typeof(p_input->'expectedGeneration') IS DISTINCT FROM 'number'
-      ELSE true END THEN
+      ELSE true END) THEN
     RAISE EXCEPTION 'one Commerce source route decision is required' USING ERRCODE = '22023';
   END IF;
   PERFORM commerce_customer_context.lock_customer_source_route(p_tenant_id,p_legal_entity_id,v_kind,v_id);
