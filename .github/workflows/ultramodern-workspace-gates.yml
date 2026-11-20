@@ -823,11 +823,6 @@ jobs:
             working-directory: app
             run: mise exec -- pnpm lean-core:check
 
-          - name: Workspace Contract
-            if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
-            working-directory: app
-            run: mise exec -- pnpm contract:check
-
           - name: Module Contract Generation
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
             working-directory: app
@@ -839,7 +834,12 @@ jobs:
             run: mise exec -- pnpm action:test:unit
 
       # Module contract generation creates and deletes bundles inside verticals.
-      # Wait for it before the i18n scanner walks those source directories.
+      # Wait for cleanup before workspace and i18n scanners walk those source directories.
+      - name: Workspace Contract
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
+        working-directory: app
+        run: mise exec -- pnpm contract:check
+
       - name: I18n Boundaries
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.group == 'contracts' }}
         working-directory: app
