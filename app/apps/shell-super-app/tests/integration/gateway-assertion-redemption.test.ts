@@ -74,6 +74,7 @@ it.live('refuses an expired assertion and cleans only fully expired evidence', (
       const staleJti = randomUUID();
       const liveJti = randomUUID();
       const forgottenJti = randomUUID();
+      const inFlightJti = randomUUID();
       const freshJti = randomUUID();
       yield* Effect.addFinalizer(() =>
         database.executor
@@ -104,12 +105,18 @@ it.live('refuses an expired assertion and cleans only fully expired evidence', (
       yield* database.executor
         .insert(gatewayAssertionRedemptions)
         .values({ audience, expiresAt: longGone, issuer, jti: forgottenJti });
+      // A row just past the skew window is kept for as long as a redemption that started before expiry may still run
+      // (the redemption timeout), so cleanup can never delete the evidence an in-flight replay would be compared with.
+      const justPast = new Date((now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS - 2) * 1000);
+      yield* database.executor
+        .insert(gatewayAssertionRedemptions)
+        .values({ audience, expiresAt: justPast, issuer, jti: inFlightJti });
       yield* redemption.consume({ audience, expiresAtEpochSeconds: now + 300, issuer, jti: freshJti });
       const remaining = yield* database.executor
         .select({ jti: gatewayAssertionRedemptions.jti })
         .from(gatewayAssertionRedemptions)
-        .where(inArray(gatewayAssertionRedemptions.jti, [liveJti, forgottenJti, freshJti]));
-      expect(remaining.map((row) => row.jti).toSorted()).toEqual([liveJti, freshJti].toSorted());
+        .where(inArray(gatewayAssertionRedemptions.jti, [liveJti, forgottenJti, freshJti, inFlightJti]));
+      expect(remaining.map((row) => row.jti).toSorted()).toEqual([liveJti, freshJti, inFlightJti].toSorted());
     }),
   ),
 );
