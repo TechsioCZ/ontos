@@ -46,10 +46,7 @@ import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/sy
 import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batch.ts';
 import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
 import { SymmyCustomerGroupRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
-import type {
-  SymmyCustomerGroupDefinitionFacts,
-  SymmyCustomerGroupRows,
-} from '../../shared/domain/symmy-customer-group-batch.ts';
+import type { SymmyCustomerGroupRows } from '../../shared/domain/symmy-customer-group-batch.ts';
 import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts';
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
@@ -86,8 +83,6 @@ export interface SymmyJobAdmissionRequest {
   readonly customerGroups?: SymmyCustomerGroupRows;
   readonly customers?: SymmyCustomerRows;
   readonly fixtureId?: string;
-  /** What the owner held for each customer group code when the request arrived. A fence, never caller intent. */
-  readonly groupFacts?: SymmyCustomerGroupDefinitionFacts;
   readonly idempotencyKey: string;
   readonly plan?: SymmyFixtureExecutionPlan;
   readonly priceBatch?: SymmyPriceBatch;
