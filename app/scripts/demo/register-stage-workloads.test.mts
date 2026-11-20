@@ -1,4 +1,4 @@
-import { Result, Schema } from 'effect';
+import { Cause, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -6,7 +6,9 @@ import {
   StageWorkloadRegistrationsFileSchema,
   StageWorkloadStepSchema,
   stageWorkloadBindingIds,
+  StageWorkloadRegistrationFailure,
   stageWorkloadCompanyIds,
+  stageWorkloadFailureReason,
   stageWorkloadPlanFingerprint,
 } from './register-stage-workloads.mts';
 import type { StageWorkloadStep } from './register-stage-workloads.mts';
@@ -104,4 +106,19 @@ it('fingerprints the plan independently of order, and changes with any write dec
   });
   expect(print([step, other])).toBe(print([other, step]));
   expect(print([step])).not.toBe(print([{ ...step, writeBinding: false }]));
+});
+
+it('names why a run stopped, a database layer failure included, without its connection address', () => {
+  expect(
+    stageWorkloadFailureReason(
+      Cause.fail(new StageWorkloadRegistrationFailure({ reason: 'DATABASE_URL is required' })),
+    ),
+  ).toBe('DATABASE_URL is required');
+  // The stage container's first failure: Core's shared pools without the process registry.
+  const refused = { _tag: 'SqlError', message: 'Shared database pools require a scoped process host registry' };
+  expect(stageWorkloadFailureReason(Cause.fail(refused))).toBe(
+    'SqlError: Shared database pools require a scoped process host registry',
+  );
+  const unreachable = { _tag: 'SqlError', message: 'connect failed for postgres://runtime:secret@db:5432/ontos' };
+  expect(stageWorkloadFailureReason(Cause.fail(unreachable))).toBe('SqlError: connect failed for <address withheld>');
 });
