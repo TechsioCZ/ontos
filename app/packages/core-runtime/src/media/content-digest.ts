@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Duration, Effect, Predicate, Schema } from 'effect';
+import { Duration, Effect, Predicate, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -79,6 +79,11 @@ export class ContentDigest {
     }
   }
 
+  /** The number of bytes added so far. */
+  get byteSize(): number {
+    return this.#byteSize;
+  }
+
   add(chunk: Uint8Array): Effect.Effect<void> {
     this.#byteSize += chunk.byteLength;
     const native = this.#native;
@@ -119,3 +124,29 @@ export class ContentDigest {
     );
   }
 }
+
+/**
+ * Passes every chunk through unchanged while digesting it. `limit` stops the transfer, with `onExceed`, at the first
+ * chunk that takes the total past it, so a body longer than declared is not read to its end.
+ */
+export const digestStream = <E, ExceedFailure>(
+  body: Stream.Stream<Uint8Array, E>,
+  digest: ContentDigest,
+  limit: { readonly byteSize: number; readonly onExceed: () => ExceedFailure } | undefined,
+): Stream.Stream<Uint8Array, E | ExceedFailure> =>
+  body.pipe(
+    // One chunk at a time: the digest is order-dependent, so the sequence is the contract, not an accident.
+    Stream.mapEffect(
+      (chunk) =>
+        digest
+          .add(chunk)
+          .pipe(
+            Effect.flatMap(() =>
+              limit !== undefined && digest.byteSize > limit.byteSize
+                ? Effect.fail(limit.onExceed())
+                : Effect.succeed(chunk),
+            ),
+          ),
+      { concurrency: 1 },
+    ),
+  );

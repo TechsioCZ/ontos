@@ -6,7 +6,7 @@ import { Hex } from 'effect/encoding';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
-import { ContentTally } from '../../src/media/content-tally.ts';
+import { ContentDigest } from '../../src/media/content-digest.ts';
 import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
 import {
   ObjectStorage,
@@ -103,9 +103,9 @@ const patterned = (totalBytes: number, chunkBytes: number, seed = 1) =>
 
 const tallyOf = <Failure>(body: Stream.Stream<Uint8Array, Failure>) =>
   Effect.gen(function* tallyEffect() {
-    const tally = new ContentTally();
-    yield* Stream.runForEach(body, (chunk) => Effect.sync(() => tally.add(chunk)));
-    return tally.finish();
+    const digest = new ContentDigest();
+    yield* Stream.runForEach(body, (chunk) => digest.add(chunk));
+    return yield* digest.finish();
   });
 
 const storageFor = makeS3ObjectStorage;

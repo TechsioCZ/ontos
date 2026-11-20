@@ -1,6 +1,6 @@
 import { Effect, Schema, Stream } from 'effect';
 
-import { ContentTally, tallyStream } from './content-tally.ts';
+import { ContentDigest, digestStream } from './content-digest.ts';
 import {
   MediaContentConflict,
   MediaForbidden,
@@ -82,16 +82,22 @@ const matchesReservation = (
 const reservedContentStream = <BodyError>(
   asset: MediaByteHopAsset,
   body: Stream.Stream<Uint8Array, BodyError>,
-  tally: ContentTally,
+  digest: ContentDigest,
   differsFrom: string,
 ) =>
-  tallyStream(body, tally, {
+  digestStream(body, digest, {
     byteSize: Number(asset.byteSize),
     onExceed: () => conflict('The body is longer than the declared size'),
   }).pipe(
     Stream.concat(
-      Stream.suspend(() =>
-        matchesReservation(asset, tally.finish()) ? Stream.empty : Stream.fail(conflict(differsFrom)),
+      Stream.unwrap(
+        digest
+          .finish()
+          .pipe(
+            Effect.map((received) =>
+              matchesReservation(asset, received) ? Stream.empty : Stream.fail(conflict(differsFrom)),
+            ),
+          ),
       ),
     ),
   );
@@ -145,24 +151,24 @@ export const streamMediaObject = Effect.fn('MediaByteHop.stream')(function* stre
   const key = yield* Schema.decodeUnknownEffect(MediaStorageKeySchema)(asset.storageKey).pipe(
     Effect.mapError((cause) => mediaUnavailable('The asset storage key is not a Core Media key', cause)),
   );
-  const tally = new ContentTally();
+  const digest = new ContentDigest();
 
   if (asset.processingStatus === 'ready') {
     yield* Stream.runDrain(
       reservedContentStream(
         asset,
         input.body,
-        tally,
+        digest,
         'The bytes differ from the content this asset was confirmed with',
       ),
     );
-    return { ...tally.finish(), kind: 'already_stored' } as const satisfies MediaByteHopResult;
+    return { ...(yield* digest.finish()), kind: 'already_stored' } as const satisfies MediaByteHopResult;
   }
 
   const counted = reservedContentStream(
     asset,
     input.body,
-    tally,
+    digest,
     'The received bytes differ from the declared size or SHA-256',
   );
   const stat = yield* storage
@@ -177,5 +183,5 @@ export const streamMediaObject = Effect.fn('MediaByteHop.stream')(function* stre
         ),
       ),
     );
-  return { ...tally.finish(), kind: 'stored', stat } as const satisfies MediaByteHopResult;
+  return { ...(yield* digest.finish()), kind: 'stored', stat } as const satisfies MediaByteHopResult;
 });

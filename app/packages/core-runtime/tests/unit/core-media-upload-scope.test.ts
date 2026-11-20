@@ -26,7 +26,7 @@ const codeOf = (text: string): string =>
 
 const UPLOAD_SOURCE_PATHS = [
   'media/byte-stream.ts',
-  'media/content-tally.ts',
+  'media/content-digest.ts',
   'media/upload-contract.ts',
   'media/verification.ts',
   'modules/actions/confirm-asset.action.ts',
