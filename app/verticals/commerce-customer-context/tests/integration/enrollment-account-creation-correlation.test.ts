@@ -40,6 +40,12 @@ import type {
 } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import { providerObservationFor } from '../../src/enrollment/orchestration/owner-transition-composition.ts';
 import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from '../../src/enrollment/orchestration/provider-owner-effect.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+import { CommercePortalAuthCommunicationOutcomeReader } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
+import type { PortalAuthSourceOutcome } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
+import { protectedHandoffLayer } from '../../src/portal-auth/communications/protected-handoff.ts';
+import { verificationReplayLayer } from '../../src/portal-auth/communications/verification-replay.ts';
+import { VerificationReplayUnavailable } from '../../src/portal-auth/communications/verification-replay-unavailable.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import {
   CommercePortalAuthDatabase,
@@ -277,101 +283,198 @@ it.live('writes the governed invocation in the very insert that commits the acco
   ),
 );
 
+/** What the previous issuance of the enrollment operation is known to have become, scripted per replay by a test. */
+type ScriptedOutcome = PortalAuthSourceOutcome | 'OUTCOME_UNAVAILABLE';
+interface ScriptedOutcomeCell {
+  current: ScriptedOutcome;
+}
+
 /**
- * The first send is simulated as failing after the user row committed. Creation itself now awaits
- * that send, so the outcome must be unavailable rather than CREATED, and the retry must converge on
- * the already-committed account and reissue it. The reissued token is proven usable by spending it
- * through Better Auth's own `/verify-email`, not merely by observing that a send was attempted.
+ * One real realm whose verification callback counts and can fail its first send, reached through the very gateway the private
+ * account-creation port installs. `replay` installs the rule of a deployment that moved the verification e-mail onto
+ * Communications (#1406); without it the gateway is the direct one every deployment had before.
  */
-it.live('reports unavailable when the first send fails, then converges and reissues on retry', () =>
-  Effect.scoped(
-    Effect.gen(function* reportsUnavailableThenReissuesOnRetry() {
-      const configuration = yield* parseCommercePortalAuthConfig({
-        COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(yield* DATABASE_URL),
-        COMMERCE_PORTAL_AUTH_SECRET: SECRET,
-        COMMERCE_PORTAL_AUTH_URL: ORIGIN,
-      });
-      const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
-      let sendCount = 0;
-      const deliveredTokens: string[] = [];
-      const auth = yield* makeCommercePortalAuth({
-        configuration,
-        databaseAdapter: database.adapter,
-        emailDelivery: {
-          sendOTP: () => Promise.resolve(),
-          sendResetPassword: () => Promise.resolve(),
-          sendVerificationEmail: ({ token }) => {
-            sendCount += 1;
-            // The first send fails after Better Auth has already committed the user row. Creation
-            // now awaits this call directly (`sendOnSignUp` is off), so this failure must surface
-            // as the creation's own outcome rather than being swallowed fire-and-forget.
-            if (sendCount === 1) {
-              return Promise.reject(new Error('simulated transactional email outage'));
-            }
-            deliveredTokens.push(token);
-            return Promise.resolve();
-          },
+const makeVerificationSendFixture = Effect.fn('CommerceEnrollmentAccountCorrelation.makeVerificationSendFixture')(
+  function* makeSendFixture(options: { readonly failFirstSend: boolean; readonly replay: boolean }) {
+    const configuration = yield* parseCommercePortalAuthConfig({
+      COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(yield* DATABASE_URL),
+      COMMERCE_PORTAL_AUTH_SECRET: SECRET,
+      COMMERCE_PORTAL_AUTH_URL: ORIGIN,
+    });
+    const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
+    const sends = { count: 0 };
+    const deliveredTokens: string[] = [];
+    const auth = yield* makeCommercePortalAuth({
+      configuration,
+      databaseAdapter: database.adapter,
+      emailDelivery: {
+        sendOTP: () => Promise.resolve(),
+        sendResetPassword: () => Promise.resolve(),
+        sendVerificationEmail: ({ token }) => {
+          sends.count += 1;
+          // The first send fails after Better Auth has already committed the user row. Creation awaits this call directly
+          // (`sendOnSignUp` is off), so this failure must surface as the creation's own outcome rather than being swallowed.
+          if (options.failFirstSend && sends.count === 1) {
+            return Promise.reject(new Error('simulated transactional email outage'));
+          }
+          deliveredTokens.push(token);
+          return Promise.resolve();
         },
-      });
-      const lookupLive = CommercePortalAuthAccountLookupLive.pipe(
-        Layer.provide(Layer.succeed(CommercePortalAuthDatabase, database)),
-      );
-      const gatewayLive = CommercePortalAuthAccountCreationGatewayLive.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            CommercePortalAuthAccountCreationProviderLive.pipe(
-              Layer.provide(Layer.succeed(CommercePortalAuthInstance, auth)),
-            ),
-            lookupLive,
-          ),
+      },
+    });
+    const outcome: ScriptedOutcomeCell = { current: 'NOT_SUBMITTED' };
+    const outcomeReader = Layer.succeed(CommercePortalAuthCommunicationOutcomeReader, {
+      outcomeOf: () =>
+        outcome.current === 'OUTCOME_UNAVAILABLE'
+          ? Effect.fail(new VerificationReplayUnavailable({ reason: 'OUTCOME_UNAVAILABLE' }))
+          : Effect.succeed(outcome.current),
+    });
+    const replayLive = verificationReplayLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          protectedHandoffLayer(() => Effect.succeed('CURRENT')),
+          outcomeReader,
+          commercePortalAuthPlatformCryptoLive,
         ),
-      );
-      const gateway = yield* CommercePortalAuthAccountCreationGatewayService.pipe(Effect.provide(gatewayLive));
-      const email = `enrollment-verification-reissue-${randomUUID()}@example.test`;
-      const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID());
-      const attemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)(randomUUID());
-      const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
-      yield* Effect.addFinalizer(() => database.executor.delete(user).where(eq(user.email, email)).pipe(Effect.orDie));
+      ),
+    );
+    // the replay rule needs the same handoff the callback would use; this fixture never routes through Communications
+    const lookupLive = CommercePortalAuthAccountLookupLive.pipe(
+      Layer.provide(Layer.succeed(CommercePortalAuthDatabase, database)),
+    );
+    const gatewayLive = CommercePortalAuthAccountCreationGatewayLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          CommercePortalAuthAccountCreationProviderLive.pipe(
+            Layer.provide(Layer.succeed(CommercePortalAuthInstance, auth)),
+          ),
+          lookupLive,
+          options.replay ? replayLive : Layer.empty,
+        ),
+      ),
+    );
+    const gateway = yield* CommercePortalAuthAccountCreationGatewayService.pipe(Effect.provide(gatewayLive));
+    const email = `enrollment-verification-send-${randomUUID()}@example.test`;
+    const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID());
+    const attemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)(randomUUID());
+    const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
+    yield* Effect.addFinalizer(() => database.executor.delete(user).where(eq(user.email, email)).pipe(Effect.orDie));
+    const attemptOnce = () =>
+      gateway.create({
+        email,
+        enrollmentAttemptId: attemptId,
+        name: 'Verification send account',
+        ownerInvocationId,
+        password: Redacted.make(PASSWORD),
+        tenantId,
+      });
+    return { attemptOnce, auth, database, deliveredTokens, email, outcome, sends };
+  },
+);
 
-      const attemptOnce = () =>
-        gateway.create({
-          email,
-          enrollmentAttemptId: attemptId,
-          name: 'Verification reissue account',
-          ownerInvocationId,
-          password: Redacted.make(PASSWORD),
-          tenantId,
-        });
+/** Spends a delivered token through Better Auth's own verify + sign-in path: proof that the link was usable. */
+const spendVerificationLink = Effect.fn('CommerceEnrollmentAccountCorrelation.spendVerificationLink')(
+  function* spendLink(fixture: Effect.Success<ReturnType<typeof makeVerificationSendFixture>>, token: string) {
+    const headers = new Headers({ origin: ORIGIN });
+    yield* Effect.promise(
+      async () => await fixture.auth.api.verifyEmail({ headers, query: { token }, returnHeaders: true }),
+    );
+    return yield* Effect.promise(
+      async () =>
+        await fixture.auth.api.signInEmail({
+          body: { email: fixture.email, password: PASSWORD },
+          headers,
+          returnHeaders: true,
+        }),
+    );
+  },
+);
 
-      // The user row commits inside Better Auth's sign-up, but the awaited send fails right after,
-      // so the outcome is unavailable and no CREATED result is ever produced for this invocation.
-      const firstFailure = yield* Effect.flip(attemptOnce());
-      expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(firstFailure)).toBe(true);
-      expect(sendCount).toBe(1);
-      expect(deliveredTokens).toStrictEqual([]);
+/**
+ * LEGACY DIRECT DELIVERY (a deployment that has NOT moved the verification e-mail onto Communications). The first send is simulated
+ * as failing after the user row committed. Creation awaits that send, so the outcome is unavailable rather than CREATED, and the
+ * retry converges on the already-committed account and reissues it: nothing else records what the earlier send did, so a reissue
+ * is the only way such a deployment can complete. The reissued token is proven usable by spending it through Better Auth's own
+ * `/verify-email`. A deployment that adopts Communications changes exactly this behaviour: see the replay tests below (#1406).
+ */
+it.live(
+  'legacy direct delivery: reports unavailable when the first send fails, then converges and reissues on retry',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* reportsUnavailableThenReissuesOnRetry() {
+        const fixture = yield* makeVerificationSendFixture({ failFirstSend: true, replay: false });
 
-      const [committedRow] = yield* database.executor.select({ id: user.id }).from(user).where(eq(user.email, email));
-      const committedSubjectId =
-        committedRow?.id ?? (yield* Effect.die('The user row did not commit before the send failed'));
+        const firstFailure = yield* Effect.flip(fixture.attemptOnce());
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(firstFailure)).toBe(true);
+        expect(fixture.sends.count).toBe(1);
+        expect(fixture.deliveredTokens).toStrictEqual([]);
 
-      // The retry converges on the account the failed send left behind and reissues the link.
-      const retried = yield* attemptOnce();
+        const [committedRow] = yield* fixture.database.executor
+          .select({ id: user.id })
+          .from(user)
+          .where(eq(user.email, fixture.email));
+        const committedSubjectId =
+          committedRow?.id ?? (yield* Effect.die('The user row did not commit before the send failed'));
 
-      expect(retried.providerSubjectId).toBe(committedSubjectId);
-      expect(sendCount).toBe(2);
-      expect(deliveredTokens).toHaveLength(1);
-      const token = deliveredTokens.at(0) ?? (yield* Effect.die('The retry reissue delivered no verification token'));
+        const retried = yield* fixture.attemptOnce();
+        expect(retried.providerSubjectId).toBe(committedSubjectId);
+        expect(fixture.sends.count).toBe(2);
+        expect(fixture.deliveredTokens).toHaveLength(1);
+        const token =
+          fixture.deliveredTokens.at(0) ?? (yield* Effect.die('The retry reissue delivered no verification token'));
+        const signedIn = yield* spendVerificationLink(fixture, token);
+        expect(signedIn.response.user.id).toBe(retried.providerSubjectId);
+      }),
+    ),
+);
 
-      // Spend the reissued token through Better Auth's own verify + sign-in path so the proof is that
-      // the retry left a usable link, not merely that a send was attempted.
-      const headers = new Headers({ origin: ORIGIN });
-      yield* Effect.promise(async () => await auth.api.verifyEmail({ headers, query: { token }, returnHeaders: true }));
-      const signedIn = yield* Effect.promise(
-        async () => await auth.api.signInEmail({ body: { email, password: PASSWORD }, headers, returnHeaders: true }),
-      );
-      expect(signedIn.response.user.id).toBe(retried.providerSubjectId);
-    }),
-  ),
+/**
+ * THE NEW TRUTH once the verification e-mail runs through Communications (#1406, AUTH-COM-09). A replay of the SAME owner invocation
+ * correlates the previous issuance and its last outcome instead of issuing a fresh link:
+ * - nothing was ever submitted for the issuance: the replay is the continuation and issues the link (the only usable one);
+ * - the previous message is on its way, accepted, uncertain or continuing under the recovery rule of the SAME intent: the replay
+ *   sends nothing and issues nothing, and still reports the committed subject;
+ * - the previous message was stopped, or the outcome cannot be established: the replay sends nothing and the creation stays
+ *   retryable, because only Auth itself ever issues a new link.
+ */
+it.live(
+  'with Communications: a replay of the same invocation correlates the previous issuance and sends nothing on uncertainty',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* replayCorrelatesThePreviousIssuance() {
+        const fixture = yield* makeVerificationSendFixture({ failFirstSend: true, replay: true });
+
+        // the first send fails after the account committed, and Communications never received a request
+        const firstFailure = yield* Effect.flip(fixture.attemptOnce());
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(firstFailure)).toBe(true);
+        expect(fixture.sends.count).toBe(1);
+
+        // NOT_SUBMITTED: no message can exist, so the replay continues the same operation and the link is usable
+        fixture.outcome.current = 'NOT_SUBMITTED';
+        const continued = yield* fixture.attemptOnce();
+        expect(fixture.sends.count).toBe(2);
+        const token =
+          fixture.deliveredTokens.at(0) ?? (yield* Effect.die('The continuation delivered no verification token'));
+        expect((yield* spendVerificationLink(fixture, token)).response.user.id).toBe(continued.providerSubjectId);
+
+        // an uncertain, accepted, in-progress or continuing previous message: nothing new is sent or issued, the subject is reported
+        for (const outcome of ['UNCERTAIN', 'ACCEPTED', 'IN_PROGRESS', 'NON_ACCEPTANCE_PROVEN'] as const) {
+          fixture.outcome.current = outcome;
+          const replayed = yield* fixture.attemptOnce();
+          expect(replayed.providerSubjectId).toBe(continued.providerSubjectId);
+          expect(fixture.sends.count).toBe(2);
+        }
+
+        // a stopped previous message and an unreadable outcome both send nothing and leave the creation retryable
+        for (const outcome of ['STOPPED', 'OUTCOME_UNAVAILABLE'] as const) {
+          fixture.outcome.current = outcome;
+          const refused = yield* Effect.flip(fixture.attemptOnce());
+          expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(refused)).toBe(true);
+          expect(fixture.sends.count).toBe(2);
+        }
+        expect(fixture.deliveredTokens).toHaveLength(1);
+      }),
+    ),
 );
 
 /**

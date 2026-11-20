@@ -9,6 +9,7 @@ import {
 import { withCause } from '../problems-support.ts';
 import { normalizeCommercePortalAuthEmail } from '../../../src/portal-auth/email-normalization.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
+import { CommercePortalAuthVerificationReplay } from '../../../src/portal-auth/communications/verification-replay.ts';
 import { COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS, CommercePortalAuthInstance } from './auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
 import type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
@@ -202,6 +203,9 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
   > {
     const auth = yield* CommercePortalAuthAccountCreationProviderService;
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
+    // Present only when the deployment moved the verification e-mail onto Communications (#1406); absent, the
+    // verification send behaves exactly as before and Core and staff Auth run without Communications.
+    const verificationReplay = yield* Effect.serviceOption(CommercePortalAuthVerificationReplay);
     // Shared by the initial send and the correlated-replay reissue; only the failure reason differs.
     const sendAccountVerificationEmail = (verificationEmail: string, reason: string) =>
       auth.api
@@ -209,6 +213,46 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
         .pipe(
           Effect.mapError((cause) => withCause(new CommercePortalAuthAccountCreationUnavailable({ reason }), cause)),
         );
+    /**
+     * The verification send of one enrollment operation. Moved onto Communications, a replay of the SAME owner invocation
+     * names the SAME issuance: it correlates the previous issuance, its intent and its last outcome, and it sends or
+     * issues nothing on uncertainty (AUTH-COM-09). Only a replay with no previous submission issues the link, and only
+     * Auth itself ever issues a new one.
+     */
+    const issueVerificationEmail = (input: {
+      readonly email: string;
+      readonly ownerInvocationId: string;
+      readonly providerSubjectId: string;
+      readonly reason: string;
+      readonly replay: boolean;
+    }) =>
+      Option.match(verificationReplay, {
+        onNone: () => sendAccountVerificationEmail(input.email, input.reason),
+        onSome: (policy) =>
+          policy
+            .begin({
+              ownerInvocationId: input.ownerInvocationId,
+              providerSubjectId: input.providerSubjectId,
+              replay: input.replay,
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                withCause(
+                  new CommercePortalAuthAccountCreationUnavailable({
+                    reason:
+                      cause.reason === 'PREVIOUS_ISSUANCE_STOPPED'
+                        ? 'Commerce portal account creation found the previous verification message stopped and does not repair it'
+                        : 'Commerce portal account creation could not establish the previous verification message',
+                  }),
+                  cause,
+                ),
+              ),
+              Effect.flatMap((decision) =>
+                decision === 'ISSUE' ? sendAccountVerificationEmail(input.email, input.reason) : Effect.void,
+              ),
+              Effect.ensuring(policy.release({ providerSubjectId: input.providerSubjectId })),
+            ),
+      });
     const create = Effect.fn('CommercePortalAuthAccountCreationGateway.create')(function* createAccount(
       input: Pick<
         CommercePortalAccountCreateInput,
@@ -234,10 +278,13 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
         // committed, and nothing else in this realm ever retries it. Reissuing here is what makes
         // the retry actually able to sign in, not just able to report CREATED again; a reissue
         // failure keeps the Attempt retryable instead of quietly completing without a usable link.
-        yield* sendAccountVerificationEmail(
-          normalizedEmail,
-          'Commerce portal account creation could not reissue the verification email',
-        );
+        yield* issueVerificationEmail({
+          email: normalizedEmail,
+          ownerInvocationId: input.ownerInvocationId,
+          providerSubjectId: correlatedSubject.value,
+          reason: 'Commerce portal account creation could not reissue the verification email',
+          replay: true,
+        });
         return { providerSubjectId: correlatedSubject.value };
       }
       // This is only a provider-local duplicate guard. It never identifies an existing account to
@@ -322,10 +369,13 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
       }
       // A send failure here still leaves the user row committed, so it is reported as retryable
       // unavailability rather than CREATED: the correlated replay above is what completes it.
-      yield* sendAccountVerificationEmail(
-        normalizedEmail,
-        'Commerce portal account creation could not send the verification email',
-      );
+      yield* issueVerificationEmail({
+        email: normalizedEmail,
+        ownerInvocationId: input.ownerInvocationId,
+        providerSubjectId,
+        reason: 'Commerce portal account creation could not send the verification email',
+        replay: false,
+      });
       // `response.token` is deliberately never read or copied into the result.
       return { providerSubjectId };
     });

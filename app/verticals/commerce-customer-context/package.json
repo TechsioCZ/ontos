@@ -253,6 +253,7 @@
     "@app/catalog": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",
     "@app/commerce-order-contracts": "workspace:*",
+    "@app/communications-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/customer-market-retirement-contracts": "workspace:*",
     "@app/customer-payment-term-contracts": "workspace:*",
