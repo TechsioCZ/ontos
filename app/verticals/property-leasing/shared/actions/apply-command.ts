@@ -104,13 +104,16 @@ export const FeedbackSchema = Schema.Literals([
   'ready',
   'saving',
   'forbidden',
+  'signedOut',
   'conflict',
   'validation',
   'unavailable',
 ]);
 export type Feedback = typeof FeedbackSchema.Type;
+/** What a failed read or command tells the person; an expired login (401) asks them to sign in again. */
 export const failureFeedback = (failure: { readonly _tag: string; readonly status?: number }): Feedback =>
   Match.value(failure).pipe(
+    Match.when({ status: 401 }, () => 'signedOut' as const),
     Match.when({ status: 403 }, () => 'forbidden' as const),
     Match.when({ status: 409 }, () => 'conflict' as const),
     Match.when({ status: 400 }, () => 'validation' as const),

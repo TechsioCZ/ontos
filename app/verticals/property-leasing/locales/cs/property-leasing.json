@@ -29,6 +29,7 @@
         "loading": "Načítání…",
         "saving": "Ukládání…",
         "forbidden": "Pro tuto oblast nemáte oprávnění.",
+        "signedOut": "Přihlášení vypršelo. Přihlaste se znovu.",
         "conflict": "Stav se mezitím změnil. Zobrazujeme aktuální údaje, zkuste operaci znovu.",
         "validation": "Zkontrolujte vstupní údaje a povolený přechod stavu.",
         "unavailable": "Služba je dočasně nedostupná."

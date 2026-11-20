@@ -253,7 +253,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     );
   const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
     const nextFeedback = failureFeedback(failure);
-    if (nextFeedback === 'forbidden' || nextFeedback === 'unavailable') {
+    if (nextFeedback === 'forbidden' || nextFeedback === 'signedOut' || nextFeedback === 'unavailable') {
       cancellation.current?.abort();
       cancellation.current = new AbortController();
       clearSensitiveState();
@@ -1416,7 +1416,7 @@ const RetryAfterFailure = ({
   readonly label: string;
   readonly onRetry: () => void;
 }) =>
-  feedback === 'unavailable' || feedback === 'forbidden' ? (
+  feedback === 'unavailable' || feedback === 'forbidden' || feedback === 'signedOut' ? (
     <Button disabled={busy} onClick={onRetry} size="sm" theme="outlined" variant="secondary">
       {label}
     </Button>
@@ -1503,6 +1503,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                             forbidden: 'danger',
                             ready: 'success',
                             saving: 'info',
+                            signedOut: 'danger',
                             unavailable: 'danger',
                             validation: 'warning',
                           } as const

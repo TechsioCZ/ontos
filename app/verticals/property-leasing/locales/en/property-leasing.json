@@ -29,6 +29,7 @@
         "loading": "Loading…",
         "saving": "Saving…",
         "forbidden": "You do not have permission for this area.",
+        "signedOut": "Your sign-in has expired. Sign in again.",
         "conflict": "The state changed in the meantime. The current data is shown; try the operation again.",
         "validation": "Check the input and the allowed state transition.",
         "unavailable": "The service is temporarily unavailable."

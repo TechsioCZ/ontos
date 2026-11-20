@@ -4,8 +4,9 @@
 // the save sends the chosen guest's party reference. A failed search says so in the stay form, describes the guest
 // picker and leaves the page's own state alone. A newer name of the chosen guest replaces the kept one. When Party
 // Registry refuses the read, the form closes with its guest, the loaded records hide and no earlier search answers any
-// more. The picker's own clear action, named after the guest it drops, drops the guest and keeps the rest of the form.
-// The real page, picker, router and i18n run; the lease owner's records and
+// more. An expired login, on the guest search or on the lease read, says to sign in again rather than that the service
+// is down. The picker's own clear action, named after the guest it drops, drops the guest and keeps the rest of the
+// form. The real page, picker, router and i18n run; the lease owner's records and
 // Action, the Property register, the Agreement register and Party Registry's customer list answer in process through
 // their HttpApi contracts behind the Shell's gateway issuer.
 import { saveLabelsFor } from '@app/admin-ui';
@@ -43,7 +44,7 @@ import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-actio
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
-import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { RecordsApi, RecordsAuthenticationProblemSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { leaseRecords } from '../../src/routes/[lang]/najmy/lease-occupant.ts';
 import { RecordsPage } from '../../src/routes/[lang]/najmy/page.tsx';
 import { occupancyRef, unitRef } from '../fixtures/occupancy-draft.ts';
@@ -160,6 +161,15 @@ const unavailable = CustomerListUnavailableProblemSchema.make({
 });
 
 const leases = Schema.decodeUnknownSync(RecordsResponseSchema)({ canWrite: true, occupancies: [], revision: 7 });
+/** The lease owner's answer once the login has expired. */
+const leasesSignedOut = RecordsAuthenticationProblemSchema.make({
+  detail: 'The session has expired.',
+  status: 401,
+  title: 'Authentication required',
+  type: 'https://ontos.dev/problems/authentication-required',
+});
+/** What the lease owner's records read answers next; a test switches it before mounting. */
+let leasesAnswer: Effect.Effect<typeof leases, typeof leasesSignedOut> = Effect.succeed(leases);
 const created = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: occupancyRef, revision: 8 });
 
 /** What Party Registry's customer list answers next; a test switches it between searches. */
@@ -190,7 +200,9 @@ const network = browserNetwork(
   ).application,
   serveApi(
     OwnerRecordsApi,
-    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) => group.handle('execute', () => Effect.succeed(leases))),
+    HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
+      group.handle('execute', () => Effect.suspend(() => leasesAnswer)),
+    ),
   ),
   serveApi(
     OwnerActionApi,
@@ -374,6 +386,7 @@ const expectKept = () => {
 beforeEach(() => {
   heldRelease = Deferred.makeUnsafe<boolean>();
   listAnswer = Effect.succeed(directory);
+  leasesAnswer = Effect.succeed(leases);
   listReads = 0;
   commands.length = 0;
   gatewayRefusesDirectory = false;
@@ -594,7 +607,7 @@ describe('the guest of a new stay', () => {
   );
 
   it.live(
-    'an expired login closes the form with its guest',
+    'an expired login closes the form with its guest and says to sign in again',
     () =>
       Effect.gen(function* expiredLogin() {
         yield* chooseNovakova;
@@ -604,6 +617,7 @@ describe('the guest of a new stay', () => {
         yield* networkIdle;
         expect(document.querySelector('#booking-guest-query')).toBeNull();
         expect(text()).not.toContain('Jana Nováková');
+        expect(text()).toContain(czech('property-leasing.demo.feedback.signedOut'));
         expect(buttons(czech('property-leasing.demo.retry')).length).toBe(1);
         expect(commands).toEqual([]);
       }).pipe(Effect.provide(network)),
@@ -626,6 +640,18 @@ describe('the guest of a new stay', () => {
         expect(offered()).toEqual([]);
         expect(pickerSelect(guestLabel).value).toBe('');
         expect(document.querySelector<HTMLInputElement>('#booking-guest-query')?.value).toBe('');
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+  it.live(
+    'an expired login on the lease read says to sign in again, not that the service is down',
+    () =>
+      Effect.gen(function* expiredLoginOnLeases() {
+        leasesAnswer = Effect.fail(leasesSignedOut);
+        yield* pinTestDocument;
+        yield* mountInRoute(<RecordsPage context={context} />, { path: 'najmy', url: '/cs/najmy' });
+        yield* waitUntil(() => buttons(czech('property-leasing.demo.retry')).length === 1);
+        expect(text()).toContain(czech('property-leasing.demo.feedback.signedOut'));
       }).pipe(Effect.provide(network)),
     { timeout: 20_000 },
   );
