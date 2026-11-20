@@ -11,73 +11,86 @@
  * enrollment). The row lock quiesces admissions for the length of the transaction: an admission locks the same row
  * with `lock_symmy_enrollment_snapshot`, waits for this transaction, and then no longer matches the snapshot it read. A
  * route with outstanding work is never replaced, because the rotated epoch would close the fence of every job it
- * admitted; the refusal lists those jobs.
+ * admitted; the refusal lists that work and how it is resolved.
  */
 import {
   ActiveApplicationCompositionService,
   loadCheckedActiveApplicationComposition,
   makeLegalEntityContext,
-  makeSystemPrincipalContextResolver,
   makeTenantModuleStateService,
   principalEligibilityForTransaction,
-  registerSystemWorkload,
-  registeredWorkloadCallReceiverIssue,
 } from '@app/core-runtime';
-import type { OntosModuleDeploymentContract } from '@app/core-runtime';
+import { readActiveWorkloadBindingHolders } from '@app/core-runtime/access/enforcement';
+import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { CoreDatabase } from '@app/core-runtime/db/client';
-import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, notExists, sql } from 'drizzle-orm';
 import { Config, Effect, Option, Schema } from 'effect';
 
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyJobLifecyclePolicyRefSchema } from '../../shared/domain/symmy-job-notification.ts';
 import { SymmyJobRetentionPolicySchema } from '../../shared/domain/symmy-job-retention.ts';
-import { symmyImportJobs, symmyJobEffects, symmyJobRoutes } from '../db/schema.ts';
+import {
+  symmyImportJobs,
+  symmyJobEffects,
+  symmyJobRetentionTombstones,
+  symmyJobRoutes,
+  symmySyncAdmissions,
+} from '../db/schema.ts';
+import {
+  SymmyRequiredBindingSchema,
+  checkSymmyRouteBindings,
+  deriveSymmyRouteBindings,
+  symmyBindingWorkloads,
+} from './symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from './symmy-route-enrollment-refused.ts';
 import type { SymmyRouteEnrollmentRefusal } from './symmy-route-enrollment-refused.ts';
 import { SymmyRouteEnrollmentUnavailable } from './symmy-route-enrollment-unavailable.ts';
 import {
-  SymmyRouteCallerSchema,
   SymmyRouteEnrollmentRequestSchema,
   decideSymmyRouteWrite,
-  symmyCounterpartRefusals,
+  symmyCoreRefusals,
+  symmyEnrolledInventory,
+  symmyOutstandingRefusals,
   symmyPlannedRouteRow,
+  symmyRelatedRouteRefusals,
   symmyRetentionRefusals,
   symmyRouteDifferences,
   symmyRouteInventoryOf,
   symmyRouteRequestRefusals,
-  symmyWorkerCallOf,
+  symmySourceFamilyPeers,
 } from './symmy-route-enrollment.ts';
-import type { SymmyRouteEnrollmentRequest, SymmyRouteInventoryOperation } from './symmy-route-enrollment.ts';
+import type { SymmyRouteEnrollmentRequest, SymmyRouteInventory } from './symmy-route-enrollment.ts';
+import type { SymmyRouteBindingPlan } from './symmy-route-bindings.ts';
 
-const SYMMY_MODULE = 'integration.symmy';
-const WORKER_JOB_KEY = 'integration.symmy.execute-symmy-job';
-/** The outstanding jobs a refusal names; the operator re-runs once these have drained. */
+/** The outstanding work a refusal names; the operator re-runs once it has been resolved. */
 const OUTSTANDING_LIMIT = 50;
 
 type CoreExecutor = (typeof CoreDatabase)['Service']['executor'];
 type Transaction = Parameters<Parameters<CoreExecutor['transaction']>[0]>[0];
-type RouteRow = typeof symmyJobRoutes.$inferSelect;
 
 export const SymmyRouteEnrollmentModeSchema = Schema.Literals(['dry-run', 'apply', 'verify']);
 export type SymmyRouteEnrollmentMode = typeof SymmyRouteEnrollmentModeSchema.Type;
 
-/** A binding one of the two route identities needs. Core is the only writer of bindings; this command grants none. */
-const RequiredBindingSchema = Schema.Struct({
-  identity: SymmyRouteCallerSchema,
-  purpose: Schema.String,
-  workloadKey: Schema.String.pipe(Schema.brand('SymmyRouteRequiredWorkloadKey')),
-});
-type RequiredBinding = typeof RequiredBindingSchema.Type;
-const requiredWorkload = (workloadKey: string) => RequiredBindingSchema.fields.workloadKey.make(workloadKey);
-
 export const SymmyRouteEnrollmentReceiptSchema = Schema.Struct({
-  counterpart: Schema.Literals(['matches', 'not_enrolled']),
+  /** The one active system principal that runs each executor workload of the route. */
+  executors: Schema.Array(
+    Schema.Struct({
+      principalId: PrincipalIdSchema,
+      workloadKey: Schema.String.pipe(Schema.brand('SymmyRouteExecutorWorkloadKey')),
+    }),
+  ),
   mode: SymmyRouteEnrollmentModeSchema,
   outcome: Schema.Literals(['enrolled', 'replaced', 'unchanged', 'would_enroll', 'would_replace', 'verified']),
-  requiredBindings: Schema.Array(RequiredBindingSchema),
+  requiredBindings: Schema.Array(SymmyRequiredBindingSchema),
   routeId: SymmyRouteEnrollmentRequestSchema.fields.routeId,
   routeKey: SymmyRouteEnrollmentRequestSchema.fields.routeKey,
-  workerPrincipalId: Schema.OptionFromNullOr(Schema.String),
+  /** The enrolled routes of the same source whose logical source identity this route matches. */
+  sourcePeers: Schema.Array(
+    Schema.Struct({
+      routeId: SymmyRouteEnrollmentRequestSchema.fields.routeId,
+      routeKey: SymmyRouteEnrollmentRequestSchema.fields.routeKey,
+    }),
+  ),
 });
 export type SymmyRouteEnrollmentReceipt = typeof SymmyRouteEnrollmentReceiptSchema.Type;
 
@@ -95,113 +108,11 @@ const refused = (refusals: readonly SymmyRouteEnrollmentRefusal[]) => {
 };
 
 const decodeRequest = Schema.decodeUnknownEffect(SymmyRouteEnrollmentRequestSchema, { onExcessProperty: 'error' });
+const decodeReceipt = Schema.decodeUnknownEffect(SymmyRouteEnrollmentReceiptSchema);
 const encodeConfiguration = Schema.encodeEffect(Schema.fromJsonString(SymmyFixtureExecutionPlanSchema));
 const encodePolicy = Schema.encodeEffect(Schema.fromJsonString(SymmyJobLifecyclePolicyRefSchema));
-const decodeConfiguration = Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema);
 const isRefused = Schema.is(SymmyRouteEnrollmentRefused);
 const isUnavailable = Schema.is(SymmyRouteEnrollmentUnavailable);
-
-/** The workloads a published operation admits: an Action's own carrier or a read's published carrier. */
-const publishedWorkloads = (
-  contract: OntosModuleDeploymentContract | undefined,
-  operation: Pick<SymmyRouteInventoryOperation, 'entrypointKey' | 'schemaVersion'>,
-): Option.Option<readonly string[]> => {
-  if (contract === undefined) {
-    return Option.none();
-  }
-  const { actions, operationContracts } = contract.manifest.publicSurface;
-  const matches = (candidate: {
-    readonly entrypoint: { readonly entrypointKey: string };
-    readonly schemaVersion: string;
-  }) =>
-    candidate.entrypoint.entrypointKey === operation.entrypointKey &&
-    candidate.schemaVersion === operation.schemaVersion;
-  const declared = [
-    ...actions.flatMap((action) => (matches(action) ? [action.accessWorkload?.workloads ?? []] : [])),
-    ...(operationContracts ?? []).flatMap((read) => (matches(read) ? [read.workloadCarrier?.workloads ?? []] : [])),
-  ];
-  return declared.length === 0 ? Option.none() : Option.some(declared.flat());
-};
-
-/** What Symmy itself publishes for the Shell to admit and poll a route of this kind. */
-const symmyAdmissionOperations = (durableJobs: boolean) => [
-  { entrypointKey: 'integration.symmy.api.symmy-route-context', purpose: 'route context', schemaVersion: '1' },
-  ...(durableJobs
-    ? [
-        { entrypointKey: 'integration.symmy.admit-symmy-job', purpose: 'admission', schemaVersion: '1' },
-        { entrypointKey: 'integration.symmy.api.symmy-job-status', purpose: 'polling', schemaVersion: '1' },
-      ]
-    : []),
-];
-
-/**
- * Checks every operation the route enrolls against the active Application Composition and derives the bindings each
- * identity needs: the worker's published registered call (receiver, version, declaration, workload, company scope)
- * and, for a Shell read, the receiver's published workloads.
- */
-const checkComposition = Effect.fn('SymmyRouteEnrollment.checkComposition')(function* checkComposition(
-  operations: readonly SymmyRouteInventoryOperation[],
-  durableJobs: boolean,
-) {
-  const authority = yield* ActiveApplicationCompositionService;
-  const { catalog } = yield* loadCheckedActiveApplicationComposition(authority).pipe(
-    Effect.mapError(unavailable('The active Application Composition could not be read')),
-  );
-  const byModule = (moduleId: string) => catalog.contracts.find((contract) => contract.manifest.module.id === moduleId);
-  const byAppId = (appId: string) => catalog.contracts.find((contract) => contract.deployment.appId === appId);
-  const refusals: SymmyRouteEnrollmentRefusal[] = [];
-  const bindings: RequiredBinding[] = [];
-  for (const admission of symmyAdmissionOperations(durableJobs)) {
-    const workloads = publishedWorkloads(byModule(SYMMY_MODULE), admission);
-    if (Option.isNone(workloads)) {
-      refusals.push(
-        refusalOf('operation_not_published', `${admission.entrypointKey} is not published by ${SYMMY_MODULE}`),
-      );
-    } else {
-      bindings.push(
-        ...workloads.value.map((workloadKey) => ({
-          identity: 'integration' as const,
-          purpose: admission.purpose,
-          workloadKey: requiredWorkload(workloadKey),
-        })),
-      );
-    }
-  }
-  for (const operation of operations) {
-    const name = `${operation.entrypointKey}@${operation.schemaVersion}`;
-    if (operation.caller === 'worker') {
-      const call = symmyWorkerCallOf(operation);
-      const issue =
-        call === undefined
-          ? `Symmy registers no worker call of ${name}`
-          : registeredWorkloadCallReceiverIssue(call, byAppId(call.audience));
-      if (issue !== undefined || call === undefined) {
-        refusals.push(refusalOf('operation_not_published', issue ?? name));
-      } else {
-        bindings.push({ identity: 'worker', purpose: name, workloadKey: requiredWorkload(call.workloadKey) });
-      }
-    } else {
-      const workloads = publishedWorkloads(byModule(operation.moduleId), operation);
-      if (Option.isNone(workloads)) {
-        refusals.push(refusalOf('operation_not_published', `${name} is not published by ${operation.moduleId}`));
-      } else {
-        bindings.push(
-          ...workloads.value.map((workloadKey) => ({
-            identity: 'integration' as const,
-            purpose: name,
-            workloadKey: requiredWorkload(workloadKey),
-          })),
-        );
-      }
-    }
-  }
-  if (durableJobs) {
-    bindings.push({ identity: 'worker', purpose: 'job execution', workloadKey: requiredWorkload(WORKER_JOB_KEY) });
-  }
-  const unique = new Map(bindings.map((binding) => [`${binding.identity} ${binding.workloadKey}`, binding]));
-  yield* refused(refusals);
-  return [...unique.values()];
-});
 
 /** The Core facts the route depends on, each read through its owner's exported reader. */
 const coreRefusals = Effect.fn('SymmyRouteEnrollment.coreRefusals')(function* coreRefusals(
@@ -213,20 +124,17 @@ const coreRefusals = Effect.fn('SymmyRouteEnrollment.coreRefusals')(function* co
     .getTenantModuleStates(request.tenantId, moduleKeys)
     .pipe(Effect.mapError(unavailable('The Tenant module states could not be read')));
   const active = new Set(states.flatMap(({ moduleKey, state }) => (state === 'active' ? [moduleKey] : [])));
-  const company =
-    request.legalEntityId === undefined
-      ? []
-      : yield* makeLegalEntityContext({ executor: transaction })
-          .validateSelection(request.tenantId, request.legalEntityId)
-          .pipe(
-            Effect.as([]),
-            Effect.catchTag('LegalEntityContextUnavailableError', (cause) =>
-              Effect.fail(unavailable('The company could not be read')(cause)),
-            ),
-            Effect.orElseSucceed(() => [
-              refusalOf('company_not_active', 'The company is not an active company of the Tenant'),
-            ]),
-          );
+  const companyActive =
+    request.legalEntityId === undefined ||
+    (yield* makeLegalEntityContext({ executor: transaction })
+      .validateSelection(request.tenantId, request.legalEntityId)
+      .pipe(
+        Effect.as(true),
+        Effect.catchTag('LegalEntityContextUnavailableError', (cause) =>
+          Effect.fail(unavailable('The company could not be read')(cause)),
+        ),
+        Effect.orElseSucceed(() => false),
+      ));
   const principal = yield* principalEligibilityForTransaction(transaction).resolve({
     principalId: request.principalId,
     tenantId: request.tenantId,
@@ -234,45 +142,19 @@ const coreRefusals = Effect.fn('SymmyRouteEnrollment.coreRefusals')(function* co
   if (principal.decision === 'unavailable') {
     return yield* unavailable('The integration principal could not be read')();
   }
-  return [
-    ...moduleKeys.flatMap((moduleKey) =>
-      active.has(moduleKey) ? [] : [refusalOf('module_not_active', `Module ${moduleKey} is not active in the Tenant`)],
-    ),
-    ...company,
-    ...(principal.decision === 'eligible'
-      ? []
-      : [refusalOf('integration_principal_not_active', `The integration principal is ${principal.reason}`)]),
-  ];
+  return symmyCoreRefusals({
+    activeModules: active,
+    companyActive,
+    moduleKeys,
+    principalIneligible: principal.decision === 'eligible' ? Option.none() : Option.some(principal.reason),
+  });
 });
 
-/** Exactly one active system principal of the Tenant runs Symmy jobs, as the worker resolves it. */
-const resolveWorker = Effect.fn('SymmyRouteEnrollment.resolveWorker')(function* resolveWorker(
-  executor: CoreExecutor,
-  tenantId: string,
-) {
-  return yield* makeSystemPrincipalContextResolver({ executor })
-    .resolveEnrolled({
-      registration: registerSystemWorkload({ jobKey: WORKER_JOB_KEY }),
-      runReference: 'symmy-route-enrollment',
-      tenantId,
-    })
-    .pipe(
-      Effect.map(({ principalId }) => Option.some<string>(principalId)),
-      Effect.catchTag('SystemPrincipalContextDeniedError', ({ reason }) =>
-        Effect.fail(new SymmyRouteEnrollmentRefused({ refusals: [refusalOf('worker_principal_not_unique', reason)] })),
-      ),
-      Effect.catchTags({
-        SystemPrincipalContextInvalidError: unavailable('The worker principal could not be resolved'),
-        SystemPrincipalContextUnavailableError: unavailable('The worker principal could not be resolved'),
-      }),
-    );
-});
+const codeMatch = (routeCode: string | undefined) =>
+  routeCode === undefined ? isNull(symmyJobRoutes.routeCode) : eq(symmyJobRoutes.routeCode, routeCode);
 
-const companyMatch = (legalEntityId: string | undefined) =>
-  legalEntityId === undefined ? isNull(symmyJobRoutes.legalEntityId) : eq(symmyJobRoutes.legalEntityId, legalEntityId);
-
-/** The uncoded route of one kind for the request's Tenant, principal and company, locked for this transaction. */
-const lockSelector = (transaction: Transaction, request: SymmyRouteEnrollmentRequest, routeKey: RouteRow['routeKey']) =>
+/** The route of one kind and code for the request's Tenant, principal and company, locked for this transaction. */
+const lockSelector = (transaction: Transaction, request: SymmyRouteEnrollmentRequest) =>
   transaction
     .select()
     .from(symmyJobRoutes)
@@ -280,9 +162,11 @@ const lockSelector = (transaction: Transaction, request: SymmyRouteEnrollmentReq
       and(
         eq(symmyJobRoutes.tenantId, request.tenantId),
         eq(symmyJobRoutes.principalId, request.principalId),
-        companyMatch(request.legalEntityId),
-        eq(symmyJobRoutes.routeKey, routeKey),
-        isNull(symmyJobRoutes.routeCode),
+        request.legalEntityId === undefined
+          ? isNull(symmyJobRoutes.legalEntityId)
+          : eq(symmyJobRoutes.legalEntityId, request.legalEntityId),
+        eq(symmyJobRoutes.routeKey, request.routeKey),
+        codeMatch(request.routeCode),
       ),
     )
     .limit(1)
@@ -304,9 +188,29 @@ const readRouteId = (transaction: Transaction, routeId: string) =>
       Effect.mapError(unavailable('The enrolled route could not be read')),
     );
 
-/** Jobs of the route with an effect that has not settled: replacing the route would close their fences. */
-const outstandingJobs = (transaction: Transaction, tenantId: string, routeId: string) =>
+/** The principal's active routes of this kind and of the kinds sharing its source, held for this transaction. */
+const readRelatedRoutes = (transaction: Transaction, request: SymmyRouteEnrollmentRequest) =>
   transaction
+    .select()
+    .from(symmyJobRoutes)
+    .where(
+      and(
+        eq(symmyJobRoutes.tenantId, request.tenantId),
+        eq(symmyJobRoutes.principalId, request.principalId),
+        eq(symmyJobRoutes.active, true),
+        inArray(symmyJobRoutes.routeKey, [request.routeKey, ...symmySourceFamilyPeers(request.routeKey)]),
+      ),
+    )
+    .for('share')
+    .pipe(Effect.mapError(unavailable('The related routes could not be read')));
+
+/** The jobs and synchronous admissions of the route that a replacement would strand (`symmyOutstandingRefusals`). */
+const outstandingWork = Effect.fn('SymmyRouteEnrollment.outstandingWork')(function* outstandingWork(
+  transaction: Transaction,
+  request: SymmyRouteEnrollmentRequest,
+  inventory: SymmyRouteInventory,
+) {
+  const jobs = yield* transaction
     .selectDistinct({ jobId: symmyImportJobs.jobId, state: symmyJobEffects.state })
     .from(symmyImportJobs)
     .innerJoin(
@@ -315,14 +219,43 @@ const outstandingJobs = (transaction: Transaction, tenantId: string, routeId: st
     )
     .where(
       and(
-        eq(symmyImportJobs.tenantId, tenantId),
-        eq(symmyImportJobs.routeId, routeId),
+        eq(symmyImportJobs.tenantId, request.tenantId),
+        eq(symmyImportJobs.routeId, request.routeId),
         ne(symmyJobEffects.state, 'settled'),
+        notExists(
+          transaction
+            .select({ jobId: symmyJobRetentionTombstones.jobId })
+            .from(symmyJobRetentionTombstones)
+            .where(
+              and(
+                eq(symmyJobRetentionTombstones.tenantId, symmyImportJobs.tenantId),
+                eq(symmyJobRetentionTombstones.jobId, symmyImportJobs.jobId),
+              ),
+            ),
+        ),
       ),
     )
-    .orderBy(symmyImportJobs.jobId)
+    .orderBy(symmyImportJobs.jobId, symmyJobEffects.state)
     .limit(OUTSTANDING_LIMIT)
     .pipe(Effect.mapError(unavailable('The outstanding jobs of the route could not be read')));
+  const admissions =
+    inventory.admission === 'sync'
+      ? yield* transaction
+          .select({ admissionId: symmySyncAdmissions.admissionId })
+          .from(symmySyncAdmissions)
+          .where(
+            and(
+              eq(symmySyncAdmissions.tenantId, request.tenantId),
+              eq(symmySyncAdmissions.routeId, request.routeId),
+              isNull(symmySyncAdmissions.retentionReceipt),
+            ),
+          )
+          .orderBy(symmySyncAdmissions.admissionId)
+          .limit(OUTSTANDING_LIMIT)
+          .pipe(Effect.mapError(unavailable('The outstanding admissions of the route could not be read')))
+      : [];
+  return symmyOutstandingRefusals({ admissions: admissions.map(({ admissionId }) => admissionId), jobs });
+});
 
 const writeRoute = Effect.fn('SymmyRouteEnrollment.writeRoute')(function* writeRoute(
   transaction: Transaction,
@@ -355,6 +288,95 @@ const writeRoute = Effect.fn('SymmyRouteEnrollment.writeRoute')(function* writeR
 });
 
 /**
+ * The transaction of one enrollment, for a request already checked against its inventory, the active composition and
+ * the retention configuration: the Core facts, the bindings by name, the related routes, then the decided write.
+ */
+export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(function* enrollSymmyRoute(input: {
+  readonly inventory: SymmyRouteInventory;
+  readonly mode: SymmyRouteEnrollmentMode;
+  readonly plan: Pick<SymmyRouteBindingPlan, 'bindings' | 'moduleKeys'>;
+  readonly replace: boolean;
+  readonly request: SymmyRouteEnrollmentRequest;
+}) {
+  const { inventory, plan, request } = input;
+  const { executor } = yield* CoreDatabase;
+  return yield* executor
+    .transaction(
+      Effect.fn('SymmyRouteEnrollment.transaction')(function* enrollment(transaction) {
+        const core = yield* coreRefusals(transaction, request, plan.moduleKeys);
+        const holders = new Map(
+          yield* Effect.forEach(
+            symmyBindingWorkloads(plan.bindings),
+            (workloadKey) =>
+              readActiveWorkloadBindingHolders(transaction, request.tenantId, workloadKey).pipe(
+                Effect.map((found) => [workloadKey, found] as const),
+                Effect.mapError(unavailable('The workload bindings could not be read')),
+              ),
+            { concurrency: 1 },
+          ),
+        );
+        const bindings = checkSymmyRouteBindings({
+          bindings: plan.bindings,
+          holders,
+          principalId: request.principalId,
+        });
+        const bySelector = yield* lockSelector(transaction, request);
+        const byRouteId = yield* readRouteId(transaction, request.routeId);
+        const related = symmyRelatedRouteRefusals(request, inventory, yield* readRelatedRoutes(transaction, request));
+        yield* refused([...core, ...bindings.refusals, ...related.refusals]);
+        const receipt = (outcome: SymmyRouteEnrollmentReceipt['outcome']) =>
+          decodeReceipt({
+            executors: [...bindings.executors].map(([workloadKey, principalId]) => ({ principalId, workloadKey })),
+            mode: input.mode,
+            outcome,
+            requiredBindings: plan.bindings,
+            routeId: request.routeId,
+            routeKey: request.routeKey,
+            sourcePeers: related.peers,
+          }).pipe(Effect.mapError(unavailable('The enrollment receipt could not be built')));
+        if (input.mode === 'verify') {
+          const stored = Option.getOrUndefined(bySelector);
+          if (stored === undefined || stored.routeId !== request.routeId) {
+            return yield* refuse(refusalOf('route_not_enrolled', `No route ${request.routeId} holds this selector`));
+          }
+          const changed = symmyRouteDifferences(request, stored);
+          yield* refused(
+            changed.length === 0
+              ? []
+              : [refusalOf('route_drift', `The enrolled route differs in ${changed.join(', ')}`)],
+          );
+          return yield* receipt('verified');
+        }
+        const decision = decideSymmyRouteWrite(request, { byRouteId, bySelector }, input.replace);
+        if (isRefused(decision)) {
+          return yield* decision;
+        }
+        if (decision.kind === 'unchanged') {
+          return yield* receipt('unchanged');
+        }
+        if (decision.kind === 'replace') {
+          yield* refused(yield* outstandingWork(transaction, request, inventory));
+        }
+        if (input.mode === 'dry-run') {
+          return yield* receipt(decision.kind === 'insert' ? 'would_enroll' : 'would_replace');
+        }
+        yield* writeRoute(transaction, request, decision.kind === 'replace');
+        const stored = yield* readRouteId(transaction, request.routeId);
+        if (Option.isNone(stored) || symmyRouteDifferences(request, stored.value).length > 0) {
+          return yield* unavailable('The enrolled route does not read back as written')();
+        }
+        return yield* receipt(decision.kind === 'insert' ? 'enrolled' : 'replaced');
+      }),
+    )
+    .pipe(
+      Effect.catchIf(
+        (failure) => !(isRefused(failure) || isUnavailable(failure)),
+        (cause) => Effect.fail(unavailable('The enrollment transaction did not commit')(cause)),
+      ),
+    );
+});
+
+/**
  * Runs one enrollment of one route. dry-run and verify write nothing; apply inserts the route, replaces it when
  * `replace` is set, or leaves an identical route unchanged, and reads it back. Any refusal or failure rolls back.
  */
@@ -366,28 +388,27 @@ export const runSymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.run')(fun
   const request = yield* decodeRequest(input.request).pipe(
     Effect.catchTag('SchemaError', ({ message }) => refuse(refusalOf('invalid_request', message))),
   );
-  const inventory = symmyRouteInventoryOf(request.routeKey);
-  if (!Option.isOption(inventory)) {
-    return yield* refuse(inventory);
+  const found = symmyRouteInventoryOf(request.routeKey);
+  if (!Option.isOption(found)) {
+    return yield* refuse(found);
   }
-  if (Option.isNone(inventory)) {
+  if (Option.isNone(found)) {
     return yield* refuse(
-      refusalOf('route_not_inventoried', `${request.routeKey} has no operation inventory and cannot be enrolled yet`),
+      refusalOf('route_not_inventoried', `${request.routeKey} is an operator fixture route, not a Symmy route`),
     );
   }
-  const { counterpart, durableJobs, operations } = inventory.value;
-  yield* refused(symmyRouteRequestRefusals(request, inventory.value));
-  const enrolled = operations.filter((operation) =>
-    request.configuration.items.some(({ effects }) =>
-      effects.some(
-        ({ operation: candidate }) =>
-          candidate.moduleId === operation.moduleId &&
-          candidate.entrypointKey === operation.entrypointKey &&
-          candidate.schemaVersion === operation.schemaVersion,
-      ),
-    ),
+  const inventory = found.value;
+  yield* refused(symmyRouteRequestRefusals(request, inventory));
+  const authority = yield* ActiveApplicationCompositionService;
+  const { catalog } = yield* loadCheckedActiveApplicationComposition(authority).pipe(
+    Effect.mapError(unavailable('The active Application Composition could not be read')),
   );
-  const bindings = yield* checkComposition(enrolled, durableJobs);
+  const plan = deriveSymmyRouteBindings({
+    contracts: catalog.contracts,
+    enrolled: symmyEnrolledInventory(inventory, request.configuration),
+    inventory,
+  });
+  yield* refused(plan.refusals);
   const retention = yield* Config.option(
     Config.schema(
       Schema.fromJsonString(Schema.Array(SymmyJobRetentionPolicySchema)),
@@ -400,85 +421,5 @@ export const runSymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.run')(fun
       Option.getOrElse(retention, () => []),
     ),
   );
-  const { executor } = yield* CoreDatabase;
-  const workerPrincipalId = durableJobs ? yield* resolveWorker(executor, request.tenantId) : Option.none<string>();
-  const moduleKeys = [...new Set([SYMMY_MODULE, ...enrolled.map(({ moduleId }) => moduleId)])].toSorted();
-  return yield* executor
-    .transaction(
-      Effect.fn('SymmyRouteEnrollment.transaction')(function* enrollment(transaction) {
-        const core = yield* coreRefusals(transaction, request, moduleKeys);
-        const bySelector = yield* lockSelector(transaction, request, request.routeKey);
-        const byRouteId = yield* readRouteId(transaction, request.routeId);
-        const partner = yield* lockSelector(transaction, request, counterpart);
-        const partnerPlan = partner.pipe(
-          Option.flatMap((row) =>
-            row.active
-              ? decodeConfiguration(row.fixturePlan).pipe(
-                  Option.map((configuration) => ({ configuration, routeId: row.routeId })),
-                )
-              : Option.none(),
-          ),
-        );
-        yield* refused([...core, ...symmyCounterpartRefusals(request, partnerPlan)]);
-        const receipt = (outcome: SymmyRouteEnrollmentReceipt['outcome']): SymmyRouteEnrollmentReceipt => ({
-          counterpart: Option.isSome(partnerPlan) ? 'matches' : 'not_enrolled',
-          mode: input.mode,
-          outcome,
-          requiredBindings: bindings,
-          routeId: request.routeId,
-          routeKey: request.routeKey,
-          workerPrincipalId,
-        });
-        if (input.mode === 'verify') {
-          const stored = Option.getOrUndefined(bySelector);
-          if (stored === undefined || stored.routeId !== request.routeId) {
-            return yield* refuse(refusalOf('route_not_enrolled', `No route ${request.routeId} holds this selector`));
-          }
-          const changed = symmyRouteDifferences(request, stored);
-          yield* refused(
-            changed.length === 0
-              ? []
-              : [refusalOf('route_drift', `The enrolled route differs in ${changed.join(', ')}`)],
-          );
-          return receipt('verified');
-        }
-        const decision = decideSymmyRouteWrite(request, { byRouteId, bySelector }, input.replace);
-        if (isRefused(decision)) {
-          return yield* decision;
-        }
-        if (decision.kind === 'unchanged') {
-          return receipt('unchanged');
-        }
-        if (decision.kind === 'replace') {
-          const outstanding = yield* outstandingJobs(transaction, request.tenantId, request.routeId);
-          yield* refused(
-            outstanding.length === 0
-              ? []
-              : [
-                  refusalOf(
-                    'outstanding_work',
-                    `Drain or reconcile these jobs first: ${outstanding
-                      .map(({ jobId, state }) => `${jobId} (${state})`)
-                      .join(', ')}`,
-                  ),
-                ],
-          );
-        }
-        if (input.mode === 'dry-run') {
-          return receipt(decision.kind === 'insert' ? 'would_enroll' : 'would_replace');
-        }
-        yield* writeRoute(transaction, request, decision.kind === 'replace');
-        const stored = yield* readRouteId(transaction, request.routeId);
-        if (Option.isNone(stored) || symmyRouteDifferences(request, stored.value).length > 0) {
-          return yield* unavailable('The enrolled route does not read back as written')();
-        }
-        return receipt(decision.kind === 'insert' ? 'enrolled' : 'replaced');
-      }),
-    )
-    .pipe(
-      Effect.catchIf(
-        (failure) => !(isRefused(failure) || isUnavailable(failure)),
-        (cause) => Effect.fail(unavailable('The enrollment transaction did not commit')(cause)),
-      ),
-    );
+  return yield* enrollSymmyRoute({ inventory, mode: input.mode, plan, replace: input.replace, request });
 });

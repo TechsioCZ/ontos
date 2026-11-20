@@ -5,12 +5,12 @@
  *   pnpm --filter @app/symmy-integration ops:route-enrollment dry-run --request route.json
  *   pnpm --filter @app/symmy-integration ops:route-enrollment apply --request route.json [--replace]
  *   pnpm --filter @app/symmy-integration ops:route-enrollment verify --request route.json
-
  *
  * The request is the reviewed route (`SymmyRouteEnrollmentRequestSchema`). The command connects with
  * DATABASE_ADMIN_URL (the route is writable only by the migration and operator login), reads the active Application
  * Composition from ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL and the retention configuration from
- * ONTOS_SYMMY_JOB_RETENTION_POLICIES. It grants no binding and calls no owner.
+ * ONTOS_SYMMY_JOB_RETENTION_POLICIES. It prints every refusal, or the receipt with the bindings the route needs and
+ * the system principal that runs each executor workload. It grants no binding and calls no owner.
  */
 import { DatabaseConfig, parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { CoreDatabaseLive } from '@app/core-runtime/db/client';
