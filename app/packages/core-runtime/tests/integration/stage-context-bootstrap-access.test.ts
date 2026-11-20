@@ -1825,4 +1825,50 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
         ),
       ),
   );
+
+  suite.effect(
+    'refuses, writing nothing, to end a connected app in a company the acting owner is suspended in, and ends it once the owner administers it again',
+    () =>
+      withStage((stage) =>
+        onDatabaseClock(
+          stage,
+          Effect.gen(function* refusesUnadministeredConnectedApp() {
+            const { tenantId } = stage;
+            yield* stage
+              .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
+              .pipe(failClosed);
+            // The colleague administers nothing and has one live connection in the company. The owner still owns and
+            // reaches the tenant but is suspended in the company, so they do not administer it and may not end
+            // somebody else's connection there.
+            const liveApp = { binding: uid(246), grant: uid(236), live: true, person: colleague };
+            yield* seed(stage, directoryRow(tenantId, colleague), ...connectedApp(stage, liveApp));
+            yield* suspendOwnerInCompany(stage);
+            const operatorFile = { retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
+            const grantsBefore = yield* grantRowsOf(stage, colleague);
+            const bindingsBefore = yield* bindingSummaryOf(stage, colleague);
+            const refused = yield* refusalOf(stage, operatorFile, [owner, colleague, bystander]);
+            expect(refused).toMatch(/^stage_connected_app_not_administered: /u);
+            expect(refused).toContain('Client 236 (https://client-236.example/metadata)');
+            expect(refused).toContain(`company ${company}`);
+            expect(yield* grantRowsOf(stage, colleague)).toEqual(grantsBefore);
+            expect(yield* bindingSummaryOf(stage, colleague)).toEqual(bindingsBefore);
+            // The owner's company membership resumed, the owner administers the company and the same file ends the app.
+            yield* seed(
+              stage,
+              `update core.access_memberships set status = 'active'
+                 where tenant_id = '${tenantId}' and principal_id = '${owner}' and kind = 'member'
+                   and status = 'suspended' and scope_id = '${companyScopeOf(stage)}'`,
+            );
+            yield* stage.reconcile({ ...emptyRun, ...operatorFile }).pipe(failClosed);
+            expect(yield* grantRowsOf(stage, colleague)).toEqual([
+              { id: liveApp.grant, reason: 'admin', revoked_by: owner, status: 'revoked' },
+            ]);
+            expect(yield* bindingSummaryOf(stage, colleague)).toEqual([
+              { count: 1, revision: 2, status: 'revoked', subject: 'oauth_grant' },
+              { count: 1, revision: 2, status: 'revoked', subject: 'user' },
+            ]);
+          }),
+        ),
+      ),
+  );
 });

@@ -255,6 +255,10 @@ it.effect('uses explicit operator module intent and refuses a module absent from
  */
 const leaverLogin = 'auth-user-leaver';
 const leaverId = '20000000-0000-4000-8000-0000000000d1';
+/** The company the acting owner administers, and one they do not (suspended there, say). */
+const administeredCompany = '11000000-0000-4000-8000-0000000000d0';
+const unadministeredCompany = '11000000-0000-4000-8000-0000000000d9';
+const administersOnly = (legalEntityId: string) => legalEntityId === administeredCompany;
 const loginBinding: StageLeaverBinding = {
   authenticationNamespaceId: 'namespace',
   bindingRevision: 1,
@@ -275,6 +279,7 @@ const appOf = (n: number, grant: string, binding: StageLeaverBinding['status'] |
     clientName: `Client ${n}`,
     grantId,
     lastUsedAt: null,
+    legalEntityId: administeredCompany,
     principalId: leaverId,
     status: grant,
     tenantId: '10000000-0000-4000-8000-0000000000d0',
@@ -301,6 +306,7 @@ const endingOf = (
   input: { readonly login?: StageLeaverBinding; readonly principalStatus?: string } = {},
 ) =>
   stageCredentialEndingOf({
+    actingOwnerAdministers: administersOnly,
     authenticationNamespaceId: 'namespace',
     bindings: [input.login ?? loginBinding, ...apps.flatMap(({ bindings }) => bindings)],
     connectedApps: apps.map(({ app }) => app),
@@ -383,6 +389,7 @@ it.effect('still refuses a credential that is no connected app of the leaver', (
     }
     const credential = (bindings: readonly StageLeaverBinding[], connectedApps: readonly StageConnectedApp[]) =>
       stageCredentialEndingOf({
+        actingOwnerAdministers: administersOnly,
         authenticationNamespaceId: 'namespace',
         bindings: [loginBinding, ...bindings],
         connectedApps,
@@ -407,6 +414,39 @@ it.effect('still refuses a credential that is no connected app of the leaver', (
     expect(unsigned.reason).toMatch(/live binding of the login/u);
     return yield* Effect.void;
   }),
+);
+
+it.effect(
+  'ends a live connected app only in a company the acting owner administers, and names the one it may not end',
+  () =>
+    Effect.gen(function* refusesUnadministeredCompany() {
+      const inCompany = (app: ReturnType<typeof appOf>, legalEntityId: string) => ({
+        ...app,
+        app: { ...app.app, legalEntityId },
+      });
+      // An active grant and a draft consent in a company the owner does not administer: neither is ended, and the file is
+      // refused naming the app and the company, before anything is written.
+      for (const live of [appOf(6, 'active', 'active'), appOf(7, 'draft', null)]) {
+        const refused = yield* endingOf([revokedInTheProduct(1), inCompany(live, unadministeredCompany)]).pipe(
+          Effect.flip,
+        );
+        expect(refused.code).toBe('stage_connected_app_not_administered');
+        expect(refused.reason).toContain(live.app.clientName);
+        expect(refused.reason).toContain(live.app.clientId);
+        expect(refused.reason).toContain(unadministeredCompany);
+      }
+      // A connection that already ended there ends nothing, so no administration is asked; its binding is still revoked.
+      const ended = inCompany(revokedInTheProduct(2), unadministeredCompany);
+      const ending = yield* endingOf([ended]);
+      expect(ending.connectedApps).toEqual([]);
+      expect(ending.bindings.map(({ id }) => id)).toEqual([
+        loginBinding.principalAuthBindingId,
+        ended.app.authBindingId,
+      ]);
+      // The same live app in the company the owner administers is ended.
+      const administered = appOf(6, 'active', 'active');
+      expect((yield* endingOf([administered])).connectedApps).toEqual([administered.app]);
+    }),
 );
 
 const bootstrapConfiguration = {

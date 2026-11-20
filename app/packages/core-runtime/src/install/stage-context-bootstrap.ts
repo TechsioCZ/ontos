@@ -157,7 +157,11 @@ export class StageContextBootstrapError extends Schema.TaggedError<StageContextB
   'StageContextBootstrapError',
   {
     cause: Schema.optionalKey(Schema.Unknown),
-    code: Schema.Literals(['stage_context_bootstrap_failed', 'stage_last_administrator']),
+    code: Schema.Literals([
+      'stage_context_bootstrap_failed',
+      'stage_connected_app_not_administered',
+      'stage_last_administrator',
+    ]),
     reason: Schema.String,
     /** The access scope a `stage_last_administrator` refusal would leave without anybody who administers it. */
     scopeId: Schema.optionalKey(AccessScopeIdSchema),
@@ -890,6 +894,8 @@ export interface StageConnectedApp {
   readonly clientName: string;
   readonly grantId: string;
   readonly lastUsedAt: Date | null;
+  /** The company the connection acts in: only somebody who administers it ends somebody else's connection there. */
+  readonly legalEntityId: string;
   readonly principalId: string;
   readonly status: string;
   readonly tenantId: string;
@@ -914,12 +920,16 @@ const isLiveConnectedApp = ({ status }: StageConnectedApp) => status === 'active
  * binding back. Every such binding that is not revoked is revoked with the login's, a `disabled` one too: Core's
  * binding writers may enable a disabled binding again while its Principal is active, and the product's own
  * revocation of a connection only disables it. Every connected app still `active` or `draft` is ended as a company
- * administrator ends somebody else's connection in the product. Any other binding (an API key, another login, a grant
- * binding no grant of the leaver names) refuses the departure, and so does a person without a live binding of the
- * login, unless an earlier run of the file archived them: then every binding is revoked already and the departure is
- * replayed.
+ * administrator ends somebody else's connection in the product, so only when the acting owner administers the company
+ * the app acts in (`actingOwnerAdministers`, decided at the decision time); one in a company the owner does not
+ * administer refuses the file with `stage_connected_app_not_administered`, naming the app and the company. Any other
+ * binding (an API key, another login, a grant binding no grant of the leaver names) refuses the departure, and so does
+ * a person without a live binding of the login, unless an earlier run of the file archived them: then every binding is
+ * revoked already and the departure is replayed.
  */
 export const stageCredentialEndingOf = (input: {
+  /** Whether the tenant owner the run acts through effectively administers a company at the decision time. */
+  readonly actingOwnerAdministers: (legalEntityId: string) => boolean;
   readonly authenticationNamespaceId: string;
   readonly bindings: readonly StageLeaverBinding[];
   readonly connectedApps: readonly StageConnectedApp[];
@@ -959,13 +969,25 @@ export const stageCredentialEndingOf = (input: {
       ),
     );
   }
+  const live = input.connectedApps.filter(isLiveConnectedApp);
+  // The product lets only an administrator of the connection's company end somebody else's connection; the run ends it
+  // as the acting owner, so the owner must administer that company, which a tenant owner suspended there does not.
+  const unadministered = live.find(({ legalEntityId }) => !input.actingOwnerAdministers(legalEntityId));
+  if (unadministered !== undefined) {
+    return Effect.fail(
+      new StageContextBootstrapError({
+        code: 'stage_connected_app_not_administered',
+        reason: `The connected app ${unadministered.clientName} (${unadministered.clientId}) of a retired stage Principal acts in company ${unadministered.legalEntityId}, which the acting tenant owner does not administer at the decision time; a company administrator ends it there first, or the owner's administration of that company is restored through People`,
+      }),
+    );
+  }
   return Effect.succeed({
     bindings: unrevoked.map(({ bindingRevision, principalAuthBindingId, status }) => ({
       id: principalAuthBindingId,
       revision: bindingRevision,
       status,
     })),
-    connectedApps: input.connectedApps.filter(isLiveConnectedApp),
+    connectedApps: live,
     replay,
   });
 };
@@ -993,6 +1015,8 @@ interface PrincipalRetirement {
 
 /** What every departure of one tenant is decided with, read at decision time under the run's locks. */
 interface TenantDecision {
+  /** Whether the acting owner effectively administers a company of the tenant at the decision time (Core's live rule). */
+  readonly actingOwnerAdministers: (legalEntityId: string) => boolean;
   /** The administrators who are active persons of the tenant, share-locked until the run commits. */
   readonly active: ReadonlySet<string>;
   readonly at: Date;
@@ -1080,6 +1104,7 @@ const lockLeavers = Effect.fn('StageContextBootstrap.lockLeavers')(function* loc
       clientName: oauthConnectionGrants.clientName,
       grantId: oauthConnectionGrants.grantId,
       lastUsedAt: oauthConnectionGrants.lastUsedAt,
+      legalEntityId: oauthConnectionGrants.legalEntityId,
       principalId: oauthConnectionGrants.actingPrincipalId,
       status: oauthConnectionGrants.status,
       tenantId: oauthConnectionGrants.tenantId,
@@ -1247,6 +1272,48 @@ const administrationIntentOf = (input: {
   tenantId: input.tenantId,
 });
 
+/** The tenant's scopes as Core's live administration rule reads them: the tenant context, or exactly one company. */
+const scopeRowsOf = (view: StagePeopleView): readonly ScopeRow[] =>
+  view.scopes.map((row) => ({ legalEntityId: row.legalEntityId ?? null, scopeId: row.scopeId }));
+
+/**
+ * Whether a person who stays effectively administers a scope of the tenant at the decision time: Core's own live
+ * rule, `administersScope`, over the share-locked membership rows of the administrators who stay and the configure
+ * bases `configureBasesOf` derives from them. A started, unexpired `access_admin` row of that company or tenant
+ * ownership, a live membership path, and no live suspension in that scope. A tenant without its tenant context has no
+ * administration path at all, so nobody administers anything there.
+ */
+const effectiveAdministrationOf = (
+  locked: LockedTenant,
+  at: Date,
+): ((principalId: string, row: ScopeRow) => boolean) => {
+  const { tenantScopeId } = locked.view;
+  if (tenantScopeId === undefined) {
+    return () => false;
+  }
+  const intent = administrationIntentOf({
+    at,
+    memberships: locked.administration,
+    scopes: locked.view.scopes,
+    tenantId: TenantIdSchema.make(locked.reading.tenantId),
+    tenantScopeId,
+  });
+  const rows = locked.administration.map(liveMembershipRowOf);
+  const tenantScopeIds = scopeRowsOf(locked.view).flatMap(({ legalEntityId, scopeId }) =>
+    legalEntityId === null ? [scopeId] : [],
+  );
+  return (principalId, row) => {
+    const actor = PrincipalIdSchema.make(principalId);
+    return administersScope({
+      at,
+      bases: configureBasesOf({ actor, at, intent, memberships: locked.administration }),
+      facts: membershipFactsOf({ at, holder: { _tag: 'Principal', principalId: actor }, rows }),
+      row,
+      tenantScopeIds,
+    });
+  };
+};
+
 /**
  * The first scope a leaver of the file administers that nobody who stays would still effectively administer at the
  * decision time, or `undefined` when every such scope keeps one. A scope counts when a leaver holds an owner or
@@ -1257,8 +1324,11 @@ const administrationIntentOf = (input: {
  * ownership, a live membership path, and no live suspension in that scope. A tenant owner suspended in a company
  * therefore does not administer that company, although People still counts them there.
  */
-const unadministeredScopeOf = (locked: LockedTenant, at: Date): ScopeRow | undefined => {
-  const { tenantScopeId } = locked.view;
+const unadministeredScopeOf = (
+  locked: LockedTenant,
+  at: Date,
+  administers: (principalId: string, row: ScopeRow) => boolean,
+): ScopeRow | undefined => {
   const leaving = new Set(locked.leavers.map(({ principalId }) => principalId));
   const held = new Set(
     locked.view.memberships.flatMap((membership) =>
@@ -1272,38 +1342,11 @@ const unadministeredScopeOf = (locked: LockedTenant, at: Date): ScopeRow | undef
   if (held.size === 0) {
     return undefined;
   }
-  const scopeRows: readonly ScopeRow[] = locked.view.scopes.map((row) => ({
-    legalEntityId: row.legalEntityId ?? null,
-    scopeId: row.scopeId,
-  }));
+  const scopeRows = scopeRowsOf(locked.view);
   const heldRows = [...held]
     .toSorted()
     .map((scopeId): ScopeRow => scopeRows.find((row) => row.scopeId === scopeId) ?? { legalEntityId: null, scopeId });
-  // A tenant without its tenant context has no administration path at all.
-  if (tenantScopeId === undefined) {
-    return heldRows[0];
-  }
-  const tenantId = TenantIdSchema.make(locked.reading.tenantId);
-  const intent = administrationIntentOf({
-    at,
-    memberships: locked.administration,
-    scopes: locked.view.scopes,
-    tenantId,
-    tenantScopeId,
-  });
-  const rows = locked.administration.map(liveMembershipRowOf);
-  const tenantScopeIds = scopeRows.flatMap(({ legalEntityId, scopeId }) => (legalEntityId === null ? [scopeId] : []));
   const staying = [...locked.active].filter((principalId) => !leaving.has(principalId)).toSorted();
-  const administers = (principalId: string, row: ScopeRow) => {
-    const actor = PrincipalIdSchema.make(principalId);
-    return administersScope({
-      at,
-      bases: configureBasesOf({ actor, at, intent, memberships: locked.administration }),
-      facts: membershipFactsOf({ at, holder: { _tag: 'Principal', principalId: actor }, rows }),
-      row,
-      tenantScopeIds,
-    });
-  };
   return heldRows.find((row) => !staying.some((principalId) => administers(principalId, row)));
 };
 
@@ -1360,7 +1403,8 @@ const tenantDecisionOf = Effect.fn('StageContextBootstrap.tenantDecisionOf')(fun
   }
   // Every scope a leaver administers must keep somebody who stays and effectively administers it; the file names no
   // successor, and the acting owner does not administer a company they are suspended in.
-  const unadministered = unadministeredScopeOf(locked, at);
+  const administration = effectiveAdministrationOf(locked, at);
+  const unadministered = unadministeredScopeOf(locked, at, administration);
   if (unadministered !== undefined) {
     return yield* new StageContextBootstrapError({
       code: 'stage_last_administrator',
@@ -1370,7 +1414,16 @@ const tenantDecisionOf = Effect.fn('StageContextBootstrap.tenantDecisionOf')(fun
       scopeId: AccessScopeIdSchema.make(unadministered.scopeId),
     });
   }
-  return { ...context, active, scope: yield* operatorScopeOf({ ownerId: owner, tenantId: reading.tenantId }) };
+  // The run ends a leaver's live connected app as a company administrator ends somebody else's, by the same rule.
+  const companies = scopeRowsOf(view).filter(({ legalEntityId }) => legalEntityId !== null);
+  const actingOwnerAdministers = (legalEntityId: string) =>
+    companies.some((row) => row.legalEntityId === legalEntityId && administration(owner, row));
+  return {
+    ...context,
+    actingOwnerAdministers,
+    active,
+    scope: yield* operatorScopeOf({ ownerId: owner, tenantId: reading.tenantId }),
+  };
 });
 
 /**
@@ -1446,6 +1499,7 @@ const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* r
   const leaver = PrincipalIdSchema.make(retired.principalId);
   const holder: Holder = { _tag: 'Principal', principalId: leaver };
   const credentials = yield* stageCredentialEndingOf({
+    actingOwnerAdministers: decision.actingOwnerAdministers,
     authenticationNamespaceId: decision.authenticationNamespaceId,
     bindings,
     connectedApps,
