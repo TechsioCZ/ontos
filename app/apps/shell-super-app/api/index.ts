@@ -60,6 +60,7 @@ import {
   SupportRecoveryPrincipalContextResolverLive,
   TenantModuleStateServiceLive,
   ActionRuntime,
+  assetCurrentRead,
   assetMetadataRead,
 } from '@app/core-runtime';
 import {
@@ -295,6 +296,11 @@ import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.t
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
 import { CapturedShellCompositionCatalog, narrowToCapturedRelease } from './modules/captured-shell-catalog.ts';
 import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-definitions.ts';
+import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
+import { SHELL_HOST_APP_ID } from '@app/core-runtime/sdk/core';
+import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
+import { authenticateHostedOperation, hostedOperationProblems } from './core-hosted-operations.ts';
+import { ShellGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.service.ts';
 import {
   ShellGovernedReads,
   createShellGovernedReadsLayer,
@@ -2528,6 +2534,24 @@ const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
 );
 
 /**
+ * The Core operations the Shell host serves to modules (#1443 P2): Core Media Current V1 for Catalog. The caller is a
+ * MODULE relaying its requester as an audience-scoped Bearer assertion (never a session cookie), so this endpoint is
+ * the only Shell route that reads one; `authenticateHostedOperation` verifies, redeems it once and requires that the
+ * calling module's installed release declares exactly this operation, and the read then runs as the requester.
+ */
+const coreHostedOperationsGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreHostedOperations', (handlers) =>
+  handlers.handle(
+    'assetCurrent',
+    makeGovernedReadHttpHandler({
+      audience: SHELL_HOST_APP_ID,
+      authenticatePrincipal: authenticateHostedOperation,
+      problems: hostedOperationProblems,
+      registration: assetCurrentRead,
+    }),
+  ),
+);
+
+/**
  * The object store of Core Media. A host without a valid S3 configuration still boots: every download then ends as
  * a retryable 503, because the unconfigured port matches no asset and reaches no provider.
  */
@@ -2981,6 +3005,19 @@ export const makeShellAuthenticationApiRuntime = (
   const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  // The Core operations this host serves to modules: the object store, the verifier of the Shell-audience assertion,
+  // its single-use redemption in the Shell's own private store, and the approved release it is checked against.
+  const coreHostedOperationsHandlersLive = coreHostedOperationsGroupLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        coreMediaObjectStorageLive,
+        GatewayPrincipalVerifierLive,
+        ShellGatewayAssertionRedemptionLive.pipe(Layer.provide(runtimeAuthPersistenceLive)),
+        shellReadAuthorityLayer,
+        moduleCatalogLayer,
+      ),
+    ),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
     runtimeCorePersistenceLive,
     delegationScopeResolverLayer,
@@ -3060,6 +3097,7 @@ export const makeShellAuthenticationApiRuntime = (
     coreReadAssetMetadataGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
     coreMediaDownloadHandlersLive,
+    coreHostedOperationsHandlersLive,
     externalIdentityGroupLive,
     accessAdminHandlersLive,
     SymmyIngressHandlersLive.pipe(
