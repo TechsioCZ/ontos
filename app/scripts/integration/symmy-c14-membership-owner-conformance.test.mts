@@ -556,7 +556,8 @@ it.live(
         const beforeRemoval = yield* membershipInvocations;
         const jobsBeforeRemoval = yield* admittedJobs;
         // The assignment-only route has no removal. An internal plan that restates the pinned assignment, order 1
-        // included, is admitted further below with the order the ledger gives its lineage.
+        // included, is admitted further below with the order the ledger gives its lineage: it names the profile as the
+        // effect's target and the pinned source record and occurrence as its item's, so the worker can deliver it.
         const membershipPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(
           yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
             items: [
@@ -569,6 +570,7 @@ it.live(
                       payload: yield* Schema.encodeEffect(membershipAssignmentSchema)(pinned.payload),
                     },
                     operation: commerceOperation(membershipActionKey),
+                    originalTarget: pinned.payload.profile.profileRef,
                   },
                 ],
                 itemKey: 'restated-membership',
@@ -589,8 +591,8 @@ it.live(
           HttpBody.jsonUnsafe({ customers: [{ ...customer, operation: 'REMOVE' }] }),
         );
         expect(rejectedRemoval.status).toBe(400);
-        // An internal plan that removes the assigned membership is refused on the assignment-only route: no job,
-        // no ledger order and no owner call.
+        // An internal plan that removes the assigned membership, complete in every other respect, is refused on the
+        // assignment-only route: no job, no ledger order and no owner call.
         const ledgerOrders = admin`select effect_id from symmy_integration.membership_source_orders where tenant_id=${tenantId} order by source_order`;
         const ordersBeforeRemoval = yield* ledgerOrders;
         const removalPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(
@@ -610,6 +612,7 @@ it.live(
                       },
                     },
                     operation: commerceOperation(membershipActionKey),
+                    originalTarget: pinned.payload.profile.profileRef,
                   },
                 ],
                 itemKey: 'withdrawn-membership',
@@ -619,6 +622,7 @@ it.live(
                   sourceNamespace: groupSource.namespace,
                   sourceRecordId: pinned.payload.source.sourceRecordId,
                 },
+                sourceOccurrenceId: pinned.payload.source.assertionId,
               },
             ],
           }),
