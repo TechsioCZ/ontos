@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { saveLabelsFor } from '@app/admin-ui';
+import { networkIdle } from '@app/shared-contracts/testing/http-double';
 import { RouterContextProvider } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Latch, Schema } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
@@ -21,11 +22,13 @@ import type {
 import { RoleEditorView } from '../../src/routes/access-admin/role-editor/role-editor-view.tsx';
 import type { RoleEditorViewProps } from '../../src/routes/access-admin/role-editor/role-editor-view.tsx';
 import { routeMeta } from '../../src/routes/[lang]/access/roles/route.meta.ts';
-import { loadRolePageModel } from '../../src/routes/[lang]/access/roles/role-page-model.ts';
+import { loader as roleLoader, loadRolePageModel } from '../../src/routes/[lang]/access/roles/role-page-model.ts';
+import { resetBrowserSessionCache } from '../../src/routes/[lang]/home-page-model.ts';
 import { roleErrorStatus } from '../../src/routes/access-admin/role-editor/role-commands.ts';
 import { RoleEditorFeature } from '../../src/routes/access-admin/role-editor/role-editor-feature.tsx';
 import { CreateRoleFeature } from '../../src/routes/access-admin/role-editor/create-role-feature.tsx';
 import type { GetAccessRoleResponse } from '../../shared/access-admin-api.ts';
+import { currentSession } from '../../src/api/auth-client.ts';
 import { CurrentSessionSchema } from '../../shared/browser-api.ts';
 import { adaSelectingCompany, makeShellBff, signedInShellReads } from '../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../support/shell-bff-double.ts';
@@ -72,6 +75,11 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 
 /** The role administration BFF the editor features reach through the page's own network. */
 const rolesBff = (script: ShellBffScript) => makeShellBff({ ...signedInShellReads(adaSelectingCompany), ...script });
+
+/** A completed BFF read after the action, followed by a drain while the browser transport is still installed. */
+const settleRoleRequests = currentSession().pipe(Effect.andThen(networkIdle));
+const accessRequests = (bff: ReturnType<typeof rolesBff>) =>
+  bff.requests.filter((received) => received.endpoint !== 'currentSession');
 
 afterEach(cleanup);
 const saveName = saveLabelsFor('en').save;
@@ -369,8 +377,10 @@ it.effect('editing after a server preview invalidates both token and confirmatio
       yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /commerce\.order\.order\.read/u })));
       expect(screen.queryByRole('checkbox', { name: /dangerousConfirmEffect/u })).toBeNull();
       expect(saveButton().hasAttribute('disabled')).toBe(true);
+      yield* Effect.promise(() => user.click(saveButton()));
+      yield* settleRoleRequests;
     }).pipe(Effect.provide(bff.browser));
-    expect(bff.requests.map((received) => received.endpoint)).toEqual(['previewAccessRoleEdit']);
+    expect(accessRequests(bff).map((received) => received.endpoint)).toEqual(['previewAccessRoleEdit']);
   }),
 );
 
@@ -421,8 +431,9 @@ it.effect(
         yield* Effect.promise(() => screen.findAllByText('shell.accessAdmin.common.unavailable'));
         yield* Effect.promise(() => user.click(saveButton()));
         yield* secondSave.await;
+        yield* settleRoleRequests;
       }).pipe(Effect.provide(bff.browser));
-      const saveRequests = bff.requests.filter((received) => received.endpoint === 'saveAccessRoleEdit');
+      const saveRequests = accessRequests(bff).filter((received) => received.endpoint === 'saveAccessRoleEdit');
       expect(saveRequests).toHaveLength(2);
       expect(saveRequests[0]?.idempotencyKey).toMatch(uuid);
       expect(saveRequests[1]?.idempotencyKey).toBe(saveRequests[0]?.idempotencyKey);
@@ -445,16 +456,18 @@ it.effect('creation uses only the blank template with no cells, then selects the
       const user = userEvent.setup();
       yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
       yield* Effect.promise(() => user.click(screen.getByRole('button', { name: saveName })));
-      return yield* Effect.promise(() => selected.promise);
+      const selectedRole = yield* Effect.promise(() => selected.promise);
+      yield* settleRoleRequests;
+      return selectedRole;
     }).pipe(Effect.provide(bff.browser));
     expect(role).toEqual(created);
-    expect(bff.requests).toHaveLength(1);
-    expect(bff.requests[0]).toMatchObject({
+    expect(accessRequests(bff)).toHaveLength(1);
+    expect(accessRequests(bff)[0]).toMatchObject({
       acceptLanguage: 'en',
       body: { cells: [], name: 'New role', scope: { kind: 'tenant' }, templateKey: 'blank' },
       endpoint: 'createAccessRole',
     });
-    expect(bff.requests[0]?.idempotencyKey).toMatch(uuid);
+    expect(accessRequests(bff)[0]?.idempotencyKey).toMatch(uuid);
   }),
 );
 
@@ -468,8 +481,9 @@ it.effect('creation cannot use a nonblank template or an unavailable writer', ()
       const create = screen.getByRole('button', { name: saveName });
       expect(create.hasAttribute('disabled')).toBe(true);
       yield* Effect.promise(() => user.click(create));
+      yield* settleRoleRequests;
     }).pipe(Effect.provide(bff.browser));
-    expect(bff.requests).toEqual([]);
+    expect(accessRequests(bff)).toEqual([]);
   }),
 );
 
@@ -483,13 +497,16 @@ it.effect('create role: typing writes nothing, Save writes once', () =>
       renderCopy(<CreateRoleFeature catalog={blankCatalog()} onCreated={handleCreated} writesAvailable />);
       const user = userEvent.setup();
       yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
-      expect(bff.requests).toEqual([]);
+      yield* settleRoleRequests;
+      expect(accessRequests(bff)).toEqual([]);
       expect(screen.getByRole('button', { name: saveName }).hasAttribute('disabled')).toBe(false);
       yield* Effect.promise(() => user.click(screen.getByRole('button', { name: saveName })));
-      return yield* Effect.promise(() => selected.promise);
+      const selectedRole = yield* Effect.promise(() => selected.promise);
+      yield* settleRoleRequests;
+      return selectedRole;
     }).pipe(Effect.provide(bff.browser));
     expect(role).toEqual(created);
-    expect(bff.requests.map((received) => received.endpoint)).toEqual(['createAccessRole']);
+    expect(accessRequests(bff).map((received) => received.endpoint)).toEqual(['createAccessRole']);
   }),
 );
 
@@ -508,8 +525,9 @@ it.effect('create role: leaving with unsaved input asks first, Discard sends not
       expect(router.history.location.pathname).toBe(rolesPath);
       yield* Effect.promise(() => user.click(discard));
       yield* Effect.promise(() => waitFor(() => expect(router.history.location.pathname).toBe('/en')));
+      yield* settleRoleRequests;
     }).pipe(Effect.provide(bff.browser));
-    expect(bff.requests).toEqual([]);
+    expect(accessRequests(bff)).toEqual([]);
   }),
 );
 
@@ -520,36 +538,59 @@ it.effect('tenant administration loads without a selected company and anonymous 
       listAccessRoles: () => Effect.succeed({ items: [fixture.role], nextCursor: null }),
       listAccessRoleTemplates: () => Effect.succeed(fixture.catalog),
     } satisfies ShellBffScript;
-    const tenantBff = rolesBff(roleReads);
-    const model = yield* loadRolePageModel(new Request('https://app.example.test/en/access/roles')).pipe(
-      Effect.provide(tenantBff.browser),
-    );
-    expect(model.state).toBe('ready');
-    const roleRequests = tenantBff.requests.filter((received) => received.endpoint.startsWith('listAccessRole'));
-    const sentReads = roleRequests.map(({ body, endpoint, url }) => ({ body, endpoint, url }));
-    // The two reads run concurrently; their order is not part of the contract.
-    expect(sentReads).toHaveLength(2);
-    expect(sentReads).toEqual(
-      expect.arrayContaining([
-        {
-          body: { limit: 100 },
-          endpoint: 'listAccessRoleTemplates',
-          url: 'https://app.example.test/shell-super-app-api/shell/access/roles/templates',
-        },
-        {
-          body: { limit: 100 },
-          endpoint: 'listAccessRoles',
-          url: 'https://app.example.test/shell-super-app-api/shell/access/roles/list',
-        },
-      ]),
-    );
+    for (const { language, preferredLanguage } of [
+      { language: 'en', preferredLanguage: 'cs' },
+      { language: 'cs', preferredLanguage: 'en' },
+    ]) {
+      yield* resetBrowserSessionCache;
+      const tenantBff = rolesBff(roleReads);
+      const model = yield* Effect.promise(() =>
+        roleLoader({
+          params: { lang: language },
+          request: new Request(`https://app.example.test/${language}/access/roles`, {
+            headers: { 'accept-language': preferredLanguage },
+          }),
+        }),
+      ).pipe(Effect.provide(tenantBff.browser));
+      expect(model.state).toBe('ready');
+      const sessionRequest = tenantBff.requests.find(({ endpoint }) => endpoint === 'currentSession');
+      expect(sessionRequest).toBeDefined();
+      expect(sessionRequest?.acceptLanguage).toBeUndefined();
+      const roleRequests = tenantBff.requests.filter((received) => received.endpoint.startsWith('listAccessRole'));
+      const sentReads = roleRequests.map(({ acceptLanguage, body, endpoint, url }) => ({
+        acceptLanguage,
+        body,
+        endpoint,
+        url,
+      }));
+      // The two reads run concurrently; their order is not part of the contract.
+      expect(sentReads).toHaveLength(2);
+      expect(sentReads).toEqual(
+        expect.arrayContaining([
+          {
+            acceptLanguage: language,
+            body: { limit: 100 },
+            endpoint: 'listAccessRoleTemplates',
+            url: 'https://app.example.test/shell-super-app-api/shell/access/roles/templates',
+          },
+          {
+            acceptLanguage: language,
+            body: { limit: 100 },
+            endpoint: 'listAccessRoles',
+            url: 'https://app.example.test/shell-super-app-api/shell/access/roles/list',
+          },
+        ]),
+      );
+    }
     const anonymousBff = rolesBff({
       ...roleReads,
       currentSession: () => Effect.succeed(Schema.decodeUnknownSync(CurrentSessionSchema)({ state: 'anonymous' })),
     });
-    const anonymous = yield* loadRolePageModel(new Request('https://app.example.test/en/access/roles')).pipe(
-      Effect.provide(anonymousBff.browser),
-    );
+    yield* resetBrowserSessionCache;
+    const anonymous = yield* loadRolePageModel({
+      params: { lang: 'en' },
+      request: new Request('https://app.example.test/en/access/roles'),
+    }).pipe(Effect.provide(anonymousBff.browser));
     expect(anonymous.state).toBe('unauthenticated');
     expect(anonymousBff.requests.map((received) => received.endpoint)).toEqual(['currentSession']);
   }),
@@ -599,8 +640,9 @@ it.effect('successful save remains visible and the next preview uses the returne
       expect(screen.getByText('shell.accessAdmin.common.saved')).toBeTruthy();
       yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
       yield* Effect.promise(() => screen.findByRole('checkbox', { name: /dangerousConfirmEffect/u }));
+      yield* settleRoleRequests;
     }).pipe(Effect.provide(bff.browser));
-    const previews = bff.requests.filter((received) => received.endpoint === 'previewAccessRoleEdit');
+    const previews = accessRequests(bff).filter((received) => received.endpoint === 'previewAccessRoleEdit');
     expect(previews).toHaveLength(2);
     expect(previews.at(-1)).toMatchObject({
       acceptLanguage: 'en',
@@ -638,6 +680,11 @@ it.effect('role edit: changed cells ask before leaving, Discard restores the sav
         />,
       );
       const user = userEvent.setup();
+      leavePage(router);
+      yield* Effect.promise(() => waitFor(() => expect(router.history.location.pathname).toBe('/en')));
+      router.history.push(rolesPath);
+      yield* Effect.promise(() => waitFor(() => expect(router.history.location.pathname).toBe(rolesPath)));
+      expect(screen.queryByRole('alertdialog')).toBeNull();
       const before = readCell().checked;
       yield* Effect.promise(() => user.click(readCell()));
       expect(screen.getByRole('button', { name: saveName }).hasAttribute('disabled')).toBe(true);
@@ -652,7 +699,8 @@ it.effect('role edit: changed cells ask before leaving, Discard restores the sav
       router.history.push(rolesPath);
       yield* Effect.promise(() => waitFor(() => expect(router.history.location.pathname).toBe(rolesPath)));
       expect(screen.queryByRole('alertdialog')).toBeNull();
+      yield* settleRoleRequests;
     }).pipe(Effect.provide(bff.browser));
-    expect(bff.requests).toEqual([]);
+    expect(accessRequests(bff)).toEqual([]);
   }),
 );

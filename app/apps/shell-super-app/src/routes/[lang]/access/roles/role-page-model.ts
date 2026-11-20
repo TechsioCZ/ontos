@@ -11,6 +11,11 @@ import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-auth
 import { loadHomePageModel } from '../../home-page-model.ts';
 import type { HomePageModel } from '../../home-page-model.ts';
 
+interface RoleLoaderArguments {
+  readonly params: { readonly lang: string };
+  readonly request: Request;
+}
+
 export type RolePageModel = { readonly shell: HomePageModel } & (
   | {
       readonly catalog: ListAccessRoleTemplatesResponse;
@@ -21,7 +26,7 @@ export type RolePageModel = { readonly shell: HomePageModel } & (
 );
 
 /** Tenant authentication is sufficient to ask the governed BFF. No company-selection prerequisite. */
-export const loadRolePageModel = (request: Request): Effect.Effect<RolePageModel> =>
+export const loadRolePageModel = ({ params, request }: RoleLoaderArguments): Effect.Effect<RolePageModel> =>
   loadHomePageModel(request).pipe(
     Effect.flatMap((shell) => {
       if (shell.state !== 'authenticated') {
@@ -34,8 +39,8 @@ export const loadRolePageModel = (request: Request): Effect.Effect<RolePageModel
         Effect.flatMap((options) =>
           Effect.all(
             {
-              catalog: listAccessRoleTemplates({ limit: 100 }, options),
-              roles: listAccessRoles({ limit: 100 }, options),
+              catalog: listAccessRoleTemplates({ limit: 100 }, { ...options, locale: params.lang }),
+              roles: listAccessRoles({ limit: 100 }, { ...options, locale: params.lang }),
             },
             { concurrency: 2 },
           ),
@@ -47,5 +52,5 @@ export const loadRolePageModel = (request: Request): Effect.Effect<RolePageModel
       );
     }),
   );
-export const loader = ({ request }: { readonly request: Request }): Promise<RolePageModel> =>
-  browserRuntime.runPromise(loadRolePageModel(request), { signal: request.signal });
+export const loader = (input: RoleLoaderArguments): Promise<RolePageModel> =>
+  browserRuntime.runPromise(loadRolePageModel(input), { signal: input.request.signal });
