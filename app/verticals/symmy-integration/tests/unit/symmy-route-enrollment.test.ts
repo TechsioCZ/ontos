@@ -96,6 +96,7 @@ const customerPage = operation(
   'commerce.customer-context.api.customer-profile-source-page',
 );
 const createGroup = operation('commerce.customer-context', 'commerce.customer-context.create-customer-group');
+const updateGroup = operation('commerce.customer-context', 'commerce.customer-context.update-customer-group');
 const groupDefinitionSource = operation(
   'commerce.customer-context',
   'commerce.customer-context.api.customer-group-definition-source',
@@ -483,6 +484,19 @@ describe('Symmy route request refusals', () => {
       'required_operation_missing: customerGroupsBatch cannot serve a request without commerce.customer-context.api.customer-group-definition-source@1',
     ]);
     expect(requestRefusals(request('customerGroupsBatch'))).toEqual([]);
+    // Either write is enough beside the read, as the Shell and the planner serve both: an update-only route is enrolled.
+    expect(
+      requestRefusals(
+        withConfiguration('customerGroupsBatch', {
+          items: [item('CUSTOMER_GROUP', [updateGroup, groupDefinitionSource])],
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      requestRefusals(
+        withConfiguration('customerGroupsBatch', { items: [item('CUSTOMER_GROUP', [groupDefinitionSource])] }),
+      ),
+    ).toEqual(['required_operation_missing: customerGroupsBatch admits writes and enrolls no owner write']);
     expect(requestRefusals(request('customerGroupsBatch', {}, ['legalEntityId']))).toEqual([
       'company_scope_required: customerGroupsBatch reads or writes the data of one company and cannot be enrolled on a Tenant-only route',
     ]);
