@@ -23,7 +23,7 @@ import {
   ownerUnavailable,
 } from '../orchestration/owner-effect-codec.ts';
 import type { CommerceEnrollmentOwnerEffect } from '../orchestration/owner-transition-driver.ts';
-import { acquireRetailPartyGateway } from './retail-self-enrollment-party-owner.ts';
+import { acquireRetailEnrollmentPartyGateway } from './retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from './retail-self-enrollment-party-owner.ts';
 import { retailSelfEnrollmentEvidenceReference } from './retail-self-enrollment-contracts.ts';
 
@@ -80,7 +80,7 @@ const retainedCommandCommitted = Effect.fn('RetailCustomerDirectory.retainedComm
     const retainedKey = yield* Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
       retailSelfEnrollmentEvidenceReference(['retail-customer-directory', retainedInvocationId, step]),
     ).pipe(Effect.mapError((cause) => unavailable('The retained command identity is invalid', cause)));
-    const gateway = yield* acquireRetailPartyGateway(input);
+    const gateway = yield* acquireRetailEnrollmentPartyGateway(input);
     const retained = yield* resolvePartyCommandCommitWithAuthorization(
       { actionKey: command.actionKey, idempotencyKey: retainedKey },
       Redacted.value(gateway.credential),
@@ -116,7 +116,7 @@ const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* run
   const idempotencyKey = yield* Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
     retailSelfEnrollmentEvidenceReference(['retail-customer-directory', ownerInvocationId, step]),
   ).pipe(Effect.mapError((cause) => unavailable('The customer command identity is invalid', cause)));
-  const recoveryGateway = yield* acquireRetailPartyGateway(input);
+  const recoveryGateway = yield* acquireRetailEnrollmentPartyGateway(input);
   const resolution = yield* resolvePartyCommandCommitWithAuthorization(
     { actionKey: command.actionKey, idempotencyKey },
     Redacted.value(recoveryGateway.credential),
@@ -135,7 +135,7 @@ const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* run
     return yield* unavailable('The original customer command is still running or indeterminate');
   }
   {
-    const gateway = yield* acquireRetailPartyGateway(input);
+    const gateway = yield* acquireRetailEnrollmentPartyGateway(input);
     const options = { ...gateway.options, correlationId: input.requestCorrelation, idempotencyKey };
     const dispatched =
       command.actionKey === 'party.registry.counterparty-customer-onboard'
@@ -229,6 +229,7 @@ export const retailCustomerDirectoryOwnerEffect = (
 ): CommerceEnrollmentOwnerEffect => {
   const input = Object.freeze({
     ...originalInput,
+    originator: Object.freeze({ ...originalInput.originator }),
     partyRef: Object.freeze({ ...originalInput.partyRef }),
     registration: Object.freeze({ ...originalInput.registration }),
   });

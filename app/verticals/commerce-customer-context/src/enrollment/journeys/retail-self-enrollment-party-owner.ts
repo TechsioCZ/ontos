@@ -11,8 +11,11 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import { shellGatewayBaseUrlConfig } from '@app/shared-contracts/shell-gateway-url';
 import { Config, Effect, Match, Redacted, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
-
 import { commerceTenantGatewayApiKey } from '../../../api/tenant-workload-credentials.ts';
+import type { Crypto } from 'effect';
+
+import { acquireRetailOwnerCredential } from './retail-owner-gateway-credential.ts';
+import type { RetailEnrollmentOriginator } from './retail-owner-gateway-credential.ts';
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
 import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
@@ -70,11 +73,14 @@ export interface RetailPartyCandidateOwnerInput {
   /** The exact Party candidate submitted for this Attempt.  It never enters a Commerce digest. */
   readonly candidate: PartyCandidate;
   readonly compositionRevision: string;
+  readonly crypto: Crypto.Crypto;
   readonly legalEntityId: string;
+  readonly originator: RetailEnrollmentOriginator;
   readonly requestCorrelation: string;
   readonly tenantId: string;
 }
 
+const PARTY_REGISTRY_AUDIENCE = 'party-registry';
 const PARTY_REGISTRY_UNAVAILABLE_CODE = 'party_registry_unavailable';
 
 const unavailable = (reason: string, cause?: unknown) =>
@@ -84,7 +90,12 @@ const partyGatewayConfiguration = Config.all({ baseUrl: shellGatewayBaseUrlConfi
 
 /** Fresh, scoped owner credential for each Party command or authoritative recovery read. */
 export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwner.acquireRetailPartyGateway')(
-  function* acquireGateway(input: Omit<RetailPartyCandidateOwnerInput, 'candidate'>) {
+  function* acquireGateway(
+    input: Pick<
+      RetailPartyCandidateOwnerInput,
+      'compositionRevision' | 'legalEntityId' | 'requestCorrelation' | 'tenantId'
+    >,
+  ) {
     const { compositionRevision, legalEntityId, requestCorrelation, tenantId } = input;
     const configured = yield* partyGatewayConfiguration.pipe(
       Effect.mapError((cause) => unavailable('The Party Registry server gateway configuration is unavailable', cause)),
@@ -94,7 +105,7 @@ export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwn
     );
     const response = yield* issueApiKeyGatewayContext(
       {
-        audience: 'party-registry',
+        audience: PARTY_REGISTRY_AUDIENCE,
         compositionRevision,
         legalEntityId,
       },
@@ -117,7 +128,7 @@ export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwn
       Effect.mapError((cause) => unavailable('The Party Registry issuer returned an unusable credential scope', cause)),
     );
     if (
-      claims.aud !== 'party-registry' ||
+      claims.aud !== PARTY_REGISTRY_AUDIENCE ||
       claims.compositionRevision !== compositionRevision ||
       claims.principal.tenantId !== tenantId ||
       claims.principal.legalEntityId !== legalEntityId ||
@@ -135,12 +146,42 @@ export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwn
   },
 );
 
+/** Fresh module delegation preserves the original enrollment subject for every Party call. */
+export const acquireRetailEnrollmentPartyGateway = Effect.fn(
+  'RetailSelfEnrollmentPartyOwner.acquireEnrollmentPartyGateway',
+)(function* acquireGateway(input: Omit<RetailPartyCandidateOwnerInput, 'candidate'>) {
+  const { compositionRevision, crypto, legalEntityId, originator, requestCorrelation, tenantId } = input;
+  if (originator.tenantId !== tenantId || originator.compositionRevision !== compositionRevision) {
+    return yield* unavailable('The enrollment originator does not match the immutable Attempt scope');
+  }
+  const issued = yield* acquireRetailOwnerCredential({
+    audience: PARTY_REGISTRY_AUDIENCE,
+    crypto,
+    legalEntityId,
+    originator,
+    requestCorrelation,
+  }).pipe(
+    Effect.mapError((cause) => unavailable('The Party Registry delegated owner credential is unavailable', cause)),
+  );
+  return {
+    credential: issued.credential,
+    options: { baseUrl: issued.baseUrl, compositionRevision },
+  };
+});
+
 const makeRetailPartyCandidateOwnerExecutors = (
   input: RetailPartyCandidateOwnerInput,
 ): RetailPartyCandidateOwnerExecutors => {
-  const { compositionRevision, legalEntityId, requestCorrelation, tenantId } = input;
-  const gatewayScope = Object.freeze({ compositionRevision, legalEntityId, requestCorrelation, tenantId });
-  const acquire = () => acquireRetailPartyGateway(gatewayScope);
+  const { compositionRevision, crypto, legalEntityId, originator, requestCorrelation, tenantId } = input;
+  const gatewayScope = Object.freeze({
+    compositionRevision,
+    crypto,
+    legalEntityId,
+    originator: Object.freeze({ ...originator }),
+    requestCorrelation,
+    tenantId,
+  });
+  const acquire = () => acquireRetailEnrollmentPartyGateway(gatewayScope);
   return Object.freeze<RetailPartyCandidateOwnerExecutors>({
     acceptEvidence: (payload, options) =>
       acquire().pipe(

@@ -3,16 +3,16 @@ import {
   AddContactPointPayloadSchema,
   CounterpartyCustomerOnboardPayloadSchema,
 } from '@app/party-registry/api';
-import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
-import { ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
+import { GatewayContextV3ClaimsSchema } from '@app/shared-contracts';
+import { ConfigProvider, Crypto, DateTime, Effect, Layer, Match, Result, Schema, Struct } from 'effect';
 import { Base64Url } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
-import { CommerceTenantWorkloadCredentialUnavailable } from '../../api/tenant-workload-credentials.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { retailCustomerDirectoryOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-customer-owner.ts';
 import {
-  acquireRetailPartyGateway,
+  acquireRetailEnrollmentPartyGateway,
   retailPartyCandidateOwnerEffect,
 } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
@@ -36,6 +36,18 @@ const decisionRef = {
   resourceType: 'party.registry.party-match-decision',
   tenantId,
 };
+const crypto = Crypto.make({
+  digest: () => Effect.succeed(new Uint8Array()),
+  randomBytes: (size) => new Uint8Array(size).fill(1),
+});
+const originator = { actionInvocationId: '91000000-0000-4000-8000-000000000001', compositionRevision, tenantId };
+const delegationPayload = {
+  audience: 'party-registry',
+  compositionRevision,
+  exchangeId: '01010101-0101-4101-8101-010101010101',
+  legalEntityScope: 'subject',
+  subject: { _tag: 'Originator', actionInvocationId: originator.actionInvocationId, legalEntityId, tenantId },
+};
 const input: RetailPartyCandidateOwnerInput & {
   readonly verifiedEvidence: Effect.Effect<typeof RetailEnrollmentEvidenceSchema.Type>;
 } = {
@@ -47,7 +59,9 @@ const input: RetailPartyCandidateOwnerInput & {
     validFrom: DateTime.makeUnsafe('2026-09-19T10:00:00.000Z'),
   },
   compositionRevision,
+  crypto,
   legalEntityId,
+  originator,
   requestCorrelation,
   tenantId,
   verifiedEvidence: Effect.succeed(
@@ -76,16 +90,15 @@ const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
   tenantId,
   transitionKey: 'party.candidate.submit',
 });
-const configuration = ConfigProvider.layer(
-  ConfigProvider.fromUnknown({
-    COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
-      [tenantId]: { coreIdentityApiKey: 'scheduled-core-identity-key', gatewayApiKey: 'scheduled-service-api-key' },
-    }),
-    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
-  }),
+const configuration = Layer.merge(
+  ConfigProvider.layer(
+    ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api' }),
+  ),
+  Layer.effectDiscard(holdTestModuleCredentials({ 'commerce-customer-context': 'reviewed-ccc-module-key' })),
 );
 const tokenFor = (claimsTenantId = tenantId, claimsRevision = compositionRevision, tokenId = 1) => {
   const claims = {
+    act: { appId: 'commerce-customer-context', buildMarker: 'ccc-release', principalId: servicePrincipalId },
     aud: 'party-registry',
     compositionRevision: claimsRevision,
     exp: 1_700_000_300,
@@ -94,15 +107,16 @@ const tokenFor = (claimsTenantId = tenantId, claimsRevision = compositionRevisio
     jti: `70000000-0000-4000-8000-${String(tokenId).padStart(12, '0')}`,
     principal: {
       authBindingId: '80000000-0000-4000-8000-000000000001',
-      authContextRef: 'key:scheduled-service',
+      authContextRef: 'key:original-storefront',
+      authenticationNamespaceId: 'ontos.staff.better-auth.v1',
       authMethod: 'api_key',
       legalEntityId,
-      principalId: servicePrincipalId,
+      principalId: actorPrincipalId,
       tenantId: claimsTenantId,
     },
-    sub: servicePrincipalId,
+    sub: actorPrincipalId,
     targetBuildMarker: 'party-release-1',
-    ver: 1,
+    ver: 3,
   };
   return `${Base64Url.encode('{}')}.${Base64Url.encode(JSON.stringify(claims))}.test-signature`;
 };
@@ -127,16 +141,12 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration));
     expect(outcome.status).toBe('SUCCEEDED');
     expect(requests.map((request) => request.url)).toEqual([
-      'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
+      'https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context',
       'https://shell.example.test/api/approved/party-registry/party-registry/actions/create-party',
     ]);
     for (const request of [requests[0]]) {
-      expect(request?.headers.get('x-api-key')).toBe('scheduled-service-api-key');
-      expect(yield* Effect.promise(() => request.json())).toEqual({
-        audience: 'party-registry',
-        compositionRevision,
-        legalEntityId,
-      });
+      expect(request?.headers.get('x-api-key')).toBe('reviewed-ccc-module-key');
+      expect(yield* Effect.promise(() => request.json())).toEqual(delegationPayload);
     }
     expect(requests[1]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 1)}`);
     for (const request of [requests[1]]) {
@@ -147,23 +157,102 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
   }),
 );
 
-it.effect('a Tenant without a workload credential fails closed without presenting any key', () =>
+it.effect('an originator from another Tenant fails closed before issuance', () =>
   Effect.gen(function* unconfiguredTenant() {
     const requests: Request[] = [];
     const fakeFetch: typeof fetch = (target, init) => {
       requests.push(new Request(target, init));
       return Promise.resolve(Response.json(gatewayResponse()));
     };
-    const failure = yield* acquireRetailPartyGateway({
+    const failure = yield* acquireRetailEnrollmentPartyGateway({
       compositionRevision,
+      crypto,
       legalEntityId,
+      originator,
       requestCorrelation,
       tenantId: '90000000-0000-4000-8000-000000000001',
     }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
     expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
-    expect(failure.reason).toBe('The Party Registry server gateway credential is unavailable');
-    expect(failure.cause).toBeInstanceOf(CommerceTenantWorkloadCredentialUnavailable);
+    expect(failure.reason).toBe('The enrollment originator does not match the immutable Attempt scope');
     expect(requests).toHaveLength(0);
+  }),
+);
+
+for (const mode of ['principal-only', 'wrong-actor', 'wrong-company', 'wrong-release'] as const) {
+  it.effect(`rejects ${mode} issuer authority before contacting Party`, () =>
+    Effect.gen(function* refusedIssuer() {
+      const claims = Schema.decodeSync(Schema.fromJsonString(GatewayContextV3ClaimsSchema))(
+        Result.getOrThrow(Base64Url.decodeString(tokenFor().split('.')[1])),
+      );
+      const changed = Match.value(mode).pipe(
+        Match.when('principal-only', () => ({ ...Struct.omit(claims, ['act']), ver: 1 })),
+        Match.when('wrong-actor', () => ({ ...claims, act: { ...claims.act, appId: 'pricing' } })),
+        Match.when('wrong-company', () => ({
+          ...claims,
+          principal: { ...claims.principal, legalEntityId: '90000000-0000-4000-8000-000000000001' },
+        })),
+        Match.when('wrong-release', () => ({ ...claims, compositionRevision: 'd'.repeat(64) })),
+        Match.exhaustive,
+      );
+      const requests: Request[] = [];
+      const fakeFetch: typeof fetch = (target, init) => {
+        requests.push(new Request(target, init));
+        return Promise.resolve(
+          Response.json({
+            ...gatewayResponse(),
+            token: `${Base64Url.encode('{}')}.${Base64Url.encode(JSON.stringify(changed))}.test-signature`,
+          }),
+        );
+      };
+      const failure = yield* retailPartyCandidateOwnerEffect(input)
+        .dispatch(transition)
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
+      expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+      expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+        '/shell-super-app-api/auth/delegated/gateway-context',
+      ]);
+    }),
+  );
+}
+
+it.effect('a refused module credential never falls back to a Tenant API key or contacts Party', () =>
+  Effect.gen(function* refusedModule() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (target, init) => {
+      requests.push(new Request(target, init));
+      return Promise.resolve(
+        Response.json(
+          {
+            detail: 'Module credential refused',
+            status: 403,
+            title: 'Forbidden',
+            type: 'https://ontos.dev/problems/gateway-forbidden',
+          },
+          { status: 403 },
+        ),
+      );
+    };
+    const failure = yield* acquireRetailEnrollmentPartyGateway(input).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      Effect.provide(
+        Layer.merge(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+                [tenantId]: { coreIdentityApiKey: 'must-not-be-used', gatewayApiKey: 'must-not-be-used' },
+              }),
+              ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
+            }),
+          ),
+          Layer.effectDiscard(holdTestModuleCredentials({ 'commerce-customer-context': 'refused-module-key' })),
+        ),
+      ),
+      Effect.flip,
+    );
+    expect(failure.reason).toBe('The Party Registry delegated owner credential is unavailable');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers.get('x-api-key')).toBe('refused-module-key');
+    expect(new URL(requests[0].url).pathname).toBe('/shell-super-app-api/auth/delegated/gateway-context');
   }),
 );
 
@@ -190,11 +279,7 @@ it.effect('a stale original Attempt is denied by issuance before contacting Part
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
     expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
     expect(requests).toHaveLength(1);
-    expect(yield* Effect.promise(() => requests[0].json())).toEqual({
-      audience: 'party-registry',
-      compositionRevision,
-      legalEntityId,
-    });
+    expect(yield* Effect.promise(() => requests[0].json())).toEqual(delegationPayload);
   }),
 );
 
@@ -216,12 +301,17 @@ it.effect('a mismatched issuer Tenant fails before any Party match or create', (
 
 it.effect('keeps the original Attempt revision and scope when a caller later mutates its input object', () =>
   Effect.gen(function* immutableAttemptTransport() {
-    const mutableInput = { ...input };
+    const mutableInput = { ...input, originator: { ...input.originator } };
     const owner = retailPartyCandidateOwnerEffect(mutableInput);
     Object.assign(mutableInput, {
       compositionRevision: 'd'.repeat(64),
       legalEntityId: '90000000-0000-4000-8000-000000000001',
       requestCorrelation: 'changed-correlation',
+      tenantId: '90000000-0000-4000-8000-000000000001',
+    });
+    Object.assign(mutableInput.originator, {
+      actionInvocationId: '92000000-0000-4000-8000-000000000001',
+      compositionRevision: 'd'.repeat(64),
       tenantId: '90000000-0000-4000-8000-000000000001',
     });
     const requests: Request[] = [];
@@ -244,11 +334,7 @@ it.effect('keeps the original Attempt revision and scope when a caller later mut
       .dispatch(transition)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration));
     expect(outcome.resultReference).toBe(partyRef.resourceId);
-    expect(yield* Effect.promise(() => requests[0].json())).toEqual({
-      audience: 'party-registry',
-      compositionRevision,
-      legalEntityId,
-    });
+    expect(yield* Effect.promise(() => requests[0].json())).toEqual(delegationPayload);
     expect(requests[1]?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
     expect(requests[1]?.headers.get('x-correlation-id')).toBe(requestCorrelation);
   }),
@@ -303,13 +389,13 @@ it.effect('committed native recovery uses one owned-result assertion without rev
     const fakeFetch: typeof fetch = (target, init) => {
       const request = new Request(target, init);
       requests.push(request);
-      if (request.url.endsWith('/auth/api-key/gateway-context')) {
+      if (request.url.endsWith('/auth/delegated/gateway-context')) {
         issued += 1;
         return Promise.resolve(Response.json(gatewayResponse(tenantId, issued)));
       }
       const credential = request.headers.get('authorization') ?? '';
       const [, tokenPayload] = credential.slice('Bearer '.length).split('.');
-      const claims = Schema.decodeSync(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))(
+      const claims = Schema.decodeSync(Schema.fromJsonString(GatewayContextV3ClaimsSchema))(
         Result.getOrThrow(Base64Url.decodeString(tokenPayload)),
       );
       if (consumed.has(claims.jti)) {
@@ -374,7 +460,9 @@ it.effect('committed native recovery uses one owned-result assertion without rev
 
 const customerDirectoryInput = {
   compositionRevision,
+  crypto,
   legalEntityId,
+  originator,
   partyRef: {
     ...partyRef,
     moduleId: 'party.registry',
@@ -403,7 +491,7 @@ const customerDirectoryTransport = (
   const fakeFetch: typeof fetch = (target, init) => {
     const request = new Request(target, init);
     requests.push(request);
-    if (request.url.endsWith('/auth/api-key/gateway-context')) {
+    if (request.url.endsWith('/auth/delegated/gateway-context')) {
       issued += 1;
       return Promise.resolve(Response.json(gatewayResponse(tenantId, issued)));
     }
@@ -663,7 +751,7 @@ it.effect('treats a customer role that committed under the same key during dispa
   }),
 );
 
-it.effect('never presents the Tenant gateway key to a plain-HTTP Shell address off the machine', () =>
+it.effect('never presents the module key to a plain-HTTP Shell address off the machine', () =>
   Effect.gen(function* plainHttpShell() {
     const requests: Request[] = [];
     const fakeFetch: typeof fetch = (target, init) => {
@@ -672,29 +760,24 @@ it.effect('never presents the Tenant gateway key to a plain-HTTP Shell address o
     };
     const offMachine = new URL('https://shell.internal.example/shell-super-app-api');
     offMachine.protocol = 'http:';
-    const failure = yield* acquireRetailPartyGateway({
+    const failure = yield* acquireRetailEnrollmentPartyGateway({
       compositionRevision,
+      crypto,
       legalEntityId,
+      originator,
       requestCorrelation,
       tenantId,
     }).pipe(
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
-              [tenantId]: {
-                coreIdentityApiKey: 'scheduled-core-identity-key',
-                gatewayApiKey: 'scheduled-service-api-key',
-              },
-            }),
-            ONTOS_SHELL_GATEWAY_BASE_URL: offMachine.toString(),
-          }),
+        Layer.merge(
+          ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: offMachine.toString() })),
+          Layer.effectDiscard(holdTestModuleCredentials({ 'commerce-customer-context': 'reviewed-ccc-module-key' })),
         ),
       ),
       Effect.flip,
     );
-    expect(failure.reason).toBe('The Party Registry server gateway configuration is unavailable');
+    expect(failure.reason).toBe('The Party Registry delegated owner credential is unavailable');
     expect(requests).toHaveLength(0);
   }),
 );

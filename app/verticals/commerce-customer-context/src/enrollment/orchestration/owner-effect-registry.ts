@@ -421,9 +421,24 @@ export const verifiedRetailEnrollmentEvidence = Effect.fn(
   };
 });
 
+const originatorFor = (context: CommerceEnrollmentOwnerEffectContext) =>
+  context.attempt.originatorActionInvocationId === undefined
+    ? Effect.fail(
+        attemptRejected(
+          'The Attempt has no recorded original Action invocation',
+          context.attempt.portalEnrollmentAttemptId,
+        ),
+      )
+    : Effect.succeed({
+        actionInvocationId: context.attempt.originatorActionInvocationId,
+        compositionRevision: context.attempt.compositionRevision,
+        tenantId: context.attempt.tenantId,
+      });
+
 const partyEntry = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
   accountLookup: CommercePortalAuthAccountLookup,
+  crypto: Crypto.Crypto,
 ): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
     transition: JourneyTransitionSpec,
@@ -457,7 +472,9 @@ const partyEntry = (
       retailPartyCandidateOwnerEffect({
         candidate,
         compositionRevision: context.attempt.compositionRevision,
+        crypto,
         legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+        originator: yield* originatorFor(context),
         requestCorrelation: context.requestCorrelation,
         tenantId: context.attempt.tenantId,
         verifiedEvidence: verifiedRetailEnrollmentEvidence(
@@ -492,7 +509,10 @@ const retainResultsEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactio
     return registered(retailEnrollmentRetainedResultsOwnerEffect(run.value, context.attempt), requestDigest);
   });
 
-const customerDirectoryEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+const customerDirectoryEntry = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  crypto: Crypto.Crypto,
+): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.customerDirectory')(
     function* customerDirectoryEntryEffect(transition, context) {
       if (Option.isNone(run) || Option.isNone(context.subject.partyRef)) {
@@ -525,7 +545,9 @@ const customerDirectoryEntry = (run: Option.Option<CommerceEnrollmentOwnerTransa
       return registered(
         retailCustomerDirectoryOwnerEffect({
           compositionRevision: context.attempt.compositionRevision,
+          crypto,
           legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+          originator: yield* originatorFor(context),
           partyRef,
           registration: registration.value,
           requestCorrelation: context.requestCorrelation,
@@ -689,20 +711,6 @@ const bindProfileCommitResolution = (
               : Effect.succeed({ result: found.value, state: 'COMMITTED' as const }),
           ),
         );
-      });
-
-const originatorFor = (context: CommerceEnrollmentOwnerEffectContext) =>
-  context.attempt.originatorActionInvocationId === undefined
-    ? Effect.fail(
-        attemptRejected(
-          'The Attempt has no recorded original Action invocation',
-          context.attempt.portalEnrollmentAttemptId,
-        ),
-      )
-    : Effect.succeed({
-        actionInvocationId: context.attempt.originatorActionInvocationId,
-        compositionRevision: context.attempt.compositionRevision,
-        tenantId: context.attempt.tenantId,
       });
 
 const ensureProfileEntry = (
@@ -1379,11 +1387,11 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
       ],
       [
         registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
-        partyEntry(ownerTransactionRun, accountLookup),
+        partyEntry(ownerTransactionRun, accountLookup, crypto),
       ],
       [
         registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY),
-        customerDirectoryEntry(ownerTransactionRun),
+        customerDirectoryEntry(ownerTransactionRun, crypto),
       ],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY),

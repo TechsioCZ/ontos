@@ -1,5 +1,5 @@
 import { RetailEnrollmentEvidenceSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { RetailPortalBindingResult } from '../../shared/actions/bind-retail-portal-profile.ts';
@@ -123,7 +123,12 @@ const candidate: RetailPartyCandidateOwnerInput['candidate'] = {
 const partyOwnerInput = {
   candidate,
   compositionRevision: 'c'.repeat(64),
+  crypto: Crypto.make({
+    digest: () => Effect.succeed(new Uint8Array()),
+    randomBytes: (size) => new Uint8Array(size).fill(1),
+  }),
   legalEntityId: '50000000-0000-4000-8000-000000000001',
+  originator: { actionInvocationId, compositionRevision: 'c'.repeat(64), tenantId },
   requestCorrelation,
   tenantId,
   verifiedEvidence: Effect.succeed(
