@@ -15,6 +15,7 @@ import type { AccessWorkloadBindings, WorkloadBindingQuery } from '../enforcemen
 import { LegalEntityIdSchema } from '../ids.ts';
 import type { LegalEntityId } from '../ids.ts';
 import type { AccessIntentDatabase } from '../intent/persistence.ts';
+import { activeRegisteredCompany, activeRegistrationOfBinding } from './company-registration.ts';
 
 /*
  * The read side of the registered workload identities (O73). Legacy required an explicit per-Action
@@ -68,31 +69,15 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
           Effect.andThen(() =>
             opened
               .select({
-                companyStatus: legalEntities.status,
-                legalEntityId: accessWorkloadCompanyBindings.legalEntityId,
-                registrationStatus: accessWorkloadCompanyBindings.status,
+                legalEntityId: legalEntities.legalEntityId,
                 workloadKey: accessWorkloadBindings.workloadKey,
               })
               .from(accessWorkloadBindings)
               // A registration counts only while the binding it was written for is still active: the keys and the
               // companies come from the same active bindings in the same read, so a revoked binding takes its key
-              // and its company together (D6).
-              .leftJoin(
-                accessWorkloadCompanyBindings,
-                and(
-                  eq(accessWorkloadCompanyBindings.tenantId, accessWorkloadBindings.tenantId),
-                  eq(accessWorkloadCompanyBindings.workloadBindingId, accessWorkloadBindings.bindingId),
-                ),
-              )
-              // The registered company is a company of this tenant, so a suspended or archived one is never
-              // selectable even though its registration is untouched.
-              .leftJoin(
-                legalEntities,
-                and(
-                  eq(legalEntities.tenantId, accessWorkloadCompanyBindings.tenantId),
-                  eq(legalEntities.legalEntityId, accessWorkloadCompanyBindings.legalEntityId),
-                ),
-              )
+              // and its company together (D6). The predicate is the one every registration reader shares.
+              .leftJoin(accessWorkloadCompanyBindings, activeRegistrationOfBinding())
+              .leftJoin(legalEntities, activeRegisteredCompany())
               .where(
                 and(
                   eq(accessWorkloadBindings.tenantId, query.tenantId),
@@ -129,7 +114,7 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
       const activeCompanyIds = new Set<LegalEntityId>();
       for (const row of rows) {
         workloadKeys.add(row.workloadKey);
-        if (row.legalEntityId !== null && row.registrationStatus === 'active' && row.companyStatus === 'active') {
+        if (row.legalEntityId !== null) {
           activeCompanyIds.add(LegalEntityIdSchema.make(row.legalEntityId));
         }
       }
