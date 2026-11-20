@@ -151,6 +151,17 @@ const ResponseSchema = Schema.Union([
       'CREATE_UNAVAILABLE',
       'CREATE_INTERNAL',
       'CREATE_DECODE',
+      'RETIRE_AUTHENTICATION',
+      'RETIRE_CONFLICT',
+      'RETIRE_FORBIDDEN',
+      'RETIRE_INTERNAL',
+      'RETIRE_INVALID',
+      'RETIRE_NOT_FOUND',
+      'RETIRE_UNAVAILABLE',
+      'RETIRE_INELIGIBLE',
+      'RETIRE_COMMIT_INDETERMINATE',
+      'RETIRE_DECODE',
+      'RETIRE_TRANSPORT',
     ]),
     type: Schema.Literal('FAILED'),
     version: Schema.Literal(version),
@@ -701,15 +712,43 @@ const program = Effect.gen(function* priceGroupCurrentChild() {
         expectedCurrent,
         reason: 'TEST #1248 retire real owner Catalog identity',
       });
-      const result = yield* executeRetirePriceGroupWithAuthorization(
+      const response = yield* executeRetirePriceGroupWithAuthorization(
         payload,
         authorization,
         command.requestId,
         options(command),
-      ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(PriceGroupRetirementAcceptanceSchema)));
-      catalogRevision = result.acceptedCatalogRevision;
-      retired = true;
-      yield* send({ result, type: 'RETIRED_G2', version });
+      ).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(PriceGroupRetirementAcceptanceSchema)),
+        Effect.map((result) => ({ result, type: 'RETIRED_G2' as const, version })),
+        Effect.catchTags({
+          HttpClientError: () =>
+            Effect.succeed({ stage: 'RETIRE_TRANSPORT' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionAuthenticationProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_AUTHENTICATION' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionCommitIndeterminateProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_COMMIT_INDETERMINATE' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionConflictProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_CONFLICT' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionForbiddenProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_FORBIDDEN' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionIneligibleProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_INELIGIBLE' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionInternalProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_INTERNAL' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionInvalidProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_INVALID' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionNotFoundProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_NOT_FOUND' as const, type: 'FAILED' as const, version }),
+          RetirePriceGroupActionUnavailableProblem: () =>
+            Effect.succeed({ stage: 'RETIRE_UNAVAILABLE' as const, type: 'FAILED' as const, version }),
+          SchemaError: () => Effect.succeed({ stage: 'RETIRE_DECODE' as const, type: 'FAILED' as const, version }),
+        }),
+      );
+      if (response.type === 'RETIRED_G2') {
+        catalogRevision = response.result.acceptedCatalogRevision;
+        retired = true;
+      }
+      yield* send(response);
     }
   }
 });
