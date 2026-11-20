@@ -1240,28 +1240,52 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
       ),
   );
 
-  suite.effect('refuses a file whose two leavers are each the only successor the other would leave', () =>
-    withStage((stage) =>
-      Effect.gen(function* refusesMutualSuccessors() {
-        const { tenantId } = stage;
-        yield* stage
-          .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
-          .pipe(failClosed);
-        // Both administer the company and the owner is suspended in it: each leaver alone leaves the other, but the
-        // file excludes every leaver, so together they leave nobody.
-        yield* seed(stage, companyAdministrators(stage));
-        yield* suspendOwnerInCompany(stage);
-        const refused = yield* refusalOf(
+  suite.effect(
+    'refuses a file whose two leavers are each the only successor the other would leave, and lets either leave alone',
+    () =>
+      withStage((stage) =>
+        onDatabaseClock(
           stage,
-          {
-            retiredPrincipals: [leaving(tenantId, colleague, 'colleague'), leaving(tenantId, bystander, 'bystander')],
-          },
-          [owner, colleague, bystander],
-        );
-        expect(refused).toMatch(/^stage_last_administrator: /u);
-        expect(refused).toContain(companyScopeOf(stage));
-      }),
-    ),
+          Effect.gen(function* refusesMutualSuccessors() {
+            const { tenantId } = stage;
+            yield* stage
+              .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
+              .pipe(failClosed);
+            // Both administer the company and the owner is suspended in it: each leaver alone leaves the other, but the
+            // file excludes every leaver, so together they leave nobody.
+            yield* seed(stage, companyAdministrators(stage));
+            yield* suspendOwnerInCompany(stage);
+            const retiringColleague = { retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
+            const refused = yield* refusalOf(
+              stage,
+              {
+                retiredPrincipals: [...retiringColleague.retiredPrincipals, leaving(tenantId, bystander, 'bystander')],
+              },
+              [owner, colleague, bystander],
+            );
+            expect(refused).toMatch(/^stage_last_administrator: /u);
+            expect(refused).toContain(companyScopeOf(stage));
+            // Each administrator is effective on their own: the colleague leaves alone, and the bystander who stays
+            // keeps administering the company.
+            yield* stage.reconcile({ ...emptyRun, ...retiringColleague }).pipe(failClosed);
+            const rows = yield* stage.admin
+              .unsafe<{ readonly id: string; readonly status: string }>(
+                `select 'membership ' || membership_id::text as id, status from core.access_memberships
+                  where membership_id in ('${uid(77)}', '${uid(78)}')
+                 union all select 'principal ' || principal_id::text, status from core.principals
+                  where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${bystander}')
+                 order by 1`,
+              )
+              .pipe(Effect.orDie);
+            expect(rows).toEqual([
+              { id: `membership ${uid(77)}`, status: 'revoked' },
+              { id: `membership ${uid(78)}`, status: 'active' },
+              { id: `principal ${colleague}`, status: 'archived' },
+              { id: `principal ${bystander}`, status: 'active' },
+            ]);
+          }),
+        ),
+      ),
   );
 
   suite.effect(
