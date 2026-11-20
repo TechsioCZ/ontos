@@ -164,10 +164,10 @@ it.effect('obtains route scope from the protected generated owner Read and refus
       expect((yield* readSymmyRouteScope(proof)).legalEntityId).toBe(legalEntityId);
       const reflected = Reflect.construct(proof.constructor, [{}, { routeJson: JSON.stringify(response) }]);
       const reflectedFailure = yield* Effect.flip(readSymmyRouteScope(reflected));
-      expect(reflectedFailure.code).toBe('forbidden');
+      expect(reflectedFailure).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
       const copied = Object.assign(Object.create(Object.getPrototypeOf(proof)), proof);
       const copiedFailure = yield* Effect.flip(readSymmyRouteScope(copied));
-      expect(copiedFailure.code).toBe('forbidden');
+      expect(copiedFailure).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
       const wrongCompany = yield* Effect.flip(
         projectSymmyRouteScopePrincipal(proof, {
           audience: 'party-registry',
@@ -175,7 +175,7 @@ it.effect('obtains route scope from the protected generated owner Read and refus
           principal,
         }),
       );
-      expect(wrongCompany.code).toBe('forbidden');
+      expect(wrongCompany).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     }).pipe(Effect.provide(current.layer));
     expect(current.calls).toHaveLength(1);
     expect(current.calls[0]?.url).toBe(
@@ -194,10 +194,10 @@ it.effect('rejects a different tenant returned by the owner and a revoked authen
       Effect.flip,
       Effect.provide(wrongTenant.layer),
     );
-    expect(tenantFailure.code).toBe('forbidden');
+    expect(tenantFailure).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     const revoked = yield* fixture({ activeBinding: false });
     const bindingFailure = yield* acquireSymmyRouteScopeProof(request).pipe(Effect.flip, Effect.provide(revoked.layer));
-    expect(bindingFailure.code).toBe('forbidden');
+    expect(bindingFailure).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     expect(revoked.calls).toHaveLength(0);
   }),
 );
@@ -209,7 +209,7 @@ it.effect('refuses an admit-purpose claim for a read route before requesting own
       Effect.flip,
       Effect.provide(current.layer),
     );
-    expect(failure.code).toBe('forbidden');
+    expect(failure).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     expect(current.calls).toHaveLength(0);
   }),
 );
@@ -234,7 +234,7 @@ it.effect('refuses route metadata that names an owner operation absent from the 
         }),
       );
     }).pipe(Effect.provide(current.layer));
-    expect(failure.code).toBe('forbidden');
+    expect(failure).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     expect(current.calls).toHaveLength(1);
   }),
 );
@@ -509,7 +509,7 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
       { catalog: yield* publish('historical_read'), entrypointKeys: groupRoute, routeKey: 'customerGroupsBatch' },
     ] as const) {
       const refused = yield* Effect.flip(issue(refusedInput));
-      expect(refused).toMatchObject({ code: 'forbidden' });
+      expect(refused).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     }
   }),
 );
