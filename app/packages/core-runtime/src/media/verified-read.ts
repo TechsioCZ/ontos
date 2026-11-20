@@ -1,7 +1,7 @@
-import { Effect, Schema, Stream } from 'effect';
+import { Effect, Option, Schema, Stream } from 'effect';
 
 import { actionErrorSchema } from '../actions/error-schema.ts';
-import { ContentTally } from './content-tally.ts';
+import { ContentDigest } from './content-digest.ts';
 import { ObjectStorage, ObjectStorageObjectMissing } from './object-storage.ts';
 import type { ObjectStat, ObjectStorageFailure } from './object-storage.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -216,10 +216,10 @@ const openRecordedObject = Effect.fn('MediaVerifiedRead.open')(function* openRec
  */
 const verdictOf = Effect.fn('MediaVerifiedRead.verdict')(function* verdictOf(
   opened: OpenedObject,
-  tally: ContentTally,
+  digest: ContentDigest,
 ) {
   const storage = yield* ObjectStorage;
-  const observed = tally.finish();
+  const observed = yield* digest.finish();
   if (observed.byteSize !== opened.stat.byteSize) {
     return yield* interrupted({ outcome: 'unavailable', reason: 'framing_inconsistent' });
   }
@@ -245,29 +245,42 @@ const verdictOf = Effect.fn('MediaVerifiedRead.verdict')(function* verdictOf(
   return yield* interrupted({ finding, outcome: 'integrity_failed' });
 });
 
-/** The stream of the opened object: the bytes pass on as they are read and the verdict decides its end. */
-const verifiedBody = (opened: OpenedObject) => {
-  const tally = new ContentTally();
-  return opened.body.pipe(
-    Stream.mapError(providerInterruption),
-    // One chunk at a time: the tally is order-dependent, so the sequence is the contract, not an accident.
-    Stream.mapEffect(
-      (chunk) =>
-        Effect.sync(() => {
-          tally.add(chunk);
-          return chunk;
-        }),
-      { concurrency: 1 },
-    ),
-    Stream.concat(Stream.fromEffect(verdictOf(opened, tally)).pipe(Stream.drain)),
-  );
-};
+/**
+ * The stream of the opened object. Every chunk is digested as it passes, and the LAST chunk is withheld until the
+ * verdict is in: a consumer that announces the confirmed length (HTTP `Content-Length`) then never sees a complete
+ * body for bytes that turn out wrong, because the final bytes are only released after the object verified.
+ */
+const verifiedBody = (opened: OpenedObject) =>
+  Stream.suspend(() => {
+    const digest = new ContentDigest();
+    // The last chunk read so far, withheld until the next one (or the verdict) arrives.
+    let held = Option.none<Uint8Array>();
+    const exchange = (next: Option.Option<Uint8Array>) => {
+      const previous = Option.toArray(held);
+      held = next;
+      return previous;
+    };
+    return opened.body.pipe(
+      Stream.mapError(providerInterruption),
+      // One chunk at a time: the digest is order-dependent, so the sequence is the contract, not an accident.
+      Stream.mapEffect((chunk) => digest.add(chunk).pipe(Effect.as(chunk)), { concurrency: 1 }),
+      Stream.map((chunk) => exchange(Option.some(chunk))),
+      Stream.flattenIterable,
+      Stream.concat(
+        Stream.fromEffect(verdictOf(opened, digest)).pipe(
+          Stream.map(() => exchange(Option.none())),
+          Stream.flattenIterable,
+        ),
+      ),
+    );
+  });
 
 export interface OpenedVerifiedMediaStream {
   /**
    * The object's bytes, passed on chunk by chunk, never buffered whole. A clean end means the whole object was
    * verified; any other end is `MediaVerifiedReadInterrupted`. Bytes already emitted before a failing end were
-   * NOT yet verified: a consumer that must not present unverified bytes verifies first (`verifyReadyMediaAsset`).
+   * NOT yet verified, except that the last chunk is only emitted after the verdict: a consumer that must not
+   * present unverified bytes at all verifies first (`verifyReadyMediaAsset`).
    */
   readonly body: Stream.Stream<Uint8Array, MediaVerifiedReadInterrupted>;
   readonly byteSize: MediaByteSize;
@@ -300,12 +313,12 @@ export const verifyReadyMediaAsset = Effect.fn('MediaVerifiedRead.verify')(funct
 ) {
   const read = Effect.gen(function* read() {
     const opened = yield* openRecordedObject(asset, { refuseStatMismatch: false });
-    const tally = new ContentTally();
+    const digest = new ContentDigest();
     yield* opened.body.pipe(
-      Stream.runForEach((chunk) => Effect.sync(() => tally.add(chunk))),
+      Stream.runForEach((chunk) => digest.add(chunk)),
       Effect.mapError(providerInterruption),
     );
-    return yield* verdictOf(opened, tally);
+    return yield* verdictOf(opened, digest);
   });
   const outcome = yield* read.pipe(
     Effect.catchTag('MediaVerifiedReadInterrupted', ({ read: unverified }) =>

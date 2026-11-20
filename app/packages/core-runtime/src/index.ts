@@ -189,6 +189,9 @@ export { legalEntityDetailRead } from './generated-reads/legal-entity-detail.ts'
 
 // @ontos-core-read asset-metadata
 export { assetMetadataRead } from './generated-reads/asset-metadata.ts';
+
+// @ontos-core-read asset-download
+export { assetDownloadRead } from './generated-reads/asset-download.ts';
 // @ontos-codesmith-core-read-exports:end
 export {
   LegalEntityContext,
