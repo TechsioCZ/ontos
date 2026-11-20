@@ -7,6 +7,8 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { RegisterStockItemPayloadSchema, RegisterStockItemResultSchema } from '../actions/register-stock-item.ts';
+import { StockItemRejected } from '../domain/stock-item.ts';
+import { StockItemIdSchema } from '../resources/stock-item.ts';
 
 export { RegisterStockItemPayloadSchema } from '../actions/register-stock-item.ts';
 export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
@@ -46,7 +48,12 @@ export const RegisterStockItemActionConflictProblemSchema = makeProblemDetailsSc
 export const RegisterStockItemActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'RegisterStockItemActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'stock_item_rejected']) },
+  {
+    code: Schema.Literals(['action_policy_denied', 'stock_item_rejected']),
+    reason: Schema.optionalKey(StockItemRejected.fields.reason),
+    /** The existing Current Stock Item when the reason is exact_selection_meaning_already_registered. */
+    stockItemId: Schema.optionalKey(StockItemIdSchema),
+  },
 );
 export const RegisterStockItemActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'RegisterStockItemActionPreconditionProblem',

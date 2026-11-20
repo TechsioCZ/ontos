@@ -11,11 +11,14 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
+import { PgClient } from '@effect/sql-pg';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Redacted, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -45,9 +48,15 @@ import {
 } from '../../shared/actions/register-stock-item.ts';
 import { SelectInventoryBackendPayloadSchema } from '../../shared/actions/select-inventory-backend.ts';
 import { inventoryApi } from '../../shared/api.ts';
+import { EstablishStockPositionActionIneligibleProblemSchema } from '../../shared/apis/establish-stock-position-action.ts';
 import { InventorySourceImportReceiptResponseSchema } from '../../shared/apis/inventory-source-import-receipt.ts';
+import {
+  RegisterStockItemActionConflictProblemSchema,
+  RegisterStockItemActionIneligibleProblemSchema,
+} from '../../shared/apis/register-stock-item-action.ts';
 import { InventorySourceAssertionProposalSchema } from '../../shared/domain/inventory-source-assertion.ts';
 import { InventorySourceImportActionInvocationIdSchema } from '../../shared/domain/inventory-source-import-outcome.ts';
+import { transitionStockLocation } from '../../shared/domain/stock-location.ts';
 import { UnknownOnHandEvidenceSchema } from '../../shared/domain/stock-position.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { createStockLocationAction } from '../../src/actions/create-stock-location.action.ts';
@@ -63,14 +72,25 @@ import { executeImportSourceAssertionWithAuthorization } from '../../src/api/imp
 import { executeInventorySourceImportReceiptWithAuthorization } from '../../src/api/inventory-source-import-receipt-client.ts';
 import { executeRegisterStockItemWithAuthorization } from '../../src/api/register-stock-item-action-client.ts';
 import { executeSelectInventoryBackendWithAuthorization } from '../../src/api/select-inventory-backend-action-client.ts';
-import { inventorySourceImportLedger, inventoryStockPositions } from '../../src/database/schema.ts';
+import { inventoryStockPositions } from '../../src/database/schema.ts';
 import { importSourceAssertionOwnerAuthorizationOverlayLive } from '../../src/persistence/import-source-assertion-owner-authorization.ts';
+import { makeDrizzleStockItemRepository } from '../../src/persistence/stock-item-repository.ts';
+import { stockLocationPersistenceForScope } from '../../src/persistence/stock-location-repository.ts';
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { sourceImportCompositionFixture } from '../support/source-import-composition.fixture.ts';
 
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
+
+/**
+ * Catalog-owned inputs. This Inventory test does not run Catalog: these stand for the exact Selection meanings
+ * and the Product Unit a Catalog Product Variant supplies, and Inventory retains them without interpreting them.
+ */
+const CATALOG_PRODUCT_UNIT_ID = 'c47a1001-0000-4000-8000-000000000001';
+const CATALOG_SELECTION_MEANING_ID = 'catalog-variant:fixture-sku-1';
+const CATALOG_RACE_SELECTION_MEANING_ID = 'catalog-variant:fixture-sku-race';
+const CATALOG_RETIRED_SELECTION_MEANING_ID = 'catalog-variant:fixture-sku-retired';
 
 /**
  * The state an External Business System stock import needs is established only through the governed
@@ -113,6 +133,12 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
     );
     const ownerRuntimeLayer = fixture.layer.pipe(Layer.provide(importSourceAssertionOwnerAuthorizationOverlayLive));
     const { tenantId } = fixture;
+    const coreEvidenceServices = yield* Layer.build(
+      PgClient.layer({ url: Redacted.make(connections.admin.connectionString) }).pipe(
+        Layer.provideMerge(Reactivity.layer),
+      ),
+    );
+    const coreEvidenceExecutor = yield* testCoreDatabase.pipe(Effect.provide(coreEvidenceServices));
 
     const keyPair = yield* Effect.sync(() => generateKeyPairSync('ed25519'));
     const kid = 'inventory-external-backend-setup';
@@ -197,11 +223,11 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
       (value) => Effect.promise(value.dispose.bind(value)).pipe(Effect.orDie),
     );
     const nativeFetch: typeof fetch = (input, init) => app.handler(new Request(input, init), emptyContext);
-    const options = Effect.fn('ExternalBackendSetupTest.options')(function* options() {
+    const options = Effect.fn('ExternalBackendSetupTest.options')(function* options(idempotencyKey?: string) {
       return {
         baseUrl: 'https://inventory.ontos.test',
         compositionRevision: composition.composition.revision,
-        idempotencyKey: yield* nextId,
+        idempotencyKey: idempotencyKey ?? (yield* nextId),
       };
     });
     const run = <Result, Failure, Requirements>(effect: Effect.Effect<Result, Failure, Requirements>) =>
@@ -238,67 +264,156 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
     // 2. One Stock Item for the exact Catalog Selection meaning and Unit of the imported SKU.
     const unitRef = {
       moduleId: 'commerce.catalog',
-      resourceId: yield* nextId,
+      resourceId: CATALOG_PRODUCT_UNIT_ID,
       resourceType: 'commerce.catalog.product-unit',
       tenantId,
     } as const;
-    const { stockItem } = yield* run(
-      requireExecutionResult(
-        RegisterStockItemResultSchema,
-        executeRegisterStockItemWithAuthorization(
-          yield* Schema.decodeUnknownEffect(RegisterStockItemPayloadSchema)({
-            exactSelectionMeaning: { id: `catalog-variant:${yield* nextId}`, kind: 'PRODUCT_VARIANT' },
-            unitRef,
-          }),
-          yield* authorization(),
-          yield* nextId,
-          yield* options(),
+    const register = Effect.fn('ExternalBackendSetupTest.register')(function* register(
+      exactSelectionMeaningId: string,
+      idempotencyKey?: string,
+    ) {
+      return yield* run(
+        requireExecutionResult(
+          RegisterStockItemResultSchema,
+          executeRegisterStockItemWithAuthorization(
+            yield* Schema.decodeUnknownEffect(RegisterStockItemPayloadSchema)({
+              exactSelectionMeaning: { id: exactSelectionMeaningId, kind: 'PRODUCT_VARIANT' },
+              unitRef,
+            }),
+            yield* authorization(),
+            yield* nextId,
+            yield* options(idempotencyKey),
+          ),
         ),
-      ),
+      );
+    });
+    const registrationKey = yield* nextId;
+    const registered = yield* register(CATALOG_SELECTION_MEANING_ID, registrationKey);
+    const { stockItem } = registered;
+    // A lost reply is recovered under the same key; the same key never carries another payload.
+    expect(yield* register(CATALOG_SELECTION_MEANING_ID, registrationKey)).toEqual(registered);
+    const reusedKey = yield* register(CATALOG_RACE_SELECTION_MEANING_ID, registrationKey).pipe(Effect.flip);
+    assert(Schema.is(RegisterStockItemActionConflictProblemSchema)(reusedKey));
+    expect(reusedKey.code).toBe('action_request_hash_conflict');
+    // An operator who lost the key is refused with the Item that already exists.
+    const lostKey = yield* register(CATALOG_SELECTION_MEANING_ID).pipe(Effect.flip);
+    assert(Schema.is(RegisterStockItemActionIneligibleProblemSchema)(lostKey));
+    expect(lostKey).toMatchObject({
+      reason: 'exact_selection_meaning_already_registered',
+      stockItemId: stockItem.stockItemRef.resourceId,
+    });
+    // Two keys racing for one meaning register one Item, and the loser is refused naming it.
+    const registrationRace = yield* Effect.all(
+      [
+        register(CATALOG_RACE_SELECTION_MEANING_ID).pipe(Effect.result),
+        register(CATALOG_RACE_SELECTION_MEANING_ID).pipe(Effect.result),
+      ],
+      { concurrency: 2 },
     );
+    const registrationWinners = registrationRace.filter(Result.isSuccess);
+    expect(registrationWinners).toHaveLength(1);
+    for (const outcome of registrationRace) {
+      if (Result.isFailure(outcome)) {
+        assert(Schema.is(RegisterStockItemActionIneligibleProblemSchema)(outcome.failure));
+        expect(outcome.failure).toMatchObject({
+          reason: 'exact_selection_meaning_already_registered',
+          stockItemId: registrationWinners[0]?.success.stockItem.stockItemRef.resourceId,
+        });
+      }
+    }
 
     // 3. One ACTIVE Stock Location for the ERP's physical warehouse.
-    const { stockLocation } = yield* run(
-      requireExecutionResult(
-        CreateStockLocationResultSchema,
-        executeCreateStockLocationWithAuthorization(
-          yield* Schema.decodeUnknownEffect(CreateStockLocationPayloadSchema)({
-            displayName: 'ERP main warehouse',
-            operationalScope: { _tag: 'PHYSICAL_SITE', physicalSiteKeys: ['erp-site:main'] },
-          }),
-          yield* authorization(),
-          yield* nextId,
-          yield* options(),
+    const createLocation = Effect.fn('ExternalBackendSetupTest.createLocation')(function* createLocation(
+      displayName: string,
+    ) {
+      return yield* run(
+        requireExecutionResult(
+          CreateStockLocationResultSchema,
+          executeCreateStockLocationWithAuthorization(
+            yield* Schema.decodeUnknownEffect(CreateStockLocationPayloadSchema)({
+              displayName,
+              operationalScope: { _tag: 'PHYSICAL_SITE', physicalSiteKeys: ['erp-site:main'] },
+            }),
+            yield* authorization(),
+            yield* nextId,
+            yield* options(),
+          ),
         ),
-      ),
-    );
+      );
+    });
+    const { stockLocation } = yield* createLocation('ERP main warehouse');
 
     // 4. The Position starts UNKNOWN under the selected backend; this Action never writes a quantity.
-    const { stockPosition } = yield* run(
-      requireExecutionResult(
-        EstablishStockPositionResultSchema,
-        executeEstablishStockPositionWithAuthorization(
-          yield* Schema.decodeUnknownEffect(EstablishStockPositionPayloadSchema)({
-            ownerConfigurationRef: {
-              moduleId: 'commerce.inventory',
-              resourceId: configuration.configurationId,
-              resourceType: 'commerce.inventory.inventory-backend-configuration',
-              tenantId,
-            },
-            scope: {
-              customerConfigurationId,
-              stockItemRef: stockItem.stockItemRef,
-              stockLocationRef: stockLocation.ref,
-              unitRef,
-            },
-          }),
-          yield* authorization(),
-          yield* nextId,
-          yield* options(),
+    const establish = Effect.fn('ExternalBackendSetupTest.establish')(function* establish(
+      scope: { readonly stockItemRef: unknown; readonly stockLocationRef: unknown },
+      idempotencyKey?: string,
+    ) {
+      return yield* run(
+        requireExecutionResult(
+          EstablishStockPositionResultSchema,
+          executeEstablishStockPositionWithAuthorization(
+            yield* Schema.decodeUnknownEffect(EstablishStockPositionPayloadSchema)({
+              ownerConfigurationRef: {
+                moduleId: 'commerce.inventory',
+                resourceId: configuration.configurationId,
+                resourceType: 'commerce.inventory.inventory-backend-configuration',
+                tenantId,
+              },
+              scope: { ...scope, customerConfigurationId, unitRef },
+            }),
+            yield* authorization(),
+            yield* nextId,
+            yield* options(idempotencyKey),
+          ),
         ),
-      ),
+      );
+    });
+    const positionScope = { stockItemRef: stockItem.stockItemRef, stockLocationRef: stockLocation.ref };
+    // Two keys racing for one scope establish one Position, and the loser is refused naming it.
+    const establishmentKeys = [yield* nextId, yield* nextId] as const;
+    const establishmentRace = yield* Effect.all(
+      establishmentKeys.map((key) => establish(positionScope, key).pipe(Effect.result)),
+      { concurrency: 2 },
     );
+    const winnerIndex = establishmentRace.findIndex(Result.isSuccess);
+    const winner = establishmentRace[winnerIndex];
+    const loser = establishmentRace[1 - winnerIndex];
+    assert(winner !== undefined && Result.isSuccess(winner) && loser !== undefined && Result.isFailure(loser));
+    const { stockPosition } = winner.success;
     expect(Schema.is(UnknownOnHandEvidenceSchema)(stockPosition.onHand)).toBe(true);
+    assert(Schema.is(EstablishStockPositionActionIneligibleProblemSchema)(loser.failure));
+    expect(loser.failure).toMatchObject({ positionRef: stockPosition.ref, reason: 'POSITION_SCOPE_ALREADY_CURRENT' });
+    expect(yield* establish(positionScope, establishmentKeys[winnerIndex])).toEqual(winner.success);
+
+    // A retired Stock Item or a merged Stock Location cannot receive a new Position.
+    const { stockItem: retiringItem } = yield* register(CATALOG_RETIRED_SELECTION_MEANING_ID);
+    const { stockLocation: mergingLocation } = yield* createLocation('ERP overflow warehouse');
+    const transitionedAt = DateTime.formatIso(yield* DateTime.now);
+    yield* fixture
+      .prepareOwner((transaction, scope) =>
+        Effect.gen(function* endTargetLifecycles() {
+          yield* makeDrizzleStockItemRepository(transaction).retire(retiringItem, transitionedAt);
+          const merged = yield* transitionStockLocation(mergingLocation, {
+            _tag: 'MERGE',
+            reason: 'Merged into the ERP main warehouse',
+            successorRef: stockLocation.ref,
+            transitionedAt,
+          });
+          yield* stockLocationPersistenceForScope(transaction, scope).saveTransition({
+            expectedRevision: mergingLocation.revision,
+            next: merged,
+          });
+        }),
+      )
+      .pipe(Effect.provide(ownerRuntimeLayer));
+    for (const [scope, reason] of [
+      [{ stockItemRef: retiringItem.stockItemRef, stockLocationRef: stockLocation.ref }, 'STOCK_ITEM_NOT_CURRENT'],
+      [{ stockItemRef: stockItem.stockItemRef, stockLocationRef: mergingLocation.ref }, 'STOCK_LOCATION_NOT_ACTIVE'],
+    ] as const) {
+      const refused = yield* establish(scope).pipe(Effect.flip);
+      assert(Schema.is(EstablishStockPositionActionIneligibleProblemSchema)(refused));
+      expect(refused.reason).toBe(reason);
+    }
 
     // 5. The ERP's own item and location keys correlate to the exact Item and Location.
     const externalKey = (identifierKind: 'ITEM' | 'LOCATION', externalValue: string) => ({
@@ -358,6 +473,7 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
       receivedAt: observedAt,
       sourceReference: 'erp-stock:snapshot:1',
     });
+    const importKey = yield* nextId;
     const imported = yield* run(
       requireExecutionResult(
         ImportSourceAssertionResultSchema,
@@ -365,26 +481,25 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
           { authorizationTargetRef: stockPosition.ref, items: [proposal] },
           yield* authorization(),
           yield* nextId,
-          yield* options(),
+          yield* options(importKey),
         ),
       ),
     );
     expect(imported.items).toMatchObject([{ assertionId: proposal.assertionId, status: 'ACCEPTED' }]);
 
-    // 7. The accepted row is readable through Inventory's public receipt read, with its ERP provenance.
-    const [ledger] = yield* fixture
-      .prepareOwner((transaction) =>
-        transaction
-          .select({ actionInvocationId: inventorySourceImportLedger.actionInvocationId })
-          .from(inventorySourceImportLedger)
-          .where(eq(inventorySourceImportLedger.tenantId, tenantId)),
-      )
-      .pipe(Effect.provide(ownerRuntimeLayer));
-    assert(ledger !== undefined);
+    // 7. The accepted row is readable through Inventory's public receipt read, with its ERP provenance. The
+    // original invocation is Core's record of the import's own idempotency key: the key a recovering caller
+    // holds and the gateway's registered recovery resolves; no Inventory row is read for it.
+    const original = (yield* fixture.evidence(coreEvidenceExecutor)).invocations.filter(
+      ({ actionKey, idempotencyKey }) =>
+        actionKey === importSourceAssertionAction.descriptor.actionKey && idempotencyKey === importKey,
+    );
+    expect(original).toHaveLength(1);
+    assert(original[0] !== undefined);
     const receipt = yield* run(
       executeInventorySourceImportReceiptWithAuthorization(
         {
-          actionInvocationId: InventorySourceImportActionInvocationIdSchema.make(ledger.actionInvocationId),
+          actionInvocationId: InventorySourceImportActionInvocationIdSchema.make(original[0].actionInvocationId),
           itemIndex: 0,
           proposal,
         },

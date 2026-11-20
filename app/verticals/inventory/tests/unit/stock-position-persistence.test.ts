@@ -126,6 +126,23 @@ const queuedSelect = (batches: readonly (readonly PersistenceTestRow[])[]) => {
   };
 };
 
+const lockedRows = <Row>(rows: readonly Row[], modes: string[]) => ({
+  for: (mode: string) => {
+    modes.push(mode);
+    return Effect.succeed(rows);
+  },
+});
+const lockingSelect = <Row>(rows: readonly Row[], modes: string[]) => ({
+  from: () => ({ where: () => ({ limit: () => lockedRows(rows, modes) }) }),
+});
+/** Locks the establishment targets of `position` against Item, then Location, rows answered in that order. */
+const lockTargets = (batches: readonly (readonly { readonly lifecycleState: string }[])[], modes: string[] = []) => {
+  const remaining = [...batches];
+  const transaction = { select: () => lockingSelect(remaining.shift() ?? [], modes) };
+  // @ts-expect-error Mock implements only the exercised transaction chains.
+  return stockPositionPersistenceForScope(transaction, scope).lockEstablishmentTargets(position.scope);
+};
+
 describe('Inventory Stock Position persistence', () => {
   it('exports one tenant-RLS owner table with partial Current-scope uniqueness and exact numeric ON_HAND', () => {
     expect(INVENTORY_STOCK_POSITION_TABLES).toEqual([inventoryStockPositions]);
@@ -206,6 +223,24 @@ describe('Inventory Stock Position persistence', () => {
     }),
   );
 
+  it.effect('locks a CURRENT Stock Item, then an ACTIVE Stock Location, and refuses any other lifecycle', () =>
+    Effect.gen(function* lockEstablishmentTargets() {
+      const modes: string[] = [];
+      yield* lockTargets([[{ lifecycleState: 'CURRENT' }], [{ lifecycleState: 'ACTIVE' }]], modes);
+      expect(modes).toEqual(['update', 'update']);
+      expect(yield* lockTargets([[]]).pipe(Effect.flip)).toMatchObject({ reason: 'STOCK_ITEM_NOT_FOUND' });
+      expect(yield* lockTargets([[{ lifecycleState: 'RETIRED' }]]).pipe(Effect.flip)).toMatchObject({
+        reason: 'STOCK_ITEM_NOT_CURRENT',
+      });
+      expect(yield* lockTargets([[{ lifecycleState: 'CURRENT' }], []]).pipe(Effect.flip)).toMatchObject({
+        reason: 'STOCK_LOCATION_NOT_FOUND',
+      });
+      expect(
+        yield* lockTargets([[{ lifecycleState: 'CURRENT' }], [{ lifecycleState: 'MERGED' }]]).pipe(Effect.flip),
+      ).toMatchObject({ reason: 'STOCK_LOCATION_NOT_ACTIVE' });
+    }),
+  );
+
   it.effect('rejects another Tenant before touching the owner transaction', () =>
     Effect.gen(function* rejectForeignTenant() {
       const transaction = new Proxy(
@@ -254,5 +289,11 @@ describe('Inventory Stock Position persistence', () => {
         Cause.fail({ code: checkViolation, constraint: 'inventory_stock_positions_owner_configuration_ck' }),
       ),
     ).toMatchObject({ reason: 'OWNER_CONFIGURATION_MISMATCH' });
+    const losingCandidate = mapStockPositionWriteError(
+      positionRef,
+      Cause.fail({ code: ['23', '505'].join(''), constraint: 'inventory_stock_positions_current_scope_uk' }),
+    );
+    expect(losingCandidate).toMatchObject({ reason: 'POSITION_SCOPE_ALREADY_CURRENT' });
+    expect(losingCandidate).not.toHaveProperty('positionRef');
   });
 });

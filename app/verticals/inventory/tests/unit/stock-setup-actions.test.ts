@@ -1,6 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { Crypto, Effect, Option, Ref, Schema } from 'effect';
+import { Crypto, Effect, Option, Ref, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -13,7 +13,9 @@ import type { StockLocation } from '../../shared/domain/stock-location.ts';
 import type { StockPosition } from '../../shared/domain/stock-position.ts';
 import { StockPositionRejected, UnknownOnHandEvidenceSchema } from '../../shared/domain/stock-position.ts';
 import { StockItemRejected } from '../../shared/domain/stock-item.ts';
+import { makeDrizzleStockItemRepository } from '../../src/persistence/stock-item-repository.ts';
 import type { StockItemRepositoryService } from '../../src/persistence/stock-item-repository.ts';
+import { stockPositionPersistenceForScope } from '../../src/persistence/stock-position-repository.ts';
 import type { StockPositionPersistence } from '../../src/persistence/stock-position-repository.ts';
 import {
   createStockLocationAction,
@@ -108,7 +110,25 @@ const selectedConfiguration = Schema.decodeUnknownSync(InventoryBackendConfigura
   tenantId,
 });
 
-const makePositions = Effect.gen(function* makePositions() {
+const inOtherTenant = <TenantRef extends { readonly tenantId: string }>(ref: TenantRef) => ({
+  ...ref,
+  tenantId: otherTenantId,
+});
+
+const rowsOf = <Row>(rows: readonly Row[]) => ({
+  from: () => ({ where: () => ({ limit: () => Effect.succeed(rows) }) }),
+});
+const insertingNothing = { values: () => ({ onConflictDoNothing: () => ({ returning: () => Effect.succeed([]) }) }) };
+/** A Drizzle double whose insert meets a concurrently committed row and whose selects answer `batches` in order. */
+const raceLosingTransaction = <Row>(batches: readonly (readonly Row[])[]) => {
+  const remaining = [...batches];
+  return { insert: () => insertingNothing, select: () => rowsOf(remaining.shift() ?? []) };
+};
+
+/** `refusal` is what the owner's Item and Location lock answers for the establishment targets. */
+const makePositions = Effect.fn('StockSetupActionsTest.makePositions')(function* makePositions(
+  refusal?: StockPositionRejected['reason'],
+) {
   const positions = yield* Ref.make<ReadonlyMap<string, StockPosition>>(new Map());
   const persistence: StockPositionPersistence = {
     create: (position) =>
@@ -127,6 +147,10 @@ const makePositions = Effect.gen(function* makePositions() {
           ),
         ),
       ),
+    lockEstablishmentTargets: () =>
+      refusal === undefined
+        ? Effect.void
+        : Effect.fail(new StockPositionRejected({ code: 'stock_position_rejected', reason: refusal })),
     read: (ref) => Ref.get(positions).pipe(Effect.map((stored) => Option.fromNullishOr(stored.get(ref.resourceId)))),
     save: ({ next }) => Effect.succeed(next),
   };
@@ -245,14 +269,43 @@ describe('Inventory stock setup Actions', () => {
       });
       expect(created).toEqual([stockLocation]);
       expect(collector.snapshot()).toMatchObject({
-        auditEvidence: { operation: 'CREATED', stockLocationRef: stockLocation.ref },
+        auditEvidence: {
+          operation: 'CREATED',
+          physicalSiteKeyCount: 1,
+          scopeKind: 'PHYSICAL_SITE',
+          stockLocationRef: stockLocation.ref,
+        },
+      });
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('keeps the audit of the largest valid logical aggregate within Core audit limits', () =>
+    Effect.gen(function* createLargestAggregate() {
+      const physicalSiteKeys = Array.from(
+        { length: 100 },
+        (_, index) => `${String(index).padStart(3, '0')}${'k'.repeat(297)}`,
+      );
+      const payload = Schema.decodeUnknownSync(CreateStockLocationPayloadSchema)({
+        displayName: 'ERP regional aggregate',
+        operationalScope: { _tag: 'LOGICAL_AGGREGATE', physicalSiteKeys },
+      });
+      const { collector, context } = handlerContext(createStockLocationAction, {
+        create: (location: StockLocation) => Effect.succeed(location),
+      });
+      const { stockLocation } = yield* handleCreateStockLocation(payload, context);
+      expect(stockLocation.operationalScope.physicalSiteKeys).toEqual(physicalSiteKeys);
+      expect(collector.snapshot().auditEvidence).toEqual({
+        operation: 'CREATED',
+        physicalSiteKeyCount: 100,
+        scopeKind: 'LOGICAL_AGGREGATE',
+        stockLocationRef: stockLocation.ref,
       });
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('establishes one Current Position with UNKNOWN ON_HAND under the selected backend, never a quantity', () =>
     Effect.gen(function* establishStockPosition() {
-      const { persistence, positions } = yield* makePositions;
+      const { persistence, positions } = yield* makePositions();
       const establish = stockPositionEstablishment(persistence, {
         findCurrent: () => Effect.succeed(Option.some(selectedConfiguration)),
       });
@@ -282,7 +335,7 @@ describe('Inventory stock setup Actions', () => {
 
   it.effect('refuses a Position whose owner is not the selected backend configuration and stores nothing', () =>
     Effect.gen(function* refuseUnselectedOwner() {
-      const { persistence, positions } = yield* makePositions;
+      const { persistence, positions } = yield* makePositions();
       const establish = stockPositionEstablishment(persistence, {
         findCurrent: () => Effect.succeed(Option.none()),
       });
@@ -295,6 +348,125 @@ describe('Inventory stock setup Actions', () => {
       expect(Schema.is(StockPositionRejected)(failure)).toBe(true);
       expect(failure).toMatchObject({ reason: 'OWNER_CONFIGURATION_MISMATCH' });
       expect((yield* Ref.get(positions)).size).toBe(0);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('refuses an owner configuration other than the one the Customer Configuration selects', () =>
+    Effect.gen(function* refuseOtherConfiguration() {
+      const { persistence, positions } = yield* makePositions();
+      const otherSelection = Schema.decodeUnknownSync(InventoryBackendConfigurationSchema)({
+        ...Schema.encodeSync(InventoryBackendConfigurationSchema)(selectedConfiguration),
+        configurationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      });
+      const establish = stockPositionEstablishment(persistence, {
+        findCurrent: () => Effect.succeed(Option.some(otherSelection)),
+      });
+      const failure = yield* Effect.flip(
+        handleEstablishStockPosition(
+          positionPayload,
+          handlerContext(establishStockPositionAction, { establish }).context,
+        ),
+      );
+      expect(failure).toMatchObject({ reason: 'OWNER_CONFIGURATION_MISMATCH' });
+      expect((yield* Ref.get(positions)).size).toBe(0);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('refuses a retired Stock Item or a non-ACTIVE Stock Location and stores no Position', () =>
+    Effect.gen(function* refuseUnusableTargets() {
+      for (const reason of ['STOCK_ITEM_NOT_CURRENT', 'STOCK_LOCATION_NOT_ACTIVE'] as const) {
+        const { persistence, positions } = yield* makePositions(reason);
+        const establish = stockPositionEstablishment(persistence, {
+          findCurrent: () => Effect.succeed(Option.some(selectedConfiguration)),
+        });
+        const failure = yield* Effect.flip(
+          handleEstablishStockPosition(
+            positionPayload,
+            handlerContext(establishStockPositionAction, { establish }).context,
+          ),
+        );
+        expect(Schema.is(StockPositionRejected)(failure)).toBe(true);
+        expect(failure).toMatchObject({ reason });
+        expect((yield* Ref.get(positions)).size).toBe(0);
+      }
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('refuses a Stock Position scope of another Tenant before touching the owner transaction', () =>
+    Effect.gen(function* refuseForeignTenant() {
+      const untouchable = new Proxy(
+        {},
+        {
+          get: () => {
+            throw new Error('must not touch transaction');
+          },
+        },
+      );
+      const establish = stockPositionEstablishment(
+        // @ts-expect-error Mock deliberately exposes no transaction operations.
+        stockPositionPersistenceForScope(untouchable, scope),
+        { findCurrent: () => Effect.die('must not read a backend selection for another Tenant') },
+      );
+      const encoded = Schema.encodeSync(EstablishStockPositionPayloadSchema)(positionPayload);
+      const foreign = Schema.decodeUnknownSync(EstablishStockPositionPayloadSchema)({
+        ownerConfigurationRef: inOtherTenant(encoded.ownerConfigurationRef),
+        scope: {
+          customerConfigurationId: encoded.scope.customerConfigurationId,
+          stockItemRef: inOtherTenant(encoded.scope.stockItemRef),
+          stockLocationRef: inOtherTenant(encoded.scope.stockLocationRef),
+          unitRef: inOtherTenant(encoded.scope.unitRef),
+        },
+      });
+      const failure = yield* Effect.flip(
+        handleEstablishStockPosition(foreign, handlerContext(establishStockPositionAction, { establish }).context),
+      );
+      expect(failure).toMatchObject({ reason: 'TENANT_SCOPE_MISMATCH' });
+      // A Location of another Tenant cannot form one scope with this Tenant's Item and Unit at all.
+      const mixed = Schema.decodeUnknownResult(EstablishStockPositionPayloadSchema)({
+        ...encoded,
+        scope: { ...encoded.scope, stockLocationRef: inOtherTenant(encoded.scope.stockLocationRef) },
+      });
+      expect(Result.isFailure(mixed)).toBe(true);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('names the Current Stock Item a concurrent registration committed first', () =>
+    Effect.gen(function* registrationRace() {
+      const winnerId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const winner = {
+        createdAt: new Date('2026-11-20T08:00:00.000Z'),
+        exactSelectionKind: 'PRODUCT_VARIANT',
+        exactSelectionMeaningId: 'catalog-variant:sku-race',
+        lifecycleState: 'CURRENT',
+        retiredAt: null,
+        revision: 1,
+        stockItemId: winnerId,
+        stockUnitModuleId: unitRef.moduleId,
+        stockUnitResourceId: unitRef.resourceId,
+        stockUnitResourceType: unitRef.resourceType,
+        stockUnitTenantId: tenantId,
+        tenantId,
+      };
+      // The pre-check found no Item; the insert then met the concurrent winner and inserted nothing.
+      const transaction = raceLosingTransaction([[], [winner]]);
+      const service = {
+        // @ts-expect-error Mock implements only the exercised transaction chains.
+        register: stockItemRegistration(makeDrizzleStockItemRepository(transaction), yield* Crypto.Crypto),
+      };
+      const failure = yield* Effect.flip(
+        handleRegisterStockItem(
+          Schema.decodeUnknownSync(RegisterStockItemPayloadSchema)({
+            exactSelectionMeaning: { id: 'catalog-variant:sku-race', kind: 'PRODUCT_VARIANT' },
+            unitRef,
+          }),
+          handlerContext(registerStockItemAction, service).context,
+        ),
+      );
+      expect(failure).toMatchObject({
+        exactSelectionMeaningId: 'catalog-variant:sku-race',
+        reason: 'exact_selection_meaning_already_registered',
+        stockItemId: winnerId,
+      });
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

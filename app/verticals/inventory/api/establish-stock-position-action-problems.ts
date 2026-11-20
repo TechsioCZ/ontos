@@ -73,8 +73,10 @@ export const establishStockPositionActionProblem = {
     }),
   ineligible: (
     code: ProblemOf<'EstablishStockPositionActionIneligibleProblem'>['code'],
+    rejection: Pick<ProblemOf<'EstablishStockPositionActionIneligibleProblem'>, 'positionRef' | 'reason'> = {},
   ): ProblemOf<'EstablishStockPositionActionIneligibleProblem'> =>
     EstablishStockPositionActionIneligibleProblemSchema.make({
+      ...rejection,
       code,
       detail: 'The request is not eligible for this Action.',
       status: problemStatus.ineligible,
@@ -132,7 +134,14 @@ const mapDomainProblem = (error: DomainError): EstablishStockPositionActionProbl
         establishStockPositionActionProblem.unavailable('inventory_backend_configuration_persistence_unavailable'),
       StockPositionPersistenceUnavailable: () =>
         establishStockPositionActionProblem.unavailable('stock_position_persistence_unavailable'),
-      StockPositionRejected: () => establishStockPositionActionProblem.ineligible('stock_position_rejected'),
+      // Only an already-Current scope names a persisted Position; other refusals carry no usable ref.
+      StockPositionRejected: ({ positionRef, reason }) =>
+        establishStockPositionActionProblem.ineligible(
+          'stock_position_rejected',
+          reason === 'POSITION_SCOPE_ALREADY_CURRENT' && positionRef !== undefined
+            ? { positionRef, reason }
+            : { reason },
+        ),
     }),
     Match.exhaustive,
   );
