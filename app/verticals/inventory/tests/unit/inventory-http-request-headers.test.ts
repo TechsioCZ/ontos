@@ -126,6 +126,12 @@ const withIdempotencyKey =
     replaceHeaders(sent, (headers) => headers.set('idempotency-key', value));
 const withProposalIntent: Exchange = (sent) =>
   replaceHeaders(sent, (headers) => headers.set('x-action-intent', 'propose'));
+const withUnknownIntent: Exchange = (sent) =>
+  replaceHeaders(sent, (headers) => headers.set('x-action-intent', 'approve'));
+const withTraceId =
+  (value: string): Exchange =>
+  (sent) =>
+    replaceHeaders(sent, (headers) => headers.set('x-trace-id', value));
 const withUndeclaredPayloadField: Exchange = (sent) => ({
   body: `{"undeclaredField":true,${sent.body.slice(1)}`,
   headers: sent.headers,
@@ -393,6 +399,17 @@ describe('Inventory HTTP requests with transport headers', () => {
           action.call(authorization, 'undeclared-key'),
         );
         expect(Schema.is(action.invalid)(undeclared)).toBe(true);
+
+        // The request mode is a closed literal and the trace identifier is bounded like the key: any other intent
+        // and an overlong trace identifier are refused, never ignored.
+        const unknownIntent = yield* inventory.send(withUnknownIntent, (authorization) =>
+          action.call(authorization, 'unknown-intent-key'),
+        );
+        expect(Schema.is(action.invalid)(unknownIntent)).toBe(true);
+        const overlongTrace = yield* inventory.send(withTraceId('t'.repeat(201)), (authorization) =>
+          action.call(authorization, 'overlong-trace-key'),
+        );
+        expect(Schema.is(action.invalid)(overlongTrace)).toBe(true);
         expect(inventory.snapshot().redemptions).toBe(2);
         expect(inventory.snapshot().actions.stages).toEqual(stages);
       }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
