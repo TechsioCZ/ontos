@@ -1,5 +1,6 @@
 import { makeActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { v1 } from '@authzed/authzed-node';
+import { PgClient } from '@effect/sql-pg';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import {
@@ -8,6 +9,7 @@ import {
   DateTime,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Predicate,
@@ -38,6 +40,7 @@ import { ActionRuntime } from '../../src/actions/runtime.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabasePools } from '../../src/db/database-client.ts';
 import { DatabaseIdentityEnrollmentContext, SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import {
   accessScopeFences,
@@ -182,8 +185,7 @@ class NativeFixtureEndpoints extends Context.Service<
   }
 >()('@app/core-runtime/tests/unit/live-operation-fixture.test/NativeFixtureEndpoints') {}
 
-const NativeFixtureEndpointsLive = Layer.effect(
-  NativeFixtureEndpoints,
+const NativeFixtureEndpointsLive = Layer.effectContext(
   Effect.gen(function* nativeFixtureEndpoints() {
     const databasePort = yield* serveScriptedPostgres(answerFixtureStatement, {
       closed: (session) => {
@@ -201,22 +203,22 @@ const NativeFixtureEndpointsLive = Layer.effect(
       checkPermission: (request) => scriptedAnswer(() => transport.checkPermission(request)),
       writeRelationships: (request) => scriptedAnswer(() => transport.writeRelationships(request)),
     });
-    // The fixture loads SpiceDB settings only from the process environment, as deployed runtimes do.
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        rs.stubEnv('SPICEDB_CA_CERT', spiceDb.caCertificate);
-        rs.stubEnv('SPICEDB_ENDPOINT', spiceDb.endpoint);
-        rs.stubEnv('SPICEDB_PRESHARED_KEY', fixturePreSharedKey);
-      }),
-      () => Effect.sync(() => rs.unstubAllEnvs()),
-    );
-    return {
+    return Context.make(NativeFixtureEndpoints, {
       attachmentConfiguration: fixtureConfiguration(databasePort, attachmentDatabase),
       configuration: fixtureConfiguration(databasePort, 'unit'),
       connectionAs: (role: string, database = 'unit') =>
         Redacted.make(`postgresql://${role}:unit@127.0.0.1:${databasePort}/${database}`),
       spiceDbEndpoint: spiceDb.endpoint,
-    };
+    }).pipe(
+      Context.add(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({
+          SPICEDB_CA_CERT: spiceDb.caCertificate,
+          SPICEDB_ENDPOINT: spiceDb.endpoint,
+          SPICEDB_PRESHARED_KEY: fixturePreSharedKey,
+        }),
+      ),
+    );
   }),
 ).pipe(Layer.provide(NodeServices.layer));
 
@@ -429,9 +431,51 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, NativeFixtureEndpointsLive), { exclude
       }),
     );
 
+    suite.effect('closes the unused actor pool when bootstrap construction fails', () =>
+      Effect.gen(function* closeActorPoolAfterConstructionFailure() {
+        const { configuration, connectionAs } = yield* NativeFixtureEndpoints;
+        const provider = yield* ConfigProvider.ConfigProvider;
+        const acquired = yield* Deferred.make<{
+          readonly client: PgClient.PgClient;
+          readonly scope: Scope.Closeable;
+        }>();
+        const failure = yield* makeLiveOperationFixture({
+          ...configuration,
+          // Validation accepts this exact local target, but pool construction rejects URL startup options.
+          bootstrapConnectionString: Redacted.make(
+            `${Redacted.value(connectionAs(fixtureRuntimeRole))}?options=invalid`,
+          ),
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          runtimeConnectionString: connectionAs(FIXTURE_REQUEST_IDENTITY.role),
+        }).pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.orElse(ConfigProvider.fromUnknown({ ONTOS_DATABASE_POOL_SHARED: 'true' }), provider),
+          ),
+          Effect.provideService(DatabasePools, {
+            acquire: (poolConfiguration) =>
+              Effect.gen(function* acquireNativePool() {
+                const scope = yield* Scope.fork(yield* Scope.Scope);
+                const client = yield* PgClient.make(poolConfiguration).pipe(Scope.provide(scope));
+                yield* Deferred.succeed(acquired, { client, scope });
+                return client;
+              }),
+          }),
+          Effect.flip,
+        );
+        const { client, scope } = yield* Deferred.await(acquired);
+        yield* Effect.gen(function* verifyClosedPool() {
+          expect(failure.reason).toBe('Unable to initialize the fixture bootstrap database');
+          // A closed native pool interrupts checkout; an unclosed, unused pool can still log in.
+          const checkout = yield* Effect.scoped(client.reserve).pipe(Effect.forkChild);
+          expect(Exit.hasInterrupts(yield* Fiber.await(checkout))).toBe(true);
+        }).pipe(Effect.ensuring(Scope.close(scope, Exit.void)));
+      }),
+    );
+
     // Pools open their sessions on first use, so a pool that never ran a statement has no session to end.
     suite.effect('ends every database session it opened on failure and on interruption', () =>
-      Effect.gen(function* closeBothAuthorityPools() {
+      Effect.gen(function* closeOpenedSessions() {
         const { configuration, connectionAs } = yield* NativeFixtureEndpoints;
         transport.writeRelationships.mockResolvedValue(v1.WriteRelationshipsResponse.create());
         const failedFrom = databaseSessions.length;
@@ -1870,7 +1914,8 @@ const persistedCreatorFaults = (
 );
 
 it.layer(
-  Layer.mergeAll(NodeCrypto.layer, ConfigProvider.layer(ConfigProvider.fromUnknown({})), NativeFixtureEndpointsLive),
+  // Only SpiceDB settings are provided; attachment must not need an administrative database URL.
+  Layer.mergeAll(NodeCrypto.layer, NativeFixtureEndpointsLive),
   { excludeTestServices: true },
 )('runtime-only live fixture attachment', (suite) => {
   suite.effect('attaches with no admin configuration and performs no identity or grant writes', () =>
