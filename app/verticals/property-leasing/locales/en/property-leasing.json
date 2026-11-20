@@ -136,8 +136,7 @@
       "contract": "Contract",
       "lease": "Lease",
       "tasks": "Service tasks",
-      "invoice": "Invoice",
-      "unavailable": "unavailable"
+      "invoice": "Invoice"
     },
     "related": {
       "unitCard": "Unit and building",
@@ -165,12 +164,12 @@
       "noContract": "No contract is linked to this lease yet.",
       "tasksCard": "Unit service tasks",
       "noTasks": "No tasks are recorded for this unit.",
-      "tasksUnavailable": "Tasks could not be loaded or you lack access.",
+      "tasksUnavailable": "Tasks could not be loaded.",
       "openTasks": "Open tasks",
       "due": "due {{date}}",
       "invoicesCard": "Lease invoices",
       "noInvoices": "No invoice has been issued for this lease yet.",
-      "invoicesUnavailable": "Invoices could not be loaded or you lack access.",
+      "invoicesUnavailable": "Invoices could not be loaded.",
       "openInvoice": "Open invoice",
       "allInvoices": "Go to billing",
       "taskStates": {

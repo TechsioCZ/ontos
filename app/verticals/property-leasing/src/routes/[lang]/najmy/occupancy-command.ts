@@ -1,6 +1,7 @@
-// The Save commands of the lease and stay form and what came of them: the outcome the form's draft controller reads.
+// The Save commands of the lease screen's forms and what came of them: the outcome their draft controllers read.
 import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import { ApplyCommandResultSchema, FeedbackSchema, failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import type { Feedback, OccupancyCommand } from '../../../../shared/actions/apply-command.ts';
@@ -58,24 +59,13 @@ const isOccupancyConflict = <E extends { readonly _tag: string }>(error: E): boo
   error.code === 'occupancy_conflict';
 
 /**
- * Sends one command against `expectedRevision` and answers its outcome; it never fails. The revision covers every
- * lease and stay, so a conflict is resent once against a fresh read while `unchanged` holds for it.
+ * What one written command came to; it never fails. The occupancy conflict is `Conflict`; every other failure is
+ * `Failed` with the reason `failureFeedback` gives it, so an expired login reads as one on every Save.
  */
-export const sendOccupancyCommand = (
-  command: OccupancyCommand,
-  expectedRevision: number,
-  unchanged: UnchangedSince,
+export const occupancyOutcomeOf = <E extends { readonly _tag: string; readonly status?: number }>(
+  write: Effect.Effect<typeof ApplyCommandResultSchema.Type | ActionProposalAccepted, E>,
 ): Effect.Effect<OccupancyOutcome> =>
-  sendLeasingCommand(command, expectedRevision).pipe(
-    Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
-      conflict.code === 'occupancy_conflict'
-        ? executeRecords({}, 'property-leasing.records').pipe(
-            Effect.flatMap((fresh) =>
-              unchanged(fresh) ? sendLeasingCommand(command, fresh.revision) : Effect.fail(conflict),
-            ),
-          )
-        : Effect.fail(conflict),
-    ),
+  write.pipe(
     Effect.match({
       onFailure: (failure): OccupancyOutcome =>
         isOccupancyConflict(failure) ? ConflictOutcomeSchema.make({}) : failedWith(failureFeedback(failure)),
@@ -84,6 +74,54 @@ export const sendOccupancyCommand = (
           ? ProposedOutcomeSchema.make({ proposal: result })
           : SavedOutcomeSchema.make({ resourceRef: result.resourceRef, revision: result.revision }),
     }),
+  );
+
+/**
+ * Sends one command against `expectedRevision` and answers its outcome; it never fails. The revision covers every
+ * lease and dossier of the company, so a conflict is resent once against a fresh read while `unchanged` holds for it;
+ * a change of the edited record itself stays a conflict.
+ */
+export const sendOccupancyCommand = (
+  command: OccupancyCommand,
+  expectedRevision: number,
+  unchanged: UnchangedSince,
+): Effect.Effect<OccupancyOutcome> =>
+  occupancyOutcomeOf(
+    sendLeasingCommand(command, expectedRevision).pipe(
+      Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
+        conflict.code === 'occupancy_conflict'
+          ? executeRecords({}, 'property-leasing.records').pipe(
+              Effect.flatMap((fresh) =>
+                unchanged(fresh) ? sendLeasingCommand(command, fresh.revision) : Effect.fail(conflict),
+              ),
+            )
+          : Effect.fail(conflict),
+      ),
+    ),
+  );
+
+/**
+ * The Save of an edit panel (the rent, a dossier's contacts or business case) as its draft controller reads it: the
+ * new revision once saved. `onReason` hears why it failed (None otherwise), for the Save bar's error line, and
+ * `onProposal` hears of a change parked for approval.
+ */
+export const editSaveResult = (
+  send: Effect.Effect<OccupancyOutcome>,
+  {
+    onProposal,
+    onReason,
+  }: { readonly onProposal: OnProposal; readonly onReason: (reason: Option.Option<Feedback>) => void },
+): Effect.Effect<RevisionedSaveResult> =>
+  send.pipe(
+    Effect.tap((outcome) =>
+      Effect.sync(() => {
+        onReason(failureReasonOf(outcome));
+        if (Predicate.isTagged(outcome, 'Proposed')) {
+          onProposal(outcome.proposal);
+        }
+      }),
+    ),
+    Effect.map(revisionedResultOf),
   );
 
 /** A new lease or stay cannot overwrite anyone's change: a conflict is resent once against a fresh read. */

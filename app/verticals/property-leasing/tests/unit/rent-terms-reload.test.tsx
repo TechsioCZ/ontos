@@ -2,7 +2,8 @@
 // The rent panel of a lease while the leases reload in the background (a live change, the 20 s freshness window, a
 // settled write). The strict lease store reads `pending` during such a reload; the open panel must stay mounted: typed
 // input, its unsaved status and the leave question survive, a save goes out against the revision the draft was read
-// at, and a draft with nothing typed takes the reloaded rent.
+// at, and a draft with nothing typed takes the reloaded rent. An expired login on a rent or dossier save says to sign
+// in again in that form's Save bar, not that saving failed.
 // The page runs on its real i18n, router and generated clients. The Shell's gateway issuer, the lease owner's records
 // and Action endpoints and the Property and Agreement registers answer in process through their HttpApi contracts;
 // the issuer also hands out the reference credentials every lease command carries.
@@ -29,7 +30,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { act } from 'react';
 
 import { CustomerListApi } from '../../../party-registry/shared/apis/customer-list.ts';
-import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import {
+  applyCommandActionProblem,
+  applyCommandActionSchemaErrorLive,
+} from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
@@ -55,6 +59,8 @@ const recordsAt = (revision: number, day: number): RecordsResponse =>
     revision,
   });
 const saved = Schema.decodeUnknownSync(ApplyCommandResultSchema)({ resourceRef: occupancyRef, revision: 9 });
+/** The lease owner's answer to a command once the login has expired. */
+const signedOut = applyCommandActionProblem.authentication();
 
 const context: ModulePageProps['context'] = {
   legalEntityId: 'company-a',
@@ -64,6 +70,8 @@ const context: ModulePageProps['context'] = {
 
 /** What the lease owner answers the next records read with; each test scripts it. */
 let answer: Effect.Effect<RecordsResponse> = Effect.succeed(recordsAt(7, 15));
+/** What the lease owner answers the next command with; a test switches it before saving. */
+let commandAnswer: Effect.Effect<typeof saved, typeof signedOut> = Effect.succeed(saved);
 /** Every records read and command the lease owner received, in order. */
 const reads: RecordsRequest[] = [];
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
@@ -95,9 +103,9 @@ const network = browserNetwork(
     OwnerActionApi,
     HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
       group.handle('execute', ({ payload }) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           commands.push(payload);
-          return saved;
+          return commandAnswer;
         }),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
@@ -189,6 +197,7 @@ beforeEach(() => {
   reads.length = 0;
   commands.length = 0;
   answer = Effect.succeed(recordsAt(7, 15));
+  commandAnswer = Effect.succeed(saved);
   leaseRecords.invalidate();
 });
 
@@ -243,6 +252,69 @@ describe('rent panel across a background reload', () => {
         });
       }).pipe(Effect.provide(network)),
     // Mounts the real lease page, reloads its records and saves: 2.56 s on a loaded runner.
+    { timeout: 20_000 },
+  );
+});
+
+/** The failed Save bar inside `form`; null until its save has failed. */
+const failedBar = (form: Element | null | undefined) => form?.querySelector('[data-save-state="error"]') ?? null;
+/** The state picker of the lease's business case; null until the dossier is on screen. */
+const caseState = () =>
+  document.querySelector<HTMLSelectElement>(`select[aria-label="${czech('property-leasing.dossier.caseState')}"]`);
+
+/** The business case's form, around its state picker. */
+const caseForm = () => caseState()?.closest('form');
+
+describe('an expired login on an edit-panel save', () => {
+  const signedOutText = czech('property-leasing.demo.feedback.signedOut');
+
+  it.live(
+    'the rent save says to sign in again, not that saving failed',
+    () =>
+      Effect.gen(function* expiredRentSave() {
+        commandAnswer = Effect.fail(signedOut);
+        yield* openRent;
+        yield* type(monthly, '20000');
+        yield* clickPanel(labels.save);
+        const panel = () =>
+          maybeField(monthly).pipe(Option.flatMapNullishOr((input) => input.closest('[role="dialog"]')));
+        yield* waitUntil(() => failedBar(Option.getOrUndefined(panel())) !== null);
+        const bar = failedBar(Option.getOrUndefined(panel()))?.textContent;
+        expect(bar).toContain(signedOutText);
+        expect(bar).not.toContain(labels.failed);
+        expect(commands).toMatchObject([{ command: { _tag: 'SetRentTerms' } }]);
+      }).pipe(Effect.provide(network)),
+    { timeout: 20_000 },
+  );
+
+  it.live(
+    'a dossier save says to sign in again, not that saving failed',
+    () =>
+      Effect.gen(function* expiredDossierSave() {
+        commandAnswer = Effect.fail(signedOut);
+        yield* pinTestDocument;
+        yield* mountInRoute(<RecordsPage context={context} />, {
+          path: 'najmy',
+          url: `/cs/najmy?resourceId=${occupancyRef.resourceId}`,
+        });
+        yield* waitUntil(() => caseState() !== null);
+        yield* acted(() => {
+          const select = Option.getOrThrow(Option.fromNullOr(caseState()));
+          Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, 'IN_PROGRESS');
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        const save = () =>
+          [...(caseForm()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+            (candidate) => candidate.textContent?.trim() === labels.save,
+          );
+        yield* waitUntil(() => save()?.disabled === false);
+        yield* acted(() => save()?.click());
+        yield* waitUntil(() => failedBar(caseForm()) !== null);
+        const bar = failedBar(caseForm())?.textContent;
+        expect(bar).toContain(signedOutText);
+        expect(bar).not.toContain(labels.failed);
+        expect(commands).toMatchObject([{ command: { _tag: 'UpdateTenantDossier', caseState: 'IN_PROGRESS' } }]);
+      }).pipe(Effect.provide(network)),
     { timeout: 20_000 },
   );
 });

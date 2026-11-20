@@ -1,7 +1,10 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { Effect, Option, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import { describe, expect, it } from 'effect-rstest';
+import { applyCommandActionProblem } from '../../api/apply-command-action-problems.ts';
+import type { Feedback } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import { CounterpartyIdSchema } from '../../shared/apis/records.ts';
 import type { Occupancy, RecordsResponse, TenantContact, TenantDossier } from '../../shared/apis/records.ts';
@@ -10,7 +13,6 @@ import {
   caseDraftOf,
   caseUnchangedSince,
   contactsUnchangedSince,
-  leasingSaveResult,
   rentDraftOf,
   rentTermsOf,
   rentUnchangedSince,
@@ -23,6 +25,8 @@ import {
   ProposedOutcomeSchema,
   SavedOutcomeSchema,
   additionResultOf,
+  editSaveResult,
+  occupancyOutcomeOf,
   settleAddition,
 } from '../../src/routes/[lang]/najmy/occupancy-command.ts';
 import type { OccupancyOutcome } from '../../src/routes/[lang]/najmy/occupancy-command.ts';
@@ -120,23 +124,41 @@ describe('rent terms panel', () => {
     expect(unchanged(records({ ...lease, rentTerms: moved }, []))).toBe(false);
   });
 
-  it.effect('turns only the occupancy conflict into the conflict outcome and adopts the returned revision', () =>
+  it.effect('turns only the occupancy conflict into a conflict, any other failure into one with its reason', () =>
     Effect.gen(function* outcomes() {
-      expect(yield* leasingSaveResult(Effect.succeed({ revision: 8 }))).toBe(8);
-      expect(yield* leasingSaveResult(Effect.fail(conflictProblem('occupancy_conflict')))).toBe('conflict');
-      expect(yield* leasingSaveResult(Effect.fail(conflictProblem('action_invocation_state_invalid')))).toBe('failed');
+      const reasons: Option.Option<Feedback>[] = [];
+      const save = <E extends { readonly _tag: string; readonly status?: number }>(
+        write: Effect.Effect<{ readonly resourceRef: null; readonly revision: number }, E>,
+      ) =>
+        editSaveResult(occupancyOutcomeOf(write), {
+          onProposal: constVoid,
+          onReason: (reason) => {
+            reasons.push(reason);
+          },
+        });
+      expect(yield* save(Effect.succeed({ resourceRef: null, revision: 8 }))).toBe(8);
+      expect(yield* save(Effect.fail(conflictProblem('occupancy_conflict')))).toBe('conflict');
+      expect(yield* save(Effect.fail(conflictProblem('action_invocation_state_invalid')))).toBe('failed');
+      expect(yield* save(Effect.fail(applyCommandActionProblem.authentication()))).toBe('failed');
+      expect(reasons).toEqual([Option.none(), Option.none(), Option.some('conflict'), Option.some('signedOut')]);
     }),
   );
 
   it.effect('reports a change parked for approval as proposed and reports nothing for a commit', () =>
     Effect.gen(function* outcomes() {
       const reported: ActionProposalAccepted[] = [];
-      const report = (parked: ActionProposalAccepted) => {
-        reported.push(parked);
-      };
-      expect(yield* leasingSaveResult(Effect.succeed(proposal), report)).toBe('proposed');
+      const save = (
+        write: Effect.Effect<ActionProposalAccepted | { readonly resourceRef: null; readonly revision: number }>,
+      ) =>
+        editSaveResult(occupancyOutcomeOf(write), {
+          onProposal: (parked) => {
+            reported.push(parked);
+          },
+          onReason: constVoid,
+        });
+      expect(yield* save(Effect.succeed(proposal))).toBe('proposed');
       expect(reported).toEqual([proposal]);
-      expect(yield* leasingSaveResult(Effect.succeed({ resourceRef: null, revision: 9 }), report)).toBe(9);
+      expect(yield* save(Effect.succeed({ resourceRef: null, revision: 9 }))).toBe(9);
       expect(reported).toEqual([proposal]);
     }),
   );

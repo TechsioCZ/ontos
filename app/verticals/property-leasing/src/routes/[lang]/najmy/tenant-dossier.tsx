@@ -18,6 +18,7 @@ import { Effect, Option, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { useEffect, useRef, useState } from 'react';
+import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy, RecordsResponse, TenantContact, TenantDossier } from '../../../../shared/apis/records.ts';
 import { formatInstant, principalLabel } from './principal-labels.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
@@ -64,11 +65,15 @@ const fold = (value: string) =>
     .toLowerCase();
 export type { DossierChanges } from './leasing-save.ts';
 
-/** The Save button of a dossier section: one save against the revision its draft builds on. */
+/**
+ * The Save button of a dossier section: one save against the revision its draft builds on; `onReason` hears why it
+ * failed (None otherwise), for the section's Save bar.
+ */
 export type DossierSave = (
   changes: DossierChanges,
   expectedRevision: number,
   unchanged: UnchangedSince,
+  onReason: (reason: Option.Option<Feedback>) => void,
 ) => Effect.Effect<RevisionedSaveResult>;
 
 export type { DossierLog } from './dossier-communication.tsx';
@@ -103,13 +108,15 @@ const useDossierDraft = <V,>({
 }) => {
   /** The version of the section the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
+  /** Why the last save failed, for the Save bar; None after any other outcome. */
+  const [reason, setReason] = useState(() => Option.none<Feedback>());
   const rememberSaved = (value: V, result: RevisionedSaveResult) => {
     if (Predicate.isNumber(result) || result === 'saved') {
       base.current = value;
     }
   };
   const send = (value: V, expectedRevision: number, changes: DossierChanges) =>
-    onSave(changes, expectedRevision, unchangedSince(base.current)).pipe(
+    onSave(changes, expectedRevision, unchangedSince(base.current), setReason).pipe(
       Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
     );
   const record = useRecordDraft<V, never>({
@@ -132,7 +139,7 @@ const useDossierDraft = <V,>({
   }, [base, server, settledOnServer]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
-  return { guard, record };
+  return { guard, reason, record };
 };
 
 /** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
@@ -157,7 +164,7 @@ const DossierContacts = ({
 }: ContactsSectionProps) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
-  const { guard, record } = useDossierDraft({
+  const { guard, reason, record } = useDossierDraft({
     changesOf: (contacts: readonly TenantContact[]) =>
       validContacts(contacts) ? Option.some({ contacts: trimmedContacts(contacts) }) : Option.none(),
     equals: sameContacts,
@@ -284,6 +291,10 @@ const DossierContacts = ({
       )}
       {canWrite && (
         <SaveBar
+          error={Option.match(reason, {
+            onNone: () => null,
+            onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+          })}
           labels={labels}
           onReloadLatest={handleReloadLatest}
           onSave={handleSave}
@@ -316,7 +327,7 @@ const DossierCase = ({
 }: CaseSectionProps) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
-  const { guard, record } = useDossierDraft({
+  const { guard, reason, record } = useDossierDraft({
     changesOf: (draft: CaseDraft) => caseChangesOf(draft, dossier),
     equals: sameCaseDraft,
     onSave,
@@ -415,6 +426,10 @@ const DossierCase = ({
             </label>
           </div>
           <SaveBar
+            error={Option.match(reason, {
+              onNone: () => null,
+              onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+            })}
             labels={labels}
             onReloadLatest={handleReloadLatest}
             onSave={handleSave}

@@ -16,6 +16,7 @@ import {
   TaskSchema,
   RecordsApi as WorkRecordsApi,
   RecordsResponseSchema as WorkResponseSchema,
+  RecordsAuthenticationProblemSchema,
   RecordsForbiddenProblemSchema,
 } from '@app/work-tasks/contracts/records';
 import { HttpApiBuilder, HttpServerRequest } from '@modern-js/bff-effect/effect-edge';
@@ -198,8 +199,10 @@ const problem = {
   title: 'Forbidden',
   type: 'https://ontos.dev/problems/forbidden',
 } as const;
-let workAnswer: Effect.Effect<typeof workResponse, typeof RecordsForbiddenProblemSchema.Type> =
-  Effect.succeed(workResponse);
+let workAnswer: Effect.Effect<
+  typeof workResponse,
+  typeof RecordsAuthenticationProblemSchema.Type | typeof RecordsForbiddenProblemSchema.Type
+> = Effect.succeed(workResponse);
 let invoiceAnswer: Effect.Effect<typeof emptyInvoices, typeof LeaseInvoicesForbiddenProblemSchema.Type> =
   Effect.succeed(emptyInvoices);
 let counterpartyAnswer: Effect.Effect<typeof counterpartyResponse, typeof CounterpartyReadForbiddenProblemSchema.Type> =
@@ -461,7 +464,10 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
           leaseTasks.snapshot(detail(1)),
           leaseInvoicesExact.snapshot(detail(1)),
         );
-        expect(view).toEqual({ invoices: Option.some('unavailable'), tasks: Option.some('unavailable') });
+        expect(view).toEqual({
+          invoices: Option.some(Result.fail('forbidden')),
+          tasks: Option.some(Result.fail('forbidden')),
+        });
         expect(leaseTasks.snapshot(detail(1))).not.toHaveProperty('value');
         expect(leaseInvoicesExact.snapshot(detail(1))).not.toHaveProperty('value');
         workAnswer = Effect.succeed(workResponse);
@@ -487,9 +493,26 @@ it.layer(network, { excludeTestServices: true })('lease related preload', (suite
       expect(
         leaseRelatedView(detail(1), leaseTasks.snapshot(detail(1)), leaseInvoicesExact.snapshot(detail(1))),
       ).toEqual({
-        invoices: Option.some('unavailable'),
-        tasks: Option.some([tasks[0]]),
+        invoices: Option.some(Result.fail('forbidden')),
+        tasks: Option.some(Result.succeed([tasks[0]])),
       });
+    }),
+  );
+
+  suite.effect('an expired login on the task read reads as an expired login while the lease read succeeds', () =>
+    Effect.gen(function* expiredTaskLogin() {
+      yield* pinTestDocument;
+      yield* seed;
+      expect(leaseRecords.snapshot(input).state).toBe('ready');
+      workAnswer = Effect.fail(
+        RecordsAuthenticationProblemSchema.make({ ...problem, status: 401, title: 'Authentication required' }),
+      );
+      yield* Effect.result(leaseTasks.read(detail(1)));
+      yield* leaseInvoicesExact.read(detail(1));
+      expect(
+        leaseRelatedView(detail(1), leaseTasks.snapshot(detail(1)), leaseInvoicesExact.snapshot(detail(1))),
+      ).toEqual({ invoices: Option.some(Result.succeed([])), tasks: Option.some(Result.fail('signedOut')) });
+      expect(leaseRecords.snapshot(input).state).toBe('ready');
     }),
   );
 

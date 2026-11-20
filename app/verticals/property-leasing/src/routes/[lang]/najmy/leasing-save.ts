@@ -1,13 +1,10 @@
 // Save of the lease screen's edit panels: one command against the revision its draft builds on.
-import type { RevisionedSaveResult } from '@app/admin-ui';
-import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { Crypto, Effect, Option, PlatformError, Predicate, Schema } from 'effect';
+import { Crypto, Effect, Option, PlatformError } from 'effect';
 import type { OccupancyCommand } from '../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse, RentTerms, TenantContact, TenantDossier } from '../../../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../api/records-client.ts';
 import { crownsInput, parseCrowns } from './lease-story.tsx';
 
 const browserCrypto = Crypto.make({
@@ -34,14 +31,6 @@ export type UnchangedSince = (records: RecordsResponse) => boolean;
 /** Told about a change that was parked for approval instead of being saved. */
 export type OnProposal = (proposal: ActionProposalAccepted) => void;
 
-/** The Save button of a lease-screen form: one save against the revision its draft builds on. */
-export type LeasingSave = (
-  command: OccupancyCommand,
-  expectedRevision: number,
-  unchanged: UnchangedSince,
-  onProposal?: OnProposal,
-) => Effect.Effect<RevisionedSaveResult>;
-
 /** Sends one command against `expectedRevision`, with the reference credentials every lease command carries. */
 export const sendLeasingCommand = (command: OccupancyCommand, expectedRevision: number) =>
   Effect.all(
@@ -62,53 +51,6 @@ export const sendLeasingCommand = (command: OccupancyCommand, expectedRevision: 
         referenceCredentials,
       }),
     ),
-  );
-
-/**
- * The outcome of one save: the new revision once saved, `conflict` for the occupancy conflict, `proposed` for a change
- * parked for approval (not saved: the draft stays unconfirmed on its base revision and `onProposal` hears of it), else
- * `failed`.
- */
-export const leasingSaveResult = <E>(
-  write: Effect.Effect<{ readonly revision: number } | ActionProposalAccepted, E>,
-  onProposal?: OnProposal,
-): Effect.Effect<RevisionedSaveResult> =>
-  write.pipe(
-    Effect.match({
-      onFailure: (error): RevisionedSaveResult =>
-        Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') &&
-        Predicate.hasProperty(error, 'code') &&
-        error.code === 'occupancy_conflict'
-          ? 'conflict'
-          : 'failed',
-      onSuccess: (result): RevisionedSaveResult => {
-        if (Schema.is(ActionProposalAcceptedSchema)(result)) {
-          onProposal?.(result);
-          return 'proposed';
-        }
-        return result.revision;
-      },
-    }),
-  );
-
-/**
- * The revision covers every lease and dossier of the company, so a conflict is resent once against a fresh read while
- * `unchanged` holds for it; a change of the edited record itself stays a conflict.
- */
-export const saveLeasingCommand: LeasingSave = (command, expectedRevision, unchanged, onProposal) =>
-  leasingSaveResult(
-    sendLeasingCommand(command, expectedRevision).pipe(
-      Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
-        conflict.code === 'occupancy_conflict'
-          ? executeRecords({}, 'property-leasing.records').pipe(
-              Effect.flatMap((fresh) =>
-                unchanged(fresh) ? sendLeasingCommand(command, fresh.revision) : Effect.fail(conflict),
-              ),
-            )
-          : Effect.fail(conflict),
-      ),
-    ),
-    onProposal,
   );
 
 // Rent terms of one lease.

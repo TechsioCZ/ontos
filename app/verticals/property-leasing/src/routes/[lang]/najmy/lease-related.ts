@@ -4,6 +4,8 @@ import { definePageData, pageDataPending } from '@app/shared-contracts/page-data
 import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { Data, Effect, Option, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
+import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
+import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { leaseRecords } from './lease-occupant.ts';
@@ -212,27 +214,38 @@ export const invalidateLeaseRelated = (): void => {
   leaseInvoicesExact.invalidate();
 };
 
-const section = <Value, Failure>(snapshot: PageDataSnapshot<Value, Failure>): Option.Option<Value | 'unavailable'> => {
+type RelatedFailure = Parameters<typeof failureFeedback>[0];
+
+/** None while pending, then the loaded value or why the read failed (an expired login, a denial, ...). */
+const section = <Value, Failure extends RelatedFailure>(
+  snapshot: PageDataSnapshot<Value, Failure>,
+): Option.Option<Result.Result<Value, Feedback>> => {
   if (snapshot.state === 'pending') {
     return Option.none();
   }
-  return snapshot.state === 'failed' ? Option.some('unavailable') : Option.some(snapshot.value);
+  return Option.some(
+    snapshot.state === 'failed' ? Result.fail(failureFeedback(snapshot.error)) : Result.succeed(snapshot.value),
+  );
 };
 
 export const leaseRelatedView = (
   input: LeaseDetailInput | undefined,
-  tasks: PageDataSnapshot<LeaseTaskRecords, unknown>,
-  invoices: PageDataSnapshot<LeaseInvoiceRecords, unknown>,
+  tasks: PageDataSnapshot<LeaseTaskRecords, RelatedFailure>,
+  invoices: PageDataSnapshot<LeaseInvoiceRecords, RelatedFailure>,
 ): LeaseRelated =>
   input === undefined
     ? { invoices: Option.none(), tasks: Option.none() }
     : {
-        // The exact paginated lease read is the only invoice source: pending renders loading, a denial or an
-        // incomplete/drifted collection renders `unavailable`, and a ready snapshot is the settled exact rows.
-        invoices: Option.map(section(invoices), (value) =>
-          value === 'unavailable' ? value : invoicesForLease(input.record, value.invoices),
+        // The exact paginated lease read is the only invoice source: pending renders loading, a failed read (a denial,
+        // an expired login, an incomplete/drifted collection) renders why, and a ready snapshot is the exact rows.
+        invoices: Option.map(
+          section(invoices),
+          Result.map((value) => invoicesForLease(input.record, value.invoices)),
         ),
-        tasks: Option.map(section(tasks), (value) => (value === 'unavailable' ? value : value.items)),
+        tasks: Option.map(
+          section(tasks),
+          Result.map((value) => value.items),
+        ),
       };
 
 /**

@@ -136,8 +136,7 @@
       "contract": "Smlouva",
       "lease": "Nájem",
       "tasks": "Servisní úkoly",
-      "invoice": "Faktura",
-      "unavailable": "nedostupné"
+      "invoice": "Faktura"
     },
     "related": {
       "unitCard": "Jednotka a budova",
@@ -165,12 +164,12 @@
       "noContract": "K nájmu zatím není připojena smlouva.",
       "tasksCard": "Servisní úkoly jednotky",
       "noTasks": "K jednotce nejsou evidované žádné úkoly.",
-      "tasksUnavailable": "Úkoly se nepodařilo načíst nebo k nim nemáte oprávnění.",
+      "tasksUnavailable": "Úkoly se nepodařilo načíst.",
       "openTasks": "Otevřít úkoly",
       "due": "termín {{date}}",
       "invoicesCard": "Faktury k nájmu",
       "noInvoices": "K nájmu zatím není vystavená žádná faktura.",
-      "invoicesUnavailable": "Faktury se nepodařilo načíst nebo k nim nemáte oprávnění.",
+      "invoicesUnavailable": "Faktury se nepodařilo načíst.",
       "openInvoice": "Otevřít fakturu",
       "allInvoices": "Přejít na fakturaci",
       "taskStates": {

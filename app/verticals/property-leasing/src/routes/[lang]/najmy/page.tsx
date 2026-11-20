@@ -32,7 +32,7 @@ import { FormInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useId, useReducer, useRef, useState } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
@@ -69,20 +69,20 @@ import {
   occupancyEditorActions,
   occupancyEditorReducer,
 } from './editor-state.ts';
-import { createOccupancy, failedWith, saveLeaseDraft, sendAddition, settleAddition } from './occupancy-command.ts';
+import {
+  createOccupancy,
+  editSaveResult,
+  failedWith,
+  saveLeaseDraft,
+  sendAddition,
+  sendOccupancyCommand,
+  settleAddition,
+} from './occupancy-command.ts';
 import type { AdditionSave, OccupancyOutcome } from './occupancy-command.ts';
 import { leaseDraftRecord, stayDraftRecord, updateDraftCommand } from './occupancy-draft.ts';
 import { OccupancyEditorPanel } from './occupancy-editor-panel.tsx';
 import type { OccupancySave } from './occupancy-editor-panel.tsx';
-import {
-  saveLeasingCommand,
-  newUuid,
-  rentDraftOf,
-  rentProblems,
-  rentTermsOf,
-  rentUnchangedSince,
-  sameRentDraft,
-} from './leasing-save.ts';
+import { newUuid, rentDraftOf, rentProblems, rentTermsOf, rentUnchangedSince, sameRentDraft } from './leasing-save.ts';
 import type { RentDraft } from './leasing-save.ts';
 import type { OccupancyDraft, OccupancyEditorMode } from './editor-state.ts';
 import {
@@ -422,15 +422,17 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   };
   const saveCounterpartyDossier =
     (counterpartyId: string): DossierSave =>
-    (changes, expectedRevision, unchanged) => {
+    (changes, expectedRevision, unchanged, onReason) => {
       const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
       return entry === undefined
         ? Effect.succeed<RevisionedSaveResult>('failed')
-        : saveLeasingCommand(
-            { _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes },
-            expectedRevision,
-            unchanged,
-            setProposal,
+        : editSaveResult(
+            sendOccupancyCommand(
+              { _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes },
+              expectedRevision,
+              unchanged,
+            ),
+            { onProposal: setProposal, onReason },
           );
     };
   const openRentEditor = () => {
@@ -736,12 +738,16 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       base.current = value;
     }
   };
+  /** Why the last save failed, for the Save bar; None after any other outcome. */
+  const [reason, setReason] = useState(() => Option.none<Feedback>());
   const send = (value: RentDraft, expectedRevision: number, rentTerms: RentTerms) =>
-    saveLeasingCommand(
-      { _tag: 'SetRentTerms', occupancyRef: occupancy.occupancyRef, rentTerms },
-      expectedRevision,
-      rentUnchangedSince(occupancy.occupancyRef.resourceId, base.current),
-      state.reportProposal,
+    editSaveResult(
+      sendOccupancyCommand(
+        { _tag: 'SetRentTerms', occupancyRef: occupancy.occupancyRef, rentTerms },
+        expectedRevision,
+        rentUnchangedSince(occupancy.occupancyRef.resourceId, base.current),
+      ),
+      { onProposal: state.reportProposal, onReason: setReason },
     ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
   const record = useRecordDraft<RentDraft, never>({
     equals: sameRentDraft,
@@ -783,7 +789,16 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(LABEL_CLOSE)}
           </Button>
-          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          <SaveBar
+            error={Option.match(reason, {
+              onNone: () => null,
+              onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+            })}
+            labels={labels}
+            onReloadLatest={handleReloadLatest}
+            onSave={handleSave}
+            status={record.status}
+          />
         </>
       }
       closeLabel={t(LABEL_CLOSE)}
@@ -991,10 +1006,10 @@ const OccupancyStory = ({ model, state }: OccupancyDetailProps) => {
         {
           href: `/${language}/ukoly`,
           label: t('property-leasing.story.tasks'),
-          value:
-            Option.getOrUndefined(state.related.tasks) === 'unavailable'
-              ? t('property-leasing.story.unavailable')
-              : String(tasks.length),
+          value: Option.match(state.related.tasks.pipe(Option.flatMap(Result.getFailure)), {
+            onNone: () => String(tasks.length),
+            onSome: (reason) => t(`property-leasing.demo.feedback.${reason}`),
+          }),
         },
         {
           href:
@@ -1104,12 +1119,14 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
           onLog={(changes) =>
             state.saveAddition({ _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes })
           }
-          onSave={(changes, expectedRevision, unchanged) =>
-            saveLeasingCommand(
-              { _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes },
-              expectedRevision,
-              unchanged,
-              state.reportProposal,
+          onSave={(changes, expectedRevision, unchanged, onReason) =>
+            editSaveResult(
+              sendOccupancyCommand(
+                { _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes },
+                expectedRevision,
+                unchanged,
+              ),
+              { onProposal: state.reportProposal, onReason },
             )
           }
           onUpdate={(changes) =>

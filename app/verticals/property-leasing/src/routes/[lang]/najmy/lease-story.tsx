@@ -6,11 +6,12 @@ import type { executeRecords as readProperty } from '@app/property-portfolio/cli
 import type { Task } from '@app/work-tasks/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { Option } from 'effect';
+import { Option, Result } from 'effect';
 import type { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
+import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy, RentTerms } from '../../../../shared/apis/records.ts';
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
@@ -21,22 +22,24 @@ export type LeaseProperty = Effect.Success<ReturnType<typeof readProperty>>['pro
 export type LeaseTask = Task;
 export type LeaseInvoice = Invoice;
 
-/** Related records of one lease, each loaded independently so a missing permission hides only its own card. */
+/**
+ * Related records of one lease, each loaded independently so a missing permission hides only its own card; a failed
+ * read holds why it failed.
+ */
 export interface LeaseRelated {
-  readonly invoices: Option.Option<readonly LeaseInvoice[] | 'unavailable'>;
-  readonly tasks: Option.Option<readonly LeaseTask[] | 'unavailable'>;
+  readonly invoices: Option.Option<Result.Result<readonly LeaseInvoice[], Feedback>>;
+  readonly tasks: Option.Option<Result.Result<readonly LeaseTask[], Feedback>>;
 }
 
 const P = 'property-leasing';
 const mutedClass = 'propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)';
 const rowClass = `${surfaceTileClassName} propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-3 propertyleasing:p-3 propertyleasing:text-sm`;
 
-export const loadedList = <A,>(value: Option.Option<readonly A[] | 'unavailable'>): readonly A[] => {
-  if (Option.isNone(value) || value.value === 'unavailable') {
-    return [];
-  }
-  return value.value;
-};
+export const loadedList = <A,>(value: Option.Option<Result.Result<readonly A[], Feedback>>): readonly A[] =>
+  value.pipe(
+    Option.flatMap(Result.getSuccess),
+    Option.getOrElse(() => []),
+  );
 export const monthlyTotal = (terms: RentTerms) => terms.monthlyRentMinor + terms.serviceChargesMinor;
 export const sameRentTerms = (left: RentTerms, right: RentTerms) =>
   left.monthlyRentMinor === right.monthlyRentMinor &&
@@ -385,7 +388,8 @@ export const TasksCard = ({
   readonly t: Translate;
   readonly tasks: LeaseRelated['tasks'];
 }) => {
-  const tasks = Option.getOrUndefined(state);
+  const failure = state.pipe(Option.flatMap(Result.getFailure), Option.getOrUndefined);
+  const tasks = state.pipe(Option.flatMap(Result.getSuccess), Option.getOrUndefined);
   return (
     <SectionCard
       actions={
@@ -401,12 +405,14 @@ export const TasksCard = ({
       }
       title={t(`${P}.related.tasksCard`)}
     >
-      {tasks === undefined && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
-      {tasks === 'unavailable' && <p className={mutedClass}>{t(`${P}.related.tasksUnavailable`)}</p>}
-      {tasks !== undefined && tasks !== 'unavailable' && tasks.length === 0 && (
-        <p className={mutedClass}>{t(`${P}.related.noTasks`)}</p>
+      {Option.isNone(state) && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
+      {failure !== undefined && (
+        <p className={mutedClass}>
+          {t(`${P}.related.tasksUnavailable`)} {t(`${P}.demo.feedback.${failure}`)}
+        </p>
       )}
-      {tasks !== undefined && tasks !== 'unavailable' && tasks.length > 0 && (
+      {tasks !== undefined && tasks.length === 0 && <p className={mutedClass}>{t(`${P}.related.noTasks`)}</p>}
+      {tasks !== undefined && tasks.length > 0 && (
         <ul className="propertyleasing:space-y-2">
           {tasks.map((task) => (
             <li className={rowClass} key={task.ref.resourceId}>
@@ -441,7 +447,8 @@ export const InvoicesCard = ({
   readonly language: string;
   readonly t: Translate;
 }) => {
-  const invoices = Option.getOrUndefined(state);
+  const failure = state.pipe(Option.flatMap(Result.getFailure), Option.getOrUndefined);
+  const invoices = state.pipe(Option.flatMap(Result.getSuccess), Option.getOrUndefined);
   return (
     <SectionCard
       actions={
@@ -457,12 +464,14 @@ export const InvoicesCard = ({
       }
       title={t(`${P}.related.invoicesCard`)}
     >
-      {invoices === undefined && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
-      {invoices === 'unavailable' && <p className={mutedClass}>{t(`${P}.related.invoicesUnavailable`)}</p>}
-      {invoices !== undefined && invoices !== 'unavailable' && invoices.length === 0 && (
-        <p className={mutedClass}>{t(`${P}.related.noInvoices`)}</p>
+      {Option.isNone(state) && <p className={mutedClass}>{t(`${P}.demo.feedback.loading`)}</p>}
+      {failure !== undefined && (
+        <p className={mutedClass}>
+          {t(`${P}.related.invoicesUnavailable`)} {t(`${P}.demo.feedback.${failure}`)}
+        </p>
       )}
-      {invoices !== undefined && invoices !== 'unavailable' && invoices.length > 0 && (
+      {invoices !== undefined && invoices.length === 0 && <p className={mutedClass}>{t(`${P}.related.noInvoices`)}</p>}
+      {invoices !== undefined && invoices.length > 0 && (
         <ul className="propertyleasing:space-y-2">
           {invoices.map((invoice) => (
             <li className={rowClass} key={invoice.ref.resourceId}>

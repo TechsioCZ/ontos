@@ -20,7 +20,7 @@ import {
 } from '@app/work-tasks/contracts/records';
 import type { RecordsRequest as WorkRecordsRequest } from '@app/work-tasks/contracts/records';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Option, Result, Schema } from 'effect';
 import { afterAll, afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -255,7 +255,7 @@ const invoiceTextOf = (related: LeaseRelated | undefined): string =>
     ? 'unmounted'
     : Option.match(related.invoices, {
         onNone: () => 'loading',
-        onSome: (value) => (value === 'unavailable' ? 'unavailable' : String(value.length)),
+        onSome: Result.match({ onFailure: (reason) => reason, onSuccess: (value) => String(value.length) }),
       });
 const RelatedHarness = () => {
   const related = useLeaseRelated(detail());
@@ -356,7 +356,7 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
         }),
       );
       yield* dispatch(moduleChangeEvent);
-      yield* waitUntil(() => view.text() === 'unavailable');
+      yield* waitUntil(() => view.text() === 'forbidden');
       yield* networkIdle;
       expect(leaseInvoicesExact.snapshot(detail())).not.toHaveProperty('value');
       answer = Effect.fail(
@@ -534,15 +534,21 @@ it.layer(network, { excludeTestServices: true })('lease invoices preload', (suit
       yield* seed;
       yield* preloadLeaseRelated(detail());
       const view = leaseRelatedView(detail(), leaseTasks.snapshot(detail()), leaseInvoicesExact.snapshot(detail()));
-      expect(view.invoices).toEqual(Option.some(warmed.invoices));
+      expect(view.invoices).toEqual(Option.some(Result.succeed(warmed.invoices)));
       const pending = leaseRelatedView(detail(), leaseTasks.snapshot(detail()), pageDataPending);
       expect(pending.invoices).toEqual(Option.none());
       const failed = leaseRelatedView(detail(), leaseTasks.snapshot(detail()), {
-        error: 'denied',
+        error: LeaseInvoicesUnavailableProblemSchema.make({
+          detail: 'Lease invoices are unavailable',
+          retryable: true,
+          status: 503,
+          title: 'Unavailable',
+          type: 'urn:test:lease-invoices-unavailable',
+        }),
         refreshing: false,
         state: 'failed',
       });
-      expect(failed.invoices).toEqual(Option.some('unavailable'));
+      expect(failed.invoices).toEqual(Option.some(Result.fail('unavailable')));
     }),
   );
 });
