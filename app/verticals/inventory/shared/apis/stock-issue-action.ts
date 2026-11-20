@@ -3,14 +3,13 @@
 // @ontos-action-http-slug stock-issue
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import { StockIssuePayloadSchema, StockIssueResultSchema } from '../actions/stock-issue.ts';
 
 export { StockIssuePayloadSchema } from '../actions/stock-issue.ts';
-const StockIssueActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const StockIssueActionInvalidProblemSchema = makeProblemDetailsSchema('StockIssueActionInvalidProblem', 400);
 export const StockIssueActionAuthenticationProblemSchema = makeProblemDetailsSchema(
@@ -136,7 +135,6 @@ export const stockIssueActionGroupDefinition = HttpApiGroup.make('stockIssueActi
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/stock-issue', {
       error: actionErrors,
-      headers: StockIssueActionHeadersSchema,
       payload: Schema.toEncoded(StockIssuePayloadSchema),
       success: [ActionProposalAcceptedSchema, StockIssueResultSchema],
     }),

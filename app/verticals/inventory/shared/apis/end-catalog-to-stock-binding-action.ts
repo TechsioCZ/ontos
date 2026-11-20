@@ -3,6 +3,7 @@
 // @ontos-action-http-slug end-catalog-to-stock-binding
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/end-catalog-to-stock-binding.ts';
 
 export { EndCatalogToStockBindingPayloadSchema } from '../actions/end-catalog-to-stock-binding.ts';
-const EndCatalogToStockBindingActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const EndCatalogToStockBindingActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EndCatalogToStockBindingActionInvalidProblem',
@@ -144,7 +143,6 @@ export const endCatalogToStockBindingActionGroupDefinition = HttpApiGroup.make('
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/end-catalog-to-stock-binding', {
       error: actionErrors,
-      headers: EndCatalogToStockBindingActionHeadersSchema,
       payload: Schema.toEncoded(EndCatalogToStockBindingPayloadSchema),
       success: [ActionProposalAcceptedSchema, EndCatalogToStockBindingResultSchema],
     }),
