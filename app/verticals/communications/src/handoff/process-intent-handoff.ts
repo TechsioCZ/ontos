@@ -275,14 +275,20 @@ const haltIntent = Effect.fn('Communications.recordRecoveryHalt')(function* reco
 });
 
 /** The source owner's own change (BR-08): stale only when the Current facts say the request is no longer justified. */
-const sourceCurrentnessOf = (
+export const sourceCurrentnessOf = (
   type: {
     readonly currentness: { readonly requireLatestSourceRevision: boolean };
     readonly eligibleSourceStates: readonly string[];
   },
   revision: number,
   facts: { readonly latestRevision: number; readonly state: string },
+  validUntil: Option.Option<DateTime.Utc>,
+  now: DateTime.Utc,
 ): SourceCurrentnessCase => {
+  // the source's own stated expiry (`occurrence.validUntil`): a request past it is no longer justified, whatever the owner answers
+  if (Option.exists(validUntil, (until) => DateTime.isLessThanOrEqualTo(until, now))) {
+    return SourceCurrentness.Stale({ reason: 'SOURCE_NO_LONGER_VALID' });
+  }
   if (type.currentness.requireLatestSourceRevision && revision !== facts.latestRevision) {
     return SourceCurrentness.Stale({ reason: 'SOURCE_REVISION_NOT_CURRENT' });
   }
@@ -418,10 +424,17 @@ const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(docume
     tenantId: input.decisionRequest.tenantId,
     typeId: type.typeId,
   };
+  const now = yield* DateTime.now;
   const [decision] = yield* decideMessageHandoffs(
     {
       recipient: { bindings: input.bindings, request: input.decisionRequest, scope: input.scope, type },
-      source: sourceCurrentnessOf(type, request.occurrence.revision, facts.value),
+      source: sourceCurrentnessOf(
+        type,
+        request.occurrence.revision,
+        facts.value,
+        Option.fromNullishOr(request.occurrence.validUntil),
+        now,
+      ),
     },
     [
       {
