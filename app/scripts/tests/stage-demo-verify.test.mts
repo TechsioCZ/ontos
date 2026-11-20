@@ -495,6 +495,11 @@ it('finds the API key challenge among several and never mistakes a parameter for
   expect(
     symmyIngressAnswerProblems({ ...symmyAnswer, challenge: 'Bearer realm="staff", apikey = "ontos-gateway"' }),
   ).toEqual([{ problem: NO_API_KEY_CHALLENGE, reason: 'content' }]);
+  for (const spacing of ['  ', ' \t', '\t ']) {
+    expect(
+      symmyIngressAnswerProblems({ ...symmyAnswer, challenge: `Bearer realm="staff", apikey${spacing}= "x"` }),
+    ).toEqual([{ problem: NO_API_KEY_CHALLENGE, reason: 'content' }]);
+  }
 });
 
 it('refuses a Symmy ingress problem body that lacks the title and detail the gateway sends', () => {

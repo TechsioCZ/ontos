@@ -72,7 +72,7 @@ const GatewayAuthenticationRequiredSchema = Schema.fromJsonString(
 );
 const QUOTED_STRING = /"(?:[^"\\]|\\.)*"/gu;
 /** A scheme opens a challenge and is followed by a space or nothing; a parameter is followed by "=", spaced or not. */
-const CHALLENGE_SCHEME = /^(?<scheme>[\w!#$%&'*+.^`|~-]+)(?:\s+(?!=)|$)/u;
+const CHALLENGE_SCHEME = /^(?<scheme>[\w!#$%&'*+.^`|~-]+)(?:\s(?!\s*=)|$)/u;
 
 /**
  * Whether a WWW-Authenticate value, which may list several challenges, offers the API key scheme.
