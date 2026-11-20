@@ -24,8 +24,9 @@ export const MediaByteSizeSchema = Schema.Int.check(
 export type MediaByteSize = typeof MediaByteSizeSchema.Type;
 
 /**
- * Where a processing status may go. `ready` and `failed` are final here: nothing regresses from `ready`, and a
- * proven mismatch is not retried in place. `scanning` is part of the vocabulary but no scanner exists to enter it.
+ * Where a processing status may go in an upload. `ready` and `failed` are final here, and a proven mismatch is not
+ * retried in place. The one move out of `ready` is not an upload transition: only the integrity Action records
+ * proven corruption (`MediaAssetRepository.recordIntegrityFailure`), and nothing ever leaves `failed`. `scanning` is part of the vocabulary but no scanner exists to enter it.
  */
 const STATUS_SUCCESSORS = {
   failed: [],

@@ -45,7 +45,7 @@ export interface MediaRecoveryEvent {
 export const mediaRecoveryRef = (storageKey: string): string =>
   Hex.encode(sha256(utf8ToBytes(`${RECOVERY_REF_DOMAIN}\0${storageKey}`))).slice(0, RECOVERY_REF_LENGTH);
 
-/** Proven corruption and a refusal to clean up are worth a warning; every other category is routine. */
+/** Only proven corruption is worth a warning; every other category, a cleanup refusal included, is routine. */
 const isWarning = (category: MediaRecoveryCategory): boolean => category === 'integrity_failed';
 
 export const logMediaRecovery = (event: MediaRecoveryEvent): Effect.Effect<void> => {
