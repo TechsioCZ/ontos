@@ -109,6 +109,8 @@ import { customerProfileSourcePartiesRead } from './src/api/customer-profile-sou
 import { customerProfileSourceRead } from './src/api/customer-profile-source.read.ts';
 import { CustomerProfileTradingGateApi } from './shared/apis/customer-profile-trading-gate.ts';
 import { CustomerRecordVisibilityApi } from './shared/apis/customer-record-visibility.ts';
+import { CustomerSourceRouteApi } from './shared/apis/customer-source-route.ts';
+import { customerSourceRouteRead } from './src/api/customer-source-route.read.ts';
 import { decidePurchaseApprovalRequestAction } from './src/actions/decide-purchase-approval-request.action.ts';
 import { DeliveryDestinationResolutionApi } from './shared/apis/delivery-destination-resolution.ts';
 import { deliveryDestinationResolutionRead } from './src/api/delivery-destination-resolution.read.ts';
@@ -403,6 +405,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'customer-profile-source-parties': CustomerProfileSourcePartiesApi,
       'customer-profile-trading-gate': CustomerProfileTradingGateApi,
       'customer-record-visibility': CustomerRecordVisibilityApi,
+      'customer-source-route': CustomerSourceRouteApi,
       'delivery-destination-resolution': DeliveryDestinationResolutionApi,
       'effective-customer-group-membership-set-v1': EffectiveCustomerGroupMembershipSetV1Api,
       'effective-customer-group-memberships': EffectiveCustomerGroupMembershipsApi,
@@ -558,6 +561,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'customer-profile-source',
         operationKey: 'customerProfileSource.execute',
         registration: customerProfileSourceRead,
+      },
+      {
+        apiKey: 'customer-source-route',
+        operationKey: 'customerSourceRoute.execute',
+        registration: customerSourceRouteRead,
       },
       {
         apiKey: 'effective-customer-group-membership-set-v1',

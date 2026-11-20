@@ -10,6 +10,7 @@ import {
   configureCustomerSourceRouteAction,
   handleConfigureCustomerSourceRoute,
 } from '../../src/actions/configure-customer-source-route.action.ts';
+import { customerSourceRouteRead } from '../../src/api/customer-source-route.read.ts';
 import type {
   CustomerSourceRouteConfiguration,
   CustomerSourceRouteDecision,
@@ -56,7 +57,9 @@ const resultOf = Schema.decodeUnknownSync(ConfigureCustomerSourceRouteResultSche
 
 it('admits exactly one route per registry entry with every fact its owner routine compares', () => {
   expect(
-    Exit.isSuccess(decodePayload({ expectedGeneration: null, reason: 'Bind the ERP route', route: membership })),
+    Exit.isSuccess(
+      decodePayload({ _tag: 'CONFIGURE', expectedGeneration: null, reason: 'Bind the ERP route', route: membership }),
+    ),
   ).toBe(true);
   for (const route of [
     profile,
@@ -80,27 +83,38 @@ it('admits exactly one route per registry entry with every fact its owner routin
       route: { id: 'internal-address-route', revision: '1' },
     },
   ]) {
-    expect(Exit.isSuccess(decodePayload({ expectedGeneration: 3, reason: 'Bind the ERP route', route }))).toBe(true);
+    expect(
+      Exit.isSuccess(decodePayload({ _tag: 'CONFIGURE', expectedGeneration: 3, reason: 'Bind the ERP route', route })),
+    ).toBe(true);
     const { principalId: _omitted, ...withoutPrincipal } = route;
-    expect(Exit.isFailure(decodePayload({ expectedGeneration: null, reason: 'Bind', route: withoutPrincipal }))).toBe(
-      true,
-    );
+    expect(
+      Exit.isFailure(
+        decodePayload({ _tag: 'CONFIGURE', expectedGeneration: null, reason: 'Bind', route: withoutPrincipal }),
+      ),
+    ).toBe(true);
   }
 });
 
 it('rejects an implicit completeness claim, a duplicate reader in any case, a blank reason and a non-generation', () => {
   for (const invalid of [
-    { expectedGeneration: null, reason: 'Bind', route: { ...membership, allowComplete: true } },
-    { expectedGeneration: null, reason: 'Bind', route: { ...profile, sourceReaderPrincipalIds: [reader, reader] } },
+    { _tag: 'CONFIGURE', expectedGeneration: null, reason: 'Bind', route: { ...membership, allowComplete: true } },
     {
+      _tag: 'CONFIGURE',
+      expectedGeneration: null,
+      reason: 'Bind',
+      route: { ...profile, sourceReaderPrincipalIds: [reader, reader] },
+    },
+    {
+      _tag: 'CONFIGURE',
       expectedGeneration: null,
       reason: 'Bind',
       route: { ...profile, sourceReaderPrincipalIds: [reader, reader.toUpperCase()] },
     },
-    { expectedGeneration: null, reason: '   ', route: membership },
-    { expectedGeneration: 0, reason: 'Bind', route: membership },
-    { expectedGeneration: 1.5, reason: 'Bind', route: membership },
-    { expected: null, reason: 'Bind', route: membership },
+    { _tag: 'CONFIGURE', expectedGeneration: null, reason: '   ', route: membership },
+    { _tag: 'CONFIGURE', expectedGeneration: 0, reason: 'Bind', route: membership },
+    { _tag: 'CONFIGURE', expectedGeneration: 1.5, reason: 'Bind', route: membership },
+    { _tag: 'CONFIGURE', expected: null, reason: 'Bind', route: membership },
+    { expectedGeneration: null, reason: 'Bind', route: membership },
   ]) {
     expect(Exit.isFailure(decodePayload(invalid))).toBe(true);
   }
@@ -113,7 +127,25 @@ it('rejects an implicit completeness claim, a duplicate reader in any case, a bl
       revision: '1',
     },
   };
-  expect(Exit.isSuccess(decodePayload({ expectedGeneration: 1, reason: 'Qualify', route: complete }))).toBe(true);
+  expect(
+    Exit.isSuccess(decodePayload({ _tag: 'CONFIGURE', expectedGeneration: 1, reason: 'Qualify', route: complete })),
+  ).toBe(true);
+});
+
+it('pauses by route kind, route id and the generation read, and states no other route fact', () => {
+  const pause = { _tag: 'PAUSE', expectedGeneration: 4, reason: 'Pause imports', routeId: 'legacy-group-route' };
+  for (const routeKind of ['PROFILE', 'GROUP_DEFINITION', 'MEMBERSHIP', 'SAVED_ADDRESS']) {
+    expect(Exit.isSuccess(decodePayload({ ...pause, routeKind }))).toBe(true);
+  }
+  for (const invalid of [
+    { ...pause, routeKind: 'PRICE_GROUP' },
+    { ...pause, expectedGeneration: null, routeKind: 'MEMBERSHIP' },
+    { ...pause, routeId: '', routeKind: 'MEMBERSHIP' },
+    { ...pause, reason: ' ', routeKind: 'MEMBERSHIP' },
+    { ...pause, principalId: writer, routeKind: 'MEMBERSHIP' },
+  ]) {
+    expect(Exit.isFailure(decodePayload(invalid))).toBe(true);
+  }
 });
 
 it('is a human-only critical administration Action that no workload or agent can run', () => {
@@ -127,6 +159,23 @@ it('is a human-only critical administration Action that no workload or agent can
   expect(descriptor.idempotency).toBe('required');
   expect(descriptor.legalEntityScope).toBe('required');
   expect(descriptor.domainEvents).toEqual({});
+});
+
+it('shows a stored route only to the administrators who may configure it, never to a workload or agent', () => {
+  const { descriptor } = customerSourceRouteRead;
+  expect(descriptor.accessDeclaration).toEqual({
+    key: 'commerce.customer-context.customer-source-route.read',
+    kind: 'admin',
+    modes: ['run'],
+    placement: {
+      group: configureCustomerSourceRouteAction.descriptor.accessDeclaration?.placement.group,
+      level: 'basic',
+    },
+    risk: 'sensitive',
+    selectors: [],
+  });
+  expect(descriptor).not.toHaveProperty('accessWorkload');
+  expect(descriptor.legalEntityScope).toBe('required');
 });
 
 const run = (payload: ConfigureCustomerSourceRoutePayload, decision: CustomerSourceRouteDecision) =>
@@ -156,7 +205,12 @@ const run = (payload: ConfigureCustomerSourceRoutePayload, decision: CustomerSou
 it.effect('records the route, its generations, the outcome and the reason, and emits nothing else', () =>
   Effect.gen(function* configurationEvidence() {
     const configured = resultOf({ _tag: 'CONFIGURED', generation: 1, route: membership });
-    const created = payloadOf({ expectedGeneration: null, reason: 'Bind the ERP route', route: membership });
+    const created = payloadOf({
+      _tag: 'CONFIGURE',
+      expectedGeneration: null,
+      reason: 'Bind the ERP route',
+      route: membership,
+    });
     const first = yield* run(created, {
       currentGeneration: Option.some(1),
       previousGeneration: Option.none(),
@@ -183,17 +237,39 @@ it.effect('records the route, its generations, the outcome and the reason, and e
     expect(first.evidence.outboxMessages).toEqual([]);
 
     const paused = payloadOf({
+      _tag: 'PAUSE',
       expectedGeneration: 1,
       reason: 'Pause imports',
-      route: { ...membership, active: false },
+      routeId: 'internal-membership-route',
+      routeKind: 'MEMBERSHIP',
     });
     const changed = yield* run(paused, {
       currentGeneration: Option.some(2),
       previousGeneration: Option.some(1),
-      result: resultOf({ _tag: 'CONFIGURED', generation: 2, route: { ...membership, active: false } }),
+      result: resultOf({ _tag: 'PAUSED', generation: 2 }),
     });
-    expect(changed.evidence.auditEvidence).toMatchObject({ currentGeneration: 2, previousGeneration: 1 });
-    expect(changed.evidence.dataAccessEvents[0]).toMatchObject({ resultCount: 1 });
+    expect(changed.received).toEqual([
+      { actingPrincipalId: scope.principalId, actionInvocationId: invocation, payload: paused },
+    ]);
+    expect(changed.evidence.auditEvidence).toEqual({
+      currentGeneration: 2,
+      outcome: 'PAUSED',
+      previousGeneration: 1,
+      reason: 'Pause imports',
+      routeId: 'internal-membership-route',
+      routeKind: 'MEMBERSHIP',
+    });
+    expect(changed.evidence.dataAccessEvents[0]).toMatchObject({
+      resultCount: 1,
+      targetResourceId: 'internal-membership-route',
+    });
+    // A route already paused at the generation read stays as it is.
+    const alreadyPaused = yield* run(paused, {
+      currentGeneration: Option.some(1),
+      previousGeneration: Option.some(1),
+      result: resultOf({ _tag: 'PAUSED', generation: 1 }),
+    });
+    expect(alreadyPaused.evidence.auditEvidence).toMatchObject({ currentGeneration: 1, outcome: 'UNCHANGED' });
 
     for (const reason of ['EXPECTATION_MISMATCH', 'PRINCIPAL_INELIGIBLE', 'SOURCE_IDENTITY_IMMUTABLE'] as const) {
       const rejected = yield* run(created, {

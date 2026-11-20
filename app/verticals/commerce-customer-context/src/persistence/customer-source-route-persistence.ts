@@ -1,10 +1,18 @@
-import { defineScopedRoutine } from '@app/core-runtime';
+import { defineScopedRoutine, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import {
   readScopedSystemWorkloadEnrollment,
   readWorkerWorkloadPrincipalEligibility,
 } from '@app/core-runtime/access/enforcement';
 import { Effect, Match, Option, Schema } from 'effect';
+import {
+  CustomerSourceRouteRequestSchema,
+  CustomerSourceRouteResponseSchema,
+} from '../../shared/apis/customer-source-route.ts';
+import type {
+  CustomerSourceRouteRequest,
+  CustomerSourceRouteResponse,
+} from '../../shared/apis/customer-source-route.ts';
 import {
   ConfigureCustomerSourceRouteResultSchema,
   CustomerSourceRouteGenerationSchema,
@@ -17,16 +25,33 @@ import type {
   CustomerSourceRoute,
 } from '../../shared/domain/customer-source-route.ts';
 
+const OWNER_MODULE_KEY = 'commerce.customer-context';
+const DATABASE_SCHEMA = 'commerce_customer_context';
+const generationColumn = Schema.toEncoded(Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema));
+
+const lockCustomerSourceRouteRoutine = defineScopedRoutine({
+  name: 'lock_customer_source_route',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'text' },
+  ],
+  resultSchema: Schema.Struct({ locked: Schema.Literal(true) }),
+  routineKey: 'customer-source-route.lock',
+  schema: DATABASE_SCHEMA,
+});
 const configureCustomerSourceRouteRoutine = defineScopedRoutine({
   name: 'configure_customer_source_route',
-  ownerModuleKey: 'commerce.customer-context',
+  ownerModuleKey: OWNER_MODULE_KEY,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'jsonb' },
   ],
   resultSchema: Schema.Struct({
-    current_generation: Schema.toEncoded(Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema)),
+    current_generation: generationColumn,
     outcome: Schema.Literals([
       'CONFIGURED',
       'UNCHANGED',
@@ -34,11 +59,39 @@ const configureCustomerSourceRouteRoutine = defineScopedRoutine({
       'PRINCIPAL_INELIGIBLE',
       'SOURCE_IDENTITY_IMMUTABLE',
     ]),
-    previous_generation: Schema.toEncoded(Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema)),
+    previous_generation: generationColumn,
     stored_route: Schema.Unknown,
   }),
   routineKey: 'customer-source-route.configure',
-  schema: 'commerce_customer_context',
+  schema: DATABASE_SCHEMA,
+});
+const pauseCustomerSourceRouteRoutine = defineScopedRoutine({
+  name: 'pause_customer_source_route',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({
+    current_generation: generationColumn,
+    outcome: Schema.Literals(['PAUSED', 'UNCHANGED', 'EXPECTATION_MISMATCH']),
+    previous_generation: generationColumn,
+  }),
+  routineKey: 'customer-source-route.pause',
+  schema: DATABASE_SCHEMA,
+});
+const readCustomerSourceRouteRoutine = defineScopedRoutine({
+  name: 'read_customer_source_route',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({ result: Schema.Unknown }),
+  routineKey: 'customer-source-route.read',
+  schema: DATABASE_SCHEMA,
 });
 
 /** Every source write of this owner runs as the source-write workload; Profile source reads as source-read. */
@@ -78,22 +131,19 @@ export interface CustomerSourceRouteServices {
   ) => Effect.Effect<CustomerSourceRouteDecision, CustomerSourceRouteUnavailable>;
 }
 
-/** The routine reads and writes the one registry row under the trusted Tenant and legal entity. */
+/** The routines read and write the one registry row under the trusted Tenant and legal entity, in one transaction. */
 export const customerSourceRouteServices: ReadServiceFactory<CustomerSourceRouteServices> = (transaction) => {
   /**
-   * Core's current enrollment facts, read in this transaction: the writer is the Tenant's one enrolled system
-   * principal of the source-write workload, and each Profile reader an active integration principal bound to
-   * the source-read workload of the Profile source reads.
+   * Core's enrollment for the route, read in this transaction after the route's lock is held: the Tenant's one
+   * enrolled system principal of the source-write workload, and those requested Profile readers Core binds as
+   * active integration principals to the source-read workload. The routine compares the route with them.
    */
-  const principalsEligible = Effect.fn('CustomerSourceRoute.principalsEligible')(function* principalsEligible(
+  const enrolledPrincipals = Effect.fn('CustomerSourceRoute.enrolledPrincipals')(function* enrolledPrincipals(
     route: CustomerSourceRoute,
   ) {
     const writer = yield* readScopedSystemWorkloadEnrollment(transaction, SOURCE_WRITE_WORKLOAD).pipe(
       Effect.mapError(unavailable),
     );
-    if (!Option.exists(writer, ({ principalId }) => principalId.toLowerCase() === route.principalId.toLowerCase())) {
-      return false;
-    }
     const readers = yield* Effect.forEach(
       Match.value(route).pipe(
         Match.tag('PROFILE', ({ sourceReaderPrincipalIds }) => sourceReaderPrincipalIds),
@@ -104,48 +154,137 @@ export const customerSourceRouteServices: ReadServiceFactory<CustomerSourceRoute
           kind: 'integration',
           principalId,
           workloadKey: SOURCE_READ_WORKLOAD,
-        }).pipe(Effect.mapError(unavailable)),
+        }).pipe(
+          Effect.mapError(unavailable),
+          Effect.map((eligible) => (eligible ? [principalId] : [])),
+        ),
+      // One owner transaction: its reads run one after another.
       { concurrency: 1 },
     );
-    return readers.every(Boolean);
+    return {
+      enrolledReaderPrincipalIds: readers.flat(),
+      enrolledWriterPrincipalId: writer.pipe(
+        Option.map(({ principalId }) => principalId),
+        Option.getOrNull,
+      ),
+    };
+  });
+
+  const configureRoute = Effect.fn('CustomerSourceRoute.configureRoute')(function* configureRoute(
+    { actingPrincipalId, actionInvocationId }: CustomerSourceRouteConfiguration,
+    payload: Extract<ConfigureCustomerSourceRoutePayload, { readonly _tag: 'CONFIGURE' }>,
+  ) {
+    // lock -> read Core's enrollment -> write, all in this one transaction, whose statements run one after another.
+    const [route, [lock]] = yield* Effect.all(
+      [
+        encodeRoute(payload.route),
+        transaction.invoke(lockCustomerSourceRouteRoutine, [payload.route._tag, payload.route.route.id]),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.mapError(unavailable));
+    if (lock === undefined) {
+      return yield* unavailable();
+    }
+    const enrolled = yield* enrolledPrincipals(payload.route);
+    const [row] = yield* transaction
+      .invoke(configureCustomerSourceRouteRoutine, [
+        {
+          actingPrincipalId,
+          actionInvocationId,
+          expectedGeneration: Option.getOrNull(payload.expectedGeneration),
+          reason: payload.reason,
+          route,
+          ...enrolled,
+        },
+      ])
+      .pipe(Effect.mapError(unavailable));
+    if (row === undefined) {
+      return yield* unavailable();
+    }
+    const result = yield* decodeResult(
+      row.outcome === 'CONFIGURED' || row.outcome === 'UNCHANGED'
+        ? { _tag: row.outcome, generation: row.current_generation, route: row.stored_route }
+        : { _tag: 'REJECTED', currentGeneration: row.current_generation, reason: row.outcome },
+    ).pipe(Effect.mapError(unavailable));
+    return {
+      currentGeneration: Option.fromNullishOr(row.current_generation),
+      previousGeneration: Option.fromNullishOr(row.previous_generation),
+      result,
+    } satisfies CustomerSourceRouteDecision;
+  });
+
+  /** A pause reads no Core enrollment: it changes only the stored active flag of a route that already exists. */
+  const pauseRoute = Effect.fn('CustomerSourceRoute.pauseRoute')(function* pauseRoute(
+    { actingPrincipalId, actionInvocationId }: CustomerSourceRouteConfiguration,
+    payload: Extract<ConfigureCustomerSourceRoutePayload, { readonly _tag: 'PAUSE' }>,
+  ) {
+    const [row] = yield* transaction
+      .invoke(pauseCustomerSourceRouteRoutine, [
+        {
+          actingPrincipalId,
+          actionInvocationId,
+          expectedGeneration: payload.expectedGeneration,
+          reason: payload.reason,
+          routeId: payload.routeId,
+          routeKind: payload.routeKind,
+        },
+      ])
+      .pipe(Effect.mapError(unavailable));
+    if (row === undefined) {
+      return yield* unavailable();
+    }
+    const result = yield* decodeResult(
+      row.outcome === 'EXPECTATION_MISMATCH'
+        ? { _tag: 'REJECTED', currentGeneration: row.current_generation, reason: row.outcome }
+        : { _tag: 'PAUSED', generation: row.current_generation },
+    ).pipe(Effect.mapError(unavailable));
+    return {
+      currentGeneration: Option.fromNullishOr(row.current_generation),
+      previousGeneration: Option.fromNullishOr(row.previous_generation),
+      result,
+    } satisfies CustomerSourceRouteDecision;
   });
 
   return Effect.succeed({
-    configure: Effect.fn('CustomerSourceRoute.configure')(function* configure({
-      actingPrincipalId,
-      actionInvocationId,
-      payload,
-    }: CustomerSourceRouteConfiguration) {
-      const [route, eligible] = yield* Effect.all(
-        [encodeRoute(payload.route).pipe(Effect.mapError(unavailable)), principalsEligible(payload.route)],
-        // One owner transaction: its reads run one after another.
-        { concurrency: 1 },
-      );
-      const [row] = yield* transaction
-        .invoke(configureCustomerSourceRouteRoutine, [
-          {
-            actingPrincipalId,
-            actionInvocationId,
-            expectedGeneration: Option.getOrNull(payload.expectedGeneration),
-            principalsEligible: eligible,
-            reason: payload.reason,
-            route,
-          },
-        ])
-        .pipe(Effect.mapError(unavailable));
-      if (row === undefined) {
-        return yield* unavailable();
-      }
-      const result = yield* decodeResult(
-        row.outcome === 'CONFIGURED' || row.outcome === 'UNCHANGED'
-          ? { _tag: row.outcome, generation: row.current_generation, route: row.stored_route }
-          : { _tag: 'REJECTED', currentGeneration: row.current_generation, reason: row.outcome },
-      ).pipe(Effect.mapError(unavailable));
-      return {
-        currentGeneration: Option.fromNullishOr(row.current_generation),
-        previousGeneration: Option.fromNullishOr(row.previous_generation),
-        result,
-      } satisfies CustomerSourceRouteDecision;
-    }),
+    configure: (configuration: CustomerSourceRouteConfiguration) =>
+      Match.value(configuration.payload).pipe(
+        Match.tagsExhaustive({
+          CONFIGURE: (payload) => configureRoute(configuration, payload),
+          PAUSE: (payload) => pauseRoute(configuration, payload),
+        }),
+      ),
   });
 };
+
+const readUnavailable = (cause?: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'Commerce source routes are unavailable',
+    }),
+    'cause',
+    { configurable: true, value: cause },
+  );
+const encodeRouteRequest = Schema.encodeEffect(CustomerSourceRouteRequestSchema);
+const decodeStoredRoute = Schema.decodeUnknownEffect(CustomerSourceRouteResponseSchema, { onExcessProperty: 'error' });
+
+export interface CustomerSourceRouteReadServices {
+  readonly read: (
+    input: CustomerSourceRouteRequest,
+  ) => Effect.Effect<CustomerSourceRouteResponse, ReadHandlerUnavailable>;
+}
+
+/** The stored route exactly as its owner holds it, with one page of its history, under the trusted scope. */
+export const customerSourceRouteReadServices: ReadServiceFactory<CustomerSourceRouteReadServices> = (transaction) =>
+  Effect.succeed({
+    read: Effect.fn('CustomerSourceRoute.read')(function* read(input: CustomerSourceRouteRequest) {
+      const [row] = yield* encodeRouteRequest(input).pipe(
+        Effect.flatMap((request) => transaction.invoke(readCustomerSourceRouteRoutine, [request])),
+        Effect.mapError(readUnavailable),
+      );
+      if (row === undefined) {
+        return yield* readUnavailable();
+      }
+      return yield* decodeStoredRoute(row.result).pipe(Effect.mapError(readUnavailable));
+    }),
+  });

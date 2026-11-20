@@ -234,6 +234,7 @@ import { customerProfileSourcePartiesReadApiLive } from './customer-profile-sour
 import { customerProfileSourceReadApiLive } from './customer-profile-source-read-server.ts';
 import { customerProfileTradingGateReadApiLive } from './customer-profile-trading-gate-read-server.ts';
 import { customerRecordVisibilityReadApiLive } from './customer-record-visibility-read-server.ts';
+import { customerSourceRouteReadApiLive } from './customer-source-route-read-server.ts';
 import { decidePurchaseApprovalRequestActionApiLive } from './decide-purchase-approval-request-action-server.ts';
 import { deliveryDestinationResolutionReadApiLive } from './delivery-destination-resolution-read-server.ts';
 import { effectiveCustomerGroupMembershipSetV1ReadApiLive } from './effective-customer-group-membership-set-v1-read-server.ts';
@@ -1195,6 +1196,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     customerProfileSourceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerProfileTradingGateReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerRecordVisibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerSourceRouteReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     decidePurchaseApprovalRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     deliveryDestinationResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     effectiveCustomerGroupMembershipSetV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
