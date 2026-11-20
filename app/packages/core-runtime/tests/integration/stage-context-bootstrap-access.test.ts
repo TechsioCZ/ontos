@@ -604,9 +604,15 @@ const ownershipPeriodOf = (stage: Stage) =>
 
 /**
  * Runs a case on a clock of its own, started at the database's clock: only the case moves it, so a decision time is
- * exactly where the case put it however slowly the run goes.
+ * exactly where the case put it however slowly the run goes. Every case that seeds a row with the database's `now()`
+ * and lets a run decide on it runs here: the suite's default test clock stands at the epoch, where such a row has not
+ * started yet, so a departure would neither end it nor count it as anybody's administration. The body is the case's
+ * effect, or a function of the time its clock started at.
  */
-const onDatabaseClock = <Value, Failure>(stage: Stage, body: (startedAt: number) => Effect.Effect<Value, Failure>) =>
+const onDatabaseClock = <Value, Failure>(
+  stage: Stage,
+  body: Effect.Effect<Value, Failure> | ((startedAt: number) => Effect.Effect<Value, Failure>),
+) =>
   Effect.gen(function* onDatabaseClockEffect() {
     const clock = yield* TestClock.make();
     const [row] = yield* stage.admin
@@ -614,7 +620,7 @@ const onDatabaseClock = <Value, Failure>(stage: Stage, body: (startedAt: number)
       .pipe(Effect.orDie);
     const startedAt = Number(row?.ms);
     yield* clock.setTime(startedAt);
-    return yield* body(startedAt).pipe(Effect.provideService(Clock.Clock, clock));
+    return yield* (Effect.isEffect(body) ? body : body(startedAt)).pipe(Effect.provideService(Clock.Clock, clock));
   }).pipe(Effect.scoped);
 
 /**
@@ -890,104 +896,112 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
     'moves two logins in one transaction, finishes an interrupted run on replay and leaves a bystander as it was',
     () =>
       withStage((stage) =>
-        Effect.gen(function* movesLoginsAtomically() {
-          const { tenantId } = stage;
-          yield* stage
-            .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
-            .pipe(failClosed);
-          const role = yield* fullAccessRoleOf(stage);
-          const delegation = uid(70);
-          const delegatedAssignment = uid(71);
-          const companyScope = legalEntityScopeId(TenantIdSchema.make(tenantId), LegalEntityIdSchema.make(company));
-          // The colleague also holds "Plný přístup" in the company through the bystander's delegation, and every
-          // person has a company directory membership.
-          yield* seed(
-            stage,
-            directoryRow(tenantId, colleague),
-            directoryRow(tenantId, unassigned),
-            directoryRow(tenantId, bystander),
-            delegationRow(stage, {
-              grantedBy: owner,
-              id: delegation,
-              manager: bystander,
-              people: colleague,
-              role: role.role,
-            }),
-            `insert into core.access_assignments
-               (incarnation_id, tenant_id, scope_id, role_id, role_revision_id, principal_id, assigned_by, delegated_by,
-                delegation_envelope_json, status, valid_from, valid_until)
-             values ('${delegatedAssignment}', '${tenantId}', '${companyScope}', '${role.role}', '${role.revision}',
-                     '${colleague}', '${bystander}', '${delegation}',
-                     jsonb_build_object('capabilityKeys', jsonb_build_array('${READ}', '${ACTION}', '${CORE_READ}'),
-                                        'delegationId', '${delegation}',
-                                        'until', '2099-01-01T00:00:00Z'::timestamptz),
-                     'active', now() - interval '1 hour', '2099-01-01T00:00:00Z')`,
-          );
-          const untouched = yield* peopleRowsOf(stage, [owner, bystander]);
-          const decidedBefore = yield* outcomesOf(stage, bystander);
-          expect(decidedBefore[0]).toBe('ALLOWED');
-          const moved = (principalId: string, authBindingId: string, login: string) => ({
-            authBindingId,
-            displayName: `Moved ${login}`,
-            principalId,
-            providerUserId: `auth-${login}-${tenantId}`,
-            tenantId,
-          });
-          const run = {
-            ...emptyRun,
-            attachedLogins: [moved(uid(40), uid(41), 'moved-a'), moved(uid(42), uid(43), 'moved-b')],
-            retiredPrincipals: [leaving(tenantId, colleague, 'colleague'), leaving(tenantId, unassigned, 'unassigned')],
-          };
-          // The run stops after its one transaction committed and before the tenant was projected.
-          const interrupted = yield* stage.reconcileInterrupted(run).pipe(Effect.flip);
-          expect(interrupted.reason).toMatch(/interrupted after the commit/u);
-          const leavers = yield* stage.admin
-            .unsafe<StatusRow>(
-              `select principal_id::text as person, 'binding' as table, status from core.principal_auth_bindings
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${unassigned}', '${uid(40)}', '${uid(42)}')
-               union all select principal_id::text, 'principal', status from core.principals
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${unassigned}', '${uid(40)}', '${uid(42)}')
-               union all select principal_id::text, 'membership', status from core.access_memberships
-                 where tenant_id = '${tenantId}' and principal_id = '${colleague}'
-               union all select principal_id::text, 'assignment', status from core.access_assignments
-                 where tenant_id = '${tenantId}' and principal_id = '${colleague}'
-               union all select principal_id::text, 'directory', status from core.principal_company_memberships
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${unassigned}')`,
-            )
-            .pipe(Effect.orDie);
-          expect(statusesOf(leavers, colleague, 'binding')).toEqual(['revoked']);
-          expect(statusesOf(leavers, colleague, 'principal')).toEqual(['archived']);
-          expect(statusesOf(leavers, colleague, 'membership')).toEqual(['revoked']);
-          // The delegated assignment ended with the rest; the delegation itself is the bystander's and stays.
-          expect(statusesOf(leavers, colleague, 'assignment')).toEqual(['revoked']);
-          expect(statusesOf(leavers, colleague, 'directory')).toEqual(['departed']);
-          expect(statusesOf(leavers, unassigned, 'binding')).toEqual(['revoked']);
-          expect(statusesOf(leavers, unassigned, 'principal')).toEqual(['archived']);
-          expect(statusesOf(leavers, unassigned, 'directory')).toEqual(['departed']);
-          expect([statusesOf(leavers, uid(40), 'binding'), statusesOf(leavers, uid(42), 'principal')]).toEqual([
-            ['active'],
-            ['active'],
-          ]);
-          const delegations = yield* stage.admin
-            .unsafe<{ readonly status: string }>(
-              `select status from core.access_delegations where tenant_id = '${tenantId}' and delegation_id = '${delegation}'`,
-            )
-            .pipe(Effect.orDie);
-          expect(delegations).toEqual([{ status: 'active' }]);
-          const committed = yield* peopleRowsOf(stage, [colleague, unassigned, uid(40), uid(42)]);
-          // The same file again finds every move made, writes nothing and projects the tenant.
-          yield* stage.reconcile(run).pipe(failClosed);
-          expect(yield* peopleRowsOf(stage, [colleague, unassigned, uid(40), uid(42)])).toBe(committed);
-          const converged = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
-          expect([converged.touches, converged.deletions, converged.verified]).toEqual([0, 0, true]);
-          expect((yield* stage.decide({ carrier: readCarrier, principalId: colleague, tenantId })).outcome).toBe(
-            'DENIED',
-          );
-          // The bystander and the owner keep every row and every decision they had.
-          expect(yield* peopleRowsOf(stage, [owner, bystander])).toBe(untouched);
-          expect(yield* outcomesOf(stage, bystander)).toEqual(decidedBefore);
-          expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
-        }),
+        onDatabaseClock(
+          stage,
+          Effect.gen(function* movesLoginsAtomically() {
+            const { tenantId } = stage;
+            yield* stage
+              .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
+              .pipe(failClosed);
+            const role = yield* fullAccessRoleOf(stage);
+            const delegation = uid(70);
+            const delegatedAssignment = uid(71);
+            const companyScope = legalEntityScopeId(TenantIdSchema.make(tenantId), LegalEntityIdSchema.make(company));
+            // The colleague also holds "Plný přístup" in the company through the bystander's delegation, and every
+            // person has a company directory membership.
+            yield* seed(
+              stage,
+              directoryRow(tenantId, colleague),
+              directoryRow(tenantId, unassigned),
+              directoryRow(tenantId, bystander),
+              delegationRow(stage, {
+                grantedBy: owner,
+                id: delegation,
+                manager: bystander,
+                people: colleague,
+                role: role.role,
+              }),
+              `insert into core.access_assignments
+                 (incarnation_id, tenant_id, scope_id, role_id, role_revision_id, principal_id, assigned_by, delegated_by,
+                  delegation_envelope_json, status, valid_from, valid_until)
+               values ('${delegatedAssignment}', '${tenantId}', '${companyScope}', '${role.role}', '${role.revision}',
+                       '${colleague}', '${bystander}', '${delegation}',
+                       jsonb_build_object('capabilityKeys', jsonb_build_array('${READ}', '${ACTION}', '${CORE_READ}'),
+                                          'delegationId', '${delegation}',
+                                          'until', '2099-01-01T00:00:00Z'::timestamptz),
+                       'active', now() - interval '1 hour', '2099-01-01T00:00:00Z')`,
+            );
+            const untouched = yield* peopleRowsOf(stage, [owner, bystander]);
+            const decidedBefore = yield* outcomesOf(stage, bystander);
+            expect(decidedBefore[0]).toBe('ALLOWED');
+            const moved = (principalId: string, authBindingId: string, login: string) => ({
+              authBindingId,
+              displayName: `Moved ${login}`,
+              principalId,
+              providerUserId: `auth-${login}-${tenantId}`,
+              tenantId,
+            });
+            const run = {
+              ...emptyRun,
+              attachedLogins: [moved(uid(40), uid(41), 'moved-a'), moved(uid(42), uid(43), 'moved-b')],
+              retiredPrincipals: [
+                leaving(tenantId, colleague, 'colleague'),
+                leaving(tenantId, unassigned, 'unassigned'),
+              ],
+            };
+            // The run stops after its one transaction committed and before the tenant was projected.
+            const interrupted = yield* stage.reconcileInterrupted(run).pipe(Effect.flip);
+            expect(interrupted.reason).toMatch(/interrupted after the commit/u);
+            const leavers = yield* stage.admin
+              .unsafe<StatusRow>(
+                `select principal_id::text as person, 'binding' as table, status from core.principal_auth_bindings
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${unassigned}', '${uid(40)}', '${uid(42)}')
+                 union all select principal_id::text, 'principal', status from core.principals
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${unassigned}', '${uid(40)}', '${uid(42)}')
+                 union all select principal_id::text, 'membership', status from core.access_memberships
+                   where tenant_id = '${tenantId}' and principal_id = '${colleague}'
+                 union all select principal_id::text, 'assignment', status from core.access_assignments
+                   where tenant_id = '${tenantId}' and principal_id = '${colleague}'
+                 union all select principal_id::text, 'directory', status from core.principal_company_memberships
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${unassigned}')`,
+              )
+              .pipe(Effect.orDie);
+            expect(statusesOf(leavers, colleague, 'binding')).toEqual(['revoked']);
+            expect(statusesOf(leavers, colleague, 'principal')).toEqual(['archived']);
+            expect(statusesOf(leavers, colleague, 'membership')).toEqual(['revoked']);
+            // The delegated assignment ended with the rest; the delegation itself is the bystander's and stays.
+            expect(statusesOf(leavers, colleague, 'assignment')).toEqual(['revoked']);
+            expect(statusesOf(leavers, colleague, 'directory')).toEqual(['departed']);
+            expect(statusesOf(leavers, unassigned, 'binding')).toEqual(['revoked']);
+            expect(statusesOf(leavers, unassigned, 'principal')).toEqual(['archived']);
+            expect(statusesOf(leavers, unassigned, 'directory')).toEqual(['departed']);
+            expect([statusesOf(leavers, uid(40), 'binding'), statusesOf(leavers, uid(42), 'principal')]).toEqual([
+              ['active'],
+              ['active'],
+            ]);
+            const delegations = yield* stage.admin
+              .unsafe<{ readonly status: string }>(
+                `select status from core.access_delegations where tenant_id = '${tenantId}' and delegation_id = '${delegation}'`,
+              )
+              .pipe(Effect.orDie);
+            expect(delegations).toEqual([{ status: 'active' }]);
+            const committed = yield* peopleRowsOf(stage, [colleague, unassigned, uid(40), uid(42)]);
+            // The same file again finds every move made, writes nothing and projects the tenant.
+            yield* stage.reconcile(run).pipe(failClosed);
+            expect(yield* peopleRowsOf(stage, [colleague, unassigned, uid(40), uid(42)])).toBe(committed);
+            const converged = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
+            expect([converged.touches, converged.deletions, converged.verified]).toEqual([0, 0, true]);
+            expect((yield* stage.decide({ carrier: readCarrier, principalId: colleague, tenantId })).outcome).toBe(
+              'DENIED',
+            );
+            // The bystander and the owner keep every row and every decision they had.
+            expect(yield* peopleRowsOf(stage, [owner, bystander])).toBe(untouched);
+            expect(yield* outcomesOf(stage, bystander)).toEqual(decidedBefore);
+            expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe(
+              'ALLOWED',
+            );
+          }),
+        ),
       ),
   );
 
@@ -1187,39 +1201,42 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
     'refuses, writing nothing, a departure that leaves a company only to a tenant owner suspended in it',
     () =>
       withStage((stage) =>
-        Effect.gen(function* refusesSuspendedOwnerAsSuccessor() {
-          const { tenantId } = stage;
-          yield* stage
-            .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
-            .pipe(failClosed);
-          // The colleague is the company's only administrator; the owner still owns and reaches the tenant but is
-          // suspended in the company, so nobody who stays administers it.
-          yield* seed(stage, companyAdministrator(stage, colleague, uid(77)));
-          yield* suspendOwnerInCompany(stage);
-          const retiringColleague = { retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
-          const watched = [owner, colleague, bystander];
-          const refused = yield* refusalOf(stage, retiringColleague, watched);
-          expect(refused).toMatch(/^stage_last_administrator: /u);
-          expect(refused).toContain(companyScopeOf(stage));
-          // Another effective administrator of the company who stays lets the same file run.
-          yield* seed(stage, companyAdministrator(stage, bystander, uid(78)));
-          yield* stage.reconcile({ ...emptyRun, ...retiringColleague }).pipe(failClosed);
-          const rows = yield* stage.admin
-            .unsafe<{ readonly id: string; readonly status: string }>(
-              `select 'membership ' || membership_id::text as id, status from core.access_memberships
-                where membership_id in ('${uid(77)}', '${uid(78)}')
-               union all select 'principal ' || principal_id::text, status from core.principals
-                where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${bystander}')
-               order by 1`,
-            )
-            .pipe(Effect.orDie);
-          expect(rows).toEqual([
-            { id: `membership ${uid(77)}`, status: 'revoked' },
-            { id: `membership ${uid(78)}`, status: 'active' },
-            { id: `principal ${colleague}`, status: 'archived' },
-            { id: `principal ${bystander}`, status: 'active' },
-          ]);
-        }),
+        onDatabaseClock(
+          stage,
+          Effect.gen(function* refusesSuspendedOwnerAsSuccessor() {
+            const { tenantId } = stage;
+            yield* stage
+              .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
+              .pipe(failClosed);
+            // The colleague is the company's only administrator; the owner still owns and reaches the tenant but is
+            // suspended in the company, so nobody who stays administers it.
+            yield* seed(stage, companyAdministrator(stage, colleague, uid(77)));
+            yield* suspendOwnerInCompany(stage);
+            const retiringColleague = { retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
+            const watched = [owner, colleague, bystander];
+            const refused = yield* refusalOf(stage, retiringColleague, watched);
+            expect(refused).toMatch(/^stage_last_administrator: /u);
+            expect(refused).toContain(companyScopeOf(stage));
+            // Another effective administrator of the company who stays lets the same file run.
+            yield* seed(stage, companyAdministrator(stage, bystander, uid(78)));
+            yield* stage.reconcile({ ...emptyRun, ...retiringColleague }).pipe(failClosed);
+            const rows = yield* stage.admin
+              .unsafe<{ readonly id: string; readonly status: string }>(
+                `select 'membership ' || membership_id::text as id, status from core.access_memberships
+                  where membership_id in ('${uid(77)}', '${uid(78)}')
+                 union all select 'principal ' || principal_id::text, status from core.principals
+                  where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${bystander}')
+                 order by 1`,
+              )
+              .pipe(Effect.orDie);
+            expect(rows).toEqual([
+              { id: `membership ${uid(77)}`, status: 'revoked' },
+              { id: `membership ${uid(78)}`, status: 'active' },
+              { id: `principal ${colleague}`, status: 'archived' },
+              { id: `principal ${bystander}`, status: 'active' },
+            ]);
+          }),
+        ),
       ),
   );
 
@@ -1251,130 +1268,136 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
     'moves two logins between tenants in one file as the AKROS run does, and the same file again changes nothing',
     () =>
       withStage((stage) =>
-        Effect.gen(function* movesLikeTheAkrosRun() {
-          const { destinationTenantId: destination, tenantId } = stage;
-          yield* stage
-            .reconcile({
+        onDatabaseClock(
+          stage,
+          Effect.gen(function* movesLikeTheAkrosRun() {
+            const { destinationTenantId: destination, tenantId } = stage;
+            yield* stage
+              .reconcile({
+                ...emptyRun,
+                tenants: [
+                  destinationBootstrap(destination),
+                  tenantBootstrap(tenantId, [
+                    bystanderAccount(tenantId),
+                    fullAccessAccount(tenantId, dispatcher, uid(18), 'dispatcher'),
+                    fullAccessAccount(tenantId, other, uid(19), 'other'),
+                    fullAccessAccount(tenantId, pendingPerson, uid(20), 'pending'),
+                  ]),
+                ],
+              })
+              .pipe(failClosed);
+            // The e-shop login (colleague) and the one who stays (bystander) administer the company, like
+            // eshop@akros.demo and eshop@sroubarna.demo; the dispatcher is the expedice login; other is unrelated.
+            yield* seed(
+              stage,
+              directoryRow(tenantId, colleague),
+              directoryRow(tenantId, bystander),
+              directoryRow(tenantId, dispatcher),
+              directoryRow(tenantId, other),
+              companyAdministrators(stage),
+              // A bystander's access change that a People command committed and never projected.
+              `update core.access_assignments set status = 'revoked'
+                 where tenant_id = '${tenantId}' and principal_id = '${pendingPerson}' and status = 'active'`,
+            );
+            const stays = [owner, bystander, other];
+            const untouched = yield* peopleRowsOf(stage, stays);
+            const decidedBefore = yield* Effect.all([outcomesOf(stage, bystander), outcomesOf(stage, other)], {
+              concurrency: 1,
+            });
+            expect(decidedBefore.map(([readOutcome]) => readOutcome)).toEqual(['ALLOWED', 'ALLOWED']);
+            const moved = (principalId: string, authBindingId: string, login: string) => ({
+              authBindingId,
+              displayName: `Destination ${login}`,
+              principalId,
+              providerUserId: `auth-${login}-${tenantId}`,
+              tenantId: destination,
+            });
+            const operatorFile = {
               ...emptyRun,
-              tenants: [
-                destinationBootstrap(destination),
-                tenantBootstrap(tenantId, [
-                  bystanderAccount(tenantId),
-                  fullAccessAccount(tenantId, dispatcher, uid(18), 'dispatcher'),
-                  fullAccessAccount(tenantId, other, uid(19), 'other'),
-                  fullAccessAccount(tenantId, pendingPerson, uid(20), 'pending'),
-                ]),
+              attachedLogins: [moved(uid(140), uid(141), 'colleague'), moved(uid(142), uid(143), 'dispatcher')],
+              retiredPrincipals: [
+                leaving(tenantId, colleague, 'colleague'),
+                leaving(tenantId, dispatcher, 'dispatcher'),
               ],
-            })
-            .pipe(failClosed);
-          // The e-shop login (colleague) and the one who stays (bystander) administer the company, like
-          // eshop@akros.demo and eshop@sroubarna.demo; the dispatcher is the expedice login; other is unrelated.
-          yield* seed(
-            stage,
-            directoryRow(tenantId, colleague),
-            directoryRow(tenantId, bystander),
-            directoryRow(tenantId, dispatcher),
-            directoryRow(tenantId, other),
-            companyAdministrators(stage),
-            // A bystander's access change that a People command committed and never projected.
-            `update core.access_assignments set status = 'revoked'
-               where tenant_id = '${tenantId}' and principal_id = '${pendingPerson}' and status = 'active'`,
-          );
-          const stays = [owner, bystander, other];
-          const untouched = yield* peopleRowsOf(stage, stays);
-          const decidedBefore = yield* Effect.all([outcomesOf(stage, bystander), outcomesOf(stage, other)], {
-            concurrency: 1,
-          });
-          expect(decidedBefore.map(([readOutcome]) => readOutcome)).toEqual(['ALLOWED', 'ALLOWED']);
-          const moved = (principalId: string, authBindingId: string, login: string) => ({
-            authBindingId,
-            displayName: `Destination ${login}`,
-            principalId,
-            providerUserId: `auth-${login}-${tenantId}`,
-            tenantId: destination,
-          });
-          const operatorFile = {
-            ...emptyRun,
-            attachedLogins: [moved(uid(140), uid(141), 'colleague'), moved(uid(142), uid(143), 'dispatcher')],
-            retiredPrincipals: [leaving(tenantId, colleague, 'colleague'), leaving(tenantId, dispatcher, 'dispatcher')],
-          };
-          yield* stage.reconcile(operatorFile).pipe(failClosed);
-          // Each login signs in to the destination as a fresh Principal of its own, holding nothing yet.
-          const destinationRows = () =>
-            stage.admin
-              .unsafe<{
-                readonly binding: string;
-                readonly person: string;
-                readonly principal: string;
-                readonly subject: string;
-              }>(
-                `select p.principal_id::text as person, p.status as principal, b.status as binding,
-                        b.provider_subject_id as subject
-                   from core.principals p
-                   join core.principal_auth_bindings b on b.tenant_id = p.tenant_id and b.principal_id = p.principal_id
-                  where p.tenant_id = '${destination}' and p.principal_id in ('${uid(140)}', '${uid(142)}') order by 1`,
+            };
+            yield* stage.reconcile(operatorFile).pipe(failClosed);
+            // Each login signs in to the destination as a fresh Principal of its own, holding nothing yet.
+            const destinationRows = () =>
+              stage.admin
+                .unsafe<{
+                  readonly binding: string;
+                  readonly person: string;
+                  readonly principal: string;
+                  readonly subject: string;
+                }>(
+                  `select p.principal_id::text as person, p.status as principal, b.status as binding,
+                          b.provider_subject_id as subject
+                     from core.principals p
+                     join core.principal_auth_bindings b on b.tenant_id = p.tenant_id and b.principal_id = p.principal_id
+                    where p.tenant_id = '${destination}' and p.principal_id in ('${uid(140)}', '${uid(142)}') order by 1`,
+                )
+                .pipe(Effect.orDie);
+            const attached = yield* destinationRows();
+            expect(attached).toEqual([
+              { binding: 'active', person: uid(140), principal: 'active', subject: `auth-colleague-${tenantId}` },
+              { binding: 'active', person: uid(142), principal: 'active', subject: `auth-dispatcher-${tenantId}` },
+            ]);
+            // Both leave the old tenant whole, and every row their departures ended names the tenant owner acting
+            // through the bootstrap, never the person who left.
+            const left = yield* stage.admin
+              .unsafe<StatusRow>(
+                `select principal_id::text as person, 'binding' as table, status from core.principal_auth_bindings
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
+                 union all select principal_id::text, 'principal', status from core.principals
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
+                 union all select principal_id::text, 'membership', status from core.access_memberships
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
+                 union all select principal_id::text, 'assignment', status from core.access_assignments
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
+                 union all select principal_id::text, 'directory', status from core.principal_company_memberships
+                   where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')`,
               )
               .pipe(Effect.orDie);
-          const attached = yield* destinationRows();
-          expect(attached).toEqual([
-            { binding: 'active', person: uid(140), principal: 'active', subject: `auth-colleague-${tenantId}` },
-            { binding: 'active', person: uid(142), principal: 'active', subject: `auth-dispatcher-${tenantId}` },
-          ]);
-          // Both leave the old tenant whole, and every row their departures ended names the tenant owner acting
-          // through the bootstrap, never the person who left.
-          const left = yield* stage.admin
-            .unsafe<StatusRow>(
-              `select principal_id::text as person, 'binding' as table, status from core.principal_auth_bindings
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
-               union all select principal_id::text, 'principal', status from core.principals
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
-               union all select principal_id::text, 'membership', status from core.access_memberships
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
-               union all select principal_id::text, 'assignment', status from core.access_assignments
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')
-               union all select principal_id::text, 'directory', status from core.principal_company_memberships
-                 where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')`,
-            )
-            .pipe(Effect.orDie);
-          for (const person of [colleague, dispatcher]) {
-            expect([
-              statusesOf(left, person, 'binding'),
-              statusesOf(left, person, 'principal'),
-              statusesOf(left, person, 'membership'),
-              statusesOf(left, person, 'assignment'),
-              statusesOf(left, person, 'directory'),
-            ]).toEqual([['revoked'], ['archived'], ['revoked'], ['revoked'], ['departed']]);
-            expect((yield* stage.decide({ carrier: readCarrier, principalId: person, tenantId })).outcome).toBe(
-              'DENIED',
-            );
-          }
-          const endings = yield* stage.admin
-            .unsafe<{ readonly ended_by: string | null; readonly ended_reason: string | null }>(
-              `select distinct ended_by::text as ended_by, ended_reason from core.access_memberships
-                where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')`,
-            )
-            .pipe(Effect.orDie);
-          expect(endings).toEqual([{ ended_by: owner, ended_reason: STAGE_RETIREMENT_REASON }]);
-          // The administrator who stays, the owner and the unrelated person keep every row and every decision.
-          expect(yield* peopleRowsOf(stage, stays)).toBe(untouched);
-          expect(
-            yield* Effect.all([outcomesOf(stage, bystander), outcomesOf(stage, other)], { concurrency: 1 }),
-          ).toEqual(decidedBefore);
-          // The reconcile is the single writer's and projects the tenant whole: the bystander's change that was
-          // committed but never projected is published by this run too. DEPLOYMENT.md tells the operator to check
-          // for such changes before the run.
-          expect((yield* outcomesOf(stage, pendingPerson))[0]).toBe('DENIED');
-          const projected = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
-          expect([projected.touches, projected.deletions, projected.verified]).toEqual([0, 0, true]);
-          // The same file again finds both moves made, writes nothing and reconciles to nothing.
-          const everyone = [owner, colleague, unassigned, bystander, dispatcher, other, pendingPerson];
-          const settled = yield* peopleRowsOf(stage, everyone);
-          yield* stage.reconcile(operatorFile).pipe(failClosed);
-          expect(yield* peopleRowsOf(stage, everyone)).toBe(settled);
-          expect(yield* destinationRows()).toEqual(attached);
-          const converged = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
-          expect([converged.touches, converged.deletions, converged.verified]).toEqual([0, 0, true]);
-        }),
+            for (const person of [colleague, dispatcher]) {
+              expect([
+                statusesOf(left, person, 'binding'),
+                statusesOf(left, person, 'principal'),
+                statusesOf(left, person, 'membership'),
+                statusesOf(left, person, 'assignment'),
+                statusesOf(left, person, 'directory'),
+              ]).toEqual([['revoked'], ['archived'], ['revoked'], ['revoked'], ['departed']]);
+              expect((yield* stage.decide({ carrier: readCarrier, principalId: person, tenantId })).outcome).toBe(
+                'DENIED',
+              );
+            }
+            const endings = yield* stage.admin
+              .unsafe<{ readonly ended_by: string | null; readonly ended_reason: string | null }>(
+                `select distinct ended_by::text as ended_by, ended_reason from core.access_memberships
+                  where tenant_id = '${tenantId}' and principal_id in ('${colleague}', '${dispatcher}')`,
+              )
+              .pipe(Effect.orDie);
+            expect(endings).toEqual([{ ended_by: owner, ended_reason: STAGE_RETIREMENT_REASON }]);
+            // The administrator who stays, the owner and the unrelated person keep every row and every decision.
+            expect(yield* peopleRowsOf(stage, stays)).toBe(untouched);
+            expect(
+              yield* Effect.all([outcomesOf(stage, bystander), outcomesOf(stage, other)], { concurrency: 1 }),
+            ).toEqual(decidedBefore);
+            // The reconcile is the single writer's and projects the tenant whole: the bystander's change that was
+            // committed but never projected is published by this run too. DEPLOYMENT.md tells the operator to check
+            // for such changes before the run.
+            expect((yield* outcomesOf(stage, pendingPerson))[0]).toBe('DENIED');
+            const projected = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
+            expect([projected.touches, projected.deletions, projected.verified]).toEqual([0, 0, true]);
+            // The same file again finds both moves made, writes nothing and reconciles to nothing.
+            const everyone = [owner, colleague, unassigned, bystander, dispatcher, other, pendingPerson];
+            const settled = yield* peopleRowsOf(stage, everyone);
+            yield* stage.reconcile(operatorFile).pipe(failClosed);
+            expect(yield* peopleRowsOf(stage, everyone)).toBe(settled);
+            expect(yield* destinationRows()).toEqual(attached);
+            const converged = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
+            expect([converged.touches, converged.deletions, converged.verified]).toEqual([0, 0, true]);
+          }),
+        ),
       ),
   );
 
