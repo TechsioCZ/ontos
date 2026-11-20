@@ -153,6 +153,18 @@ const priceGroups = contract('price-group-catalog', 'pricing.price-group-catalog
   ],
 });
 
+/** The Privacy source processing check Commerce customer context makes for a membership write, as main registers it. */
+const privacyCheck = {
+  audience: 'privacy',
+  declarationKey: 'privacy.core.source-processing-eligibility.read',
+  entrypointKey: 'privacy.core.api.source-processing-eligibility',
+  jobKey: SYMMY_JOB_KEY,
+  legalEntityScope: 'required' as const,
+  schemaVersion: '1',
+  sourceWorkloadKey: 'commerce.customer-context.source-write',
+  workloadKey: 'privacy.core.source-processing-check',
+};
+
 /** Pricing publishing only the source reads named, under the Pricing source read workload. */
 const pricingReading = (published: readonly string[]) =>
   contract('pricing', 'commerce.pricing', {
@@ -288,17 +300,7 @@ describe('Symmy route bindings', () => {
   });
 
   it('asks only for the nested calls the owner names for the enrolled operation, not for its whole workload', () => {
-    const sourceWrite = 'commerce.customer-context.source-write';
-    const privacyCheck = {
-      audience: 'privacy',
-      declarationKey: 'privacy.core.source-processing-eligibility.read',
-      entrypointKey: 'privacy.core.api.source-processing-eligibility',
-      jobKey: SYMMY_JOB_KEY,
-      legalEntityScope: 'required' as const,
-      schemaVersion: '1',
-      sourceWorkloadKey: sourceWrite,
-      workloadKey: 'privacy.core.source-processing-check',
-    };
+    const sourceWrite = privacyCheck.sourceWorkloadKey;
     const compatibility = {
       ...privacyCheck,
       audience: 'price-group-catalog',
@@ -408,14 +410,14 @@ describe('Symmy route bindings', () => {
       `${required}, and its registered call reaches commerce.other-market`,
     ]);
 
-    // Commerce customer context requires the organization-business check of a membership write but omits the call.
-    const membershipWrite = 'commerce.customer-context.source-write';
-    const organizationCheck: Requirement = {
-      entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
-      key: 'commerce.customer-context.requirement.org-membership-write-privacy',
+    // A nested owner's requirement too, as on main: Privacy requires Party's organization record facts for the check
+    // Commerce customer context makes for a membership write, and registers no call to them.
+    const organizationParty: Requirement = {
+      entrypointKey: privacyCheck.entrypointKey,
+      key: 'privacy.core.requirement.customer-intake-organization-party',
       provider: {
-        entrypointKey: 'privacy.core.api.organization-business-applicability',
-        moduleId: 'privacy.core',
+        entrypointKey: 'party.registry.api.organization-record-facts',
+        moduleId: 'party.registry',
         schemaVersion: '1',
       },
     };
@@ -429,21 +431,32 @@ describe('Symmy route bindings', () => {
           ...receivingRead('commerce.customer-context.api.customer-group-membership-source-receipt'),
         ],
       },
+      [privacyCheck],
+      requires('commerce.customer-context.apply-customer-group-membership-source', [privacyCheck]),
+    );
+    const privacy = contract(
+      'privacy',
+      'privacy.core',
+      {
+        operationContracts: [
+          carrier(privacyCheck.entrypointKey, [privacyCheck.workloadKey], privacyCheck.declarationKey),
+        ],
+      },
       [],
-      [organizationCheck],
+      [organizationParty],
     );
     const membership = inventoryOf('customerGroupCustomersBatch');
     expect(
       deriveSymmyRouteBindings({
         companyScoped: true,
-        contracts: [symmy, customerContext],
+        contracts: [symmy, customerContext, privacy],
         enrolled: membership.operations,
         inventory: membership,
       }).refusals,
     ).toEqual([
       {
         code: 'call_not_declared',
-        detail: `The installed commerce.customer-context requires privacy.core privacy.core.api.organization-business-applicability@1 for commerce.customer-context.apply-customer-group-membership-source@1 (requirement commerce.customer-context.requirement.org-membership-write-privacy) and registers no call to it under ${membershipWrite}`,
+        detail: `The installed privacy.core requires party.registry party.registry.api.organization-record-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-party) and registers no call to it under ${privacyCheck.workloadKey}`,
       },
     ]);
   });
