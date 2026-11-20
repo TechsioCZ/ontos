@@ -1128,9 +1128,19 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
               )
               .pipe(Effect.orDie);
             expect(delegations).toEqual([{ status: 'active' }]);
+            // Before the rerun, the person of a login the run attached connects an app, so that Principal now holds a
+            // binding no run wrote. The rerun still recognises its own attachment by the Principal and binding ids the
+            // file names, whatever else that Principal gained.
+            yield* seed(
+              stage,
+              ...connectedApp(stage, { binding: uid(45), grant: uid(44), live: true, person: uid(40) }),
+            );
             const committed = yield* peopleRowsOf(stage, [colleague, unassigned, uid(40), uid(42)]);
+            expect(committed).toContain(uid(45));
             // The same file again finds every move made, writes nothing and projects the tenant.
-            yield* stage.reconcile(run).pipe(failClosed);
+            const rerun = yield* stage.reconcile(run).pipe(failClosed);
+            expect(rerun.moves.attachments.map(({ created }) => created)).toEqual([false, false]);
+            expect(rerun.moves.departures.map(({ archives }) => archives)).toEqual([false, false]);
             expect(yield* peopleRowsOf(stage, [colleague, unassigned, uid(40), uid(42)])).toBe(committed);
             const converged = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
             expect([converged.touches, converged.deletions, converged.verified]).toEqual([0, 0, true]);
@@ -1503,7 +1513,8 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
                           b.provider_subject_id as subject
                      from core.principals p
                      join core.principal_auth_bindings b on b.tenant_id = p.tenant_id and b.principal_id = p.principal_id
-                    where p.tenant_id = '${destination}' and p.principal_id in ('${uid(140)}', '${uid(142)}') order by 1`,
+                    where p.tenant_id = '${destination}' and p.principal_id in ('${uid(140)}', '${uid(142)}')
+                    order by 1, b.principal_auth_binding_id`,
                 )
                 .pipe(Effect.orDie);
             const attached = yield* destinationRows();
@@ -1565,9 +1576,10 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             expect(yield* destinationRows()).toEqual(attached);
             const converged = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
             expect([converged.touches, converged.deletions, converged.verified]).toEqual([0, 0, true]);
-            // The moved login then connects an app in the destination. The same file is refused at the attachment's
-            // exact replay, as before, and writes nothing; the departure it completed still hands its connected app to
-            // the Shell's clean-up, so a run that stopped before that clean-up is finished by the same file.
+            // The moved login then connects an app in the destination, so its Principal there holds a second binding.
+            // The same file is still the replay of its attachment, found by the Principal and binding ids it names: it
+            // writes nothing and reconciles to nothing. The departure it completed still hands its connected app to the
+            // Shell's clean-up, so a run that stopped before that clean-up is finished by the same file.
             yield* seed(
               stage,
               ...connectedApp(stage, {
@@ -1578,7 +1590,18 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
                 where: { legalEntityId: uid(105), tenantId: destination },
               }),
             );
-            expect(yield* refusalOf(stage, operatorFile, everyone)).toMatch(/fresh Principal and staff binding/u);
+            const reconnected = yield* destinationRows();
+            expect(reconnected).toEqual([
+              ...attached.slice(0, 1),
+              { binding: 'active', person: uid(140), principal: 'active', subject: uid(152) },
+              ...attached.slice(1),
+            ]);
+            const replayed = yield* stage.reconcile(operatorFile).pipe(failClosed);
+            expect(replayed.moves.attachments.map(({ created }) => created)).toEqual([false, false]);
+            expect(yield* peopleRowsOf(stage, everyone)).toBe(settled);
+            expect(yield* destinationRows()).toEqual(reconnected);
+            const reconciled = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
+            expect([reconciled.touches, reconciled.deletions, reconciled.verified]).toEqual([0, 0, true]);
             const completed = yield* stage.completed(operatorFile.retiredPrincipals).pipe(failClosed);
             expect(
               completed.map(({ endedByThisRun, grantId, principalId, tenantId: at }) => ({

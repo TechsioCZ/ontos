@@ -652,9 +652,13 @@ const NON_FRESH_ATTACHMENT =
   'An attached login takes a fresh Principal and staff binding, or replays exactly the pair it created';
 
 /**
- * Whether an attached login is new or an exact replay. Only a Principal and a binding that both do not exist
- * yet are created; a Principal that exists is accepted only together with exactly the binding this login
- * created for it and no other, because a further login would inherit everything that Principal holds.
+ * Whether an attached login is new or the replay of its own completed attachment. Only a Principal and a binding that
+ * both do not exist yet are created. A replay is recognised by the exact Principal id and login binding id the file
+ * names: the Principal exactly as created and active, its binding of this login in this tenant exactly as created and
+ * active, and no other binding of the login in the tenant. Whatever else that Principal has gained since (the person
+ * reconnected an app in the tenant, say) does not change that it is this attachment, so a rerun of the unchanged file
+ * finishes what an earlier run left. Any other existing Principal or binding is refused, because the login would
+ * inherit everything that Principal holds.
  */
 const attachmentOf = Effect.fn('StageContextBootstrap.attachmentOf')(function* attachmentOfEffect(
   transaction: CoreTransaction,
@@ -676,7 +680,8 @@ const attachmentOf = Effect.fn('StageContextBootstrap.attachmentOf')(function* a
     principalId: login.principalId,
     tenantId: login.tenantId,
   };
-  // The Principal, and any binding that claims this binding id, signs this user in to the tenant, or the Principal holds.
+  // The Principal, and every binding that claims this binding id, signs this user in to the tenant, or the Principal
+  // holds: all of them, so a Principal with many bindings never hides the one the file names.
   const [[principal], bindings] = yield* Effect.all(
     [
       selectBootstrapPrincipals(transaction, identity),
@@ -706,8 +711,7 @@ const attachmentOf = Effect.fn('StageContextBootstrap.attachmentOf')(function* a
               eq(principalAuthBindings.principalId, login.principalId),
             ),
           ),
-        )
-        .limit(3),
+        ),
     ],
     { concurrency: 1 },
   ).pipe(Effect.mapError(bootstrapFailureFromCause));
@@ -724,12 +728,19 @@ const attachmentOf = Effect.fn('StageContextBootstrap.attachmentOf')(function* a
     subjectType: 'user',
     tenantId: login.tenantId,
   } as const;
-  const [binding] = bindings;
+  const own = bindings.find(({ principalAuthBindingId }) => principalAuthBindingId === login.authBindingId);
+  const ofTheLogin = bindings.filter(
+    (binding) =>
+      binding.tenantId === login.tenantId &&
+      binding.authenticationNamespaceId === authenticationNamespaceId &&
+      binding.subjectType === 'user' &&
+      binding.providerSubjectId === login.providerUserId,
+  );
   return principal !== undefined &&
-    binding !== undefined &&
-    bindings.length === 1 &&
+    own !== undefined &&
     isExactRecord(principal, bootstrapPrincipalRecord(identity)) &&
-    isExactRecord(binding, expectedBinding)
+    isExactRecord(own, expectedBinding) &&
+    ofTheLogin.every((binding) => binding === own)
     ? 'replay'
     : yield* failure(NON_FRESH_ATTACHMENT);
 });
@@ -1877,7 +1888,8 @@ const writeRetirement = Effect.fn('StageContextBootstrap.writeRetirement')(funct
       .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
   // Exactly the grants this run moved from `active` to `revoked` are recorded, in this transaction: a draft it denied
-  // is no revocation, a grant that had ended keeps whatever its own ending recorded, and a replay ends nothing.
+  // is no revocation and a grant that had ended keeps whatever its own ending recorded. A replay records one only for a
+  // grant it moves from `active` itself, and denies a draft that arrived late; both are in what it reports.
   const recorded = ended.flatMap(({ app, revokedFromActive }) => (revokedFromActive ? [app] : []));
   yield* Effect.forEach(
     recorded,
