@@ -159,6 +159,7 @@ it.live(
           purpose: 'implementation-1096-registered-workload-gateway',
         });
         const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+        const runtime = yield* PgClient.make({ url: Redacted.make(isolated.connections.runtime.connectionString) });
         // Only Symmy calls through the gateway on this path: the Shell mounts once its one relay source is bound.
         const shell = yield* makeApiKeyGatewayNativeFixture({
           ownedDatabase: isolated,
@@ -179,9 +180,11 @@ it.live(
         const issuer = yield* seedPrincipal(admin, tenantId, 'human');
         yield* bindAuth(admin, issuer, 'user', shell.providerUserId);
         // The access scopes and Ready fences Core's Tenant bootstrap writes: every governed Action holds the Tenant's
-        // fence, the admission and the owner writes included, so a Tenant without them answers each with 503.
+        // fence, the admission and the owner writes included, so a Tenant without them answers each with 503. Core
+        // installs a scope only for an enrolled database identity, so they are written through the clone's runtime
+        // login; the administrative login holds no scope authority and is refused.
         yield* testCoreDatabase.pipe(
-          Effect.provideService(PgClient.PgClient, admin),
+          Effect.provideService(PgClient.PgClient, runtime),
           Effect.flatMap((core) =>
             writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId: issuer.principalId, tenantId }),
           ),
