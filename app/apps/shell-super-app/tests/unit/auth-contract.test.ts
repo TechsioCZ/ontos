@@ -174,6 +174,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     switchLegalEntity: '/auth/legal-entity/switch',
     switchTenant: '/auth/tenant/switch',
     transferAccessOwnership: '/shell/access/people/transfer-ownership',
+    uploadAssetBytes: '/core/media/assets/:mediaAssetId/bytes',
   });
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',

@@ -99,22 +99,31 @@ import { FetchHttpClient, HttpServerRequest } from 'effect/http';
 import { flow } from 'effect/Function';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
+  assetByteSourceRead,
   assetDownloadRead,
+  confirmAssetAction,
+  confirmAssetRequest,
   downloadResponseHeaders,
+  ingestMediaBytes,
   integrityRecordRequest,
+  isMediaFailure,
   loadS3ObjectStorageConfig,
   logMediaRecovery,
   makeS3ObjectStorage,
+  MediaByteSource,
   MediaDownloadSource,
   MediaIntegrityRecorder,
   mediaRecoveryRef,
   ObjectStorage,
+  parseContentLength,
   ProvenMediaIntegrityFinding,
   recordAssetIntegrityFailureAction,
+  StoredMediaObjectVerification,
   streamConfirmedBytes,
   unconfiguredObjectStorage,
+  uploadResponseHeaders,
 } from '@app/core-runtime/media/edge';
-import type { MediaVerifiableAssetOffer } from '@app/core-runtime/media/edge';
+import type { MediaByteSourceOffer, MediaFailure, MediaVerifiableAssetOffer } from '@app/core-runtime/media/edge';
 import { AccessChangesCommandsLive } from '@app/core-runtime/access/changes/commands';
 import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
 import {
@@ -225,10 +234,12 @@ import type {
   AvailableTenantsProblem,
   IdentityProblem,
   LegalEntityAccessForbiddenProblem,
+  MediaUploadProblem,
   LegalEntityProblem,
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
+  ShellLengthRequiredProblem,
   ShellInvalidRequestProblem,
   ShellPolicyConflictProblem,
   ShellPolicyUnprocessableProblem,
@@ -775,6 +786,15 @@ const shellInternalProblem = (): ShellInternalProblem =>
     500,
     'Shell request failed',
     'https://ontos.dev/problems/shell-internal',
+  );
+
+const shellLengthRequiredProblem = (): ShellLengthRequiredProblem =>
+  problemDetails(
+    'ShellLengthRequiredProblem',
+    'The request must state the exact Content-Length of the file.',
+    411,
+    'Content length required',
+    'https://ontos.dev/problems/content-length-required',
   );
 
 const shellSelectionRequiredProblem = (): ShellSelectionRequiredProblem =>
@@ -2534,6 +2554,118 @@ const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
 );
 
 /**
+ * The failure of a Core Media upload as the client sees it: the media outcomes keep the status ERRORS.md gives them
+ * (403 refused principal, 404 absent or foreign, 409 state or content conflict, 411 body of unstated length,
+ * 422 proven corruption, 503 uncertain or unavailable), and every Action or Read failure of the confirm step keeps
+ * its identity mapping. No problem carries a key, a digest, a locator or a provider message.
+ */
+const mediaUploadProblem = (error: IdentityRuntimeError | MediaFailure): MediaUploadProblem => {
+  if (!isMediaFailure(error)) {
+    return identityProblem(error);
+  }
+  return Match.value(error).pipe(
+    Match.tags({
+      ActionRequestHashConflict: shellPolicyConflictProblem,
+      MediaAssetNotFound: shellTargetNotFoundProblem,
+      MediaContentConflict: shellPolicyConflictProblem,
+      MediaForbidden: shellTargetForbiddenProblem,
+      MediaIngestUncertain: shellCapabilityUnavailableProblem,
+      MediaIntegrityFailed: shellPolicyUnprocessableProblem,
+      MediaLengthRequired: shellLengthRequiredProblem,
+      MediaNotReady: shellPolicyConflictProblem,
+      MediaUnavailable: shellCapabilityUnavailableProblem,
+    }),
+    Match.exhaustive,
+  );
+};
+
+/** Every answer of the upload edge, the failures too, is private, never cached and never sniffed. */
+const privateUploadResponse = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeaders(response, uploadResponseHeaders)),
+);
+
+/** The caller as a tenant-wide principal: the byte-source Read is company-free, the ingest applies the company itself. */
+const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
+
+/**
+ * Core Media byte ingress (#1433 upload, #1430): the middle leg of reserve, stream, confirm. It authenticates the
+ * caller, reads the reserved row through the `authenticated_principal` byte-source Read (no capability: the row and
+ * the reserving principal authorize the byte hop), streams the body into the object store OUTSIDE any Core
+ * transaction through `ingestMediaBytes`, and answers only after the confirm Action, run as the caller, sealed the
+ * asset `ready`. The success is `ready`; anything the bytes did not prove is a typed non-success and the same asset
+ * stays recoverable by the same PUT.
+ */
+const coreMediaUploadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreMediaUpload', (handlers) =>
+  handlers.handle('uploadAssetBytes', ({ params, request }) =>
+    Effect.gen(function* uploadCoreMediaBytes() {
+      yield* privateUploadResponse;
+      const authentication = yield* AuthenticationService;
+      const resolved = yield* authentication
+        .resolveTenantContext(requestHeaders(request.headers))
+        .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+      yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+      if (resolved.state !== 'authenticated') {
+        return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+      }
+      const { principal } = resolved;
+      // The tenant is the authenticated principal's, never the request's: another tenant's id is "not found".
+      const mediaAssetRef = {
+        moduleId: 'core.media',
+        resourceId: params.mediaAssetId,
+        resourceType: 'core.media.asset',
+        tenantId: principal.tenantId,
+      } as const;
+      const correlationId = correlationFromRequest(request);
+      const reads = yield* ReadRuntime;
+      let offered = Option.none<MediaByteSourceOffer>();
+      yield* reads
+        .runRead({
+          input: { mediaAssetRef },
+          principal: withoutSelectedLegalEntity(principal),
+          registration: assetByteSourceRead,
+          transport: { correlationId },
+        })
+        .pipe(
+          Effect.provideService(MediaByteSource, {
+            offer: (asset) =>
+              Effect.sync(() => {
+                offered = Option.some(asset);
+              }),
+          }),
+          Effect.mapError(mediaUploadProblem),
+        );
+      // The Read offered the reserved row after its decision; it is used only now that the Read completed.
+      if (Option.isNone(offered)) {
+        return yield* Effect.fail(shellCapabilityUnavailableProblem());
+      }
+      const actions = yield* ActionRuntime;
+      const confirmation = confirmAssetRequest(mediaAssetRef);
+      return yield* ingestMediaBytes({
+        asset: offered.value,
+        body: request.stream,
+        confirm: (verification) =>
+          actions
+            .runAction({
+              payload: confirmation.payload,
+              principal,
+              registration: confirmAssetAction,
+              transport: { correlationId, idempotencyKey: confirmation.idempotencyKey },
+            })
+            .pipe(Effect.provideService(StoredMediaObjectVerification, verification)),
+        contentLength: parseContentLength(headerValue(request.headers, 'content-length')),
+        mediaAssetRef,
+        principalId: principal.principalId,
+        selectedLegalEntityId: principal.legalEntityId,
+      }).pipe(Effect.mapError(mediaUploadProblem));
+    }).pipe(
+      recoverUnexpectedDefect(request, 'Unexpected Core Media upload defect', () =>
+        Effect.fail(shellInternalProblem()),
+      ),
+    ),
+  ),
+);
+
+/**
  * The Core operations the Shell host serves to modules (#1443 P2): Core Media Current V1 for Catalog. The caller is a
  * MODULE relaying its requester as an audience-scoped Bearer assertion (never a session cookie), so this endpoint is
  * the only Shell route that reads one; `authenticateHostedOperation` verifies, redeems it once and requires that the
@@ -2616,6 +2748,8 @@ const coreMediaIntegrityRecorderUnconfiguredLive = Layer.succeed(MediaIntegrityR
 const coreMediaDownloadHandlersLive = coreMediaDownloadGroupLive.pipe(
   Layer.provide(Layer.mergeAll(coreMediaObjectStorageLive, coreMediaIntegrityRecorderUnconfiguredLive)),
 );
+/** The upload route with its composed dependency: the object store. The confirm Action runs under the caller. */
+const coreMediaUploadHandlersLive = coreMediaUploadGroupLive.pipe(Layer.provide(coreMediaObjectStorageLive));
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.effect(Tracer.Tracer, Tracer.Tracer),
@@ -3097,6 +3231,7 @@ export const makeShellAuthenticationApiRuntime = (
     coreReadAssetMetadataGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
     coreMediaDownloadHandlersLive,
+    coreMediaUploadHandlersLive,
     coreHostedOperationsHandlersLive,
     externalIdentityGroupLive,
     accessAdminHandlersLive,
