@@ -687,12 +687,6 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     reason: 'Approved C14 customer export projects current qualified profiles and IČO through governed Commerce Reads.',
     specifier: `${commercePackageSpecifierPrefix}${suffix}`,
   })),
-  {
-    importer: 'apps/shell-super-app/api/symmy/customer-group-batch-facts.ts',
-    reason:
-      'Approved C14 customer group import fences each public group on its current source definition through the governed Commerce Read.',
-    specifier: `${commercePackageSpecifierPrefix}/api/customer-group-definition-source/client`,
-  },
   ...[
     'verticals/privacy/src/services/organization-profile-ico-applicability.service.ts',
     'verticals/privacy/src/services/organization-business-applicability.service.ts',
