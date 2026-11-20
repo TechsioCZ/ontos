@@ -586,6 +586,10 @@ export const privacyOwnerCoverageForScope = (
             .select({ at: messageIntents.createdAt, id: messageIntents.intentId })
             .from(messageIntents)
             .where(eq(messageIntents.tenantId, tenantId)),
+          observations: transaction
+            .select({ at: providerObservations.recordedAt, id: providerObservations.observationId })
+            .from(providerObservations)
+            .where(eq(providerObservations.tenantId, tenantId)),
           // a pin's retention starts at the message it belongs to: the ORIGINAL business event, never the later pin time
           pins: transaction
             .select({
@@ -602,10 +606,6 @@ export const privacyOwnerCoverageForScope = (
               ),
             )
             .where(eq(intentDocumentPins.tenantId, tenantId)),
-          observations: transaction
-            .select({ at: providerObservations.recordedAt, id: providerObservations.observationId })
-            .from(providerObservations)
-            .where(eq(providerObservations.tenantId, tenantId)),
           requests: transaction
             .select({ at: communicationRequests.receivedAt, id: communicationRequests.requestId })
             .from(communicationRequests)

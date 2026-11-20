@@ -111,6 +111,20 @@ const requestRecords = (data: Gathered | undefined, add: AddRecord) => {
   }
 };
 
+/** The records the recovery, reconciliation and document lanes append next to the history of a message. */
+const laterLaneRecords = (data: Gathered | undefined, add: AddRecord) => {
+  const history = 'ATTEMPTS_PROVIDER_OBSERVATIONS_SUPPRESSION';
+  for (const { evaluationSeq, intentId } of data?.recoveryEvaluations ?? []) {
+    add(history, REF_KIND.recoveryEvaluation, `${intentId}:${evaluationSeq}`, { intentId });
+  }
+  for (const { intentId, resolutionId } of data?.conflictResolutions ?? []) {
+    add(history, REF_KIND.conflictResolution, resolutionId, { intentId });
+  }
+  for (const { intentId, position } of data?.documentPins ?? []) {
+    add('ATTACHMENT_LINK_REFERENCES', REF_KIND.documentPin, `${intentId}:${position}`, { intentId });
+  }
+};
+
 const historyRecords = (data: Gathered | undefined, add: AddRecord) => {
   const history = 'ATTEMPTS_PROVIDER_OBSERVATIONS_SUPPRESSION';
   for (const { attemptId, intentId } of data?.attempts ?? []) {
@@ -125,15 +139,6 @@ const historyRecords = (data: Gathered | undefined, add: AddRecord) => {
   }
   for (const { conflictId, intentId } of data?.observationConflicts ?? []) {
     add(history, REF_KIND.observationConflict, conflictId, { intentId });
-  }
-  for (const { evaluationSeq, intentId } of data?.recoveryEvaluations ?? []) {
-    add(history, REF_KIND.recoveryEvaluation, `${intentId}:${evaluationSeq}`, { intentId });
-  }
-  for (const { intentId, resolutionId } of data?.conflictResolutions ?? []) {
-    add(history, REF_KIND.conflictResolution, resolutionId, { intentId });
-  }
-  for (const { intentId, position } of data?.documentPins ?? []) {
-    add('ATTACHMENT_LINK_REFERENCES', REF_KIND.documentPin, `${intentId}:${position}`, { intentId });
   }
   for (const { attemptId, intentId } of data?.retries ?? []) {
     add(history, REF_KIND.retryLink, attemptId, { intentId });
@@ -156,6 +161,7 @@ export const recordsOf = (data: Gathered | undefined, attribution: readonly stri
   };
   requestRecords(data, add);
   historyRecords(data, add);
+  laterLaneRecords(data, add);
   for (const contentRef of attribution) {
     records.push({ category: 'TYPE_LANGUAGE_TEMPLATE_REVISION', contentRef, intentId: null, requestId: null });
   }

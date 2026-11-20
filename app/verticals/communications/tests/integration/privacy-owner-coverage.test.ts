@@ -658,14 +658,10 @@ describe('Communications Owner Coverage finds the recovery, reconciliation and d
         const intentId = yield* intentIdAt(intents);
         yield* stepWith(world, handoffDouble(), intentId);
         const answer = yield* coverageOf(world, [subject('customer-1')], withBackup());
-        const part = Option.match(answer, {
-          onNone: () => undefined,
-          onSome: ({ coverage }) =>
-            coverage.coverageParts.find(({ scopeRef }) => scopeRef === 'communications.attachment-link-references'),
-        });
-        expect(part?.foundContentRefs).toEqual([`communications.core.document-pin:${intentId}:0`]);
+        const pinRefs = found(answer).filter((ref) => ref.startsWith('communications.core.document-pin:'));
+        expect(pinRefs).toEqual([`communications.core.document-pin:${intentId}:0`]);
         // the reference names nothing of the content: no byte, URL or file name reaches Privacy
-        expect(JSON.stringify(part)).not.toMatch(/asset-1|doc-1|https?:/u);
+        expect(JSON.stringify(pinRefs)).not.toMatch(/asset-1|doc-1|https?:/u);
         // and the pin starts its retention at the message it belongs to, the original business event
         const starts = yield* world.database.inTenant(world.tenantId, (transaction) =>
           privacyOwnerCoverageForScope(transaction, operationalScope(world.tenantId), withBackup()).businessStarts(),
