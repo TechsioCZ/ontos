@@ -1,11 +1,12 @@
 import {
+  OperationAuthenticationRequired,
   ReadResultValidationError,
   ReadRuntime,
   TrustedPrincipalContextSchema,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Logger, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { readCustomerOwnAddressBook } from '../../api/portal-auth/session/customer-address-book.ts';
@@ -86,6 +87,73 @@ const scope: CustomerOwnAddressBookScope = {
     tenantId,
   }),
 };
+
+for (const diagnostic of [
+  {
+    category: 'namespace_unregistered',
+    phase: 'saved_address_list',
+    reason: 'The authentication namespace is not registered',
+    suffix: 'saved-address-list',
+  },
+  {
+    category: 'binding_not_current',
+    phase: 'saved_address_defaults',
+    reason: 'The authenticated principal binding is no longer valid',
+    suffix: 'saved-address-defaults',
+  },
+  {
+    category: 'other',
+    phase: 'saved_address_list',
+    reason: 'private-cookie-token-that-must-not-be-logged',
+    suffix: 'saved-address-list',
+  },
+]) {
+  it.effect(
+    `diagnoses ${diagnostic.phase} ${diagnostic.category} without changing the failure or disclosing its cause`,
+    () =>
+      Effect.gen(function* addressBookFailureDiagnostic() {
+        const logs: string[] = [];
+        const failure = Object.assign(
+          new OperationAuthenticationRequired({
+            code: 'operation_authentication_required',
+            reason: diagnostic.reason,
+          }),
+          { cause: { authorization: 'private-authorization-value', sessionRef: 'private-session-reference' } },
+        );
+        const runtime: ReadRuntimeService = {
+          runRead: (input) =>
+            input.registration.descriptor.readKey.endsWith(diagnostic.suffix)
+              ? Effect.fail(failure)
+              : Schema.decodeUnknownEffect(input.registration.descriptor.resultSchema)({ addresses: [] }).pipe(
+                  Effect.orDie,
+                ),
+        };
+        const result = yield* readCustomerOwnAddressBook(scope).pipe(
+          Effect.provideService(ReadRuntime, runtime),
+          Effect.provide(
+            Logger.layer([
+              Logger.make((options) => {
+                logs.push(JSON.stringify(Logger.formatStructured.log(options)));
+              }),
+            ]),
+          ),
+          Effect.result,
+        );
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBe(failure);
+        }
+        expect(logs).toHaveLength(1);
+        const logged = logs.join('\n');
+        expect(logged).toContain(`"addressBookPhase":"${diagnostic.phase}"`);
+        expect(logged).toContain(`"authenticationReason":"${diagnostic.category}"`);
+        expect(logged).toContain('OperationAuthenticationRequired');
+        for (const privateValue of [diagnostic.reason, 'private-authorization-value', 'private-session-reference']) {
+          expect(logged).not.toContain(privateValue);
+        }
+      }).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
+  );
+}
 
 it.effect('reads only the admitted customer profile under the customer principal, preserving every address field', () =>
   Effect.gen(function* ownAddressBook() {

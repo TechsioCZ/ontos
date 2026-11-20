@@ -9,6 +9,7 @@ import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'e
 
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
 import { readCustomerOwnAddressBook } from './customer-address-book.ts';
+import { logCustomerAddressBookBoundaryFailure } from './customer-address-book-diagnostics.ts';
 import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommerceSessionReferenceSchema } from '../../../shared/portal-auth-contracts.ts';
@@ -633,14 +634,32 @@ export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.adm
     request: HttpServerRequest.HttpServerRequest,
     permission: RetailPortalPermissionCode = 'retail.profile.read',
   ) {
-    const current = yield* getSession(request);
+    const diagnoseAddressBook = permission === 'retail.address_book.use';
+    const current = yield* getSession(request).pipe(
+      Effect.tapError(() =>
+        diagnoseAddressBook
+          ? logCustomerAddressBookBoundaryFailure('provider_session', 'provider_session_rejected')
+          : Effect.void,
+      ),
+    );
     if (current.state === 'anonymous') {
       return current;
     }
     const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
       authentication: () => authenticationProblem('authentication_failed'),
       unavailable: () => unavailableProblem(),
-    });
+    }).pipe(
+      Effect.tapError((error) =>
+        diagnoseAddressBook
+          ? logCustomerAddressBookBoundaryFailure(
+              'workload_principal',
+              Schema.is(CommercePortalAuthSessionAuthenticationProblemSchema)(error)
+                ? 'workload_authentication_failed'
+                : 'workload_unavailable',
+            )
+          : Effect.void,
+      ),
+    );
     if (principal.legalEntityId === undefined) {
       return yield* Effect.fail(unavailableProblem());
     }
@@ -657,6 +676,16 @@ export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.adm
         tenantId: principal.tenantId,
       })
       .pipe(
+        Effect.tapError((cause) =>
+          diagnoseAddressBook
+            ? logCustomerAddressBookBoundaryFailure(
+                'customer_authority',
+                Schema.is(CustomerAuthorityRejected)(cause)
+                  ? 'customer_authority_rejected'
+                  : 'customer_authority_unavailable',
+              )
+            : Effect.void,
+        ),
         Effect.mapError((cause) =>
           Schema.is(CustomerAuthorityRejected)(cause) ? forbiddenProblem('account_disabled') : unavailableProblem(),
         ),
@@ -712,6 +741,7 @@ const getCustomerAddressBook = Effect.fn('CommercePortalAuthSessionHttp.getCusto
     yield* noStoreHeaders;
     const current = yield* admitCustomerAccount(request, 'retail.address_book.use');
     if (current.state !== 'authenticated') {
+      yield* logCustomerAddressBookBoundaryFailure('provider_session', 'session_absent');
       return yield* Effect.fail(authenticationProblem('authentication_failed'));
     }
     const { legalEntityId } = current.workloadPrincipal;

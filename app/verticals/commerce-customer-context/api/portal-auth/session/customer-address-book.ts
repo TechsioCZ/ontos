@@ -5,6 +5,7 @@ import { Crypto, Effect, Schema } from 'effect';
 import type { SavedAddressListResponse } from '../../../shared/apis/saved-address-list.ts';
 import type { SavedAddressDefaultsResponse } from '../../../shared/apis/saved-address-defaults.ts';
 import type { CurrentCustomerAuthority } from './customer-authority.ts';
+import { logCustomerAddressBookReadFailure } from './customer-address-book-diagnostics.ts';
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   CommerceSessionReferenceSchema,
@@ -104,6 +105,7 @@ export const readCustomerOwnAddressBook = Effect.fn('CustomerOwnAddressBook.read
       transport: { correlationId },
     })
     .pipe(
+      Effect.tapError(logCustomerAddressBookReadFailure('saved_address_list')),
       Effect.flatMap(Schema.decodeUnknownEffect(SavedAddressListResponseSchema)),
       Effect.catchTag('SchemaError', () => Effect.fail(unavailable())),
     );
@@ -116,6 +118,7 @@ export const readCustomerOwnAddressBook = Effect.fn('CustomerOwnAddressBook.read
       transport: { correlationId },
     })
     .pipe(
+      Effect.tapError(logCustomerAddressBookReadFailure('saved_address_defaults')),
       Effect.flatMap(Schema.decodeUnknownEffect(SavedAddressDefaultsResponseSchema)),
       Effect.catchTag('SchemaError', () => Effect.fail(unavailable())),
     );
