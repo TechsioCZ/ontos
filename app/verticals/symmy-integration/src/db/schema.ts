@@ -43,6 +43,7 @@ export const SYMMY_INTEGRATION_TABLES = [
   'job_retention_tombstones',
   'job_routes',
   'privacy_measure_executions',
+  'route_enrollment_records',
   'sync_admission_attempts',
   'sync_admissions',
 ] as const;
@@ -151,6 +152,42 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
       sql`char_length(${table.routeRevision}) between 1 and 80 and char_length(${table.mappingVersion}) between 1 and 80`,
     ),
     ...tenantRlsPolicies('symmy_job_routes_tenant', table.tenantId),
+  ],
+);
+
+/**
+ * Who enrolled, replaced or deactivated a route, and why: one append-only record per change, written by the operator
+ * command in the transaction of the change. The runtime role holds no privilege on it.
+ */
+export const symmyRouteEnrollmentRecords = symmyIntegrationSchema.table.withRLS(
+  'route_enrollment_records',
+  {
+    change: text('change', { enum: ['enroll', 'replace', 'deactivate'] }).notNull(),
+    legalEntityId: uuid('legal_entity_id'),
+    operatorRef: text('operator_ref').notNull(),
+    previousRevision: text('previous_revision'),
+    reason: text('reason').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+    recordId: uuid('record_id').defaultRandom().primaryKey(),
+    routeId: uuid('route_id').notNull(),
+    routeKey: text('route_key', { enum: durableRoutes }).notNull(),
+    routeRevision: text('route_revision').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    index('symmy_route_enrollment_records_route_idx').on(table.tenantId, table.routeId, table.recordedAt),
+    check(
+      'symmy_route_enrollment_records_change_ck',
+      sql`${table.change} in ('enroll', 'replace', 'deactivate')
+        and (${table.change} = 'enroll') = (${table.previousRevision} is null)
+        and (${table.change} <> 'deactivate' or ${table.previousRevision} = ${table.routeRevision})`,
+    ),
+    check(
+      'symmy_route_enrollment_records_text_ck',
+      sql`char_length(${table.operatorRef}) between 1 and 200 and char_length(${table.reason}) between 1 and 500
+        and char_length(${table.routeRevision}) between 1 and 80
+        and (${table.previousRevision} is null or char_length(${table.previousRevision}) between 1 and 80)`,
+    ),
   ],
 );
 
@@ -322,6 +359,7 @@ export const symmyIntegrationRelations = defineRelations({
   symmyJobPrivacyExecutions,
   symmyJobRetentionTombstones,
   symmyJobRoutes,
+  symmyRouteEnrollmentRecords,
   symmySyncAdmissionAttempts,
   symmySyncAdmissions,
 });
