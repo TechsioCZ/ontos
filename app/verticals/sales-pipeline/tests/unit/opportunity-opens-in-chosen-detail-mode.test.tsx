@@ -78,35 +78,39 @@ afterEach(() => {
   localStorage.removeItem(DETAIL_VIEW_MODE_KEY);
 });
 
-it.live('the page header choice opens a real opportunity as a non-blocking quick view and remembers the choice', () =>
-  Effect.gen(function* quickView() {
-    const { router } = yield* mount;
-    expect(button(czech('sales-pipeline.detailView.page')).getAttribute('aria-pressed')).toBe('true');
-    yield* acted(() => button(czech('sales-pipeline.detailView.panel')).click());
-    yield* waitUntil(
-      () =>
-        button(czech('sales-pipeline.detailView.panel')).getAttribute('aria-pressed') === 'true' &&
-        localStorage.getItem(DETAIL_VIEW_MODE_KEY) === 'panel',
-    );
-    expect(button(czech('sales-pipeline.detailView.panel')).getAttribute('aria-pressed')).toBe('true');
-    expect(localStorage.getItem(DETAIL_VIEW_MODE_KEY)).toBe('panel');
-    yield* openRecord();
-    yield* waitUntil(() => document.querySelector('[role="dialog"]') !== null);
-    const dialog = Option.getOrThrow(Option.fromNullOr(document.querySelector('[role="dialog"]')));
-    expect(dialog.textContent).toContain(title);
-    expect(dialog.getAttribute('aria-modal')).not.toBe('true');
-    expect(router.state.location.href).toBe('/cs/prodej/prilezitosti');
-    const search = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>('#pipeline-search')));
-    yield* acted(() => {
-      search.focus();
-      search.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
-      search.click();
-    });
-    yield* settle;
-    expect(document.activeElement).toBe(search);
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(title);
-    expect(opportunityRow()?.closest('[aria-hidden="true"]')).toBeNull();
-  }).pipe(Effect.provide(network)),
+it.live(
+  'the page header choice opens a real opportunity as a non-blocking quick view and remembers the choice',
+  () =>
+    Effect.gen(function* quickView() {
+      const { router } = yield* mount;
+      expect(button(czech('sales-pipeline.detailView.page')).getAttribute('aria-pressed')).toBe('true');
+      yield* acted(() => button(czech('sales-pipeline.detailView.panel')).click());
+      yield* waitUntil(
+        () =>
+          button(czech('sales-pipeline.detailView.panel')).getAttribute('aria-pressed') === 'true' &&
+          localStorage.getItem(DETAIL_VIEW_MODE_KEY) === 'panel',
+      );
+      expect(button(czech('sales-pipeline.detailView.panel')).getAttribute('aria-pressed')).toBe('true');
+      expect(localStorage.getItem(DETAIL_VIEW_MODE_KEY)).toBe('panel');
+      yield* openRecord();
+      yield* waitUntil(() => document.querySelector('[role="dialog"]') !== null);
+      const dialog = Option.getOrThrow(Option.fromNullOr(document.querySelector('[role="dialog"]')));
+      expect(dialog.textContent).toContain(title);
+      expect(dialog.getAttribute('aria-modal')).not.toBe('true');
+      expect(router.state.location.href).toBe('/cs/prodej/prilezitosti');
+      const search = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>('#pipeline-search')));
+      yield* acted(() => {
+        search.focus();
+        search.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+        search.click();
+      });
+      yield* settle;
+      expect(document.activeElement).toBe(search);
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain(title);
+      expect(opportunityRow()?.closest('[aria-hidden="true"]')).toBeNull();
+    }).pipe(Effect.provide(network)),
+  // The file's first mount of the real opportunities page, the same cold load that took 5.17 s on a loaded runner.
+  { timeout: 20_000 },
 );
 
 it.live('the default detail choice navigates to the selected opportunity full page', () =>

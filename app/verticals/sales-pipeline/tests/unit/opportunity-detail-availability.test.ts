@@ -171,81 +171,85 @@ describe('opportunity detail availability', () => {
     expect(state.opportunity).toBe(target);
   });
 
-  it.live('passes the requested id and the authorized read state to the detail panel', () =>
-    Effect.gen(function* pageWiring() {
-      yield* pinTestDocument;
-      const target = opportunity(1, 'Vybraná obchodní příležitost');
-      const other = opportunity(2, 'Jiná příležitost');
-      const forbidden = Schema.decodeUnknownSync(RecordsForbiddenProblemSchema)({
-        _tag: 'RecordsForbiddenProblem',
-        detail: 'Přístup byl odepřen.',
-        status: 403,
-        title: 'Zakázáno',
-        type: 'about:blank',
-      });
-      const unavailable = Schema.decodeUnknownSync(RecordsUnavailableProblemSchema)({
-        _tag: 'RecordsUnavailableProblem',
-        detail: 'Registr není dostupný.',
-        retryable: true,
-        status: 503,
-        title: 'Nedostupné',
-        type: 'about:blank',
-      });
-      let reply: Effect.Effect<typeof RecordsResponseSchema.Type, typeof forbidden | typeof unavailable> =
-        Effect.succeed(pageRecords([other, target]));
-      const entered = yield* Deferred.make<boolean>();
-      const release = yield* Deferred.make<boolean>();
-      let firstGate = true;
-      const held = new Set<string>();
-      const network = pageNetwork(
-        Effect.gen(function* readPage() {
-          if (firstGate) {
-            firstGate = false;
-            held.add('initial-records');
-            yield* Deferred.succeed(entered, true);
-            yield* Deferred.await(release).pipe(Effect.ensuring(Effect.sync(() => held.delete('initial-records'))));
-          }
-          return yield* reply;
-        }),
-      );
-      yield* Effect.gen(function* readStates() {
-        localStorage.setItem(DETAIL_VIEW_MODE_KEY, 'panel');
-        yield* openPage();
-        yield* Deferred.await(entered);
-        yield* networkQuietExcept(held.size);
-        expect(panelText()).toContain(czech('sales-pipeline.loading'));
-        yield* Deferred.succeed(release, true);
-        yield* networkIdle;
-        yield* flushReact;
-        expect(panelText()).toContain(target.title);
-        unmountAll();
-
-        const states = [
-          { expected: czech('sales-pipeline.detail.missing'), response: Effect.succeed(pageRecords([other])) },
-          { expected: czech('sales-pipeline.pages.records.forbidden'), response: Effect.fail(forbidden) },
-          { expected: czech('sales-pipeline.pages.records.unavailable'), response: Effect.fail(unavailable) },
-        ];
-        for (const state of states) {
-          reply = state.response;
+  it.live(
+    'passes the requested id and the authorized read state to the detail panel',
+    () =>
+      Effect.gen(function* pageWiring() {
+        yield* pinTestDocument;
+        const target = opportunity(1, 'Vybraná obchodní příležitost');
+        const other = opportunity(2, 'Jiná příležitost');
+        const forbidden = Schema.decodeUnknownSync(RecordsForbiddenProblemSchema)({
+          _tag: 'RecordsForbiddenProblem',
+          detail: 'Přístup byl odepřen.',
+          status: 403,
+          title: 'Zakázáno',
+          type: 'about:blank',
+        });
+        const unavailable = Schema.decodeUnknownSync(RecordsUnavailableProblemSchema)({
+          _tag: 'RecordsUnavailableProblem',
+          detail: 'Registr není dostupný.',
+          retryable: true,
+          status: 503,
+          title: 'Nedostupné',
+          type: 'about:blank',
+        });
+        let reply: Effect.Effect<typeof RecordsResponseSchema.Type, typeof forbidden | typeof unavailable> =
+          Effect.succeed(pageRecords([other, target]));
+        const entered = yield* Deferred.make<boolean>();
+        const release = yield* Deferred.make<boolean>();
+        let firstGate = true;
+        const held = new Set<string>();
+        const network = pageNetwork(
+          Effect.gen(function* readPage() {
+            if (firstGate) {
+              firstGate = false;
+              held.add('initial-records');
+              yield* Deferred.succeed(entered, true);
+              yield* Deferred.await(release).pipe(Effect.ensuring(Effect.sync(() => held.delete('initial-records'))));
+            }
+            return yield* reply;
+          }),
+        );
+        yield* Effect.gen(function* readStates() {
+          localStorage.setItem(DETAIL_VIEW_MODE_KEY, 'panel');
           yield* openPage();
+          yield* Deferred.await(entered);
+          yield* networkQuietExcept(held.size);
+          expect(panelText()).toContain(czech('sales-pipeline.loading'));
+          yield* Deferred.succeed(release, true);
           yield* networkIdle;
           yield* flushReact;
-          expect(panelText()).toContain(state.expected);
+          expect(panelText()).toContain(target.title);
           unmountAll();
-        }
-      }).pipe(
-        Effect.provide(network),
-        Effect.ensuring(
-          Deferred.succeed(release, true).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                unmountAll();
-                localStorage.removeItem(DETAIL_VIEW_MODE_KEY);
-              }),
+
+          const states = [
+            { expected: czech('sales-pipeline.detail.missing'), response: Effect.succeed(pageRecords([other])) },
+            { expected: czech('sales-pipeline.pages.records.forbidden'), response: Effect.fail(forbidden) },
+            { expected: czech('sales-pipeline.pages.records.unavailable'), response: Effect.fail(unavailable) },
+          ];
+          for (const state of states) {
+            reply = state.response;
+            yield* openPage();
+            yield* networkIdle;
+            yield* flushReact;
+            expect(panelText()).toContain(state.expected);
+            unmountAll();
+          }
+        }).pipe(
+          Effect.provide(network),
+          Effect.ensuring(
+            Deferred.succeed(release, true).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  unmountAll();
+                  localStorage.removeItem(DETAIL_VIEW_MODE_KEY);
+                }),
+              ),
             ),
           ),
-        ),
-      );
-    }),
+        );
+      }),
+    // The file's first mount of the real opportunities page: 5.17 s on a loaded runner.
+    { timeout: 20_000 },
   );
 });
