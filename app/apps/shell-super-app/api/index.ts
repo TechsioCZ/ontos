@@ -2897,12 +2897,13 @@ export const makeShellAuthenticationApiRuntime = (
     SymmyIngressHandlersLive.pipe(
       Layer.provide(
         Layer.mergeAll(
-          SymmyIngressAuthenticationLive.pipe(Layer.provideMerge(symmyIngressLive)),
+          SymmyIngressAuthenticationLive,
           SymmyIngressSchemaErrorLive,
           SymmyIngressDefectLive,
           symmyOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer)),
         ),
       ),
+      Layer.provide(symmyIngressLive),
     ),
     paymentGatewayHandlersLive.pipe(
       Layer.provide(
