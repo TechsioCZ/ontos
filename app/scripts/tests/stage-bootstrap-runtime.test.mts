@@ -12,31 +12,23 @@ import type { Crypto } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
-import type { AuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
-import type {
-  bootstrapStageAccounts,
-  bootstrapStageAccountsFromEnvironment,
-} from '../../apps/shell-super-app/api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
+import type { bootstrapStageAccounts } from '../../apps/shell-super-app/api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../apps/shell-super-app/api/database-identity-enrollment.ts';
+import type { makeStageAccountsRuntime } from '../../apps/shell-super-app/scripts/bootstrap-stage-accounts.mts';
 import { makeStageInstallationRuntime } from '../../apps/shell-super-app/scripts/bootstrap-stage-accounts.mts';
 import { coreRelations } from '../../packages/core-runtime/src/db/schema.ts';
 
-type InstallationServices = Layer.Success<ReturnType<typeof makeStageInstallationRuntime>>;
-type UnprovidedBootstrapServices<Services> = Exclude<Services, AuthDatabase | Crypto.Crypto | InstallationServices>;
+// The operator command's one composition, Better Auth included, provides everything the run asks for but the platform.
+type RunServices = Layer.Success<ReturnType<typeof makeStageAccountsRuntime>>;
+type UnprovidedBootstrapServices<Services> = Exclude<Services, Crypto.Crypto | RunServices>;
 const bootstrapDependenciesAreComplete: [
   UnprovidedBootstrapServices<Effect.Services<ReturnType<typeof bootstrapStageAccounts>>>,
 ] extends [never]
   ? true
   : false = true;
-const environmentDependenciesAreComplete: [
-  UnprovidedBootstrapServices<Effect.Services<ReturnType<typeof bootstrapStageAccountsFromEnvironment>>>,
-] extends [never]
-  ? true
-  : false = true;
 
-it('provides every native stage bootstrap requirement, including enrollment, at the operator root', () => {
+it('provides every native stage bootstrap requirement, including enrollment and Better Auth, at the operator root', () => {
   expect(bootstrapDependenciesAreComplete).toBe(true);
-  expect(environmentDependenciesAreComplete).toBe(true);
 });
 
 it.effect('builds the production installation graph with the actual Shell enrollment and no external I/O', () =>
