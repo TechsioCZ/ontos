@@ -199,7 +199,7 @@ export const coreOperationRegistrations: readonly CoreOperationRegistration[] = 
  * The Core operations the Shell host serves to modules over the module route, each with the governed Core read that
  * answers it there. They are NOT in `coreOperationRegistrations`: no module host runs them in-process.
  */
-export const shellHostedCoreOperationRegistrations: readonly CoreOperationRegistration[] = Object.freeze([
+const shellHostedCoreOperationRegistrations: readonly CoreOperationRegistration[] = Object.freeze([
   Object.freeze({ operation: coreOperations.assetCurrent, registration: assetCurrentRead }),
 ]);
 
