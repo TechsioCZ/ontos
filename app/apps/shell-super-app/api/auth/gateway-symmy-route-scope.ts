@@ -213,16 +213,28 @@ const admissionDefinitionRead = {
   routeKey: 'customerGroupsBatch',
   schemaVersion: '1',
 } as const;
-/** The enrolled, published owner reads of the destination that an assertion for this route proof may name. */
-const ownerReadOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) =>
-  route.allowedOwnerOperations.flatMap((operation) => {
-    const admitted =
-      facts.sourcePurpose === 'read' ||
-      (facts.routeKey === admissionDefinitionRead.routeKey &&
-        operation.moduleId === admissionDefinitionRead.moduleId &&
-        operation.entrypointKey === admissionDefinitionRead.entrypointKey &&
-        operation.schemaVersion === admissionDefinitionRead.schemaVersion);
-    if (!admitted || operation.moduleId !== destination.manifest.module.id) {
+/**
+ * The owner reads of the destination that an assertion for this route proof may name. A read proof names every
+ * enrolled, published read. An admission proof names at most the one definition read, once however many enrollment
+ * items name it, and only where the destination publishes it as a current read.
+ */
+const ownerReadOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
+  if (facts.sourcePurpose === 'admit') {
+    const { entrypointKey, moduleId, routeKey, schemaVersion } = admissionDefinitionRead;
+    return facts.routeKey === routeKey &&
+      destination.manifest.module.id === moduleId &&
+      route.allowedOwnerOperations.some(
+        (operation) =>
+          operation.moduleId === moduleId &&
+          operation.entrypointKey === entrypointKey &&
+          operation.schemaVersion === schemaVersion,
+      ) &&
+      gatewayPublishedOperationAccess(destination, entrypointKey, schemaVersion) === 'read'
+      ? [{ entrypointKey, schemaVersion }]
+      : [];
+  }
+  return route.allowedOwnerOperations.flatMap((operation) => {
+    if (operation.moduleId !== destination.manifest.module.id) {
       return [];
     }
     const access = gatewayPublishedOperationAccess(destination, operation.entrypointKey, operation.schemaVersion);
@@ -230,6 +242,7 @@ const ownerReadOperations = (destination: InstalledContract, route: Route, facts
       ? [{ entrypointKey: operation.entrypointKey, schemaVersion: operation.schemaVersion }]
       : [];
   });
+};
 
 export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projectPrincipal')(function* project(
   proof: SymmyRouteScopeProof,

@@ -376,50 +376,87 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
     const moduleId = 'commerce.customer-context';
     const definitionRead = 'commerce.customer-context.api.customer-group-definition-source';
     const otherRead = 'commerce.customer-context.api.customer-profile-source-page';
+    const groupCreate = 'commerce.customer-context.create-customer-group';
     const commerce = makeModuleContractFixture({ appId: 'commerce-customer-context', moduleId });
-    const snapshot = yield* makeCompositionSnapshot([
-      {
-        ...commerce,
-        manifest: {
-          ...commerce.manifest,
-          publicSurface: {
-            ...commerce.manifest.publicSurface,
-            api: [{ key: 'commerce.customer-context.api.reads', operationKeys: ['read0.execute', 'read1.execute'] }],
-            operationContracts: [definitionRead, otherRead].map((entrypointKey, index) => ({
-              apiKey: 'commerce.customer-context.api.reads',
-              entrypoint: defineTenantModuleEntrypoint({
-                access: 'read',
-                authorization: { kind: 'protected' },
-                entrypointKey,
-                moduleKey: moduleId,
-                role: 'api',
-              }),
-              operationKey: `read${index}.execute`,
-              schemaVersion: '1',
-            })),
+    // The catalog publishes the group create as a write and the definition read with the access under test.
+    const publish = (definitionAccess: 'historical_read' | 'read') =>
+      Effect.gen(function* publishedCommerce() {
+        const snapshot = yield* makeCompositionSnapshot([
+          {
+            ...commerce,
+            manifest: {
+              ...commerce.manifest,
+              publicSurface: {
+                ...commerce.manifest.publicSurface,
+                actions: [
+                  {
+                    accessWorkload: {
+                      reason: 'Exact source group write',
+                      workloads: ['commerce.customer-context.source-write'],
+                    },
+                    actionKey: groupCreate,
+                    auditProfile: 'standard',
+                    entrypoint: defineTenantModuleEntrypoint({
+                      access: 'write',
+                      authorization: { kind: 'protected' },
+                      entrypointKey: groupCreate,
+                      moduleKey: moduleId,
+                      role: 'action',
+                    }),
+                    idempotency: 'required',
+                    legalEntityScope: 'required',
+                    owningModuleId: moduleId,
+                    schemaVersion: '1',
+                  },
+                ],
+                api: [
+                  { key: 'commerce.customer-context.api.reads', operationKeys: ['read0.execute', 'read1.execute'] },
+                ],
+                operationContracts: [
+                  { access: definitionAccess, entrypointKey: definitionRead },
+                  { access: 'read' as const, entrypointKey: otherRead },
+                ].map(({ access, entrypointKey }, index) => ({
+                  apiKey: 'commerce.customer-context.api.reads',
+                  entrypoint: defineTenantModuleEntrypoint({
+                    access,
+                    authorization: { kind: 'protected' },
+                    entrypointKey,
+                    moduleKey: moduleId,
+                    role: 'api',
+                  }),
+                  operationKey: `read${index}.execute`,
+                  schemaVersion: '1',
+                })),
+              },
+            },
           },
-        },
-      },
-    ]);
-    const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+        ]);
+        const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+        return { ...catalog, composition: snapshot.composition };
+      });
     const enrolled = (entrypointKeys: readonly string[]) =>
       entrypointKeys.map((entrypointKey) => ({ entrypointKey, moduleId, schemaVersion: '1' }));
-    const issue = (routeKey: 'customerGroupsBatch' | 'customersBatch', entrypointKeys: readonly string[]) =>
+    const issue = (input: {
+      readonly catalog: ShellInstalledCatalog;
+      readonly company?: string;
+      readonly entrypointKeys: readonly string[];
+      readonly routeKey: 'customerGroupsBatch' | 'customersBatch';
+    }) =>
       Effect.gen(function* issueCommerceRead() {
         const current = yield* fixture({
-          allowedOwnerOperations: enrolled(entrypointKeys),
-          catalog: { ...catalog, composition: snapshot.composition },
+          allowedOwnerOperations: enrolled(input.entrypointKeys),
+          catalog: input.catalog,
         });
         const assertion = yield* Effect.gen(function* admissionRoute() {
           const proof = yield* acquireSymmyRouteScopeProof({
             ...request,
-            compositionRevision: snapshot.composition.revision,
-            routeRequest: { routeKey },
+            compositionRevision: input.catalog.composition.revision,
+            routeRequest: { routeKey: input.routeKey },
             sourcePurpose: 'admit',
           });
           return yield* issueSymmyRouteScopeAssertion(proof, {
             audience: 'commerce-customer-context',
-            legalEntityId,
+            legalEntityId: input.company ?? legalEntityId,
             principal,
           });
         }).pipe(Effect.provide(current.layer));
@@ -432,13 +469,14 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
           }),
         );
       });
-    const groupRoute = [
-      'commerce.customer-context.create-customer-group',
-      'commerce.customer-context.update-customer-group',
-      definitionRead,
-      otherRead,
-    ];
-    const signed = yield* issue('customerGroupsBatch', groupRoute);
+    const catalog = yield* publish('read');
+    const groupRoute = [groupCreate, 'commerce.customer-context.update-customer-group', definitionRead, otherRead];
+    // Two enrollment items name the definition read; the assertion names it once.
+    const signed = yield* issue({
+      catalog,
+      entrypointKeys: [...groupRoute, definitionRead],
+      routeKey: 'customerGroupsBatch',
+    });
     expect(signed.payload['routeScope']).toMatchObject({
       legalEntityId,
       operations: [{ entrypointKey: definitionRead, schemaVersion: '1' }],
@@ -446,12 +484,24 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
       routeKey: 'customerGroupsBatch',
       tenantId: principal.tenantId,
     });
-    // Another admission route, and the group route without the definition read, reach no Commerce read.
-    for (const [routeKey, entrypointKeys] of [
-      ['customersBatch', groupRoute],
-      ['customerGroupsBatch', groupRoute.filter((entrypointKey) => entrypointKey !== definitionRead)],
+    // Another admission route; the group route without the definition read, though it enrolls a published write;
+    // another company on the group route; and a definition read published only for historical reads.
+    for (const refusedInput of [
+      { catalog, entrypointKeys: groupRoute, routeKey: 'customersBatch' },
+      {
+        catalog,
+        entrypointKeys: groupRoute.filter((entrypointKey) => entrypointKey !== definitionRead),
+        routeKey: 'customerGroupsBatch',
+      },
+      {
+        catalog,
+        company: '90000000-0000-4000-8000-000000000001',
+        entrypointKeys: groupRoute,
+        routeKey: 'customerGroupsBatch',
+      },
+      { catalog: yield* publish('historical_read'), entrypointKeys: groupRoute, routeKey: 'customerGroupsBatch' },
     ] as const) {
-      const refused = yield* Effect.flip(issue(routeKey, entrypointKeys));
+      const refused = yield* Effect.flip(issue(refusedInput));
       expect(refused).toMatchObject({ code: 'forbidden' });
     }
   }),
