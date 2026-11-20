@@ -1827,6 +1827,8 @@ process.stdout.write(JSON.stringify(failures));`,
           expect(failure.reason).toBe('Invalid live operation fixture configuration');
         }
       }).pipe(Effect.scoped),
+    // A child process that imports the whole fixture cold: 2.2 s on a quiet runner, over the suite limit on a busy one.
+    { timeout: 10_000 },
   );
 });
 
