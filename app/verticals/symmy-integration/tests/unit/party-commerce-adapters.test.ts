@@ -143,24 +143,31 @@ const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
   const bodies: Body[] = [];
   const sent: Request[] = [];
   const queued: OwnerReply[] = [];
-  let fallback = Option.none<OwnerReply>();
+  let fallback = Option.none<(body: Body) => OwnerReply>();
   const decodeBody = Schema.decodeUnknownOption(Schema.fromJsonString(schemas.body));
   const encodeSuccess = Schema.encodeSync(schemas.success);
   const succeeding =
     (value: () => Success): OwnerReply =>
     () =>
       Response.json(encodeSuccess(value()));
+  /** A reply queued once answers first; otherwise the standing reply is chosen for this request. */
+  const replyTo = (body: Body) =>
+    Option.orElse(Option.fromNullishOr(queued.shift()), () => fallback.pipe(Option.map((select) => select(body))));
   const endpoint = {
     /** Answers every later request with the owner's response computed when the request arrives. */
     answer: (value: () => Success) => {
-      fallback = Option.some(succeeding(value));
+      fallback = Option.some(() => succeeding(value));
+    },
+    /** Answers every later request with the reply its decoded request selects, whatever order requests arrive in. */
+    answerBy: (select: (body: Body) => OwnerReply) => {
+      fallback = Option.some(select);
     },
     bodies,
     fail: <Problem extends { readonly status: number }, Encoded>(
       schema: Schema.Codec<Problem, Encoded>,
       problem: Problem,
     ) => {
-      fallback = Option.some(problemReply(schema, problem));
+      fallback = Option.some(() => problemReply(schema, problem));
     },
     failOnce: <Problem extends { readonly status: number }, Encoded>(
       schema: Schema.Codec<Problem, Encoded>,
@@ -175,7 +182,7 @@ const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
       sent.push(request);
       return Option.flatMap(decodeBody(text), (body) => {
         bodies.push(body);
-        return Option.orElse(Option.fromNullishOr(queued.shift()), () => fallback);
+        return replyTo(body);
       });
     },
     reset: () => {
@@ -186,12 +193,14 @@ const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
     },
     sent,
     succeed: (value: Success) => {
-      fallback = Option.some(succeeding(() => value));
+      fallback = Option.some(() => succeeding(() => value));
     },
+    /** The owner's success response to one request, for `answerBy`. */
     succeedOnce: (value: Success) => {
       queued.push(succeeding(() => value));
       return endpoint;
     },
+    success: (value: Success): OwnerReply => succeeding(() => value),
     write: schemas.write,
   };
   return endpoint;
@@ -1916,35 +1925,42 @@ const replayedGroupAdmission = Schema.decodeUnknownSync(AdmitSymmySyncResultSche
   replayed: true,
   tenantId,
 });
+const groupReplayGroup = {
+  businessCode: groupReplayPayload.businessCode,
+  currentDefinition: {
+    changeKind: 'CREATED',
+    description: groupReplayPayload.description,
+    membershipCriteria: groupReplayPayload.membershipCriteria,
+    name: groupReplayPayload.name,
+    purpose: groupReplayPayload.purpose,
+    reason: groupReplayPayload.reason,
+    recordedAt: '2026-11-07T00:00:00.000Z',
+    revision: 1,
+  },
+  currentState: 'ACTIVE',
+  definitionHistory: [],
+  groupRef: {
+    moduleId: 'commerce.customer-context',
+    resourceId: '10000000-0000-4000-8000-000000000034',
+    resourceType: 'commerce.customer-context.customer-group',
+    tenantId,
+  },
+  lifecycleHistory: [],
+  meaningKey: groupReplayPayload.meaningKey,
+  revision: 1,
+};
 const groupReplayReceipt = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceResponseSchema)({
   _tag: 'RECEIPT',
   created: true,
-  group: {
-    businessCode: groupReplayPayload.businessCode,
-    currentDefinition: {
-      changeKind: 'CREATED',
-      description: groupReplayPayload.description,
-      membershipCriteria: groupReplayPayload.membershipCriteria,
-      name: groupReplayPayload.name,
-      purpose: groupReplayPayload.purpose,
-      reason: groupReplayPayload.reason,
-      recordedAt: '2026-11-07T00:00:00.000Z',
-      revision: 1,
-    },
-    currentState: 'ACTIVE',
-    definitionHistory: [],
-    groupRef: {
-      moduleId: 'commerce.customer-context',
-      resourceId: '10000000-0000-4000-8000-000000000034',
-      resourceType: 'commerce.customer-context.customer-group',
-      tenantId,
-    },
-    lifecycleHistory: [],
-    meaningKey: groupReplayPayload.meaningKey,
-    revision: 1,
-  },
+  group: groupReplayGroup,
   operation: 'CREATE',
   originalIntent: groupReplayPayload,
+  source: groupReplayPayload.source,
+});
+/** What a current definition read would answer for the same group: never the answer to an exact retry. */
+const groupReplayCurrent = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceResponseSchema)({
+  _tag: 'CURRENT',
+  group: groupReplayGroup,
   source: groupReplayPayload.source,
 });
 const replayGroupAdmission = Effect.gen(function* replayGroupAdmission() {
@@ -1956,21 +1972,26 @@ const replayGroupAdmission = Effect.gen(function* replayGroupAdmission() {
     }),
   );
 });
-const definitionsUnavailable = CustomerGroupDefinitionSourceUnavailableProblemSchema.make({
-  detail: 'Group definitions unavailable',
-  retryable: true,
-  status: 503,
-  title: 'Unavailable',
-  type: 'about:blank',
-});
+const definitionsUnavailable = problemReply(
+  CustomerGroupDefinitionSourceUnavailableProblemSchema,
+  CustomerGroupDefinitionSourceUnavailableProblemSchema.make({
+    detail: 'Group definitions unavailable',
+    retryable: true,
+    status: 503,
+    title: 'Unavailable',
+    type: 'about:blank',
+  }),
+);
 // A synchronous admission stores no effect outcome: its exact retry asks Commerce for the receipt of each effect.
 describe('exact synchronous Group retry', () => {
   it.effect('is answered from the Commerce receipt while a current definition read would be unavailable', () =>
     Effect.gen(function* receiptWithoutCurrentRead() {
       reset();
       peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      peer.groupDefinition.fail(CustomerGroupDefinitionSourceUnavailableProblemSchema, definitionsUnavailable);
-      peer.groupDefinition.succeedOnce(groupReplayReceipt);
+      // Commerce answers each read by its mode: the receipt read answers, a current definition read is unavailable.
+      peer.groupDefinition.answerBy(({ mode }) =>
+        mode === 'RECEIPT' ? peer.groupDefinition.success(groupReplayReceipt) : definitionsUnavailable,
+      );
       const result = yield* replayGroupAdmission;
       expect(result.items[0].effects).toEqual([
         { effectId: groupReplayEffectId, owner: 'commerce.customer-context', status: 'accepted_change' },
@@ -1982,7 +2003,10 @@ describe('exact synchronous Group retry', () => {
     Effect.gen(function* receiptUnavailable() {
       reset();
       peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
-      peer.groupDefinition.fail(CustomerGroupDefinitionSourceUnavailableProblemSchema, definitionsUnavailable);
+      // The receipt read is unavailable; a current definition read would answer the group as it now stands.
+      peer.groupDefinition.answerBy(({ mode }) =>
+        mode === 'RECEIPT' ? definitionsUnavailable : peer.groupDefinition.success(groupReplayCurrent),
+      );
       const result = yield* replayGroupAdmission;
       expect(result.items[0].effects).toEqual([
         { effectId: groupReplayEffectId, owner: 'commerce.customer-context', status: 'indeterminate' },
