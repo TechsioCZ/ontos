@@ -27,7 +27,6 @@ export const MEDIA_CURRENT_REVISION = 1;
 export const AssetCurrentRequestSchema = Schema.Struct({
   mediaAssetRefs: Schema.NonEmptyArray(MediaAssetRefSchema),
 });
-export type AssetCurrentRequest = typeof AssetCurrentRequestSchema.Type;
 
 const AssetCurrentRevisionSchema = Schema.Struct({
   resourceRef: MediaAssetRefSchema,
@@ -55,11 +54,10 @@ const UnconfirmedEntrySchema = Schema.Struct({
   resourceRef: MediaAssetRefSchema,
 });
 
-export const AssetCurrentEntrySchema = Schema.Union([AvailableEntrySchema, UnconfirmedEntrySchema]);
+const AssetCurrentEntrySchema = Schema.Union([AvailableEntrySchema, UnconfirmedEntrySchema]);
 export type AssetCurrentEntry = typeof AssetCurrentEntrySchema.Type;
 
 export const AssetCurrentResponseSchema = Schema.Struct({ entries: Schema.Array(AssetCurrentEntrySchema) });
-export type AssetCurrentResponse = typeof AssetCurrentResponseSchema.Type;
 
 /**
  * The state of one requested ref, from what Core found (ledger A13). The asset must be absent in the trusted tenant

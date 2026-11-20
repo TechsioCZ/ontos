@@ -95,12 +95,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media owns no 
         forbid(sources, 'an access engine import', /from\s+['"][^'"]*\/access\/[^'"]*['"]/u, 'code');
         forbid(sources, 'an AccessDecision', /AccessDecision/u);
         forbid(sources, 'a gate call', /\.\s*decide(?:Many)?\s*\(/u);
+        forbid(sources, 'a decision outcome', /['"](?:ALLOWED|DENIED|NEEDS_APPROVAL)['"]/u, 'code');
         // The Current V1 contract names the owner states Catalog consumes (`UNAVAILABLE` is one of them): that is
         // the vocabulary of an owner answer about an asset, never an access decision, so only that file is exempt.
         forbid(
           sources.filter(([file]) => file !== 'src/media/current-contract.ts'),
           'a decision outcome',
-          /['"](?:ALLOWED|DENIED|NEEDS_APPROVAL|UNAVAILABLE)['"]/u,
+          /['"]UNAVAILABLE['"]/u,
           'code',
         );
       }),
