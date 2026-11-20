@@ -9,7 +9,7 @@ import {
   ShellTargetForbiddenProblemSchema,
   ShellTargetNotFoundProblemSchema,
 } from '../../../../shared/browser-api.ts';
-import type { CurrentSession, ShellDocumentContext, ShellDocumentTarget } from '../../../../shared/browser-api.ts';
+import type { CurrentSession } from '../../../../shared/browser-api.ts';
 import {
   BrowserModuleRevisionConflict,
   pinBrowserModuleTarget,
@@ -23,14 +23,7 @@ import {
 } from '../../../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 
-/** The DOM's Request drops a cookie header, as a browser does; a loader request carries it. */
-const request = (cookie = 'session=test-session') => {
-  const value = new Request('https://shell.example.test/en/contacts');
-  Object.defineProperty(value, 'headers', {
-    value: new Headers({ cookie }),
-  });
-  return value;
-};
+const request = () => new Request('https://shell.example.test/en/contacts');
 
 const approvedTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
   appId: 'party-registry',
@@ -254,80 +247,5 @@ it.effect('admits an independent approved remote within the same document compos
       }),
       browserDocument,
     );
-  }),
-);
-
-/** Server rendering: no browser document, like the SSR loader on Node and Workers. */
-const asServerRender = <Value, Failure>(operation: Effect.Effect<Value, Failure>) => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
-  return Effect.acquireUseRelease(
-    Effect.sync(() => Reflect.deleteProperty(globalThis, 'document')),
-    () => operation,
-    () =>
-      Effect.sync(() => {
-        if (descriptor !== undefined) {
-          Object.defineProperty(globalThis, 'document', descriptor);
-        }
-      }),
-  );
-};
-
-/** The document context the BFF answers server rendering for Ada with the pinned composition. */
-const signedInDocument = (target?: ShellDocumentTarget): ShellDocumentContext => {
-  const document: ShellDocumentContext = {
-    composition: {
-      compositionRevision: shellCompositionRevision,
-      deniedAppIds: [],
-      gatewayAudiences: [],
-      homeComponents: [],
-      navigation: [],
-      state: 'available',
-      unavailableDeployments: [],
-    },
-    session: adaSignedIn,
-  };
-  return target === undefined ? document : { ...document, target };
-};
-
-/** Server rendering of /contacts for a visitor who carries the Shell's session cookie. */
-const serverModel = (context: ShellDocumentContext) => {
-  const bff = moduleBff({ documentContext: () => Effect.succeed(context) });
-  const serverRequest = request('better-auth.session_token=test-session');
-  return asServerRender(moduleModel(bff, { canonicalPath: '/contacts', request: serverRequest })).pipe(
-    Effect.map((model) => ({ model, requests: bff.requests.map(({ body, endpoint }) => ({ body, endpoint })) })),
-  );
-};
-
-it.effect('server rendering reads the page target in the one document read and keeps it only for that revision', () =>
-  Effect.gen(function* serverTargetInDocument() {
-    const resolved = yield* serverModel(signedInDocument({ state: 'resolved', target: approvedTarget }));
-    expect(resolved.model).toMatchObject({ state: 'resolved', target: { moduleId: 'party.registry' } });
-    // One request per document: no separate target read, no separate Shell read.
-    expect(resolved.requests).toEqual([
-      { body: { target: { canonicalPath: '/contacts' } }, endpoint: 'documentContext' },
-    ]);
-
-    const promoted = signedInDocument({
-      state: 'resolved',
-      target: { ...approvedTarget, compositionRevision: 'd'.repeat(64) },
-    });
-    expect((yield* serverModel(promoted)).model).toMatchObject({ state: 'reload_required' });
-    const forbidden = signedInDocument({ problem: targetRefusals.ShellTargetForbiddenProblem, state: 'failed' });
-    expect((yield* serverModel(forbidden)).model).toMatchObject({ state: 'forbidden' });
-    const sessionEnded = signedInDocument({
-      problem: { ...problem, _tag: 'ShellAuthenticationRequiredProblem', status: 401 },
-      state: 'failed',
-    });
-    expect((yield* serverModel(sessionEnded)).model).toMatchObject({
-      shell: { reason: 'session_ended' },
-      state: 'selection_required',
-    });
-    const unselected = signedInDocument({ state: 'selection_required' });
-    expect((yield* serverModel(unselected)).model).toMatchObject({ state: 'selection_required' });
-    // An authenticated document that answered no target never shows a page.
-    expect((yield* serverModel(signedInDocument())).model).toMatchObject({ state: 'unavailable' });
-    const anonymous = yield* serverModel({ session: { state: 'anonymous' } });
-    expect(anonymous.model).toMatchObject({ state: 'selection_required' });
-    expect(anonymous.requests.map(({ endpoint }) => endpoint)).toEqual(['documentContext']);
   }),
 );

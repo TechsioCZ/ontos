@@ -1,5 +1,3 @@
-import { createRequire } from 'node:module';
-
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { ConfigProvider, Deferred, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -24,7 +22,6 @@ import type { CurrentSession, ShellComposition } from '../../../../shared/browse
 import { LegalEntityDetailResponseSchema } from '../../../../shared/core-reads/legal-entity-detail.ts';
 import {
   loadHomePageModel,
-  loadServerModuleDocument,
   primeBrowserReads,
   resetBrowserSessionCache,
 } from '../../../../src/routes/[lang]/home-page-model.ts';
@@ -63,10 +60,7 @@ const futureItem = {
 };
 const navigation = [futureItem];
 const problem = { detail: 'redacted', title: 'redacted', type: 'about:blank' } as const;
-const request = (url = 'https://shell.example.test/en') =>
-  new Request(url, {
-    headers: { cookie: 'session=test-session' },
-  });
+const request = (url = 'https://shell.example.test/en') => new Request(url);
 
 const session = Schema.decodeUnknownSync(CurrentSessionSchema);
 const legalEntitiesResponse = Schema.decodeUnknownSync(AvailableLegalEntitiesResponseSchema);
@@ -591,26 +585,6 @@ it.effect('shows the welcome text the selected company provides on the Shell wel
   }),
 );
 
-/** Server rendering: no browser document, like the SSR loader on Node and Workers. */
-const asServerRender = <Value, Failure, Requirements>(operation: Effect.Effect<Value, Failure, Requirements>) => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
-  return Effect.acquireUseRelease(
-    Effect.sync(() => Reflect.deleteProperty(globalThis, 'document')),
-    () => operation,
-    () =>
-      Effect.sync(() => {
-        if (descriptor !== undefined) {
-          Object.defineProperty(globalThis, 'document', descriptor);
-        }
-      }),
-  );
-};
-// happy-dom's Request drops the cookie header (a browser-forbidden name); the server's request carries it.
-const serverRequest = (url = 'https://shell.example.test/en') =>
-  Object.defineProperty(new Request(url), 'headers', {
-    value: new Headers({ cookie: 'better-auth.session_token=test-session' }),
-  });
-
 const documentContext = Schema.decodeUnknownSync(ShellDocumentContextSchema);
 const documentContextOf = (overrides: Partial<typeof ShellDocumentContextSchema.Encoded> = {}) =>
   documentContext({
@@ -623,100 +597,46 @@ const documentContextOf = (overrides: Partial<typeof ShellDocumentContextSchema.
     ...overrides,
   });
 
-/** The BFF answering server rendering with one document context; every separate read is left unscripted. */
-const documentBff = (context: ReturnType<typeof documentContextOf>, overrides: ShellBffScript = {}) =>
-  makeShellBff({ documentContext: () => Effect.succeed(context), ...overrides });
-
-const serverModel = (bff: Bff, url?: string) => asServerRender(loadModel(bff, serverRequest(url)));
-
-/** The serializer TanStack's server rendering embeds every loader's data with, as its router core loads it. */
-interface EmbeddingSerializer {
-  readonly crossSerialize: (value: HomePageModel) => string;
-  readonly deserialize: (source: string) => HomePageModel;
-  readonly serialize: (value: HomePageModel) => string;
-}
-const embeddingSerializer = (): EmbeddingSerializer => {
-  const fromShell = createRequire(`${process.cwd()}/package.json`);
-  const fromRouter = createRequire(fromShell.resolve('@tanstack/react-router'));
-  return createRequire(fromRouter.resolve('@tanstack/router-core'))('seroval');
+/** The serialized document model delivered to the browser at hydration; Node tests verify its producer. */
+const hydratedDocumentModel = () => {
+  const signedIn = session({ identity, state: 'authenticated' });
+  if (
+    signedIn.state !== 'authenticated' ||
+    composition.state !== 'available' ||
+    legalEntities.state !== 'authenticated'
+  ) {
+    throw new Error('Expected an authenticated hydration fixture');
+  }
+  const renderedTenants = tenants.tenants.slice(0, 1);
+  return {
+    browserReads: {
+      canManagePeople: false,
+      composition,
+      legalEntities,
+      tenants: { tenants: renderedTenants },
+    },
+    compositionRevision,
+    contextState: 'authenticated',
+    gatewayAudiences: [],
+    homeContribution: { state: 'forbidden' },
+    identity: signedIn.identity,
+    legalEntities: {
+      items: legalEntities.legalEntities,
+      state: 'available',
+      tenantContextAvailable: false,
+    },
+    navigation: {
+      deniedAppIds: [],
+      items: composition.navigation,
+      moduleIds: composition.navigation.map((item) => item.moduleId),
+      state: 'available',
+      unavailableDeployments: [],
+    },
+    selectedLegalEntityId: signedIn.identity.legalEntityId,
+    state: 'authenticated',
+    tenants: { items: renderedTenants, state: 'available' },
+  } satisfies Extract<HomePageModel, { readonly state: 'authenticated' }>;
 };
-
-/** Names a person controls (their company, their name, a role) written to escape the document's script. */
-const HOSTILE = '</script><script>alert(1)</script><!-- \u2028\u2029 ]]> "\'`';
-
-it.effect('the server model cannot break out of the document script, whatever the names it carries', () =>
-  Effect.gen(function* hostileNames() {
-    const hostileIdentity = { ...identity, displayName: HOSTILE, legalName: HOSTILE };
-    const bff = documentBff(
-      documentContextOf({
-        legalEntities: { ...legalEntities, legalEntities: [{ legalEntityId, legalName: HOSTILE }] },
-        session: { identity: hostileIdentity, state: 'authenticated' },
-        tenants: { state: 'available', tenants: [{ name: HOSTILE, tenantId }] },
-      }),
-    );
-    const model = yield* serverModel(bff);
-    const serializer = embeddingSerializer();
-    const embedded = serializer.crossSerialize(model);
-    expect(embedded).toContain('alert(1)');
-    expect(embedded).not.toMatch(/<\/script/iu);
-    expect(embedded).not.toContain('<!--');
-    expect(embedded).not.toMatch(/[\u2028\u2029]/u);
-    expect(embedded).not.toContain('<');
-    // The browser reads back exactly the names the server rendered, the hostile ones included.
-    expect(serializer.deserialize(serializer.serialize(model))).toEqual(model);
-  }),
-);
-
-it.effect('server rendering reads the whole document context in one request', () =>
-  Effect.gen(function* serverReadsOnce() {
-    const bff = documentBff(documentContextOf());
-    expect(yield* serverModel(bff)).toEqual({
-      compositionRevision,
-      contextState: 'authenticated',
-      gatewayAudiences: [],
-      homeContribution: { state: 'forbidden' },
-      identity,
-      legalEntities: {
-        items: [{ legalEntityId, legalName: 'Alpha company' }],
-        state: 'available',
-        tenantContextAvailable: false,
-      },
-      navigation: {
-        deniedAppIds: [],
-        items: navigation,
-        moduleIds: ['future.generated'],
-        state: 'available',
-        unavailableDeployments: [],
-      },
-      selectedLegalEntityId: legalEntityId,
-      state: 'authenticated',
-      tenants: { items: [{ name: 'Alpha tenant', tenantId }], state: 'available' },
-      // Exactly the separate endpoints' answers to this person here, and nothing else (no token, no assertion).
-      browserReads: {
-        canManagePeople: false,
-        composition,
-        legalEntities,
-        tenants: { tenants: [{ name: 'Alpha tenant', tenantId }] },
-      },
-    });
-    // One request: no separate session, composition, choice, capability, assertion or target read.
-    expect(bff.requests.map(({ body, endpoint }) => ({ body, endpoint }))).toEqual([
-      { body: { home: true }, endpoint: 'documentContext' },
-    ]);
-  }),
-);
-
-it.effect('a document whose hint checks could not answer primes nothing, so the browser asks again', () =>
-  Effect.gen(function* unansweredHints() {
-    const { canManagePeople: _unanswered, ...withoutPeopleHint } = documentContextOf();
-    for (const context of [withoutPeopleHint, documentContextOf({ tenantContextUnavailable: true })]) {
-      const model = yield* serverModel(documentBff(context));
-      // The page still shows the hint as "no"; only nothing is kept as an answer.
-      expect(model).toMatchObject({ state: 'authenticated' });
-      expect(model).not.toHaveProperty('browserReads');
-    }
-  }),
-);
 
 /** The reads the server-rendered model answers; the session is always read fresh. */
 const primedShellReads = [
@@ -727,30 +647,22 @@ const primedShellReads = [
 ] as const;
 
 /**
- * Renders the document on the server, then primes its reads in this browser document as hydration does, and pins
+ * Receives the rendered document model, primes its reads in this browser document as hydration does, and pins
  * the document to the rendered release. The returned BFF also answers the browser's separate reads; `browserReads`
  * lists what the browser asked after hydration.
  */
 const hydrateServerModel = (overrides: ShellBffScript = {}) =>
   Effect.gen(function* hydrate() {
-    const bff = signedInBff({ documentContext: () => Effect.succeed(documentContextOf()), ...overrides });
-    const model = yield* serverModel(bff);
-    if (
-      model.state !== 'authenticated' ||
-      model.browserReads === undefined ||
-      model.compositionRevision === undefined
-    ) {
-      return yield* Effect.die('Expected a server-rendered model with its browser reads');
-    }
+    const bff = signedInBff(overrides);
+    const model = hydratedDocumentModel();
     yield* resetBrowserSessionCache;
     yield* primeBrowserReads(model.identity, model.browserReads, 'https://shell.example.test/en').pipe(
       Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
     );
     yield* pinDocumentCompositionRevision(model.compositionRevision, document);
-    const rendered = bff.requests.length;
     return {
       bff,
-      browserReads: () => endpoints(bff).slice(rendered),
+      browserReads: () => endpoints(bff),
       load: () => loadAgain(bff, new Request('https://shell.example.test/en/ukoly')),
       model,
       reads: model.browserReads,
@@ -821,152 +733,6 @@ it.effect('a session boundary drops the primed reads, so the next loader asks th
   }),
 );
 
-it.effect('a module page document reads its target in the same document-context request', () =>
-  Effect.gen(function* moduleDocument() {
-    const target = { state: 'selection_required' as const };
-    const bff = documentBff(documentContextOf({ target }));
-    const moduleDocumentModel = yield* asServerRender(
-      loadServerModuleDocument(serverRequest('https://shell.example.test/en/contacts'), {
-        canonicalPath: '/contacts',
-      }).pipe(
-        Effect.provide(bff.layer),
-        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
-      ),
-    );
-    expect(moduleDocumentModel.target).toEqual(target);
-    expect(moduleDocumentModel.shell).toMatchObject({ compositionRevision, state: 'authenticated' });
-    expect(bff.requests.map(({ body, endpoint, targetSource }) => ({ body, endpoint, targetSource }))).toEqual([
-      { body: { target: { canonicalPath: '/contacts' } }, endpoint: 'documentContext', targetSource: 'server_render' },
-    ]);
-  }),
-);
-
-const withoutLegalEntities = ({ legalEntities: _legalEntities, ...rest }: ReturnType<typeof documentContextOf>) => rest;
-
-it.effect('server rendering maps each document-context part to the same models as the separate reads', () =>
-  Effect.gen(function* serverPartOutcomes() {
-    expect(yield* serverModel(documentBff(documentContext({ session: { state: 'anonymous' } })))).toEqual({
-      state: 'anonymous',
-    });
-    expect(yield* serverModel(documentBff(documentContextOf({ composition: { state: 'reload_required' } })))).toEqual({
-      state: 'reload_required',
-    });
-    expect(yield* serverModel(documentBff(documentContextOf({ composition: { state: 'unavailable' } })))).toEqual({
-      state: 'unavailable',
-    });
-    expect(
-      yield* serverModel(documentBff(documentContextOf({ tenants: { state: 'authentication_required' } }))),
-    ).toEqual({ reason: 'session_ended', state: 'anonymous' });
-    expect(
-      yield* serverModel(documentBff(withoutLegalEntities(documentContextOf({ tenants: { state: 'unavailable' } })))),
-    ).toMatchObject({
-      legalEntities: { items: [], state: 'unavailable' },
-      tenants: { items: [{ name: tenantId, tenantId }], state: 'unavailable' },
-    });
-    const forbidden = makeShellBff({ documentContext: () => Effect.fail(identityForbidden) });
-    expect(yield* serverModel(forbidden)).toEqual({ reason: 'account_forbidden', state: 'anonymous' });
-  }),
-);
-
-it.effect('server rendering keeps a context without a selected legal entity free of composition data', () =>
-  Effect.gen(function* serverSelectionRequired() {
-    const bff = documentBff(
-      documentContext({
-        composition: { navigation: [], state: 'selection_required' },
-        legalEntities: {
-          legalEntities: [{ legalEntityId: otherLegalEntityId, legalName: 'Beta company' }],
-          state: 'selection_required',
-          tenantContextAvailable: true,
-        },
-        session: {
-          availableLegalEntities: [{ legalEntityId: otherLegalEntityId, legalName: 'Beta company' }],
-          identity: tenantIdentity,
-          state: 'selection_required',
-        },
-        tenants: { state: 'available', tenants: [{ name: 'Alpha tenant', tenantId }] },
-      }),
-    );
-    const model = yield* serverModel(bff);
-    expect(model).toMatchObject({
-      contextState: 'selection_required',
-      legalEntities: { items: [{ legalEntityId: otherLegalEntityId, legalName: 'Beta company' }], state: 'available' },
-      navigation: { items: [], state: 'available' },
-    });
-    expect(model).not.toHaveProperty('compositionRevision');
-  }),
-);
-
-it.effect('server rendering offers people administration from the context capability', () =>
-  Effect.gen(function* serverPeopleCapability() {
-    for (const canManagePeople of [false, true]) {
-      const bff = documentBff(
-        documentContextOf({ canManagePeople, composition: availableComposition({ navigation: peopleNavigation }) }),
-      );
-      expect(yield* serverModel(bff)).toMatchObject({
-        navigation: { items: peopleAdministrationItems(canManagePeople) },
-      });
-    }
-  }),
-);
-
-it.effect('server rendering embeds the admitted Home target without a separate request', () =>
-  Effect.gen(function* serverAdmitsHome() {
-    const contribution = {
-      state: 'ready' as const,
-      target: {
-        appId: 'fixture-dashboard',
-        componentKey: 'fixture.dashboard.home',
-        compositionRevision,
-        entrypointKey: 'fixture.dashboard.component.home',
-        federation: {
-          expose: './Home',
-          manifest: { sha256: 'a'.repeat(64), url: 'https://assets.example.test/dashboard/mf-manifest.json' },
-          remoteName: 'fixtureDashboard',
-        },
-        moduleId: 'fixture.dashboard',
-        routeParameters: {},
-        writable: false,
-      },
-    };
-    const home = documentBff(documentContextOf({ home: { contribution } }));
-    expect(yield* serverModel(home)).toMatchObject({
-      homeContribution: { state: 'ready', target: { compositionRevision, moduleId: 'fixture.dashboard' } },
-      state: 'authenticated',
-    });
-    expect(endpoints(home)).toEqual(['documentContext']);
-    const page = documentBff(documentContextOf());
-    yield* serverModel(page, 'https://shell.example.test/en/ukoly');
-    expect(page.requests.at(-1)?.body).toEqual({});
-  }),
-);
-
-it.effect('server rendering preserves the company welcome and unavailable Home outcomes', () =>
-  Effect.gen(function* serverHomeOutcomes() {
-    const welcome = documentBff(
-      documentContextOf({ home: { contribution: { state: 'forbidden' }, welcome: 'Firemní přivítání' } }),
-    );
-    expect(yield* serverModel(welcome)).toMatchObject({
-      companyWelcome: 'Firemní přivítání',
-      homeContribution: { state: 'forbidden' },
-    });
-    const unavailable = documentBff(documentContextOf({ home: { contribution: { state: 'unavailable' } } }));
-    expect(yield* serverModel(unavailable)).toMatchObject({ homeContribution: { state: 'unavailable' } });
-    expect([...endpoints(welcome), ...endpoints(unavailable)]).toEqual(['documentContext', 'documentContext']);
-  }),
-);
-
-it.effect('server rendering embeds no gateway assertions and leaves them to the browser batch', () =>
-  Effect.gen(function* serverWithoutAssertions() {
-    const bff = documentBff(
-      documentContextOf({ composition: availableComposition({ gatewayAudiences: ['future-generated'] }) }),
-    );
-    const model = yield* serverModel(bff, 'https://shell.example.test/en/ukoly');
-    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
-    expect(model).not.toHaveProperty('gatewayAssertions');
-    expect(endpoints(bff)).toEqual(['documentContext']);
-  }),
-);
-
 const tenantSession = (): CurrentSession =>
   session({ availableLegalEntities: [], identity: tenantIdentity, state: 'tenant_authenticated' });
 const tenantScopeComposition: ShellComposition = shellComposition({ navigation: [], state: 'selection_required' });
@@ -1005,26 +771,5 @@ it.effect('reconstructs explicit tenant scope on browser reload without company 
     expect(model).not.toHaveProperty('selectedLegalEntityId');
     expect(endpoints(bff)).not.toContain('shellComposition');
     expect(requestsTo(bff, 'documentContext')).toHaveLength(1);
-  }),
-);
-
-it.effect('reconstructs explicit tenant scope from the server document context', () =>
-  Effect.gen(function* serverTenantScope() {
-    const bff = documentBff(
-      documentContextOf({
-        composition: tenantScopeComposition,
-        compositionRevision,
-        legalEntities: { legalEntities: [], state: 'tenant_authenticated', tenantContextAvailable: true },
-        session: tenantSession(),
-      }),
-    );
-    const model = yield* serverModel(bff);
-    expect(model).toMatchObject({
-      compositionRevision,
-      contextState: 'tenant_authenticated',
-      legalEntities: { tenantContextAvailable: true },
-      navigation: { items: [] },
-    });
-    expect(model).not.toHaveProperty('selectedLegalEntityId');
   }),
 );
