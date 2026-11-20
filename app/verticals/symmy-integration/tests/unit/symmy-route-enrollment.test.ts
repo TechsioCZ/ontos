@@ -19,6 +19,7 @@ import {
   updateProductOperation,
   variantFactsOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
+import { stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
 import { symmyCallInMode } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
@@ -109,6 +110,8 @@ const currentMarkets = operation('commerce.market-catalog', 'commerce.market-cat
 const priceSchedule = operation('commerce.pricing', 'commerce.pricing.api.price-schedule');
 const groupSourcePrices = operation('commerce.pricing', 'commerce.pricing.api.price-group-source-prices');
 const currencies = operation('commerce.pricing', 'commerce.pricing.api.current-supported-currencies');
+const importStock = operation('commerce.inventory', 'commerce.inventory.import-source-assertion');
+const stockBackend = 'AKROS_ERP';
 
 type EncodedRequest = typeof SymmyRouteEnrollmentRequestSchema.Encoded;
 type EncodedConfiguration = EncodedRequest['configuration'];
@@ -156,12 +159,29 @@ const selector: NonNullable<EncodedConfiguration['selector']> = {
   },
 };
 
+/** One position of the ERP's stock the stock route admits rows for. */
+const stockPosition = (
+  itemKey: string,
+  changes: Partial<NonNullable<EncodedConfiguration['stockScope']>[number]> = {},
+): NonNullable<EncodedConfiguration['stockScope']>[number] => ({
+  customerConfigurationId: 'AKROS',
+  issuerBackendId: stockBackend,
+  itemKey,
+  locationKey: 'WH-MAIN',
+  namespace: 'AKROS_STOCK',
+  positionRef: {
+    moduleId: 'commerce.inventory',
+    resourceId: groupId,
+    resourceType: 'commerce.inventory.stock-position',
+    tenantId,
+  },
+  scope: 'AKROS_COMPANY',
+  ...changes,
+});
+
 const decode = Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema);
 const write = { legalEntityId, lifecyclePolicy };
-type Enrollable = Exclude<
-  SymmyEnrollmentRouteKey,
-  'assortmentRulesFixtureBatch' | 'inventoryStockBatch' | 'sellerVatDeclarationsFixtureBatch'
->;
+type Enrollable = Exclude<SymmyEnrollmentRouteKey, 'assortmentRulesFixtureBatch' | 'sellerVatDeclarationsFixtureBatch'>;
 type RouteFields = Omit<
   EncodedRequest,
   'mappingVersion' | 'principalId' | 'routeId' | 'routeKey' | 'routeRevision' | 'tenantId'
@@ -181,6 +201,14 @@ const valid = {
     configuration: { items: [item('CUSTOMER_GROUP', [createGroup, groupDefinitionSource])] },
   }),
   customersBatch: () => ({ ...write, configuration: { items: [item('CUSTOMER', [createParty, retailProfile])] } }),
+  inventoryStockBatch: () => ({
+    configuration: {
+      inventoryBackendId: stockBackend,
+      items: [item('STOCK', [importStock])],
+      stockScope: [stockPosition('SKU-1')],
+    },
+    lifecyclePolicy,
+  }),
   priceListPricesBatch: () => ({
     ...write,
     configuration: { items: [item('PRICE', [definePrice, revisePrice, associations])], ...priceSource },
@@ -205,6 +233,7 @@ const enrollable: readonly Enrollable[] = [
   'customerGroupCustomersBatch',
   'customerGroupsBatch',
   'customersBatch',
+  'inventoryStockBatch',
   'priceListPricesBatch',
   'priceLists',
   'priceListsBatchUpsert',
@@ -239,7 +268,7 @@ const withConfiguration = (
 
 const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => {
   const found = symmyRouteInventoryOf(routeKey);
-  if (!Option.isOption(found) || Option.isNone(found)) {
+  if (Option.isNone(found)) {
     throw new Error(`expected an inventory of ${routeKey}`);
   }
   return found.value;
@@ -286,10 +315,9 @@ const refusalCodes = (
 ) => (Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : []);
 
 describe('Symmy route inventories', () => {
-  it('refuses the stock route with its own reason and names no inventory for an operator fixture route', () => {
-    const stock = symmyRouteInventoryOf('inventoryStockBatch');
-    expect(Option.isOption(stock) ? undefined : stock.code).toBe('stock_route_pending_inventory_setup');
+  it('names no inventory for an operator fixture route', () => {
     expect(symmyRouteInventoryOf('assortmentRulesFixtureBatch')).toEqual(Option.none());
+    expect(symmyRouteInventoryOf('sellerVatDeclarationsFixtureBatch')).toEqual(Option.none());
   });
 
   it('resolves every executor operation and adapter read to exactly one call Symmy registers in its mode', () => {
@@ -332,6 +360,7 @@ describe('Symmy route inventories', () => {
       ['customersBatch', counterpartyProfileOperation, undefined],
       ['customersBatch', addAddressOperation, undefined],
       ['customersBatch', organizationIcoOperation, undefined],
+      ['inventoryStockBatch', stockOperation, undefined],
     ];
     for (const [routeKey, builderOperation, entityKind] of built) {
       const listed = inventoryOf(routeKey).operations.filter(
@@ -466,6 +495,41 @@ describe('Symmy route request refusals', () => {
         ]),
       ),
     ).toEqual([]);
+  });
+
+  it('requires the stock route to name its Inventory backend and positions of that backend and Tenant', () => {
+    expect(requestRefusals(withConfiguration('inventoryStockBatch', {}, ['stockScope']))).toEqual([
+      'stock_scope_required: inventoryStockBatch names the Inventory backend it asserts for and the stock positions it admits rows for',
+    ]);
+    expect(codes(withConfiguration('inventoryStockBatch', {}, ['inventoryBackendId']))).toEqual([
+      'stock_scope_required',
+    ]);
+    const otherTenant = { ...stockPosition('SKU-3').positionRef, tenantId: legalEntityId };
+    expect(
+      requestRefusals(
+        withConfiguration('inventoryStockBatch', {
+          stockScope: [
+            stockPosition('SKU-1'),
+            stockPosition('SKU-2', { issuerBackendId: 'OTHER_ERP' }),
+            stockPosition('SKU-3', { positionRef: otherTenant }),
+          ],
+        }),
+      ),
+    ).toEqual([
+      'stock_scope_invalid: The position of item SKU-2 at location WH-MAIN is issued by backend OTHER_ERP, not AKROS_ERP, so none of its rows is admitted',
+      'stock_scope_invalid: The position of item SKU-3 at location WH-MAIN belongs to another Tenant',
+    ]);
+    // The Inventory import is the stock route's one owner operation, and its admission pins a lifecycle policy.
+    expect(codes(withConfiguration('inventoryStockBatch', { items: [item('STOCK', [createProduct])] }))).toEqual([
+      'operation_not_in_route_inventory',
+      'required_operation_missing',
+      'required_operation_missing',
+    ]);
+    expect(codes(request('inventoryStockBatch', {}, ['lifecyclePolicy']))).toEqual(['lifecycle_policy_required']);
+    // Stock positions belong to the stock route alone.
+    expect(codes(withConfiguration('customerGroupsBatch', { stockScope: [stockPosition('SKU-1')] }))).toEqual([
+      'configuration_field_not_allowed',
+    ]);
   });
 
   it('keeps the routes of one company off a Tenant-only route', () => {
@@ -883,6 +947,9 @@ describe('Symmy route write decisions', () => {
     expect(symmyRouteEnrollmentLockKey(request('adminRegions'))).toBe(
       `symmy-route-enrollment:${tenantId}:${principalId}:adminRegions`,
     );
+    expect(symmyRouteEnrollmentLockKey(request('inventoryStockBatch'))).toBe(
+      `symmy-route-enrollment:${tenantId}:${principalId}:inventoryStockBatch`,
+    );
   });
 });
 
@@ -899,6 +966,10 @@ describe('Symmy route runtime prerequisites', () => {
     ]);
     expect(prerequisitesOf('productsBatch')).toEqual(['ONTOS_SYMMY_JOB_RETENTION_POLICIES:operator_copy_only']);
     expect(prerequisitesOf('adminProducts')).toEqual([]);
+    // A synchronous admission refused for its policy answers 503, a job admission 403.
+    expect(symmyRuntimePrerequisites(request('inventoryStockBatch')).map(({ whenMissing }) => whenMissing)).toEqual([
+      expect.stringContaining('as 503 SymmyUnavailableProblem'),
+    ]);
     for (const prerequisite of symmyRuntimePrerequisites(request('adminRegions'))) {
       expect(prerequisite.whenMissing).toContain('projection_not_configured');
     }

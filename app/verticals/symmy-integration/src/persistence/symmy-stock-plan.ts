@@ -6,7 +6,8 @@ import { symmyStockScopeKey } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRow, SymmyStockRows, SymmyStockScopeEntry } from '../../shared/domain/symmy-stock-batch.ts';
 import { uuidFromDigest } from './derived-identity.ts';
 
-const stockOperation = {
+/** The Inventory import every enrolled stock row is planned as, and the one owner operation of the stock route. */
+export const stockOperation = {
   entrypointKey: 'commerce.inventory.import-source-assertion',
   moduleId: 'commerce.inventory',
   schemaVersion: '1',

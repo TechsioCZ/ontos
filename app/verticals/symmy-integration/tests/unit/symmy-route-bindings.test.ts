@@ -72,19 +72,24 @@ const carrier = (entrypointKey: string, workloads: readonly string[], declaratio
   schemaVersion: '1',
   workloadCarrier: { declarationKey, workloads },
 });
-/** The receiving side of every worker call Symmy registers for one entrypoint, exactly as Symmy registers it. */
-const received = (entrypointKey: string) =>
-  symmyIntegrationRegisteredWorkloadCalls.filter((call) => call.entrypointKey === entrypointKey && 'workerKey' in call);
-const receivingAction = (entrypointKey: string) =>
-  received(entrypointKey).map((call) => ({
+/**
+ * The receiving side of every call Symmy registers for one entrypoint, exactly as Symmy registers it: from its job
+ * worker, or from its synchronous admission.
+ */
+const received = (entrypointKey: string, sync = false) =>
+  symmyIntegrationRegisteredWorkloadCalls.filter(
+    (call) => call.entrypointKey === entrypointKey && (sync ? 'sourceActionKey' in call : 'workerKey' in call),
+  );
+const receivingAction = (entrypointKey: string, sync = false) =>
+  received(entrypointKey, sync).map((call) => ({
     accessDeclaration: { key: call.declarationKey },
     accessWorkload: { workloads: [call.workloadKey] },
     entrypoint: { entrypointKey },
     legalEntityScope: call.legalEntityScope,
     schemaVersion: call.schemaVersion,
   }));
-const receivingRead = (entrypointKey: string) =>
-  received(entrypointKey)
+const receivingRead = (entrypointKey: string, sync = false) =>
+  received(entrypointKey, sync)
     .slice(0, 1)
     .map((call) => carrier(entrypointKey, [call.workloadKey], call.declarationKey));
 
@@ -173,7 +178,7 @@ const pricingReading = (published: readonly string[]) =>
 
 const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => {
   const found = symmyRouteInventoryOf(routeKey);
-  if (!Option.isOption(found) || Option.isNone(found)) {
+  if (Option.isNone(found)) {
     throw new Error(`expected the ${routeKey} inventory`);
   }
   return found.value;
@@ -504,6 +509,52 @@ describe('Symmy route bindings', () => {
     expect(groupBindings([]).refusals.map(({ detail }) => detail)).toContain(
       `${definitionRead}@1 is not published by commerce.customer-context`,
     );
+  });
+
+  it('derives the bindings of a Tenant-wide stock route and refuses one with a company, which Inventory publishes no import for', () => {
+    const syncAdmission = 'integration.symmy.admit-symmy-sync';
+    const sourceWrite = 'commerce.inventory.source-write';
+    const sourceRead = 'commerce.inventory.source-read';
+    const syncSymmy = contract(
+      'symmy-integration',
+      'integration.symmy',
+      {
+        actions: [
+          { accessWorkload: { workloads: [admit] }, entrypoint: { entrypointKey: syncAdmission }, schemaVersion: '1' },
+        ],
+        operationContracts: [
+          carrier('integration.symmy.api.symmy-route-context', [admit, poll]),
+          carrier('integration.symmy.api.symmy-sync-admission', [admit]),
+        ],
+      },
+      symmyIntegrationRegisteredWorkloadCalls,
+      requires(syncAdmission, symmyIntegrationRegisteredWorkloadCalls.filter(symmyCallInMode('sync'))),
+    );
+    const inventory = contract('inventory', 'commerce.inventory', {
+      actions: receivingAction('commerce.inventory.import-source-assertion', true),
+      operationContracts: receivingRead('commerce.inventory.api.inventory-source-import-receipt', true),
+    });
+    const stock = (companyScoped: boolean) =>
+      deriveSymmyRouteBindings({
+        companyScoped,
+        contracts: [syncSymmy, inventory],
+        enrolled: inventoryOf('inventoryStockBatch').operations,
+        inventory: inventoryOf('inventoryStockBatch'),
+      });
+    const tenantWide = stock(false);
+    expect(tenantWide.refusals).toEqual([]);
+    expect(tenantWide.moduleKeys).toEqual(['commerce.inventory', 'integration.symmy']);
+    // The route context, the admission and its receipt, then the import the gateway checks the integration principal for.
+    expect(workloadsOf(tenantWide.bindings, 'integration')).toEqual([`${admit} | ${poll}`, admit, admit, sourceWrite]);
+    // The import and its recovery through the receipt read run as the worker, and no job is executed.
+    expect(workloadsOf(tenantWide.bindings, 'executor')).toEqual([sourceWrite, sourceRead]);
+    expect(stock(true).refusals).toEqual([
+      {
+        code: 'company_scope_forbidden',
+        detail:
+          'commerce.inventory.import-source-assertion@1 is published without a company, which the synchronous admission of this route passes to it',
+      },
+    ]);
   });
 
   it('refuses a company-scoped call on a route that passes no company to it', () => {

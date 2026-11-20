@@ -699,9 +699,6 @@ export const runSymmyRouteEnrollment = Effect.fn('SymmyRouteEnrollment.run')(fun
     Effect.catchTag('SchemaError', ({ message }) => refuse(refusalOf('invalid_request', message))),
   );
   const found = symmyRouteInventoryOf(request.routeKey);
-  if (!Option.isOption(found)) {
-    return yield* refuse(found);
-  }
   if (Option.isNone(found)) {
     return yield* refuse(
       refusalOf('route_not_inventoried', `${request.routeKey} is an operator fixture route, not a Symmy route`),
