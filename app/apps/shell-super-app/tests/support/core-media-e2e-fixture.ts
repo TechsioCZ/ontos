@@ -724,6 +724,22 @@ const REQUIRED_ENVIRONMENT = [
   'SPICEDB_ENDPOINT',
 ] as const;
 
+/**
+ * A scenario the run cannot execute is skipped (BLOCKED), unless the run states it must execute them all
+ * (`D20_E2E_REQUIRED=1`, the gated run): then a skip is a failure, so a missing relay or emulator can never read as green.
+ */
+export const skipScenario = (ctx: { readonly skip: (note?: string) => void }, note: string) =>
+  Effect.gen(function* skipOrFail() {
+    const required = yield* Config.option(Config.String('D20_E2E_REQUIRED')).pipe(Effect.orDie);
+    if (Option.isSome(required) && required.value === '1') {
+      return yield* Effect.die(`D20_E2E_REQUIRED is set but the scenario cannot run: ${note}`);
+    }
+    yield* Effect.sync(() => {
+      ctx.skip(note);
+    });
+    return yield* Effect.never;
+  });
+
 const requireEnvironment = (ctx: { readonly skip: (note?: string) => void }, names: readonly string[]) =>
   Effect.gen(function* checkEnvironment() {
     const missing: string[] = [];
@@ -733,10 +749,7 @@ const requireEnvironment = (ctx: { readonly skip: (note?: string) => void }, nam
       }
     }
     if (missing.length > 0) {
-      yield* Effect.sync(() => {
-        ctx.skip(`BLOCKED: the run is not configured with ${missing.join(', ')}`);
-      });
-      yield* Effect.never;
+      yield* skipScenario(ctx, `BLOCKED: the run is not configured with ${missing.join(', ')}`);
     }
   });
 
