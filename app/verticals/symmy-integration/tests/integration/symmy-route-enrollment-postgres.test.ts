@@ -103,8 +103,8 @@ const outcomeOf = <A extends { readonly outcome: string }, E>(result: Result.Res
   });
 
 /**
- * A fresh Tenant with two active companies, two Symmy API-key principals, one integration principal no API key
- * authenticates as, and the one system worker.
+ * A fresh Tenant with two active companies, two Symmy integration principals with an active API-key binding, one whose
+ * API-key binding is disabled, and the one system worker.
  */
 const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* makeFixture() {
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -114,7 +114,7 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
   const otherLegalEntityId = crypto.randomUUID();
   const integrationId = crypto.randomUUID();
   const otherIntegrationId = crypto.randomUUID();
-  const keylessIntegrationId = crypto.randomUUID();
+  const disabledBindingIntegrationId = crypto.randomUUID();
   const systemId = crypto.randomUUID();
   const slug = `route-enrollment-${tenantId}`;
   yield* admin`insert into core.tenants(tenant_id,name,slug,status,default_locale) values(${tenantId},'Route enrollment fixture',${slug},'active','en')`;
@@ -127,9 +127,9 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
   for (const [principalId, keyStatus] of [
     [integrationId, 'active'],
     [otherIntegrationId, 'active'],
-    [keylessIntegrationId, 'disabled'],
+    [disabledBindingIntegrationId, 'disabled'],
   ] as const) {
-    yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${principalId},${tenantId},'integration','active','Symmy API key')`;
+    yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${principalId},${tenantId},'integration','active','Symmy integration')`;
     // The API-key binding the Shell resolves an x-api-key to; a disabled one authenticates no request.
     yield* admin`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status)
       values(${crypto.randomUUID()},${tenantId},${principalId},${STAFF_AUTHENTICATION_NAMESPACE_ID},'better_auth','api_key',${crypto.randomUUID()},${keyStatus})`;
@@ -143,8 +143,8 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
     [integrationId, importWorkload],
     [otherIntegrationId, admitWorkload],
     [otherIntegrationId, importWorkload],
-    [keylessIntegrationId, admitWorkload],
-    [keylessIntegrationId, importWorkload],
+    [disabledBindingIntegrationId, admitWorkload],
+    [disabledBindingIntegrationId, importWorkload],
     [systemId, importWorkload],
     [systemId, SYMMY_JOB_KEY],
   ] as const) {
@@ -244,8 +244,8 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
   return {
     admin,
     connections,
+    disabledBindingIntegrationId,
     integrationId,
-    keylessIntegrationId,
     legalEntityId,
     otherIntegrationId,
     otherLegalEntityId,
@@ -544,13 +544,16 @@ it.effect(
   30_000,
 );
 
-it.effect('refuses an integration principal no API key authenticates as, in apply and in verify', () =>
-  Effect.gen(function* keylessPrincipal() {
-    const { keylessIntegrationId, request, run } = yield* makeFixture();
-    const keyless = request('productsBatch', { principalId: keylessIntegrationId, routeId: crypto.randomUUID() });
+it.effect('refuses an integration principal without an active API-key binding, in apply and in verify', () =>
+  Effect.gen(function* disabledBindingPrincipal() {
+    const { disabledBindingIntegrationId, request, run } = yield* makeFixture();
+    const unbound = request('productsBatch', {
+      principalId: disabledBindingIntegrationId,
+      routeId: crypto.randomUUID(),
+    });
     for (const mode of [operator, { mode: 'verify' } as const]) {
-      expect((yield* refusals(run({ request: keyless, run: mode }))).map(({ code }) => code)).toEqual([
-        'integration_api_key_missing',
+      expect((yield* refusals(run({ request: unbound, run: mode }))).map(({ code }) => code)).toEqual([
+        'integration_api_key_binding_missing',
       ]);
     }
   }).pipe(Effect.scoped, Effect.provide(services)),
