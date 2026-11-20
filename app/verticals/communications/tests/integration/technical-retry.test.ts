@@ -411,7 +411,7 @@ describe('Current gates during recovery (#1403 R-06 AC-03)', () => {
           expect(handoff.calls).toHaveLength(1);
           // the source owner moved on itself: the source is told so, and Communications changes none of its business state
           const { feed } = yield* historyOf(world, requestId);
-          expect(feed.messages[0]).toMatchObject({ attention: 'FAILURE', reason: 'SOURCE_STALE' });
+          expect(feed.messages[0]).toMatchObject({ attention: 'FAILURE', reason: 'SOURCE_STATE_INELIGIBLE' });
           expect(feed.sourceImpact).toBe('SOURCE_OWNER_DECIDES');
         }
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),

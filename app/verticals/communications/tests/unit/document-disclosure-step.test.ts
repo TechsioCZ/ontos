@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CommunicationResourceRefSchema, RecipientRoleSchema } from '../../src/domain/catalog/vocabulary.ts';
-import { DocumentPinSchema, pinStillHolds } from '../../src/domain/documents/document-pin.ts';
+import { DocumentPinSchema, pinStillHolds, samePin } from '../../src/domain/documents/document-pin.ts';
 import type { DocumentPin } from '../../src/domain/documents/document-pin.ts';
 import { DocumentPolicySchema } from '../../src/domain/documents/document-policy.ts';
 import { DocumentReferenceSchema, orderedReferences } from '../../src/domain/documents/document-reference.ts';
@@ -118,10 +118,31 @@ describe('the document step asks the owner only for named documents and never re
     ).toThrow();
     expect(() => Schema.decodeUnknownSync(DocumentPinSchema)({ ...pinOf('a'), revision: 2 })).toThrow();
     const link = { assetRef: assetRef('asset-1'), revision: 1 } as const;
-    expect(pinStillHolds(pinOf('asset-1'), { form: 'LINK', link })).toBe(true);
-    expect(pinStillHolds(pinOf('asset-1'), { form: 'ATTACHMENT', link })).toBe(false);
-    expect(pinStillHolds(pinOf('asset-2'), { form: 'LINK', link })).toBe(false);
+    const document = documentRef('doc-1');
+    expect(pinStillHolds(pinOf('asset-1'), { document, form: 'LINK', link })).toBe(true);
+    expect(pinStillHolds(pinOf('asset-1'), { document, form: 'ATTACHMENT', link })).toBe(false);
+    expect(pinStillHolds(pinOf('asset-2'), { document, form: 'LINK', link })).toBe(false);
+    // the pin of a position holds only for the document the reference at that position names (#1409)
+    expect(pinStillHolds(pinOf('asset-1'), { document: documentRef('doc-2'), form: 'LINK', link })).toBe(false);
   });
+
+  it('two pins are the same pin only when every fact of the position is the same', () => {
+    expect(samePin(pinOf('asset-1'), pinOf('asset-1'))).toBe(true);
+    expect(samePin(pinOf('asset-1'), pinOf('asset-2'))).toBe(false);
+    expect(samePin(pinOf('asset-1'), pinOf('asset-1', 1))).toBe(false);
+    expect(samePin(pinOf('asset-1'), { ...pinOf('asset-1'), form: 'ATTACHMENT' })).toBe(false);
+  });
+
+  it.effect('a stored pin of another document than the one the reference names stops the message', () =>
+    Effect.gen(function* repositioned() {
+      const owner = documentOwnerDouble();
+      owner.assign('doc-1', assetRef('asset-1'));
+      const verdict = yield* discloseDocuments(
+        stepInput({ pinned: [{ ...pinOf('asset-1'), document: documentRef('doc-9') }] }),
+      ).pipe(Effect.provide(owner.layer));
+      expect(verdict).toMatchObject({ kind: 'STOPPED', reasons: [{ category: 'DOCUMENT_PIN_NOT_CURRENT' }] });
+    }),
+  );
 });
 
 describe('the request carries documents as safe references and keeps its meaning without them', () => {
@@ -144,6 +165,13 @@ describe('the request carries documents as safe references and keeps its meaning
         'a',
         'b',
       ]);
+      // a persisted position never depends on a locale: code-unit order, so an upper-case id sorts before a lower-case one and
+      // punctuation sorts by its code (`-` < `.` < `:` < `_`), the same on every runtime, ICU version and collation
+      expect(
+        orderedReferences(['b', 'a_1', 'a:1', 'B', 'a', 'a.1', 'A', 'a-1'].map(reference)).map(
+          ({ document }) => document.resourceId,
+        ),
+      ).toEqual(['A', 'B', 'a', 'a-1', 'a.1', 'a:1', 'a_1', 'b']);
       expect(Schema.is(CommunicationResourceRefSchema)(input.documents[0]?.document)).toBe(true);
     }),
   );

@@ -62,10 +62,26 @@ export interface ConflictFacts {
   readonly resolvedAt?: DateTime.Utc | undefined;
 }
 
+/** The two facts a stored stop reason keeps: its category and the specific cause behind it. Never an address, text or payload. */
+export interface StoredStopReason {
+  readonly category: string;
+  readonly cause: string;
+}
+
+/**
+ * The ONE closed code a stop is shown under, in the history, the Read and the source outcome feed alike (#1406, #1409). A source
+ * lifecycle stop keeps the category `SOURCE_STALE` for the gates but is shown as its own specific reason (`SOURCE_EXPIRED`,
+ * `SOURCE_CONSUMED`, `SOURCE_REVOKED`, `SOURCE_SUPERSEDED`, `SOURCE_NOT_RESUMABLE`, `SOURCE_NO_LONGER_VALID`, ...); every other
+ * stop is shown as its category, which is already as specific as its reason.
+ */
+export const stopReasonCodeOf = ({ category, cause }: StoredStopReason): string =>
+  category === 'SOURCE_STALE' ? cause : category;
+
 export interface StopFacts {
-  readonly categories: readonly string[];
   readonly evaluationSeq: number;
   readonly proven: boolean;
+  /** The closed code of each reason of the stop, the proven ones first (see `stopReasonCodeOf`). */
+  readonly reasonCodes: readonly string[];
   readonly recordedAt: DateTime.Utc;
 }
 
@@ -148,6 +164,12 @@ export interface IntentHistorySummary {
    */
   readonly recovery: RecoveryFacts | undefined;
   readonly status: HistoryStatus;
+  /**
+   * The closed code of the stop the headline IS (the handoff stop that suppressed or holds the message before any attempt may
+   * have left), the first reason of the proven stop else of the latest one. Absent when the headline is not a handoff stop: the
+   * decision's own reason or the recovery's code say why then.
+   */
+  readonly stopReason: string | undefined;
 }
 
 export interface IntentHistory {
@@ -281,7 +303,7 @@ const decisionDrafts = (facts: IntentTimelineFacts): readonly Draft[] => {
     kind: 'HANDOFF_STOPPED',
     occurredAt: stop.recordedAt,
     orderedAt: stop.recordedAt,
-    reasonCodes: stop.categories,
+    reasonCodes: stop.reasonCodes,
     recordedAt: stop.recordedAt,
     sequence: stop.evaluationSeq,
     // a stop that only could not establish a fact proves nothing against the message
@@ -368,13 +390,14 @@ export const summarizeIntent = (facts: IntentTimelineFacts): IntentHistorySummar
   const latestDelivery = latestConclusiveDelivery(facts);
   const deliveryProven = latestDelivery?.kind === 'DELIVERY_PROVEN' && !contradictory;
   const latestAttempt = EffectArray.sort(facts.attempts, byAttemptNumber).at(-1);
-  const withStatus = (status: HistoryStatus): IntentHistorySummary => ({
+  const withStatus = (status: HistoryStatus, stopReason?: string): IntentHistorySummary => ({
     contradictory,
     deliveryProven,
     needsReconciliation: facts.conflicts.some(({ resolvedAt }) => resolvedAt === undefined),
     providerAccepted,
     recovery: latestRecoveryOf(facts, latestAttempt),
     status,
+    stopReason,
   });
   // an attempt that provably submitted nothing (no adapter, or no request made) never let a stopped message leave
   const mayHaveLeft = facts.attempts.some(attemptMayHaveLeft);
@@ -389,7 +412,16 @@ export const summarizeIntent = (facts: IntentTimelineFacts): IntentHistorySummar
   }
   if (currentStops.length > 0 && !mayHaveLeft) {
     // one proven stop is final; a stop that only could not establish a fact is held, with its reason, for re-evaluation
-    return withStatus(currentStops.some(({ proven }) => proven) ? 'SUPPRESSED' : 'HELD_UNPROVEN');
+    const headlineStop =
+      currentStops.find(({ proven }) => proven) ??
+      EffectArray.sort(
+        currentStops,
+        Order.mapInput(Order.Number, ({ evaluationSeq }: StopFacts) => evaluationSeq),
+      ).at(-1);
+    return withStatus(
+      currentStops.some(({ proven }) => proven) ? 'SUPPRESSED' : 'HELD_UNPROVEN',
+      headlineStop?.reasonCodes[0],
+    );
   }
   if (contradictory) {
     return withStatus('INDETERMINATE');

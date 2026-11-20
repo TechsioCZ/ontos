@@ -28,6 +28,16 @@ export const formOfReference = ({ form }: DocumentReference) => form ?? 'LINK';
 export const referenceKey = ({ document }: DocumentReference) =>
   `${document.moduleId}|${document.resourceType}|${document.resourceId}`;
 
-/** The position a document keeps in a message: the canonical order of its reference, so a source's list order changes nothing. */
+/**
+ * The position a document keeps in a message: the canonical order of its reference, so a source's list order changes nothing.
+ * The order is a code-unit comparison of the reference key, never a locale one: a persisted position must be the same on every
+ * runtime, ICU version and collation, or a pin written by one process would be read at another position by the next.
+ */
 export const orderedReferences = (references: readonly DocumentReference[]) =>
-  references.toSorted((left, right) => referenceKey(left).localeCompare(referenceKey(right)));
+  references.toSorted((left, right) => {
+    const [first, second] = [referenceKey(left), referenceKey(right)];
+    if (first === second) {
+      return 0;
+    }
+    return first < second ? -1 : 1;
+  });

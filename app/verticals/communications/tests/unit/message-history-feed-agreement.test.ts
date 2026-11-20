@@ -45,6 +45,41 @@ describe('the history Read and the source outcome feed agree on every recovery f
     }),
   );
 
+  it.effect('[stop before any attempt] the feed and the Read carry the closed code of the stop itself (#1409)', () =>
+    Effect.gen(function* stopCode() {
+      // there is no attempt and so no recovery evaluation: the reason is the stop's own, proven or not
+      const proven = yield* readAndFeed(factsOf({ stops: [stop({ proven: true, reasonCodes: ['SOURCE_EXPIRED'] })] }));
+      expectAgreement(proven, { attention: 'FAILURE', status: 'SUPPRESSED' });
+      expect(proven.outcome.reason).toBe('SOURCE_EXPIRED');
+      expect(proven.item.headline.reasonCodes).toEqual(['SOURCE_EXPIRED']);
+      const unproven = yield* readAndFeed(
+        factsOf({ stops: [stop({ proven: false, reasonCodes: ['DOCUMENT_MEDIA_UNAVAILABLE'] })] }),
+      );
+      expectAgreement(unproven, { attention: 'NEEDS_REEVALUATION', status: 'HELD_UNPROVEN' });
+      expect(unproven.outcome.reason).toBe('DOCUMENT_MEDIA_UNAVAILABLE');
+      // an unproven stop superseded by a later one: the headline is the latest evaluation, never the first
+      const superseded = yield* readAndFeed(
+        factsOf({
+          stops: [
+            stop({ at: 1, proven: false, reasonCodes: ['DOCUMENT_MEDIA_UNAVAILABLE'], seq: 1 }),
+            stop({ at: 2, proven: false, reasonCodes: ['DOCUMENT_OWNER_UNAVAILABLE'], seq: 2 }),
+          ],
+        }),
+      );
+      expect(superseded.outcome.reason).toBe('DOCUMENT_OWNER_UNAVAILABLE');
+      // a proven stop is the headline whatever else was recorded, and its first (primary) reason is the feed's
+      const final = yield* readAndFeed(
+        factsOf({
+          stops: [
+            stop({ at: 1, proven: false, reasonCodes: ['DOCUMENT_OWNER_UNAVAILABLE'], seq: 1 }),
+            stop({ at: 2, proven: true, reasonCodes: ['SOURCE_REVOKED', 'PRIVACY_INDETERMINATE'], seq: 2 }),
+          ],
+        }),
+      );
+      expect(final.outcome.reason).toBe('SOURCE_REVOKED');
+    }),
+  );
+
   it.effect('[proven stop] a proven stop of the RECOVERY keeps the failure and names the concrete reason', () =>
     Effect.gen(function* provenRecoveryStop() {
       const both = yield* readAndFeed(

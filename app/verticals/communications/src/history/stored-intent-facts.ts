@@ -3,6 +3,7 @@ import { Schema } from 'effect';
 import { DeliveryAttemptIdSchema } from '../../shared/communication-intake.ts';
 import { DocumentPinSchema } from '../domain/documents/document-pin.ts';
 import { FailureClassSchema, ObservationKindSchema, AttemptStateSchema } from '../domain/history/vocabulary.ts';
+import { stopReasonCodeOf } from '../domain/history/timeline.ts';
 import type { IntentTimelineFacts } from '../domain/history/timeline.ts';
 
 /**
@@ -66,9 +67,9 @@ export const StoredIntentFactsSchema = Schema.Struct({
   ),
   stops: Schema.Array(
     Schema.Struct({
-      categories: Schema.Array(Schema.String),
       evaluationSeq: Schema.Number,
       proven: Schema.Boolean,
+      reasons: Schema.Array(Schema.Struct({ category: Schema.String, cause: Schema.String })),
       recordedAt: Instant,
     }),
   ),
@@ -110,5 +111,10 @@ export const timelineFactsOfStored = (
     }),
   ),
   recoveries: facts.recoveries,
-  stops: facts.stops,
+  stops: facts.stops.map(({ evaluationSeq, proven, reasons, recordedAt }) => ({
+    evaluationSeq,
+    proven,
+    reasonCodes: reasons.map(stopReasonCodeOf),
+    recordedAt,
+  })),
 });

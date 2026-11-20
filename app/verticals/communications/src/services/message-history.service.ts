@@ -32,7 +32,7 @@ import {
   providerObservations,
 } from '../database/schema.ts';
 import { sourceOutcomeFeedOf } from '../domain/history/source-outcome.ts';
-import { historyOfIntent } from '../domain/history/timeline.ts';
+import { historyOfIntent, stopReasonCodeOf } from '../domain/history/timeline.ts';
 import type {
   AttemptFacts,
   ConflictFacts,
@@ -130,7 +130,7 @@ const EndpointSchema = Schema.Struct({ channel: Schema.String, mask: Schema.Stri
 const PolicySchema = Schema.Struct({ mode: Schema.Literals(['A', 'B']), policy: LanguagePolicyRefSchema });
 const EvidenceReasonSchema = Schema.Struct({ reason: Schema.optional(Schema.String) });
 const ObservationEvidenceFailureSchema = Schema.Struct({ failureClass: Schema.optional(FailureClassSchema) });
-const StopReasonsSchema = Schema.Array(Schema.Struct({ category: Schema.String }));
+const StopReasonsSchema = Schema.Array(Schema.Struct({ category: Schema.String, cause: Schema.String }));
 const UnresolvedSlotsSchema = Schema.Array(Schema.Struct({ reason: Schema.String, slotKey: HistorySlotKeySchema }));
 
 /** A stored document the history only decorates with: an unreadable one is left out, never guessed. */
@@ -339,9 +339,9 @@ const recoveryFactOf = (row: RecoveryRow): RecoveryFacts => ({
 });
 
 const stopFactOf = (row: StopRow): StopFacts => ({
-  categories: Option.getOrElse(readStopReasons(row.reasons), () => []).map(({ category }) => category),
   evaluationSeq: row.evaluationSeq,
   proven: row.proven,
+  reasonCodes: Option.getOrElse(readStopReasons(row.reasons), () => []).map(stopReasonCodeOf),
   recordedAt: instant(row.recordedAt),
 });
 

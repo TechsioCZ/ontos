@@ -79,11 +79,12 @@ export const attentionOf = (
 /**
  * The ONE derivation of what the owner says about one message: its attention and its concrete reason. The source outcome feed and
  * the safe history Read (#1409) both call it, so the two can never disagree about what the source must do. The reason is the
- * closed code of the decision, else why recovery did not continue the message.
+ * closed code of the decision, else of the handoff stop the headline is (a document stop, a source lifecycle stop, a `validUntil`
+ * stop: also a stop BEFORE any attempt, which has no recovery evaluation), else why recovery did not continue the message.
  */
 export const messageHeadlineOf = (summary: IntentHistorySummary, decisionReason: string | undefined) => ({
   attention: attentionOf(summary.status, summary.needsReconciliation, summary.recovery),
-  reason: decisionReason ?? summary.recovery?.code,
+  reason: decisionReason ?? summary.stopReason ?? summary.recovery?.code,
 });
 
 const requiredOutcomeOf = (facts: RequestOutcomeFacts, messages: readonly MessageOutcome[]) => {

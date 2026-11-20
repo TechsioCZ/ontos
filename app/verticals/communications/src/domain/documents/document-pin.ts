@@ -42,9 +42,26 @@ export const pinnedDocumentOf = (pin: DocumentPin): PinnedDocument => ({
 const sameRef = (left: DocumentPin['assetRef'], right: DocumentPin['assetRef']) =>
   left.moduleId === right.moduleId && left.resourceType === right.resourceType && left.resourceId === right.resourceId;
 
-/** Whether the owner's answer of today still names the pinned Asset in the pinned form: the only way a retry may continue. */
+/**
+ * Whether the owner's answer of today still names the pinned Asset in the pinned form FOR THE DOCUMENT the source named at that
+ * position: the only way a retry may continue. A pin whose document is not the one the reference names (a position that changed
+ * meaning) never holds, whatever Asset the owner answers.
+ */
 export const pinStillHolds = (
   pin: DocumentPin,
-  current: { readonly form: DocumentForm; readonly link: ExactDocumentLink },
+  current: {
+    readonly document: DocumentPin['document'];
+    readonly form: DocumentForm;
+    readonly link: ExactDocumentLink;
+  },
 ) =>
-  pin.form === current.form && pin.revision === current.link.revision && sameRef(pin.assetRef, current.link.assetRef);
+  sameRef(pin.document, current.document) &&
+  pin.form === current.form &&
+  pin.revision === current.link.revision &&
+  sameRef(pin.assetRef, current.link.assetRef);
+
+/** Whether two pins of one position are the same pin: the first writer's pin and the one this evaluation would store. */
+export const samePin = (stored: DocumentPin, candidate: DocumentPin) =>
+  stored.position === candidate.position &&
+  stored.classification === candidate.classification &&
+  pinStillHolds(stored, { document: candidate.document, form: candidate.form, link: pinnedDocumentOf(candidate).link });

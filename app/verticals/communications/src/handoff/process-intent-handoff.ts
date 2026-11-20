@@ -15,10 +15,11 @@ import {
 import { MessageHandoff } from '../domain/handoff/message-handoff.ts';
 import type { PinnedHandoff, ProviderEvidence } from '../domain/handoff/message-handoff.ts';
 import { recoveryPolicyOf } from '../domain/catalog/message-type.ts';
-import { DocumentPinSchema, pinnedDocumentOf } from '../domain/documents/document-pin.ts';
+import { DocumentPinSchema, pinnedDocumentOf, samePin } from '../domain/documents/document-pin.ts';
 import type { DocumentPin, PinnedDocument } from '../domain/documents/document-pin.ts';
 import type { DocumentReference } from '../domain/documents/document-reference.ts';
 import { attemptMayHaveLeft } from '../domain/history/delivery-result.ts';
+import { stopReasonCodeOf } from '../domain/history/timeline.ts';
 import { ProviderObservationInputSchema } from '../domain/history/provider-observation.ts';
 import { attemptIdOf } from '../domain/intake/identity.ts';
 import { decodeIntakeInput } from '../domain/intake/intake-input.ts';
@@ -46,7 +47,7 @@ import {
   workerRecordRecoveryEvaluationRoutine,
   workerRecordStopRoutine,
 } from '../persistence/communications-routines.ts';
-import { discloseDocuments } from './document-disclosure-step.ts';
+import { discloseDocuments, documentStopOf } from './document-disclosure-step.ts';
 import type { DocumentVerdict } from './document-disclosure-step.ts';
 import { storeUnavailable } from './handoff-errors.ts';
 import type { HandoffStoreUnavailable } from './handoff-errors.ts';
@@ -239,7 +240,7 @@ const stopIntent = Effect.fn('Communications.recordHandoffStop')(function* recor
         intentId,
         latest.attemptId,
         'STOPPED',
-        reasons[0]?.category ?? 'GATE_UNANSWERED',
+        reasons[0] === undefined ? 'GATE_UNANSWERED' : stopReasonCodeOf(reasons[0]),
         reasons.map((reason) => ({ ...reason })),
       ])
       .pipe(Effect.mapError((cause) => storeUnavailable('The recovery stop could not be recorded', cause)));
@@ -280,7 +281,9 @@ export const sourceCurrentnessOf = (
   type: {
     readonly currentness: { readonly requireLatestSourceRevision: boolean };
     readonly eligibleSourceStates: readonly string[];
-    readonly ineligibleSourceStates?: readonly { readonly reason: StaleSourceReason; readonly state: string }[] | undefined;
+    readonly ineligibleSourceStates?:
+      | readonly { readonly reason: StaleSourceReason; readonly state: string }[]
+      | undefined;
   },
   revision: number,
   facts: { readonly latestRevision: number; readonly state: string },
@@ -613,15 +616,18 @@ const loadAndGate = Effect.fn('Communications.loadAndGate')(function* load(
 });
 
 /**
- * Stores the owner's FIRST answer for each document that has no pin yet (#1409) and returns the STORED pin of each: the first
- * writer wins, so a second caller or a retry that resolved another Asset adopts what was pinned and nothing is repointed.
+ * Stores the pins of the documents the owner answered FIRST, and answers with the stored pins or the one fact that the stored
+ * pin of a position is not the answer this evaluation had. The first writer wins (`worker_pin_document` always returns what is
+ * stored): two evaluations that resolved different Assets at the same moment must not both go on, so an evaluation that finds
+ * another pin than its own answer does NOT adopt it; it stops with `DOCUMENT_PIN_NOT_CURRENT` and the next evaluation (which
+ * reads the stored pin as `existing`) decides again against it.
  */
 const pinDocuments = Effect.fn('Communications.pinDocuments')(function* pin(
   invoker: ScopedRoutineInvoker,
   intentId: typeof MessageIntentIdSchema.Type,
   pins: readonly DocumentPin[],
 ) {
-  return yield* Effect.forEach(
+  const answers = yield* Effect.forEach(
     pins,
     (candidate) =>
       invoker
@@ -644,11 +650,15 @@ const pinDocuments = Effect.fn('Communications.pinDocuments')(function* pin(
           Effect.flatMap(({ outcome, pin: stored }) =>
             outcome === 'MISSING' || stored === undefined
               ? storeUnavailable('The document pin could not be stored')
-              : Effect.succeed(stored),
+              : Effect.succeed({ candidate, stored }),
           ),
         ),
     { concurrency: 1 },
   );
+  // the pin that is stored is the first writer's: an answer that differs from this evaluation's own is never adopted
+  return answers.every(({ candidate, stored }) => samePin(stored, candidate))
+    ? ({ kind: 'PINNED', pins: answers.map(({ stored }) => stored) } as const)
+    : ({ kind: 'DIVERGED' } as const);
 });
 
 const byPosition = (left: DocumentPin, right: DocumentPin) => left.position - right.position;
@@ -664,7 +674,12 @@ const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
 ) {
   const { intentId } = input;
   // the pins are committed together with the attempt, BEFORE the provider is asked, so no handoff names an unpinned document
-  const pinned = [...documents.existing, ...(yield* pinDocuments(invoker, intentId, documents.toPin))];
+  const pinning = yield* pinDocuments(invoker, intentId, documents.toPin);
+  if (pinning.kind === 'DIVERGED') {
+    // another evaluation pinned another answer first: this one never goes on with its own, and never adopts the other
+    return (yield* stopIntent(invoker, document, [documentStopOf('DOCUMENT_PIN_NOT_CURRENT')])) satisfies Prepared;
+  }
+  const pinned = [...documents.existing, ...pinning.pins];
   // the next attempt number: 1, or the one after an attempt that provably did not leave (`continuation.basis` says why)
   const attemptNumber = (latestAttemptOf(document)?.attemptNumber ?? 0) + 1;
   const attemptId = yield* attemptIdOf(intentId, attemptNumber);

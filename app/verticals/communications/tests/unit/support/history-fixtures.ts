@@ -107,15 +107,15 @@ export const recovery = (options: RecoveryOptions = {}): RecoveryFacts => ({
 
 interface StopOptions {
   readonly at?: number;
-  readonly categories?: readonly string[];
   readonly proven?: boolean;
+  readonly reasonCodes?: readonly string[];
   readonly seq?: number;
 }
 
 export const stop = (options: StopOptions = {}): StopFacts => ({
-  categories: options.categories ?? ['PRIVACY_NOT_ALLOWED'],
   evaluationSeq: options.seq ?? 1,
   proven: options.proven ?? true,
+  reasonCodes: options.reasonCodes ?? ['PRIVACY_NOT_ALLOWED'],
   recordedAt: minute(options.at ?? 1),
 });
 

@@ -133,7 +133,7 @@ describe('Source outcome feed of a request', () => {
     const feed = feedFor('REQUIRED', [
       intentOf(
         1,
-        { stops: [stop({ categories: ['PRIVACY_OWNER_UNAVAILABLE'], proven: false })] },
+        { stops: [stop({ proven: false, reasonCodes: ['PRIVACY_OWNER_UNAVAILABLE'] })] },
         'PRIVACY_OWNER_UNAVAILABLE',
       ),
     ]);

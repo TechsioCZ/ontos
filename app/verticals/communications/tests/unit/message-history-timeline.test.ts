@@ -23,7 +23,7 @@ describe('Truthful message history: request, decision, intent, attempt and obser
 
   it('[H-03] a stop at the last handoff is SUPPRESSED too, with its reason categories, and is not a failure', () => {
     const history = historyOfIntent(
-      factsOf({ stops: [stop({ categories: ['PRIVACY_NOT_ALLOWED', 'SOURCE_STALE'] })] }),
+      factsOf({ stops: [stop({ reasonCodes: ['PRIVACY_NOT_ALLOWED', 'SOURCE_STALE'] })] }),
     );
     expect(history.summary.status).toBe('SUPPRESSED');
     expect(history.entries.map(({ kind }) => kind)).toEqual(['INTENT_PREPARED', 'HANDOFF_STOPPED']);
@@ -293,7 +293,7 @@ describe('Late, duplicate and out-of-order observations keep one explicit, deter
 describe('A stop that proves nothing is HELD_UNPROVEN, never a suppression (#1402 review)', () => {
   it('headlines a stop of unproven reasons distinctly from a proven suppression, with the reason code kept', () => {
     const unproven = historyOfIntent(
-      factsOf({ stops: [stop({ categories: ['PRIVACY_OWNER_UNAVAILABLE'], proven: false })] }),
+      factsOf({ stops: [stop({ proven: false, reasonCodes: ['PRIVACY_OWNER_UNAVAILABLE'] })] }),
     );
     expect(unproven.summary).toMatchObject({ providerAccepted: false, status: 'HELD_UNPROVEN' });
     expect(unproven.entries.map(({ kind, status }) => [kind, status])).toEqual([
@@ -301,7 +301,7 @@ describe('A stop that proves nothing is HELD_UNPROVEN, never a suppression (#140
       ['HANDOFF_STOPPED', 'HELD_UNPROVEN'],
     ]);
     expect(unproven.entries[1]?.reasonCodes).toEqual(['PRIVACY_OWNER_UNAVAILABLE']);
-    const proven = historyOfIntent(factsOf({ stops: [stop({ categories: ['PRIVACY_NOT_ALLOWED'], proven: true })] }));
+    const proven = historyOfIntent(factsOf({ stops: [stop({ proven: true, reasonCodes: ['PRIVACY_NOT_ALLOWED'] })] }));
     expect(proven.summary.status).toBe('SUPPRESSED');
     expect(proven.entries[1]?.status).toBe('SUPPRESSED');
   });
@@ -310,7 +310,7 @@ describe('A stop that proves nothing is HELD_UNPROVEN, never a suppression (#140
     expect(
       statusOf(
         factsOf({
-          stops: [stop({ proven: false, seq: 1 }), stop({ categories: ['SOURCE_STALE'], proven: true, seq: 2 })],
+          stops: [stop({ proven: false, seq: 1 }), stop({ proven: true, reasonCodes: ['SOURCE_STALE'], seq: 2 })],
         }),
       ),
     ).toBe('SUPPRESSED');

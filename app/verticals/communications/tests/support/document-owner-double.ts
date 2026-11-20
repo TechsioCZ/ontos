@@ -41,10 +41,19 @@ export interface Assignment {
   media: 'AVAILABLE' | 'UNAVAILABLE';
 }
 
+const resolutionOf = (assignment: Assignment | undefined): DocumentResolutionCase => {
+  if (assignment === undefined || assignment.disclosure === 'FORBIDDEN') {
+    return DocumentResolution.DisclosureForbidden();
+  }
+  return assignment.media === 'UNAVAILABLE'
+    ? DocumentResolution.MediaUnavailable()
+    : DocumentResolution.Approved({ asset: { ref: assignment.asset, revision: assignment.claimedRevision } });
+};
+
 export const documentOwnerDouble = () => {
   const assignments = new Map<string, Assignment>();
   const openers = new Map<string, Set<string>>();
-  const state = { outage: false };
+  const state = { afterResolve: Effect.void, outage: false };
   const asked: { readonly kind: 'authorizeOpen' | 'resolve'; readonly subject: string }[] = [];
   const resolve = (query: DocumentResolveQuery) =>
     Effect.suspend((): Effect.Effect<DocumentResolutionCase, DocumentOwnerUnavailable> => {
@@ -53,14 +62,8 @@ export const documentOwnerDouble = () => {
       if (state.outage) {
         return Effect.fail(new DocumentOwnerUnavailable({ reason: 'OWNER_UNAVAILABLE' }));
       }
-      if (assignment === undefined || assignment.disclosure === 'FORBIDDEN') {
-        return Effect.succeed(DocumentResolution.DisclosureForbidden());
-      }
-      return Effect.succeed(
-        assignment.media === 'UNAVAILABLE'
-          ? DocumentResolution.MediaUnavailable()
-          : DocumentResolution.Approved({ asset: { ref: assignment.asset, revision: assignment.claimedRevision } }),
-      );
+      // a concurrent evaluation may act between the owner's answer and the caller's next step (the first-write race of a pin)
+      return state.afterResolve.pipe(Effect.as(resolutionOf(assignment)));
     });
   const authorizeOpen = (query: DocumentOpenQuery) =>
     Effect.suspend((): Effect.Effect<DocumentOpenCase, DocumentOwnerUnavailable> => {
@@ -99,6 +102,16 @@ export const documentOwnerDouble = () => {
       openers.set(
         asset.resourceId,
         new Set([...(openers.get(asset.resourceId) ?? [])].filter((id) => id !== principalId)),
+      );
+    },
+    /** Runs `action` right after the owner answered a resolve and before the caller goes on, once; the next answers are plain. */
+    afterNextResolve: (action: Effect.Effect<void>) => {
+      state.afterResolve = action.pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            state.afterResolve = Effect.void;
+          }),
+        ),
       );
     },
     setOutage: (outage: boolean) => {

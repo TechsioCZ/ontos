@@ -58,6 +58,7 @@ interface TypeOverrides {
   readonly currentness?: { readonly requireLatestSourceRevision: boolean };
   readonly documents?: unknown;
   readonly eligibleSourceStates?: readonly string[];
+  readonly ineligibleSourceStates?: readonly { readonly reason: string; readonly state: string }[];
   readonly onboarding?: 'ACTIVE' | 'NOT_ACTIVATED';
   readonly privacyPurposeRefs?: readonly string[];
   readonly purpose?: string;

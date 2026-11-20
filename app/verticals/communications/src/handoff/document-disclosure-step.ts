@@ -37,7 +37,7 @@ export type DocumentVerdict =
   | { readonly existing: readonly DocumentPin[]; readonly kind: 'CLEARED'; readonly toPin: readonly DocumentPin[] }
   | { readonly kind: 'STOPPED'; readonly reasons: readonly RecoveryStopReason[] };
 
-const stopOf = (reason: DocumentStopReason): RecoveryStopReason => ({
+export const documentStopOf = (reason: DocumentStopReason): RecoveryStopReason => ({
   category: reason,
   cause: reason,
   proven: stopIsProven(reason),
@@ -74,7 +74,7 @@ const assessOne = Effect.fn('Communications.assessOneDocument')(function* assess
   }
   const stored = input.pinned.find((pin) => pin.position === position);
   if (stored !== undefined) {
-    return pinStillHolds(stored, disclosure)
+    return pinStillHolds(stored, { document: reference.document, form: disclosure.form, link: disclosure.link })
       ? ({ kind: 'EXISTING', pin: stored } satisfies OneDocument)
       : ({ kind: 'STOP', reason: 'DOCUMENT_PIN_NOT_CURRENT' } satisfies OneDocument);
   }
@@ -102,7 +102,7 @@ export const discloseDocuments = Effect.fn('Communications.discloseDocuments')(f
       concurrency: 1,
     },
   );
-  const stops = answers.flatMap((answer) => (answer.kind === 'STOP' ? [stopOf(answer.reason)] : []));
+  const stops = answers.flatMap((answer) => (answer.kind === 'STOP' ? [documentStopOf(answer.reason)] : []));
   if (stops.length > 0) {
     // proven reasons first, so the stop that is final is the one the history names first
     return {

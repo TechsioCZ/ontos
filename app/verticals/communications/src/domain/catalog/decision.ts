@@ -72,7 +72,11 @@ export const isStaleSourceReason = Schema.is(StaleSourceReasonSchema);
 
 /** The closed reason a source state outside the type's eligible states means: its declared one, else the generic one (#1406). */
 export const ineligibleStateReasonOf = (
-  type: { readonly ineligibleSourceStates?: readonly { readonly reason: StaleSourceReason; readonly state: string }[] | undefined },
+  type: {
+    readonly ineligibleSourceStates?:
+      | readonly { readonly reason: StaleSourceReason; readonly state: string }[]
+      | undefined;
+  },
   state: string,
 ): StaleSourceReason =>
   type.ineligibleSourceStates?.find((declared) => declared.state === state)?.reason ?? 'SOURCE_STATE_INELIGIBLE';

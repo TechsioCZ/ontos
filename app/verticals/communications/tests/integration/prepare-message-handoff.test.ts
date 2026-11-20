@@ -17,7 +17,11 @@ import {
 } from '../../src/database/schema.ts';
 import { attemptIdOf } from '../../src/domain/intake/identity.ts';
 import { workerBeginAttemptRoutine } from '../../src/persistence/communications-routines.ts';
-import { DeliveryAttemptIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
+import {
+  CommunicationRequestIdSchema,
+  DeliveryAttemptIdSchema,
+  MessageIntentIdSchema,
+} from '../../shared/communication-intake.ts';
 import { MessageHandoff, unavailableMessageHandoffLayer } from '../../src/domain/handoff/message-handoff.ts';
 import type { PinnedHandoff } from '../../src/domain/handoff/message-handoff.ts';
 import {
@@ -26,10 +30,13 @@ import {
   resolveTemplatePin,
 } from '../../src/services/template-revision-domain.service.ts';
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
+import { SourceStopReasonSchema } from '../../src/domain/catalog/vocabulary.ts';
+import { projectMessageHistoryItem } from '../../src/history/message-history-projection.ts';
 import { fixtureType } from '../unit/support/catalog-fixtures.ts';
 import { privacyAllowed, privacyIndeterminate, privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
 import { ORIGINAL_ADDRESS, unusable } from '../unit/support/recipient-fixtures.ts';
-import { handoffDouble } from '../support/intake-fixtures.ts';
+import { historyOf } from '../support/history-world.ts';
+import { communicationRequest, handoffDouble, originalRecipient } from '../support/intake-fixtures.ts';
 import { decided, intakeWorld, requestFor, templateBase } from '../support/intake-world.ts';
 import { actorWith, makeRuntimeDatabase, nativeServices } from '../support/persistence.fixture.ts';
 
@@ -674,5 +681,139 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
             .filter((name) => /address|secret|token|otp|password/u.test(name)),
         ).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+/**
+ * [#1406] A source lifecycle stop is stored as the category `SOURCE_STALE` with the cause that names which fact it was, and the
+ * history, the Read and the source outcome feed show THAT cause: a source that must decide pausing, recovery or only recording
+ * can tell an expired proof from a consumed or a revoked one at the pre-handoff gate, before any attempt exists.
+ */
+describe('A source lifecycle stop is visible under its own reason in the history and the feed (#1406)', () => {
+  const LIFECYCLE_STATES = SourceStopReasonSchema.literals.map((reason) => ({
+    reason,
+    state: `fixture.state.${reason.toLowerCase().replaceAll('_', '-')}`,
+  }));
+  const lifecycleType = () => fixtureType({ ineligibleSourceStates: LIFECYCLE_STATES });
+
+  /** Decides one request of the world through the public intake and returns its single intent. */
+  const decideRequest = Effect.fn('PrepareHandoffTest.decideRequest')(function* decideOne(
+    world: World,
+    request: Parameters<World['runner']['submit']>[1],
+  ) {
+    const result = decided(yield* world.runner.submit(world.tenantId, request));
+    const [intent] = result.decision.kind === 'MESSAGE_INTENTS' ? result.decision.intents : [];
+    if (intent === undefined) {
+      return yield* Effect.die('the fixture request must decide one intent');
+    }
+    return { intentId: intent.intentId, requestId: CommunicationRequestIdSchema.make(result.requestId) };
+  });
+
+  const stopSeenBySource = Effect.fn('PrepareHandoffTest.stopSeenBySource')(function* seen(
+    world: World,
+    requestId: typeof CommunicationRequestIdSchema.Type,
+  ) {
+    const history = yield* historyOf(world, requestId);
+    const [intent] = history.intents;
+    if (intent === undefined) {
+      return yield* Effect.die('the request decided one intent');
+    }
+    const item = yield* projectMessageHistoryItem(history, intent, { includeEndpointMask: false });
+    return {
+      entries: intent.history.entries.flatMap(({ reasonCodes }) => reasonCodes),
+      feed: history.feed.messages[0],
+      item,
+    };
+  });
+
+  for (const { reason, state } of LIFECYCLE_STATES) {
+    it.live(`${reason}: the specific reason, never only SOURCE_STALE, in the history, the Read and the feed`, () =>
+      Effect.gen(function* lifecycleStop() {
+        const world = yield* setup({ types: [lifecycleType()] });
+        const handoff = handoffDouble();
+        const { intentId, requestId } = yield* decideRequest(world, requestFor(world.tenantId));
+        world.source.state.state = state;
+        expect(yield* step(world, handoff, intentId)).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'SOURCE_STALE', cause: reason, proven: true }],
+        });
+        expect(handoff.calls).toEqual([]);
+        const seen = yield* stopSeenBySource(world, requestId);
+        expect(seen.entries).toContain(reason);
+        expect(seen.entries).not.toContain('SOURCE_STALE');
+        expect(seen.item.headline.reasonCodes).toEqual([reason]);
+        expect(seen.feed).toMatchObject({ attention: 'FAILURE', reason, status: 'SUPPRESSED' });
+        expect(seen.item.headline.attention).toBe(seen.feed?.attention);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+    );
+  }
+
+  it.live('an undeclared ineligible state and a moved-on revision keep their own closed reasons', () =>
+    Effect.gen(function* undeclared() {
+      const handoff = handoffDouble();
+      const generic = yield* setup({ types: [lifecycleType()] });
+      const first = yield* decideRequest(generic, requestFor(generic.tenantId));
+      generic.source.state.state = 'fixture.state.undeclared';
+      yield* step(generic, handoff, first.intentId);
+      expect((yield* stopSeenBySource(generic, first.requestId)).feed).toMatchObject({
+        reason: 'SOURCE_STATE_INELIGIBLE',
+      });
+      const moved = yield* setup({ types: [lifecycleType()] });
+      const second = yield* decideRequest(moved, requestFor(moved.tenantId));
+      moved.source.state.latestRevision = 2;
+      yield* step(moved, handoff, second.intentId);
+      expect((yield* stopSeenBySource(moved, second.requestId)).feed).toMatchObject({
+        reason: 'SOURCE_REVISION_NOT_CURRENT',
+      });
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'a request whose validUntil is already past at intake is decided, then stopped with SOURCE_NO_LONGER_VALID',
+    () =>
+      Effect.gen(function* pastAtIntake() {
+        const world = yield* setup();
+        const handoff = handoffDouble();
+        const { intentId, requestId } = yield* decideRequest(
+          world,
+          communicationRequest({
+            bindings: [originalRecipient('customer-1')],
+            tenantId: world.tenantId,
+            validUntil: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+          }),
+        );
+        expect(yield* step(world, handoff, intentId)).toMatchObject({
+          kind: 'STOPPED',
+          reasons: [{ category: 'SOURCE_STALE', cause: 'SOURCE_NO_LONGER_VALID', proven: true }],
+        });
+        // the proof is never handed off, and the source is told the concrete reason, not a generic category
+        expect(handoff.calls).toEqual([]);
+        const seen = yield* stopSeenBySource(world, requestId);
+        expect(seen.feed).toMatchObject({
+          attention: 'FAILURE',
+          reason: 'SOURCE_NO_LONGER_VALID',
+          status: 'SUPPRESSED',
+        });
+        expect(seen.item.headline.reasonCodes).toEqual(['SOURCE_NO_LONGER_VALID']);
+        expect(seen.entries).toContain('SOURCE_NO_LONGER_VALID');
+        // final: a proven stop is never reopened by a later delivery
+        expect(kindOf(yield* step(world, handoff, intentId))).toBe('SKIPPED:ALREADY_STOPPED');
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('a validUntil in the future does not stop the message', () =>
+    Effect.gen(function* futureValidUntil() {
+      const world = yield* setup();
+      const handoff = handoffDouble();
+      const { intentId } = yield* decideRequest(
+        world,
+        communicationRequest({
+          bindings: [originalRecipient('customer-1')],
+          tenantId: world.tenantId,
+          validUntil: DateTime.makeUnsafe('2999-01-01T00:00:00.000Z'),
+        }),
+      );
+      expect(kindOf(yield* step(world, handoff, intentId))).toBe('HANDED_OFF');
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

@@ -14,6 +14,11 @@ export type MessageTypeRegistryViolationCase = Data.TaggedEnum<{
   IndivisibleGroupSlotInvalid: { readonly slotKey: string; readonly typeId: string };
   /** An indivisible audience needs messages to hold together; a no-message type has no audience. */
   IndivisibleGroupWithoutMessages: { readonly typeId: string };
+  /**
+   * A source state is either eligible or declared ineligible with its own closed reason, never both, and a declared state names
+   * ONE reason (#1406): a state that is both would mean the owner both lets the message proceed and stops it.
+   */
+  IneligibleSourceStateConflict: { readonly state: string; readonly typeId: string };
   /** A business-required type must produce messages; a required no-message rule would never be a failure. */
   RequiredTypeWithoutMessages: { readonly typeId: string };
 }>;
@@ -62,6 +67,13 @@ const violationsOf = (types: readonly TransactionalMessageType[]): readonly Mess
       ? [MessageTypeRegistryViolation.ActiveTypeWithoutPrivacyPurpose({ typeId })]
       : [],
   ),
+  ...types.flatMap(({ eligibleSourceStates, ineligibleSourceStates = [], typeId }) => {
+    const eligible = new Set<string>(eligibleSourceStates);
+    const declared = ineligibleSourceStates.map(({ state }) => state);
+    return [...new Set([...declared.filter((state) => eligible.has(state)), ...duplicates(declared)])].map((state) =>
+      MessageTypeRegistryViolation.IneligibleSourceStateConflict({ state, typeId }),
+    );
+  }),
   ...types.flatMap(({ audience, result, typeId }) => groupViolations(audience, result, typeId)),
   ...types.flatMap(({ requiredness, result, typeId }) =>
     requiredness === 'REQUIRED' && result.kind === 'NO_MESSAGE'

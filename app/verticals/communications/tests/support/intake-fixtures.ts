@@ -1,6 +1,6 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
 import type { CommunicationRequest } from '@app/communications-contracts/communication-request';
-import { Effect, Layer, Ref, Schema } from 'effect';
+import { DateTime, Effect, Layer, Ref, Schema } from 'effect';
 
 import type { TransactionalMessageType } from '../../src/domain/catalog/message-type.ts';
 import { SourceStateKeySchema } from '../../src/domain/catalog/vocabulary.ts';
@@ -74,6 +74,8 @@ export interface RequestInput {
   readonly safeReferences?: readonly { readonly key: string; readonly resourceId: string }[];
   readonly sourceModule?: string;
   readonly tenantId?: string;
+  /** The source's own stated expiry (`occurrence.validUntil`); omitted by a source without one. */
+  readonly validUntil?: DateTime.Utc;
 }
 
 /** A fictional committed source request as the published contract carries it. */
@@ -103,9 +105,18 @@ export const communicationRequest = (input: RequestInput): CommunicationRequest 
     };
     return entry.form === undefined ? named : { ...named, form: entry.form };
   });
+  const sourceOccurrence = {
+    occurrenceId: input.occurrenceId ?? 'fixture-occurrence-1',
+    revision: input.revision ?? 1,
+  };
+  // the source's own expiry is stated only by a source that has one
+  const occurrence =
+    input.validUntil === undefined
+      ? sourceOccurrence
+      : { ...sourceOccurrence, validUntil: DateTime.formatIso(input.validUntil) };
   const ordinary = {
     idempotency: input.correlationId === undefined ? { key } : { correlationId: input.correlationId, key },
-    occurrence: { occurrenceId: input.occurrenceId ?? 'fixture-occurrence-1', revision: input.revision ?? 1 },
+    occurrence,
     originalRecipients: input.bindings.map((entry) => encodeBinding({ ...entry, scope })),
     purpose: input.purpose ?? 'fixture.single',
     safeReferences: (input.safeReferences ?? []).map(({ key: referenceKey, resourceId }) => ({

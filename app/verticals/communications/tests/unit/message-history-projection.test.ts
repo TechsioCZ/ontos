@@ -157,7 +157,9 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
       Effect.gen(function* vocabulary() {
         const held = yield* project(
           withMask,
-          intentRecord({ facts: factsOf({ stops: [stop({ categories: ['PRIVACY_INDETERMINATE'], proven: false })] }) }),
+          intentRecord({
+            facts: factsOf({ stops: [stop({ proven: false, reasonCodes: ['PRIVACY_INDETERMINATE'] })] }),
+          }),
         );
         expect(held.headline).toMatchObject({
           attention: 'NEEDS_REEVALUATION',

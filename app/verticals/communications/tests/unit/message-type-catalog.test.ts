@@ -99,6 +99,29 @@ describe('#1394 Rule: the catalog approves types explicitly', () => {
     ).toEqual(['RequiredTypeWithoutMessages']);
   });
 
+  it('rejects a source state that is both eligible and declared ineligible, or declared twice (#1406)', () => {
+    const [open] = fixtureType().eligibleSourceStates;
+    expect(
+      violationTags([fixtureType({ ineligibleSourceStates: [{ reason: 'SOURCE_EXPIRED', state: open }] })]),
+    ).toEqual(['IneligibleSourceStateConflict']);
+    expect(
+      violationTags([
+        fixtureType({
+          ineligibleSourceStates: [
+            { reason: 'SOURCE_EXPIRED', state: 'fixture.state.gone' },
+            { reason: 'SOURCE_REVOKED', state: 'fixture.state.gone' },
+          ],
+        }),
+      ]),
+    ).toEqual(['IneligibleSourceStateConflict']);
+    // a state declared ineligible once, under its own reason, is a valid registry
+    expect(
+      violationTags([
+        fixtureType({ ineligibleSourceStates: [{ reason: 'SOURCE_EXPIRED', state: 'fixture.state.gone' }] }),
+      ]),
+    ).toEqual([]);
+  });
+
   it.effect('BR-05/AC-04: one invalid added type fails loudly at construction and never empties the registry', () =>
     Effect.gen(function* invalidAdditionIsLoud() {
       const valid = fixtureTypeNamed('good-addition');

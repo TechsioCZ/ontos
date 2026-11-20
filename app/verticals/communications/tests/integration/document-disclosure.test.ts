@@ -6,6 +6,8 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { CommunicationRequestIdSchema } from '../../shared/communication-intake.ts';
 import { intentDocumentPins } from '../../src/database/schema.ts';
+import { workerPinDocumentRoutine } from '../../src/persistence/communications-routines.ts';
+import { projectMessageHistoryItem } from '../../src/history/message-history-projection.ts';
 import { DocumentStopReasonSchema, stopIsProven } from '../../src/domain/documents/disclosure.ts';
 import type { DocumentStopReason } from '../../src/domain/documents/disclosure.ts';
 import { fixtureRecovery, fixtureType } from '../unit/support/catalog-fixtures.ts';
@@ -245,9 +247,19 @@ describe('every document stop reason is truthful, closed and visible to the sour
         // an unproven stop holds the message for a new evaluation; a proven one is a failure the source owner decides on
         const record = yield* intentHistoryOf(world, requestId);
         expect(record.history.summary.status).toBe(proven ? 'SUPPRESSED' : 'HELD_UNPROVEN');
-        const { feed } = yield* historyOf(world, requestId);
+        const history = yield* historyOf(world, requestId);
+        const { feed, intents } = history;
         expect(feed.messages[0]?.attention).toBe(proven ? 'FAILURE' : 'NEEDS_REEVALUATION');
+        // a stop BEFORE any attempt has no recovery evaluation: the feed still carries the stop's own closed code (#1409)
+        expect(feed.messages[0]?.reason).toBe(stopCase.reason);
         expect(record.history.entries.flatMap(({ reasonCodes }) => reasonCodes)).toContain(stopCase.reason);
+        // the Read is derived from the same facts: it lists the very reason the source is told, with the same attention
+        const item = yield* Option.match(Option.fromNullishOr(intents[0]), {
+          onNone: () => Effect.die('the request has one intent'),
+          onSome: (intent) => projectMessageHistoryItem(history, intent, { includeEndpointMask: false }),
+        });
+        expect(item.headline.reasonCodes).toContain(stopCase.reason);
+        expect(item.headline.attention).toBe(feed.messages[0]?.attention);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
     );
   }
@@ -277,6 +289,75 @@ describe('every document stop reason is truthful, closed and visible to the sour
         'DOCUMENT_OWNER_MISMATCH:true',
       ]);
       expect(kindOf(yield* stepWith(final, handoff, second.intentId))).toBe('SKIPPED:ALREADY_STOPPED');
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+});
+
+describe('two first evaluations that resolved different Assets never both go on (#1409)', () => {
+  it.live(
+    'the first writer wins: the other evaluation stops with DOCUMENT_PIN_NOT_CURRENT and never adopts the stored pin',
+    () =>
+      Effect.gen(function* firstWriteRace() {
+        const world = yield* setup([linkType()]);
+        world.documents.assign('doc-1', assetRef('asset-1'));
+        const handoff = handoffDouble();
+        const { intentId, requestId } = yield* decideWith(world, [{ documentId: 'doc-1' }]);
+        // between this evaluation's owner answer (asset-1) and its pin, a concurrent evaluation that resolved ANOTHER Asset pins first
+        world.documents.afterNextResolve(
+          world.database
+            .inTenant(world.tenantId, (tx) =>
+              tx.invoke(workerPinDocumentRoutine, [
+                intentId,
+                0,
+                'fixture.documents',
+                'fixture.documents.document',
+                'doc-1',
+                'fixture.classification.customer',
+                'LINK',
+                'core.media',
+                'core.media.asset',
+                'asset-2',
+                1,
+              ]),
+            )
+            .pipe(Effect.orDie, Effect.asVoid),
+        );
+        expect(stoppedReasons(yield* stepWith(world, handoff, intentId))).toEqual(['DOCUMENT_PIN_NOT_CURRENT:true']);
+        expect(handoff.calls).toEqual([]);
+        // the stored pin is the first writer's, untouched
+        expect(yield* pinsOf(world, intentId)).toMatchObject([{ assetId: 'asset-2' }]);
+        const { feed } = yield* historyOf(world, requestId);
+        expect(feed.messages[0]).toMatchObject({ attention: 'FAILURE', reason: 'DOCUMENT_PIN_NOT_CURRENT' });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('two evaluations that resolved the SAME Asset both keep the one stored pin', () =>
+    Effect.gen(function* sameAsset() {
+      const world = yield* setup([linkType()]);
+      world.documents.assign('doc-1', assetRef('asset-1'));
+      const handoff = handoffDouble();
+      const { intentId } = yield* decideWith(world, [{ documentId: 'doc-1' }]);
+      world.documents.afterNextResolve(
+        world.database
+          .inTenant(world.tenantId, (tx) =>
+            tx.invoke(workerPinDocumentRoutine, [
+              intentId,
+              0,
+              'fixture.documents',
+              'fixture.documents.document',
+              'doc-1',
+              'fixture.classification.customer',
+              'LINK',
+              'core.media',
+              'core.media.asset',
+              'asset-1',
+              1,
+            ]),
+          )
+          .pipe(Effect.orDie, Effect.asVoid),
+      );
+      expect(kindOf(yield* stepWith(world, handoff, intentId))).toBe('HANDED_OFF');
+      expect(yield* pinsOf(world, intentId)).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });
