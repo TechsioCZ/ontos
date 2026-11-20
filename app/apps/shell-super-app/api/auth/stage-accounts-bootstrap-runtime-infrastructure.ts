@@ -274,8 +274,8 @@ const retireAuthUser = Effect.fn('StageAccountsBootstrap.retireAuthUser')(functi
 });
 
 /**
- * The Better Auth user a retired Principal's login signs in as. Core retires the Principal only when every live
- * staff binding it has belongs to this user; the user itself is not changed here.
+ * The Better Auth user a retired Principal's login signs in as. Core retires the Principal only while it holds a live
+ * staff binding of this user and no binding of anybody else; the user itself is not changed here.
  */
 const retiredLoginUser = Effect.fn('StageAccountsBootstrap.retiredLoginUser')(function* retiredLoginUser(
   email: string,

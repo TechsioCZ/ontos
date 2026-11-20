@@ -1,4 +1,4 @@
-import { and, eq, gt, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, or, sql } from 'drizzle-orm';
 import { Config, DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
@@ -10,6 +10,7 @@ import { AccessMembershipStore } from '../access/intent/memberships.ts';
 import type { AccessMembership } from '../access/intent/memberships.ts';
 import { AccessPeopleStore, PEOPLE_CHANGE_LOCK_NAMESPACE } from '../access/intent/people-store.ts';
 import { peopleRevisionOf } from '../access/intent/people-revision.ts';
+import { asDate } from '../access/intent/persistence.ts';
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
 import { AccessTeamStore } from '../access/intent/teams.ts';
 import type { AccessTeamWithMembers } from '../access/intent/teams.ts';
@@ -40,6 +41,7 @@ import {
   tenantModuleStates,
   tenants,
 } from '../db/schema.ts';
+import type { BindingStatus } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
@@ -565,7 +567,7 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
 
 /**
  * One person's sign-in to a tenant that stays active, named by its Principal and by the Better Auth user the
- * operator file's email resolved to. Every live staff binding of that Principal must be that user's.
+ * operator file's email resolved to. The Principal must be signed in to by that user, and by nothing else.
  */
 export interface StageRetiredPrincipalIdentity {
   readonly principalId: string;
@@ -573,7 +575,12 @@ export interface StageRetiredPrincipalIdentity {
   readonly tenantId: string;
 }
 
-const STAGE_RETIREMENT_REASON = 'The stage operator retired this login from the tenant';
+/**
+ * What every row a departure ends records as its reason. The authority is the stage operator's accounts file
+ * (ADR-0028), exercised through the tenant's owner, so the history reads who ended the row and through what.
+ */
+export const STAGE_RETIREMENT_REASON =
+  'Ended by the tenant owner through the stage accounts bootstrap, on the stage operator accounts file (ADR-0028)';
 
 /**
  * The tenant's People lock, the one every governed people change commits under, so a retirement never
@@ -586,6 +593,37 @@ const lockTenantPeople = (transaction: CoreTransaction, tenantId: string) =>
       'objects',
     )
     .pipe(Effect.mapError(bootstrapFailureFromCause), Effect.asVoid);
+
+/**
+ * The scope a departure is planned and written in: the tenant's owner acting for the stage operator, whose
+ * accounts file is the authority (ADR-0028). Every row the departure ends records that owner, never the person who
+ * leaves, and the session reference names the bootstrap the owner acted through.
+ */
+const operatorScopeOf = (input: {
+  readonly legalEntityId?: string;
+  readonly ownerId: string;
+  readonly tenantId: string;
+}): Effect.Effect<OperationalScope, StageContextBootstrapError> => {
+  const session = {
+    authBindingId: stableUuid(`ontos.stage.accounts-bootstrap.operator:${input.tenantId}:${input.ownerId}`),
+    authContextRef: `stage-accounts-bootstrap:operator:${input.tenantId}:${input.ownerId}`,
+    authMethod: 'session' as const,
+    principalId: input.ownerId,
+    tenantId: input.tenantId,
+  };
+  const context = input.legalEntityId === undefined ? session : { ...session, legalEntityId: input.legalEntityId };
+  return Schema.decodeEffect(TrustedPrincipalContextSchema)(context).pipe(
+    Effect.map((scope) => ({ ...scope, correlationId: 'stage-accounts-bootstrap' }) satisfies OperationalScope),
+    Effect.mapError((cause) => failure('The stage operator scope is invalid', cause)),
+  );
+};
+
+/** The person a holder is; an agent is nobody's Principal here. */
+const personIdsOf = (holder: Holder): readonly string[] =>
+  Match.value(holder).pipe(
+    Match.tag('Principal', ({ principalId }): readonly string[] => [principalId]),
+    Match.orElse((): readonly string[] => []),
+  );
 
 /** Whether an existing row carries exactly the expected values. */
 const isExactRecord = (existing: ExactRecord, expected: ExactRecord): boolean =>
@@ -735,21 +773,71 @@ const endedIdsOf = (writes: readonly PeopleIntentWrite[]): ReadonlySet<string> =
   );
 
 /**
- * The view after one departure's plan committed: its memberships and assignments revoked, as the People store
- * writes them. The next person of the same tenant is planned on it, so two administrators of one scope never
- * each count the other as the successor that stays.
+ * One planned write applied to a view, exactly as the People store writes it. Every kind of Core's write union is
+ * handled (`Match.exhaustive`), so a kind Core adds later fails typecheck here instead of leaving the next plan on
+ * a view whose revision the store refuses.
+ */
+const viewAfterWrite = (view: StagePeopleView, write: PeopleIntentWrite): StagePeopleView =>
+  Match.value(write).pipe(
+    Match.tag('EndAssignment', ({ incarnationId }): StagePeopleView => ({
+      ...view,
+      assignments: view.assignments.map((assignment): Assignment =>
+        assignment.incarnationId === incarnationId ? { ...assignment, status: 'revoked' } : assignment,
+      ),
+    })),
+    Match.tag('EndDelegation', ({ delegationId }): StagePeopleView => ({
+      ...view,
+      delegations: view.delegations.map((delegation): Delegation =>
+        delegation.id === delegationId ? { ...delegation, status: 'revoked' } : delegation,
+      ),
+    })),
+    Match.tag('EndMembership', ({ membershipId, status }): StagePeopleView => ({
+      ...view,
+      memberships: view.memberships.map((membership): AccessMembership =>
+        membership.id === membershipId ? { ...membership, status } : membership,
+      ),
+    })),
+    Match.tag('RecordAssignment', ({ assignment }): StagePeopleView => ({
+      ...view,
+      assignments: [...view.assignments, assignment],
+    })),
+    Match.tag('RecordDelegation', ({ delegation }): StagePeopleView => ({
+      ...view,
+      delegations: [...view.delegations, delegation],
+    })),
+    Match.tag('RecordMembership', ({ membership }): StagePeopleView => ({
+      ...view,
+      memberships: [...view.memberships, membership],
+    })),
+    Match.tag('RecordTeamMember', ({ member }): StagePeopleView => ({
+      ...view,
+      teams: view.teams.map((entry): AccessTeamWithMembers =>
+        entry.team.id === member.teamId ? { ...entry, members: [...entry.members, member] } : entry,
+      ),
+    })),
+    Match.tag('RemoveTeamMember', ({ teamMemberId }): StagePeopleView => ({
+      ...view,
+      teams: view.teams.map((entry): AccessTeamWithMembers => ({
+        ...entry,
+        members: entry.members.filter((member) => member.id !== teamMemberId),
+      })),
+    })),
+    // A precondition writes no row.
+    Match.tag('RequireDirectoryMember', (): StagePeopleView => view),
+    Match.exhaustive,
+  );
+
+/**
+ * The view after one departure's plan committed. The next person of the same tenant is planned on it, so two
+ * administrators of one scope never each count the other as the successor that stays, and the revision it carries
+ * is the one the People store reads once the first plan is written.
  */
 const viewAfter = (view: StagePeopleView, writes: readonly PeopleIntentWrite[]): StagePeopleView => {
-  const ended = endedIdsOf(writes);
-  return {
-    ...view,
-    assignments: view.assignments.map((assignment) =>
-      ended.has(assignment.incarnationId) ? { ...assignment, status: 'revoked' } : assignment,
-    ),
-    memberships: view.memberships.map((membership) =>
-      ended.has(membership.id) ? { ...membership, status: 'revoked' } : membership,
-    ),
-  };
+  let after = view;
+  for (const write of writes) {
+    after = viewAfterWrite(after, write);
+  }
+  return after;
 };
 
 /** One company directory membership a departure ends, read with its revision for the compare-and-set. */
@@ -759,13 +847,34 @@ interface DirectoryDeparture {
   readonly scope: OperationalScope;
 }
 
+/** One staff binding as the run read it under its row lock: the compare-and-set its revocation is written with. */
+interface WitnessedBinding {
+  readonly id: string;
+  readonly revision: number;
+  readonly status: BindingStatus;
+}
+
 /** Everything one departure writes, decided before anything of the run is written. */
 interface PrincipalRetirement {
   readonly archive: boolean;
+  /** Exactly the bindings the run read and revokes, each at the revision and status it read. */
+  readonly bindings: readonly WitnessedBinding[];
+  /** The connections still marked active that the run read, every one ended by time; the commit refuses another set. */
+  readonly connectionIds: readonly string[];
   readonly directory: readonly DirectoryDeparture[];
   readonly expectedRevision: string;
   readonly peopleWrites: readonly PeopleIntentWrite[];
-  readonly revokeBindings: boolean;
+  /** The tenant owner acting for the stage operator: every row this departure writes is attributed to it. */
+  readonly scope: OperationalScope;
+}
+
+/** What every departure of one tenant is decided with, read at decision time under the run's locks. */
+interface TenantDecision {
+  readonly at: Date;
+  readonly authenticationNamespaceId: string;
+  /** The administrators who are active persons of the tenant, share-locked until the run commits. */
+  readonly eligible: ReadonlySet<string>;
+  readonly enrollment: DatabaseIdentityEnrollment;
   readonly scope: OperationalScope;
 }
 
@@ -774,37 +883,147 @@ const notEnded = (row: { readonly status: string; readonly validUntil?: Date | u
   row.status !== 'revoked' && row.status !== 'expired' && (row.validUntil === undefined || at < row.validUntil);
 
 /**
- * Plans one person leaving a tenant that stays, exactly as the governed "person leaves" command does: Core's
- * membership-end planner ends the tenant member row and everything that stood on it, and refuses the last
- * administrator of any scope. Before that it refuses whatever the departure would leave projectable or would
- * take from somebody else: a binding of another login or credential, a live delegation the person granted or
- * manages, a team place and an agent connection. Every refusal is decided here; nothing is written.
+ * Locks every leaver's Principal row FOR UPDATE before anything about it is read. A writer that adds a binding, a
+ * personal key or an agent connection to a Principal references that row: its foreign key takes a KEY SHARE lock,
+ * which FOR UPDATE excludes, and the external identity writer locks the row FOR UPDATE itself. None of them takes the
+ * People lock, so this row lock is what keeps every one of them out between this run's decision and its commit:
+ * they wait, then find the Principal archived.
  */
-const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* retirementOfEffect(
+const lockLeavers = Effect.fn('StageContextBootstrap.lockLeavers')(function* lockLeaversEffect(
   transaction: CoreTransaction,
-  retired: StageRetiredPrincipalIdentity,
+  leavers: readonly StageRetiredPrincipalIdentity[],
+  enrollment: DatabaseIdentityEnrollment,
+): Effect.fn.Return<void, StageContextBootstrapError> {
+  const [first] = leavers;
+  if (first === undefined) {
+    return yield* Effect.void;
+  }
+  // A leaver's installer scope only selects the tenant for row security; it locks and attributes nothing.
+  yield* installOperationalScope(transaction, yield* stageScopeOf(first), enrollment).pipe(
+    Effect.mapError(bootstrapFailureFromCause),
+  );
+  yield* transaction
+    .select({ principalId: principals.principalId })
+    .from(principals)
+    .where(
+      and(
+        eq(principals.tenantId, first.tenantId),
+        inArray(
+          principals.principalId,
+          leavers.map(({ principalId }) => principalId),
+        ),
+      ),
+    )
+    .orderBy(principals.principalId)
+    .for('update')
+    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  return yield* Effect.void;
+});
+
+/**
+ * The decision facts of one tenant. A leaver who owns the tenant is refused first. Every person holding an owner or
+ * administrator membership is read with their Principal row share-locked: only an active person counts as an administrator who stays, and none of them can be
+ * disabled or archived before this run commits. The one owner among them is the identity the stage operator's file
+ * acts through (ADR-0028); a tenant without exactly one live owner who is an active person is refused, because no
+ * accountable identity would write its history.
+ */
+const tenantDecisionOf = Effect.fn('StageContextBootstrap.tenantDecisionOf')(function* tenantDecisionOfEffect(
+  transaction: CoreTransaction,
   view: StagePeopleView,
+  leavers: readonly StageRetiredPrincipalIdentity[],
+  reading: OperationalScope,
   context: {
     readonly at: Date;
     readonly authenticationNamespaceId: string;
     readonly enrollment: DatabaseIdentityEnrollment;
   },
-): Effect.fn.Return<PrincipalRetirement, StageContextBootstrapError> {
+): Effect.fn.Return<TenantDecision, StageContextBootstrapError> {
   const { at } = context;
-  const scope = yield* stageScopeOf(retired);
-  yield* installOperationalScope(transaction, scope, context.enrollment).pipe(
+  const managing = view.memberships.filter((membership) => membership.kind !== 'member' && notEnded(membership, at));
+  const leaving = new Set(leavers.map(({ principalId }) => principalId));
+  // No tenant owner leaves through the operator path, a co-owner included: ownership moves only through People.
+  if (
+    managing.some(
+      (membership) =>
+        membership.kind === 'owner' && personIdsOf(membership.holder).some((principalId) => leaving.has(principalId)),
+    )
+  ) {
+    return yield* failure(
+      'A tenant owner is never retired through the stage accounts bootstrap; transfer the ownership through People first',
+    );
+  }
+  const administrators = [...new Set(managing.flatMap(({ holder }) => personIdsOf(holder)))].toSorted();
+  yield* installOperationalScope(transaction, reading, context.enrollment).pipe(
     Effect.mapError(bootstrapFailureFromCause),
   );
-  const [[principal], bindings] = yield* Effect.all(
+  const active =
+    administrators.length === 0
+      ? []
+      : yield* transaction
+          .select({ principalId: principals.principalId })
+          .from(principals)
+          .where(
+            and(
+              eq(principals.tenantId, reading.tenantId),
+              inArray(principals.principalId, administrators),
+              eq(principals.kind, 'human'),
+              eq(principals.status, 'active'),
+            ),
+          )
+          .orderBy(principals.principalId)
+          .for('share')
+          .pipe(Effect.mapError(bootstrapFailureFromCause));
+  const eligible: ReadonlySet<string> = new Set(active.map(({ principalId }) => principalId));
+  const owners = [
+    ...new Set(
+      managing.flatMap((membership) =>
+        membership.kind === 'owner' && membership.status === 'active' && membership.validFrom <= at
+          ? personIdsOf(membership.holder)
+          : [],
+      ),
+    ),
+  ].filter((principalId) => eligible.has(principalId));
+  const [owner] = owners;
+  if (owner === undefined || owners.length > 1) {
+    return yield* failure(
+      `The stage accounts bootstrap retires a login only through the tenant's one owner; tenant ${reading.tenantId} has ${owners.length} live owners who are active persons`,
+    );
+  }
+  return { ...context, eligible, scope: yield* operatorScopeOf({ ownerId: owner, tenantId: reading.tenantId }) };
+});
+
+/**
+ * Plans one person leaving a tenant that stays, as the governed "person leaves" command does when the tenant owner
+ * ends somebody's membership: Core's membership-end planner, run as the owner acting for the stage operator, ends the
+ * tenant member row and everything that stood on it, and refuses the last administrator of any scope, counting only
+ * administrators who are active persons at decision time (a tenant owner was refused with the tenant's facts).
+ * Before that it refuses whatever the departure would leave projectable and whatever it would take from somebody else: a binding of another login or
+ * credential, a live delegation the person granted or manages, a team place and a live agent connection. Every
+ * refusal is decided here; nothing is written.
+ */
+const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* retirementOfEffect(
+  transaction: CoreTransaction,
+  retired: StageRetiredPrincipalIdentity,
+  view: StagePeopleView,
+  decision: TenantDecision,
+): Effect.fn.Return<PrincipalRetirement, StageContextBootstrapError> {
+  const { at, scope } = decision;
+  yield* installOperationalScope(transaction, scope, decision.enrollment).pipe(
+    Effect.mapError(bootstrapFailureFromCause),
+  );
+  const [[principal], bindings, connections] = yield* Effect.all(
     [
       transaction
         .select({ kind: principals.kind, status: principals.status })
         .from(principals)
         .where(and(eq(principals.tenantId, retired.tenantId), eq(principals.principalId, retired.principalId)))
         .limit(1),
+      // Row-locked: no binding is re-enabled or rewritten between this read and its revocation.
       transaction
         .select({
           authenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
+          bindingRevision: principalAuthBindings.bindingRevision,
+          principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
           provider: principalAuthBindings.provider,
           providerSubjectId: principalAuthBindings.providerSubjectId,
           status: principalAuthBindings.status,
@@ -816,28 +1035,56 @@ const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* r
             eq(principalAuthBindings.tenantId, retired.tenantId),
             eq(principalAuthBindings.principalId, retired.principalId),
           ),
-        ),
+        )
+        .orderBy(principalAuthBindings.principalAuthBindingId)
+        .for('update'),
+      transaction
+        .select({
+          connectionId: accessAgentConnections.connectionId,
+          validUntil: accessAgentConnections.validUntil,
+        })
+        .from(accessAgentConnections)
+        .where(
+          and(
+            eq(accessAgentConnections.tenantId, retired.tenantId),
+            eq(accessAgentConnections.principalId, retired.principalId),
+            eq(accessAgentConnections.status, 'active'),
+          ),
+        )
+        .orderBy(accessAgentConnections.connectionId)
+        .for('update'),
     ],
     { concurrency: 1 },
   ).pipe(Effect.mapError(bootstrapFailureFromCause));
   if (principal?.kind !== 'human') {
     return yield* failure('A retired stage Principal must be a person of its tenant');
   }
+  const leaver = PrincipalIdSchema.make(retired.principalId);
+  const holder: Holder = { _tag: 'Principal', principalId: leaver };
   const ofTheLogin = (binding: (typeof bindings)[number]) =>
-    binding.authenticationNamespaceId === context.authenticationNamespaceId &&
+    binding.authenticationNamespaceId === decision.authenticationNamespaceId &&
     binding.provider === 'better_auth' &&
     binding.subjectType === 'user' &&
     binding.providerSubjectId === retired.providerUserId;
-  if (!bindings.some(ofTheLogin)) {
-    return yield* failure('A retired stage Principal must be signed in to by the login its email names');
-  }
-  if (bindings.some((binding) => binding.status !== 'revoked' && !ofTheLogin(binding))) {
+  const unrevoked = bindings.filter(({ status }) => status !== 'revoked');
+  if (unrevoked.some((binding) => !ofTheLogin(binding))) {
     return yield* failure(
       'A retired stage Principal must sign in only as the login its email names; another login or credential is bound to it',
     );
   }
-  const leaver = PrincipalIdSchema.make(retired.principalId);
-  const holder: Holder = { _tag: 'Principal', principalId: leaver };
+  // A departure needs the login's live binding. Only a Principal this file already retired comes back without one:
+  // archived, every binding revoked, one of them the login's.
+  const replay = principal.status === 'archived';
+  const signedIn = replay
+    ? unrevoked.length === 0 && bindings.some(ofTheLogin)
+    : unrevoked.some((binding) => binding.status === 'active' && ofTheLogin(binding));
+  if (!signedIn) {
+    return yield* failure(
+      replay
+        ? 'An archived stage Principal is retired again only as the exact replay of its departure: every binding revoked, one of them the login its email names'
+        : 'A retired stage Principal must hold a live binding of the login its email names',
+    );
+  }
   const delegations = view.delegations.filter(
     (delegation) =>
       (delegation.grantedBy === leaver || delegation.managerId === leaver) &&
@@ -852,20 +1099,7 @@ const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* r
   if (view.teams.some(({ members }) => members.some((member) => sameHolder(member.holder, holder)))) {
     return yield* failure('A retired stage Principal must hold no team place; remove it through People first');
   }
-  const connections = yield* transaction
-    .select({ connectionId: accessAgentConnections.connectionId })
-    .from(accessAgentConnections)
-    .where(
-      and(
-        eq(accessAgentConnections.tenantId, retired.tenantId),
-        eq(accessAgentConnections.principalId, retired.principalId),
-        eq(accessAgentConnections.status, 'active'),
-        gt(accessAgentConnections.validUntil, at),
-      ),
-    )
-    .limit(1)
-    .pipe(Effect.mapError(bootstrapFailureFromCause));
-  if (connections.length > 0) {
+  if (connections.some(({ validUntil }) => at < asDate(validUntil))) {
     return yield* failure('A retired stage Principal must operate no live agent connection; end it first');
   }
   const { tenantScopeId } = view;
@@ -881,12 +1115,18 @@ const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* r
             membership.validFrom <= at &&
             (membership.validUntil === undefined || at < membership.validUntil),
         );
+  // Only an administrator who is an active person stays to administer; the leaver's own rows decide what they give up.
+  const counted = view.memberships.filter((membership) =>
+    personIdsOf(membership.holder).every(
+      (principalId) => principalId === retired.principalId || decision.eligible.has(principalId),
+    ),
+  );
   const peopleWrites =
     ending === undefined || tenantScopeId === undefined
       ? []
       : (yield* planMembershipEnd({
-          actor: leaver,
-          administration: administrationOf(view.memberships, tenantScopeId, at),
+          actor: PrincipalIdSchema.make(scope.principalId),
+          administration: administrationOf(counted, tenantScopeId, at),
           assignments: view.assignments,
           at,
           delegations: view.delegations,
@@ -929,8 +1169,12 @@ const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* r
   const directory = yield* Effect.forEach(
     companies,
     Effect.fn(function* directoryDepartureOf(company) {
-      const companyScope = yield* stageScopeOf({ ...retired, legalEntityId: company.legalEntityId });
-      yield* installOperationalScope(transaction, companyScope, context.enrollment).pipe(
+      const companyScope = yield* operatorScopeOf({
+        legalEntityId: company.legalEntityId,
+        ownerId: scope.principalId,
+        tenantId: retired.tenantId,
+      });
+      yield* installOperationalScope(transaction, companyScope, decision.enrollment).pipe(
         Effect.mapError(bootstrapFailureFromCause),
       );
       const [row] = yield* transaction
@@ -959,19 +1203,25 @@ const retirementOf = Effect.fn('StageContextBootstrap.retirementOf')(function* r
     { concurrency: 1 },
   );
   return {
-    archive: principal.status !== 'archived',
+    archive: !replay,
+    bindings: unrevoked.map(({ bindingRevision, principalAuthBindingId, status }) => ({
+      id: principalAuthBindingId,
+      revision: bindingRevision,
+      status,
+    })),
+    connectionIds: connections.map(({ connectionId }) => connectionId),
     directory: directory.flat(),
     expectedRevision: peopleRevisionOfView(view),
     peopleWrites,
-    revokeBindings: bindings.some(({ status }) => status !== 'revoked'),
     scope,
   };
 });
 
 /**
- * Writes one planned departure: the People plan through the People store (which re-checks the revision it was
- * planned on under the tenant's People lock), the company directory memberships through Core's directory
- * writer, then the person's bindings and Principal.
+ * Writes one planned departure as the tenant owner acting for the stage operator: the People plan through the People
+ * store (which re-checks the revision it was planned on under the tenant's People lock), the company directory
+ * memberships through Core's directory writer, then exactly the bindings the run read, each by compare-and-set, and
+ * the Principal. A binding or connection set that moved since the decision rolls the whole file back.
  */
 const writeRetirement = Effect.fn('StageContextBootstrap.writeRetirement')(function* writeRetirementEffect(
   transaction: CoreTransaction,
@@ -1004,23 +1254,71 @@ const writeRetirement = Effect.fn('StageContextBootstrap.writeRetirement')(funct
     }),
     { concurrency: 1, discard: true },
   );
-  if (retirement.revokeBindings) {
-    yield* transaction
-      .update(principalAuthBindings)
-      .set({
-        bindingRevision: sql`${principalAuthBindings.bindingRevision} + 1`,
-        revokedAt: context.at,
-        status: 'revoked',
-        updatedAt: context.at,
-      })
-      .where(
-        and(
-          eq(principalAuthBindings.tenantId, retired.tenantId),
-          eq(principalAuthBindings.principalId, retired.principalId),
-          ne(principalAuthBindings.status, 'revoked'),
+  yield* installOperationalScope(transaction, retirement.scope, context.enrollment).pipe(
+    Effect.mapError(bootstrapFailureFromCause),
+  );
+  const revoked =
+    retirement.bindings.length === 0
+      ? []
+      : yield* transaction
+          .update(principalAuthBindings)
+          .set({
+            bindingRevision: sql`${principalAuthBindings.bindingRevision} + 1`,
+            revokedAt: context.at,
+            status: 'revoked',
+            updatedAt: context.at,
+          })
+          .where(
+            and(
+              eq(principalAuthBindings.tenantId, retired.tenantId),
+              eq(principalAuthBindings.principalId, retired.principalId),
+              or(
+                ...retirement.bindings.map((binding) =>
+                  and(
+                    eq(principalAuthBindings.principalAuthBindingId, binding.id),
+                    eq(principalAuthBindings.bindingRevision, binding.revision),
+                    eq(principalAuthBindings.status, binding.status),
+                  ),
+                ),
+              ),
+            ),
+          )
+          .returning({ id: principalAuthBindings.principalAuthBindingId })
+          .pipe(Effect.mapError(bootstrapFailureFromCause));
+  const [unrevoked, connections] = yield* Effect.all(
+    [
+      transaction
+        .select({ id: principalAuthBindings.principalAuthBindingId })
+        .from(principalAuthBindings)
+        .where(
+          and(
+            eq(principalAuthBindings.tenantId, retired.tenantId),
+            eq(principalAuthBindings.principalId, retired.principalId),
+            ne(principalAuthBindings.status, 'revoked'),
+          ),
         ),
-      )
-      .pipe(Effect.mapError(bootstrapFailureFromCause));
+      transaction
+        .select({ connectionId: accessAgentConnections.connectionId })
+        .from(accessAgentConnections)
+        .where(
+          and(
+            eq(accessAgentConnections.tenantId, retired.tenantId),
+            eq(accessAgentConnections.principalId, retired.principalId),
+            eq(accessAgentConnections.status, 'active'),
+          ),
+        )
+        .orderBy(accessAgentConnections.connectionId),
+    ],
+    { concurrency: 1 },
+  ).pipe(Effect.mapError(bootstrapFailureFromCause));
+  const witnessed =
+    revoked.length === retirement.bindings.length &&
+    unrevoked.length === 0 &&
+    connections.map(({ connectionId }) => connectionId).join(',') === retirement.connectionIds.join(',');
+  if (!witnessed) {
+    return yield* failure(
+      'A binding or agent connection of a retired stage Principal changed after the run decided; nothing of the file is written',
+    );
   }
   if (retirement.archive) {
     yield* transaction
@@ -1048,25 +1346,35 @@ interface PlannedRetirements {
 }
 
 /**
- * Every attached login and retired Principal of one operator file, in ONE transaction: each tenant's People
- * lock first, then every refusal decided from what the transaction reads, and only then every write. A
- * refusal writes nothing, and a run that stops after the commit is completed by running the same file again,
- * which finds each move already made and reconciles its tenants.
+ * Every attached login and retired Principal of one operator file, in ONE transaction: each tenant's People lock,
+ * then every leaver's Principal row, then the decision time, then every refusal decided from what the transaction
+ * reads, and only then every write. A refusal writes nothing, and a run that stops after the commit is completed by
+ * running the same file again, which finds each move already made and reconciles its tenants.
  */
 const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveLoginsEffect(
   transaction: CoreTransaction,
   input: Pick<StageContextBootstrapInput, 'attachedLogins' | 'retiredPrincipals'>,
   context: {
-    readonly at: Date;
     readonly authenticationNamespaceId: string;
     readonly enrollment: DatabaseIdentityEnrollment;
   },
 ): Effect.fn.Return<void, StageContextBootstrapError, AccessMembershipStore | AccessPeopleStore | AccessTeamStore> {
   const retiredTenantIds = [...new Set(input.retiredPrincipals.map(({ tenantId }) => tenantId))].toSorted();
+  const leaversOf = (tenantId: string) => input.retiredPrincipals.filter((retired) => retired.tenantId === tenantId);
   yield* Effect.forEach(retiredTenantIds, (tenantId) => lockTenantPeople(transaction, tenantId), {
     concurrency: 1,
     discard: true,
   });
+  yield* Effect.forEach(
+    retiredTenantIds,
+    (tenantId) => lockLeavers(transaction, leaversOf(tenantId), context.enrollment),
+    {
+      concurrency: 1,
+      discard: true,
+    },
+  );
+  // Decided now, after every wait for a lock: a membership that ran out while this run waited no longer counts.
+  const decided = { ...context, at: yield* DateTime.nowAsDate };
   const attachments = yield* Effect.forEach(
     input.attachedLogins,
     (login) => attachmentOf(transaction, login, context.authenticationNamespaceId),
@@ -1075,17 +1383,21 @@ const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveL
   const retirements = yield* Effect.forEach(
     retiredTenantIds,
     Effect.fn(function* tenantRetirementsOf(tenantId) {
-      const leavers = input.retiredPrincipals.filter((retired) => retired.tenantId === tenantId);
+      const leavers = leaversOf(tenantId);
       const [first] = leavers;
       if (first === undefined) {
         return [];
       }
-      const view = yield* peopleViewOf(yield* stageScopeOf(first));
+      // The people intent is read under a leaver's installer scope, which only selects the tenant; every decision
+      // and write below runs as the tenant owner acting for the stage operator.
+      const reading = yield* stageScopeOf(first);
+      const view = yield* peopleViewOf(reading);
+      const decision = yield* tenantDecisionOf(transaction, view, leavers, reading, decided);
       const planned = yield* Effect.reduce(
         leavers,
         (): PlannedRetirements => ({ plans: [], view }),
         (state, retired) =>
-          retirementOf(transaction, retired, state.view, context).pipe(
+          retirementOf(transaction, retired, state.view, decision).pipe(
             Effect.map((retirement): PlannedRetirements => ({
               plans: [...state.plans, { retired, retirement }],
               view: viewAfter(state.view, retirement.peopleWrites),
@@ -1127,7 +1439,7 @@ const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveL
   );
   return yield* Effect.forEach(
     retirements.flat(),
-    ({ retired, retirement }) => writeRetirement(transaction, retired, retirement, context),
+    ({ retired, retirement }) => writeRetirement(transaction, retired, retirement, decided),
     { concurrency: 1, discard: true },
   );
 });
@@ -1318,7 +1630,6 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
     if (input.attachedLogins.length > 0 || input.retiredPrincipals.length > 0) {
       yield* runTenantTransaction(executor, (transaction) =>
         moveLogins(transaction, input, {
-          at,
           authenticationNamespaceId: options.authenticationNamespaceId,
           enrollment,
         }),

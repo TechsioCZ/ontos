@@ -375,32 +375,51 @@ interface AccountPlan {
   readonly steps: readonly Step[];
 }
 
-const ROUTING_CAPABILITY = 'core.shell.tenant-module-target.resolve';
-const ORDER_PAGE = 'demo.merchandise.page-orders.read';
-const ORDER_RECORDS = 'demo.merchandise.api-records.read';
-const EXPEDITION_KEYS: ReadonlySet<string> = new Set([
-  ORDER_PAGE,
-  ORDER_RECORDS,
-  'demo.merchandise.api-media.read',
-  'demo.merchandise.order-status.change',
-]);
-const ESHOP_MODULES: ReadonlySet<string> = new Set([
-  'demo.merchandise',
-  'demo.tagging',
-  'commerce.market-catalog',
-  'commerce.storefront-registry',
-  'commerce.customer-context',
-  'party.registry',
-  'work.tasks',
-  'demo.workforce',
-]);
+/**
+ * What each reviewed AKROS role may consist of, as data: one list per role. The lists are today's staff screens of the
+ * demo e-shop and its order desk, which live in the demo module `demo.merchandise` and the modules its screens read;
+ * they are replaced when the order desk lives in a main module. Every key here exists in today's catalogue, and a cell
+ * outside its role's list is refused. Whatever a list says, `cellUnsafe` still refuses administration, critical,
+ * non-run, narrowed and limited cells, and the plan refuses ownership, administration and time-limited grants.
+ */
+export const REVIEWED_ROLE_CONTENTS = {
+  /** expedice@akros.demo: the order desk — the order page, its records and media, and the order status change. */
+  fulfilment: {
+    capabilities: [
+      'demo.merchandise.page-orders.read',
+      'demo.merchandise.api-records.read',
+      'demo.merchandise.api-media.read',
+      'demo.merchandise.order-status.change',
+    ],
+  },
+  /**
+   * eshop@akros.demo: the operational capabilities of the modules the e-shop screens read, by module, never one that
+   * bootstraps, cleans up, seeds or administers.
+   */
+  eshop: {
+    modules: [
+      'demo.merchandise',
+      'demo.tagging',
+      'commerce.market-catalog',
+      'commerce.storefront-registry',
+      'commerce.customer-context',
+      'party.registry',
+      'work.tasks',
+      'demo.workforce',
+    ],
+  },
+  /** Both logins, tenant-wide: the Shell's module routing, nothing else. */
+  routing: { capabilities: ['core.shell.tenant-module-target.resolve'] },
+} as const;
 
 const cellAllowed = (holder: Holder, key: string) =>
   Match.value(holder).pipe(
-    Match.when('routing', () => key === ROUTING_CAPABILITY),
-    Match.when(EXPEDICE, () => EXPEDITION_KEYS.has(key)),
+    Match.when('routing', () => REVIEWED_ROLE_CONTENTS.routing.capabilities.some((allowed) => allowed === key)),
+    Match.when(EXPEDICE, () => REVIEWED_ROLE_CONTENTS.fulfilment.capabilities.some((allowed) => allowed === key)),
     Match.orElse(
-      () => ESHOP_MODULES.has(key.split('.').slice(0, 2).join('.')) && !/bootstrap|cleanup|seed|admin/u.test(key),
+      () =>
+        REVIEWED_ROLE_CONTENTS.eshop.modules.some((module) => module === key.split('.').slice(0, 2).join('.')) &&
+        !/bootstrap|cleanup|seed|admin/u.test(key),
     ),
   );
 
