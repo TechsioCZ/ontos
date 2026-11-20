@@ -152,6 +152,72 @@ it('preserves finite Privacy dispatch metadata only with its exact original huma
   expect(Schema.is(RegisteredGatewayPrivacyDispatchSchema)(withoutClaim)).toBe(false);
 });
 
+it('seals a finite Communications dispatch only with its own consumer worker', () => {
+  const governance = '30000000-0000-4000-8000-000000000001';
+  const human = Schema.decodeSync(TrustedPrincipalContextSchema)({ ...context, legalEntityId: governance });
+  const dispatch: typeof RegisteredGatewayPrivacyDispatchSchema.Encoded = {
+    authority: {
+      consumerModuleKey: 'communications.core',
+      originActionKey: 'privacy.core.dispatch-privacy-measure',
+      originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+      producerModuleKey: 'privacy.core',
+      subjectResourceType: 'privacy.core.privacy-measure',
+      targetAccess: 'tenant-scope',
+      topic: 'privacy.measure.dispatched',
+      workerKey: 'communications.core.receive-privacy-measure',
+    },
+    claimId: 'privacy-dispatch-native-claim',
+    deliveryId: '00000000-0000-4000-8000-000000000011',
+    dispatchInvocationId: '00000000-0000-4000-8000-000000000012',
+    domainEventId: '00000000-0000-4000-8000-000000000013',
+    governanceLegalEntityId: governance,
+    handoffHash: 'b'.repeat(64),
+    measureId: 'privacy.core.measure-fixture',
+    messageId: '00000000-0000-4000-8000-000000000014',
+    operation: 'CommunicationsReceipt',
+    principalId: human.principalId,
+    requestHash: 'c'.repeat(64),
+    sourceMode: 'worker',
+    target: {
+      access: 'read',
+      appId: 'communications',
+      declarationKey: 'communications.core.privacy-owner-execution-outcome.read',
+      entrypointKey: 'communications.core.api.privacy-owner-execution-outcome',
+      legalEntityScope: 'optional',
+      moduleId: 'communications.core',
+      schemaVersion: '1',
+    },
+    taskId: 'privacy.core.task-fixture',
+    tenantId: human.tenantId,
+    workerKey: 'communications.core.receive-privacy-measure',
+    workerModuleKey: 'communications.core',
+  };
+  const seal = (metadata: typeof RegisteredGatewayPrivacyDispatchSchema.Encoded) =>
+    trustVerifiedGatewayPrincipalContext(
+      human,
+      compositionRevision,
+      undefined,
+      { appId: 'privacy', buildMarker: 'privacy-fixture-build', principalId: '00000000-0000-4000-8000-000000000010' },
+      undefined,
+      undefined,
+      Schema.decodeSync(RegisteredGatewayPrivacyDispatchSchema)(metadata),
+    );
+  const sealed = readVerifiedGatewayPrivacyDispatch(seal(dispatch));
+  expect(sealed?.operation).toBe('CommunicationsReceipt');
+  expect(sealed?.authority.consumerModuleKey).toBe('communications.core');
+  expect(sealed?.authority.targetAccess).toBe('tenant-scope');
+  // the sealed worker must be the very consumer worker the authority names: Symmy's worker cannot stand in for it
+  expect(() =>
+    seal({
+      ...dispatch,
+      workerKey: 'integration.symmy.symmy-job-privacy-dispatch',
+      workerModuleKey: 'integration.symmy',
+    }),
+  ).toThrow();
+  expect(() => seal({ ...dispatch, workerModuleKey: 'integration.symmy' })).toThrow();
+  expect(() => seal({ ...dispatch, workerKey: 'communications.core.prepare-message-handoff' })).toThrow();
+});
+
 it('keeps Organization governance read provenance on the exact original human company scope only', () => {
   const human = Schema.decodeSync(TrustedPrincipalContextSchema)({
     ...context,

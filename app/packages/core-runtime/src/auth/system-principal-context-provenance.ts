@@ -169,6 +169,7 @@ export type RegisteredGatewayRouteScope = typeof RegisteredGatewayRouteScopeSche
 export const PrivacyDispatchOperationSchema = Schema.Literals([
   'SymmyRetention',
   'SymmyReceipt',
+  'CommunicationsReceipt',
   'PrivacyEligibility',
   'PrivacyOutcome',
 ]);
