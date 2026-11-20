@@ -26,6 +26,7 @@ import {
 } from './agent-operator-session.mts';
 import type { AgentOperatorSession } from './agent-operator-session.mts';
 import { demoId } from './fixture-ids.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 const OperatorSetupInputSchema = Schema.Struct({
   agentPrincipalId: ReplaceAgentOperatorsPayloadSchema.fields.agentPrincipalId,
@@ -315,5 +316,11 @@ const command = Command.make(
     }).pipe(Effect.scoped),
 ).pipe(Command.provide(AgentProfileOperatorLive));
 if (import.meta.main) {
-  await Effect.runPromise(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));
+  await Effect.runPromise(
+    Command.run(command, { version: '1.0.0' }).pipe(
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 }

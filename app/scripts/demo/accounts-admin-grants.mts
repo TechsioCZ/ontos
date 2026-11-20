@@ -11,12 +11,14 @@ import { NodeServices } from '@effect/platform-node';
 import { Console, Effect, Exit } from 'effect';
 
 import { runCanonicalDemoRepair } from './local-repair.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 const program = runCanonicalDemoRepair()
   .pipe(Effect.tap(() => Console.log('Demo reviewed access re-seeded; identities and records were not reset.')))
   .pipe(Effect.provide(NodeServices.layer));
 
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(program);
+  // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+  const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(ProcessDatabasePoolsLive)));
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }
