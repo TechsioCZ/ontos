@@ -118,14 +118,61 @@ const inOtherTenant = <TenantRef extends { readonly tenantId: string }>(ref: Ten
 const rowsOf = <Row>(rows: readonly Row[]) => ({
   from: () => ({ where: () => ({ limit: () => Effect.succeed(rows) }) }),
 });
-const insertingNothing = { values: () => ({ onConflictDoNothing: () => ({ returning: () => Effect.succeed([]) }) }) };
-/** A Drizzle double whose insert meets a concurrently committed row and whose selects answer `batches` in order. */
-const raceLosingTransaction = <Row>(batches: readonly (readonly Row[])[]) => {
-  const remaining = [...batches];
-  return { insert: () => insertingNothing, select: () => rowsOf(remaining.shift() ?? []) };
+const inserting = (rows: readonly object[]) => ({
+  values: () => ({ onConflictDoNothing: () => ({ returning: () => Effect.succeed(rows) }) }),
+});
+/**
+ * A Drizzle double whose selects answer `batches` in order and whose inserts answer `inserts` in order, an
+ * empty answer standing for an insert that met a concurrently committed Current Item.
+ */
+const raceLosingTransaction = (
+  batches: readonly (readonly object[])[],
+  inserts: readonly (readonly object[])[] = [],
+) => {
+  const remainingSelects = [...batches];
+  const remainingInserts = [...inserts];
+  const transaction = {
+    insert: () => {
+      transaction.inserts += 1;
+      return inserting(remainingInserts.shift() ?? []);
+    },
+    inserts: 0,
+    select: () => rowsOf(remainingSelects.shift() ?? []),
+  };
+  return transaction;
 };
+const currentItemRow = (stockItemId: string) => ({
+  createdAt: new Date('2026-11-20T08:00:00.000Z'),
+  exactSelectionKind: 'PRODUCT_VARIANT',
+  exactSelectionMeaningId: 'catalog-variant:sku-race',
+  lifecycleState: 'CURRENT',
+  retiredAt: null,
+  revision: 1,
+  stockItemId,
+  stockUnitModuleId: unitRef.moduleId,
+  stockUnitResourceId: unitRef.resourceId,
+  stockUnitResourceType: unitRef.resourceType,
+  stockUnitTenantId: tenantId,
+  tenantId,
+});
+/** Registers `catalog-variant:sku-race` over a `raceLosingTransaction` double. */
+const registerRacing = Effect.fn('StockSetupActionsTest.registerRacing')(function* registerRacing(
+  transaction: ReturnType<typeof raceLosingTransaction>,
+) {
+  const service = {
+    // @ts-expect-error Mock implements only the exercised transaction chains.
+    register: stockItemRegistration(makeDrizzleStockItemRepository(transaction), yield* Crypto.Crypto),
+  };
+  return yield* handleRegisterStockItem(
+    Schema.decodeUnknownSync(RegisterStockItemPayloadSchema)({
+      exactSelectionMeaning: { id: 'catalog-variant:sku-race', kind: 'PRODUCT_VARIANT' },
+      unitRef,
+    }),
+    handlerContext(registerStockItemAction, service).context,
+  );
+});
 
-/** `refusal` is what the owner's Item and Location lock answers for the establishment targets. */
+/** `refusal` is what the owner's configuration, Item and Location lock answers for the establishment targets. */
 const makePositions = Effect.fn('StockSetupActionsTest.makePositions')(function* makePositions(
   refusal?: StockPositionRejected['reason'],
 ) {
@@ -433,40 +480,29 @@ describe('Inventory stock setup Actions', () => {
   it.effect('names the Current Stock Item a concurrent registration committed first', () =>
     Effect.gen(function* registrationRace() {
       const winnerId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-      const winner = {
-        createdAt: new Date('2026-11-20T08:00:00.000Z'),
-        exactSelectionKind: 'PRODUCT_VARIANT',
-        exactSelectionMeaningId: 'catalog-variant:sku-race',
-        lifecycleState: 'CURRENT',
-        retiredAt: null,
-        revision: 1,
-        stockItemId: winnerId,
-        stockUnitModuleId: unitRef.moduleId,
-        stockUnitResourceId: unitRef.resourceId,
-        stockUnitResourceType: unitRef.resourceType,
-        stockUnitTenantId: tenantId,
-        tenantId,
-      };
       // The pre-check found no Item; the insert then met the concurrent winner and inserted nothing.
-      const transaction = raceLosingTransaction([[], [winner]]);
-      const service = {
-        // @ts-expect-error Mock implements only the exercised transaction chains.
-        register: stockItemRegistration(makeDrizzleStockItemRepository(transaction), yield* Crypto.Crypto),
-      };
-      const failure = yield* Effect.flip(
-        handleRegisterStockItem(
-          Schema.decodeUnknownSync(RegisterStockItemPayloadSchema)({
-            exactSelectionMeaning: { id: 'catalog-variant:sku-race', kind: 'PRODUCT_VARIANT' },
-            unitRef,
-          }),
-          handlerContext(registerStockItemAction, service).context,
-        ),
-      );
+      const failure = yield* Effect.flip(registerRacing(raceLosingTransaction([[], [currentItemRow(winnerId)]])));
       expect(failure).toMatchObject({
         exactSelectionMeaningId: 'catalog-variant:sku-race',
         reason: 'exact_selection_meaning_already_registered',
         stockItemId: winnerId,
       });
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('registers again when the Item a concurrent registration committed is retired before it is read', () =>
+    Effect.gen(function* registrationAfterRetiredWinner() {
+      const registeredId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+      // Pre-check: no Item. Insert: met the winner. Lookup: the winner was retired, no Current Item. Insert again.
+      const retried = raceLosingTransaction([[], []], [[], [currentItemRow(registeredId)]]);
+      const { stockItem } = yield* registerRacing(retried);
+      expect(stockItem.stockItemRef.resourceId).toBe(registeredId);
+      expect(retried.inserts).toBe(2);
+      // Every insert keeps meeting a winner retired before it is read: bounded, then refused as unavailable.
+      const losing = raceLosingTransaction([]);
+      const exhausted = yield* Effect.flip(registerRacing(losing));
+      expect(exhausted).toMatchObject({ code: 'stock_item_persistence_unavailable' });
+      expect(losing.inserts).toBe(3);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
