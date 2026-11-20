@@ -3,7 +3,6 @@
 // @ontos-action-http-slug recover-inventory-effect
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -12,7 +11,6 @@ import {
 } from '../actions/recover-inventory-effect.ts';
 
 export { RecoverInventoryEffectPayloadSchema } from '../actions/recover-inventory-effect.ts';
-export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const RecoverInventoryEffectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecoverInventoryEffectActionInvalidProblem',
