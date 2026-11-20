@@ -32,6 +32,7 @@ const codeOf = (text: string): string =>
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const REGISTRATIONS = [
+  'src/generated-reads/asset-download.ts',
   'src/generated-reads/asset-metadata.ts',
   'src/modules/actions/confirm-asset.action.ts',
   'src/modules/actions/rename-display-filename.action.ts',
@@ -46,7 +47,7 @@ const bareOf = (code: string): string =>
     .replaceAll(/"(?:[^"\\\n]|\\.)*"/gu, '""')
     .replaceAll(/`(?:[^`\\]|\\.)*`/gu, '``');
 
-/** Every shipped Core Media source: the media directory and the four registrations. */
+/** Every shipped Core Media source: the media directory and the registrations. */
 const mediaSources = Effect.gen(function* mediaSources() {
   const media = yield* listFiles('src/media');
   const files = [...media, ...REGISTRATIONS];

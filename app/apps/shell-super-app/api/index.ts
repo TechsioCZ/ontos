@@ -59,6 +59,7 @@ import {
   selfApiKeyBindingsRead,
   SupportRecoveryPrincipalContextResolverLive,
   TenantModuleStateServiceLive,
+  ActionRuntime,
   assetMetadataRead,
 } from '@app/core-runtime';
 import {
@@ -95,6 +96,24 @@ import {
 } from 'effect';
 import { FetchHttpClient, HttpServerRequest } from 'effect/http';
 import { flow } from 'effect/Function';
+import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import {
+  assetDownloadRead,
+  downloadResponseHeaders,
+  integrityRecordRequest,
+  loadS3ObjectStorageConfig,
+  logMediaRecovery,
+  makeS3ObjectStorage,
+  MediaDownloadSource,
+  MediaIntegrityRecorder,
+  mediaRecoveryRef,
+  ObjectStorage,
+  ProvenMediaIntegrityFinding,
+  recordAssetIntegrityFailureAction,
+  streamConfirmedBytes,
+  unconfiguredObjectStorage,
+} from '@app/core-runtime/media/edge';
+import type { MediaVerifiableAssetOffer } from '@app/core-runtime/media/edge';
 import { AccessChangesCommandsLive } from '@app/core-runtime/access/changes/commands';
 import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
 import {
@@ -2435,6 +2454,135 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
     ),
 );
 // @ontos-codesmith-core-read-server-groups:end
+
+/**
+ * Core Media byte delivery (#1443 download, #1436 transfer). Each request is its own decision: it authenticates,
+ * runs the governed `download` Core Read (authorization, module state, evidence, all fresh), and only an allowed
+ * request opens the stored object and streams it through the verifier. No URL, token or decision outlives the
+ * request; `Range` and every conditional header are ignored, so a retry or reconnect is a new request and a new
+ * decision, while a transfer already authorized at its start finishes even if the Permission is revoked meanwhile.
+ */
+const coreMediaDownloadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreMediaDownload', (handlers) =>
+  handlers.handle('downloadAsset', ({ params, request }) =>
+    Effect.gen(function* downloadCoreMediaAsset() {
+      const authentication = yield* AuthenticationService;
+      const resolved = yield* authentication
+        .resolveTenantContext(requestHeaders(request.headers))
+        .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+      yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+      if (resolved.state !== 'authenticated') {
+        return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+      }
+      const runtime = yield* ReadRuntime;
+      let offered = Option.none<MediaVerifiableAssetOffer>();
+      const authorization = yield* runtime
+        .runRead({
+          input: {
+            // The tenant is the authenticated principal's, never the request's: another tenant's id is "not found".
+            mediaAssetRef: {
+              moduleId: 'core.media',
+              resourceId: params.mediaAssetId,
+              resourceType: 'core.media.asset',
+              tenantId: resolved.principal.tenantId,
+            },
+          },
+          principal: resolved.principal,
+          registration: assetDownloadRead,
+          transport: { correlationId: correlationFromRequest(request) },
+        })
+        .pipe(
+          Effect.provideService(MediaDownloadSource, {
+            offer: (asset) =>
+              Effect.sync(() => {
+                offered = Option.some(asset);
+              }),
+          }),
+          Effect.catch((error) =>
+            Predicate.isTagged(error, 'MediaNotReady')
+              ? failIdentityProblem(shellPolicyConflictProblem())
+              : pipe(error, identityProblem, failIdentityProblem),
+          ),
+        );
+      // The Read offered the stored object's facts after its decision; they are used only now that it completed.
+      if (Option.isNone(offered)) {
+        return yield* failIdentityProblem(shellCapabilityUnavailableProblem());
+      }
+      const download = yield* streamConfirmedBytes(offered.value, authorization).pipe(
+        Effect.catchTags({
+          MediaIntegrityFailed: () => failIdentityProblem(shellPolicyUnprocessableProblem()),
+          MediaNotReady: () => failIdentityProblem(shellPolicyConflictProblem()),
+          MediaUnavailable: () => failIdentityProblem(shellCapabilityUnavailableProblem()),
+        }),
+      );
+      return HttpServerResponse.stream(download.body, { headers: downloadResponseHeaders(authorization) });
+    }).pipe(
+      recoverUnexpectedDefect(request, 'Unexpected Core Media download defect', () =>
+        failIdentityProblem(shellInternalProblem()),
+      ),
+    ),
+  ),
+);
+
+/**
+ * The object store of Core Media. A host without a valid S3 configuration still boots: every download then ends as
+ * a retryable 503, because the unconfigured port matches no asset and reaches no provider.
+ */
+const coreMediaObjectStorageLive = Layer.effect(
+  ObjectStorage,
+  loadS3ObjectStorageConfig().pipe(
+    Effect.flatMap(makeS3ObjectStorage),
+    Effect.catchTag('ObjectStorageConfigError', (failure) =>
+      Effect.logWarning('core.media.object-storage.unconfigured').pipe(
+        Effect.annotateLogs({ reason: failure.reason }),
+        Effect.as(unconfiguredObjectStorage),
+      ),
+    ),
+  ),
+).pipe(Layer.provide(Layer.mergeAll(FetchHttpClient.layer, ShellCryptoLive)));
+
+/**
+ * Hands proven corruption to the integrity Action under the host's bound `core.media.integrity` workload
+ * principal. The finding travels as the Action's request-scoped proof service, never as a payload field. A failed
+ * recording changes nothing the client saw; the next verification finds the same corruption and records it again.
+ */
+export const makeCoreMediaIntegrityRecorderLive = (principal: TrustedPrincipalContext) =>
+  Layer.effect(
+    MediaIntegrityRecorder,
+    Effect.gen(function* makeCoreMediaIntegrityRecorder() {
+      const actions = yield* ActionRuntime;
+      return {
+        record: (finding, mediaAssetRef) =>
+          actions
+            .runAction({
+              ...integrityRecordRequest(finding, mediaAssetRef),
+              principal,
+              registration: recordAssetIntegrityFailureAction,
+            })
+            .pipe(
+              Effect.provideService(ProvenMediaIntegrityFinding, finding),
+              Effect.asVoid,
+              Effect.matchEffect({
+                onFailure: (error) =>
+                  logMediaRecovery({
+                    category: 'unresolved',
+                    operation: 'integrity',
+                    ref: mediaRecoveryRef(finding.storageKey),
+                  }).pipe(
+                    Effect.andThen(Effect.logWarning('core.media.integrity.unrecorded')),
+                    Effect.annotateLogs({ failure: error._tag }),
+                  ),
+                onSuccess: () => Effect.void,
+              }),
+            ),
+      };
+    }),
+  );
+
+/** No integrity workload principal is configured on a host that does not compose one: nothing is recorded. */
+const coreMediaIntegrityRecorderUnconfiguredLive = Layer.succeed(MediaIntegrityRecorder, {
+  record: (finding) =>
+    logMediaRecovery({ category: 'unresolved', operation: 'integrity', ref: mediaRecoveryRef(finding.storageKey) }),
+});
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.effect(Tracer.Tracer, Tracer.Tracer),
@@ -2902,6 +3050,9 @@ export const makeShellAuthenticationApiRuntime = (
     // @ontos-core-read asset-metadata
     coreReadAssetMetadataGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
+    coreMediaDownloadGroupLive.pipe(
+      Layer.provide(Layer.mergeAll(coreMediaObjectStorageLive, coreMediaIntegrityRecorderUnconfiguredLive)),
+    ),
     externalIdentityGroupLive,
     accessAdminHandlersLive,
     SymmyIngressHandlersLive.pipe(

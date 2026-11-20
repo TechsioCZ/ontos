@@ -128,6 +128,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     currentSession: '/auth/session',
     decideAccessApproval: '/shell/access/approvals/decide',
     decideAccessChanges: '/shell/access/changes/decide',
+    downloadAsset: '/core/media/assets/:mediaAssetId/content',
     executeAccessApproval: '/shell/access/approvals/execute',
     executeAssetMetadata: '/core/reads/asset-metadata',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
