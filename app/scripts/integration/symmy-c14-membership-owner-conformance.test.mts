@@ -32,6 +32,7 @@ import {
 } from './support/symmy-c14-customer-assignment-fixture.mts';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
 import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
+import { nameGroupDefinitionRouteReader } from './support/symmy-c14-group-definition-reader.mts';
 import { makeInternalMembershipPlan } from './support/symmy-c14-membership-plan.mts';
 import { prepareManualMembershipNativeFixture } from './support/symmy-c14-membership-manual.mts';
 import {
@@ -118,24 +119,23 @@ it.live(
           namespace: internalSyncSource.namespace,
           route: { id: sourceRouteId, revision: internalSyncSource.routeRevision },
         };
+        const groupDefinitionRoute = {
+          active: true,
+          issuer: groupSource.issuer,
+          legalEntityId,
+          mappingRevision: groupSource.mappingRevision,
+          namespace: groupSource.namespace,
+          principalId: systemId,
+          routeId: sourceRouteId,
+          routeRevision: groupSource.route.revision,
+          tenantId,
+        };
         yield* seedCustomerGroupSourceAuthority({
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           fixture: isolated,
           operatorPrincipalId: integration.issuerPrincipalId,
           operatorProviderUserId: shell.providerUserId,
-          route: {
-            active: true,
-            issuer: groupSource.issuer,
-            legalEntityId,
-            mappingRevision: groupSource.mappingRevision,
-            namespace: groupSource.namespace,
-            principalId: systemId,
-            routeId: sourceRouteId,
-            routeRevision: groupSource.route.revision,
-            // The Shell reads each code's current definition as the API-key integration principal before it admits.
-            sourceReaderPrincipalIds: [integration.principalId],
-            tenantId,
-          },
+          route: groupDefinitionRoute,
         });
         yield* seedCustomerGroupMembershipSourceAuthority({
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
@@ -204,6 +204,21 @@ it.live(
           ]),
         };
         yield* restartOwner(fixture, 'symmy-integration', environment);
+        // The manual setup binds the human administrator's session, which then names the Group definition route reader:
+        // the Shell reads each code's current definition as the API-key integration principal before it admits.
+        const manual = yield* prepareManualMembershipNativeFixture(fixture);
+        expect(manual.membership.management).toEqual({ kind: 'MANUAL' });
+        const commerce = fixture.ownerRuntimes.get('commerce-customer-context');
+        assert.isDefined(commerce);
+        yield* nameGroupDefinitionRouteReader({
+          adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+          administratorPrincipalId: integration.issuerPrincipalId,
+          commerceBaseUrl: `http://127.0.0.1:${commerce.port}/commerce-customer-context-api`,
+          compositionRevision: fixture.snapshot.composition.revision,
+          readerPrincipalId: integration.principalId,
+          route: groupDefinitionRoute,
+          shell,
+        });
         const client = yield* HttpClient.HttpClient;
         const headers = { 'x-api-key': Redacted.value(fixture.providerKey.secret) };
         const groupResponse = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customer-groups/batch`, {
@@ -269,8 +284,6 @@ it.live(
         }
         const occurrenceId = yield* uuid;
         const removalOccurrenceId = yield* uuid;
-        const manual = yield* prepareManualMembershipNativeFixture(fixture);
-        expect(manual.membership.management).toEqual({ kind: 'MANUAL' });
         const memberRecordId = 'INTERNAL_C14_EXPLICIT_MEMBER';
         const source = {
           issuer: groupSource.issuer,

@@ -24,6 +24,7 @@ import { Config, DateTime, Duration, Effect, Fiber, FileSystem, Layer, Option, Q
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
+import { nameGroupDefinitionRouteReader } from './support/symmy-c14-group-definition-reader.mts';
 import { prepareInternalSyncAuthority } from './support/symmy-c14-sync-authority.mts';
 import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 import {
@@ -225,8 +226,6 @@ it.live(
             principalId: systemPrincipalId,
             routeId: groupLogicalRouteId,
             routeRevision: internalSyncSource.routeRevision,
-            // The Shell reads each code's current definition as the API-key integration principal before it admits.
-            sourceReaderPrincipalIds: [integration.principalId],
             tenantId,
           },
         };
@@ -338,6 +337,16 @@ it.live(
           ownerDiagnostics.push(running.diagnostic);
           ownerOutput.set(appId, running.output);
         }
+        // The Shell reads each code's current definition as the API-key integration principal before it admits.
+        yield* nameGroupDefinitionRouteReader({
+          adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
+          administratorPrincipalId: integration.issuerPrincipalId,
+          commerceBaseUrl: `${backends[groupAppId]}commerce-customer-context-api`,
+          compositionRevision: snapshot.composition.revision,
+          readerPrincipalId: integration.principalId,
+          route: groupSetupRequest.route,
+          shell,
+        });
         const retryTransport = yield* startInternalSyncRetryTransport({
           ownerOrigin: `http://127.0.0.1:${symmyPort}`,
           port: retryPort,
