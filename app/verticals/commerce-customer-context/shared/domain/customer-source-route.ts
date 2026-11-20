@@ -98,19 +98,18 @@ export const CustomerSourceRouteKindSchema = Schema.Literals([
 /**
  * `CONFIGURE` states the whole route; its `expectedGeneration` is the generation of the route the administrator
  * last read, or none (null) when the route must not exist yet. `PAUSE` names only the stored route and the
- * generation read, and changes nothing but its active flag. The owner compares the expected generation before
- * anything else: any other stored generation is an expectation mismatch and writes nothing, so a decision taken on
- * a stale view never overwrites a later one. Only then are a configuration's principals, its source identity and
- * the change itself checked; an identical route under the expected generation is UNCHANGED.
+ * generation read, and changes nothing but its active flag. The owner routine compares the expected generation
+ * before anything else it decides: any other stored generation is an expectation mismatch and writes nothing, so a
+ * decision taken on a stale view never overwrites a later one. Only then are a configuration's principals, its
+ * source identity and the change itself checked; an identical route under the expected generation is UNCHANGED. A
+ * configuration whose read of Core's enrollment fails or is ambiguous (two enrolled writers) is answered unavailable
+ * before the routine runs, and writes nothing.
  *
- * Limitation of both: a source recovers the receipt of an effect whose reply it lost only while the route is
- * active. A Profile, Group definition or Membership receipt is recovered by the route's current writer (a Profile
- * receipt also by a reader the route names) naming the route's current revision and, for a Profile or Group
- * definition, its current mapping revision, whatever revision the effect was written under. A Saved Address receipt
- * is recovered only while the route stays at exactly the revision and mapping revision the effect was written
- * under, with the principal that wrote it still its writer. Pausing any route, and revising a Saved Address route
- * or changing its writer, leaves such a reply unrecoverable until the route is restored; nothing committed is lost.
- * Change a route only after the source's outstanding work has settled.
+ * Limitation: pausing a route blocks recovery through that route of a receipt whose reply the source lost. A
+ * Profile, Group definition or Membership receipt can still be recovered through another active route of the same
+ * source that satisfies its recovery routine's checks. A Saved Address receipt is pinned to its original route,
+ * route revision, mapping revision and writer: it is recovered only while that route is active at those revisions
+ * with that writer. Nothing committed is lost. Change a route only after the source's outstanding work has settled.
  */
 export const ConfigureCustomerSourceRoutePayloadSchema = Schema.Union([
   Schema.TaggedStruct('CONFIGURE', {

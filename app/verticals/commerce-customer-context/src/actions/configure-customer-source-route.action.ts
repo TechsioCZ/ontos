@@ -19,22 +19,20 @@ const domainEvents = {} as const;
 
 /**
  * Establishes, changes or pauses one Commerce source route (#1125-#1128): the binding of an exact issuer and
- * namespace to the enrolled principals that may write or read source facts through that route revision. Each
- * decision is first compared with the stored route generation; a mismatch writes nothing, so a second create-only
- * request for an existing route is refused even when it states the same route. Only then does a pause clear the
- * route's active flag, or a configuration require every principal it names to be one Core enrolls for the route's
- * workload and its source identity to stay the one the route was configured for; an identical route is UNCHANGED,
- * with no new generation. An exact replay of the same idempotency key is answered by the Action runtime with the
- * original result.
+ * namespace to the enrolled principals that may write or read source facts through that route revision. The owner
+ * routine compares each decision with the stored route generation before anything else it decides; a mismatch writes
+ * nothing, so a second create-only request for an existing route is refused even when it states the same route. Only
+ * then does a pause clear the route's active flag, or a configuration require every principal it names to be one Core
+ * enrolls for the route's workload and its source identity to stay the one the route was configured for; an identical
+ * route is UNCHANGED, with no new generation. A configuration whose read of Core's enrollment fails or is ambiguous
+ * (two enrolled writers) is answered unavailable before the routine runs, and writes nothing. An exact replay of the
+ * same idempotency key is answered by the Action runtime with the original result.
  *
- * Limitation: a source recovers the receipt of an effect whose reply it lost only while the route is active. A
- * Profile, Group definition or Membership receipt is recovered by the route's current writer (a Profile receipt
- * also by a reader the route names) naming the route's current revision and, for a Profile or Group definition, its
- * current mapping revision, whatever revision the effect was written under. A Saved Address receipt is recovered
- * only while the route stays at exactly the revision and mapping revision the effect was written under, with the
- * principal that wrote it still its writer. Pausing any route, and revising a Saved Address route or changing its
- * writer, leaves such a reply unrecoverable until the route is restored; nothing committed is lost. An
- * administrator changes a route only after the source's outstanding work has settled.
+ * Limitation: pausing a route blocks recovery through that route of a receipt whose reply the source lost. A
+ * Profile, Group definition or Membership receipt can still be recovered through another active route of the same
+ * source that satisfies its recovery routine's checks. A Saved Address receipt is pinned to its original route,
+ * route revision, mapping revision and writer: it is recovered only while that route is active at those revisions
+ * with that writer. Nothing committed is lost. Change a route only after the source's outstanding work has settled.
  */
 export const handleConfigureCustomerSourceRoute = Effect.fn('ConfigureCustomerSourceRoute.handle')(
   function* configureCustomerSourceRoute(
