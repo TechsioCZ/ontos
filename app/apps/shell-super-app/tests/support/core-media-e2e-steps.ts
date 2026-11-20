@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { uploadAssetAction } from '@app/core-runtime';
-import { Effect, Option, Schema } from 'effect';
+import { renameDisplayFilenameAction, uploadAssetAction } from '@app/core-runtime';
+import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { principalOf } from './core-media-e2e-fixture.ts';
@@ -132,3 +132,84 @@ export const requireFaultInjection = (ctx: { readonly skip: () => void }, world:
     onNone: () => Effect.sync(() => ctx.skip()).pipe(Effect.andThen(Effect.never)),
     onSome: Effect.succeed,
   });
+
+const ObservedFailure = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.String),
+});
+const observedFailure = (failure: Option.Option<unknown>) =>
+  failure.pipe(Option.flatMap((value) => Schema.decodeUnknownOption(ObservedFailure)(value)));
+
+/** The tag of the typed failure an effect ended with, `none` when it succeeded, `defect` for anything untyped. */
+export const failureTagOf = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
+  Effect.exit(effect).pipe(
+    Effect.map((exit) =>
+      Exit.isSuccess(exit)
+        ? 'none'
+        : Option.getOrElse(
+            Option.flatMap(observedFailure(Cause.findErrorOption(exit.cause)), ({ _tag }) =>
+              Option.fromNullishOr(_tag),
+            ),
+            () => 'defect',
+          ),
+    ),
+  );
+
+/** The stable code of the typed failure an effect ended with, `none` when it succeeded. */
+export const failureCodeOf = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
+  Effect.exit(effect).pipe(
+    Effect.map((exit) =>
+      Exit.isSuccess(exit)
+        ? 'none'
+        : Option.getOrElse(
+            Option.flatMap(observedFailure(Cause.findErrorOption(exit.cause)), ({ code }) =>
+              Option.fromNullishOr(code),
+            ),
+            () => 'defect',
+          ),
+    ),
+  );
+
+/** The rename Action, run as the actor through the governed runtime over the real gate. */
+export const renameAs = (
+  world: MediaE2eWorld,
+  actor: E2eActor,
+  mediaAssetRef: { readonly resourceId: string },
+  displayFilename: string,
+  idempotencyKey: string,
+) =>
+  Effect.gen(function* renameStep() {
+    const principal = yield* principalOf(actor);
+    return yield* world.withStorage(
+      world.actions.runAction({
+        payload: {
+          displayFilename,
+          mediaAssetRef: {
+            moduleId: 'core.media',
+            resourceId: mediaAssetRef.resourceId,
+            resourceType: 'core.media.asset',
+            tenantId: actor.tenantId,
+          },
+        },
+        principal,
+        registration: renameDisplayFilenameAction,
+        transport: { correlationId: `e2e-rename-${idempotencyKey}`, idempotencyKey },
+      }),
+    );
+  });
+
+/** A value the scenario needs, or a defect that names what the world lacked. */
+export const needed = <Value>(value: Value | undefined, what: string): Effect.Effect<Value> =>
+  value === undefined ? Effect.die(`The world has no ${what}`) : Effect.succeed(value);
+
+/** Repeats a request until its answer is the wanted one, pausing in the database so no timer is involved. */
+export const untilStatus = Effect.fn('CoreMediaE2e.untilStatus')(function* untilStatus<
+  Response extends { readonly status: number },
+>(world: MediaE2eWorld, attempt: Effect.Effect<Response>, status: number, attempts = 40) {
+  let answer = yield* attempt;
+  for (let remaining = attempts; remaining > 0 && answer.status !== status; remaining -= 1) {
+    yield* world.admin.unsafe('select pg_sleep(0.5)').pipe(Effect.orDie);
+    answer = yield* attempt;
+  }
+  return answer;
+});
