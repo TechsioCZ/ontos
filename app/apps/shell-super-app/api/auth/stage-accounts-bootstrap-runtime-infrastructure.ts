@@ -558,28 +558,3 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
     retiredPrincipals: retiredPrincipals.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
   };
 });
-
-/**
- * The operator command: reads the accounts file and runs the bootstrap. The installation runtime is the
- * caller's — the process root (`scripts/bootstrap-stage-accounts.mts`) owns the privileged pool, the
- * engine transport and their lifetime — so this module never assembles a layer and never opens a
- * connection of its own; its requirement simply propagates to that root.
- */
-export const bootstrapStageAccountsFromEnvironment = Effect.fn('StageAccountsBootstrap.bootstrapFromEnvironment')(
-  function* bootstrapFromEnvironment(
-    readAccountsFile: StageAccountsFileReader,
-    input: { readonly declaredWorkloadKeys: ReadonlySet<string>; readonly modules: readonly AccessCatalogModule[] },
-  ): Effect.fn.Return<
-    StageAccountsBootstrapRunResult,
-    StageAccountsBootstrapError,
-    | AccessPeopleStore
-    | AccessTeamStore
-    | AuthDatabase
-    | Crypto.Crypto
-    | DatabaseIdentityEnrollmentContext
-    | InstallationRuntime
-  > {
-    const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, input.declaredWorkloadKeys);
-    return yield* bootstrapStageAccounts(configuration, { modules: input.modules });
-  },
-);

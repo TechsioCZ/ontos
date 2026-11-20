@@ -206,7 +206,7 @@ export interface StageContextBootstrapConfiguration {
  * The installation run connects with the runtime identity (`DATABASE_URL`), not the administrative one:
  * every scope it installs is a session-setting scope, which the enrollment it is handed must name, and
  * the identity rows it writes are the shared runtime's own. The administrative connection stays with the
- * migrator and the Better Auth store, which need privileges the access runtime never holds.
+ * migrator and with the Better Auth store of the operator command.
  */
 export const loadStageContextBootstrapConfiguration = Effect.fn('StageContextBootstrap.loadConfiguration')(
   function* loadStageContextBootstrapConfiguration() {

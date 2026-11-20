@@ -423,7 +423,7 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
 - `retiredAccountEmails` (may be empty) lists former stage accounts. The bootstrap bans each one, ends its sessions and removes its password credential. Retired data must not overlap an active Tenant, Principal, or email.
 - Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. The bootstrap is insert-only: it never revives a membership, an assignment or a role an administrator ended, and removing a grant from the file does not revoke it.
 
-The bootstrap connects with the runtime identity (`DATABASE_URL`), not the administrative one: every scope it installs is a session-setting scope its enrollment must name, and the identity rows it writes are the shared runtime's own. `DATABASE_ADMIN_URL` stays with the migrator and the Better Auth store.
+The bootstrap's Core work connects with the runtime identity (`DATABASE_URL`), not the administrative one: every scope it installs is a session-setting scope its enrollment must name, and the identity rows and revocation events it writes are the shared runtime's own. Its Better Auth store connects with `DATABASE_ADMIN_URL`. The two URLs must be distinct logins of the same database (the runtime login is never `postgres`), and each client confirms on its first statement that its session is the login its own URL names, so a URL handed to the wrong client fails that statement before the run writes anything. One composition in the script (`makeStageAccountsRuntime`) builds both clients, the engine transport and the access writers; the integration test builds its run through the same function.
 
 Every later canonical state change uses a typed Action.
 

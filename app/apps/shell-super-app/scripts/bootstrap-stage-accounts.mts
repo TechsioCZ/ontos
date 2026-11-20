@@ -15,6 +15,7 @@ import { AccessProjectionWriterLive } from '@app/core-runtime/access/intent/proj
 import { AccessTeamStoreLive } from '@app/core-runtime/access/intent/teams';
 import { TenantIntentLoaderLive } from '@app/core-runtime/access/intent/tenant-intent-loader';
 import { AccessWriteJournalStoreLive } from '@app/core-runtime/access/lifecycle/persistence/journal-store';
+import type { SpiceDbConfigValue } from '@app/core-runtime/access/spicedb-config';
 import { CoreDatabaseLive } from '@app/core-runtime/db/client';
 import type { CoreDatabase } from '@app/core-runtime/db/client';
 import { readStageAccountsFileContents } from '@app/core-runtime/install/stage-accounts-file';
@@ -24,19 +25,22 @@ import {
   AccessWorkloadSchema,
   DatabaseConfig,
   makeDatabaseIdentityEnrollmentLive,
-  parseDatabaseConfig,
+  parseDatabaseConnectionPair,
 } from '@app/core-runtime';
-import type { DatabaseConnectionError, DatabaseIdentityEnrollmentContext } from '@app/core-runtime';
+import type {
+  DatabaseConnectionError,
+  DatabaseConnectionPair,
+  DatabaseIdentityEnrollmentContext,
+} from '@app/core-runtime';
 import { Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
-import { AuthConfig } from '../api/auth/config.ts';
-import { AuthDatabaseLive } from '../api/auth/db/client.ts';
+import { AuthDatabaseForExpectedRoleLive } from '../api/auth/db/client.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../api/database-identity-enrollment.ts';
 import { StageAccountsBootstrapError } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import type { StageAccountsFileReader } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
-  bootstrapStageAccountsFromEnvironment,
+  bootstrapStageAccounts,
   loadStageAccountsConfiguration,
 } from '../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 
@@ -64,7 +68,7 @@ const AccessCatalogArtifactSchema = Schema.Struct({
  * shell pages and field groups. A deployment contract carries no read, and a stage owner denied every
  * read is not a bootstrap but a broken tenant.
  */
-const stageAccessModules = Effect.gen(function* loadModules() {
+export const stageAccessModules = Effect.gen(function* loadModules() {
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const artifactPath = path.resolve(import.meta.dirname, '../../../', AUTHORIZATION_CATALOG_ARTIFACT_PATH);
@@ -119,71 +123,77 @@ export const makeStageInstallationRuntime = (
   >;
 };
 
+/** What one stage accounts run connects to: both PostgreSQL identities, checked as one pair, and the stage engine. */
+export interface StageAccountsConnections {
+  /** `runtime` is `DATABASE_URL`, `admin` is `DATABASE_ADMIN_URL`: two distinct logins of one database. */
+  readonly databases: DatabaseConnectionPair;
+  readonly spiceDb: Redacted.Redacted<SpiceDbConfigValue>;
+}
+
 /**
- * The installation runtime of this command: one runtime pool, one engine transport and the six access
- * writers, composed here because this script is a process root. The administrative connection is
- * separate and used only by Better Auth below.
+ * The Better Auth store of a stage accounts run: the administrative connection, confirmed on its first statement to be
+ * the very login `DATABASE_ADMIN_URL` names, never the runtime role it is not.
  */
-const stageInstallationRuntime = Effect.gen(function* buildStageInstallationRuntime() {
-  const stage = yield* loadStageContextBootstrapConfiguration();
-  const databaseConfiguration = yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(stage.databaseUrl) }).pipe(
-    Effect.mapError(
-      (error) =>
-        new StageAccountsBootstrapError({
-          code: 'stage_accounts_configuration_invalid',
-          reason: error.reason,
-        }),
-    ),
-  );
-  const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration)));
-  // The engine transport belongs to this run: it is opened with the layer and closed when the run ends.
+export const makeStageAccountsAuthDatabase = (databases: DatabaseConnectionPair) =>
+  AuthDatabaseForExpectedRoleLive(databases.admin);
+
+/**
+ * The whole graph of one stage accounts run, composed here because this script is a process root, and the only
+ * composition the operator command and its integration test build. Core, its access writers, the projection writer
+ * and the revocation events the run records in its own transaction share one pool of the runtime connection, confirmed
+ * on its first statement to be the login `DATABASE_URL` names; the engine transport is opened with the graph and
+ * closed when the run ends; Better Auth uses the administrative connection (`makeStageAccountsAuthDatabase`). A URL
+ * handed to the wrong client fails that client's first statement, before the run writes anything.
+ */
+export const makeStageAccountsRuntime = (connections: StageAccountsConnections) => {
+  const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, connections.databases.runtime)));
   const engine = Layer.effect(
     AccessProjectionCompiler,
     Effect.acquireRelease(
-      Effect.sync(() => makeAccessProjectionTransport(Redacted.value(stage.spiceDb))),
+      Effect.sync(() => makeAccessProjectionTransport(Redacted.value(connections.spiceDb))),
       (transport) => Effect.sync(() => transport.close()),
     ).pipe(Effect.map((transport) => makeAccessProjectionCompiler(transport))),
   );
-  return makeStageInstallationRuntime(database, engine);
+  return Layer.mergeAll(
+    makeStageInstallationRuntime(database, engine),
+    makeStageAccountsAuthDatabase(connections.databases),
+  );
+};
+
+const invalid = (error: { readonly reason: string }) =>
+  new StageAccountsBootstrapError({ code: 'stage_accounts_configuration_invalid', reason: error.reason });
+
+/**
+ * This command's connections, from the container's own environment: `DATABASE_URL` and `DATABASE_ADMIN_URL` must be
+ * two distinct logins of one database (the runtime login is never `postgres`), and the engine is stage-private SpiceDB.
+ */
+const stageAccountsConnections = Effect.fn('StageAccountsBootstrap.connections')(function* stageAccountsConnectionsOf(
+  databaseAdminUrl: string,
+) {
+  const stage = yield* loadStageContextBootstrapConfiguration().pipe(Effect.mapError(invalid));
+  const databases = yield* parseDatabaseConnectionPair({
+    DATABASE_ADMIN_URL: databaseAdminUrl,
+    DATABASE_URL: Redacted.value(stage.databaseUrl),
+  }).pipe(Effect.mapError(invalid));
+  return { databases, spiceDb: stage.spiceDb } satisfies StageAccountsConnections;
 });
 
 const program = Effect.gen(function* bootstrapStageAccountsProgram() {
   const { declaredWorkloadKeys, modules } = yield* stageAccessModules;
   const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, declaredWorkloadKeys);
+  const connections = yield* stageAccountsConnections(configuration.databaseAdminUrl);
   // A pool that cannot be opened is this command's failure, reported with the reason it recorded.
-  const runtime = yield* stageInstallationRuntime.pipe(
-    Effect.mapError(
-      (error) =>
-        new StageAccountsBootstrapError({
-          code: 'stage_accounts_persistence_failed',
-          reason: error.reason,
-        }),
-    ),
-  );
-  const result = yield* bootstrapStageAccountsFromEnvironment(readAccountsFile, { declaredWorkloadKeys, modules }).pipe(
-    Effect.provide(runtime),
-    Effect.provide(
-      AuthDatabaseLive.pipe(
-        Layer.provide(
-          Layer.succeed(AuthConfig, {
-            baseUrl: configuration.authBaseUrl,
-            connectionString: configuration.databaseAdminUrl,
-            secret: configuration.authSecret,
-            secureCookies: true,
-            supportUserIds: [],
-            trustedOrigins: [configuration.authBaseUrl],
-          }),
-        ),
-      ),
-    ),
-    Effect.catchTag(
-      'AuthDatabaseConnectionError',
-      () =>
+  const result = yield* bootstrapStageAccounts(configuration, { modules }).pipe(
+    Effect.provide(makeStageAccountsRuntime(connections)),
+    Effect.catchTags({
+      AuthDatabaseConnectionError: () =>
         new StageAccountsBootstrapError({
           code: 'stage_accounts_persistence_failed',
           reason: 'The stage authentication database could not be opened',
         }),
-    ),
+      DatabaseConnectionError: (error) =>
+        new StageAccountsBootstrapError({ code: 'stage_accounts_persistence_failed', reason: error.reason }),
+    }),
   );
   yield* Effect.forEach(
     result.accounts,
