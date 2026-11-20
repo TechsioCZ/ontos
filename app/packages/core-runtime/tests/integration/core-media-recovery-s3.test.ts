@@ -30,7 +30,7 @@ import { AssetDownloadAuthorizationSchema } from '../../src/media/download-contr
 import { MediaDownloadAborted, streamConfirmedBytes } from '../../src/media/download.ts';
 import { MediaIntegrityFailed, MediaUnavailable } from '../../src/media/errors.ts';
 import { MediaIntegrityRecorder } from '../../src/media/integrity-recorder.ts';
-import { verifyReadyMediaAsset } from '../../src/media/verified-read.ts';
+import { statReadyMediaAsset, verifyReadyMediaAsset } from '../../src/media/verified-read.ts';
 import type { MediaVerifiableAsset } from '../../src/media/verified-read.ts';
 import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import type { S3FaultProxy } from '../support/s3-fault-proxy.ts';
@@ -174,6 +174,49 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
                 expect(yield* verify(storage, row)).toMatchObject({ contentSha256, outcome: 'verified' });
               }
               expect(proxy.injected().length).toBeGreaterThanOrEqual(faults.length);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'the Current stat check confirms a stored object with one HEAD and no body, and an outage, a missing object and another length are each their own answer',
+      (ctx) =>
+        Effect.scoped(
+          withProxy(ctx, (proxy, base) =>
+            Effect.gen(function* currentStat() {
+              const storage = yield* makeS3ObjectStorage({
+                ...base,
+                endpoint: proxy.origin,
+                requestTimeoutMillis: Option.some(400),
+              });
+              const stat = (row: MediaVerifiableAsset) =>
+                statReadyMediaAsset(row).pipe(Effect.provideService(ObjectStorage, storage));
+              const key = yield* freshKey;
+              const content = encoder.encode('the confirmed bytes');
+              const row = readyRow(storage, key, { byteSize: content.byteLength, contentSha256: digestOf(content) });
+              // Nothing stored yet: the provider's 404 is a missing object, never absence of the asset.
+              expect(yield* stat(row)).toEqual({ outcome: 'missing_object' });
+              yield* storage.put({ body: Stream.make(content), contentType: 'text/plain', key });
+              const requestsBefore = proxy.requests();
+              expect(yield* stat(row)).toEqual({ byteSize: content.byteLength, outcome: 'present' });
+              // One exchange (a HEAD): no object body was requested for the answer.
+              expect(proxy.requests() - requestsBefore).toBe(1);
+              // CONTROLLED FAULT: a provider 503, a reset and a hang on the HEAD are each unavailable, then the same answer.
+              for (const fault of [
+                { code: 'ServiceUnavailable', kind: 'status', status: 503 },
+                { kind: 'reset-before' },
+                { kind: 'hang' },
+              ] as const) {
+                proxy.setRules([{ fault, method: 'HEAD' }]);
+                expect((yield* stat(row)).outcome, fault.kind).toBe('unavailable');
+                expect((yield* stat(row)).outcome, `${fault.kind} spent`).toBe('present');
+              }
+              // Another recorded length: inconsistent with the stored object, and nothing claims corruption.
+              expect(yield* stat({ ...row, byteSize: BigInt(content.byteLength + 1) })).toEqual({
+                outcome: 'inconsistent_metadata',
+                reason: 'declared_size_differs',
+              });
             }),
           ),
         ),
