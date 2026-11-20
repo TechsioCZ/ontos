@@ -20,7 +20,8 @@ import {
   principalManagementRepositoryFromTransaction,
 } from '../../src/auth/principal-management.ts';
 import { makeSupportRecoveryPrincipalContextResolver } from '../../src/auth/support-recovery-principal-context.ts';
-import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../src/auth/system-principal-context.ts';
+import { makeSystemPrincipalContextResolver } from '../../src/auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../../src/auth/system-workload-registration.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
