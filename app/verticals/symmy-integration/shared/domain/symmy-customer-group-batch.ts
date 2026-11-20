@@ -25,6 +25,10 @@ const definitionSource = create.source.schema.fields;
  * Symmy states no revision or time for a group, so the order in which OntOS admits requests is the order: each
  * admission asserts its code after the last assertion the owner holds, under a revision derived from its
  * Idempotency-Key. A delayed older request admitted later wins.
+ *
+ * A synchronous admission stores the plan it admitted, not the outcomes of its effects. An exact retry of a key is
+ * answered from the owner's receipt of each effect, never from a new definition read; while the owner's read is
+ * unavailable it answers indeterminate, never a wrong result.
  */
 export const SymmyCustomerGroupRowSchema = Schema.Struct({
   businessCode: create.businessCode,
