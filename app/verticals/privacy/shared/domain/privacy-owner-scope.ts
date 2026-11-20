@@ -54,7 +54,6 @@ export const OwnerBlockerAssessmentSchema = Schema.Struct({
       : 'Blocker references must be unique',
   ),
 );
-export type OwnerBlockerAssessment = typeof OwnerBlockerAssessmentSchema.Type;
 
 /**
  * The exact owner scope an owner-contract owner (#595-#605) needs to evaluate a Privacy Measure, carried by the handoff next
