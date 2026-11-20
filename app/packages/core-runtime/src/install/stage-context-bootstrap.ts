@@ -1048,13 +1048,16 @@ const notEnded = (row: { readonly status: string; readonly validUntil?: Date | u
 
 /**
  * Locks every leaver's connected apps (the OAuth grants that act as the person) FOR UPDATE and returns them, then the
- * leaver's Principal row FOR UPDATE, then every binding and agent connection it already has. The grants come first
- * because Core's grant writers lock a grant before the Principal and the binding (approving a draft, revoking a
- * connection), so the run never waits on a Principal or binding while holding a grant one of them waits for. A writer
- * that adds a binding, a personal key or an agent connection to a Principal references that row: its foreign key takes a KEY SHARE lock, which FOR UPDATE excludes, and the external identity
- * writer locks the row FOR UPDATE itself. None of them takes the People lock, so this row lock is what keeps every one
- * of them out between this run's decision and its commit: they wait, then find the Principal archived. The existing
- * bindings and connections are locked here, before the decision time, so no later read of them waits.
+ * leaver's Principal row FOR UPDATE, then every binding and agent connection it already has. The grants come first, as
+ * Core's revocation and a first approval lock the grant before the person's rows. A reconnect does not follow that
+ * order: approving a draft locks the draft, then the person's rows, then the older active grant of the same client it
+ * supersedes. The run may hold that older grant while it waits for the draft or the person's row, so the two can
+ * deadlock; PostgreSQL then aborts one of them, and when it is the run, nothing of the file is written and the same
+ * file is run again. A writer that adds a binding, a personal key or an agent connection to a Principal references that
+ * row: its foreign key takes a KEY SHARE lock, which FOR UPDATE excludes, and the external identity writer locks the
+ * row FOR UPDATE itself. None of them takes the People lock, so this row lock is what keeps every one of them out
+ * between this run's decision and its commit: they wait, then find the Principal archived. The existing bindings and
+ * connections are locked here, before the decision time, so no later read of them waits.
  */
 const lockLeavers = Effect.fn('StageContextBootstrap.lockLeavers')(function* lockLeaversEffect(
   transaction: CoreTransaction,
