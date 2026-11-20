@@ -47,7 +47,11 @@ import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { STAGE_RETIREMENT_REASON, reconcileStageContextBootstraps } from '../../src/install/stage-context-bootstrap.ts';
-import type { StageAccountIdentity, StageTenantBootstrap } from '../../src/install/stage-context-bootstrap.ts';
+import type {
+  StageAccountIdentity,
+  StageContextBootstrapRun,
+  StageTenantBootstrap,
+} from '../../src/install/stage-context-bootstrap.ts';
 import { createTemplateDatabase, replacedDatabase } from '../support/access-scenarios/database.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
@@ -237,11 +241,11 @@ interface Stage {
   /** The stage bootstrap of one operator accounts file, over this suite's tenant runtime. */
   readonly reconcile: (
     input: Parameters<typeof reconcileStageContextBootstraps>[0],
-  ) => Effect.Effect<readonly { readonly owner: boolean; readonly principalId: string }[], StageFailure>;
+  ) => Effect.Effect<StageContextBootstrapRun, StageFailure>;
   /** The same run, stopped after its intent committed: the single writer never gets to project it. */
   readonly reconcileInterrupted: (
     input: Parameters<typeof reconcileStageContextBootstraps>[0],
-  ) => Effect.Effect<readonly { readonly owner: boolean; readonly principalId: string }[], StageFailure>;
+  ) => Effect.Effect<StageContextBootstrapRun, StageFailure>;
   /** The case's own tenant: random, so no case reads another case's tuples in the shared engine. */
   readonly tenantId: string;
 }
@@ -401,6 +405,62 @@ const peopleRowsOf = (stage: Stage, principalIds: readonly string[]) => {
 const directoryRow = (tenantId: string, principalId: string) =>
   `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
      values ('${tenantId}', '${company}', '${principalId}', 'employee', 'active')`;
+
+/**
+ * One connected app of a person as the product leaves it: the OAuth grant that acts as them and its `oauth_grant`
+ * binding, naming each other. A connection the person revoked in the product is a `revoked` grant whose binding the
+ * revocation only disabled; a live one is `active` on both and was last used yesterday.
+ */
+const connectedApp = (
+  stage: Stage,
+  input: { readonly binding: string; readonly grant: string; readonly live: boolean; readonly person: string },
+) => {
+  const client = input.grant.slice(-3);
+  const ended = input.live
+    ? { at: 'null', by: 'null', reason: 'null', status: 'active' }
+    : { at: "now() - interval '2 days'", by: `'${input.person}'`, reason: "'user'", status: 'revoked' };
+  return [
+    `insert into core.oauth_connection_grants
+       (grant_id, tenant_id, legal_entity_id, user_id, user_principal_id, acting_principal_id, acting_kind, client_id,
+        client_name, client_host, client_kind, modules_json, write_policy, profile_id, auth_binding_id, status,
+        consented_at, last_used_at, revoked_at, revoked_by_principal_id, revoke_reason)
+     values ('${input.grant}', '${stage.tenantId}', '${company}', 'better-auth-${input.person}', '${input.person}',
+             '${input.person}', 'human', 'https://client-${client}.example/metadata', 'Client ${client}',
+             'client-${client}.example', 'cimd', '"all"'::jsonb, 'direct', gen_random_uuid(), '${input.binding}',
+             '${ended.status}', now() - interval '10 days', now() - interval '1 day', ${ended.at}, ${ended.by},
+             ${ended.reason})`,
+    `insert into core.principal_auth_bindings
+       (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type,
+        provider_subject_id, status)
+     values ('${input.binding}', '${stage.tenantId}', '${input.person}', 'staff', 'better_auth', 'oauth_grant',
+             '${input.grant}', '${input.live ? 'active' : 'disabled'}')`,
+  ];
+};
+
+/** Every grant of the person, as one text: who ended it, why and how it stands. */
+const grantRowsOf = (stage: Stage, principalId: string) =>
+  stage.admin
+    .unsafe<{
+      readonly id: string;
+      readonly reason: string | null;
+      readonly revoked_by: string | null;
+      readonly status: string;
+    }>(
+      `select grant_id::text as id, status, revoke_reason as reason, revoked_by_principal_id::text as revoked_by
+         from core.oauth_connection_grants where tenant_id = '${stage.tenantId}' and acting_principal_id = '${principalId}'
+        order by 1`,
+    )
+    .pipe(Effect.orDie);
+
+/** The person's bindings by kind: how many there are of each status and revision. */
+const bindingSummaryOf = (stage: Stage, principalId: string) =>
+  stage.admin
+    .unsafe<{ readonly count: number; readonly revision: number; readonly status: string; readonly subject: string }>(
+      `select subject_type as subject, status, binding_revision as revision, count(*)::int as count
+         from core.principal_auth_bindings where tenant_id = '${stage.tenantId}' and principal_id = '${principalId}'
+        group by 1, 2, 3 order by 1, 2, 3`,
+    )
+    .pipe(Effect.orDie);
 
 /** The tenant's "Plný přístup" role and revision, as the owner's bootstrap assigned it. */
 const fullAccessRoleOf = (stage: Stage) =>
@@ -728,7 +788,7 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
       Effect.gen(function* createsStageTenant() {
         const { tenantId } = stage;
         const results = yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
-        expect(results.map(({ owner: isOwner, principalId }) => ({ owner: isOwner, principalId }))).toEqual([
+        expect(results.accounts.map(({ owner: isOwner, principalId }) => ({ owner: isOwner, principalId }))).toEqual([
           { owner: true, principalId: owner },
           { owner: false, principalId: colleague },
           { owner: false, principalId: unassigned },
@@ -801,7 +861,7 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             ],
           })
           .pipe(failClosed);
-        expect(retired).toEqual([]);
+        expect(retired).toEqual({ accounts: [], connectedApps: [] });
         // The negative control: nothing of the retired tenant answers any more.
         for (const principalId of [owner, colleague]) {
           const decision = yield* stage.decide({ carrier: readCarrier, principalId, tenantId });
@@ -1613,5 +1673,156 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
         ]);
       }),
     ),
+  );
+
+  suite.effect(
+    'retires a person with connected apps as the AKROS e-shop login is: ends the live one, revokes every grant binding and replays to nothing',
+    () =>
+      withStage((stage) =>
+        onDatabaseClock(
+          stage,
+          Effect.gen(function* retiresWithConnectedApps() {
+            const { tenantId } = stage;
+            yield* stage
+              .reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId, [bystanderAccount(tenantId)])] })
+              .pipe(failClosed);
+            // The e-shop login administers the company beside the bystander and has its directory row, five connections
+            // it revoked in the product (their bindings only disabled) and one still live, used yesterday.
+            const revokedApps = [1, 2, 3, 4, 5].map((n) => ({
+              binding: uid(210 + n),
+              grant: uid(200 + n),
+              live: false,
+              person: colleague,
+            }));
+            const liveApp = { binding: uid(216), grant: uid(206), live: true, person: colleague };
+            yield* seed(
+              stage,
+              directoryRow(tenantId, colleague),
+              companyAdministrators(stage),
+              ...[...revokedApps, liveApp].flatMap((app) => connectedApp(stage, app)),
+            );
+            const untouched = yield* peopleRowsOf(stage, [owner, bystander]);
+            const operatorFile = { ...emptyRun, retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
+            const run = yield* stage.reconcile(operatorFile).pipe(failClosed);
+            // The run reports every connected app of the leaver and ended exactly the live one.
+            expect(
+              run.connectedApps.map(({ endedByThisRun, grantId, principalId }) => ({
+                endedByThisRun,
+                grantId,
+                principalId,
+              })),
+            ).toEqual(
+              [...revokedApps, liveApp].map(({ grant, live }) => ({
+                endedByThisRun: live,
+                grantId: grant,
+                principalId: colleague,
+              })),
+            );
+            // The live connection ended as an administrator ends somebody else's, attributed to the acting owner; the
+            // five the person revoked keep their own history.
+            expect(yield* grantRowsOf(stage, colleague)).toEqual([
+              ...revokedApps.map(({ grant }) => ({
+                id: grant,
+                reason: 'user',
+                revoked_by: colleague,
+                status: 'revoked',
+              })),
+              { id: liveApp.grant, reason: 'admin', revoked_by: owner, status: 'revoked' },
+            ]);
+            // Every binding is revoked by compare-and-set at the revision it was read: the login's and all six grants'.
+            expect(yield* bindingSummaryOf(stage, colleague)).toEqual([
+              { count: 6, revision: 2, status: 'revoked', subject: 'oauth_grant' },
+              { count: 1, revision: 2, status: 'revoked', subject: 'user' },
+            ]);
+            const principalRows = yield* stage.admin
+              .unsafe<{ readonly status: string }>(
+                `select status from core.principals where tenant_id = '${tenantId}' and principal_id = '${colleague}'`,
+              )
+              .pipe(Effect.orDie);
+            expect(principalRows).toEqual([{ status: 'archived' }]);
+            expect((yield* stage.decide({ carrier: readCarrier, principalId: colleague, tenantId })).outcome).toBe(
+              'DENIED',
+            );
+            expect(yield* peopleRowsOf(stage, [owner, bystander])).toBe(untouched);
+            // The same file again finds the departure made: it ends nothing, writes nothing and reports nothing ended.
+            const settled = yield* peopleRowsOf(stage, [colleague]);
+            const grantsSettled = yield* grantRowsOf(stage, colleague);
+            const again = yield* stage.reconcile(operatorFile).pipe(failClosed);
+            expect(again.connectedApps.map(({ endedByThisRun }) => endedByThisRun)).toEqual([
+              false,
+              false,
+              false,
+              false,
+              false,
+              false,
+            ]);
+            expect(yield* peopleRowsOf(stage, [colleague])).toBe(settled);
+            expect(yield* grantRowsOf(stage, colleague)).toEqual(grantsSettled);
+          }),
+        ),
+      ),
+  );
+
+  suite.effect(
+    'retires a person with no membership, only a directory row and three connections they revoked, as expedice is',
+    () =>
+      withStage((stage) =>
+        onDatabaseClock(
+          stage,
+          Effect.gen(function* retiresWithoutMemberships() {
+            const { tenantId } = stage;
+            yield* stage.reconcile({ ...emptyRun, tenants: [tenantBootstrap(tenantId)] }).pipe(failClosed);
+            // The unassigned account holds no membership at all: only its directory row and three connections it revoked
+            // in the product, whose bindings the revocation only disabled.
+            const apps = [1, 2, 3].map((n) => ({
+              binding: uid(230 + n),
+              grant: uid(220 + n),
+              live: false,
+              person: unassigned,
+            }));
+            yield* seed(stage, directoryRow(tenantId, unassigned), ...apps.flatMap((app) => connectedApp(stage, app)));
+            const memberships = yield* stage.admin
+              .unsafe<{ readonly count: number }>(
+                `select count(*)::int as count from core.access_memberships
+                  where tenant_id = '${tenantId}' and principal_id = '${unassigned}'`,
+              )
+              .pipe(Effect.orDie);
+            expect(memberships).toEqual([{ count: 0 }]);
+            const grantsBefore = yield* grantRowsOf(stage, unassigned);
+            expect(grantsBefore.map(({ status }) => status)).toEqual(['revoked', 'revoked', 'revoked']);
+            const untouched = yield* peopleRowsOf(stage, [owner, colleague]);
+            const operatorFile = { ...emptyRun, retiredPrincipals: [leaving(tenantId, unassigned, 'unassigned')] };
+            const run = yield* stage.reconcile(operatorFile).pipe(failClosed);
+            // Nothing was live, so nothing is ended; each disabled grant binding is revoked with the login's.
+            expect(run.connectedApps.map(({ endedByThisRun, grantId }) => ({ endedByThisRun, grantId }))).toEqual(
+              apps.map(({ grant }) => ({ endedByThisRun: false, grantId: grant })),
+            );
+            expect(yield* grantRowsOf(stage, unassigned)).toEqual(grantsBefore);
+            expect(yield* bindingSummaryOf(stage, unassigned)).toEqual([
+              { count: 3, revision: 2, status: 'revoked', subject: 'oauth_grant' },
+              { count: 1, revision: 2, status: 'revoked', subject: 'user' },
+            ]);
+            const left = yield* stage.admin
+              .unsafe<{ readonly kind: string; readonly status: string }>(
+                `select 'directory' as kind, status from core.principal_company_memberships
+                  where tenant_id = '${tenantId}' and principal_id = '${unassigned}'
+                 union all select 'principal', status from core.principals
+                  where tenant_id = '${tenantId}' and principal_id = '${unassigned}'
+                 order by 1`,
+              )
+              .pipe(Effect.orDie);
+            expect(left).toEqual([
+              { kind: 'directory', status: 'departed' },
+              { kind: 'principal', status: 'archived' },
+            ]);
+            expect(yield* peopleRowsOf(stage, [owner, colleague])).toBe(untouched);
+            // The same file again changes nothing.
+            const settled = yield* peopleRowsOf(stage, [unassigned]);
+            yield* stage.reconcile(operatorFile).pipe(failClosed);
+            expect(yield* peopleRowsOf(stage, [unassigned])).toBe(settled);
+            expect(yield* grantRowsOf(stage, unassigned)).toEqual(grantsBefore);
+          }),
+        ),
+      ),
   );
 });

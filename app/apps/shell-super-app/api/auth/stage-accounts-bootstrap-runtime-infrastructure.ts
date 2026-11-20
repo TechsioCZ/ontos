@@ -9,17 +9,18 @@ import {
 import type {
   InstallationRuntime,
   StageContextBootstrapResult,
+  StageRetiredConnectedApp,
 } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { Crypto } from 'effect';
 import { Config, DateTime, Effect, Option, Redacted } from 'effect';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { AuthDatabase } from './db/client.ts';
-import { account, session, user } from './db/schema.ts';
+import { account, oauthAccessToken, oauthConsent, oauthRefreshToken, session, user } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
 import {
   STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
@@ -274,6 +275,34 @@ const retireAuthUser = Effect.fn('StageAccountsBootstrap.retireAuthUser')(functi
 });
 
 /**
+ * Deletes the Better Auth tokens and consent of every connected app of a Principal this run retired, as the product's
+ * revocation does once Core has ended a grant: Core ended the grant in the run's transaction (or the product had ended
+ * it), and a refresh token of an ended grant would otherwise keep minting access tokens that nothing admits. What is
+ * already gone deletes nothing, so the same file again changes nothing here either.
+ */
+const retireConnectedAppTokens = Effect.fn('StageAccountsBootstrap.retireConnectedAppTokens')(
+  function* retireConnectedAppTokens(connectedApps: readonly StageRetiredConnectedApp[]) {
+    const grantIds = connectedApps.map(({ grantId }) => grantId);
+    if (grantIds.length === 0) {
+      return yield* Effect.void;
+    }
+    const { executor: database } = yield* AuthDatabase;
+    return yield* database
+      .transaction((transaction) =>
+        Effect.all(
+          [
+            transaction.delete(oauthAccessToken).where(inArray(oauthAccessToken.referenceId, grantIds)),
+            transaction.delete(oauthRefreshToken).where(inArray(oauthRefreshToken.referenceId, grantIds)),
+            transaction.delete(oauthConsent).where(inArray(oauthConsent.referenceId, grantIds)),
+          ],
+          { concurrency: 1, discard: true },
+        ),
+      )
+      .pipe(Effect.mapError(persistenceFailure));
+  },
+);
+
+/**
  * The Better Auth user a retired Principal's login signs in as. Core retires the Principal only while it holds a live
  * staff binding of this user and no binding of anybody else; the user itself is not changed here.
  */
@@ -332,11 +361,24 @@ const toAccountResult = (
   tenantId: context.tenantId,
 });
 
-/** What one operator run did: its accounts and retired accounts, the logins it attached and the people it retired. */
+/**
+ * What one operator run did: its accounts and retired accounts, the logins it attached, the people it retired and the
+ * connected apps their departure ended.
+ */
 export interface StageAccountsBootstrapRunResult extends StageAccountsBootstrapResult {
   readonly attachedLogins: readonly {
     readonly email: string;
     readonly principalId: string;
+    readonly tenantId: string;
+  }[];
+  /** The connected apps this run ended, by client name and id; never a token. */
+  readonly endedConnectedApps: readonly {
+    readonly clientId: string;
+    readonly clientName: string;
+    readonly email: string;
+    readonly grantId: string;
+    readonly lastUsedAt: Date | null;
+    readonly status: string;
     readonly tenantId: string;
   }[];
   readonly retiredPrincipals: readonly {
@@ -445,7 +487,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
         }),
     ),
   );
-  const results = yield* reconcileStageContextBootstraps(
+  const run = yield* reconcileStageContextBootstraps(
     {
       attachedLogins: attachedLoginIdentities,
       retiredPrincipals: retiredPrincipalIdentities,
@@ -462,19 +504,36 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
         }),
     ),
   );
+  yield* retireConnectedAppTokens(run.connectedApps);
   const retiredAccounts = yield* Effect.forEach(accountsFile.retiredAccountEmails, retireAuthUser, {
     concurrency: 1,
   });
-  const accounts = results.flatMap((result, index) => {
+  const accounts = run.accounts.flatMap((result, index) => {
     const accountConfiguration = accountConfigurations[index];
     const authUser = authUsers[index];
     return accountConfiguration === undefined || authUser === undefined
       ? []
       : [toAccountResult(accountConfiguration, authUser, result)];
   });
+  const emailOf = new Map<string, string>(retiredPrincipals.map(({ email, principalId }) => [principalId, email]));
   return {
     accounts,
     attachedLogins: attachedLogins.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
+    endedConnectedApps: run.connectedApps.flatMap((app) =>
+      app.endedByThisRun
+        ? [
+            {
+              clientId: app.clientId,
+              clientName: app.clientName,
+              email: emailOf.get(app.principalId) ?? app.principalId,
+              grantId: app.grantId,
+              lastUsedAt: app.lastUsedAt,
+              status: app.status,
+              tenantId: app.tenantId,
+            },
+          ]
+        : [],
+    ),
     retiredAccounts,
     retiredPrincipals: retiredPrincipals.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
   };

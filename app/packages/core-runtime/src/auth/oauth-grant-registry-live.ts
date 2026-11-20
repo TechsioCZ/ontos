@@ -7,7 +7,7 @@ import { oauthConnectionGrants as grants, principalAuthBindings as bindings, pri
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './staff-authentication-namespace.ts';
 import { OAuthGrantRecordFactsSchema } from './oauth-grant-registry-contract.ts';
 import { OAuthGrantRegistryUnavailable } from './oauth-grant-registry-unavailable.ts';
-import type { CoreDatabaseExecutor } from '../db/types.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type {
   OAuthGrantRecord,
   OAuthGrantActivation,
@@ -15,6 +15,7 @@ import type {
   OAuthGrantListFilter,
   OAuthGrantKey,
   OAuthGrantModules,
+  OAuthGrantStatusChange,
 } from './oauth-grant-registry-contract.ts';
 import { OAuthGrantRegistry } from './oauth-grant-registry-service.ts';
 
@@ -81,6 +82,65 @@ const sameKey = (key: OAuthGrantKey): SQL[] => [
   eq(grants.legalEntityId, key.legalEntityId),
   eq(grants.userId, key.userId),
 ];
+
+/**
+ * Ends one grant on the caller's transaction, under the grant's row lock: a draft becomes `denied`, an active grant
+ * `revoked` or `superseded` with who ended it and why, and the grant's active derived binding is disabled with it.
+ * An active grant is never denied, and a terminal grant is returned unchanged. The product's revocation commits it on
+ * its own (`setGrantStatus`); the stage operator's departure of a person runs it inside the departure's transaction.
+ */
+export const transitionOAuthGrant = Effect.fn('OAuthGrantRegistry.transitionGrant')(function* transitionGrant(
+  transaction: CoreTransaction,
+  input: OAuthGrantStatusChange,
+) {
+  const [retainedRow] = yield* transaction.select().from(grants).where(eq(grants.grantId, input.grantId)).for('update');
+  if (retainedRow === undefined) {
+    return Option.none<OAuthGrantRecord>();
+  }
+  const retained = yield* toOAuthGrantRecord(retainedRow);
+  if (input.status === 'denied' && retained.status === 'active') {
+    return Option.none<OAuthGrantRecord>();
+  }
+  if (retained.authBindingId !== null) {
+    yield* transaction
+      .update(bindings)
+      .set({
+        bindingRevision: sql`${bindings.bindingRevision} + 1`,
+        revokedAt: null,
+        status: 'disabled',
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(bindings.tenantId, retained.tenantId),
+          eq(bindings.principalAuthBindingId, retained.authBindingId),
+          eq(bindings.authenticationNamespaceId, STAFF_AUTHENTICATION_NAMESPACE_ID),
+          eq(bindings.provider, 'better_auth'),
+          eq(bindings.subjectType, 'oauth_grant'),
+          eq(bindings.providerSubjectId, retained.grantId),
+          eq(bindings.principalId, retained.actingPrincipalId),
+          eq(bindings.status, 'active'),
+          isNull(bindings.revokedAt),
+        ),
+      );
+  }
+  // Terminal grants never reactivate or change historical attribution on repeated cleanup.
+  if (retained.status !== 'draft' && retained.status !== 'active') {
+    return Option.some(retained);
+  }
+  return yield* firstGrant(
+    yield* transaction
+      .update(grants)
+      .set({
+        revokedAt: input.status === 'denied' ? null : sql`now()`,
+        revokedByPrincipalId: input.revokedByPrincipalId,
+        revokeReason: input.revokeReason,
+        status: input.status,
+      })
+      .where(eq(grants.grantId, input.grantId))
+      .returning(),
+  );
+}, Effect.mapError(unavailable));
 
 const makeRegistry = (
   executor: CoreDatabaseExecutor,
@@ -301,71 +361,14 @@ const makeRegistry = (
       .pipe(Effect.mapError(unavailable));
   });
 
-  const setGrantStatus = Effect.fn('OAuthGrantRegistry.setGrantStatus')(function* setGrantStatus(input: {
-    readonly grantId: string;
-    readonly revokedByPrincipalId: string | null;
-    readonly revokeReason: NonNullable<OAuthGrantRecord['revokeReason']> | null;
-    readonly status: 'denied' | 'revoked' | 'superseded';
-  }) {
+  const setGrantStatus = Effect.fn('OAuthGrantRegistry.setGrantStatus')(function* setGrantStatus(
+    input: OAuthGrantStatusChange,
+  ) {
     if (!GRANT_ID_PATTERN.test(input.grantId)) {
       return Option.none<OAuthGrantRecord>();
     }
     return yield* executor
-      .transaction(
-        Effect.fn('OAuthGrantRegistry.transitionTransaction')(function* transitionGrant(transaction) {
-          const [retainedRow] = yield* transaction
-            .select()
-            .from(grants)
-            .where(eq(grants.grantId, input.grantId))
-            .for('update');
-          if (retainedRow === undefined) {
-            return Option.none<OAuthGrantRecord>();
-          }
-          const retained = yield* toOAuthGrantRecord(retainedRow);
-          if (input.status === 'denied' && retained.status === 'active') {
-            return Option.none<OAuthGrantRecord>();
-          }
-          if (retained.authBindingId !== null) {
-            yield* transaction
-              .update(bindings)
-              .set({
-                bindingRevision: sql`${bindings.bindingRevision} + 1`,
-                revokedAt: null,
-                status: 'disabled',
-                updatedAt: sql`now()`,
-              })
-              .where(
-                and(
-                  eq(bindings.tenantId, retained.tenantId),
-                  eq(bindings.principalAuthBindingId, retained.authBindingId),
-                  eq(bindings.authenticationNamespaceId, STAFF_AUTHENTICATION_NAMESPACE_ID),
-                  eq(bindings.provider, 'better_auth'),
-                  eq(bindings.subjectType, 'oauth_grant'),
-                  eq(bindings.providerSubjectId, retained.grantId),
-                  eq(bindings.principalId, retained.actingPrincipalId),
-                  eq(bindings.status, 'active'),
-                  isNull(bindings.revokedAt),
-                ),
-              );
-          }
-          // Terminal grants never reactivate or change historical attribution on repeated cleanup.
-          if (retained.status !== 'draft' && retained.status !== 'active') {
-            return Option.some(retained);
-          }
-          return yield* firstGrant(
-            yield* transaction
-              .update(grants)
-              .set({
-                revokedAt: input.status === 'denied' ? null : sql`now()`,
-                revokedByPrincipalId: input.revokedByPrincipalId,
-                revokeReason: input.revokeReason,
-                status: input.status,
-              })
-              .where(eq(grants.grantId, input.grantId))
-              .returning(),
-          );
-        }),
-      )
+      .transaction((transaction) => transitionOAuthGrant(transaction, input))
       .pipe(Effect.mapError(unavailable));
   });
 

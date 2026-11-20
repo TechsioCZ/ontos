@@ -208,6 +208,14 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
     { discard: true },
   );
   yield* Effect.forEach(
+    result.endedConnectedApps,
+    (app) =>
+      Console.log(
+        `Ended connected app "${app.clientName}" (${app.clientId}) of ${app.email}: tenant=${app.tenantId} grant=${app.grantId} was=${app.status} lastUsed=${app.lastUsedAt?.toISOString() ?? 'never'}`,
+      ),
+    { discard: true },
+  );
+  yield* Effect.forEach(
     result.retiredAccounts,
     (account) => Console.log(`Retired stage account ${account.email}: ${account.status}`),
     { discard: true },
