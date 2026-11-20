@@ -24,6 +24,7 @@ import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/con
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
 import type { MediaByteHopAsset } from '../../src/media/byte-stream.ts';
+import { reconcileUncertainUpload, mayStartIndependentUpload } from '../../src/media/reconciliation.ts';
 import { ProvenMediaIntegrityFinding } from '../../src/media/integrity-contract.ts';
 import { ObjectStorage, ObjectStorageNetworkError, ObjectStorageTimeout } from '../../src/media/object-storage.ts';
 import type { ObjectStorageService } from '../../src/media/object-storage.ts';
@@ -43,7 +44,9 @@ import { makeInMemoryObjectStorage, withObjectStorageFaults } from '../../src/te
 import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { makeTestPgClient } from '../support/database.ts';
+import { injectStatementFaults } from '../support/database-faults.ts';
 
 /*
  * The world of the Core Media recovery suites on real PostgreSQL: the real Action runtime, the in-memory
@@ -58,6 +61,9 @@ const digestOf = (bytes: Uint8Array) => Hex.encode(sha256(bytes));
 const content = encoder.encode('the bytes of one independent upload');
 const WORKLOAD = WorkloadKeySchema.make('core.media.ingest');
 const allowedPermission = { checkActionPermission: () => Effect.succeed('allowed' as const) };
+
+const AccessOverrideSchema = Schema.Literals(['denied', 'unavailable']);
+type AccessOverride = typeof AccessOverrideSchema.Type | undefined;
 
 const PrincipalKindSchema = Schema.Literals(['human', 'integration', 'service', 'system']);
 type PrincipalKind = typeof PrincipalKindSchema.Type;
@@ -238,7 +244,7 @@ const openHarness = Effect.fn('CoreMediaRecoveryHarness.harness')(function* open
     }),
     enforcementPorts,
   );
-  const gateFor = (carrier: 'human' | 'machine', accessOverride: 'denied' | 'unavailable' | undefined) => {
+  const gateFor = (carrier: 'human' | 'machine', accessOverride: AccessOverride) => {
     if (accessOverride !== undefined) {
       return makeScriptedBoundAccessGate(accessOverride).bound;
     }
@@ -370,7 +376,7 @@ const confirmReservedAsset = (
   world: World,
   actor: Actor,
   options: {
-    readonly accessOverride?: 'denied' | 'unavailable';
+    readonly accessOverride?: AccessOverride;
     readonly key: string;
     readonly mediaAssetRef: typeof ConfirmAssetPayloadSchema.Type.mediaAssetRef;
     readonly verification: MediaStoredObjectVerification;
@@ -479,7 +485,7 @@ const recordIntegrity = (
   world: World,
   actor: Actor,
   options: {
-    readonly accessOverride?: 'denied' | 'unavailable' | undefined;
+    readonly accessOverride?: AccessOverride;
     readonly finding: MediaIntegrityFinding;
     readonly key: string;
     readonly mediaAssetRef: Parameters<typeof confirmReservedAsset>[3]['mediaAssetRef'];
@@ -758,5 +764,308 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media integrity 
         ).pipe(Effect.provideService(ObjectStorage, harness.storage.service));
         expect(outcome).toMatchObject({ contentSha256: digestOf(content), outcome: 'verified' });
       }).pipe(Effect.scoped),
+  );
+});
+
+const reconcileAsset = (
+  harness: Harness,
+  world: World,
+  actor: Actor,
+  options: {
+    readonly accessOverride?: AccessOverride;
+    readonly key: string;
+    readonly mediaAssetRef: Parameters<typeof confirmReservedAsset>[3]['mediaAssetRef'];
+    readonly storage?: ObjectStorageService;
+  },
+) =>
+  Effect.gen(function* reconcileOnce() {
+    const asset = yield* verifiableRowOf(harness, world.tenantId, options.mediaAssetRef.resourceId);
+    return yield* reconcileUncertainUpload({
+      asset,
+      confirm: (verification) =>
+        confirmReservedAsset(harness, world, actor, {
+          accessOverride: options.accessOverride,
+          key: options.key,
+          mediaAssetRef: options.mediaAssetRef,
+          verification,
+        }),
+    }).pipe(Effect.provideService(ObjectStorage, options.storage ?? harness.storage.service));
+  });
+
+const storedOnlyWhen = (when: 'after' | 'before', harness: Harness) =>
+  withObjectStorageFaults([{ failure: timeout, operation: 'put', times: 1, when }]).pipe(
+    Effect.provideService(ObjectStorage, harness.storage.service),
+  );
+
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media reconciliation on PostgreSQL', (suite) => {
+  suite.effect('completes the same asset when the provider stored the bytes but the answer was lost (order 2)', () =>
+    Effect.gen(function* storedButUncertain() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'lost-answer' });
+      const mediaAssetId = reservation.mediaAssetRef.resourceId;
+      // Controlled fault injection: the put stored the object, then the caller was told it failed.
+      const flaky = yield* storedOnlyWhen('after', harness);
+      const streamed = yield* Effect.exit(
+        streamReservedBytes(harness, world, world.human, mediaAssetId, content, flaky),
+      );
+      expect(failureTagOf(streamed)).toBe('MediaIngestUncertain');
+      expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('uploaded');
+      const reconciled = yield* reconcileAsset(harness, world, world.human, {
+        key: 'lost-answer-reconcile',
+        mediaAssetRef: reservation.mediaAssetRef,
+      });
+      expect(reconciled).toEqual({
+        byteSize: content.byteLength,
+        contentSha256: digestOf(content),
+        outcome: 'completed',
+      });
+      expect(mayStartIndependentUpload(reconciled)).toBe(false);
+      expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+      expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('ready');
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('stays unresolved when nothing was stored, forbids a new upload, then completes the same asset', () =>
+    Effect.gen(function* nothingStored() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'never-stored' });
+      const mediaAssetId = reservation.mediaAssetRef.resourceId;
+      const flaky = yield* storedOnlyWhen('before', harness);
+      const streamed = yield* Effect.exit(
+        streamReservedBytes(harness, world, world.human, mediaAssetId, content, flaky),
+      );
+      expect(failureTagOf(streamed)).toBe('MediaIngestUncertain');
+      const before = yield* harness.rowOf(world.tenantId, mediaAssetId);
+      // Same idempotency key every time: the uncertain Action is retryable and never runs a second effect.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const reconciled = yield* reconcileAsset(harness, world, world.human, {
+          key: 'never-stored-reconcile',
+          mediaAssetRef: reservation.mediaAssetRef,
+        });
+        expect(reconciled).toEqual({ outcome: 'unresolved', reason: 'object_missing' });
+        expect(mayStartIndependentUpload(reconciled)).toBe(false);
+      }
+      expect(yield* harness.rowOf(world.tenantId, mediaAssetId)).toEqual(before);
+      // The same client sends the bytes to the same asset; reconciliation then completes the original intent.
+      yield* streamReservedBytes(harness, world, world.human, mediaAssetId, content);
+      const completed = yield* reconcileAsset(harness, world, world.human, {
+        key: 'never-stored-reconcile',
+        mediaAssetRef: reservation.mediaAssetRef,
+      });
+      expect(completed.outcome).toBe('completed');
+      expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('completes an upload whose confirm never committed, including a rolled-back commit (order 1)', () =>
+    Effect.gen(function* confirmLost() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'confirm-lost' });
+      const mediaAssetId = reservation.mediaAssetRef.resourceId;
+      yield* streamReservedBytes(harness, world, world.human, mediaAssetId, content);
+      // The provider holds the bytes; the confirm transaction fails on its UPDATE and rolls back.
+      const rolledBack = yield* Effect.exit(
+        reconcileAsset(harness, world, world.human, {
+          key: 'confirm-lost-reconcile',
+          mediaAssetRef: reservation.mediaAssetRef,
+        }).pipe(
+          injectStatementFaults((statement) =>
+            statement.includes('"media_assets" set')
+              ? Effect.fail(
+                  new SqlError({
+                    reason: new UnknownError({
+                      cause: new Error('Injected SQL failure'),
+                      message: 'Injected write failure',
+                    }),
+                  }),
+                )
+              : Effect.void,
+          ),
+        ),
+      );
+      expect(Exit.isFailure(rolledBack)).toBe(true);
+      expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('uploaded');
+      const completed = yield* reconcileAsset(harness, world, world.human, {
+        key: 'confirm-lost-reconcile',
+        mediaAssetRef: reservation.mediaAssetRef,
+      });
+      expect(completed.outcome).toBe('completed');
+      expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect(
+    'closes the original intent as failed on proven wrong bytes and only then allows an independent upload',
+    () =>
+      Effect.gen(function* wrongBytes() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'wrong' });
+        const mediaAssetId = reservation.mediaAssetRef.resourceId;
+        yield* harness.storage.service.put({
+          body: Stream.make(tampered),
+          contentType: 'application/pdf',
+          key: deriveMediaStorageKey({ mediaAssetId, tenantId: world.tenantId }),
+        });
+        const closed = yield* reconcileAsset(harness, world, world.human, {
+          key: 'wrong-reconcile',
+          mediaAssetRef: reservation.mediaAssetRef,
+        });
+        expect(closed).toEqual({ outcome: 'closed_failed' });
+        expect(mayStartIndependentUpload(closed)).toBe(true);
+        expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('failed');
+        // Reconciling again, or with good bytes at the key, never reopens it.
+        yield* harness.storage.service.put({
+          body: Stream.make(content),
+          contentType: 'application/pdf',
+          key: deriveMediaStorageKey({ mediaAssetId, tenantId: world.tenantId }),
+        });
+        expect(
+          yield* reconcileAsset(harness, world, world.human, {
+            key: 'wrong-reconcile-2',
+            mediaAssetRef: reservation.mediaAssetRef,
+          }),
+        ).toEqual({ outcome: 'closed_failed' });
+        // The independent upload is another asset with its own id; the closed one is not touched.
+        const independent = yield* uploadReadyAsset(harness, world, world.human, content, { key: 'wrong-new' });
+        expect(independent.mediaAssetId).not.toBe(mediaAssetId);
+        expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('failed');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(2);
+      }).pipe(Effect.scoped),
+  );
+
+  suite.effect('leaves the intent unresolved on every doubtful read: outage, early close, a replaced object', () =>
+    Effect.gen(function* doubtful() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'doubt' });
+      const mediaAssetId = reservation.mediaAssetRef.resourceId;
+      yield* streamReservedBytes(harness, world, world.human, mediaAssetId, content);
+      const before = yield* harness.rowOf(world.tenantId, mediaAssetId);
+      const outage = yield* withObjectStorageFaults([{ failure: network, operation: 'get' }]).pipe(
+        Effect.provideService(ObjectStorage, harness.storage.service),
+      );
+      const shortRead: ObjectStorageService = {
+        ...harness.storage.service,
+        get: () => Effect.succeed({ body: Stream.make(content.slice(0, 5)), stat: { byteSize: content.byteLength } }),
+      };
+      const cases = [
+        [outage, 'provider_failure'],
+        [shortRead, 'framing_inconsistent'],
+      ] as const;
+      for (const [storage, reason] of cases) {
+        const reconciled = yield* reconcileAsset(harness, world, world.human, {
+          key: `doubt-${reason}`,
+          mediaAssetRef: reservation.mediaAssetRef,
+          storage,
+        });
+        expect(reconciled).toEqual({ outcome: 'unresolved', reason });
+        expect(mayStartIndependentUpload(reconciled)).toBe(false);
+      }
+      expect(yield* harness.rowOf(world.tenantId, mediaAssetId)).toEqual(before);
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('needs the original authority again: a denied or unavailable decision completes nothing', () =>
+    Effect.gen(function* authority() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'authority' });
+      const mediaAssetId = reservation.mediaAssetRef.resourceId;
+      yield* streamReservedBytes(harness, world, world.human, mediaAssetId, content);
+      for (const accessOverride of ['denied', 'unavailable'] as const) {
+        const exit = yield* Effect.exit(
+          reconcileAsset(harness, world, world.human, {
+            accessOverride,
+            key: `authority-${accessOverride}`,
+            mediaAssetRef: reservation.mediaAssetRef,
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('uploaded');
+      }
+      // Authority restored (a fresh decision, not a remembered one): the same asset completes.
+      const completed = yield* reconcileAsset(harness, world, world.human, {
+        key: 'authority-restored',
+        mediaAssetRef: reservation.mediaAssetRef,
+      });
+      expect(completed.outcome).toBe('completed');
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('answers a settled intent from its row without asking the provider or rerunning any handler', () =>
+    Effect.gen(function* settled() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const ready = yield* uploadReadyAsset(harness, world, world.human, content, { key: 'settled' });
+      const failed = yield* reserveAsset(harness, world, world.human, content, { key: 'settled-failed' });
+      yield* harness.admin.unsafe(
+        `update core.media_assets set processing_status = 'failed' where tenant_id = $1 and media_asset_id = $2`,
+        [world.tenantId, failed.mediaAssetRef.resourceId],
+      );
+      const invocationsBefore = yield* harness.countOf('core.action_invocations', world.tenantId);
+      const callsBefore = (yield* harness.storage.calls).length;
+      expect(
+        yield* reconcileAsset(harness, world, world.human, {
+          key: 'settled-r1',
+          mediaAssetRef: ready.reservation.mediaAssetRef,
+        }),
+      ).toEqual({ byteSize: content.byteLength, contentSha256: digestOf(content), outcome: 'completed' });
+      expect(
+        yield* reconcileAsset(harness, world, world.human, { key: 'settled-r2', mediaAssetRef: failed.mediaAssetRef }),
+      ).toEqual({ outcome: 'closed_failed' });
+      expect((yield* harness.storage.calls).length).toBe(callsBefore);
+      expect(yield* harness.countOf('core.action_invocations', world.tenantId)).toBe(invocationsBefore);
+      // A succeeded confirm never reruns for a retry of its key, and other content under that key is a conflict.
+      const replay = yield* Effect.exit(
+        confirmReservedAsset(harness, world, world.human, {
+          key: 'settled-confirm',
+          mediaAssetRef: ready.reservation.mediaAssetRef,
+          verification: ready.verification,
+        }),
+      );
+      expect(failureTagOf(replay)).toBe('ActionAlreadyCommitted');
+      const conflicting = yield* Effect.exit(
+        harness
+          .runtimeFor('human')
+          .runAction({
+            payload: { mediaAssetRef: failed.mediaAssetRef },
+            principal: principalOf(world, world.human),
+            registration: confirmAssetAction,
+            savedReply: 'answer',
+            transport: transportOf('settled-confirm'),
+          })
+          .pipe(Effect.provideService(StoredMediaObjectVerification, ready.verification)),
+      );
+      expect(failureTagOf(conflicting)).toBe('ActionRequestHashConflict');
+    }).pipe(Effect.scoped),
+  );
+
+  suite.effect('lets a bound ingest workload reconcile the same way, and a machine without the binding nothing', () =>
+    Effect.gen(function* machine() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      yield* harness.bind(world, world.system);
+      const reservation = yield* reserveAsset(harness, world, world.system, content, {
+        key: 'machine',
+        overrides: { ingestionSource: 'import' },
+      });
+      yield* streamReservedBytes(harness, world, world.system, reservation.mediaAssetRef.resourceId, content);
+      const unbound = yield* Effect.exit(
+        reconcileAsset(harness, world, world.integration, {
+          key: 'machine-unbound',
+          mediaAssetRef: reservation.mediaAssetRef,
+        }),
+      );
+      expect(Exit.isFailure(unbound)).toBe(true);
+      const completed = yield* reconcileAsset(harness, world, world.system, {
+        key: 'machine-bound',
+        mediaAssetRef: reservation.mediaAssetRef,
+      });
+      expect(completed.outcome).toBe('completed');
+    }).pipe(Effect.scoped),
   );
 });
