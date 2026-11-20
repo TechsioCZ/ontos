@@ -140,6 +140,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
       'a module relays its requester with a real assertion: Core answers Current V1 for the exact refs, and a refusal, a replay, a wrong audience and a direct person assertion never answer',
       (ctx) =>
         withMediaE2eWorld(
+          ctx,
           platform,
           (world) =>
             Effect.scoped(
@@ -211,7 +212,10 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 });
               }),
             ),
-          { contracts: [catalogContract()] },
+          {
+            contracts: [catalogContract()],
+            requires: ['ONTOS_GATEWAY_ISSUER', 'ONTOS_GATEWAY_PUBLIC_JWKS', 'D20_E2E_GATEWAY_PRIVATE_JWK'],
+          },
         ),
     );
   },

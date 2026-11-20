@@ -69,8 +69,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
   (suite) => {
     suite.effect(
       'row 6: an authorized, confirmed asset has exactly one Current V1, revision 1, with its exact identity; a new upload creates no V2 and moves nothing',
-      () =>
-        withMediaE2eWorld(platform, (world) =>
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* currentV1() {
               const uploader = person(world, 'uploader');
@@ -128,7 +128,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'row 7: a refused, absent, foreign, unconfirmed, corrupt or unreachable asset is never AVAILABLE, and each kind keeps its own meaning',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* neverAvailable() {
               const { faults } = yield* requireFaultInjection(ctx, world);
@@ -176,7 +176,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     suite.effect(
       'row 7: SpiceDB UNAVAILABLE refuses the Current read as a whole (CONTROLLED FAULT INJECTION: engine partition)',
       (ctx) =>
-        withMediaE2eWorld(platform, (world) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* engineDown() {
               const injection = yield* requireFaultInjection(ctx, world);

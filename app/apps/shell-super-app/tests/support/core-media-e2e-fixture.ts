@@ -697,14 +697,39 @@ const replaceStored = (storage: OpenedStorage, tenantId: string) =>
     Effect.orDie,
   );
 
+/** What the run must be configured with; without it the scenario is skipped (BLOCKED), never run against a guess. */
+const REQUIRED_ENVIRONMENT = [
+  'CORE_MEDIA_S3_ENDPOINT',
+  'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
+  'SPICEDB_ENDPOINT',
+] as const;
+
+const requireEnvironment = (ctx: { readonly skip: (note?: string) => void }, names: readonly string[]) =>
+  Effect.gen(function* checkEnvironment() {
+    const missing: string[] = [];
+    for (const name of names) {
+      if (Option.isNone(yield* Config.option(Config.String(name)).pipe(Effect.orDie))) {
+        missing.push(name);
+      }
+    }
+    if (missing.length > 0) {
+      yield* Effect.sync(() => {
+        ctx.skip(`BLOCKED: the run is not configured with ${missing.join(', ')}`);
+      });
+      yield* Effect.never;
+    }
+  });
+
 /** One E2E world: a cloned database, two tenants through the real install path, and the real engine. */
 export const withMediaE2eWorld = <Value, Failure>(
+  ctx: { readonly skip: (note?: string) => void },
   platform: E2ePlatform,
   run: (world: MediaE2eWorld) => Effect.Effect<Value, Failure>,
-  options: { readonly contracts?: readonly unknown[] } = {},
+  options: { readonly contracts?: readonly unknown[]; readonly requires?: readonly string[] } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* mediaE2eWorld() {
+      yield* requireEnvironment(ctx, [...REQUIRED_ENVIRONMENT, ...(options.requires ?? [])]);
       const crypto = yield* Crypto.Crypto;
       const catalog = yield* loadCatalog;
       const storage = yield* openStorage;
