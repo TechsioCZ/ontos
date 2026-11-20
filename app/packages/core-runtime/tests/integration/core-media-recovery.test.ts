@@ -1069,3 +1069,179 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media reconcilia
     }).pipe(Effect.scoped),
   );
 });
+
+const succeededInvocations = (harness: Harness, tenantId: string, idempotencyKey: string) =>
+  harness.admin
+    .unsafe<{ count: string }>(
+      `select count(*)::text as count from core.action_invocations where tenant_id = $1 and idempotency_key = $2 and status = 'succeeded'`,
+      [tenantId, idempotencyKey],
+    )
+    .pipe(Effect.map((rows) => Number(rows[0]?.count ?? '0')));
+
+it.layer(NodeCrypto.layer, { excludeTestServices: true })(
+  'core media recovery under concurrency on PostgreSQL',
+  (suite) => {
+    suite.effect('has many reconcilers of one asset seal it once, with one asset and no second confirming effect', () =>
+      Effect.gen(function* reconcilers() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'many' });
+        const mediaAssetId = reservation.mediaAssetRef.resourceId;
+        yield* streamReservedBytes(harness, world, world.human, mediaAssetId, content);
+        const outcomes = yield* Effect.all(
+          Array.from({ length: 6 }, (_, index) =>
+            reconcileAsset(harness, world, world.human, {
+              key: `many-${index}`,
+              mediaAssetRef: reservation.mediaAssetRef,
+            }),
+          ),
+          { concurrency: 'unbounded' },
+        );
+        expect(new Set(outcomes.map(({ outcome }) => outcome))).toEqual(new Set(['completed']));
+        const sealed = yield* harness.rowOf(world.tenantId, mediaAssetId);
+        expect(sealed?.processing_status).toBe('ready');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+        // A later reconcile finds a settled row and changes nothing, so the seal is the first one's.
+        yield* reconcileAsset(harness, world, world.human, {
+          key: 'many-later',
+          mediaAssetRef: reservation.mediaAssetRef,
+        });
+        expect(yield* harness.rowOf(world.tenantId, mediaAssetId)).toEqual(sealed);
+      }).pipe(Effect.scoped),
+    );
+
+    suite.effect('runs one effect when the same reconcile key is retried while it is still running', () =>
+      Effect.gen(function* sameKey() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'same-key' });
+        const mediaAssetId = reservation.mediaAssetRef.resourceId;
+        yield* streamReservedBytes(harness, world, world.human, mediaAssetId, content);
+        const exits = yield* Effect.all(
+          Array.from({ length: 4 }, () =>
+            Effect.exit(
+              reconcileAsset(harness, world, world.human, {
+                key: 'same-key-reconcile',
+                mediaAssetRef: reservation.mediaAssetRef,
+              }),
+            ),
+          ),
+          { concurrency: 'unbounded' },
+        );
+        expect(exits.some((exit) => Exit.isSuccess(exit))).toBe(true);
+        for (const exit of exits) {
+          // The losers are told the invocation already committed: never a second effect, never another outcome.
+          expect(Exit.isSuccess(exit) || failureTagOf(exit) === 'ActionAlreadyCommitted').toBe(true);
+        }
+        expect(yield* succeededInvocations(harness, world.tenantId, 'same-key-reconcile')).toBe(1);
+        expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('ready');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+      }).pipe(Effect.scoped),
+    );
+
+    suite.effect('closes a wrongly stored intent once however many reconcilers race, and none makes it ready', () =>
+      Effect.gen(function* racingClose() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'race-close' });
+        const mediaAssetId = reservation.mediaAssetRef.resourceId;
+        yield* harness.storage.service.put({
+          body: Stream.make(tampered),
+          contentType: 'application/pdf',
+          key: deriveMediaStorageKey({ mediaAssetId, tenantId: world.tenantId }),
+        });
+        const outcomes = yield* Effect.all(
+          Array.from({ length: 5 }, (_, index) =>
+            reconcileAsset(harness, world, world.human, {
+              key: `race-close-${index}`,
+              mediaAssetRef: reservation.mediaAssetRef,
+            }),
+          ),
+          { concurrency: 'unbounded' },
+        );
+        expect(new Set(outcomes.map(({ outcome }) => outcome))).toEqual(new Set(['closed_failed']));
+        expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('failed');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+      }).pipe(Effect.scoped),
+    );
+
+    suite.effect('lets a client resend the bytes while reconcilers run: one asset, and it ends ready once', () =>
+      Effect.gen(function* resend() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reservation = yield* reserveAsset(harness, world, world.human, content, { key: 'resend' });
+        const mediaAssetId = reservation.mediaAssetRef.resourceId;
+        const reconcile = (key: string) =>
+          reconcileAsset(harness, world, world.human, { key, mediaAssetRef: reservation.mediaAssetRef });
+        const [first, , third] = yield* Effect.all(
+          [
+            reconcile('resend-a'),
+            streamReservedBytes(harness, world, world.human, mediaAssetId, content),
+            reconcile('resend-b'),
+          ],
+          { concurrency: 'unbounded' },
+        );
+        // Mid-race a reconcile may only say unresolved or completed; it never says failed, and nothing is duplicated.
+        for (const outcome of [first, third]) {
+          expect(['completed', 'unresolved']).toContain(outcome.outcome);
+        }
+        const settled = yield* reconcile('resend-final');
+        expect(settled.outcome).toBe('completed');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+        expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.processing_status).toBe('ready');
+      }).pipe(Effect.scoped),
+    );
+
+    suite.effect('verifies a ready asset while it is reconciled: the read changes nothing and the answers agree', () =>
+      Effect.gen(function* readDuringReconcile() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const uploaded = yield* uploadReadyAsset(harness, world, world.human, content, { key: 'during' });
+        const before = yield* harness.rowOf(world.tenantId, uploaded.mediaAssetId);
+        const row = yield* verifiableRowOf(harness, world.tenantId, uploaded.mediaAssetId);
+        const [verified, reconciled] = yield* Effect.all(
+          [
+            verifyReadyMediaAsset(row).pipe(Effect.provideService(ObjectStorage, harness.storage.service)),
+            reconcileAsset(harness, world, world.human, {
+              key: 'during-reconcile',
+              mediaAssetRef: uploaded.reservation.mediaAssetRef,
+            }),
+          ],
+          { concurrency: 'unbounded' },
+        );
+        expect(verified).toMatchObject({ contentSha256: digestOf(content), outcome: 'verified' });
+        expect(reconciled.outcome).toBe('completed');
+        expect(yield* harness.rowOf(world.tenantId, uploaded.mediaAssetId)).toEqual(before);
+      }).pipe(Effect.scoped),
+    );
+
+    suite.effect('records proven corruption once when two verifiers record it at the same time', () =>
+      Effect.gen(function* racingIntegrity() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        yield* harness.bind(world, world.system, INTEGRITY_WORKLOAD);
+        const uploaded = yield* corruptReadyAsset(harness, world, 'race-integrity');
+        const finding = yield* findingOf(harness, world, uploaded.mediaAssetId);
+        const results = yield* Effect.all(
+          Array.from({ length: 4 }, (_, index) =>
+            recordIntegrity(harness, world, world.system, {
+              finding,
+              key: `race-integrity-${index}`,
+              mediaAssetRef: uploaded.reservation.mediaAssetRef,
+            }),
+          ),
+          { concurrency: 'unbounded' },
+        );
+        for (const result of results) {
+          expect(result.processingStatus).toBe('failed');
+        }
+        const evidence = yield* harness.admin.unsafe<{ text: string }>(
+          `select evidence_json::text as text from core.audit_events where tenant_id = $1 and evidence_json ? 'finding'`,
+          [world.tenantId],
+        );
+        expect(evidence).toHaveLength(1);
+        expect((yield* harness.rowOf(world.tenantId, uploaded.mediaAssetId))?.processing_status).toBe('failed');
+      }).pipe(Effect.scoped),
+    );
+  },
+);
