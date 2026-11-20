@@ -282,11 +282,11 @@ const closeServer = (created: Server) =>
 
 const serveDocument = (port: number, document: string) => Effect.acquireRelease(listenOn(port, document), closeServer);
 
-/** One sealed composition: the Shell is the receiving deployment and no module is installed. */
-const publishComposition = (platform: E2ePlatform, admin: CoreDatabaseExecutor) =>
+/** One sealed composition: the Shell is the receiving deployment, with the module contracts the scenario installs. */
+const publishComposition = (platform: E2ePlatform, admin: CoreDatabaseExecutor, contracts: readonly unknown[]) =>
   Effect.gen(function* publishActiveComposition() {
     const snapshot = yield* platform
-      .makeCompositionSnapshot([], 3_600_000)
+      .makeCompositionSnapshot(contracts, 3_600_000)
       .pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot), Effect.orDie);
     const document = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
       snapshot,
@@ -464,6 +464,8 @@ const mountShell = (
 export interface MediaE2eWorld {
   readonly actions: ActionRuntimeService;
   readonly admin: PgClient.PgClient;
+  /** The revision of the active Application Composition every request of this world runs under. */
+  readonly compositionRevision: string;
   readonly databases: DatabaseConnectionPair;
   /**
    * CONTROLLED FAULT INJECTION: the relays between the Shell and the emulator (`faults`, forwarding until a rule is
@@ -699,6 +701,7 @@ const replaceStored = (storage: OpenedStorage, tenantId: string) =>
 export const withMediaE2eWorld = <Value, Failure>(
   platform: E2ePlatform,
   run: (world: MediaE2eWorld) => Effect.Effect<Value, Failure>,
+  options: { readonly contracts?: readonly unknown[] } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* mediaE2eWorld() {
@@ -713,7 +716,11 @@ export const withMediaE2eWorld = <Value, Failure>(
       const adminContext = yield* Layer.build(
         CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, adminConfiguration))),
       );
-      yield* publishComposition(platform, Context.get(adminContext, CoreDatabase).executor);
+      const composition = yield* publishComposition(
+        platform,
+        Context.get(adminContext, CoreDatabase).executor,
+        options.contracts ?? [],
+      );
 
       const tenantId = yield* crypto.randomUUIDv4();
       const foreignTenantId = yield* crypto.randomUUIDv4();
@@ -746,6 +753,7 @@ export const withMediaE2eWorld = <Value, Failure>(
       return yield* run({
         actions: runtimes.actions,
         admin,
+        compositionRevision: composition.composition.revision,
         databases,
         faultInjection,
         foreign: foreignRoster.actors,
