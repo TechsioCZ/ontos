@@ -212,14 +212,14 @@ export const replacedDatabase = (connectionString: string, database: string): st
   return url.href;
 };
 
-const dropDatabase = (admin: PgClient.PgClient, database: string) =>
+export const dropDatabase = (admin: PgClient.PgClient, database: string) =>
   admin.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie);
 
-const cloneDatabase = (admin: PgClient.PgClient, database: string) =>
+export const cloneDatabase = (admin: PgClient.PgClient, database: string) =>
   admin.unsafe(`create database "${database}" template "${TEMPLATE_DATABASE}"`).pipe(Effect.orDie);
 
 /** A pool the caller's own scope owns and closes; never a client whose scope already ended. */
-const makeClient = (connectionString: string, maxConnections: number) =>
+export const openPgPool = (connectionString: string, maxConnections: number) =>
   Effect.gen(function* openClient() {
     const reactivity = yield* Reactivity.make;
     return yield* PgClientService.make({ maxConnections, url: Redacted.make(connectionString) }).pipe(
@@ -262,15 +262,15 @@ const labelled = <A, E, R>(name: string, effect: Effect.Effect<A, E, R>): Effect
   effect.pipe(Effect.tapCause((cause) => Effect.logError(`P14 step failed: ${name}\n${Cause.pretty(cause)}`)));
 
 /** The integration server's connections; every database this suite makes lives beside them. */
-const serverConnections = loadDatabaseConnectionPair().pipe(Effect.orDie);
-const serverAdminUrl = serverConnections.pipe(Effect.map((connections) => connections.admin.connectionString));
+export const serverConnections = loadDatabaseConnectionPair().pipe(Effect.orDie);
+export const serverAdminUrl = serverConnections.pipe(Effect.map((connections) => connections.admin.connectionString));
 
 const prepareTemplateDatabase = Effect.gen(function* prepareTemplate() {
   const adminUrl = yield* serverAdminUrl;
-  const admin = yield* makeClient(adminUrl, 1);
+  const admin = yield* openPgPool(adminUrl, 1);
   yield* dropDatabase(admin, TEMPLATE_DATABASE);
   yield* admin.unsafe(`create database "${TEMPLATE_DATABASE}"`).pipe(Effect.orDie);
-  const template = yield* makeClient(replacedDatabase(adminUrl, TEMPLATE_DATABASE), 1);
+  const template = yield* openPgPool(replacedDatabase(adminUrl, TEMPLATE_DATABASE), 1);
   yield* buildTemplateDatabase(template);
 }).pipe(
   Effect.scoped,
@@ -296,7 +296,7 @@ export const templateDatabaseLayer = Layer.effectDiscard(
   ),
 );
 
-const ensureTemplate = Effect.suspend((): Effect.Effect<void> => {
+export const ensureTemplate = Effect.suspend((): Effect.Effect<void> => {
   if (templatePrepared) {
     return Effect.void;
   }
@@ -313,7 +313,7 @@ const ensureTemplate = Effect.suspend((): Effect.Effect<void> => {
 // The engine's schema
 // ---------------------------------------------------------------------------------------------
 
-const writeEngineSchema = (configuration: SpiceDbConfigValue) =>
+export const writeEngineSchema = (configuration: SpiceDbConfigValue) =>
   Effect.acquireUseRelease(
     Effect.sync(() => newSpiceDbGrpcClient(configuration)),
     (client) =>
@@ -773,7 +773,7 @@ const buildGate = (input: { readonly configuration: SpiceDbConfigValue; readonly
     return Context.get(context, AccessDecisionGate);
   });
 
-const loadCatalog = Effect.gen(function* loadPublishedCatalog() {
+export const loadCatalog = Effect.gen(function* loadPublishedCatalog() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const artifactPath = yield* path.fromFileUrl(catalogArtifactPath);
@@ -874,11 +874,11 @@ export const withAccessAdminCase = <Value, Failure>(
       const caseDatabase = `${CASE_DATABASE_PREFIX}${seedSuffix}`;
       const adminUrl = yield* serverAdminUrl;
       yield* ensureTemplate;
-      const server = yield* makeClient(adminUrl, 1);
+      const server = yield* openPgPool(adminUrl, 1);
       yield* cloneDatabase(server, caseDatabase);
       yield* Effect.addFinalizer(() => dropDatabase(server, caseDatabase));
       const caseAdminUrl = replacedDatabase(adminUrl, caseDatabase);
-      const admin = yield* makeClient(caseAdminUrl, 2);
+      const admin = yield* openPgPool(caseAdminUrl, 2);
       const databases = yield* parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: caseAdminUrl,
         DATABASE_URL: replacedDatabase((yield* serverConnections).runtime.connectionString, caseDatabase),
