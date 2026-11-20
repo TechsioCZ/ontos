@@ -15,7 +15,6 @@ import type { MediaVerifiableAsset } from './verified-read.ts';
  */
 
 export const AssetDownloadRequestSchema = Schema.Struct({ mediaAssetRef: MediaAssetRefSchema });
-export type AssetDownloadRequest = typeof AssetDownloadRequestSchema.Type;
 
 /** What a download is allowed to present: exactly the confirmed identity, and the recorded name and type. */
 export const AssetDownloadAuthorizationSchema = Schema.Struct({
