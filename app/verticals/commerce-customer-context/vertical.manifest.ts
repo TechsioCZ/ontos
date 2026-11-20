@@ -55,6 +55,7 @@ import { CommerceQuantityResolutionApi } from './shared/apis/commerce-quantity-r
 import { commerceQuantityRuleAssignmentResourceDescriptor } from './shared/resources/commerce-quantity-rule-assignment.ts';
 import { commerceQuantityRuleResourceDescriptor } from './shared/resources/commerce-quantity-rule.ts';
 import { completePurchaseProposalBasisAction } from './src/actions/complete-purchase-proposal-basis.action.ts';
+import { configureCustomerSourceRouteAction } from './src/actions/configure-customer-source-route.action.ts';
 import { consumeOrderPurchaseApprovalAction } from './src/actions/consume-order-purchase-approval.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
 import { CounterpartyAccessInvitationReadApi } from './shared/apis/counterparty-access-invitation-read.ts';
@@ -311,6 +312,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       clearDefaultBillingAddressAction,
       clearDefaultDeliveryDestinationAction,
       completePurchaseProposalBasisAction,
+      configureCustomerSourceRouteAction,
       consumeOrderPurchaseApprovalAction,
       consumePurchaseApprovalAction,
       createApprovalHierarchyAction,

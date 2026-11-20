@@ -198,6 +198,7 @@ import { clearDefaultDeliveryDestinationActionApiLive } from './clear-default-de
 import { commerceQuantityPolicyCurrentReadApiLive } from './commerce-quantity-policy-current-read-server.ts';
 import { commerceQuantityResolutionReadApiLive } from './commerce-quantity-resolution-read-server.ts';
 import { completePurchaseProposalBasisActionApiLive } from './complete-purchase-proposal-basis-action-server.ts';
+import { configureCustomerSourceRouteActionApiLive } from './configure-customer-source-route-action-server.ts';
 import { consumeOrderPurchaseApprovalActionApiLive } from './consume-order-purchase-approval-action-server.ts';
 import { consumePurchaseApprovalActionApiLive } from './consume-purchase-approval-action-server.ts';
 import { counterpartyAccessInvitationReadReadApiLive } from './counterparty-access-invitation-read-read-server.ts';
@@ -1158,6 +1159,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     commerceQuantityPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     commerceQuantityResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     completePurchaseProposalBasisActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    configureCustomerSourceRouteActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     consumeOrderPurchaseApprovalActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     consumePurchaseApprovalActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     counterpartyAccessInvitationReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

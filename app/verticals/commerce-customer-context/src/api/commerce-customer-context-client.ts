@@ -38,6 +38,7 @@ export * from './claim-portal-enrollment-transition-action-client.ts';
 export * from './clear-default-billing-address-action-client.ts';
 export * from './clear-default-delivery-destination-action-client.ts';
 export * from './complete-purchase-proposal-basis-action-client.ts';
+export * from './configure-customer-source-route-action-client.ts';
 export * from './consume-order-purchase-approval-action-client.ts';
 export * from './consume-purchase-approval-action-client.ts';
 export * from './create-approval-hierarchy-action-client.ts';

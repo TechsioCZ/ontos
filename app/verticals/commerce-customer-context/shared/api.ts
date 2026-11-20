@@ -37,6 +37,7 @@ import { ClearDefaultDeliveryDestinationActionApi } from './apis/clear-default-d
 import { CommerceQuantityPolicyCurrentApi } from './apis/commerce-quantity-policy-current.ts';
 import { CommerceQuantityResolutionApi } from './apis/commerce-quantity-resolution.ts';
 import { CompletePurchaseProposalBasisActionApi } from './apis/complete-purchase-proposal-basis-action.ts';
+import { ConfigureCustomerSourceRouteActionApi } from './apis/configure-customer-source-route-action.ts';
 import { ConsumeOrderPurchaseApprovalActionApi } from './apis/consume-order-purchase-approval-action.ts';
 import { ConsumePurchaseApprovalActionApi } from './apis/consume-purchase-approval-action.ts';
 import { CounterpartyAccessInvitationReadApi } from './apis/counterparty-access-invitation-read.ts';
@@ -221,6 +222,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof CommerceQuantityPolicyCurrentApi
   | typeof CommerceQuantityResolutionApi
   | typeof CompletePurchaseProposalBasisActionApi
+  | typeof ConfigureCustomerSourceRouteActionApi
   | typeof ConsumeOrderPurchaseApprovalActionApi
   | typeof ConsumePurchaseApprovalActionApi
   | typeof CounterpartyAccessInvitationReadApi
@@ -367,6 +369,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(CommerceQuantityPolicyCurrentApi)
   .addHttpApi(CommerceQuantityResolutionApi)
   .addHttpApi(CompletePurchaseProposalBasisActionApi)
+  .addHttpApi(ConfigureCustomerSourceRouteActionApi)
   .addHttpApi(ConsumeOrderPurchaseApprovalActionApi)
   .addHttpApi(ConsumePurchaseApprovalActionApi)
   .addHttpApi(CounterpartyAccessInvitationReadApi)
