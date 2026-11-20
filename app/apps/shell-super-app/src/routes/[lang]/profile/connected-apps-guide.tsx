@@ -7,12 +7,24 @@ import { useState } from 'react';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { connectGuide } from './connected-apps-guide-model.ts';
 
+interface ClipboardEnvironment {
+  readonly clipboard?: Pick<Clipboard, 'writeText'>;
+}
+
+const browserClipboardEnvironment: ClipboardEnvironment = {
+  get clipboard() {
+    return navigator.clipboard;
+  },
+};
+
 const CopyButton = ({
+  clipboardEnvironment,
   copiedLabel,
   failedText,
   idleLabel,
   value,
 }: {
+  readonly clipboardEnvironment: ClipboardEnvironment;
   readonly copiedLabel: string;
   readonly failedText: string;
   readonly idleLabel: string;
@@ -22,9 +34,10 @@ const CopyButton = ({
     { readonly status: 'copied' | 'idle' } | { readonly error: Error; readonly status: 'failed' }
   >({ status: 'idle' });
   const copy = () => {
-    // tryPromise also catches a missing clipboard API in an insecure browser context.
+    // Unavailable browser APIs and rejected writes both offer manual copying.
     void browserRuntime.runPromise(
-      Effect.tryPromise(() => navigator.clipboard.writeText(value)).pipe(
+      Effect.suspend(() => Effect.fromNullishOr(clipboardEnvironment.clipboard)).pipe(
+        Effect.flatMap((clipboard) => Effect.tryPromise(() => clipboard.writeText(value))),
         Effect.timeout('5 seconds'),
         Effect.match({
           onFailure: (error) => setCopyState({ error, status: 'failed' }),
@@ -51,7 +64,13 @@ const CopyButton = ({
 };
 
 /** Uses the environment's public MCP resource URL returned by the connections API. */
-export const ConnectedAppsGuide = ({ mcpUrl }: { readonly mcpUrl: string }) => {
+export const ConnectedAppsGuide = ({
+  clipboardEnvironment = browserClipboardEnvironment,
+  mcpUrl,
+}: {
+  readonly clipboardEnvironment?: ClipboardEnvironment | undefined;
+  readonly mcpUrl: string;
+}) => {
   const { t } = useModernI18n();
   const text = (key: string) => t(`shell.connectedAppsGuide.${key}`);
   return (
@@ -66,6 +85,7 @@ export const ConnectedAppsGuide = ({ mcpUrl }: { readonly mcpUrl: string }) => {
           <code className="break-all">{mcpUrl}</code>
         </div>
         <CopyButton
+          clipboardEnvironment={clipboardEnvironment}
           copiedLabel={text('copied')}
           failedText={text('copyUrlFailed')}
           idleLabel={text('copyUrl')}
@@ -95,6 +115,7 @@ export const ConnectedAppsGuide = ({ mcpUrl }: { readonly mcpUrl: string }) => {
                   {client.command}
                 </pre>
                 <CopyButton
+                  clipboardEnvironment={clipboardEnvironment}
                   copiedLabel={text('copied')}
                   failedText={text('copyCommandFailed')}
                   idleLabel={text('copyCommand')}
@@ -104,6 +125,7 @@ export const ConnectedAppsGuide = ({ mcpUrl }: { readonly mcpUrl: string }) => {
               </>
             )}
             <CopyButton
+              clipboardEnvironment={clipboardEnvironment}
               copiedLabel={text('copied')}
               failedText={text('copyPromptFailed')}
               idleLabel={text('copyPrompt')}

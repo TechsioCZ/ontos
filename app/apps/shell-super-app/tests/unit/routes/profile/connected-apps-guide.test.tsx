@@ -4,6 +4,7 @@ import { settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { Effect } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
+import type { ComponentProps } from 'react';
 
 import { connectGuide } from '../../../../src/routes/[lang]/profile/connected-apps-guide-model.ts';
 import { ConnectedAppsGuide } from '../../../../src/routes/[lang]/profile/connected-apps-guide.tsx';
@@ -27,10 +28,10 @@ afterEach(async () => {
   await setClipboardPermission('granted');
 });
 
-const renderGuide = () =>
+const renderGuide = (clipboardEnvironment?: ComponentProps<typeof ConnectedAppsGuide>['clipboardEnvironment']) =>
   render(
     <ShellI18n translations={translations}>
-      <ConnectedAppsGuide mcpUrl={url} />
+      <ConnectedAppsGuide clipboardEnvironment={clipboardEnvironment} mcpUrl={url} />
     </ShellI18n>,
   );
 
@@ -128,20 +129,40 @@ it.live.each(['ChatGPT', 'Claude (claude.ai / Desktop)', 'Claude Code', 'VS Code
     }),
 );
 
-it.live('copies the environment URL and client configurations without credentials', () =>
+it.live('copies the environment URL and client configurations exactly once each without credentials', () =>
   Effect.gen(function* copyConfigurations() {
-    renderGuide();
+    const writes: string[] = [];
+    renderGuide({
+      clipboard: {
+        writeText: (value) => {
+          writes.push(value);
+          return Promise.resolve();
+        },
+      },
+    });
     yield* click(screen.getByRole('button', { name: 'Kopírovat adresu' }));
-    expect(yield* clipboardHolds(url)).toBe(url);
+    yield* waitUntil(() => screen.queryByRole('button', { name: 'Zkopírováno' }) !== null);
     const claudeCode = screen.getByRole('region', { name: 'Claude Code' });
     yield* click(within(claudeCode).getByRole('button', { name: 'Kopírovat konfiguraci / příkaz' }));
-    const command = `claude mcp add --transport http ontos ${url}`;
-    expect(yield* clipboardHolds(command)).toBe(command);
+    yield* waitUntil(() => within(claudeCode).queryByRole('button', { name: 'Zkopírováno' }) !== null);
     const cursor = screen.getByRole('region', { name: 'Cursor' });
     yield* click(within(cursor).getByRole('button', { name: 'Kopírovat konfiguraci / příkaz' }));
-    const configuration = JSON.stringify({ mcpServers: { ontos: { url } } }, null, 2);
-    const held = yield* clipboardHolds(configuration);
-    expect(JSON.parse(held)).toEqual({ mcpServers: { ontos: { url } } });
+    yield* waitUntil(() => within(cursor).queryByRole('button', { name: 'Zkopírováno' }) !== null);
+    // Each success receipt follows its write promise. All three operations have completed before counting.
+    expect(writes).toEqual([
+      url,
+      `claude mcp add --transport http ontos ${url}`,
+      JSON.stringify({ mcpServers: { ontos: { url } } }),
+    ]);
+  }),
+);
+
+it.live('offers manual address copying when the browser has no clipboard API', () =>
+  Effect.gen(function* missingClipboard() {
+    renderGuide({});
+    yield* click(screen.getByRole('button', { name: 'Kopírovat adresu' }));
+    yield* waitUntil(() => screen.queryByRole('alert') !== null);
+    expect(screen.getByRole('alert').textContent).toBe(translations.t('shell.connectedAppsGuide.copyUrlFailed'));
   }),
 );
 

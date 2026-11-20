@@ -2,7 +2,7 @@ import { moduleWriteEvent } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { rootRouteId, useRouter, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import type { AnyRoute } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Fiber } from 'effect';
+import { Clock, Duration, Effect, Fiber } from 'effect';
 import { createContext, createElement, Suspense, useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -22,9 +22,9 @@ interface PreloadableNavigationItem {
 }
 
 /** Long enough for a preloaded route chunk to resolve its lazy component. */
-const LAZY_WARM_WINDOW = '2 seconds';
+const LAZY_WARM_WINDOW = Duration.seconds(2);
 /** How long writes must pause before the menu prefetch starts over. */
-const PREFETCH_RESTART_QUIET = '20 seconds';
+const PREFETCH_RESTART_QUIET = Duration.seconds(20);
 const ignoreRenderError = () => {
   // The warm-up render is expected to fail once the component needs its route context.
 };
@@ -43,7 +43,7 @@ const markPreparation = (name: string, href: string) =>
  * detached from the document, resolves its lazy payload ahead of time. The render then fails without route context
  * (no effects run) and the root is discarded.
  */
-const warmLazyRouteComponents = (components: readonly ComponentType[]) =>
+const warmLazyRouteComponents = (components: readonly ComponentType[], clock: Clock.Clock) =>
   Effect.acquireUseRelease(
     Effect.sync(() =>
       components.map((component) => {
@@ -56,7 +56,7 @@ const warmLazyRouteComponents = (components: readonly ComponentType[]) =>
         return root;
       }),
     ),
-    () => Effect.sleep(LAZY_WARM_WINDOW),
+    () => clock.sleep(LAZY_WARM_WINDOW),
     (roots) => Effect.forEach(roots, (root) => Effect.sync(() => root.unmount()), { concurrency: 1, discard: true }),
   );
 
@@ -86,6 +86,7 @@ export const useIdleRoutePreload = (
   navigation: readonly PreloadableNavigationItem[],
   contextKey: string,
   disabled: boolean,
+  clock: Clock.Clock = browserRuntime.runSync(Clock.Clock),
 ) => {
   const router = useRouter();
   const { language } = useModernI18n();
@@ -110,7 +111,7 @@ export const useIdleRoutePreload = (
       if (pending !== undefined) {
         browserRuntime.runFork(Fiber.interrupt(pending));
       }
-      pending = browserRuntime.runFork(Effect.sleep(PREFETCH_RESTART_QUIET).pipe(Effect.andThen(prefetchAgain)));
+      pending = browserRuntime.runFork(clock.sleep(PREFETCH_RESTART_QUIET).pipe(Effect.andThen(prefetchAgain)));
     };
     globalThis.addEventListener(moduleWriteEvent, restart);
     return () => {
@@ -119,7 +120,7 @@ export const useIdleRoutePreload = (
         browserRuntime.runFork(Fiber.interrupt(pending));
       }
     };
-  }, [router]);
+  }, [clock, router]);
 
   useEffect(() => {
     if (previousContext.current !== contextKey) {
@@ -144,7 +145,7 @@ export const useIdleRoutePreload = (
                 Effect.andThen(staffRoutePreloads.resume),
                 Effect.andThen(Effect.sync(() => setPreparedKey(key))),
                 Effect.andThen(
-                  Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
+                  Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs), clock)),
                 ),
                 Effect.andThen(staffRoutePreloads.awaitIdle),
                 Effect.andThen(markPreparation('ontos:menu-prefetch-complete', currentHref)),
@@ -157,7 +158,7 @@ export const useIdleRoutePreload = (
       browserRuntime.runSync(staffRoutePreloads.pause);
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
-  }, [currentHref, disabled, hrefs, key, language, router, settledHref]);
+  }, [clock, currentHref, disabled, hrefs, key, language, router, settledHref]);
 
   return {
     enabled: !disabled && currentHref === settledHref && preparedKey === key,

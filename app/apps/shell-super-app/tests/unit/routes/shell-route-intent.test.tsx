@@ -3,7 +3,9 @@ import { acted, settle, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { LoaderFnContext } from '@modern-js/plugin-tanstack/runtime';
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
 import { fireEvent, screen, cleanup } from '@testing-library/react';
+import type { Clock } from 'effect';
 import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { useState } from 'react';
 import type { ReactElement } from 'react';
@@ -24,14 +26,20 @@ const StaffLinks = () => (
   </StaffRoutePreloadContext>
 );
 
-const IntentContext = ({ initiallyDisabled = false }: { readonly initiallyDisabled?: boolean }) => {
+const IntentContext = ({
+  clock,
+  initiallyDisabled = false,
+}: {
+  readonly clock: Clock.Clock;
+  readonly initiallyDisabled?: boolean;
+}) => {
   const [context, setContext] = useState('company-a');
   const [disabled, setDisabled] = useState(initiallyDisabled);
-  const preload = useIdleRoutePreload([{ enabled: true, href: '/contacts' }], context, disabled);
+  const preload = useIdleRoutePreload([{ enabled: true, href: '/contacts' }], context, disabled, clock);
   return (
     <StaffRoutePreloadContext value={preload}>
       <ShellRouteLink to="/finance">Finance</ShellRouteLink>
-      <output>{preload.enabled ? 'ready' : 'blocked'}</output>
+      <output data-generation={preload.generation}>{preload.enabled ? 'ready' : 'blocked'}</output>
       <button onClick={() => setContext('company-b')} type="button">
         Switch company
       </button>
@@ -100,6 +108,20 @@ const mountLinks = (
 
 const ready = () => screen.getByRole('status').textContent === 'ready';
 
+/** Capture before starting a phase; the mark follows lazy-root teardown and the route queue's idle barrier. */
+const nextWarmCompletion = (clock: TestClock.TestClock) => {
+  const name = 'ontos:menu-prefetch-complete';
+  const previous = performance.getEntriesByName(name).at(-1);
+  return clock
+    .adjust('2 seconds')
+    .pipe(
+      Effect.andThen(waitUntil(() => performance.getEntriesByName(name).at(-1) !== previous)),
+      Effect.andThen(staffRoutePreloads.awaitIdle),
+    );
+};
+
+const generationIs = (generation: number) => screen.getByRole('status').dataset['generation'] === String(generation);
+
 /** A FIFO turn of the actual browser Effect scheduler, then its route queue's terminal disposition. */
 const blockedIntentProcessed = Effect.gen(function* observeBlockedIntent() {
   // runFork starts immediately, but an event can yield before entering schedule/preloadRoute. Queue this
@@ -125,8 +147,8 @@ afterEach(() => {
 
 it.live('rendering staff links prepares nothing; only intent prepares a destination', () =>
   Effect.gen(function* renderedLinksIdle() {
-    const { prepared } = yield* mountLinks(<StaffLinks />);
-    yield* Effect.sleep('20 millis');
+    const { prepared, router } = yield* mountLinks(<StaffLinks />);
+    yield* Effect.promise(() => router.load());
     yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([]);
     fireEvent.mouseEnter(screen.getByRole('link', { name: 'Operations' }));
@@ -230,7 +252,9 @@ it.live('waits for the current primary reads, then prepares the pointed link and
       Deferred.succeed(reading, true).pipe(Effect.andThen(Deferred.await(release))),
     ).pipe(Effect.forkChild);
     yield* Deferred.await(reading);
-    const { prepared, starts } = yield* mountLinks(<IntentContext />);
+    const clock = yield* TestClock.make();
+    const warmCompleted = nextWarmCompletion(clock);
+    const { prepared, starts } = yield* mountLinks(<IntentContext clock={clock} />);
     fireEvent.mouseEnter(screen.getByRole('link'));
     yield* blockedIntentProcessed;
     expect(foreground.pollUnsafe()).toBeUndefined();
@@ -239,19 +263,21 @@ it.live('waits for the current primary reads, then prepares the pointed link and
     yield* Deferred.succeed(release, true);
     yield* Fiber.join(foreground);
     yield* waitUntil(ready);
+    yield* warmCompleted;
     fireEvent.mouseEnter(screen.getByRole('link'));
     yield* staffRoutePreloads.awaitIdle;
-    expect(prepared).toContainEqual({ hash: '', search: {}, to: '/en/finance' });
-    expect(prepared.map(({ to }) => to)).not.toContain('/en/contacts');
-    expect(prepared).toHaveLength(1);
+    expect(prepared).toEqual([{ hash: '', search: {}, to: '/en/finance' }]);
   }),
 );
 
 it.live('drops caches at once after writes and prepares nothing in the background afterwards', () =>
   Effect.gen(function* invalidation() {
-    const { prepared, router } = yield* mountLinks(<IntentContext />);
+    const clock = yield* TestClock.make();
+    const warmCompleted = nextWarmCompletion(clock);
+    const { prepared, router } = yield* mountLinks(<IntentContext clock={clock} />);
     yield* waitUntil(ready);
-    yield* staffRoutePreloads.awaitIdle;
+    yield* warmCompleted;
+    yield* Effect.promise(() => router.load());
     expect(prepared).toEqual([]);
     // A repeated native preload reuses its cached loader result until an invalidation.
     const operations = { hash: '', search: {}, to: '/en/operations' };
@@ -260,25 +286,38 @@ it.live('drops caches at once after writes and prepares nothing in the backgroun
     yield* warmCache;
     yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([operations]);
+    const firstWriteCompleted = nextWarmCompletion(clock);
     window.dispatchEvent(new Event(moduleWriteEvent));
     yield* warmCache;
     yield* staffRoutePreloads.awaitIdle;
     expect(prepared).toEqual([operations, operations]);
+    yield* clock.adjust('20 seconds');
+    yield* waitUntil(() => generationIs(1));
+    yield* firstWriteCompleted;
+    yield* warmCache;
+    expect(prepared).toEqual([operations, operations]);
+    const secondWriteCompleted = nextWarmCompletion(clock);
     window.dispatchEvent(new Event(moduleWriteEvent));
     yield* warmCache;
+    yield* clock.adjust('20 seconds');
+    yield* waitUntil(() => generationIs(2));
+    yield* secondWriteCompleted;
+    // This cached request completes after the quiet timer and its entire lazy-warm continuation.
+    yield* warmCache;
     yield* staffRoutePreloads.awaitIdle;
-    // Each write forced exactly one reload; the idle menu added no preparations.
-    expect(prepared.length - 1).toBe(2);
     expect(prepared).toEqual([operations, operations, operations]);
     const recording = 'ontos.page-reads.v1:/en/finance';
     window.localStorage.setItem(recording, '[]');
+    const switched = nextWarmCompletion(clock);
     yield* acted(() => {
       fireEvent.click(screen.getByRole('button', { name: 'Switch company' }));
     });
+    yield* waitUntil(ready);
+    yield* switched;
     expect(window.localStorage.getItem(recording)).toBeNull();
     yield* warmCache;
     yield* staffRoutePreloads.awaitIdle;
-    expect(prepared.length - 1).toBe(3);
+    expect(prepared).toEqual([operations, operations, operations, operations]);
   }),
 );
 
@@ -287,8 +326,10 @@ it.live('does not prepare during navigation, switching or sign-out', () =>
     const release = yield* Deferred.make<boolean>();
     const navigating = yield* Deferred.make<boolean>();
     yield* Effect.addFinalizer(() => Deferred.succeed(release, true));
+    const clock = yield* TestClock.make();
+    const warmCompleted = nextWarmCompletion(clock);
     const { prepared, router, starts } = yield* mountLinks(
-      <IntentContext initiallyDisabled />,
+      <IntentContext clock={clock} initiallyDisabled />,
       Deferred.succeed(navigating, true).pipe(Effect.andThen(Deferred.await(release))),
     );
     fireEvent.focus(screen.getByRole('link'));
@@ -309,6 +350,7 @@ it.live('does not prepare during navigation, switching or sign-out', () =>
     yield* Deferred.succeed(release, true);
     yield* Fiber.join(navigation);
     yield* waitUntil(ready);
+    yield* warmCompleted;
     fireEvent.mouseEnter(screen.getByRole('link'));
     yield* staffRoutePreloads.awaitIdle;
     expect(prepared.length).toBeGreaterThan(0);
