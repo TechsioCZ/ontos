@@ -260,7 +260,16 @@ const readRows = Effect.fn('Communications.readHistoryRows')(function* read(
   const ids = intents.map(({ intentId }) => intentId);
   const children =
     ids.length === 0
-      ? { attempts: [], conflicts: [], observations: [], recoveries: [], resends: [], resolutions: [], retries: [], stops: [] }
+      ? {
+          attempts: [],
+          conflicts: [],
+          observations: [],
+          recoveries: [],
+          resends: [],
+          resolutions: [],
+          retries: [],
+          stops: [],
+        }
       : yield* readChildRows(transaction, tenantId, ids);
   for (const request of requests) {
     const decision = decisions.find(({ requestId }) => requestId === request.requestId);
