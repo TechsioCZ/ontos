@@ -118,7 +118,7 @@ it.effect(
     Effect.gen(function* planEndToEnd() {
       const context = yield* fixture;
       yield* context.keptBuild;
-      expect(yield* context.plan()).toEqual({ build: [], keep: [APP_ID] });
+      expect(yield* context.plan()).toEqual({ build: [], keep: [APP_ID], reasons: [] });
       const head = (yield* context.git(['rev-parse', 'HEAD'])).stdout.trim();
       const proof = yield* context.fs
         .readFileString(path.join(context.unitRoot, KEEP_PROOF))
@@ -130,7 +130,12 @@ it.effect(
       // A source change: the unit is no longer kept, and the proof it carried is gone before the outputs are.
       yield* context.write(SOURCE, 'export const shell = 2;\n');
       yield* context.commit('change');
-      expect(yield* context.plan()).toEqual({ build: [APP_ID], keep: [] });
+      // The plan says why, so the job log of a cold shard names the mismatch of every rebuilt unit.
+      expect(yield* context.plan()).toEqual({
+        build: [APP_ID],
+        keep: [],
+        reasons: [{ reason: `${APP_ID}: input digest mismatch (target, origins, toolchain or sources)`, unit: APP_ID }],
+      });
       expect(yield* context.fs.exists(path.join(context.unitRoot, KEEP_PROOF))).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   60_000,
@@ -142,10 +147,14 @@ it.effect(
     Effect.gen(function* postBuildChange() {
       const context = yield* fixture;
       yield* context.keptBuild;
-      expect(yield* context.plan()).toEqual({ build: [], keep: [APP_ID] });
+      expect(yield* context.plan()).toEqual({ build: [], keep: [APP_ID], reasons: [] });
       yield* context.write(`app/${POST_BUILD}`, 'export const entry = 2;\n');
       yield* context.commit('post-build');
-      expect(yield* context.plan()).toEqual({ build: [APP_ID], keep: [] });
+      expect(yield* context.plan()).toEqual({
+        build: [APP_ID],
+        keep: [],
+        reasons: [{ reason: `${APP_ID}: input digest mismatch (target, origins, toolchain or sources)`, unit: APP_ID }],
+      });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   60_000,
 );

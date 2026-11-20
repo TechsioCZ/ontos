@@ -126,7 +126,12 @@ export const sameBackendBuild = (
   identity: CacheIdentity,
   remote: { readonly buildMarker: string; readonly sourceRevision: string },
 ) => remote.buildMarker === identity.buildMarker && remote.sourceRevision === identity.sourceRevision;
-const PlanSchema = Schema.Struct({ build: Schema.Array(Schema.String), keep: Schema.Array(Schema.String) });
+const PlanSchema = Schema.Struct({
+  build: Schema.Array(Schema.String),
+  keep: Schema.Array(Schema.String),
+  /** Why each unit in `build` is rebuilt: the first mismatch the plan found (`<unit>: <mismatch>`), in its order. */
+  reasons: Schema.Array(Schema.Struct({ reason: Schema.String, unit: Schema.String })),
+});
 export class UnitOutputCacheError extends Schema.TaggedError<UnitOutputCacheError>()('UnitOutputCacheError', {
   message: Schema.String,
   unit: Schema.String,
@@ -376,6 +381,9 @@ export const planOutputCache = (
 ) => ({
   build: checks.filter((check) => check.mismatch !== undefined).map((check) => check.unit),
   keep: checks.filter((check) => check.mismatch === undefined).map((check) => check.unit),
+  reasons: checks.flatMap((check) =>
+    check.mismatch === undefined ? [] : [{ reason: check.mismatch, unit: check.unit }],
+  ),
 });
 
 export const requiredOutputMismatch = (files: readonly OutputFile[], filename: string): string | undefined =>
@@ -513,7 +521,9 @@ const checkUnit = (context: Context, unit: CacheUnit) =>
       return yield* invalid(unit.id, 'original build identity mismatch');
     }
     return yield* Effect.void;
-  }).pipe(Effect.mapError((cause) => invalid(unit.id, String(cause))));
+  }).pipe(
+    Effect.mapError((cause) => (Schema.is(UnitOutputCacheError)(cause) ? cause : invalid(unit.id, String(cause)))),
+  );
 const listNames = (value: string) =>
   value
     .trim()
@@ -600,6 +610,10 @@ const planCommand = Command.make(
     Effect.gen(function* printPlan() {
       const { context, units } = yield* withUnits(value, flags);
       const plan = yield* planUnits(context, units);
+      // To the job log, never into the step outputs: why each unit is rebuilt, so a run explains a cold shard.
+      for (const { reason } of plan.reasons) {
+        yield* Console.error(`Rebuilding ${reason}`);
+      }
       return yield* Console.log(`keep=${plan.keep.join(' ')}\nbuild=${plan.build.join(' ')}`);
     }),
 );
