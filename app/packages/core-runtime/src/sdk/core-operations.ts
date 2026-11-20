@@ -11,6 +11,7 @@
  */
 import { Schema } from 'effect';
 
+import { AssetCurrentRequestSchema, AssetCurrentResponseSchema } from '../media/current-contract.ts';
 import { LegalEntityRefSchema } from '../resources/legal-entity.ts';
 import { CoreOperationRouteSchema } from './index.ts';
 import type { CallSchema, OperationProvider, OperationRef } from './index.ts';
@@ -38,6 +39,12 @@ export const LegalEntityDetailResponseSchema = Schema.Struct({
 });
 
 export const coreOperations = Object.freeze({
+  /** Current V1 of Media Assets for a consumer's assignments (#1443): one entry per requested owner-qualified ref. */
+  assetCurrent: coreOperation({
+    provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
+    request: AssetCurrentRequestSchema,
+    response: AssetCurrentResponseSchema,
+  }),
   legalEntityDetail: coreOperation({
     provider: { entrypointKey: 'core.identity.api.legal-entity-detail', moduleId: 'core.identity', schemaVersion: '1' },
     request: LegalEntityDetailRequestSchema,
