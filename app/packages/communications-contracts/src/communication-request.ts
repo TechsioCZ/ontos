@@ -44,10 +44,16 @@ export type CommunicationRequestSource = typeof CommunicationRequestSourceSchema
 export const CommunicationPurposeKeySchema = lowerDottedText.pipe(Schema.brand('CommunicationPurposeKey'));
 export type CommunicationPurposeKey = typeof CommunicationPurposeKeySchema.Type;
 
-/** The one committed source occurrence and the revision of it this request reflects. */
+/**
+ * The one committed source occurrence and the revision of it this request reflects. `validUntil` is optional and
+ * forward-compatible: when the source's own business fact expires (an issued link or code), the source states the instant
+ * its occurrence stops being actionable, exactly as its owner stored it. Communications never extends it and stops a
+ * handoff past it; a source without an expiry omits it, and a request that omits it means what it always meant.
+ */
 export const CommunicationSourceOccurrenceSchema = Schema.Struct({
   occurrenceId: CommunicationOccurrenceIdSchema,
   revision: CommunicationRevisionSchema,
+  validUntil: Schema.optionalKey(Schema.DateTimeUtcFromString),
 });
 export type CommunicationSourceOccurrence = typeof CommunicationSourceOccurrenceSchema.Type;
 

@@ -254,6 +254,28 @@ describe('Communication Request contract', () => {
     expect(accepted({ ...minimalRequest, occurrence: { occurrenceId: 'fixture-occurrence-1', revision } })).toBe(false);
   });
 
+  it('accepts an optional occurrence validUntil instant and round-trips it unchanged', () => {
+    const request = {
+      ...minimalRequest,
+      occurrence: { occurrenceId: 'fixture-occurrence-1', revision: 1, validUntil: '2026-11-18T10:30:00.000Z' },
+    };
+    const decoded = Schema.decodeUnknownResult(CommunicationRequestSchema)(request);
+    expect(Result.isSuccess(decoded)).toBe(true);
+    expect(accepted(minimalRequest)).toBe(true);
+    expect(
+      Schema.encodeSync(CommunicationRequestSchema)(Schema.decodeUnknownSync(CommunicationRequestSchema)(request)),
+    ).toEqual(request);
+  });
+
+  it.each(['tomorrow', '', 1_800_000_000])('rejects %j as an occurrence validUntil', (validUntil) => {
+    expect(
+      accepted({
+        ...minimalRequest,
+        occurrence: { occurrenceId: 'fixture-occurrence-1', revision: 1, validUntil },
+      }),
+    ).toBe(false);
+  });
+
   it.each(['Fixture.Purpose', 'fixture purpose', 'fixture.', '.fixture', 'fixture..purpose', ''])(
     'rejects %j as a purpose key',
     (purpose) => {
