@@ -3,6 +3,7 @@
 // @ontos-action-http-slug compensate-inventory-pre-commit
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/compensate-inventory-pre-commit.ts';
 
 export { CompensateInventoryPreCommitPayloadSchema } from '../actions/compensate-inventory-pre-commit.ts';
-const CompensateInventoryPreCommitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const CompensateInventoryPreCommitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CompensateInventoryPreCommitActionInvalidProblem',
@@ -144,7 +143,6 @@ export const compensateInventoryPreCommitActionGroupDefinition = HttpApiGroup.ma
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/compensate-inventory-pre-commit', {
       error: actionErrors,
-      headers: CompensateInventoryPreCommitActionHeadersSchema,
       payload: Schema.toEncoded(CompensateInventoryPreCommitPayloadSchema),
       success: [ActionProposalAcceptedSchema, CompensateInventoryPreCommitResultSchema],
     }),

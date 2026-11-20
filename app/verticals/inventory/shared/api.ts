@@ -110,7 +110,6 @@ type InventoryApi = HttpApi.HttpApi<'InventoryApi', InventoryApiGroups>;
 
 export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(inventoryFoundationApi)
-  .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })
   // <generated-governed-http-api-additions>
   .addHttpApi(CatalogToStockBindingResolutionApi)
   .addHttpApi(ChangeStockSharingEligibilityActionApi)

@@ -4,20 +4,27 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
-import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import type { ActionTestHarnessOptions } from '@app/core-runtime/testing/actions';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
+import { assert, describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makeInventoryApiRuntime } from '../../api/index.ts';
+import { EndExternalStockCorrelationPayloadSchema } from '../../shared/actions/end-external-stock-correlation.ts';
 import { EstablishExternalStockCorrelationPayloadSchema } from '../../shared/actions/establish-external-stock-correlation.ts';
 import { ImportSourceAssertionPayloadSchema } from '../../shared/actions/import-source-assertion.ts';
 import { SelectInventoryBackendPayloadSchema } from '../../shared/actions/select-inventory-backend.ts';
+import {
+  EndExternalStockCorrelationActionForbiddenProblemSchema,
+  EndExternalStockCorrelationActionInvalidProblemSchema,
+  EndExternalStockCorrelationActionPreconditionProblemSchema,
+} from '../../shared/apis/end-external-stock-correlation-action.ts';
 import {
   EstablishExternalStockCorrelationActionForbiddenProblemSchema,
   EstablishExternalStockCorrelationActionInvalidProblemSchema,
@@ -38,10 +45,14 @@ import {
   SelectInventoryBackendActionPreconditionProblemSchema,
 } from '../../shared/apis/select-inventory-backend-action.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { selectInventoryBackendAction } from '../../src/actions/select-inventory-backend.action.ts';
+import { executeEndExternalStockCorrelationWithAuthorization } from '../../src/api/end-external-stock-correlation-action-client.ts';
 import { executeEstablishExternalStockCorrelationWithAuthorization } from '../../src/api/establish-external-stock-correlation-action-client.ts';
 import { executeImportSourceAssertionWithAuthorization } from '../../src/api/import-source-assertion-action-client.ts';
 import { executeInventorySourceImportReceiptWithAuthorization } from '../../src/api/inventory-source-import-receipt-client.ts';
 import { executeSelectInventoryBackendWithAuthorization } from '../../src/api/select-inventory-backend-action-client.ts';
+import type { InventoryBackendConfigurationPersistence } from '../../src/persistence/inventory-backend-configuration-repository.ts';
+import { makeInventoryBackendConfigurationService } from '../../src/services/inventory-backend-configuration.service.ts';
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import { sourceImportCompositionFixture } from '../support/source-import-composition.fixture.ts';
 
@@ -113,17 +124,21 @@ const withIdempotencyKey =
   (value: string): Exchange =>
   (sent) =>
     replaceHeaders(sent, (headers) => headers.set('idempotency-key', value));
+const withProposalIntent: Exchange = (sent) =>
+  replaceHeaders(sent, (headers) => headers.set('x-action-intent', 'propose'));
 const withUndeclaredPayloadField: Exchange = (sent) => ({
   body: `{"undeclaredField":true,${sent.body.slice(1)}`,
   headers: sent.headers,
 });
 
 /**
- * The registered Inventory API runtime with the real Action and Read lifecycles over scripted storage. The access
- * gate denies every operation, so a request that reaches its handler is authenticated, enters the runtime and is
- * refused there; nothing is written.
+ * The registered Inventory API runtime with the real Action and Read lifecycles over scripted storage. Unless a test
+ * scripts another answer, the access gate denies every operation, so a request that reaches its handler is
+ * authenticated, enters the runtime and is refused there; nothing is written.
  */
-const makeRegisteredInventory = Effect.fn('InventoryRequestHeadersTest.make')(function* makeRegisteredInventory() {
+const makeRegisteredInventory = Effect.fn('InventoryRequestHeadersTest.make')(function* makeRegisteredInventory(
+  gate: Pick<ActionTestHarnessOptions, 'access' | 'mandateDispatch' | 'services'> = {},
+) {
   const composition = yield* sourceImportCompositionFixture;
   const { revision } = composition.composition;
   const compositionDocument = yield* Schema.encodeEffect(
@@ -156,6 +171,7 @@ const makeRegisteredInventory = Effect.fn('InventoryRequestHeadersTest.make')(fu
       .sign(privateKey),
   );
   const actions = yield* makeActionTestHarness({
+    ...gate,
     applicationComposition: makeActiveApplicationCompositionService(Effect.succeed(composition)),
     expectedDeployment: ultramodernApiMarker,
     ownerRegistration: inventoryRegistration,
@@ -206,6 +222,12 @@ const makeRegisteredInventory = Effect.fn('InventoryRequestHeadersTest.make')(fu
       return response;
     };
   return {
+    /** The answer as a Result, for a request that may succeed. */
+    attempt: <Success, Failure, Requirements>(
+      exchange: Exchange,
+      call: (authorization: string) => Effect.Effect<Success, Failure, Requirements>,
+    ) =>
+      call(`Bearer ${token}`).pipe(Effect.provideService(FetchHttpClient.Fetch, fetchThrough(exchange)), Effect.result),
     send: <Success, Failure, Requirements>(
       exchange: Exchange,
       call: (authorization: string) => Effect.Effect<Success, Failure, Requirements>,
@@ -225,31 +247,28 @@ interface ActionCase {
   readonly precondition: Schema.Constraint;
 }
 
+const selectBackend = (authorization: string, idempotencyKey: string) =>
+  Schema.decodeUnknownEffect(SelectInventoryBackendPayloadSchema)({
+    authorizationTargetRef: ref(
+      'commerce.inventory.inventory-backend-configuration',
+      '33333333-3333-4333-8333-333333333333',
+    ),
+    customerConfigurationId: 'request-headers',
+    selection: {
+      backend: issuer.backendKind,
+      backendId: issuer.backendId,
+      exactReservationCapability: 'UNSUPPORTED',
+      stockCorrectionCapability: 'UNSUPPORTED',
+    },
+  }).pipe(
+    Effect.flatMap((payload) =>
+      executeSelectInventoryBackendWithAuthorization(payload, authorization, 'select', clientOptions(idempotencyKey)),
+    ),
+  );
+
 const actionCases: readonly ActionCase[] = [
   {
-    call: (authorization, idempotencyKey) =>
-      Schema.decodeUnknownEffect(SelectInventoryBackendPayloadSchema)({
-        authorizationTargetRef: ref(
-          'commerce.inventory.inventory-backend-configuration',
-          '33333333-3333-4333-8333-333333333333',
-        ),
-        customerConfigurationId: 'request-headers',
-        selection: {
-          backend: issuer.backendKind,
-          backendId: issuer.backendId,
-          exactReservationCapability: 'UNSUPPORTED',
-          stockCorrectionCapability: 'UNSUPPORTED',
-        },
-      }).pipe(
-        Effect.flatMap((payload) =>
-          executeSelectInventoryBackendWithAuthorization(
-            payload,
-            authorization,
-            'select',
-            clientOptions(idempotencyKey),
-          ),
-        ),
-      ),
+    call: selectBackend,
     forbidden: SelectInventoryBackendActionForbiddenProblemSchema,
     invalid: SelectInventoryBackendActionInvalidProblemSchema,
     name: 'select-inventory-backend',
@@ -280,6 +299,27 @@ const actionCases: readonly ActionCase[] = [
     invalid: EstablishExternalStockCorrelationActionInvalidProblemSchema,
     name: 'establish-external-stock-correlation',
     precondition: EstablishExternalStockCorrelationActionPreconditionProblemSchema,
+  },
+  {
+    call: (authorization, idempotencyKey) =>
+      Schema.decodeUnknownEffect(EndExternalStockCorrelationPayloadSchema)({
+        correlationRef: ref('commerce.inventory.external-stock-correlation', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),
+        endedAt: observedAt,
+        externalKey: externalKey('ITEM', 'SKU-1'),
+      }).pipe(
+        Effect.flatMap((payload) =>
+          executeEndExternalStockCorrelationWithAuthorization(
+            payload,
+            authorization,
+            'end-correlation',
+            clientOptions(idempotencyKey),
+          ),
+        ),
+      ),
+    forbidden: EndExternalStockCorrelationActionForbiddenProblemSchema,
+    invalid: EndExternalStockCorrelationActionInvalidProblemSchema,
+    name: 'end-external-stock-correlation',
+    precondition: EndExternalStockCorrelationActionPreconditionProblemSchema,
   },
   {
     call: (authorization, idempotencyKey) =>
@@ -377,4 +417,74 @@ describe('Inventory HTTP requests with transport headers', () => {
       expect(inventory.snapshot().redemptions).toBe(1);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
+});
+
+/** A proposal store that holds no parked proposal; parking or executing a mandate through it fails the test. */
+const noParkedProposal: NonNullable<ActionTestHarnessOptions['mandateDispatch']> = {
+  claim: () => Effect.die('A proposal request claims no mandate'),
+  commit: () => Effect.die('A proposal request commits no mandate'),
+  loadParkedProposal: () => Effect.succeed(Option.none()),
+  parkProposal: () => Effect.die('An allowed proposal request parks nothing'),
+  prepare: () => Effect.die('A proposal request prepares no mandate'),
+};
+
+describe('Inventory HTTP requests asking for a proposal', () => {
+  it.live('select-inventory-backend answers only results, so a proposal request is refused before it can write', () =>
+    Effect.gen(function* resultOnlyProposal() {
+      let writes = 0;
+      const persistence: InventoryBackendConfigurationPersistence = {
+        findCurrent: () => Effect.succeed(Option.none()),
+        insertInitial: (configuration) =>
+          Effect.sync(() => {
+            writes += 1;
+            return { configuration, outcome: 'INSERTED' as const };
+          }),
+      };
+      const inventory = yield* makeRegisteredInventory({
+        access: 'allowed',
+        services: [
+          bindActionTestServices(selectInventoryBackendAction, makeInventoryBackendConfigurationService(persistence)),
+        ],
+      });
+
+      // The endpoint declares no proposal answer, so Core refuses the intent before an invocation exists.
+      const proposed = yield* inventory.attempt(withProposalIntent, (authorization) =>
+        selectBackend(authorization, 'propose-key'),
+      );
+      expect(writes).toBe(0);
+      expect(inventory.snapshot().actions).toMatchObject({ committed: [], invocations: [], permissionDenials: [] });
+      assert(Result.isFailure(proposed));
+      expect(proposed.failure).toMatchObject({ code: 'action_permission_denied', status: 403 });
+      expect(Schema.is(SelectInventoryBackendActionForbiddenProblemSchema)(proposed.failure)).toBe(true);
+
+      // The same request without the intent is an ordinary run that the allowing gate admits to the writer.
+      const ran = yield* inventory.attempt(asSent, (authorization) => selectBackend(authorization, 'run-key'));
+      expect(Result.isSuccess(ran)).toBe(true);
+      expect(writes).toBe(1);
+    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  );
+
+  for (const action of actionCases.filter(({ name }) => name !== 'select-inventory-backend')) {
+    it.live(`${action.name} hands a proposal request to Core, which refuses an unneeded one before any handler`, () =>
+      Effect.gen(function* proposableProposal() {
+        const inventory = yield* makeRegisteredInventory({ access: 'allowed', mandateDispatch: noParkedProposal });
+
+        // The allowing gate refuses an explicit proposal it does not need, so nothing gets past the permission check.
+        const proposed = yield* inventory.send(withProposalIntent, (authorization) =>
+          action.call(authorization, 'propose-key'),
+        );
+        expect(proposed).toMatchObject({ code: 'action_permission_denied', status: 403 });
+        expect(Schema.is(action.forbidden)(proposed)).toBe(true);
+        const refused = inventory.snapshot().actions;
+        expect(refused.permissionDenials.map(({ transport }) => transport.idempotencyKey)).toEqual(['propose-key']);
+        expect(refused.stages.at(-1)).toBe('permission_checked');
+
+        // The same request without the intent is an ordinary run that passes the same gate.
+        yield* inventory.attempt(asSent, (authorization) => action.call(authorization, 'run-key'));
+        const ran = inventory.snapshot().actions;
+        expect(ran.permissionDenials).toHaveLength(1);
+        expect(ran.stages.slice(refused.stages.length)).toContain('policy_boundary');
+      }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    );
+  }
 });
