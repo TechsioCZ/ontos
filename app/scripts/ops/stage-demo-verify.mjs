@@ -11,6 +11,10 @@ import { NodeRuntime } from '@effect/platform-node';
 import { Clock, Config, Console, Data, Duration, Effect, Option, Redacted, Ref, Schema } from 'effect';
 
 import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/browser-api.ts';
+import {
+  problemDetailsContentType,
+  problemDetailsFields,
+} from '../../packages/shared-contracts/src/problem-details.ts';
 
 const DEFAULT_PERSONA = 'management@najempark.demo';
 export const DEFAULT_PASSWORD = Redacted.make('password1234');
@@ -58,12 +62,27 @@ export const storefrontHomeProblems = (label, html) => {
   return problems;
 };
 
+/** The gateway's authentication problem on the wire: every RFC 9457 member the gateway sends, with its own type. */
 const GatewayAuthenticationRequiredSchema = Schema.fromJsonString(
   Schema.Struct({
+    ...problemDetailsFields,
     status: Schema.Literal(401),
     type: Schema.Literal('https://ontos.dev/problems/gateway-authentication-required'),
   }),
 );
+const QUOTED_STRING = /"(?:[^"\\]|\\.)*"/gu;
+/** An authentication scheme opens a challenge and is followed by a space or nothing; a parameter is followed by "=". */
+const CHALLENGE_SCHEME = /^(?<scheme>[\w!#$%&'*+.^`|~-]+)(?:\s|$)/u;
+
+/**
+ * Whether a WWW-Authenticate value, which may list several challenges, offers the API key scheme.
+ * @param {string} challenges The header value, as Fetch joins repeated fields.
+ */
+const offersApiKey = (challenges) =>
+  challenges
+    .replaceAll(QUOTED_STRING, '""')
+    .split(',')
+    .some((part) => CHALLENGE_SCHEME.exec(part.trim())?.groups?.scheme?.toLowerCase() === 'apikey');
 
 /**
  * The Symmy REST ingress's answer to a caller without a key: the gateway's whole 401 authentication problem with the
@@ -79,11 +98,10 @@ export const symmyIngressAnswerProblems = ({ body, challenge, contentType, locat
   }
   const problems = [];
   const mediaType = (contentType ?? '').split(';')[0]?.trim().toLowerCase();
-  if (mediaType !== 'application/problem+json') {
+  if (mediaType !== problemDetailsContentType) {
     problems.push({ problem: `answered content-type ${contentType ?? 'none'}`, reason: 'content' });
   }
-  const scheme = (challenge ?? '').trim().split(/\s+/u)[0]?.toLowerCase();
-  if (scheme !== 'apikey') {
+  if (!offersApiKey(challenge ?? '')) {
     problems.push({ problem: 'answered without the ApiKey challenge', reason: 'content' });
   }
   if (Option.isNone(Schema.decodeUnknownOption(GatewayAuthenticationRequiredSchema)(body))) {

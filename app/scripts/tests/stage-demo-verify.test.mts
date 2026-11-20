@@ -481,6 +481,27 @@ it('reports a redirect of the Symmy ingress into the web app as its only problem
   ).toEqual([{ problem: 'answered 302 to /en/api/symmy/v1/admin/products, not 401', reason: 'status' }]);
 });
 
+it('finds the API key challenge among several and never mistakes a parameter for it', () => {
+  expect(
+    symmyIngressAnswerProblems({
+      ...symmyAnswer,
+      challenge: 'Bearer realm="staff, admin", ApiKey realm="ontos-gateway"',
+    }),
+  ).toEqual([]);
+  expect(
+    symmyIngressAnswerProblems({ ...symmyAnswer, challenge: 'Bearer realm="staff", apikey="ontos-gateway"' }),
+  ).toEqual([{ problem: 'answered without the ApiKey challenge', reason: 'content' }]);
+});
+
+it('refuses a Symmy ingress problem body that lacks the title and detail the gateway sends', () => {
+  expect(
+    symmyIngressAnswerProblems({
+      ...symmyAnswer,
+      body: JSON.stringify({ status: 401, type: 'https://ontos.dev/problems/gateway-authentication-required' }),
+    }).map(({ reason }) => reason),
+  ).toEqual(['body']);
+});
+
 it('reports each wrong part of a 401 Symmy ingress answer on its own', () => {
   expect(
     symmyIngressAnswerProblems({ ...symmyAnswer, contentType: 'application/problem+json-seq' }).map(
