@@ -34,6 +34,7 @@ import { createProductRecoveryRead } from '../../src/api/create-product-recovery
 import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
 import { catalogSourceProductPageRead } from '../../src/api/catalog-source-product-page.read.ts';
 import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
+import { productPageRead } from '../../src/api/product-page.read.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -73,6 +74,7 @@ describe('Catalog backend declaration and full publication', () => {
       bindInitialVariantSourceRecoveryRead,
       catalogSourceProductPageRead,
       catalogSourceProductsRead,
+      productPageRead,
     ];
     expect(declaration.reads).toHaveLength(reads.length);
     for (const [index, read] of reads.entries()) {

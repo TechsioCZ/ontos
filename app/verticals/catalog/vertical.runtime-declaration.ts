@@ -110,6 +110,8 @@ import { ProductCategoryClassificationApi } from './shared/apis/product-category
 import { ProductCategoryHistoryApi } from './shared/apis/product-category-history.ts';
 import { ProductDetailApi } from './shared/apis/product-detail.ts';
 import { ProductHistoryApi } from './shared/apis/product-history.ts';
+import { ProductPageApi } from './shared/apis/product-page.ts';
+import { productPageRead } from './src/api/product-page.read.ts';
 import { ProductRelationshipCurrentApi } from './shared/apis/product-relationship-current.ts';
 import { ProductRelationshipHistoryApi } from './shared/apis/product-relationship-history.ts';
 import { ProductSizeCurrentApi } from './shared/apis/product-size-current.ts';
@@ -431,6 +433,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'product-category-history': ProductCategoryHistoryApi,
       'product-detail': ProductDetailApi,
       'product-history': ProductHistoryApi,
+      'product-page': ProductPageApi,
       'product-relationship-current': ProductRelationshipCurrentApi,
       'product-relationship-history': ProductRelationshipHistoryApi,
       'product-size-current': ProductSizeCurrentApi,
@@ -591,6 +594,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         operationKey: 'catalogSourceProducts.execute',
         registration: catalogSourceProductsRead,
       },
+      { apiKey: 'product-page', operationKey: 'productPage.execute', registration: productPageRead },
       // </generated-module-manifest-operation-contracts>
     ],
     shellContributions: {
@@ -700,6 +704,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     bindInitialVariantSourceRecoveryRead,
     catalogSourceProductPageRead,
     catalogSourceProductsRead,
+    productPageRead,
     // </generated-module-registration-reads>
   ],
 };

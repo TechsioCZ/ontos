@@ -310,7 +310,7 @@ export const catalogSourceProductsForScope = (
   );
 
 /** `%`, `_` and the escape character itself match literally inside a LIKE pattern. */
-const containsPattern = (text: string) => {
+export const containsPattern = (text: string) => {
   const literal = text.replaceAll(/[\\%_]/gu, String.raw`\$&`);
   return `%${literal}%`;
 };
