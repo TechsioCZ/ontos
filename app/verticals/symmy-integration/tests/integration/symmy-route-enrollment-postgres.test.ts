@@ -41,6 +41,7 @@ import type { SymmyEnrollmentRouteKey, SymmyRouteChange } from '../../src/ops/sy
 
 const admitWorkload = 'integration.symmy-admit';
 const importWorkload = 'commerce.catalog.symmy-product-import';
+const priceWriteWorkload = 'commerce.pricing.source-write';
 const catalogModule = 'commerce.catalog';
 const digest = (seed: string) => seed.repeat(64).slice(0, 64);
 const services = Layer.mergeAll(NodeServices.layer, Reactivity.layer);
@@ -68,11 +69,35 @@ const SessionUserSchema = Schema.Tuple([Schema.Struct({ user: Schema.String })])
 const TokenSchema = Schema.Tuple([Schema.Struct({ change_token: Schema.Number })]);
 const WaitingSchema = Schema.Tuple([Schema.Struct({ waiting: Schema.Number })]);
 
+/**
+ * The bindings of a products route that creates products, as derived: only the job admission runs in the route's
+ * company, as Catalog's calls are published without one and the job worker runs tenant-only.
+ */
 const bindings: readonly SymmyRequiredBinding[] = [
-  { identity: 'integration', purpose: 'job admission', workloads: [admitWorkload] },
-  { identity: 'integration', purpose: 'commerce.catalog.create-product@2', workloads: [importWorkload] },
-  { identity: 'executor', purpose: 'commerce.catalog.create-product@2', workloads: [importWorkload] },
-  { identity: 'executor', purpose: 'Symmy job execution', workloads: [SYMMY_JOB_KEY] },
+  { companyScoped: true, identity: 'integration', purpose: 'job admission', workloads: [admitWorkload] },
+  {
+    companyScoped: false,
+    identity: 'integration',
+    purpose: 'commerce.catalog.create-product@2',
+    workloads: [importWorkload],
+  },
+  {
+    companyScoped: false,
+    identity: 'executor',
+    purpose: 'commerce.catalog.create-product@2',
+    workloads: [importWorkload],
+  },
+  { companyScoped: false, identity: 'executor', purpose: 'Symmy job execution', workloads: [SYMMY_JOB_KEY] },
+];
+/** The same route that also defines prices: Pricing's define is published for a company, so its executor runs in it. */
+const pricedBindings: readonly SymmyRequiredBinding[] = [
+  ...bindings,
+  {
+    companyScoped: true,
+    identity: 'executor',
+    purpose: 'commerce.pricing.define-price@2',
+    workloads: [priceWriteWorkload],
+  },
 ];
 const attribution = {
   operatorRef: 'operator:route-enrollment-test',
@@ -103,8 +128,10 @@ const outcomeOf = <A extends { readonly outcome: string }, E>(result: Result.Res
   });
 
 /**
- * A fresh Tenant with two active companies, two Symmy integration principals with an active API-key binding, one whose
- * API-key binding is disabled, and the one system worker.
+ * A fresh Tenant with two active companies, three Symmy integration principals with an active API-key binding (one of
+ * them registered for no company), one whose API-key binding is disabled, and the one system worker. Every binding a
+ * call runs under in the first company is registered for it, as Core's registration writer stores it (D6); the route
+ * principal's import binding is registered for the other company, so its direct calls are admitted there too.
  */
 const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* makeFixture() {
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -115,6 +142,7 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
   const integrationId = crypto.randomUUID();
   const otherIntegrationId = crypto.randomUUID();
   const disabledBindingIntegrationId = crypto.randomUUID();
+  const unregisteredIntegrationId = crypto.randomUUID();
   const systemId = crypto.randomUUID();
   const slug = `route-enrollment-${tenantId}`;
   yield* admin`insert into core.tenants(tenant_id,name,slug,status,default_locale) values(${tenantId},'Route enrollment fixture',${slug},'active','en')`;
@@ -128,6 +156,7 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
     [integrationId, 'active'],
     [otherIntegrationId, 'active'],
     [disabledBindingIntegrationId, 'disabled'],
+    [unregisteredIntegrationId, 'active'],
   ] as const) {
     yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${principalId},${tenantId},'integration','active','Symmy integration')`;
     // The API-key binding the Shell resolves an x-api-key to; a disabled one authenticates no request.
@@ -138,18 +167,51 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
   for (const moduleKey of [catalogModule, 'integration.symmy']) {
     yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${moduleKey},'active')`;
   }
-  for (const [principalId, workloadKey] of [
-    [integrationId, admitWorkload],
-    [integrationId, importWorkload],
-    [otherIntegrationId, admitWorkload],
-    [otherIntegrationId, importWorkload],
-    [disabledBindingIntegrationId, admitWorkload],
-    [disabledBindingIntegrationId, importWorkload],
-    [systemId, importWorkload],
-    [systemId, SYMMY_JOB_KEY],
+  /** One active workload binding, as Core's binding writer stores it. */
+  const bind = (principalId: string, workloadKey: string) =>
+    Effect.gen(function* bindWorkload() {
+      const bindingId = crypto.randomUUID();
+      yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${bindingId},${crypto.randomUUID()},${tenantId},${principalId},${workloadKey},'active')`;
+      return bindingId;
+    });
+  /** One active company registration of a binding, as Core's registration writer stores it (D6). */
+  const register = (bindingId: string, company: string) =>
+    admin`insert into core.access_workload_company_bindings(company_binding_id,incarnation,tenant_id,workload_binding_id,legal_entity_id,status)
+      values(${crypto.randomUUID()},${crypto.randomUUID()},${tenantId},${bindingId},${company},'active')`;
+  /** Ends the live registration of a binding, as Core revokes it: a revoked one is never reopened. */
+  const revokeRegistration = (bindingId: string) =>
+    admin`update core.access_workload_company_bindings set status='revoked', revoked_at=now()
+      where tenant_id=${tenantId} and workload_binding_id=${bindingId} and status='active'`;
+  /** Ends a binding, as Core revokes it; its registration counts no longer. */
+  const revokeBinding = (bindingId: string) =>
+    admin`update core.access_workload_bindings set status='revoked', revoked_at=now() where tenant_id=${tenantId} and binding_id=${bindingId}`;
+  const bindingIds = new Map<string, string>();
+  for (const [principalId, workloadKey, company] of [
+    [integrationId, admitWorkload, legalEntityId],
+    [integrationId, importWorkload, otherLegalEntityId],
+    [otherIntegrationId, admitWorkload, legalEntityId],
+    [otherIntegrationId, importWorkload, undefined],
+    [disabledBindingIntegrationId, admitWorkload, legalEntityId],
+    [disabledBindingIntegrationId, importWorkload, undefined],
+    [unregisteredIntegrationId, admitWorkload, undefined],
+    [unregisteredIntegrationId, importWorkload, undefined],
+    [systemId, importWorkload, undefined],
+    [systemId, priceWriteWorkload, legalEntityId],
+    [systemId, SYMMY_JOB_KEY, undefined],
   ] as const) {
-    yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${crypto.randomUUID()},${crypto.randomUUID()},${tenantId},${principalId},${workloadKey},'active')`;
+    const bindingId = yield* bind(principalId, workloadKey);
+    bindingIds.set(`${principalId} ${workloadKey}`, bindingId);
+    if (company !== undefined) {
+      yield* register(bindingId, company);
+    }
   }
+  /** The binding the fixture wrote for a principal and workload. */
+  const bindingOf = (principalId: string, workloadKey: string) => {
+    const bindingId = bindingIds.get(`${principalId} ${workloadKey}`);
+    return bindingId === undefined
+      ? Effect.die(`The fixture binds ${principalId} to ${workloadKey}`)
+      : Effect.succeed(bindingId);
+  };
   // The append-only enrollment records of this Tenant stay; nothing references them.
   yield* Effect.addFinalizer(() =>
     Effect.all([
@@ -244,15 +306,22 @@ const makeFixture = Effect.fn('SymmyRouteEnrollmentPostgres.fixture')(function* 
     }).pipe(Effect.provideService(PgClient.PgClient, admin));
   return {
     admin,
+    bind,
+    bindingOf,
     connections,
     disabledBindingIntegrationId,
     integrationId,
     legalEntityId,
     otherIntegrationId,
     otherLegalEntityId,
+    register,
     request,
+    revokeBinding,
+    revokeRegistration,
     run,
+    systemId,
     tenantId,
+    unregisteredIntegrationId,
   };
 });
 
@@ -288,6 +357,7 @@ it.effect(
 
       // A missing binding is named, and nothing is written.
       const unheld: SymmyRequiredBinding = {
+        companyScoped: false,
         identity: 'executor',
         purpose: 'recovery',
         workloads: ['commerce.catalog.symmy-product-read'],
@@ -561,6 +631,89 @@ it.effect('refuses an integration principal without an active API-key binding, i
 );
 
 it.effect(
+  'refuses a company route whose identities the company gate refuses there, in dry-run, apply and verify, and still stops it',
+  () =>
+    Effect.gen(function* companyRegistrations() {
+      const fixture = yield* makeFixture();
+      const {
+        admin,
+        bind,
+        bindingOf,
+        integrationId,
+        legalEntityId,
+        otherLegalEntityId,
+        register,
+        request,
+        run,
+        systemId,
+      } = fixture;
+      const codesOf = <A, E, R>(attempt: Effect.Effect<A, E, R>) =>
+        refusals(attempt).pipe(Effect.map((found) => found.map(({ code }) => code)));
+      const modes = [operator, { mode: 'dry-run' } as const, { mode: 'verify' } as const];
+      const v1 = request('productsBatch', { routeId: crypto.randomUUID() });
+      const verify = run({ request: v1, required: pricedBindings, run: { mode: 'verify' } });
+
+      // An integration principal registered for no company is refused in every mode, naming it, the workload and the
+      // company; nothing is written.
+      const unregistered = request('productsBatch', {
+        principalId: fixture.unregisteredIntegrationId,
+        routeId: crypto.randomUUID(),
+      });
+      for (const mode of modes) {
+        const found = yield* refusals(run({ request: unregistered, required: pricedBindings, run: mode }));
+        expect(found.map(({ code }) => code)).toEqual(['integration_company_registration_missing']);
+        for (const named of [fixture.unregisteredIntegrationId, admitWorkload, legalEntityId]) {
+          expect(found[0]?.detail).toContain(named);
+        }
+      }
+
+      // Registered as the fixture writes them, the route enrolls; then its admission registration is revoked, and every
+      // mode refuses the enrolled route, the unchanged apply and dry-run included.
+      const enrolled = yield* run({ request: v1, required: pricedBindings, run: operator });
+      expect(enrolled.outcome).toBe('enrolled');
+      const enrolledAt = tokenOf(enrolled);
+      const admission = yield* bindingOf(integrationId, admitWorkload);
+      yield* fixture.revokeRegistration(admission);
+      for (const mode of modes) {
+        expect(yield* codesOf(run({ request: v1, required: pricedBindings, run: mode }))).toEqual([
+          'integration_company_registration_missing',
+        ]);
+      }
+      // A registration of another company is no registration for this one, though the principal now acts in that one.
+      yield* register(admission, otherLegalEntityId);
+      expect(yield* codesOf(verify)).toEqual(['integration_company_registration_missing']);
+      yield* fixture.revokeRegistration(admission);
+      yield* register(admission, legalEntityId);
+      expect((yield* verify).outcome).toBe('verified');
+
+      // The executor's binding is replaced by one never registered: the registration of the revoked one counts no more.
+      yield* fixture.revokeBinding(yield* bindingOf(systemId, priceWriteWorkload));
+      const priceWriter = yield* bind(systemId, priceWriteWorkload);
+      const executorRefusals = yield* refusals(verify);
+      expect(executorRefusals.map(({ code }) => code)).toEqual(['executor_company_registration_missing']);
+      for (const named of [systemId, priceWriteWorkload, legalEntityId]) {
+        expect(executorRefusals[0]?.detail).toContain(named);
+      }
+      // Registered for the other company, it is still refused here.
+      yield* register(priceWriter, otherLegalEntityId);
+      expect(yield* codesOf(verify)).toEqual(['executor_company_registration_missing']);
+
+      // A second system principal registered for this company does not stand in for the unregistered one: two holders
+      // are ambiguous, whichever of them is registered.
+      const secondSystemId = crypto.randomUUID();
+      yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name) values(${secondSystemId},${fixture.tenantId},'system','active','Second Symmy worker')`;
+      yield* register(yield* bind(secondSystemId, priceWriteWorkload), legalEntityId);
+      expect(yield* codesOf(verify)).toEqual(['executor_binding_not_unique']);
+
+      // A deactivation reads no binding and no registration: it stops the route all the same.
+      expect(yield* run({ change: deactivateAt(enrolledAt), request: v1, run: operator })).toMatchObject({
+        outcome: 'deactivated',
+      });
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  30_000,
+);
+
+it.effect(
   'deactivates a stored route of a kind it cannot enroll, without its inventory or the composition, naming what it strands',
   () =>
     Effect.gen(function* deactivateStock() {
@@ -791,6 +944,7 @@ it.live(
         sourceRouteId: crypto.randomUUID(),
       });
       const routeContext: SymmyRequiredBinding = {
+        companyScoped: false,
         identity: 'integration',
         purpose: 'route context',
         workloads: [admitWorkload],

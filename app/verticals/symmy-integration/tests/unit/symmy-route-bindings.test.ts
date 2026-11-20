@@ -24,6 +24,7 @@ const nestedRecovery = 'pricing.price-group-catalog.recovery-read';
 const integrationId = '11111111-1111-4111-8111-111111111111';
 const systemId = '22222222-2222-4222-8222-222222222222';
 const otherSystemId = '33333333-3333-4333-8333-333333333333';
+const company = '44444444-4444-4444-8444-444444444444';
 
 type Surface = SymmyRouteContract['manifest']['publicSurface'];
 type Calls = NonNullable<SymmyRouteContract['manifest']['registeredWorkloadCalls']>;
@@ -199,6 +200,11 @@ const definePrices = (contracts: readonly SymmyRouteContract[]) =>
   });
 const derive = (contracts: readonly SymmyRouteContract[]) =>
   deriveSymmyRouteBindings({ companyScoped: true, contracts, enrolled: enrolledProducts(), inventory: products() });
+/** Each binding of a plan with whether its calls run in the route's company. */
+const scoped = ({ bindings }: { readonly bindings: readonly SymmyRequiredBinding[] }) =>
+  bindings.map(
+    ({ companyScoped, identity, workloads }) => `${identity} ${workloads.join(' | ')}: ${String(companyScoped)}`,
+  );
 const workloadsOf = (bindings: readonly SymmyRequiredBinding[], identity: SymmyRequiredBinding['identity']) =>
   bindings.filter((binding) => binding.identity === identity).map(({ workloads }) => workloads.join(' | '));
 
@@ -500,17 +506,30 @@ describe('Symmy route bindings', () => {
   it('checks every binding by name and names the executor of each workload', () => {
     const { bindings } = derive([symmy, catalog, priceGroups]);
     const both = [
-      { apiKey: true, kind: 'integration' as const, principalId: integrationId },
-      { apiKey: false, kind: 'system' as const, principalId: systemId },
+      {
+        apiKey: true,
+        companyRegistration: 'binding' as const,
+        kind: 'integration' as const,
+        principalId: integrationId,
+      },
+      { apiKey: false, companyRegistration: 'binding' as const, kind: 'system' as const, principalId: systemId },
     ];
     const holders = new Map(symmyBindingWorkloads(bindings).map((workload) => [workload, both] as const));
-    const satisfied = checkSymmyRouteBindings({ bindings, holders, principalId: integrationId });
+    const satisfied = checkSymmyRouteBindings({
+      bindings,
+      holders,
+      legalEntityId: company,
+      principalId: integrationId,
+    });
     expect(satisfied.refusals).toEqual([]);
     expect(satisfied.executors.get(SYMMY_JOB_KEY)).toBe(systemId);
     expect(satisfied.executors.get(nestedRecovery)).toBe(systemId);
 
     const missing = new Map<string, readonly WorkloadBindingHolder[]>([...holders, [productImport, []]]);
-    expect(checkSymmyRouteBindings({ bindings, holders: missing, principalId: integrationId }).refusals).toEqual([
+    expect(
+      checkSymmyRouteBindings({ bindings, holders: missing, legalEntityId: company, principalId: integrationId })
+        .refusals,
+    ).toEqual([
       {
         code: 'integration_binding_missing',
         detail: `The integration principal holds none of ${productImport}, needed for commerce.catalog.create-product@2`,
@@ -523,34 +542,50 @@ describe('Symmy route bindings', () => {
 
     const shared = new Map<string, readonly WorkloadBindingHolder[]>([
       ...holders,
-      [productRead, [...both, { apiKey: false, kind: 'system', principalId: otherSystemId }]],
+      [
+        productRead,
+        [...both, { apiKey: false, companyRegistration: 'binding', kind: 'system', principalId: otherSystemId }],
+      ],
     ]);
     expect(
-      checkSymmyRouteBindings({ bindings, holders: shared, principalId: integrationId }).refusals.map(
-        ({ code }) => code,
-      ),
+      checkSymmyRouteBindings({
+        bindings,
+        holders: shared,
+        legalEntityId: company,
+        principalId: integrationId,
+      }).refusals.map(({ code }) => code),
     ).toEqual(['executor_binding_not_unique']);
 
     // The route context admits either Symmy workload; the admission needs its own.
     const pollOnly = new Map<string, readonly WorkloadBindingHolder[]>([
       ...holders,
-      [admit, [{ apiKey: false, kind: 'system', principalId: systemId }]],
+      [admit, [{ apiKey: false, companyRegistration: 'binding', kind: 'system', principalId: systemId }]],
     ]);
     expect(
-      checkSymmyRouteBindings({ bindings, holders: pollOnly, principalId: integrationId }).refusals.map(
-        ({ detail }) => detail,
-      ),
+      checkSymmyRouteBindings({
+        bindings,
+        holders: pollOnly,
+        legalEntityId: company,
+        principalId: integrationId,
+      }).refusals.map(({ detail }) => detail),
     ).toEqual([`The integration principal holds none of ${admit}, needed for job admission`]);
   });
 
   it('refuses a route principal without an active API-key binding, whatever workload bindings it holds', () => {
     const { bindings } = derive([symmy, catalog, priceGroups]);
     const unbound = [
-      { apiKey: false, kind: 'integration' as const, principalId: integrationId },
-      { apiKey: false, kind: 'system' as const, principalId: systemId },
+      {
+        apiKey: false,
+        companyRegistration: 'binding' as const,
+        kind: 'integration' as const,
+        principalId: integrationId,
+      },
+      { apiKey: false, companyRegistration: 'binding' as const, kind: 'system' as const, principalId: systemId },
     ];
     const holders = new Map(symmyBindingWorkloads(bindings).map((workload) => [workload, unbound] as const));
-    expect(checkSymmyRouteBindings({ bindings, holders, principalId: integrationId }).refusals).toEqual([
+    expect(
+      checkSymmyRouteBindings({ bindings, holders, legalEntityId: company, principalId: integrationId }).refusals,
+    ).toEqual([
       {
         code: 'integration_api_key_binding_missing',
         detail:
@@ -561,18 +596,31 @@ describe('Symmy route bindings', () => {
 
   it('refuses executor workloads held by different system principals, as the worker is one identity', () => {
     const { bindings } = derive([symmy, catalog, priceGroups]);
-    const integration = { apiKey: true, kind: 'integration' as const, principalId: integrationId };
+    const integration = {
+      apiKey: true,
+      companyRegistration: 'binding' as const,
+      kind: 'integration' as const,
+      principalId: integrationId,
+    };
     const systemOf = (workload: string) => (workload === productRead ? otherSystemId : systemId);
     const holders = new Map(
       symmyBindingWorkloads(bindings).map(
         (workload) =>
           [
             workload,
-            [integration, { apiKey: false, kind: 'system' as const, principalId: systemOf(workload) }],
+            [
+              integration,
+              {
+                apiKey: false,
+                companyRegistration: 'binding' as const,
+                kind: 'system' as const,
+                principalId: systemOf(workload),
+              },
+            ],
           ] as const,
       ),
     );
-    const checked = checkSymmyRouteBindings({ bindings, holders, principalId: integrationId });
+    const checked = checkSymmyRouteBindings({ bindings, holders, legalEntityId: company, principalId: integrationId });
     expect(checked.refusals.map(({ code }) => code)).toEqual(['executor_principals_differ']);
     expect(checked.refusals[0]?.detail).toContain(`${productRead} by ${otherSystemId}`);
     expect(checked.refusals[0]?.detail).toContain(`${SYMMY_JOB_KEY} by ${systemId}`);
@@ -585,9 +633,134 @@ describe('Symmy route bindings', () => {
         (workload) => [workload, [{ apiKey: true, kind: 'service' as const, principalId: integrationId }]] as const,
       ),
     );
-    expect(checkSymmyRouteBindings({ bindings, holders, principalId: integrationId }).refusals[0]).toEqual({
+    expect(
+      checkSymmyRouteBindings({ bindings, holders, legalEntityId: company, principalId: integrationId }).refusals[0],
+    ).toEqual({
       code: 'integration_principal_not_integration',
       detail: 'The route principal is a service principal',
+    });
+  });
+  it('asks a registration only for the bindings whose calls run in the route company', () => {
+    // The route context and the job poll run tenant-only, the admission and the owner read in the company; a live
+    // call's gateway check needs only the binding; Catalog's calls are published without a company.
+    expect(scoped(derive([symmy, catalog, priceGroups]))).toEqual([
+      `integration ${admit} | ${poll}: false`,
+      `integration ${admit}: true`,
+      `integration ${poll}: false`,
+      `integration ${groupRead}: true`,
+      `integration ${productImport}: false`,
+      `integration ${nestedWrite}: false`,
+      `integration ${productRead}: false`,
+      `executor ${productImport}: false`,
+      `executor ${nestedWrite}: false`,
+      `executor ${productRead}: false`,
+      `executor ${nestedRecovery}: false`,
+      `executor ${SYMMY_JOB_KEY}: false`,
+    ]);
+    // Pricing's define and its recovery read are published for a company, so the executor needs both registered; the
+    // job worker itself runs tenant-only. A Tenant-only route asks no registration at all.
+    const pricing = contract('pricing', 'commerce.pricing', {
+      actions: receivingAction('commerce.pricing.define-price'),
+      operationContracts: receivingRead('commerce.pricing.api.price-source-result-lookup'),
+    });
+    const prices = (companyScoped: boolean) =>
+      deriveSymmyRouteBindings({
+        companyScoped,
+        contracts: [symmy, pricing],
+        enrolled: enrolledOf('productsBatch', ['commerce.pricing.define-price']),
+        inventory: products(),
+      });
+    expect(scoped(prices(true)).filter((binding) => binding.startsWith('executor'))).toEqual([
+      'executor commerce.pricing.source-write: true',
+      'executor commerce.pricing.source-read: true',
+      `executor ${SYMMY_JOB_KEY}: false`,
+    ]);
+    expect(prices(false).bindings.some(({ companyScoped }) => companyScoped)).toBe(false);
+  });
+
+  describe('company registrations', () => {
+    const priceWrite = 'commerce.pricing.source-write';
+    const routeBindings: readonly SymmyRequiredBinding[] = [
+      { companyScoped: false, identity: 'integration', purpose: 'route context', workloads: [admit, poll] },
+      { companyScoped: true, identity: 'integration', purpose: 'job admission', workloads: [admit] },
+      { companyScoped: false, identity: 'integration', purpose: 'job read', workloads: [poll] },
+      {
+        companyScoped: true,
+        identity: 'executor',
+        purpose: 'commerce.pricing.define-price@2',
+        workloads: [priceWrite],
+      },
+      { companyScoped: false, identity: 'executor', purpose: 'Symmy job execution', workloads: [SYMMY_JOB_KEY] },
+    ];
+    type Registration = NonNullable<WorkloadBindingHolder['companyRegistration']>;
+    /** A holder as Core reports it: read with the company, where it is registered; read without one, nothing of it. */
+    const integrationAs = (companyRegistration?: Registration): WorkloadBindingHolder =>
+      companyRegistration === undefined
+        ? { apiKey: true, kind: 'integration', principalId: integrationId }
+        : { apiKey: true, companyRegistration, kind: 'integration', principalId: integrationId };
+    const systemAs = (companyRegistration?: Registration, principalId = systemId): WorkloadBindingHolder =>
+      companyRegistration === undefined
+        ? { apiKey: false, kind: 'system', principalId }
+        : { apiKey: false, companyRegistration, kind: 'system', principalId };
+    /** Every holder of the route's workloads; the tenant-only ones are read without the company. */
+    const holdersOf = (
+      admission: WorkloadBindingHolder,
+      executor: readonly WorkloadBindingHolder[],
+    ): ReadonlyMap<string, readonly WorkloadBindingHolder[]> =>
+      new Map([
+        [admit, [admission]],
+        [poll, [integrationAs()]],
+        [priceWrite, executor],
+        [SYMMY_JOB_KEY, [systemAs()]],
+      ]);
+    /** The refusals of the route enrolled for the company. */
+    const check = (holders: ReadonlyMap<string, readonly WorkloadBindingHolder[]>) =>
+      checkSymmyRouteBindings({ bindings: routeBindings, holders, legalEntityId: company, principalId: integrationId })
+        .refusals;
+
+    it('accepts the registrations the company gate admits each identity by, and asks none of a tenant-only call', () => {
+      expect(check(holdersOf(integrationAs('binding'), [systemAs('binding')]))).toEqual([]);
+      // The integration principal calls directly, so a registration of another of its bindings admits it too.
+      expect(check(holdersOf(integrationAs('other_binding'), [systemAs('binding')]))).toEqual([]);
+      // A Tenant-only route reads no company and needs no registration.
+      expect(
+        checkSymmyRouteBindings({
+          bindings: routeBindings,
+          holders: holdersOf(integrationAs(), [systemAs()]),
+          principalId: integrationId,
+        }).refusals,
+      ).toEqual([]);
+    });
+
+    it('refuses a missing registration of either identity, naming the principal, the workload and the company', () => {
+      expect(check(holdersOf(integrationAs('none'), [systemAs('none')]))).toEqual([
+        {
+          code: 'integration_company_registration_missing',
+          detail: `The integration principal ${integrationId} holds ${admit}, needed for job admission, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+        },
+        {
+          code: 'executor_company_registration_missing',
+          detail: `The system principal ${systemId} holds ${priceWrite}, needed for commerce.pricing.define-price@2, but that binding is not registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+        },
+      ]);
+      // The worker calls as a verified gateway workload, which only the binding it names admits in the company.
+      expect(check(holdersOf(integrationAs('binding'), [systemAs('other_binding')])).map(({ code }) => code)).toEqual([
+        'executor_company_registration_missing',
+      ]);
+    });
+
+    it('keeps an ambiguous executor ambiguous, whichever of its holders is registered', () => {
+      for (const [first, second] of [
+        ['binding', 'none'],
+        ['none', 'binding'],
+        ['none', 'none'],
+      ] as const) {
+        const refusals = check(holdersOf(integrationAs('binding'), [systemAs(first), systemAs(second, otherSystemId)]));
+        expect(refusals.map(({ code }) => code)).toEqual(['executor_binding_not_unique']);
+        expect(refusals[0]?.detail).toBe(
+          `2 active system principals hold ${priceWrite}: ${systemId}, ${otherSystemId}`,
+        );
+      }
     });
   });
 });

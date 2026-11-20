@@ -20,8 +20,9 @@
  * route needs, the system principal that runs each executor workload and the runtime configuration it cannot check.
  * It grants no binding and calls no owner. It requires the integration principal to hold an active, unrevoked API-key
  * binding, and does not prove that a key is issued for that binding: issue or rotate the key through the Shell's
- * API-key management. A deactivation checks nothing but the stored route and its token, so it stops a route of any
- * kind.
+ * API-key management. On a company route every binding a call runs under in that company (`companyScoped` in the
+ * receipt) must also be registered for the company; Core's workload registration writes that registration. A
+ * deactivation checks nothing but the stored route and its token, so it stops a route of any kind.
  */
 import { parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';

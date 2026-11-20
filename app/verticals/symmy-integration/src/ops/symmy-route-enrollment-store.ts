@@ -437,18 +437,33 @@ const routeChecks = Effect.fn('SymmyRouteEnrollment.routeChecks')(function* rout
 ) {
   const { inventory, plan, request } = input;
   const core = yield* coreRefusals(transaction, request, plan.moduleKeys);
+  // A workload some company-scoped call runs under is read with the route's company, so Core reports whether each
+  // holder's binding is registered for it; a tenant-only call needs no registration.
+  const companyScoped = new Set(
+    plan.bindings.flatMap(({ companyScoped: scoped, workloads }) => (scoped ? workloads : [])),
+  );
   const holders = new Map(
     yield* Effect.forEach(
       symmyBindingWorkloads(plan.bindings),
       (workloadKey) =>
-        readActiveWorkloadBindingHolders(transaction, request.tenantId, workloadKey).pipe(
+        readActiveWorkloadBindingHolders(
+          transaction,
+          request.tenantId,
+          workloadKey,
+          companyScoped.has(workloadKey) ? request.legalEntityId : undefined,
+        ).pipe(
           Effect.map((found) => [workloadKey, found] as const),
           Effect.mapError(unavailable('The workload bindings could not be read')),
         ),
       { concurrency: 1 },
     ),
   );
-  const bindings = checkSymmyRouteBindings({ bindings: plan.bindings, holders, principalId: request.principalId });
+  const bindings = checkSymmyRouteBindings({
+    bindings: plan.bindings,
+    holders,
+    legalEntityId: request.legalEntityId,
+    principalId: request.principalId,
+  });
   const related = symmyRelatedRouteRefusals(request, inventory, yield* readRelatedRoutes(transaction, request));
   return {
     executors: [...bindings.executors].map(([workloadKey, principalId]) => ({ principalId, workloadKey })),

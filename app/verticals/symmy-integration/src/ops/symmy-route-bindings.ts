@@ -19,6 +19,13 @@
  * the workload of every live call (the gateway checks that the original integration principal holds it). Every call,
  * recovery included, runs as the one active system principal holding its workload, and a job route also needs exactly
  * one system principal holding the Symmy job workload.
+ *
+ * A binding a call runs under in the route's company serves it only through an active company registration of that
+ * binding (D6): without one the receiving gate answers `deny.workload_unbound`. The integration principal's admission,
+ * synchronous receipt and owner reads run in the route's company (the Shell signs each into it), its route context
+ * read and job poll run tenant-only, and the gateway checks of a live call ask only that the integration principal
+ * still holds the workload. An executor call runs in the company unless it is published `forbidden` or a call before
+ * it ran without one; the job worker itself runs tenant-only.
  */
 import { registeredWorkloadCallReceiverIssue } from '@app/core-runtime';
 import type { OntosRegisteredWorkloadCallInput, RegisteredWorkloadCallReceiver } from '@app/core-runtime';
@@ -41,6 +48,11 @@ const SYMMY_SYNC_ADMISSION = 'integration.symmy.admit-symmy-sync';
 
 /** A binding one of the two route identities needs: any one of the named workloads. */
 export const SymmyRequiredBindingSchema = Schema.Struct({
+  /**
+   * A call this binding admits runs in the route's company, so the binding must also carry an active registration for
+   * that company; a tenant-only call needs none.
+   */
+  companyScoped: Schema.Boolean,
   identity: SymmyRouteCallerSchema,
   purpose: Schema.String,
   workloads: Schema.NonEmptyArray(Schema.String),
@@ -145,25 +157,31 @@ const publishedWorkloads = (contract: Contract | undefined, operation: SymmyRout
  * Symmy's own operations the integration principal uses on a route of this admission kind. Symmy publishes no
  * workload carrier for its reads, so the workloads each admits come from its own descriptor, which Symmy enforces when
  * it serves the operation; the installed Symmy must still publish the operation at the descriptor's version.
+ *
+ * `company` is whether the Shell calls it in the route's company: the admissions and the synchronous receipt are signed
+ * into the route scope with the route's company, while the route context is read before any route is known and a job
+ * is polled with the tenant-only admission assertion.
  */
 const symmyCarriers = (admission: SymmyRouteInventory['admission']) => [
-  { descriptor: symmyRouteContextRead.descriptor, purpose: 'route context' },
+  { company: false, descriptor: symmyRouteContextRead.descriptor, purpose: 'route context' },
   ...(admission === 'job'
     ? [
-        { descriptor: admitSymmyJobAction.descriptor, purpose: 'job admission' },
-        { descriptor: symmyJobStatusRead.descriptor, purpose: 'job read' },
+        { company: true, descriptor: admitSymmyJobAction.descriptor, purpose: 'job admission' },
+        { company: false, descriptor: symmyJobStatusRead.descriptor, purpose: 'job read' },
       ]
     : []),
   ...(admission === 'sync'
     ? [
-        { descriptor: admitSymmySyncAction.descriptor, purpose: 'synchronous admission' },
-        { descriptor: symmySyncAdmissionRead.descriptor, purpose: 'synchronous receipt' },
+        { company: true, descriptor: admitSymmySyncAction.descriptor, purpose: 'synchronous admission' },
+        { company: true, descriptor: symmySyncAdmissionRead.descriptor, purpose: 'synchronous receipt' },
       ]
     : []),
 ];
 
 interface RouteCall {
   readonly call: Call;
+  /** The call runs in the route's company. */
+  readonly company: boolean;
   /** A live call also checks the original integration principal; a recovery runs on the executor alone. */
   readonly live: boolean;
 }
@@ -205,8 +223,10 @@ const followCall = (
   }
   const moduleId = receiver.manifest.module.id;
   state.moduleKeys.add(moduleId);
-  state.calls.push({ call, live });
-  const nested = { company: company && call.legalEntityScope !== 'forbidden', live };
+  // The company this call runs with is the one that reaches the calls it makes in turn.
+  const inCompany = company && call.legalEntityScope !== 'forbidden';
+  state.calls.push({ call, company: inCompany, live });
+  const nested = { company: inCompany, live };
   // The calls the gateway admits from this operation as served: the same job, workload and recovery mode.
   const served = (receiver.manifest.registeredWorkloadCalls ?? []).filter(
     (candidate) =>
@@ -338,7 +358,7 @@ export const deriveSymmyRouteBindings = (input: {
   const bindings: SymmyRequiredBinding[] = [];
   const refusals: SymmyRouteEnrollmentRefusal[] = [];
   const symmy = byModule(SYMMY_MODULE);
-  for (const { descriptor, purpose } of symmyCarriers(inventory.admission)) {
+  for (const { company, descriptor, purpose } of symmyCarriers(inventory.admission)) {
     const operation = { entrypointKey: descriptor.entrypoint.entrypointKey, schemaVersion: descriptor.schemaVersion };
     const published = [
       ...(symmy?.manifest.publicSurface.actions ?? []),
@@ -348,7 +368,12 @@ export const deriveSymmyRouteBindings = (input: {
     if (!published || first === undefined) {
       refusals.push(notPublished(`${symmyOperationName(operation)} is not published by ${SYMMY_MODULE}`));
     } else {
-      bindings.push({ identity: 'integration', purpose, workloads: [first, ...rest] });
+      bindings.push({
+        companyScoped: input.companyScoped && company,
+        identity: 'integration',
+        purpose,
+        workloads: [first, ...rest],
+      });
     }
   }
   const reads = [
@@ -362,7 +387,13 @@ export const deriveSymmyRouteBindings = (input: {
       refusals.push(notPublished(`${symmyOperationName(operation)} is not published by ${operation.moduleId}`));
     } else {
       moduleKeys.add(operation.moduleId);
-      bindings.push({ identity: 'integration', purpose: symmyOperationName(operation), workloads: [first, ...rest] });
+      // The Shell signs every owner read of a company route into the route's company.
+      bindings.push({
+        companyScoped: input.companyScoped,
+        identity: 'integration',
+        purpose: symmyOperationName(operation),
+        workloads: [first, ...rest],
+      });
     }
   }
   const route = symmyRouteCalls(input);
@@ -371,14 +402,32 @@ export const deriveSymmyRouteBindings = (input: {
     moduleKeys.add(moduleKey);
   }
   const live = route.calls.filter((call) => call.live);
+  // The gateway and the receiving gate check only that the integration principal still holds a live call's workload,
+  // never a company of it: the executor runs the call.
   for (const workloadKey of new Set(live.map(({ call }) => call.workloadKey))) {
-    bindings.push({ identity: 'integration', purpose: purposeOf(workloadKey, live), workloads: [workloadKey] });
+    bindings.push({
+      companyScoped: false,
+      identity: 'integration',
+      purpose: purposeOf(workloadKey, live),
+      workloads: [workloadKey],
+    });
   }
   for (const workloadKey of new Set(route.calls.map(({ call }) => call.workloadKey))) {
-    bindings.push({ identity: 'executor', purpose: purposeOf(workloadKey, route.calls), workloads: [workloadKey] });
+    bindings.push({
+      companyScoped: route.calls.some(({ call, company }) => company && call.workloadKey === workloadKey),
+      identity: 'executor',
+      purpose: purposeOf(workloadKey, route.calls),
+      workloads: [workloadKey],
+    });
   }
   if (inventory.admission === 'job') {
-    bindings.push({ identity: 'executor', purpose: 'Symmy job execution', workloads: [SYMMY_JOB_KEY] });
+    // The job worker claims and runs the job tenant-only; only its calls run in the company.
+    bindings.push({
+      companyScoped: false,
+      identity: 'executor',
+      purpose: 'Symmy job execution',
+      workloads: [SYMMY_JOB_KEY],
+    });
   }
   return { bindings, moduleKeys: [...moduleKeys].toSorted(), refusals };
 };
@@ -392,11 +441,17 @@ export const symmyBindingWorkloads = (bindings: readonly SymmyRequiredBinding[])
  * Checks each required binding by name against Core's holders: the integration principal (of kind integration, holding
  * an active, unrevoked API-key binding) holds one workload of each of its bindings, and exactly one active system
  * principal holds each executor workload, the same one for every workload, as the Symmy worker runs as one identity.
- * Returns the refusals, each naming the missing or ambiguous binding, and the executor of each workload.
+ * A company-scoped binding of a company route also needs the registration the company gate admits it by, as Core
+ * reports it for the holders read with that company: the integration principal, which calls directly, any of its active
+ * bindings registered for the company; the executor, which calls as a verified gateway workload, that very binding. An
+ * ambiguous executor stays ambiguous whatever either holder is registered for. Returns the refusals, each naming the
+ * missing, unregistered or ambiguous binding, and the executor of each workload.
  */
 export const checkSymmyRouteBindings = (input: {
   readonly bindings: readonly SymmyRequiredBinding[];
   readonly holders: ReadonlyMap<string, readonly WorkloadBindingHolder[]>;
+  /** The route's company; absent for a Tenant-only route, whose calls need no registration. */
+  readonly legalEntityId?: string | undefined;
   readonly principalId: string;
 }) => {
   const holdersOf = (workloadKey: string) => input.holders.get(workloadKey) ?? [];
@@ -418,17 +473,28 @@ export const checkSymmyRouteBindings = (input: {
   const executors = new Map<string, string>();
   for (const binding of input.bindings) {
     const [workloadKey] = binding.workloads;
+    const company = binding.companyScoped ? input.legalEntityId : undefined;
     if (binding.identity === 'integration') {
-      if (
-        !binding.workloads.some((workload) =>
-          holdersOf(workload).some(
-            ({ kind, principalId }) => principalId === input.principalId && kind === 'integration',
-          ),
-        )
-      ) {
+      const holding = binding.workloads.flatMap((workload) =>
+        holdersOf(workload).flatMap((holder) =>
+          holder.principalId === input.principalId && holder.kind === 'integration' ? [{ holder, workload }] : [],
+        ),
+      );
+      if (holding.length === 0) {
         refusals.push({
           code: 'integration_binding_missing',
           detail: `The integration principal holds none of ${binding.workloads.join(' or ')}, needed for ${binding.purpose}`,
+        });
+      } else if (
+        company !== undefined &&
+        // The integration principal calls directly, so any of its active bindings registered for the company admits it.
+        !holding.some(
+          ({ holder }) => holder.companyRegistration === 'binding' || holder.companyRegistration === 'other_binding',
+        )
+      ) {
+        refusals.push({
+          code: 'integration_company_registration_missing',
+          detail: `The integration principal ${input.principalId} holds ${holding.map(({ workload }) => workload).join(' and ')}, needed for ${binding.purpose}, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
         });
       }
       continue;
@@ -447,6 +513,13 @@ export const checkSymmyRouteBindings = (input: {
       });
     } else {
       executors.set(workloadKey, system.principalId);
+      // The worker calls as a verified gateway workload, admitted in the company only by the one binding it names.
+      if (company !== undefined && system.companyRegistration !== 'binding') {
+        refusals.push({
+          code: 'executor_company_registration_missing',
+          detail: `The system principal ${system.principalId} holds ${workloadKey}, needed for ${binding.purpose}, but that binding is not registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+        });
+      }
     }
   }
   if (new Set(executors.values()).size > 1) {
