@@ -1,7 +1,7 @@
 import { Context, Effect, Schema, Stream } from 'effect';
 
 import { actionErrorSchema } from '../actions/error-schema.ts';
-import { ContentTally } from './content-tally.ts';
+import { ContentDigest } from './content-digest.ts';
 import { ObjectStorage, ObjectStorageObjectMissing } from './object-storage.ts';
 import type { ObjectStat, ObjectStorageFailure } from './object-storage.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -99,12 +99,12 @@ export const verifyStoredMediaObject = Effect.fn('MediaVerification.verify')(fun
       return yield* unverifiable('provider_mismatch');
     }
     const opened = yield* storage.get(input.storageKey).pipe(Effect.mapError(unverifiableOf));
-    const tally = new ContentTally();
+    const digest = new ContentDigest();
     yield* opened.body.pipe(
-      Stream.runForEach((chunk) => Effect.sync(() => tally.add(chunk))),
+      Stream.runForEach((chunk) => digest.add(chunk)),
       Effect.mapError(unverifiableOf),
     );
-    const observed = tally.finish();
+    const observed = yield* digest.finish();
     // A clean end that disagrees with the provider's own length is a transfer problem, not a bad object.
     if (observed.byteSize !== opened.stat.byteSize) {
       return yield* unverifiable('framing_inconsistent');
