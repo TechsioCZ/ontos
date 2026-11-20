@@ -225,6 +225,7 @@ import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts'
 import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
 import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
 import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
+import { catalogDocumentCurrentRead } from './src/api/catalog-document-current.read.ts';
 import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
 import { assortmentProductClassificationV1Read } from './src/api/assortment-product-classification-v1.read.ts';
 import { bindInitialVariantSourceAction } from './src/actions/bind-initial-variant-source.action.ts';
@@ -274,6 +275,7 @@ const partyRegistryModuleId = 'party.registry';
 const partyDetailProviderEntrypoint = 'party.registry.api.party-detail';
 const manufacturerPartyCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.party-current';
 const manufacturerExactRevisionEvidence = 'commerce.catalog.evidence.manufacturer-target.exact-revision';
+const coreMediaCurrentEvidence = 'commerce.catalog.evidence.core-media.asset-current';
 const manufacturerLegalEntityCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.legal-entity-current';
 export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
@@ -748,6 +750,16 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
           schemaVersion: '1',
         },
       },
+      {
+        // Core Media's Current V1, served by the Shell host (which holds the object store) for the requester Catalog
+        // relays as itself in the tenant: Catalog keeps no provider credential and no Core table.
+        callers: [{ kind: 'person', legalEntityScope: 'tenant' }],
+        condition: 'commerce.catalog.condition.core-media-current',
+        entrypointKey: catalogDocumentCurrentRead.descriptor.entrypoint.entrypointKey,
+        evidence: [coreMediaCurrentEvidence],
+        key: 'commerce.catalog.requirement.core-media-current',
+        provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
+      },
     ],
     schemaVersion: '1',
   },
@@ -767,6 +779,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     pricingPurposeEquivalenceRead,
     productVariantSnapshotRead,
     manufacturerRelationCurrentRead,
+    catalogDocumentCurrentRead,
     assortmentProductClassificationV1Read,
     correctProductRecoveryRead,
     updateProductRecoveryRead,
