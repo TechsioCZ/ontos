@@ -24,6 +24,8 @@ export const PrivacyOwnerAvailabilitySchema = Schema.Literals(['AVAILABLE', 'UNA
 export type PrivacyOwnerAvailability = typeof PrivacyOwnerAvailabilitySchema.Type;
 
 export const PrivacyOwnerActivationStateSchema = Schema.Literals([
+  /** No Module State Gate fact was read: the owner's governed answer is the only evidence, and it names no state. */
+  'unknown',
   'inactive',
   'active',
   'read_only',
@@ -118,7 +120,9 @@ const statusFor = (
   if (state === undefined) {
     return 'UNCHECKED';
   }
-  if (state !== 'active' && state !== 'read_only') {
+  // `unknown` is not a refusal: the owner answered through the governed call, so its own gate admitted the read, but which
+  // admitting state it was is a fact nobody read, and none is inferred
+  if (state !== 'active' && state !== 'read_only' && state !== 'unknown') {
     return 'DISABLED';
   }
   if (observation === undefined) {
@@ -130,14 +134,20 @@ const statusFor = (
   return observation.outcome;
 };
 
+const MODULE_STATE_UNKNOWN = 'MODULE_STATE_UNKNOWN_ADMITTED_BY_THE_GOVERNED_CALL';
+
 const reasonFor = (
   status: PrivacyOwnerInventoryStatus,
   observation: PrivacyOwnerObservation | undefined,
+  state: PrivacyOwnerActivationState | undefined,
 ): string | null => {
-  if (status === 'NO_DATA' && observation?.outcome === 'NO_DATA') {
-    return observation.reason ?? 'Owner confirmed complete coverage with no data';
-  }
-  return observation?.reason ?? null;
+  const reason =
+    status === 'NO_DATA' && observation?.outcome === 'NO_DATA'
+      ? (observation.reason ?? 'Owner confirmed complete coverage with no data')
+      : (observation?.reason ?? null);
+  return state === 'unknown' && observation !== undefined
+    ? [reason, MODULE_STATE_UNKNOWN].filter((part) => part !== null).join('; ')
+    : reason;
 };
 
 const inventoryEntry = (
@@ -152,7 +162,7 @@ const inventoryEntry = (
   return {
     moduleId,
     observedAt: observation?.observedAt ?? null,
-    reason: reasonFor(status, observation),
+    reason: reasonFor(status, observation, moduleStates.get(moduleId)),
     requiredByCoverageRefs: [...new Set(requiredByCoverageRefs)],
     resourceRefs: observation?.resourceRefs ?? [],
     status,

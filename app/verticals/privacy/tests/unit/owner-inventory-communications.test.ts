@@ -8,7 +8,6 @@ import type { CallOutcome } from '@app/core-runtime/sdk';
 import { Cause, Effect, Exit, Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { lookupPrivacyOwnerInventory } from '../../shared/domain/owner-inventory.ts';
 import { runOwnerInventory } from '../../src/api/owner-inventory.read.ts';
 import {
   activityWith,
@@ -79,8 +78,43 @@ const entryOf = (answer: Effect.Success<ReturnType<typeof runOwnerInventory>>) =
   answer.result.entries.find((entry) => entry.moduleId === OWNER);
 const reasonOf = (answer: Effect.Success<ReturnType<typeof runOwnerInventory>>) => entryOf(answer)?.reason ?? '';
 
+const answerWith = (state?: 'active' | 'read_only' | 'suspended') =>
+  runOwnerInventory(
+    lookupRequestOf(tenantId, 'customer-1'),
+    capabilitiesOf(communicationsActivity, tenantId, (request) => Effect.succeed(ok(answerFor(request))), state)
+      .capabilities,
+  );
+
 describe('Privacy owner inventory with Communications coverage', () => {
-  it.effect('answers other owners exactly as before and asks nobody when no subject lookup is named', () =>
+  /**
+   * FROZEN recording of the behavior at the base commit 3b729b184 (#1402), written down as literals and NOT derived from the
+   * function under test: the base Read answered these two owners UNCHECKED with no observation, whatever the request said.
+   */
+  const baseAnswerForOtherOwners = {
+    activityRef: 'activity-1',
+    complete: false,
+    entries: [
+      {
+        moduleId: 'party.registry',
+        observedAt: null,
+        reason: null,
+        requiredByCoverageRefs: ['party.registry.record'],
+        resourceRefs: [],
+        status: 'UNCHECKED',
+      },
+      {
+        moduleId: 'commerce.customer-context',
+        observedAt: null,
+        reason: null,
+        requiredByCoverageRefs: ['commerce.customer-context.record'],
+        resourceRefs: [],
+        status: 'UNCHECKED',
+      },
+    ],
+    tenantId,
+  } as const;
+
+  it.effect('answers other owners exactly as the base commit did and asks nobody when no subject lookup is named', () =>
     Effect.gen(function* unchangedForOtherOwners() {
       const other = activityWith(tenantId, [
         coverageEntry(tenantId, 'party.registry', 'party-record'),
@@ -89,17 +123,44 @@ describe('Privacy owner inventory with Communications coverage', () => {
       const { asked, capabilities } = capabilitiesOf(other, tenantId, () =>
         Effect.succeed({ _tag: 'Unavailable', reason: 'must not be asked', retryable: true }),
       );
-      const before = lookupPrivacyOwnerInventory({
-        activity: other,
-        composition: { modules: [{ moduleId: 'commerce.customer-context' }, { moduleId: 'party.registry' }] },
-      });
       const answer = yield* runOwnerInventory(plainRequestOf(tenantId), capabilities);
-      expect(answer.result).toEqual(before);
-      // a lookup for an activity that declares no Communications scope asks nobody either
+      expect(answer.result).toEqual(baseAnswerForOtherOwners);
+      // a lookup for an activity that declares no Communications scope asks nobody either, and answers the same
       const withLookup = yield* runOwnerInventory(lookupRequestOf(tenantId, 'customer-1'), capabilities);
-      expect(withLookup.result).toEqual(before);
+      expect(withLookup.result).toEqual(baseAnswerForOtherOwners);
       expect(asked).toEqual([]);
     }),
+  );
+
+  it.effect(
+    'documents the one deliberate change: an activity declaring Communications was MISSING at the base and is UNCHECKED now',
+    () =>
+      Effect.gen(function* missingBecomesUnchecked() {
+        const { capabilities } = capabilitiesOf(communicationsActivity, tenantId, () =>
+          Effect.succeed({ _tag: 'Unavailable', reason: 'must not be asked', retryable: true }),
+        );
+        const answer = yield* runOwnerInventory(plainRequestOf(tenantId), capabilities);
+        // the base composition did not list the owner, so the base answer for this very activity was status MISSING; the
+        // owner is now listed (it publishes a coverage contract) and, not being asked, is UNCHECKED: still never NO_DATA
+        const baseStatus = 'MISSING';
+        expect(entryOf(answer)?.status).toBe('UNCHECKED');
+        expect(entryOf(answer)?.status).not.toBe(baseStatus);
+        expect(answer.result.complete).toBe(false);
+      }),
+  );
+
+  it.effect(
+    'names the module state UNKNOWN when no Module State Gate fact is in the Read context, and uses a real fact when there is one',
+    () =>
+      Effect.gen(function* moduleState() {
+        const unknown = yield* answerWith();
+        expect(entryOf(unknown)?.status).toBe('NO_DATA');
+        expect(reasonOf(unknown)).toContain('MODULE_STATE_UNKNOWN_ADMITTED_BY_THE_GOVERNED_CALL');
+        // a real gate fact replaces the unknown: nothing is named unknown, and a state that refuses is DISABLED
+        expect(reasonOf(yield* answerWith('read_only'))).not.toContain('MODULE_STATE_UNKNOWN');
+        expect(entryOf(yield* answerWith('active'))?.status).toBe('NO_DATA');
+        expect(entryOf(yield* answerWith('suspended'))?.status).toBe('DISABLED');
+      }),
   );
 
   it.effect('reports Communications as UNCHECKED, never MISSING or NO_DATA, while no subject lookup was asked', () =>
@@ -173,7 +234,7 @@ describe('Privacy owner inventory with Communications coverage', () => {
         );
         const partialAnswer = yield* runOwnerInventory(lookupRequestOf(tenantId, 'customer-1'), partial.capabilities);
         expect(entryOf(partialAnswer)?.status).toBe('PARTIAL');
-        expect(reasonOf(partialAnswer)).toBe('BACKUP_AND_RECOVERY_COPIES_NOT_OBSERVABLE_BY_OWNER');
+        expect(reasonOf(partialAnswer)).toContain('BACKUP_AND_RECOVERY_COPIES_NOT_OBSERVABLE_BY_OWNER');
         expect(partialAnswer.result.complete).toBe(false);
       }),
   );

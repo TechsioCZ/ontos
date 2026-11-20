@@ -7,6 +7,7 @@ import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { OwnerInventoryRequestSchema } from '../../shared/apis/owner-inventory.ts';
 import type { OwnerInventoryRequest } from '../../shared/apis/owner-inventory.ts';
+import type { PrivacyOwnerActivationState } from '../../shared/domain/owner-inventory.ts';
 import { PersonalDataCoverageSchema } from '../../shared/domain/processing-coverage.ts';
 import type { OwnerInventoryActivity, OwnerInventoryCapabilities } from '../../src/api/owner-inventory.read.ts';
 
@@ -79,22 +80,25 @@ export const capabilitiesOf = (
   activity: OwnerInventoryActivity | undefined,
   scopeTenantId: string,
   answer: (request: PrivacyOwnerCoverageRequest) => Effect.Effect<CallOutcome<PrivacyOwnerCoverageResponse>>,
+  communicationsModuleState?: PrivacyOwnerActivationState,
 ) => {
   const asked: PrivacyOwnerCoverageRequest[] = [];
+  const capabilities = {
+    call: (_name: 'communicationsCoverage', request: PrivacyOwnerCoverageRequest) =>
+      Effect.suspend(() => {
+        asked.push(request);
+        return answer(request);
+      }),
+    scope: { legalEntityId, tenantId: scopeTenantId },
+    transaction: (body) =>
+      body(
+        { get: () => Effect.succeed(activity === undefined ? Option.none() : Option.some(activity)) },
+        transactionFacts,
+      ),
+  } satisfies OwnerInventoryCapabilities;
   return {
     asked,
-    capabilities: {
-      call: (_name: 'communicationsCoverage', request: PrivacyOwnerCoverageRequest) =>
-        Effect.suspend(() => {
-          asked.push(request);
-          return answer(request);
-        }),
-      scope: { legalEntityId, tenantId: scopeTenantId },
-      transaction: (body) =>
-        body(
-          { get: () => Effect.succeed(activity === undefined ? Option.none() : Option.some(activity)) },
-          transactionFacts,
-        ),
-    } satisfies OwnerInventoryCapabilities,
+    capabilities:
+      communicationsModuleState === undefined ? capabilities : { ...capabilities, communicationsModuleState },
   };
 };

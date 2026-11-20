@@ -41,6 +41,11 @@ const MODULE_KEY = 'privacy.core' as const;
  * contract; whether it can answer is decided by the governed call below and never by this list, so listing it proves nothing
  * about completeness (an owner with no observation stays UNCHECKED and an unreachable one UNAVAILABLE).
  */
+/**
+ * Listing Communications here changes what an activity that declares it as a System of Record answers WITHOUT a subject
+ * lookup: it was MISSING (not in the deployed composition at the #1402 baseline) and is now UNCHECKED (deployed, not asked).
+ * Every other owner is answered exactly as at the baseline.
+ */
 const launchComposition = {
   modules: [
     { moduleId: 'commerce.customer-context' },
@@ -86,6 +91,11 @@ export interface OwnerInventoryCapabilities {
     name: 'communicationsCoverage',
     request: PrivacyOwnerCoverageRequest,
   ) => Effect.Effect<CallOutcome<PrivacyOwnerCoverageResponse>>;
+  /**
+   * Communications' tenant module state, ONLY when a Module State Gate fact is in the Read's context. Core's run context
+   * carries none today, so the Read supplies none and the entry says the state is unknown.
+   */
+  readonly communicationsModuleState?: PrivacyOwnerActivationState;
   readonly scope: Pick<OwnerInventoryRunContext['scope'], 'legalEntityId' | 'tenantId'>;
   readonly transaction: TransactionCapability<OwnerInventoryActivitySource>;
 }
@@ -172,9 +182,13 @@ export const runOwnerInventory = Effect.fn('OwnerInventoryRead.run')(function* r
       onSome: ({ availability, observation }) => ({
         ...lookup,
         availability: new Map<string, PrivacyOwnerAvailability>([[COMMUNICATIONS_MODULE_ID, availability]]),
-        // an answer through the governed call is proof that the owner's Module State Gate admitted the read
+        // An answer through the governed call shows that the owner's Module State Gate admitted the read, not WHICH admitting
+        // state it was (active and read_only both admit): a gate fact in the context is used as it is, and without one the
+        // state is `unknown`, never inferred.
         moduleStates: new Map<string, PrivacyOwnerActivationState>(
-          availability === 'AVAILABLE' ? [[COMMUNICATIONS_MODULE_ID, 'read_only']] : [],
+          availability === 'AVAILABLE'
+            ? [[COMMUNICATIONS_MODULE_ID, context.communicationsModuleState ?? 'unknown']]
+            : [],
         ),
         observations: [observation],
       }),

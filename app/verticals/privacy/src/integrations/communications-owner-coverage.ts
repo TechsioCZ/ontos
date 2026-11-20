@@ -176,6 +176,13 @@ const observationOfAnswer = (
 };
 
 /**
+ * OPEN ITEM (explicit, not wired here): the owner's answer also carries `contribution` (the right-specific, third-party
+ * protected Owner Contribution), `externalCopies` (every provider that was handed a message, never provider-side
+ * disposition) and `configuration` (the Privacy inputs still open per category). This function deliberately drops all three:
+ * the inventory entry has no place for them. Wiring them into a real Privacy owner-measure path (the Owner Execution Outcome
+ * receipt, DSR contribution assembly and the configuration-gap hand-over) is the separate, later receipt task. Until then none
+ * of them may be read as "complete", "done" or "nothing to hand over" from this observation.
+ *
  * What Privacy may conclude from one governed call to the owner. Only an answer to exactly the question asked becomes an
  * observation of the owner's coverage; a refusal, a missing route, an outage or a rejected request is UNAVAILABLE with its
  * kind named, so none of them can be mistaken for an empty scope.
