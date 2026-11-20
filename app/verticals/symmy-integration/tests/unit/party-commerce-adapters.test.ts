@@ -92,7 +92,13 @@ import {
   SymmyPartyCommerceIntentSchema,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { SymmyPinnedJobPlanSchema, SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
+import { AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
+import { SymmyEffectAdapters } from '../../src/services/symmy-effect-adapters.service.ts';
 import type { SymmyEffectAdapterInput } from '../../src/services/symmy-effect-adapters.service.ts';
+import {
+  executeSymmySyncAdmission,
+  SymmySyncOriginalInvocationFacts,
+} from '../../src/services/symmy-sync-execution.service.ts';
 import {
   makeSymmyPartyCommerceAdapters,
   prepareSymmyPartyCommerceRequestHash,
@@ -1838,6 +1844,153 @@ it.effect('settles the native group meaning-change refusal as conflict without r
     return yield* Effect.void;
   }).pipe(asSymmyWorker),
 );
+
+const groupReplayEffectId = '10000000-0000-4000-8000-000000000031';
+const groupReplayItemId = '10000000-0000-4000-8000-000000000033';
+const groupReplayPayload = {
+  businessCode: 'INTERNAL_SYNC_GROUP',
+  description: 'Explicit internal group',
+  initialState: 'ACTIVE',
+  meaningKey: 'internal.sync-group',
+  membershipCriteria: 'Explicitly named internal customers',
+  name: 'Internal sync group',
+  purpose: 'Internal classification',
+  reason: 'Explicit source definition',
+  source: {
+    definitionEvidence: { kind: 'SOURCE_RECORD', reference: 'group-1', revision: 'source-1' },
+    effectId: groupReplayEffectId,
+    issuer: 'internal-symmy',
+    mappingRevision: 'mapping-1',
+    namespace: 'groups',
+    order: 1,
+    recordId: 'group-1',
+    revision: 'source-1',
+    route: { id: routeId, revision: 'route-1' },
+    sourceCode: 'group-1',
+  },
+};
+/** The exact retry of a synchronous group admission whose create committed. */
+const replayedGroupAdmission = Schema.decodeUnknownSync(AdmitSymmySyncResultSchema)({
+  admissionId: '10000000-0000-4000-8000-000000000032',
+  legalEntityId: sellingLegalEntityId,
+  plan: {
+    items: [
+      {
+        effects: [
+          {
+            authContextRef: fixtureAuthContextRef,
+            effectKey: 'customer-group-create',
+            executorBindingIncarnation: '10000000-0000-4000-8000-000000000007',
+            executorPrincipalId,
+            intent: { _tag: 'CustomerGroupCreate', payload: groupReplayPayload },
+            itemId: groupReplayItemId,
+            ref: {
+              effectId: groupReplayEffectId,
+              mappingVersion: 'mapping-1',
+              occurrence: {
+                occurrenceId: 'group-occurrence-1',
+                record: {
+                  entityKind: 'CUSTOMER_GROUP',
+                  issuerId: 'internal-symmy',
+                  route: { integrationRouteId: routeId, tenantId },
+                  sourceNamespace: 'groups',
+                  sourceRecordId: 'group-1',
+                },
+              },
+              operation: {
+                entrypointKey: 'commerce.customer-context.create-customer-group',
+                moduleId: 'commerce.customer-context',
+                schemaVersion: '1',
+              },
+              routeRevision: 'route-1',
+            },
+            requestHash: 'a'.repeat(64),
+          },
+        ],
+        itemId: groupReplayItemId,
+        itemKey: 'customer-group-0',
+        unsupportedBranches: [],
+      },
+    ],
+  },
+  replayed: true,
+  tenantId,
+});
+const groupReplayReceipt = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceResponseSchema)({
+  _tag: 'RECEIPT',
+  created: true,
+  group: {
+    businessCode: groupReplayPayload.businessCode,
+    currentDefinition: {
+      changeKind: 'CREATED',
+      description: groupReplayPayload.description,
+      membershipCriteria: groupReplayPayload.membershipCriteria,
+      name: groupReplayPayload.name,
+      purpose: groupReplayPayload.purpose,
+      reason: groupReplayPayload.reason,
+      recordedAt: '2026-11-07T00:00:00.000Z',
+      revision: 1,
+    },
+    currentState: 'ACTIVE',
+    definitionHistory: [],
+    groupRef: {
+      moduleId: 'commerce.customer-context',
+      resourceId: '10000000-0000-4000-8000-000000000034',
+      resourceType: 'commerce.customer-context.customer-group',
+      tenantId,
+    },
+    lifecycleHistory: [],
+    meaningKey: groupReplayPayload.meaningKey,
+    revision: 1,
+  },
+  operation: 'CREATE',
+  originalIntent: groupReplayPayload,
+  source: groupReplayPayload.source,
+});
+const replayGroupAdmission = Effect.gen(function* replayGroupAdmission() {
+  const adapters = yield* makeSymmyPartyCommerceAdapters;
+  return yield* executeSymmySyncAdmission(replayedGroupAdmission, symmyWorkerCompositionRevision).pipe(
+    Effect.provideService(SymmyEffectAdapters, { adapters }),
+    Effect.provideService(SymmySyncOriginalInvocationFacts, {
+      read: () => Effect.succeed(Option.some({ actionInvocationId: invocationId, status: 'succeeded' })),
+    }),
+  );
+});
+const definitionsUnavailable = CustomerGroupDefinitionSourceUnavailableProblemSchema.make({
+  detail: 'Group definitions unavailable',
+  retryable: true,
+  status: 503,
+  title: 'Unavailable',
+  type: 'about:blank',
+});
+// A synchronous admission stores no effect outcome: its exact retry asks Commerce for the receipt of each effect.
+describe('exact synchronous Group retry', () => {
+  it.effect('is answered from the Commerce receipt while a current definition read would be unavailable', () =>
+    Effect.gen(function* receiptWithoutCurrentRead() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.groupDefinition.fail(CustomerGroupDefinitionSourceUnavailableProblemSchema, definitionsUnavailable);
+      peer.groupDefinition.succeedOnce(groupReplayReceipt);
+      const result = yield* replayGroupAdmission;
+      expect(result.items[0].effects).toEqual([
+        { effectId: groupReplayEffectId, owner: 'commerce.customer-context', status: 'accepted_change' },
+      ]);
+      expect(peer.groupDefinition.bodies.map(({ mode }) => mode)).toEqual(['RECEIPT']);
+    }).pipe(overSymmyPeers),
+  );
+  it.effect('answers indeterminate, never a wrong result, while the Commerce receipt read is unavailable', () =>
+    Effect.gen(function* receiptUnavailable() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.groupDefinition.fail(CustomerGroupDefinitionSourceUnavailableProblemSchema, definitionsUnavailable);
+      const result = yield* replayGroupAdmission;
+      expect(result.items[0].effects).toEqual([
+        { effectId: groupReplayEffectId, owner: 'commerce.customer-context', status: 'indeterminate' },
+      ]);
+      expect(peer.groupDefinition.bodies.map(({ mode }) => mode)).toEqual(['RECEIPT']);
+    }).pipe(overSymmyPeers),
+  );
+});
 
 it.effect('never settles a successful native ACK without the actual succeeded Core identity', () =>
   Effect.gen(function* absentNativeFact() {
