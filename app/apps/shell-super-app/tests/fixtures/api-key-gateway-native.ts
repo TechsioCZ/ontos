@@ -54,7 +54,11 @@ import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-r
 import { allocateLoopbackPort, startCompiledSymmyShell } from '../support/server-owner-relay-native-fixture.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
-import { SwitchLegalEntityPayloadSchema } from '../../shared/browser-api.ts';
+import {
+  ChangeSystemWorkloadEnrollmentPayloadSchema,
+  SwitchLegalEntityPayloadSchema,
+  SystemWorkloadEnrollmentResponseSchema,
+} from '../../shared/browser-api.ts';
 import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { SymmyRegionsProjectionConfigurationSchema } from '../../api/symmy/regions-projection.ts';
 import { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
@@ -76,6 +80,7 @@ const gatewayDiagnosticsTag = 'gateway-diagnostics';
 const issuerDiagnosticsTag = 'issuer-diagnostics';
 const requestDiagnosticsTag = 'request-diagnostics';
 const releaseDiagnosticsTag = 'release-diagnostics';
+const systemWorkloadEnrollmentTag = 'system-workload-enrollment';
 const marketAppId = 'commerce-market-catalog';
 const customerContextAppId = 'commerce-customer-context';
 export interface ApiKeyGatewayNativeFixtureOptions {
@@ -167,6 +172,19 @@ export const ShellNativeSetupGatewayResponseSchema = Schema.TaggedStruct('setup-
   gateway: GatewayContextResponseSchema,
 });
 export const ShellNativeBoundCommandSchema = Schema.TaggedStruct('bound', {});
+/**
+ * The signed-in Tenant administrator changes a system workload enrollment through the Shell's own HTTP endpoint of
+ * `core.identity.change-system-workload-enrollment`, in the session the child holds for that human.
+ */
+export const ShellNativeSystemWorkloadEnrollmentCommandSchema = Schema.TaggedStruct(systemWorkloadEnrollmentTag, {
+  idempotencyKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+    Schema.brand('IdempotencyKey'),
+  ),
+  payload: ChangeSystemWorkloadEnrollmentPayloadSchema,
+});
+export const ShellNativeSystemWorkloadEnrollmentResponseSchema = Schema.TaggedStruct(systemWorkloadEnrollmentTag, {
+  enrollment: SystemWorkloadEnrollmentResponseSchema,
+});
 /** The relay source module's credential, provisioned by the platform exactly as every environment provisions it. */
 export const ShellNativeRelaySourceProvisionCommandSchema = Schema.TaggedStruct('relay-source-provision', {});
 /** An additional source module's credential, provisioned the same way; the parent names only the configured module. */
@@ -322,6 +340,7 @@ export const ShellNativeChildCommandSchema = Schema.Union([
   ShellNativeSetupKeyIssueCommandSchema,
   ShellNativeSetupKeyBoundCommandSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
+  ShellNativeSystemWorkloadEnrollmentCommandSchema,
   Schema.TaggedStruct('enabled', { enabled: Schema.Boolean }),
 ]);
 export const ShellNativeIssuedResponseSchema = Schema.TaggedStruct('issued', {
@@ -366,6 +385,7 @@ export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeReleaseDiagnosticsResponseSchema,
   ShellNativeSetupKeyIssuedResponseSchema,
   ShellNativeSetupGatewayResponseSchema,
+  ShellNativeSystemWorkloadEnrollmentResponseSchema,
   Schema.TaggedStruct('ack', {}),
   ShellNativeUnavailableResponseSchema,
 ]);
@@ -930,6 +950,17 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     });
     return Object.freeze({
       baseUrl: ready.baseUrl,
+      changeFixtureSystemWorkloadEnrollment: Effect.fn('ApiKeyGatewayNativeFixture.changeSystemWorkloadEnrollment')(
+        function* changeFixtureSystemWorkloadEnrollment(
+          input: Omit<typeof ShellNativeSystemWorkloadEnrollmentCommandSchema.Encoded, '_tag'>,
+        ) {
+          yield* ensureOpen;
+          const response = yield* exchange({ _tag: systemWorkloadEnrollmentTag, ...input });
+          return Schema.is(ShellNativeSystemWorkloadEnrollmentResponseSchema)(response)
+            ? response.enrollment
+            : yield* unavailable();
+        },
+      ),
       compositionSourceUrl: sourceUrl,
       gatewayDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.gatewayDiagnostics')(function* gatewayDiagnostics() {
         yield* ensureOpen;

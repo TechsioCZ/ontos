@@ -98,8 +98,10 @@ export const makeTestOperationOwner = ({
   // contribution, which is not an authored `OntosMcpContributionInput`. These fixtures test Action
   // mechanics, so the serialized contribution is dropped rather than re-authored.
   const { mcp: _serializedMcp, ...baseSurface } = base.manifest.publicSurface;
+  // Its `systemWorkloads` are the published keys, not authored registrations, so they are dropped the same way.
+  const { systemWorkloads: _serializedSystemWorkloads, ...baseManifest } = base.manifest;
   const authored = {
-    ...base.manifest,
+    ...baseManifest,
     publicSurface: {
       ...baseSurface,
       actions,
