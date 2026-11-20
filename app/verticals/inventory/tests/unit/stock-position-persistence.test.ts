@@ -135,13 +135,20 @@ const lockedRows = <Row>(rows: readonly Row[], modes: string[]) => ({
 const lockingSelect = <Row>(rows: readonly Row[], modes: string[]) => ({
   from: () => ({ where: () => ({ limit: () => lockedRows(rows, modes) }) }),
 });
-/** Locks the establishment targets of `position` against Item, then Location, rows answered in that order. */
-const lockTargets = (batches: readonly (readonly { readonly lifecycleState: string }[])[], modes: string[] = []) => {
+/**
+ * Locks the establishment targets of `position` against backend configuration, then Item, then Location, rows
+ * answered in that order.
+ */
+const lockTargets = (batches: readonly (readonly object[])[], modes: string[] = []) => {
   const remaining = [...batches];
   const transaction = { select: () => lockingSelect(remaining.shift() ?? [], modes) };
-  // @ts-expect-error Mock implements only the exercised transaction chains.
-  return stockPositionPersistenceForScope(transaction, scope).lockEstablishmentTargets(position.scope);
+  return stockPositionPersistenceForScope(
+    // @ts-expect-error Mock implements only the exercised transaction chains.
+    transaction,
+    scope,
+  ).lockEstablishmentTargets({ onHand: position.onHand, scope: position.scope });
 };
+const selectedConfigurationRow = { configurationId: backendConfigurationId };
 
 describe('Inventory Stock Position persistence', () => {
   it('exports one tenant-RLS owner table with partial Current-scope uniqueness and exact numeric ON_HAND', () => {
@@ -223,22 +230,34 @@ describe('Inventory Stock Position persistence', () => {
     }),
   );
 
-  it.effect('locks a CURRENT Stock Item, then an ACTIVE Stock Location, and refuses any other lifecycle', () =>
-    Effect.gen(function* lockEstablishmentTargets() {
-      const modes: string[] = [];
-      yield* lockTargets([[{ lifecycleState: 'CURRENT' }], [{ lifecycleState: 'ACTIVE' }]], modes);
-      expect(modes).toEqual(['update', 'update']);
-      expect(yield* lockTargets([[]]).pipe(Effect.flip)).toMatchObject({ reason: 'STOCK_ITEM_NOT_FOUND' });
-      expect(yield* lockTargets([[{ lifecycleState: 'RETIRED' }]]).pipe(Effect.flip)).toMatchObject({
-        reason: 'STOCK_ITEM_NOT_CURRENT',
-      });
-      expect(yield* lockTargets([[{ lifecycleState: 'CURRENT' }], []]).pipe(Effect.flip)).toMatchObject({
-        reason: 'STOCK_LOCATION_NOT_FOUND',
-      });
-      expect(
-        yield* lockTargets([[{ lifecycleState: 'CURRENT' }], [{ lifecycleState: 'MERGED' }]]).pipe(Effect.flip),
-      ).toMatchObject({ reason: 'STOCK_LOCATION_NOT_ACTIVE' });
-    }),
+  it.effect(
+    'key-shares the backend configuration, locks a CURRENT Stock Item, shares an ACTIVE Stock Location, and refuses otherwise',
+    () =>
+      Effect.gen(function* lockEstablishmentTargets() {
+        const modes: string[] = [];
+        yield* lockTargets(
+          [[selectedConfigurationRow], [{ lifecycleState: 'CURRENT' }], [{ lifecycleState: 'ACTIVE' }]],
+          modes,
+        );
+        expect(modes).toEqual(['key share', 'update', 'share']);
+        expect(yield* lockTargets([[]]).pipe(Effect.flip)).toMatchObject({ reason: 'OWNER_CONFIGURATION_MISMATCH' });
+        expect(yield* lockTargets([[selectedConfigurationRow], []]).pipe(Effect.flip)).toMatchObject({
+          reason: 'STOCK_ITEM_NOT_FOUND',
+        });
+        expect(
+          yield* lockTargets([[selectedConfigurationRow], [{ lifecycleState: 'RETIRED' }]]).pipe(Effect.flip),
+        ).toMatchObject({ reason: 'STOCK_ITEM_NOT_CURRENT' });
+        expect(
+          yield* lockTargets([[selectedConfigurationRow], [{ lifecycleState: 'CURRENT' }], []]).pipe(Effect.flip),
+        ).toMatchObject({ reason: 'STOCK_LOCATION_NOT_FOUND' });
+        expect(
+          yield* lockTargets([
+            [selectedConfigurationRow],
+            [{ lifecycleState: 'CURRENT' }],
+            [{ lifecycleState: 'MERGED' }],
+          ]).pipe(Effect.flip),
+        ).toMatchObject({ reason: 'STOCK_LOCATION_NOT_ACTIVE' });
+      }),
   );
 
   it.effect('rejects another Tenant before touching the owner transaction', () =>

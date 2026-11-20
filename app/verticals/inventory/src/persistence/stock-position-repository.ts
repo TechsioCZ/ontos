@@ -7,6 +7,7 @@ import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { StockPositionRejected, StockPositionSchema } from '../../shared/domain/stock-position.ts';
 import { StockPositionPersistenceUnavailable } from '../../shared/domain/stock-position-persistence-unavailable.ts';
 import type {
+  CreateStockPositionInput,
   StockPosition,
   StockPositionOnHandEvidence,
   StockPositionScope,
@@ -31,11 +32,12 @@ export interface StockPositionPersistence {
     scope: StockPositionScope,
   ) => EffectType.Effect<Option.Option<StockPosition>, StockPositionPersistenceError>;
   /**
-   * Locks the Stock Item and Stock Location a new Position will reference until the transaction ends, and
-   * refuses an Item that is not CURRENT or a Location that is not ACTIVE.
+   * Locks the backend configuration, Stock Item and Stock Location a new Position will reference until the
+   * transaction ends, and refuses a configuration of another Customer Configuration, an Item that is not
+   * CURRENT or a Location that is not ACTIVE.
    */
   readonly lockEstablishmentTargets: (
-    scope: StockPositionScope,
+    input: CreateStockPositionInput,
   ) => EffectType.Effect<void, StockPositionPersistenceError>;
   readonly read: (
     ref: StockPositionRef,
@@ -378,12 +380,35 @@ export const stockPositionPersistenceForScope = (
 
   const lockEstablishmentTargets: StockPositionPersistence['lockEstablishmentTargets'] = Effect.fn(
     'StockPositionPersistence.lockEstablishmentTargets',
-  )(function* lockStockPositionEstablishmentTargets({ stockItemRef, stockLocationRef }) {
-    if (stockItemRef.tenantId !== scope.tenantId || stockLocationRef.tenantId !== scope.tenantId) {
+  )(function* lockStockPositionEstablishmentTargets({ onHand: { ownerConfigurationRef }, scope: positionScope }) {
+    const { customerConfigurationId, stockItemRef, stockLocationRef } = positionScope;
+    if (
+      ownerConfigurationRef.tenantId !== scope.tenantId ||
+      stockItemRef.tenantId !== scope.tenantId ||
+      stockLocationRef.tenantId !== scope.tenantId
+    ) {
       return yield* refuseEstablishment('TENANT_SCOPE_MISMATCH');
     }
-    // Item first, then Location: every establishment takes the two locks in this order. A retirement, a
-    // Location transition or a concurrent establishment for the same Item waits for this transaction.
+    // Configuration, then Item, then Location. Reservation establishment locks the backend configuration
+    // before the Item, and the new Position's foreign key needs KEY SHARE on that configuration: taking it
+    // first keeps one order on both paths, so neither holds the Item while waiting for the configuration.
+    const [configuration] = yield* transaction
+      .select({ configurationId: inventoryBackendConfigurations.configurationId })
+      .from(inventoryBackendConfigurations)
+      .where(
+        and(
+          eq(inventoryBackendConfigurations.tenantId, scope.tenantId),
+          eq(inventoryBackendConfigurations.configurationId, ownerConfigurationRef.resourceId),
+          eq(inventoryBackendConfigurations.customerConfigurationId, customerConfigurationId),
+        ),
+      )
+      .limit(1)
+      .for('key share')
+      .pipe(Effect.mapError(unavailable));
+    if (configuration === undefined) {
+      return yield* refuseEstablishment('OWNER_CONFIGURATION_MISMATCH');
+    }
+    // A retirement or a concurrent establishment for the same Item waits for this transaction.
     const [item] = yield* transaction
       .select({ lifecycleState: inventoryStockItems.lifecycleState })
       .from(inventoryStockItems)
@@ -402,6 +427,8 @@ export const stockPositionPersistenceForScope = (
     if (item.lifecycleState !== 'CURRENT') {
       return yield* refuseEstablishment('STOCK_ITEM_NOT_CURRENT');
     }
+    // A Location transition is an UPDATE and waits for this transaction; establishments for other Items at
+    // this Location share the lock and proceed together.
     const [location] = yield* transaction
       .select({ lifecycleState: inventoryStockLocations.lifecycleState })
       .from(inventoryStockLocations)
@@ -412,7 +439,7 @@ export const stockPositionPersistenceForScope = (
         ),
       )
       .limit(1)
-      .for('update')
+      .for('share')
       .pipe(Effect.mapError(unavailable));
     if (location === undefined) {
       return yield* refuseEstablishment('STOCK_LOCATION_NOT_FOUND');

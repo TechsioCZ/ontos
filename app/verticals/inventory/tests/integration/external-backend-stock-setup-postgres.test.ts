@@ -15,8 +15,20 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { eq } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { and, eq, sql } from 'drizzle-orm';
+import {
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
@@ -72,7 +84,11 @@ import { executeImportSourceAssertionWithAuthorization } from '../../src/api/imp
 import { executeInventorySourceImportReceiptWithAuthorization } from '../../src/api/inventory-source-import-receipt-client.ts';
 import { executeRegisterStockItemWithAuthorization } from '../../src/api/register-stock-item-action-client.ts';
 import { executeSelectInventoryBackendWithAuthorization } from '../../src/api/select-inventory-backend-action-client.ts';
-import { inventoryStockPositions } from '../../src/database/schema.ts';
+import {
+  inventoryBackendConfigurations,
+  inventoryStockItems,
+  inventoryStockPositions,
+} from '../../src/database/schema.ts';
 import { importSourceAssertionOwnerAuthorizationOverlayLive } from '../../src/persistence/import-source-assertion-owner-authorization.ts';
 import { makeDrizzleStockItemRepository } from '../../src/persistence/stock-item-repository.ts';
 import { stockLocationPersistenceForScope } from '../../src/persistence/stock-location-repository.ts';
@@ -415,6 +431,82 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
       expect(refused.reason).toBe(reason);
     }
 
+    // Establishment locks the backend configuration before the Item, the order in which establishing a
+    // Reservation locks them (the Obligation's authority trigger, then its Requirement's scope trigger). This
+    // transaction takes those two locks in that order while the Item gets a Position at a second Location:
+    // establishment waits at the configuration without holding the Item, so the Item lock is granted at once.
+    const { stockLocation: secondLocation } = yield* createLocation('ERP second warehouse');
+    const ownerConfigurationRow = and(
+      eq(inventoryBackendConfigurations.tenantId, tenantId),
+      eq(inventoryBackendConfigurations.configurationId, configuration.configurationId),
+    );
+    const configurationLocked = yield* Deferred.make<number>();
+    const lockItem = yield* Deferred.make<null>();
+    const reservationOrder = yield* fixture
+      .prepareOwner((transaction) =>
+        Effect.gen(function* lockLikeReservationEstablishment() {
+          yield* transaction
+            .select({ id: inventoryBackendConfigurations.configurationId })
+            .from(inventoryBackendConfigurations)
+            .where(ownerConfigurationRow)
+            .for('update');
+          // Test infrastructure metadata only: identify this blocker connection without exposing query text.
+          const [backend] = yield* transaction
+            .select({ pid: sql<number>`pg_backend_pid()` })
+            .from(inventoryBackendConfigurations)
+            .where(ownerConfigurationRow);
+          assert(backend !== undefined);
+          yield* Deferred.succeed(configurationLocked, backend.pid);
+          yield* Deferred.await(lockItem);
+          // A wait here is the deadlock this ordering prevents; fail fast instead of waiting for detection.
+          yield* transaction
+            .select({ timeout: sql<string>`set_config('lock_timeout', '500ms', true)` })
+            .from(inventoryBackendConfigurations)
+            .where(ownerConfigurationRow);
+          return yield* transaction
+            .select({ id: inventoryStockItems.stockItemId })
+            .from(inventoryStockItems)
+            .where(
+              and(
+                eq(inventoryStockItems.tenantId, tenantId),
+                eq(inventoryStockItems.stockItemId, stockItem.stockItemRef.resourceId),
+              ),
+            )
+            .for('update');
+        }),
+      )
+      .pipe(Effect.provide(ownerRuntimeLayer), Effect.forkChild);
+    const blockerPid = yield* Deferred.await(configurationLocked);
+    const secondEstablishment = yield* establish({
+      stockItemRef: stockItem.stockItemRef,
+      stockLocationRef: secondLocation.ref,
+    }).pipe(Effect.forkChild);
+    let establishmentWaits = false;
+    for (let attempt = 0; attempt < 80 && !establishmentWaits; attempt += 1) {
+      // Only this disposable database's wait graph is inspected, never SQL text or foreign business rows.
+      const [row] = yield* fixture
+        .prepareOwner((transaction) =>
+          transaction
+            .select({
+              waiting: sql<boolean>`exists(select 1 from pg_stat_activity as activity
+                where activity.datname = current_database()
+                  and ${blockerPid} = any(pg_blocking_pids(activity.pid)))`,
+            })
+            .from(inventoryBackendConfigurations)
+            .where(ownerConfigurationRow),
+        )
+        .pipe(Effect.provide(ownerRuntimeLayer));
+      establishmentWaits = row?.waiting ?? false;
+      if (!establishmentWaits) {
+        yield* Effect.sleep('25 millis');
+      }
+    }
+    expect(establishmentWaits).toBe(true);
+    yield* Deferred.succeed(lockItem, null);
+    expect(yield* Fiber.join(reservationOrder)).toEqual([{ id: stockItem.stockItemRef.resourceId }]);
+    const { stockPosition: secondPosition } = yield* Fiber.join(secondEstablishment);
+    expect(secondPosition.scope.stockLocationRef).toEqual(secondLocation.ref);
+
     // 5. The ERP's own item and location keys correlate to the exact Item and Location.
     const externalKey = (identifierKind: 'ITEM' | 'LOCATION', externalValue: string) => ({
       customerConfigurationId,
@@ -524,6 +616,8 @@ it.live('operator Actions set up one external-backend Stock Position whose sourc
           .where(eq(inventoryStockPositions.tenantId, tenantId)),
       )
       .pipe(Effect.provide(ownerRuntimeLayer));
-    expect(positions).toEqual([{ id: stockPosition.ref.resourceId }]);
+    expect(new Set(positions.map(({ id }) => id))).toEqual(
+      new Set([stockPosition.ref.resourceId, secondPosition.ref.resourceId]),
+    );
   }).pipe(Effect.provide(NodeCrypto.layer), Effect.provide(NodeServices.layer)),
 );
