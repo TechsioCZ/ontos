@@ -76,16 +76,14 @@ export const evidenceOf = (overrides: Partial<OwnerExecutionEvidenceRecord> = {}
   confirmedByHumanRef: 'FICTIONAL-human-1',
   evidenceRef: 'FICTIONAL-owner-action-evidence-1',
   measureRef: 'FICTIONAL-measure-1',
-  ownerCapability: 'communications.core',
   phase: 'COMPLETED',
-  requestedScopeRef: 'FICTIONAL-requested-scope',
   results: [
     { contentRef: intentRef('a'), result: 'REMOVED' },
     { contentRef: intentRef('b'), result: 'REMOVED' },
   ],
+  scope: ownerScope(),
   sourceDecisionRef: 'FICTIONAL-decision-1',
   sourceDecisionRevision: '1',
-  tenantId,
   ...overrides,
 });
 

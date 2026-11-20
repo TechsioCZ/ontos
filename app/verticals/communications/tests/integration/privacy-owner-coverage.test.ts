@@ -11,7 +11,14 @@ import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
 import type { SuppliedPrivacyReferences } from '../../shared/privacy-owner/inventory.ts';
 import { evaluateCommunicationsOwnerMeasure, handoffRecordOf } from '../../shared/privacy-owner/outcome.ts';
 import { evaluateCommunicationsRetention } from '../../shared/privacy-owner/retention-evaluation.ts';
-import { COMMUNICATIONS_TABLES, deliveryAttempts, messageIntents } from '../../src/database/schema.ts';
+import {
+  COMMUNICATIONS_TABLES,
+  communicationDecisions,
+  communicationRequests,
+  deliveryAttempts,
+  messageIntents,
+  providerObservations,
+} from '../../src/database/schema.ts';
 import { privacyOwnerCoverageForScope } from '../../src/services/privacy-owner-coverage.service.ts';
 import type { PrivacyOwnerCoverageOptions } from '../../src/services/privacy-owner-coverage.service.ts';
 import {
@@ -41,13 +48,16 @@ import { step22Double } from '../support/step22-observation-double.ts';
 const setup = (options: Parameters<typeof intakeWorld>[1] = {}) =>
   makeRuntimeDatabase().pipe(Effect.flatMap((database) => intakeWorld(database, options)));
 
-const operationalScope = (tenantId: string): OperationalScope => ({
-  authContextRef: 'job:communications-privacy-coverage-tests:run:1',
-  authMethod: 'system',
-  correlationId: 'communications-privacy-coverage-tests',
-  principalId: '00000000-0000-4000-8000-0000000000b1',
-  tenantId,
-});
+const operationalScope = (tenantId: string, legalEntityId?: string): OperationalScope => {
+  const scope: OperationalScope = {
+    authContextRef: 'job:communications-privacy-coverage-tests:run:1',
+    authMethod: 'system',
+    correlationId: 'communications-privacy-coverage-tests',
+    principalId: '00000000-0000-4000-8000-0000000000b1',
+    tenantId,
+  };
+  return legalEntityId === undefined ? scope : { ...scope, legalEntityId };
+};
 
 const PrivilegeRowsSchema = Schema.Array(
   Schema.Struct({ can_delete: Schema.Boolean, can_truncate: Schema.Boolean, name: Schema.String }),
@@ -98,9 +108,10 @@ const coverageOf = (
   options: PrivacyOwnerCoverageOptions,
   tenantId = world.tenantId,
   right?: NonNullable<PrivacyOwnerCoverageRequest['right']>,
+  legalEntityId?: string,
 ) =>
   world.database.inTenant(world.tenantId, (transaction) =>
-    privacyOwnerCoverageForScope(transaction, operationalScope(world.tenantId), options).coverage(
+    privacyOwnerCoverageForScope(transaction, operationalScope(world.tenantId, legalEntityId), options).coverage(
       requestOf(tenantId, lookups, right),
     ),
   );
@@ -253,6 +264,14 @@ describe('Communications Owner Coverage on native PostgreSQL (AC-08 AC-15)', () 
         });
         expect(coverage.coverageStatus).toBe('PARTIAL');
         expect(coverage.contentStatus).toBe('FOUND');
+        // two intents were decided, but only the requester's own one is a found reference: the other recipient's
+        // intent and everything of it (originals, pins, attempts) is withheld from the reference list as well
+        const foundRefs = coverage.coverageParts.flatMap(({ foundContentRefs }) => foundContentRefs);
+        const { decision } = decided(submitted);
+        const decidedIntents = decision.kind === 'MESSAGE_INTENTS' ? decision.intents : [];
+        expect(decidedIntents).toHaveLength(2);
+        expect(foundRefs.filter((ref) => ref.startsWith('communications.core.intent:'))).toHaveLength(1);
+        expect(foundRefs.filter((ref) => ref.startsWith('communications.core.original-recipient:'))).toHaveLength(1);
         expect(Option.getOrUndefined(contribution)?.completion).toBe('INCOMPLETE');
         // the other recipient's intent is excluded as inseparable third-party content; the request's list is redacted
         expect(Option.getOrUndefined(contribution)?.decisions.some(({ outcome }) => outcome === 'EXCLUDE')).toBe(true);
@@ -293,20 +312,186 @@ describe('Communications Owner Coverage on native PostgreSQL (AC-08 AC-15)', () 
         expect(yield* ingestFor('o-a', 'provider-a')).toBe('RECORDED');
         yield* Effect.sleep('20 millis');
         expect(yield* ingestFor('o-b', 'provider-b')).toBe('RECORDED');
-        const answer = yield* coverageOf(world, [subject('customer-1')], withBackup());
-        const { externalCopies } = yield* Option.match(answer, {
+        const named = yield* coverageOf(world, [subject('customer-1')], {
+          ...withBackup(),
+          currentTransportProviderKey: 'provider-b',
+        });
+        const { externalCopies } = yield* Option.match(named, {
           onNone: () => Effect.die('not found'),
           onSome: Effect.succeed,
         });
         expect(externalCopies.map(({ holderRef, relationship }) => [holderRef, relationship])).toEqual([
-          ['step-22-provider:provider-a', 'KNOWN_HISTORICAL_HOLDER'],
+          ['step-22-provider:provider-a', 'PRIOR_PROVIDER'],
           ['step-22-provider:provider-b', 'CURRENT_TRANSPORT'],
+        ]);
+        // nobody told the owner which provider is current: the latest observation is not taken for it
+        const unnamed = yield* coverageOf(world, [subject('customer-1')], withBackup());
+        const unnamedCopies = yield* Option.match(unnamed, {
+          onNone: () => Effect.die('not found'),
+          onSome: ({ externalCopies: copies }) => Effect.succeed(copies),
+        });
+        expect(unnamedCopies.map(({ relationship }) => relationship)).toEqual([
+          'HISTORICAL_TRANSPORT',
+          'HISTORICAL_TRANSPORT',
         ]);
         expect(
           externalCopies.every(
             ({ providerSideDispositionEvidence }) => providerSideDispositionEvidence === 'NOT_HELD_BY_COMMUNICATIONS',
           ),
         ).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'lists a provider that was handed a message from the handoff attempt itself, with no provider observation at all',
+    () =>
+      Effect.gen(function* handedOver() {
+        const world = yield* setup();
+        const { intentId } = yield* decideOne(world);
+        // the provider accepted the submission and never reported back: no row of provider_observations exists
+        yield* step(world, handoffDouble(), intentId);
+        const observations = yield* world.read((tx) => tx.select().from(providerObservations));
+        expect(observations).toHaveLength(0);
+        const answer = yield* coverageOf(world, [subject('customer-1')], {
+          ...withBackup(),
+          currentTransportProviderKey: 'another-provider',
+        });
+        const { externalCopies } = yield* Option.match(answer, {
+          onNone: () => Effect.die('not found'),
+          onSome: Effect.succeed,
+        });
+        // this provider holds a copy although nobody observed it, and it is not the current one the deployment names
+        expect(externalCopies.map(({ holderRef, relationship }) => [holderRef, relationship])).toEqual([
+          ['step-22-provider:fixture-provider', 'PRIOR_PROVIDER'],
+        ]);
+        // a rejected or unavailable provider never accepted anything, so it is not a holder
+        const refused = yield* setup();
+        const second = yield* decideOne(refused);
+        yield* step(
+          refused,
+          handoffDouble(() => Effect.succeed({ kind: 'REJECTED', reason: 'provider_rejected' } as const)),
+          second.intentId,
+        );
+        const refusedAnswer = yield* coverageOf(refused, [subject('customer-1')], withBackup());
+        expect(
+          yield* Option.match(refusedAnswer, {
+            onNone: () => Effect.die('not found'),
+            onSome: ({ externalCopies: copies }) => Effect.succeed(copies),
+          }),
+        ).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'never shows another Legal Entity of the same Tenant: a requester in entity A sees no record created under B',
+    () =>
+      Effect.gen(function* legalEntities() {
+        const world = yield* setup();
+        const entityA = '00000000-0000-4000-8000-0000000000e1';
+        const entityB = '00000000-0000-4000-8000-0000000000e2';
+        // today's intake runs without a Legal Entity, so the Tenant-level request is real and the entity ones are stored
+        // copies of it (request, decision and intent) under another scope key: exactly what an entity-scoped producer writes
+        const tenantLevel = yield* decideOne(world);
+        const copyUnder = (legalEntityId: string) =>
+          world.database.inTenant(world.tenantId, (transaction) =>
+            Effect.gen(function* copy() {
+              const [request] = yield* transaction.select().from(communicationRequests);
+              const [decision] = yield* transaction.select().from(communicationDecisions);
+              const [intent] = yield* transaction.select().from(messageIntents);
+              if (request === undefined || decision === undefined || intent === undefined) {
+                return yield* Effect.die('the world holds no request to copy');
+              }
+              const requestId = crypto.randomUUID();
+              const intentId = crypto.randomUUID();
+              const decisionId = crypto.randomUUID();
+              yield* transaction.insert(communicationRequests).values({
+                ...request,
+                identityKey: `${request.identityKey}-${legalEntityId}`,
+                requestId,
+                scopeKey: `${world.tenantId}|${legalEntityId}|||`,
+              });
+              yield* transaction.insert(communicationDecisions).values({ ...decision, decisionId, requestId });
+              yield* transaction.insert(messageIntents).values({
+                ...intent,
+                decisionId,
+                intentId,
+                intentKey: `${intent.intentKey}-${legalEntityId}`,
+                requestId,
+              });
+              return { intentId, requestId };
+            }),
+          );
+        const inA = yield* copyUnder(entityA);
+        const inB = yield* copyUnder(entityB);
+        const refsIn = (legalEntityId?: string) =>
+          coverageOf(world, [subject('customer-1')], withBackup(), world.tenantId, undefined, legalEntityId).pipe(
+            Effect.map(found),
+          );
+        const asA = yield* refsIn(entityA);
+        expect(asA).toContain(`communications.core.request:${inA.requestId}`);
+        expect(asA).toContain(`communications.core.intent:${inA.intentId}`);
+        expect(asA).not.toContain(`communications.core.request:${inB.requestId}`);
+        expect(asA).not.toContain(`communications.core.intent:${inB.intentId}`);
+        // the Tenant-level record belongs to no entity: it stays visible, so an entity never gets a false NO_DATA
+        expect(asA).toContain(`communications.core.request:${tenantLevel.requestId}`);
+        const asB = yield* refsIn(entityB);
+        expect(asB).toContain(`communications.core.request:${inB.requestId}`);
+        expect(asB).not.toContain(`communications.core.request:${inA.requestId}`);
+        expect(asB).not.toContain(`communications.core.intent:${inA.intentId}`);
+        // a Tenant-wide read still sees every record of the Tenant
+        const tenantWide = yield* refsIn();
+        for (const requestId of [tenantLevel.requestId, inA.requestId, inB.requestId]) {
+          expect(tenantWide).toContain(`communications.core.request:${requestId}`);
+        }
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live('cites the evaluated backup evidence in the NO_DATA answer and never looks fresher than that evidence', () =>
+    Effect.gen(function* backupEvidence() {
+      const world = yield* setup();
+      const answer = yield* coverageOf(world, [subject('customer-404')], withBackup());
+      const { coverage } = yield* Option.match(answer, {
+        onNone: () => Effect.die('not found'),
+        onSome: Effect.succeed,
+      });
+      expect(coverage.contentStatus).toBe('NO_DATA');
+      const part = coverage.coverageParts.find(({ scopeRef }) => scopeRef.includes('provider-copy'));
+      expect(part?.evidenceRefs).toContain('FICTIONAL-backup-evaluation-1');
+      expect(part?.evidenceRefs.some((ref) => ref.endsWith('backup-observed-at/2026-11-19T10:00:00.000Z'))).toBe(true);
+      expect(part?.observedAt).toBe('2026-11-19T10:00:00.000Z');
+      expect(coverage.evidenceRefs).toContain('FICTIONAL-backup-evaluation-1');
+      // the owner's own observation time still holds for every other part
+      expect(
+        coverage.coverageParts.filter(({ observedAt }) => observedAt !== '2026-11-19T10:00:00.000Z'),
+      ).not.toHaveLength(0);
+    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    'finds records only by the EXACT references Privacy supplied: a lookup that names another resource finds nothing, so NO_DATA is only as complete as the trusted lookups',
+    () =>
+      Effect.gen(function* lookupBoundary() {
+        const world = yield* setup();
+        yield* decideOne(world);
+        // the stored records name fixture.party / fixture.recipient / customer-1; a differing module, type or id is another resource
+        const otherLookups = [
+          { ...subject('customer-1'), moduleId: 'fixture.other-party' },
+          { ...subject('customer-1'), resourceType: 'fixture.other-type' },
+          subject('customer-10'),
+        ] as const;
+        for (const lookup of otherLookups) {
+          const answer = yield* coverageOf(world, [lookup], withBackup());
+          const { coverage } = yield* Option.match(answer, {
+            onNone: () => Effect.die('not found'),
+            onSome: Effect.succeed,
+          });
+          expect(found(answer)).toEqual([]);
+          // complete and empty FOR THIS LOOKUP: the answer says nothing about the same person under another reference,
+          // which is why the response lists the lookup references it was built from
+          expect([coverage.coverageStatus, coverage.contentStatus]).toEqual(['COMPLETE', 'NO_DATA']);
+          expect(coverage.scope.trustedLookupRefs).toEqual([lookup.lookupRef]);
+        }
+        expect(found(yield* coverageOf(world, [subject('customer-1')], withBackup()))).not.toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

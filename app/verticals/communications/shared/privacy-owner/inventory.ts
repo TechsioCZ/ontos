@@ -144,12 +144,39 @@ const categoriesById = {
     personalDataKinds: ['SUBJECT_REFERENCE', 'TIMING_FACT'],
     recordContentScope: 'communications.attempts-provider-observations-suppression',
     storage: [
-      ownerStore('delivery_attempts', 'attempt_id', 'intent_id', 'state', 'evidence', 'prepared_at'),
+      ownerStore('delivery_attempts', 'attempt_id', 'intent_id', 'state', 'evidence', 'prepared_at', 'finished_at'),
       ownerStore('intent_handoff_stops', 'intent_id', 'reasons', 'recorded_at'),
-      ownerStore('provider_observations', 'observation_id', 'intent_id', 'kind', 'evidence', 'recorded_at'),
-      ownerStore('provider_observation_conflicts', 'conflict_id', 'content_fingerprint'),
-      ownerStore('attempt_retry_links', 'attempt_id', 'previous_attempt_id', 'basis_kind'),
-      ownerStore('intent_resend_links', 'original_intent_id', 'resend_intent_id', 'reason_code'),
+      ownerStore(
+        'provider_observations',
+        'observation_id',
+        'intent_id',
+        'attempt_id',
+        'kind',
+        'evidence',
+        'recorded_at',
+        'observed_at',
+      ),
+      ownerStore(
+        'provider_observation_conflicts',
+        'conflict_id',
+        'content_fingerprint',
+        'intent_id',
+        'attempt_id',
+        'observation_id',
+        'kind',
+        'recorded_at',
+      ),
+      ownerStore(
+        'attempt_retry_links',
+        'attempt_id',
+        'previous_attempt_id',
+        'basis_kind',
+        'basis_observation_id',
+        'intent_id',
+        'reason_code',
+        'linked_at',
+      ),
+      ownerStore('intent_resend_links', 'original_intent_id', 'resend_intent_id', 'reason_code', 'linked_at'),
     ],
   },
   ORIGINAL_RECIPIENT_ENDPOINT: {
@@ -170,7 +197,10 @@ const categoriesById = {
     personalDataKinds: ['PROVIDER_CORRELATION', 'TIMING_FACT'],
     recordContentScope: 'communications.provider-copy-working-copy-protection',
     // only the correlation of a copy a provider holds; the copy itself is the provider's, and backups are the platform's
-    storage: [ownerStore('provider_observations', 'provider_key', 'provider_ref', 'observation_key')],
+    storage: [
+      ownerStore('provider_observations', 'provider_key', 'provider_ref', 'observation_key'),
+      ownerStore('provider_observation_conflicts', 'provider_key', 'observation_key', 'observed_at'),
+    ],
   },
   REQUEST_DECISION_INTENT: {
     businessStart: { column: 'received_at', event: 'COMMUNICATION_REQUEST_RECEIVED', table: 'communication_requests' },
@@ -188,9 +218,23 @@ const categoriesById = {
         'purpose',
         'payload',
         'received_at',
+        // the source's occurrence identity, the trusted scope (Legal Entity, profile, Counterparty, Storefront references)
+        // and the hash of the material meaning (which covers the recipients) all identify the subject's event indirectly
+        'occurrence_id',
+        'scope_key',
+        'fingerprint',
       ),
       ownerStore('communication_request_conflicts', 'conflict_id', 'request_id', 'fingerprint', 'detected_at'),
-      ownerStore('communication_decisions', 'decision_id', 'request_id', 'outcome', 'type_id', 'decided_at'),
+      ownerStore(
+        'communication_decisions',
+        'decision_id',
+        'request_id',
+        'outcome',
+        'type_id',
+        'decided_at',
+        // slots that could not be resolved name the recipient roles that stayed open
+        'unresolved_slots',
+      ),
       ownerStore(
         'message_intents',
         'intent_id',
@@ -201,6 +245,12 @@ const categoriesById = {
         'recipient_role',
         'status',
         'purpose',
+        'created_at',
+        // the catalog candidate identity and slot are keyed per recipient; the Privacy scope pinned for the message names
+        // the subject locator it was decided under
+        'intent_key',
+        'slot_key',
+        'processing_scope',
       ),
     ],
   },
@@ -235,10 +285,26 @@ const categoriesById = {
         'policy_ref',
       ),
       ownerStore('template_types', 'template_type_id', 'created_by_principal_id', 'created_at'),
-      ownerStore('template_revisions', 'revision_id', 'created_by_principal_id', 'created_at'),
-      ownerStore('template_activations', 'activation_id', 'activated_by_principal_id', 'ended_by_principal_id'),
-      ownerStore('template_revision_invalidations', 'invalidation_id', 'invalidated_by_principal_id'),
-      ownerStore('tenant_language_mode_versions', 'policy_version_id', 'set_by_principal_id'),
+      // `reason` columns are free text written by a staff actor: they may name a person, so they are staff-attributed data
+      ownerStore('template_revisions', 'revision_id', 'created_by_principal_id', 'created_at', 'reason'),
+      ownerStore(
+        'template_activations',
+        'activation_id',
+        'activated_by_principal_id',
+        'ended_by_principal_id',
+        'activated_at',
+        'ended_at',
+        'activation_reason',
+        'end_reason',
+      ),
+      ownerStore(
+        'template_revision_invalidations',
+        'invalidation_id',
+        'invalidated_by_principal_id',
+        'invalidated_at',
+        'reason',
+      ),
+      ownerStore('tenant_language_mode_versions', 'policy_version_id', 'set_by_principal_id', 'set_at'),
     ],
   },
 } as const satisfies Record<InventoryCategoryId, Omit<InventoryCategory, 'id'>>;
@@ -445,3 +511,90 @@ export const authTypeEvidence: readonly AuthTypeEvidence[] = Object.freeze(
     secretOwner: 'PORTAL_AUTH_OWNER',
   })),
 );
+
+/**
+ * Why a column that no category lists holds no personal data. Every column of every owner table is either stored by a
+ * category above or named here with one of these reasons, so a column added later (or one that was never classified) cannot
+ * pass unnoticed. A column that may carry a subject reference, a staff actor, free text a person wrote or a time of their
+ * event is NOT technical: it belongs to a category.
+ */
+export const TECHNICAL_COLUMN_REASONS = {
+  ACTION_INVOCATION_CORRELATION:
+    'Opaque id of the Action invocation that wrote the row: correlation only, no subject or actor.',
+  APPROVED_TEMPLATE_TEXT:
+    'Approved template text with placeholders (1A): never personalized content, written once per revision.',
+  CLOSED_VOCABULARY_CODE:
+    'A value of a closed owner vocabulary (a code, a mode, a state flag): no free text, no subject.',
+  OPAQUE_ROW_LINK:
+    'Opaque identity or foreign-key link between owner rows (the linked row carries the data and is classified).',
+  ORDERING_OR_COUNTER: 'A counter or ordering number of the owner: no subject or actor.',
+  ORGANIZATION_SCOPE_REFERENCE:
+    'Reference to the organizational scope (Legal Entity or scope key) of a template: not a Data Subject.',
+  TEMPLATE_TYPE_IDENTITY:
+    'Identity of a Template Type (message type, channel, language): configuration, not personal data.',
+  TENANT_PARTITION_KEY: 'The Tenant partition key of every owner row.',
+} as const;
+export type TechnicalColumnReason = keyof typeof TECHNICAL_COLUMN_REASONS;
+
+const TENANT = { tenant_id: 'TENANT_PARTITION_KEY' } as const;
+const INVOCATION = { action_invocation_id: 'ACTION_INVOCATION_CORRELATION' } as const;
+
+export const TECHNICAL_COLUMNS: Readonly<Record<string, Readonly<Record<string, TechnicalColumnReason>>>> =
+  Object.freeze({
+    attempt_retry_links: { ...TENANT },
+    communication_decisions: {
+      ...TENANT,
+      language_policy: 'CLOSED_VOCABULARY_CODE',
+      no_message_reason: 'CLOSED_VOCABULARY_CODE',
+      requiredness: 'CLOSED_VOCABULARY_CODE',
+      rule_key: 'CLOSED_VOCABULARY_CODE',
+      type_revision: 'ORDERING_OR_COUNTER',
+    },
+    communication_request_conflicts: { ...TENANT, ...INVOCATION },
+    communication_requests: { ...TENANT, ...INVOCATION, occurrence_revision: 'ORDERING_OR_COUNTER' },
+    delivery_attempts: { ...TENANT, attempt_number: 'ORDERING_OR_COUNTER' },
+    intent_handoff_stops: { ...TENANT, evaluation_seq: 'ORDERING_OR_COUNTER', proven: 'CLOSED_VOCABULARY_CODE' },
+    intent_resend_links: { ...TENANT },
+    message_intents: { ...TENANT, decision_id: 'OPAQUE_ROW_LINK', reason: 'CLOSED_VOCABULARY_CODE' },
+    provider_observation_conflicts: { ...TENANT, recorded_seq: 'ORDERING_OR_COUNTER' },
+    provider_observations: { ...TENANT, recorded_seq: 'ORDERING_OR_COUNTER' },
+    template_activations: {
+      ...TENANT,
+      activation_invocation_id: 'ACTION_INVOCATION_CORRELATION',
+      end_invocation_id: 'ACTION_INVOCATION_CORRELATION',
+      ended_kind: 'CLOSED_VOCABULARY_CODE',
+      legal_entity_id: 'ORGANIZATION_SCOPE_REFERENCE',
+      revision_id: 'OPAQUE_ROW_LINK',
+      scope_key: 'ORGANIZATION_SCOPE_REFERENCE',
+      template_type_id: 'OPAQUE_ROW_LINK',
+    },
+    template_revision_invalidations: { ...TENANT, ...INVOCATION, revision_id: 'OPAQUE_ROW_LINK' },
+    template_revisions: {
+      ...TENANT,
+      ...INVOCATION,
+      body: 'APPROVED_TEMPLATE_TEXT',
+      content_digest: 'APPROVED_TEMPLATE_TEXT',
+      optional_placeholders: 'APPROVED_TEMPLATE_TEXT',
+      placeholders_used: 'APPROVED_TEMPLATE_TEXT',
+      required_placeholders: 'APPROVED_TEMPLATE_TEXT',
+      revision_number: 'ORDERING_OR_COUNTER',
+      subject: 'APPROVED_TEMPLATE_TEXT',
+      template_type_id: 'OPAQUE_ROW_LINK',
+    },
+    template_types: {
+      ...TENANT,
+      ...INVOCATION,
+      channel: 'TEMPLATE_TYPE_IDENTITY',
+      language: 'TEMPLATE_TYPE_IDENTITY',
+      legal_entity_id: 'ORGANIZATION_SCOPE_REFERENCE',
+      message_type: 'TEMPLATE_TYPE_IDENTITY',
+      scope_key: 'ORGANIZATION_SCOPE_REFERENCE',
+      scope_kind: 'ORGANIZATION_SCOPE_REFERENCE',
+    },
+    tenant_language_mode_versions: {
+      ...TENANT,
+      ...INVOCATION,
+      mode: 'CLOSED_VOCABULARY_CODE',
+      version_number: 'ORDERING_OR_COUNTER',
+    },
+  });

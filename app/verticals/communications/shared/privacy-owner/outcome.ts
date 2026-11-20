@@ -1,8 +1,10 @@
 import { DateTime, Match, Schema } from 'effect';
+import { PrivacyOwnerScopeSchema } from '@app/shared-contracts';
 import type {
   PrivacyMeasureEncoded,
   PrivacyOwnerCoverageResultEncoded,
   PrivacyOwnerExecutionOutcomeEncoded,
+  PrivacyOwnerScopeEncoded,
 } from '@app/shared-contracts';
 
 import { COMMUNICATIONS_OWNER_CAPABILITY, INPUT_OWNER } from './inventory.ts';
@@ -21,6 +23,9 @@ import type { GateOwner } from './inventory.ts';
 /** The result an authorized human's owner Action reported for ONE target content reference. */
 export const EvidencedTargetResultSchema = Schema.Literals([
   'ANONYMIZED',
+  /** The Action failed and the owner PROVED that it changed nothing: a definite, retryable technical failure. */
+  'FAILED_BEFORE_ANY_MUTATION',
+  /** The Action failed and the owner cannot prove it changed nothing: reconciliation first, never a retry. */
   'FAILED_AFTER_POSSIBLE_MUTATION',
   'NOT_EXECUTED',
   'RECTIFIED',
@@ -29,19 +34,29 @@ export const EvidencedTargetResultSchema = Schema.Literals([
 ]);
 export type EvidencedTargetResult = typeof EvidencedTargetResultSchema.Type;
 
+/**
+ * - `RECEIVED`: the owner took the handed-over measure over and NOTHING has started (it carries no target result).
+ * - `IN_PROGRESS`: a human-confirmed owner Action is running. It never counts a target as achieved.
+ * - `COMPLETED`: the Action ended; only its results can reach ACHIEVED or PARTIAL.
+ */
+export const OwnerExecutionPhaseSchema = Schema.Literals(['COMPLETED', 'IN_PROGRESS', 'RECEIVED']);
+export type OwnerExecutionPhase = typeof OwnerExecutionPhaseSchema.Type;
+
 export interface OwnerExecutionEvidenceRecord {
   readonly confirmedAt: DateTime.Utc;
   /** The authorized human who separately confirmed THIS exact owner Action. Their identity is a reference only. */
   readonly confirmedByHumanRef: string;
   readonly evidenceRef: string;
   readonly measureRef: string;
-  readonly ownerCapability: string;
-  readonly phase: 'COMPLETED' | 'IN_PROGRESS';
-  readonly requestedScopeRef: string;
+  readonly phase: OwnerExecutionPhase;
   readonly results: readonly { readonly contentRef: string; readonly result: EvidencedTargetResult }[];
+  /**
+   * The EXACT owner scope the Action ran for: owner, tenant, controller, subject, requested scope, scope parts and trusted
+   * lookups. Evidence for another subject, controller or lookup is never evidence for this measure.
+   */
+  readonly scope: PrivacyOwnerScopeEncoded;
   readonly sourceDecisionRef: string;
   readonly sourceDecisionRevision: string;
-  readonly tenantId: string;
 }
 
 export interface OwnerMeasureBlocker {
@@ -103,15 +118,22 @@ export const isSameMeasureIdentity = (left: PrivacyMeasureEncoded, right: Privac
   sameSet(left.preconditionRefs, right.preconditionRefs) &&
   sameSet(left.targetContentRefs, right.targetContentRefs);
 
-/** Evidence counts only when it names exactly this owner, tenant, scope, measure and source decision revision. */
+/** The repository's opaque Privacy reference (non-blank, trimmed, bounded): the same schema the measure's references use. */
+const isOpaquePrivacyReference = Schema.is(PrivacyOwnerScopeSchema.fields.controllerRef);
+
+/**
+ * Evidence counts only when a human confirmed it (a well-formed, non-blank reference) and it names exactly this owner,
+ * tenant, controller, subject, requested scope and lookups, measure and source decision revision.
+ */
 export const evidenceBelongsToMeasure = (
   record: OwnerExecutionEvidenceRecord,
   measure: PrivacyMeasureEncoded,
 ): boolean =>
-  record.ownerCapability === COMMUNICATIONS_OWNER_CAPABILITY &&
+  isOpaquePrivacyReference(record.confirmedByHumanRef) &&
+  isOpaquePrivacyReference(record.evidenceRef) &&
+  record.scope.ownerCapability === COMMUNICATIONS_OWNER_CAPABILITY &&
   measure.scope.ownerCapability === COMMUNICATIONS_OWNER_CAPABILITY &&
-  record.tenantId === measure.scope.tenantId &&
-  record.requestedScopeRef === measure.scope.requestedScopeRef &&
+  isSameOwnerScope(record.scope, measure.scope) &&
   record.measureRef === measure.measureRef &&
   record.sourceDecisionRef === measure.sourceDecisionRef &&
   record.sourceDecisionRevision === measure.sourceDecisionRevision;
@@ -152,81 +174,119 @@ const outcomeOf = (
 
 const untouched = (measure: PrivacyMeasureEncoded) => ({ affected: [], remaining: [...measure.targetContentRefs] });
 
-/** Partitions the exact targets by what matching, human-confirmed evidence reports for each of them. */
-const partitionByEvidence = (measure: PrivacyMeasureEncoded, evidence: readonly OwnerExecutionEvidenceRecord[]) => {
-  const accepted = new Set<EvidencedTargetResult>(achievedFor[measure.intendedOutcome]);
+const byConfirmation = (left: OwnerExecutionEvidenceRecord, right: OwnerExecutionEvidenceRecord): number =>
+  DateTime.toEpochMillis(left.confirmedAt) - DateTime.toEpochMillis(right.confirmedAt);
+
+/** The latest result reported per exact target by the given (already scope-bound, human-confirmed) records. */
+const latestResults = (
+  records: readonly OwnerExecutionEvidenceRecord[],
+): ReadonlyMap<string, EvidencedTargetResult> => {
   const latest = new Map<string, EvidencedTargetResult>();
-  for (const record of evidence.toSorted(
-    (left, right) => DateTime.toEpochMillis(left.confirmedAt) - DateTime.toEpochMillis(right.confirmedAt),
-  )) {
+  for (const record of records.toSorted(byConfirmation)) {
     for (const { contentRef, result } of record.results) {
       latest.set(contentRef, result);
     }
   }
+  return latest;
+};
+
+/**
+ * Partitions the exact targets by what matching, human-confirmed evidence reports for each of them. ONLY the results of a
+ * COMPLETED Action can make a target achieved: a result inside an IN_PROGRESS or RECEIVED record never counts, even when it
+ * sits next to a COMPLETED one. A failure that may have mutated is read from every record, whatever its phase: a possible
+ * mutation is never ignored.
+ */
+const partitionByEvidence = (measure: PrivacyMeasureEncoded, evidence: readonly OwnerExecutionEvidenceRecord[]) => {
+  const accepted = new Set<EvidencedTargetResult>(achievedFor[measure.intendedOutcome]);
+  const completed = latestResults(evidence.filter(({ phase }) => phase === 'COMPLETED'));
+  const everything = latestResults(evidence);
   const affected = measure.targetContentRefs.filter((ref) => {
-    const result = latest.get(ref);
+    const result = completed.get(ref);
     return result !== undefined && accepted.has(result);
   });
-  const uncertain = measure.targetContentRefs.filter((ref) => latest.get(ref) === 'FAILED_AFTER_POSSIBLE_MUTATION');
   const affectedSet = new Set(affected);
   return {
     affected,
+    failedWithoutMutation: measure.targetContentRefs.filter(
+      (ref) => completed.get(ref) === 'FAILED_BEFORE_ANY_MUTATION',
+    ),
     remaining: measure.targetContentRefs.filter((ref) => !affectedSet.has(ref)),
-    uncertain,
+    uncertain: measure.targetContentRefs.filter((ref) => everything.get(ref) === 'FAILED_AFTER_POSSIBLE_MUTATION'),
   };
 };
+
+const currentlyFoundRefs = (coverage: PrivacyOwnerCoverageResultEncoded): ReadonlySet<string> =>
+  new Set(coverage.coverageParts.flatMap(({ foundContentRefs }) => foundContentRefs));
 
 const evaluateWithEvidence = (
   input: OwnerMeasureEvaluationInput,
   matching: readonly OwnerExecutionEvidenceRecord[],
 ): PrivacyOwnerExecutionOutcomeEncoded => {
-  const { affected, remaining, uncertain } = partitionByEvidence(input.measure, matching);
+  const { measure } = input;
+  const partition = partitionByEvidence(measure, matching);
   const evidenceRefs = [...new Set([...input.evidenceRefs, ...matching.map(({ evidenceRef }) => evidenceRef)])];
-  if (uncertain.length > 0) {
+  const conclude = (
+    status: OutcomeStatus,
+    reason: string,
+    affected = partition.affected,
+    remaining = partition.remaining,
+  ) => outcomeOf(input, status, reason, { affected, remaining }, evidenceRefs);
+  if (partition.uncertain.length > 0) {
     // A failure after a possible mutation is never retried or settled by a guess: the owner reconciles first.
-    return outcomeOf(
-      input,
-      'INDETERMINATE',
-      'OWNER_ACTION_FAILED_AFTER_POSSIBLE_MUTATION',
-      { affected, remaining },
-      evidenceRefs,
-    );
+    return conclude('INDETERMINATE', 'OWNER_ACTION_FAILED_AFTER_POSSIBLE_MUTATION');
   }
-  if (matching.every(({ phase }) => phase === 'IN_PROGRESS')) {
-    return outcomeOf(
-      input,
-      'IN_PROGRESS',
-      'OWNER_ACTION_IN_PROGRESS_CONFIRMED_BY_HUMAN',
-      { affected, remaining },
-      evidenceRefs,
-    );
+  const [latest] = matching.toSorted((left, right) => byConfirmation(right, left));
+  // The Action's own latest word wins while it has not ended: a started Action is IN_PROGRESS, a taken-over one RECEIVED.
+  if (latest?.phase === 'IN_PROGRESS' && partition.remaining.length > 0) {
+    return conclude('IN_PROGRESS', 'OWNER_ACTION_IN_PROGRESS_CONFIRMED_BY_HUMAN');
+  }
+  if (latest?.phase === 'RECEIVED' && partition.affected.length === 0) {
+    return conclude('RECEIVED', 'MEASURE_RECEIVED_BY_OWNER_NOTHING_STARTED');
+  }
+  let { affected, remaining } = partition;
+  if (isDestructive(measure.intendedOutcome)) {
+    // A destructive result is cross-checked against what the owner CURRENTLY holds: a claimed removal that the exact-reference
+    // lookup still FINDS is a contradiction that only reconciliation settles, never ACHIEVED.
+    const found = currentlyFoundRefs(input.coverage);
+    if (measure.intendedOutcome === 'DELETE' && affected.some((ref) => found.has(ref))) {
+      return conclude('INDETERMINATE', 'CLAIMED_REMOVAL_CONTRADICTED_BY_CURRENT_COVERAGE');
+    }
+    const held = new Set(input.blockers.flatMap(({ contentRefs }) => contentRefs));
+    if (affected.some((ref) => held.has(ref))) {
+      // A current Legal Hold or retention obligation on a target never lets that target count as achieved.
+      const unresolved = new Set(remaining);
+      remaining = measure.targetContentRefs.filter((ref) => held.has(ref) || unresolved.has(ref));
+      affected = affected.filter((ref) => !held.has(ref));
+      return affected.length === 0
+        ? conclude('BLOCKED', 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_EVIDENCED_TARGET', affected, remaining)
+        : conclude(
+            'PARTIAL',
+            'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_PART_OF_THE_EVIDENCED_TARGETS',
+            affected,
+            remaining,
+          );
+    }
   }
   if (remaining.length === 0) {
-    return outcomeOf(
-      input,
-      'ACHIEVED',
-      'EVERY_TARGET_EVIDENCED_BY_CONFIRMED_OWNER_ACTION',
-      { affected, remaining },
-      evidenceRefs,
-    );
+    return conclude('ACHIEVED', 'EVERY_TARGET_EVIDENCED_BY_CONFIRMED_OWNER_ACTION');
   }
   if (affected.length > 0) {
-    return outcomeOf(
-      input,
-      'PARTIAL',
-      'ONLY_PART_OF_THE_EXACT_SCOPE_IS_EVIDENCED',
-      { affected, remaining },
-      evidenceRefs,
-    );
+    return conclude('PARTIAL', 'ONLY_PART_OF_THE_EXACT_SCOPE_IS_EVIDENCED');
   }
-  return outcomeOf(
-    input,
-    'PENDING',
-    'CONFIRMED_OWNER_ACTION_EVIDENCED_NO_TARGET',
-    untouched(input.measure),
-    evidenceRefs,
-  );
+  if (partition.failedWithoutMutation.length > 0) {
+    // Definite failure, nothing changed: the one outcome a later, separately confirmed attempt may follow.
+    return conclude('TECHNICAL_FAILED', 'OWNER_ACTION_FAILED_BEFORE_ANY_MUTATION');
+  }
+  return conclude('PENDING', 'CONFIRMED_OWNER_ACTION_EVIDENCED_NO_TARGET', [], [...measure.targetContentRefs]);
 };
+
+/** NO_DATA is only believed when EVERY part is complete and nothing was found: the aggregate is re-derived, not trusted. */
+const provesNoData = (coverage: PrivacyOwnerCoverageResultEncoded): boolean =>
+  coverage.contentStatus === 'NO_DATA' &&
+  coverage.coverageStatus === 'COMPLETE' &&
+  coverage.coverageParts.every(
+    ({ coverageStatus, foundContentRefs }) => coverageStatus === 'COMPLETE' && foundContentRefs.length === 0,
+  );
 
 /**
  * Evaluates Communications' truthful owner response to one approved Privacy Measure. Without matching, human-confirmed
@@ -257,7 +317,7 @@ export const evaluateCommunicationsOwnerMeasure = (
   if (matching.length > 0) {
     return evaluateWithEvidence(input, matching);
   }
-  if (coverage.contentStatus === 'NO_DATA') {
+  if (provesNoData(coverage)) {
     return outcomeOf(input, 'NOT_APPLICABLE', 'COMPLETE_OWNER_SCOPE_CONFIRMS_NO_DATA', { affected: [], remaining: [] });
   }
   if (coverage.coverageStatus !== 'COMPLETE' && coverage.contentStatus !== 'FOUND') {
@@ -270,7 +330,7 @@ export const evaluateCommunicationsOwnerMeasure = (
   ) {
     return outcomeOf(input, 'BLOCKED', 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT', untouched(measure));
   }
-  const currentContent = new Set(coverage.coverageParts.flatMap(({ foundContentRefs }) => foundContentRefs));
+  const currentContent = currentlyFoundRefs(coverage);
   if (!measure.targetContentRefs.every((contentRef) => currentContent.has(contentRef))) {
     // Absence from partial coverage proves nothing; only complete coverage settles a target that is not there.
     return coverage.coverageStatus === 'COMPLETE'
@@ -366,6 +426,7 @@ export const isOpenObligation = (outcome: PrivacyOwnerExecutionOutcomeEncoded): 
 /* External copy inventory (#603)                                                                   */
 /* ------------------------------------------------------------------------------------------------ */
 
+/** One fact that a provider was handed a message: an accepted handoff attempt or a provider observation of it. */
 export interface ProviderObservationFact {
   readonly observedAtMillis: number;
   readonly providerKey: string;
@@ -377,16 +438,25 @@ export interface ExternalCopyHolder {
   readonly lastObservedAt: DateTime.Utc;
   /** A provider request is never evidence of provider-side disposition: that evidence is step 22's. */
   readonly providerSideDispositionEvidence: 'NOT_HELD_BY_COMMUNICATIONS';
-  /** `CURRENT_TRANSPORT` is the provider of the latest fact; every earlier one stays a known historical holder. */
-  readonly relationship: 'CURRENT_TRANSPORT' | 'KNOWN_HISTORICAL_HOLDER';
+  /**
+   * - `CURRENT_TRANSPORT`: the deployment SAID that this is the provider it uses now;
+   * - `PRIOR_PROVIDER`: it was handed messages and the deployment says a DIFFERENT provider is current now;
+   * - `HISTORICAL_TRANSPORT`: it was handed messages and nobody told Communications which provider is current, so it
+   *   claims neither. The latest fact is never taken for the current transport: it only says who was handed a message last.
+   */
+  readonly relationship: 'CURRENT_TRANSPORT' | 'HISTORICAL_TRANSPORT' | 'PRIOR_PROVIDER';
 }
 
 /**
- * The known external holders of a copy, from the provider facts Communications keeps. Replacing a provider adds a current
- * one and keeps every earlier holder: a provider change never erases a historical obligation (#603) and nothing here asks
- * any provider to delete anything.
+ * The known external holders of a copy, from every provider that was handed a message (accepted handoff attempts AND
+ * provider observations). Replacing a provider keeps every earlier holder: a provider change never erases a historical
+ * obligation (#603) and nothing here asks any provider to delete anything. `currentProviderKey` is a deployment fact
+ * (step 22's configured transport); without it no holder is called current.
  */
-export const externalCopyInventoryOf = (facts: readonly ProviderObservationFact[]): readonly ExternalCopyHolder[] => {
+export const externalCopyInventoryOf = (
+  facts: readonly ProviderObservationFact[],
+  currentProviderKey?: string,
+): readonly ExternalCopyHolder[] => {
   const byProvider = new Map<string, { first: number; last: number }>();
   for (const { observedAtMillis, providerKey } of facts) {
     const known = byProvider.get(providerKey);
@@ -395,7 +465,12 @@ export const externalCopyInventoryOf = (facts: readonly ProviderObservationFact[
       last: Math.max(known?.last ?? observedAtMillis, observedAtMillis),
     });
   }
-  const latest = Math.max(...[...byProvider.values()].map(({ last }) => last), Number.NEGATIVE_INFINITY);
+  const relationshipOf = (providerKey: string): ExternalCopyHolder['relationship'] => {
+    if (currentProviderKey === undefined) {
+      return 'HISTORICAL_TRANSPORT';
+    }
+    return providerKey === currentProviderKey ? 'CURRENT_TRANSPORT' : 'PRIOR_PROVIDER';
+  };
   return [...byProvider.entries()]
     .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
     .map(([providerKey, { first, last }]) => ({
@@ -403,7 +478,7 @@ export const externalCopyInventoryOf = (facts: readonly ProviderObservationFact[
       holderRef: `step-22-provider:${providerKey}`,
       lastObservedAt: DateTime.makeUnsafe(last),
       providerSideDispositionEvidence: 'NOT_HELD_BY_COMMUNICATIONS',
-      relationship: last === latest ? 'CURRENT_TRANSPORT' : 'KNOWN_HISTORICAL_HOLDER',
+      relationship: relationshipOf(providerKey),
     }));
 };
 

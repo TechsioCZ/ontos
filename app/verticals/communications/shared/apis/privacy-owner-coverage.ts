@@ -101,14 +101,14 @@ export const PrivacyOwnerCoverageResponseSchema = Schema.Struct({
   coverage: Schema.toEncoded(PrivacyOwnerCoverageResultSchema),
   /** Per category: the Privacy inputs still open. A gap is pending review, never a retention default. */
   configuration: Schema.Array(ConfigurationSchema),
-  /** Known external holders of a copy, including providers replaced later (#603). */
+  /** Every provider that was handed a message, including providers replaced later (#603). Never provider-side disposition. */
   externalCopies: Schema.Array(
     Schema.Struct({
       firstObservedAt: Schema.DateTimeUtcFromString,
       holderRef: Schema.String,
       lastObservedAt: Schema.DateTimeUtcFromString,
       providerSideDispositionEvidence: Schema.Literal('NOT_HELD_BY_COMMUNICATIONS'),
-      relationship: Schema.Literals(['CURRENT_TRANSPORT', 'KNOWN_HISTORICAL_HOLDER']),
+      relationship: Schema.Literals(['CURRENT_TRANSPORT', 'HISTORICAL_TRANSPORT', 'PRIOR_PROVIDER']),
     }),
   ),
   ownerCapability: Schema.Literal(COMMUNICATIONS_OWNER_CAPABILITY),

@@ -105,43 +105,16 @@ const earliest = (starts: readonly BusinessStartObservation[]): DateTime.Utc | u
 const dueFor = (rule: SuppliedRetentionRule, due: readonly PrivacyEvaluatedDue[]): PrivacyEvaluatedDue | undefined =>
   due.find((candidate) => candidate.ruleRef === rule.ruleRef && candidate.ruleVersion === rule.ruleVersion);
 
-/** One category's finding. A rule version applies by the record's own business start, never by the evaluation date. */
-const findingFor = (
+const ruleKey = (rule: SuppliedRetentionRule): string => `${rule.ruleRef}@${String(rule.ruleVersion)}`;
+
+/** The finding of the records that start under ONE rule version: the earliest of them decides whether it is due. */
+const versionFinding = (
   categoryId: InventoryCategoryId,
-  supplied: SuppliedPrivacyReferences,
-  starts: readonly BusinessStartObservation[],
+  rule: SuppliedRetentionRule,
+  first: DateTime.Utc | undefined,
   due: readonly PrivacyEvaluatedDue[],
   evaluatedAt: DateTime.Utc,
 ): RetentionFinding => {
-  const configuration = assessCategoryConfiguration(inventoryCategory(categoryId), supplied[categoryId]);
-  if (configuration.state === 'NOT_APPLICABLE') {
-    return { category: categoryId, kind: 'NOT_APPLICABLE', reason: configuration.reason };
-  }
-  if (configuration.state === 'CONFLICTING_CONFIGURATION') {
-    return {
-      category: categoryId,
-      conflictingRuleRefs: configuration.conflictingRuleRefs,
-      kind: 'CONFLICTING_CONFIGURATION',
-      nextStep: 'PRIVACY_OWNER_DECIDES_WHICH_RULE_APPLIES',
-      pendingReview: true,
-      responsible: { gateOwners: ['PRIVACY_OWNER'] },
-    };
-  }
-  if (configuration.state === 'CONFIGURATION_GAP') {
-    return {
-      category: categoryId,
-      gaps: configuration.gaps,
-      kind: 'CONFIGURATION_GAP',
-      nextStep: 'SUPPLY_MISSING_PRIVACY_INPUTS',
-      pendingReview: true,
-      responsible: { gateOwners: [...new Set(configuration.gaps.map(({ owner }) => owner))].toSorted() },
-    };
-  }
-  const first = earliest(starts);
-  const rule =
-    first === undefined
-      ? configuration.rule
-      : (ruleApplicableAt(supplied[categoryId]?.retentionRules ?? [], first) ?? configuration.rule);
   const evaluated = dueFor(rule, due);
   if (first === undefined || evaluated === undefined) {
     return {
@@ -166,6 +139,67 @@ const findingFor = (
     : { category: categoryId, dueAt: evaluated.dueAt, earliestBusinessStartAt: first, kind: 'NOT_YET_DUE', rule };
 };
 
+/**
+ * One category's findings. A rule version applies by the record's own business start, never by the evaluation date, so a
+ * category whose records started under several versions has ONE finding per version: the earliest record of each version
+ * decides that version, and a later record under a shorter-period version is never hidden behind an earlier record under a
+ * longer one. The findings are ordered by the earliest start they cover.
+ */
+const findingsFor = (
+  categoryId: InventoryCategoryId,
+  supplied: SuppliedPrivacyReferences,
+  starts: readonly BusinessStartObservation[],
+  due: readonly PrivacyEvaluatedDue[],
+  evaluatedAt: DateTime.Utc,
+): readonly RetentionFinding[] => {
+  const configuration = assessCategoryConfiguration(inventoryCategory(categoryId), supplied[categoryId]);
+  if (configuration.state === 'NOT_APPLICABLE') {
+    return [{ category: categoryId, kind: 'NOT_APPLICABLE', reason: configuration.reason }];
+  }
+  if (configuration.state === 'CONFLICTING_CONFIGURATION') {
+    return [
+      {
+        category: categoryId,
+        conflictingRuleRefs: configuration.conflictingRuleRefs,
+        kind: 'CONFLICTING_CONFIGURATION',
+        nextStep: 'PRIVACY_OWNER_DECIDES_WHICH_RULE_APPLIES',
+        pendingReview: true,
+        responsible: { gateOwners: ['PRIVACY_OWNER'] },
+      },
+    ];
+  }
+  if (configuration.state === 'CONFIGURATION_GAP') {
+    return [
+      {
+        category: categoryId,
+        gaps: configuration.gaps,
+        kind: 'CONFIGURATION_GAP',
+        nextStep: 'SUPPLY_MISSING_PRIVACY_INPUTS',
+        pendingReview: true,
+        responsible: { gateOwners: [...new Set(configuration.gaps.map(({ owner }) => owner))].toSorted() },
+      },
+    ];
+  }
+  const rules = supplied[categoryId]?.retentionRules ?? [];
+  if (starts.length === 0) {
+    return [versionFinding(categoryId, configuration.rule, undefined, due, evaluatedAt)];
+  }
+  const byVersion = new Map<string, { rule: SuppliedRetentionRule; starts: BusinessStartObservation[] }>();
+  for (const start of starts) {
+    const rule = ruleApplicableAt(rules, start.startAt) ?? configuration.rule;
+    const group = byVersion.get(ruleKey(rule)) ?? { rule, starts: [] };
+    group.starts.push(start);
+    byVersion.set(ruleKey(rule), group);
+  }
+  return [...byVersion.values()]
+    .map((group) => ({ first: earliest(group.starts), group }))
+    .toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(left.first ?? evaluatedAt) - DateTime.toEpochMillis(right.first ?? evaluatedAt),
+    )
+    .map(({ first, group }) => versionFinding(categoryId, group.rule, first, due, evaluatedAt));
+};
+
 export const evaluateCommunicationsRetention = (input: {
   readonly businessStarts: readonly BusinessStartObservation[];
   readonly evaluatedAt: DateTime.Utc;
@@ -174,8 +208,8 @@ export const evaluateCommunicationsRetention = (input: {
 }): RetentionEvaluationReport => ({
   destructiveActionPerformed: false,
   evaluatedAt: input.evaluatedAt,
-  findings: communicationsOwnDataInventory.map(({ id }) =>
-    findingFor(
+  findings: communicationsOwnDataInventory.flatMap(({ id }) =>
+    findingsFor(
       id,
       input.supplied,
       input.businessStarts.filter(({ category }) => category === id),

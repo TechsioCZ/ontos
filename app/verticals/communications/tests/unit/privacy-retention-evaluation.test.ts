@@ -187,6 +187,44 @@ describe('Non-destructive Retention Evaluation hook (#588)', () => {
     expect(finding(later.findings, 'REQUEST_DECISION_INTENT')).toMatchObject({ rule: { ruleVersion: 2 } });
   });
 
+  it('evaluates EVERY rule version in use: a later record under a shorter-period version that is due first is not hidden', () => {
+    const v2 = {
+      applicabilityDecisionRef: 'FICTIONAL-app-2',
+      applicableStartFrom: at('2026-06-01T00:00:00.000Z'),
+      ruleRef: 'FICTIONAL-rule',
+      ruleVersion: 2,
+    } as const;
+    const due = (ruleVersion: number, dueAt: string) => ({
+      dueAt: at(dueAt),
+      evaluationRef: `FICTIONAL-evaluation-${String(ruleVersion)}`,
+      ruleRef: 'FICTIONAL-rule',
+      ruleVersion,
+    });
+    const report = evaluateCommunicationsRetention({
+      businessStarts: [
+        // the earliest record starts under the long-period version 1 and is due far in the future
+        start('REQUEST_DECISION_INTENT', at('2026-01-01T00:00:00.000Z'), requestRef('r1')),
+        // two later records start under the shorter-period version 2; the earlier of them is already due
+        start('REQUEST_DECISION_INTENT', at('2026-08-01T00:00:00.000Z'), requestRef('r3')),
+        start('REQUEST_DECISION_INTENT', at('2026-07-01T00:00:00.000Z'), requestRef('r2')),
+      ],
+      evaluatedAt: at('2027-01-01T00:00:00.000Z'),
+      privacyEvaluatedDue: [due(1, '2036-01-01T00:00:00.000Z'), due(2, '2026-12-01T00:00:00.000Z')],
+      supplied: { REQUEST_DECISION_INTENT: complete([rule1, v2]) },
+    });
+    const own = report.findings.filter(({ category }) => category === 'REQUEST_DECISION_INTENT');
+    expect(own.map(({ kind }) => kind)).toEqual(['NOT_YET_DUE', 'OBLIGATION_OPEN']);
+    expect(own[0]).toMatchObject({ earliestBusinessStartAt: at('2026-01-01T00:00:00.000Z'), rule: { ruleVersion: 1 } });
+    // version 2 reports its OWN earliest record, not the earliest record of the category
+    expect(own[1]).toMatchObject({
+      dueAt: at('2026-12-01T00:00:00.000Z'),
+      earliestBusinessStartAt: at('2026-07-01T00:00:00.000Z'),
+      kind: 'OBLIGATION_OPEN',
+      rule: { ruleVersion: 2 },
+    });
+    expect(report.destructiveActionPerformed).toBe(false);
+  });
+
   it('reports a conflicting rule configuration for the Privacy owner instead of choosing, deleting or retaining', () => {
     const other = {
       applicabilityDecisionRef: 'FICTIONAL-app-3',

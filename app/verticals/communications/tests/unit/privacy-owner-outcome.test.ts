@@ -21,11 +21,18 @@ import {
   ownerScope,
 } from './support/privacy-owner-fixtures.ts';
 
+/** Without evidence the targets are still found (pending); with evidence the owner's rows are gone unless a test says otherwise. */
+const hold = (contentRefs: readonly string[]) => [
+  { blockerRef: 'FICTIONAL-hold-1', contentRefs, kind: 'LEGAL_HOLD' as const },
+];
+const relationships = (holders: ReturnType<typeof externalCopyInventoryOf>) =>
+  holders.map(({ holderRef, relationship }) => [holderRef, relationship]);
+
 const evaluate = (overrides: Partial<OwnerMeasureEvaluationInput> = {}) =>
   evaluateCommunicationsOwnerMeasure({
     blockers: [],
     confirmedAt,
-    coverage: foundCoverage(),
+    coverage: (overrides.evidence?.length ?? 0) > 0 ? coverageOf(allComplete()) : foundCoverage(),
     evidence: [],
     evidenceRefs: ['FICTIONAL-handoff-evidence'],
     measure: measureOf(),
@@ -48,7 +55,7 @@ describe('Owner Execution Outcome of Communications', () => {
   });
 
   it('reaches ACHIEVED only when confirmed owner evidence covers every exact target', () => {
-    const outcome = evaluate({ evidence: [evidenceOf()] });
+    const outcome = evaluate({ coverage: coverageOf(allComplete()), evidence: [evidenceOf()] });
     expect(outcome.status).toBe('ACHIEVED');
     expect(outcome.remainingContentRefs).toEqual([]);
     expect(outcome.evidenceRefs).toContain('FICTIONAL-owner-action-evidence-1');
@@ -57,6 +64,7 @@ describe('Owner Execution Outcome of Communications', () => {
 
   it('reports PARTIAL with the remaining scope when only part A is evidenced (A achieved, B pending)', () => {
     const outcome = evaluate({
+      coverage: coverageOf(allComplete({ REQUEST_DECISION_INTENT: { foundContentRefs: [intentRef('b')] } })),
       evidence: [evidenceOf({ results: [{ contentRef: intentRef('a'), result: 'REMOVED' }] })],
     });
     expect(outcome.status).toBe('PARTIAL');
@@ -97,15 +105,15 @@ describe('Owner Execution Outcome of Communications', () => {
 
   it('ignores a receipt of another owner, tenant, scope, measure or revision: it never confirms Communications', () => {
     const foreign = [
-      evidenceOf({ ownerCapability: 'commerce.tax' }),
-      evidenceOf({ tenantId: '00000000-0000-4000-8000-0000000000ff' }),
-      evidenceOf({ requestedScopeRef: 'FICTIONAL-another-scope' }),
+      evidenceOf({ scope: ownerScope({ ownerCapability: 'commerce.tax' }) }),
+      evidenceOf({ scope: ownerScope({ tenantId: '00000000-0000-4000-8000-0000000000ff' }) }),
+      evidenceOf({ scope: ownerScope({ requestedScopeRef: 'FICTIONAL-another-scope' }) }),
       evidenceOf({ measureRef: 'FICTIONAL-measure-2' }),
       evidenceOf({ sourceDecisionRef: 'FICTIONAL-decision-2' }),
       evidenceOf({ sourceDecisionRevision: '2' }),
     ];
     for (const record of foreign) {
-      const outcome = evaluate({ evidence: [record] });
+      const outcome = evaluate({ coverage: foundCoverage(), evidence: [record] });
       expect(outcome.status).toBe('PENDING');
       expect(outcome.affectedContentRefs).toEqual([]);
     }
@@ -113,8 +121,179 @@ describe('Owner Execution Outcome of Communications', () => {
     expect(evaluate({ evidence: [...foreign, evidenceOf()] }).status).toBe('ACHIEVED');
   });
 
+  it('ignores evidence for another subject, controller, lookup or scope part: forged scope binding never counts', () => {
+    const forged = [
+      evidenceOf({
+        scope: ownerScope({ subject: { _tag: 'RESOLVED_DATA_SUBJECT', subjectRef: 'FICTIONAL-another-subject' } }),
+      }),
+      evidenceOf({
+        scope: ownerScope({ subject: { _tag: 'ANONYMOUS_PRIVACY_CONTEXT', contextRef: 'FICTIONAL-subject-1' } }),
+      }),
+      evidenceOf({ scope: ownerScope({ controllerRef: 'FICTIONAL-another-controller' }) }),
+      evidenceOf({ scope: ownerScope({ trustedLookupRefs: ['FICTIONAL-another-lookup'] }) }),
+      evidenceOf({ scope: ownerScope({ requestedScopePartRefs: [ownerScope().requestedScopePartRefs[0] ?? 'x'] }) }),
+    ];
+    for (const record of forged) {
+      expect(evaluate({ coverage: foundCoverage(), evidence: [record] })).toMatchObject({
+        affectedContentRefs: [],
+        status: 'PENDING',
+      });
+    }
+  });
+
+  it('ignores a confirmation without a human: a blank, untrimmed or oversized confirming reference is no confirmation', () => {
+    for (const confirmedByHumanRef of ['', '   ', ' FICTIONAL-human-1', 'FICTIONAL-human-1 ', 'x'.repeat(1001)]) {
+      expect(evaluate({ coverage: foundCoverage(), evidence: [evidenceOf({ confirmedByHumanRef })] })).toMatchObject({
+        affectedContentRefs: [],
+        status: 'PENDING',
+      });
+    }
+    expect(evaluate({ coverage: foundCoverage(), evidence: [evidenceOf({ evidenceRef: '' })] }).status).toBe('PENDING');
+  });
+
+  it('never counts a result of an IN_PROGRESS or RECEIVED record, even when it is mixed with a COMPLETED one', () => {
+    const inProgress = evidenceOf({
+      confirmedAt: DateTime.makeUnsafe('2026-11-19T13:00:00.000Z'),
+      evidenceRef: 'FICTIONAL-in-progress',
+      phase: 'IN_PROGRESS',
+      results: [{ contentRef: intentRef('b'), result: 'REMOVED' }],
+    });
+    const completedA = evidenceOf({ results: [{ contentRef: intentRef('a'), result: 'REMOVED' }] });
+    // an in-progress record claiming B removed does not make B achieved: the Action is still running
+    const mixed = evaluate({ evidence: [completedA, inProgress] });
+    expect(mixed).toMatchObject({
+      affectedContentRefs: [intentRef('a')],
+      remainingContentRefs: [intentRef('b')],
+      status: 'IN_PROGRESS',
+    });
+    // alone, an in-progress record that claims everything removed is still not ACHIEVED
+    const alone = evaluate({
+      evidence: [
+        evidenceOf({ phase: 'IN_PROGRESS' }),
+        evidenceOf({ evidenceRef: 'FICTIONAL-received', phase: 'RECEIVED' }),
+      ],
+    });
+    expect(alone.status).not.toBe('ACHIEVED');
+    expect(alone.affectedContentRefs).toEqual([]);
+  });
+
+  it('reports RECEIVED when the owner took the measure over and nothing has started', () => {
+    const outcome = evaluate({ evidence: [evidenceOf({ phase: 'RECEIVED', results: [] })] });
+    expect(outcome).toMatchObject({
+      affectedContentRefs: [],
+      reason: 'MEASURE_RECEIVED_BY_OWNER_NOTHING_STARTED',
+      remainingContentRefs: [intentRef('a'), intentRef('b')],
+      status: 'RECEIVED',
+    });
+    expect(isOpenObligation(outcome)).toBe(true);
+  });
+
+  it('reports TECHNICAL_FAILED for a definite failure that proved no mutation, and INDETERMINATE when a mutation is possible', () => {
+    const failed = evaluate({
+      evidence: [
+        evidenceOf({
+          results: [
+            { contentRef: intentRef('a'), result: 'FAILED_BEFORE_ANY_MUTATION' },
+            { contentRef: intentRef('b'), result: 'FAILED_BEFORE_ANY_MUTATION' },
+          ],
+        }),
+      ],
+    });
+    expect(failed).toMatchObject({
+      reason: 'OWNER_ACTION_FAILED_BEFORE_ANY_MUTATION',
+      reconciliationRequired: false,
+      remainingContentRefs: [intentRef('a'), intentRef('b')],
+      status: 'TECHNICAL_FAILED',
+    });
+    expect(isOpenObligation(failed)).toBe(true);
+    // a possible mutation next to a proven non-mutation is INDETERMINATE, never a retryable failure
+    expect(
+      evaluate({
+        evidence: [
+          evidenceOf({
+            results: [
+              { contentRef: intentRef('a'), result: 'FAILED_BEFORE_ANY_MUTATION' },
+              { contentRef: intentRef('b'), result: 'FAILED_AFTER_POSSIBLE_MUTATION' },
+            ],
+          }),
+        ],
+      }).status,
+    ).toBe('INDETERMINATE');
+    // possible mutation reported by a still-running Action is likewise never ignored
+    expect(
+      evaluate({
+        evidence: [
+          evidenceOf({
+            phase: 'IN_PROGRESS',
+            results: [{ contentRef: intentRef('a'), result: 'FAILED_AFTER_POSSIBLE_MUTATION' }],
+          }),
+        ],
+      }).status,
+    ).toBe('INDETERMINATE');
+  });
+
+  it('keeps the proven part PARTIAL when the rest failed before any mutation', () => {
+    expect(
+      evaluate({
+        evidence: [
+          evidenceOf({
+            results: [
+              { contentRef: intentRef('a'), result: 'REMOVED' },
+              { contentRef: intentRef('b'), result: 'FAILED_BEFORE_ANY_MUTATION' },
+            ],
+          }),
+        ],
+      }),
+    ).toMatchObject({
+      affectedContentRefs: [intentRef('a')],
+      remainingContentRefs: [intentRef('b')],
+      status: 'PARTIAL',
+    });
+  });
+
+  it('is never ACHIEVED while a current Legal Hold sits on an evidenced target: BLOCKED or PARTIAL with the reason', () => {
+    expect(evaluate({ blockers: hold([intentRef('a'), intentRef('b')]), evidence: [evidenceOf()] })).toMatchObject({
+      affectedContentRefs: [],
+      reason: 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_EVIDENCED_TARGET',
+      status: 'BLOCKED',
+    });
+    expect(evaluate({ blockers: hold([intentRef('a')]), evidence: [evidenceOf()] })).toMatchObject({
+      affectedContentRefs: [intentRef('b')],
+      reason: 'LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT_ON_PART_OF_THE_EVIDENCED_TARGETS',
+      remainingContentRefs: [intentRef('a')],
+      status: 'PARTIAL',
+    });
+  });
+
+  it('never accepts a claimed REMOVED while the exact-reference lookup still FINDS the row: INDETERMINATE, reconcile first', () => {
+    const outcome = evaluate({ coverage: foundCoverage(), evidence: [evidenceOf()] });
+    expect(outcome).toMatchObject({
+      reason: 'CLAIMED_REMOVAL_CONTRADICTED_BY_CURRENT_COVERAGE',
+      reconciliationRequired: true,
+      status: 'INDETERMINATE',
+    });
+    // once the rows are really gone from complete coverage, the same evidence is believed
+    expect(evaluate({ coverage: coverageOf(allComplete()), evidence: [evidenceOf()] }).status).toBe('ACHIEVED');
+    // a non-removing outcome keeps its row by design, so the row being found is no contradiction there
+    expect(
+      evaluate({
+        coverage: foundCoverage(),
+        evidence: [
+          evidenceOf({
+            results: [
+              { contentRef: intentRef('a'), result: 'RESTRICTED' },
+              { contentRef: intentRef('b'), result: 'RESTRICTED' },
+            ],
+          }),
+        ],
+        measure: measureOf({ intendedOutcome: 'ENFORCE_PROCESSING_RESTRICTION' }),
+      }).status,
+    ).toBe('ACHIEVED');
+  });
+
   it('does not count a result for a target the measure did not name, nor a result of the wrong kind', () => {
     const outcome = evaluate({
+      coverage: foundCoverage(),
       evidence: [
         evidenceOf({
           results: [
@@ -143,6 +322,19 @@ describe('Owner Execution Outcome of Communications', () => {
       allComplete({ PROVIDER_COPY_WORKING_COPY_PROTECTION: { coverageStatus: 'PARTIAL', unresolvedReason: 'BACKUP' } }),
     );
     expect(evaluate({ coverage: incomplete }).status).toBe('INDETERMINATE');
+  });
+
+  it('re-checks the coverage before NOT_APPLICABLE: a forged NO_DATA over an incomplete or found part is never believed', () => {
+    const honest = coverageOf(allComplete());
+    const [first, ...rest] = honest.coverageParts;
+    const incompletePart =
+      first === undefined ? [] : [{ ...first, coverageStatus: 'PARTIAL' as const, unresolvedReason: 'X' }];
+    const forgedIncomplete = { ...honest, coverageParts: [...incompletePart, ...rest] };
+    expect(evaluate({ coverage: forgedIncomplete }).status).not.toBe('NOT_APPLICABLE');
+    const foundPart = first === undefined ? [] : [{ ...first, foundContentRefs: [intentRef('a'), intentRef('b')] }];
+    const forgedFound = { ...honest, coverageParts: [...foundPart, ...rest] };
+    expect(evaluate({ coverage: forgedFound }).status).not.toBe('NOT_APPLICABLE');
+    expect(evaluate({ coverage: honest }).status).toBe('NOT_APPLICABLE');
   });
 
   it('rejects a coverage of another scope and a retry whose identity changed', () => {
@@ -212,14 +404,15 @@ describe('Handoff record of a pending obligation (AC-16, BDD "Predana povinnost 
 
 /** [#1410 AC-10, PRIV-COM-14, #603] A provider change keeps every earlier external holder and invents no provider-side disposition. */
 describe('External copy inventory', () => {
-  it('keeps the replaced provider as a known historical holder next to the current transport', () => {
-    const holders = externalCopyInventoryOf([
-      { observedAtMillis: Date.parse('2026-01-01T00:00:00Z'), providerKey: 'provider-a' },
-      { observedAtMillis: Date.parse('2026-01-02T00:00:00Z'), providerKey: 'provider-a' },
-      { observedAtMillis: Date.parse('2026-06-01T00:00:00Z'), providerKey: 'provider-b' },
-    ]);
-    expect(holders.map(({ holderRef, relationship }) => [holderRef, relationship])).toEqual([
-      ['step-22-provider:provider-a', 'KNOWN_HISTORICAL_HOLDER'],
+  const facts = [
+    { observedAtMillis: Date.parse('2026-01-01T00:00:00Z'), providerKey: 'provider-a' },
+    { observedAtMillis: Date.parse('2026-01-02T00:00:00Z'), providerKey: 'provider-a' },
+    { observedAtMillis: Date.parse('2026-06-01T00:00:00Z'), providerKey: 'provider-b' },
+  ];
+  it('keeps the replaced provider as a PRIOR provider next to the current transport the deployment names', () => {
+    const holders = externalCopyInventoryOf(facts, 'provider-b');
+    expect(relationships(holders)).toEqual([
+      ['step-22-provider:provider-a', 'PRIOR_PROVIDER'],
       ['step-22-provider:provider-b', 'CURRENT_TRANSPORT'],
     ]);
     expect(holders[0] === undefined ? '' : DateTime.formatIso(holders[0].firstObservedAt)).toBe(
@@ -230,10 +423,23 @@ describe('External copy inventory', () => {
     );
   });
 
-  it('never claims provider-side disposition: a deletion request is not evidence of a deleted copy', () => {
-    const holders = externalCopyInventoryOf([
-      { observedAtMillis: Date.parse('2026-01-01T00:00:00Z'), providerKey: 'provider-a' },
+  it('never calls the latest fact the current transport: without a named current provider every holder is historical', () => {
+    expect(relationships(externalCopyInventoryOf(facts))).toEqual([
+      ['step-22-provider:provider-a', 'HISTORICAL_TRANSPORT'],
+      ['step-22-provider:provider-b', 'HISTORICAL_TRANSPORT'],
     ]);
+    // the deployment can name the OLDER provider as current: then the one handed a message last is the prior one
+    expect(relationships(externalCopyInventoryOf(facts, 'provider-a'))).toEqual([
+      ['step-22-provider:provider-a', 'CURRENT_TRANSPORT'],
+      ['step-22-provider:provider-b', 'PRIOR_PROVIDER'],
+    ]);
+  });
+
+  it('never claims provider-side disposition: a deletion request is not evidence of a deleted copy', () => {
+    const holders = externalCopyInventoryOf(
+      [{ observedAtMillis: Date.parse('2026-01-01T00:00:00Z'), providerKey: 'provider-a' }],
+      'provider-a',
+    );
     expect(
       holders.every(
         ({ providerSideDispositionEvidence }) => providerSideDispositionEvidence === 'NOT_HELD_BY_COMMUNICATIONS',

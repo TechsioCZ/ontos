@@ -3,7 +3,7 @@ import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement'
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Context, DateTime, Effect, Match, Option } from 'effect';
+import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import type {
   CommunicationsOwnerLookup,
@@ -48,11 +48,13 @@ import {
   templateTypes,
   tenantLanguageModeVersions,
 } from '../database/schema.ts';
+import { ProviderKeySchema } from '../domain/history/vocabulary.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
 import { PrivacyOwnerCoverageUnavailable } from './privacy-owner-coverage-unavailable.ts';
 import {
   contributionItemsOf,
   foreignIntentIdsOf,
+  ownRecordsOf,
   recordsOf,
   recordsOfCategory,
   REF_KIND,
@@ -108,6 +110,11 @@ const documentNames = (column: AnyPgColumn, lookup: ResourceLookup): SQL =>
 
 export interface PrivacyOwnerCoverageOptions {
   readonly backup: OwnerBackupCoverage;
+  /**
+   * The provider key the deployment's Messaging Adapter (step 22) uses NOW. Communications cannot know it by itself, so
+   * without it no external holder is labelled the current transport.
+   */
+  readonly currentTransportProviderKey?: string;
   readonly eligibility: SuppliedRightEligibility;
   /** The Privacy references supplied so far. Every input is an open gate until the named owner supplies it. */
   readonly supplied: SuppliedPrivacyReferences;
@@ -185,10 +192,27 @@ const gatherByIntents = Effect.fn('CommunicationsPrivacyCoverage.gatherByIntents
   );
 });
 
-/** Everything of the installed tenant that the typed lookups reach, by exact owner references only. */
+/**
+ * The Legal Entity a request was made in is the second part of its `scope_key` (`tenant|legal-entity|profile|...`; empty
+ * for a Tenant-level request). A read in a Legal Entity sees its own requests and the Tenant-level ones, never a request of
+ * ANOTHER entity of the same Tenant, nor anything that exists because of one. Hiding Tenant-level records as well would turn
+ * the answer into a false NO_DATA, so they stay visible. No Legal Entity means a Tenant-wide read.
+ */
+const requestInLegalEntity = (legalEntityId: string | undefined): SQL | undefined =>
+  legalEntityId === undefined
+    ? undefined
+    : sql`split_part(${communicationRequests.scopeKey}, '|', 2) in ('', ${legalEntityId}::text)`;
+
+const intentInLegalEntity = (tenantId: string, legalEntityId: string | undefined): SQL | undefined =>
+  legalEntityId === undefined
+    ? undefined
+    : sql`exists (select 1 from ${communicationRequests} where ${communicationRequests.tenantId} = ${tenantId}::uuid and ${communicationRequests.requestId} = ${messageIntents.requestId} and split_part(${communicationRequests.scopeKey}, '|', 2) in ('', ${legalEntityId}::text))`;
+
+/** Everything of the installed tenant (and Legal Entity, when the read has one) that the typed lookups reach, by exact owner references only. */
 const gather = Effect.fn('CommunicationsPrivacyCoverage.gather')(function* gatherRows(
   transaction: ScopedTransactionExecutor,
   tenantId: string,
+  legalEntityId: string | undefined,
   resources: readonly ResourceLookup[],
 ) {
   if (resources.length === 0) {
@@ -197,21 +221,43 @@ const gather = Effect.fn('CommunicationsPrivacyCoverage.gather')(function* gathe
   const intents = yield* transaction
     .select()
     .from(messageIntents)
-    .where(and(eq(messageIntents.tenantId, tenantId), or(...resources.flatMap(intentConditions))));
-  const requests = yield* transaction
-    .select()
-    .from(communicationRequests)
     .where(
       and(
-        eq(communicationRequests.tenantId, tenantId),
-        or(
-          ...resources.map((lookup) => documentNames(communicationRequests.payload, lookup)),
-          intents.length === 0
-            ? undefined
-            : inArray(communicationRequests.requestId, [...new Set(intents.map(({ requestId }) => requestId))]),
-        ),
+        eq(messageIntents.tenantId, tenantId),
+        or(...resources.flatMap(intentConditions)),
+        intentInLegalEntity(tenantId, legalEntityId),
       ),
     );
+  const { payloadNamed, requests } = yield* Effect.all(
+    {
+      payloadNamed: transaction
+        .select({ requestId: communicationRequests.requestId })
+        .from(communicationRequests)
+        .where(
+          and(
+            eq(communicationRequests.tenantId, tenantId),
+            requestInLegalEntity(legalEntityId),
+            or(...resources.map((lookup) => documentNames(communicationRequests.payload, lookup))),
+          ),
+        ),
+      requests: transaction
+        .select()
+        .from(communicationRequests)
+        .where(
+          and(
+            eq(communicationRequests.tenantId, tenantId),
+            requestInLegalEntity(legalEntityId),
+            or(
+              ...resources.map((lookup) => documentNames(communicationRequests.payload, lookup)),
+              intents.length === 0
+                ? undefined
+                : inArray(communicationRequests.requestId, [...new Set(intents.map(({ requestId }) => requestId))]),
+            ),
+          ),
+        ),
+    },
+    { concurrency: 1 },
+  );
   const requestIds = requests.map(({ requestId }) => requestId);
   const byRequest =
     requestIds.length === 0
@@ -244,7 +290,13 @@ const gather = Effect.fn('CommunicationsPrivacyCoverage.gather')(function* gathe
     tenantId,
     intents.map(({ intentId }) => intentId),
   );
-  return Option.some<Gathered>({ ...rest, ...byRequest, intents, requests });
+  return Option.some<Gathered>({
+    ...rest,
+    ...byRequest,
+    intents,
+    payloadNamedRequestIds: payloadNamed.map(({ requestId }) => requestId),
+    requests,
+  });
 });
 
 /** Template governance rows attributed to the staff principals Privacy named. */
@@ -321,10 +373,18 @@ export interface PrivacyOwnerCoverageService {
 }
 
 interface EvidenceInput {
+  /** What an authoritative backup evaluation said, when one exists: it is cited, never silently dropped. */
+  readonly backup: OwnerBackupCoverage;
   readonly lookupRefs: readonly string[];
   readonly observedAt: DateTime.Utc;
   readonly tenantId: string;
 }
+
+/** The backup evaluation's own reference and observation instant, for the one part it completes. */
+const backupEvidenceOf = (category: InventoryCategory, evidenceInput: EvidenceInput) =>
+  category.id === 'PROVIDER_COPY_WORKING_COPY_PROTECTION' && evidenceInput.backup.kind === 'EVALUATED'
+    ? Option.some(evidenceInput.backup)
+    : Option.none();
 
 const observationOf = (
   category: InventoryCategory,
@@ -332,6 +392,7 @@ const observationOf = (
   unresolvedReason: string | undefined,
   evidenceInput: EvidenceInput,
 ): CategoryObservation => {
+  const backup = backupEvidenceOf(category, evidenceInput);
   const sortedFound = found.toSorted(byText);
   const evidence = computeCanonicalValueHash({
     category: category.id,
@@ -343,14 +404,50 @@ const observationOf = (
   });
   const base = {
     category: category.id,
-    evidenceRefs: [`${COMMUNICATIONS_OWNER_CAPABILITY}/privacy-owner-coverage/${category.id}/${evidence}`],
+    evidenceRefs: [
+      `${COMMUNICATIONS_OWNER_CAPABILITY}/privacy-owner-coverage/${category.id}/${evidence}`,
+      ...Option.match(backup, {
+        onNone: () => [],
+        onSome: ({ evidenceRef, observedAt }) => [
+          evidenceRef,
+          `${COMMUNICATIONS_OWNER_CAPABILITY}/privacy-owner-coverage/backup-observed-at/${DateTime.formatIso(observedAt)}`,
+        ],
+      }),
+    ],
     foundContentRefs: sortedFound,
-    observedAt: DateTime.formatIso(evidenceInput.observedAt),
+    // a part never looks fresher than the oldest evidence it rests on
+    observedAt: DateTime.formatIso(
+      Option.match(backup, {
+        onNone: () => evidenceInput.observedAt,
+        onSome: ({ observedAt }) =>
+          DateTime.isLessThan(observedAt, evidenceInput.observedAt) ? observedAt : evidenceInput.observedAt,
+      }),
+    ),
   };
   return unresolvedReason === undefined
     ? { ...base, coverageStatus: 'COMPLETE' }
     : { ...base, coverageStatus: 'PARTIAL', unresolvedReason };
 };
+
+const AcceptedEvidenceSchema = Schema.Struct({ kind: Schema.Literal('ACCEPTED'), providerKey: ProviderKeySchema });
+const readAcceptedEvidence = Schema.decodeUnknownOption(AcceptedEvidenceSchema);
+
+/** Providers that sent us an observation of a message. */
+const providerObservationFacts = (observations: Gathered['observations']) =>
+  observations.map(({ providerKey, recordedAt }) => ({ observedAtMillis: recordedAt.getTime(), providerKey }));
+
+/**
+ * Providers that were HANDED a message, from the handoff evidence of the attempt itself: a provider that accepted the
+ * submission holds a copy whether or not it ever reported back. A provider that never accepted is not a holder, and an
+ * attempt whose outcome was INDETERMINATE names no provider at all, so it cannot be listed here.
+ */
+const handedOverProviderFacts = (attempts: Gathered['attempts']) =>
+  attempts.flatMap(({ evidence, finishedAt, preparedAt }) =>
+    Option.match(readAcceptedEvidence(evidence), {
+      onNone: () => [],
+      onSome: ({ providerKey }) => [{ observedAtMillis: (finishedAt ?? preparedAt).getTime(), providerKey }],
+    }),
+  );
 
 const startsOf = (
   category: InventoryCategoryId,
@@ -383,13 +480,15 @@ export const privacyOwnerCoverageForScope = (
       const { attribution, gathered } = yield* Effect.all(
         {
           attribution: gatherAttribution(transaction, tenantId, principals),
-          gathered: gather(transaction, tenantId, resources),
+          gathered: gather(transaction, tenantId, scope.legalEntityId, resources),
         },
         { concurrency: 1 },
       ).pipe(Effect.mapError(unavailable));
       const data = Option.getOrUndefined(gathered);
       const subjects: readonly ResourceReference[] = subjectsOf(resources);
       const records = recordsOf(data, attribution);
+      // what is FOUND for this subject is only the subject's own: another recipient's records stay out of the reference list
+      const ownRecords = ownRecordsOf(data, records, subjects);
       const reasonContext = {
         backup: options.backup,
         hasPrincipalLookup: principals.length > 0,
@@ -402,9 +501,9 @@ export const privacyOwnerCoverageForScope = (
       const observations = communicationsOwnDataInventory.map((category) =>
         observationOf(
           category,
-          recordsOfCategory(records, category.id),
+          recordsOfCategory(ownRecords, category.id),
           unresolvedReasonOf(category.id, reasonContext),
-          { lookupRefs, observedAt, tenantId },
+          { backup: options.backup, lookupRefs, observedAt, tenantId },
         ),
       );
       const coverageResult = assessCommunicationsOwnerCoverage({
@@ -436,10 +535,8 @@ export const privacyOwnerCoverageForScope = (
         contribution,
         coverage: coverageResult,
         externalCopies: externalCopyInventoryOf(
-          (data?.observations ?? []).map(({ providerKey, recordedAt }) => ({
-            observedAtMillis: recordedAt.getTime(),
-            providerKey,
-          })),
+          [...providerObservationFacts(data?.observations ?? []), ...handedOverProviderFacts(data?.attempts ?? [])],
+          options.currentTransportProviderKey,
         ),
         ownerCapability: COMMUNICATIONS_OWNER_CAPABILITY,
         ownerMutationBoundary: 'NO_AUTOMATIC_OR_DESTRUCTIVE_OWNER_OPERATION',

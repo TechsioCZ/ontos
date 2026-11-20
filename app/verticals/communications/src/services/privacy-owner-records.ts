@@ -47,6 +47,8 @@ export interface Gathered {
   readonly intents: readonly (typeof messageIntents.$inferSelect)[];
   readonly observationConflicts: readonly (typeof providerObservationConflicts.$inferSelect)[];
   readonly observations: readonly (typeof providerObservations.$inferSelect)[];
+  /** Requests whose own document names one of the trusted lookups: they are the requester's whatever their intents say. */
+  readonly payloadNamedRequestIds: readonly string[];
   readonly requests: readonly (typeof communicationRequests.$inferSelect)[];
   readonly resends: readonly (typeof intentResendLinks.$inferSelect)[];
   readonly retries: readonly (typeof attemptRetryLinks.$inferSelect)[];
@@ -64,6 +66,8 @@ export interface OwnedRecord {
   readonly contentRef: string;
   /** The intent the record belongs to, when it belongs to exactly one. */
   readonly intentId: string | null;
+  /** The request the record belongs to, for the records that exist because of a request. */
+  readonly requestId: string | null;
 }
 
 const RecipientRefsSchema = Schema.Struct({
@@ -74,58 +78,68 @@ const readRecipients = Schema.decodeUnknownOption(RecipientRefsSchema);
 const sameResource = (left: ResourceReference, right: ResourceReference): boolean =>
   left.moduleId === right.moduleId && left.resourceType === right.resourceType && left.resourceId === right.resourceId;
 
-type AddRecord = (category: InventoryCategoryId, kind: string, id: string, intentId?: string) => void;
+type AddRecord = (
+  category: InventoryCategoryId,
+  kind: string,
+  id: string,
+  link?: { readonly intentId?: string; readonly requestId?: string },
+) => void;
 
 const requestRecords = (data: Gathered | undefined, add: AddRecord) => {
   for (const { requestId } of data?.requests ?? []) {
-    add('REQUEST_DECISION_INTENT', REF_KIND.request, requestId);
+    add('REQUEST_DECISION_INTENT', REF_KIND.request, requestId, { requestId });
   }
-  for (const { conflictId } of data?.conflicts ?? []) {
-    add('REQUEST_DECISION_INTENT', REF_KIND.conflict, conflictId);
+  for (const { conflictId, requestId } of data?.conflicts ?? []) {
+    add('REQUEST_DECISION_INTENT', REF_KIND.conflict, conflictId, { requestId });
   }
-  for (const { decisionId } of data?.decisions ?? []) {
-    add('REQUEST_DECISION_INTENT', REF_KIND.decision, decisionId);
+  for (const { decisionId, requestId } of data?.decisions ?? []) {
+    add('REQUEST_DECISION_INTENT', REF_KIND.decision, decisionId, { requestId });
   }
-  for (const { intentId } of data?.intents ?? []) {
-    add('REQUEST_DECISION_INTENT', REF_KIND.intent, intentId, intentId);
-    add('ORIGINAL_RECIPIENT_ENDPOINT', REF_KIND.originalRecipient, intentId, intentId);
-    add('TYPE_LANGUAGE_TEMPLATE_REVISION', REF_KIND.templatePin, intentId, intentId);
+  for (const { intentId, requestId } of data?.intents ?? []) {
+    add('REQUEST_DECISION_INTENT', REF_KIND.intent, intentId, { intentId, requestId });
+    add('ORIGINAL_RECIPIENT_ENDPOINT', REF_KIND.originalRecipient, intentId, { intentId, requestId });
+    add('TYPE_LANGUAGE_TEMPLATE_REVISION', REF_KIND.templatePin, intentId, { intentId, requestId });
   }
 };
 
 const historyRecords = (data: Gathered | undefined, add: AddRecord) => {
   const history = 'ATTEMPTS_PROVIDER_OBSERVATIONS_SUPPRESSION';
   for (const { attemptId, intentId } of data?.attempts ?? []) {
-    add(history, REF_KIND.attempt, attemptId, intentId);
+    add(history, REF_KIND.attempt, attemptId, { intentId });
   }
   for (const { evaluationSeq, intentId } of data?.stops ?? []) {
-    add(history, REF_KIND.handoffStop, `${intentId}:${evaluationSeq}`, intentId);
+    add(history, REF_KIND.handoffStop, `${intentId}:${evaluationSeq}`, { intentId });
   }
   for (const { intentId, observationId } of data?.observations ?? []) {
-    add(history, REF_KIND.observation, observationId, intentId);
-    add('PROVIDER_COPY_WORKING_COPY_PROTECTION', REF_KIND.providerCorrelation, observationId, intentId);
+    add(history, REF_KIND.observation, observationId, { intentId });
+    add('PROVIDER_COPY_WORKING_COPY_PROTECTION', REF_KIND.providerCorrelation, observationId, { intentId });
   }
   for (const { conflictId, intentId } of data?.observationConflicts ?? []) {
-    add(history, REF_KIND.observationConflict, conflictId, intentId);
+    add(history, REF_KIND.observationConflict, conflictId, { intentId });
   }
   for (const { attemptId, intentId } of data?.retries ?? []) {
-    add(history, REF_KIND.retryLink, attemptId, intentId);
+    add(history, REF_KIND.retryLink, attemptId, { intentId });
   }
   for (const { resendIntentId } of data?.resends ?? []) {
-    add(history, REF_KIND.resendLink, resendIntentId, resendIntentId);
+    add(history, REF_KIND.resendLink, resendIntentId, { intentId: resendIntentId });
   }
 };
 
 /** Every stored record the lookups reached, as a safe reference with its inventory category. */
 export const recordsOf = (data: Gathered | undefined, attribution: readonly string[]): readonly OwnedRecord[] => {
   const records: OwnedRecord[] = [];
-  const add: AddRecord = (category, kind, id, intentId) => {
-    records.push({ category, contentRef: communicationsContentRef(kind, id), intentId: intentId ?? null });
+  const add: AddRecord = (category, kind, id, link) => {
+    records.push({
+      category,
+      contentRef: communicationsContentRef(kind, id),
+      intentId: link?.intentId ?? null,
+      requestId: link?.requestId ?? null,
+    });
   };
   requestRecords(data, add);
   historyRecords(data, add);
   for (const contentRef of attribution) {
-    records.push({ category: 'TYPE_LANGUAGE_TEMPLATE_REVISION', contentRef, intentId: null });
+    records.push({ category: 'TYPE_LANGUAGE_TEMPLATE_REVISION', contentRef, intentId: null, requestId: null });
   }
   return records;
 };
@@ -161,6 +175,42 @@ const requestsWithOtherRecipients = (
     }
   }
   return others;
+};
+
+/**
+ * The records that belong to the REQUESTING subject. A record of an intent addressed to someone else, reached only through a
+ * shared contact reference, is another person's data and never a found reference of this subject: the contribution already
+ * withholds it as inseparable, and the coverage must not hand its reference over either. A request (and its decision and
+ * conflicts) is withheld only when every intent it decided is another recipient's AND its own document names none of the
+ * trusted lookups (`payloadNamedRequestIds`, found by the database). The part stays PARTIAL for the shared contact, so
+ * withholding never becomes a false NO_DATA.
+ */
+export const ownRecordsOf = (
+  data: Gathered | undefined,
+  records: readonly OwnedRecord[],
+  subjects: readonly ResourceReference[],
+): readonly OwnedRecord[] => {
+  const foreignIntents = foreignIntentIdsOf(data, subjects);
+  const decidedBy = new Map<string, { foreign: number; own: number }>();
+  for (const { intentId, requestId } of data?.intents ?? []) {
+    const known = decidedBy.get(requestId) ?? { foreign: 0, own: 0 };
+    decidedBy.set(
+      requestId,
+      foreignIntents.has(intentId) ? { ...known, foreign: known.foreign + 1 } : { ...known, own: known.own + 1 },
+    );
+  }
+  const named = new Set(data?.payloadNamedRequestIds);
+  const withheldRequests = new Set<string>();
+  for (const { requestId } of data?.requests ?? []) {
+    const decided = decidedBy.get(requestId);
+    if (decided !== undefined && decided.own === 0 && decided.foreign > 0 && !named.has(requestId)) {
+      withheldRequests.add(requestId);
+    }
+  }
+  return records.filter(
+    ({ intentId, requestId }) =>
+      !(intentId !== null && foreignIntents.has(intentId)) && !(requestId !== null && withheldRequests.has(requestId)),
+  );
 };
 
 /** What each found reference concerns, for the right-specific contribution. */

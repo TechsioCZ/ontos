@@ -11,6 +11,8 @@ import {
   inventoryCategory,
   noSuppliedPrivacyReferences,
   REQUIRED_INPUT_KEYS,
+  TECHNICAL_COLUMN_REASONS,
+  TECHNICAL_COLUMNS,
   ruleApplicableAt,
   TABLES_WITHOUT_PERSONAL_DATA,
 } from '../../shared/privacy-owner/inventory.ts';
@@ -38,6 +40,9 @@ const fictionalComplete = (
   ],
   ...overrides,
 });
+
+const storedBy = (id: Parameters<typeof category>[0], table: string) =>
+  category(id).storage.find((entry) => entry.table === table)?.columns ?? [];
 
 describe('Communications own-data inventory (#1410 AC-01 AC-03, PRIV-COM-01/02)', () => {
   it('declares the seven categories of the issue, each with the owner capability and its own content scope', () => {
@@ -71,6 +76,63 @@ describe('Communications own-data inventory (#1410 AC-01 AC-03, PRIV-COM-01/02)'
       ...Object.keys(TABLES_WITHOUT_PERSONAL_DATA),
     ]);
     expect([...COMMUNICATIONS_TABLE_INVENTORY].filter((table) => !classified.has(table))).toEqual([]);
+  });
+
+  it('classifies EVERY column of every owner table: stored by exactly one category, or technical with a stated reason', () => {
+    const stored = new Map<string, string[]>();
+    for (const { id, storage } of communicationsOwnDataInventory) {
+      for (const { columns, table } of storage) {
+        for (const column of columns) {
+          stored.set(`${table}.${column}`, [...(stored.get(`${table}.${column}`) ?? []), id]);
+        }
+      }
+    }
+    const unclassified: string[] = [];
+    const doubled: string[] = [];
+    for (const [table, config] of tables) {
+      if (table in TABLES_WITHOUT_PERSONAL_DATA) {
+        continue;
+      }
+      for (const { name } of config.columns) {
+        const key = `${table}.${name}`;
+        const technical = TECHNICAL_COLUMNS[table]?.[name];
+        const categories = stored.get(key) ?? [];
+        if (categories.length === 0 && technical === undefined) {
+          unclassified.push(key);
+        }
+        if (categories.length > 0 && technical !== undefined) {
+          doubled.push(key);
+        }
+      }
+    }
+    // a column no category stores and no reason excuses would be personal data nobody can find; a category that also calls it
+    // technical contradicts itself
+    expect(unclassified).toEqual([]);
+    expect(doubled).toEqual([]);
+  });
+
+  it('names no technical column that does not exist, and states a real reason for each', () => {
+    const missing = Object.entries(TECHNICAL_COLUMNS).flatMap(([table, columns]) =>
+      Object.keys(columns).flatMap((column) =>
+        tables.get(table)?.columns.some(({ name }) => name === column) === true ? [] : [`${table}.${column}`],
+      ),
+    );
+    expect(missing).toEqual([]);
+    for (const reason of Object.values(TECHNICAL_COLUMNS).flatMap((columns) => Object.values(columns))) {
+      expect(TECHNICAL_COLUMN_REASONS[reason].length).toBeGreaterThan(20);
+    }
+  });
+
+  it('keeps the previously unclassified personal-data-bearing columns inside their categories', () => {
+    expect(storedBy('REQUEST_DECISION_INTENT', 'communication_requests')).toEqual(
+      expect.arrayContaining(['occurrence_id', 'scope_key', 'fingerprint']),
+    );
+    expect(storedBy('REQUEST_DECISION_INTENT', 'message_intents')).toEqual(
+      expect.arrayContaining(['processing_scope', 'intent_key', 'slot_key']),
+    );
+    expect(storedBy('ATTEMPTS_PROVIDER_OBSERVATIONS_SUPPRESSION', 'provider_observations')).toEqual(
+      expect.arrayContaining(['attempt_id', 'observed_at']),
+    );
   });
 
   it('keeps the rendered content and attachment categories empty: nothing is persisted for them and no column suggests it', () => {
