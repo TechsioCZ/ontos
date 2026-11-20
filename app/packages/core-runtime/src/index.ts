@@ -962,6 +962,7 @@ export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.
 export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
 export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
+export { changeSystemWorkloadEnrollmentAction } from './modules/actions/change-system-workload-enrollment.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';

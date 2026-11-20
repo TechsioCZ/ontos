@@ -84,6 +84,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   ]);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
+    'changeSystemWorkloadEnrollment',
     'createNonHumanPrincipal',
     'issueManagedApiKey',
     'issueSelfApiKey',
@@ -121,6 +122,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     availableTenants: '/auth/tenants',
     changePrincipalBindingStatus: '/auth/identity/external/binding/status',
     changePrincipalStatus: '/auth/identity/principal-status',
+    changeSystemWorkloadEnrollment: '/auth/identity/system-workload-enrollments',
     createAccessDelegation: '/shell/access/people/delegate',
     createAccessRole: '/shell/access/roles/create',
     createNonHumanPrincipal: '/auth/identity/principals',

@@ -11,6 +11,7 @@ import {
   bindManagedApiKeyAction,
   bindSelfApiKeyAction,
   changePrincipalStatusAction,
+  changeSystemWorkloadEnrollmentAction,
   createNonHumanPrincipalAction,
   IdentityLifecycleConflictError,
   PrincipalResolver,
@@ -329,6 +330,20 @@ export const makeIdentityLifecycleService = (
         payload: input.payload,
         principal: input.principal,
         registration: changePrincipalStatusAction,
+        // Served as-is by the Shell's HTTP endpoint: its client's same-key retry gets the saved reply.
+        savedReply: 'answer',
+        transport: transport(input),
+      }),
+    changeSystemWorkloadEnrollment: (
+      input: RequestIdentity & {
+        readonly payload: unknown;
+        readonly principal: TrustedPrincipalContext;
+      },
+    ) =>
+      actionRuntime.runAction({
+        payload: input.payload,
+        principal: input.principal,
+        registration: changeSystemWorkloadEnrollmentAction,
         // Served as-is by the Shell's HTTP endpoint: its client's same-key retry gets the saved reply.
         savedReply: 'answer',
         transport: transport(input),

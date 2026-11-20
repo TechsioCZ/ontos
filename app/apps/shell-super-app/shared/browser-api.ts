@@ -94,6 +94,46 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
     reason: identityReason,
   }),
 ]);
+const SystemWorkloadModuleKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)).pipe(
+  Schema.brand('ModuleKey'),
+);
+const SystemWorkloadKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.brand('WorkloadKey'),
+);
+const systemWorkloadEnrollmentChange = {
+  moduleKey: SystemWorkloadModuleKeySchema,
+  reason: identityReason,
+  workloadKey: SystemWorkloadKeySchema,
+};
+/**
+ * `core.identity.change-system-workload-enrollment`: the Tenant's system Principal for one system workload an active
+ * module declares. No Principal id or kind is part of the request; Core decodes the exact keys.
+ */
+export const ChangeSystemWorkloadEnrollmentPayloadSchema = Schema.Union([
+  Schema.TaggedStruct('ENROLL', systemWorkloadEnrollmentChange),
+  Schema.TaggedStruct('END', systemWorkloadEnrollmentChange),
+]);
+const systemWorkloadEnrollment = {
+  bindingIncarnation: Schema.String,
+  moduleKey: SystemWorkloadModuleKeySchema,
+  principalId: PrincipalIdSchema,
+  workloadKey: SystemWorkloadKeySchema,
+};
+export const SystemWorkloadEnrollmentResponseSchema = Schema.Union([
+  Schema.TaggedStruct('ENROLLED', systemWorkloadEnrollment),
+  Schema.TaggedStruct('ALREADY_ENROLLED', systemWorkloadEnrollment),
+  Schema.TaggedStruct('ENDED', {
+    ...systemWorkloadEnrollment,
+    pendingWork: Schema.Literal('not_visible_to_core'),
+    stoppedCalls: Schema.Array(
+      Schema.Struct({ audience: AppIdSchema, entrypointKey: EntrypointKeySchema, schemaVersion: Schema.String }),
+    ),
+  }),
+  Schema.TaggedStruct('NOT_ENROLLED', {
+    moduleKey: SystemWorkloadModuleKeySchema,
+    workloadKey: SystemWorkloadKeySchema,
+  }),
+]);
 export const IssueApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
@@ -653,6 +693,14 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           headers: IdentityRequestHeadersSchema,
           payload: ChangePrincipalStatusPayloadSchema,
           success: PrincipalMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('changeSystemWorkloadEnrollment', '/auth/identity/system-workload-enrollments', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ChangeSystemWorkloadEnrollmentPayloadSchema,
+          success: SystemWorkloadEnrollmentResponseSchema,
         }),
       )
       .add(

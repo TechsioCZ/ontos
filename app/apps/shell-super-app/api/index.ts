@@ -197,6 +197,7 @@ import {
   SupportImpersonationResponseSchema,
   SwitchLegalEntityResponseSchema,
   SwitchTenantResponseSchema,
+  SystemWorkloadEnrollmentResponseSchema,
 } from '../shared/browser-api.ts';
 import type {
   AuthenticationInternalProblem,
@@ -1528,6 +1529,21 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         }),
       ),
     )
+    .handle('changeSystemWorkloadEnrollment', ({ headers, payload, request }) =>
+      safeIdentity(
+        request,
+        Effect.gen(function* changeSystemWorkloadEnrollmentHandler() {
+          const { context, service } = yield* mutationContext(request, headers);
+          const response = yield* service
+            .changeSystemWorkloadEnrollment({
+              ...context,
+              payload,
+            })
+            .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+          return yield* decodeResponse(SystemWorkloadEnrollmentResponseSchema, response, shellInternalProblem);
+        }),
+      ),
+    )
     .handle('changePrincipalStatus', ({ headers, payload, request }) =>
       safeIdentity(
         request,
@@ -2571,12 +2587,15 @@ export const makeShellAuthenticationApiRuntime = (
   const readRuntimeLayer = ReadRuntimeLive.pipe(
     Layer.provide(Layer.mergeAll(sharedOperationLayers, accessEnforcementLive)),
   );
+  const installedModuleCatalogServiceLayer = InstalledModuleCatalogServiceLive.pipe(
+    Layer.provide(activeApplicationCompositionLive),
+  );
   const actionRuntimeLayer = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
     Layer.provide(
       Layer.mergeAll(
         sharedOperationLayers,
         activeApplicationCompositionLive,
-        InstalledModuleCatalogServiceLive.pipe(Layer.provide(activeApplicationCompositionLive)),
+        installedModuleCatalogServiceLayer,
         ActionRepositoryLive,
         ActionPermissionLive,
         accessEnforcementLive,
@@ -2796,6 +2815,8 @@ export const makeShellAuthenticationApiRuntime = (
     actionRuntimeLayer,
     runtimeApiKeyServiceLive,
     identityLifecycleLayer,
+    // `core.identity.change-system-workload-enrollment` checks the module's published system workloads.
+    installedModuleCatalogServiceLayer,
     supportImpersonationServiceLive,
     runtimePrincipalResolverLive,
     runtimeLegalEntityContextLive,
