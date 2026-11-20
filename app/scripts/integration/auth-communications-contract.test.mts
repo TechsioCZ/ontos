@@ -89,7 +89,7 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
         ] as const) {
           const world = yield* authWorld({ mode });
           yield* Ref.set(world.languageRef, { kind: 'trusted', language: trusted });
-          const realm = makeOtpRealm(world);
+          const realm = yield* makeOtpRealm(world);
           const challenge = yield* realm.pendingChallenge;
           yield* Effect.promise(
             async () =>
@@ -107,7 +107,12 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
           );
           measured.push(issuance.expiresAt.epochMilliseconds - issuance.issuedAt.epochMilliseconds);
         }
-        expect(new Set(measured)).toEqual(new Set([policySeconds.otp * 1000]));
+        // the request states the expiry Auth STORED (the plugin sets it just before the callback), so it is the policy lifetime less the
+        // few milliseconds between the two instants: never a different lifetime, and independent of language, mode and revision
+        for (const lifetime of measured) {
+          expect(lifetime).toBeLessThanOrEqual(policySeconds.otp * 1000);
+          expect(lifetime).toBeGreaterThan(policySeconds.otp * 1000 - 5000);
+        }
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

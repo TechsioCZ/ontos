@@ -38,7 +38,7 @@ const POLL_LIMIT = 200;
 
 const setup = Effect.fn('OtpE2E.setup')(function* setupWorld(options?: Parameters<typeof authWorld>[0]) {
   const world = yield* authWorld(options ?? { mode: 'B' });
-  const realm = makeOtpRealm(world);
+  const realm = yield* makeOtpRealm(world);
   const challenge = yield* realm.pendingChallenge;
   return { challenge, realm, world };
 });
@@ -124,11 +124,13 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         yield* sendCode(world, realm, challenge.headers);
         yield* step(world, world.messageHandoff, yield* onlyIntent(world));
         expect((yield* (yield* historyReads(world)).list()).items[0]?.headline.status).toBe('PROVIDER_ACCEPTED');
-        expect(realm.database.session).toHaveLength(0);
+        // the realm keeps a pending (not yet authenticated) session for the second step; no AUTHENTICATED session may exist
+        expect(yield* realm.authenticatedSessionCount).toBe(0);
         const session = yield* Effect.promise(
           async () => await realm.auth.api.getSession({ headers: challenge.headers }),
         );
-        expect(session).toBeNull();
+        // the provider's raw reader still shows the pending row; it was never authenticated (no second factor was presented)
+        expect(session?.session).not.toHaveProperty('authenticatedAt', expect.anything());
         // the challenge is still answerable: the provider accepted a message, nobody answered the challenge
         const verified = yield* Effect.promise(
           async () =>

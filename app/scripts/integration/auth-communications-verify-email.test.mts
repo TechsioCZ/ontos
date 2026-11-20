@@ -294,7 +294,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
   );
 
   it.live(
-    '[AC-09] a first submission Communications never received is continued by the replay under the SAME issuance, and only once',
+    '[AC-09] a first submission whose answer never came back is NEVER treated as not submitted: the replay issues no second link',
     () =>
       Effect.gen(function* neverSubmitted() {
         const { create, realm, world } = yield* setup();
@@ -303,17 +303,31 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
         expect(world.submissions).toHaveLength(0);
 
+        // Auth cannot tell "never reached Communications" from "admitted, answer lost": the replay issues nothing new, and the held
+        // issuance is continued only by resubmitting the SAME request (the idempotent retry of the issuance identity)
         world.unavailableSubject.current = false;
         yield* create();
-        expect(world.submissions).toHaveLength(1);
-        // the provider issued twice (the first link never reached Communications); one issuance identity, one intent
-        expect(realm.issued.verification).toHaveLength(2);
-        yield* step(world, world.messageHandoff, yield* onlyIntent(world));
-        expect(world.mailbox).toHaveLength(1);
+        expect(realm.issued.verification).toHaveLength(1);
+        expect(world.submissions).toHaveLength(0);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
 
-        // a further replay sees the stored decision and its outcome and issues nothing
+  it.live(
+    '[AC-09 REGRESSION] the request is persisted, the submit then reports unavailable: the replay must not issue a second provider link',
+    () =>
+      Effect.gen(function* lostAnswer() {
+        const { create, realm, world } = yield* setup();
+        world.lostAnswerSubject.current = true;
+        const failure = yield* Effect.flip(create());
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
+        // Communications admitted and decided the request; only the answer was lost
+        expect(world.submissions).toHaveLength(1);
+        expect(yield* intentsOf(world)).toHaveLength(1);
+
+        world.lostAnswerSubject.current = false;
         yield* create();
-        expect(realm.issued.verification).toHaveLength(2);
+        // never a second link, never a second request, never a second intent
+        expect(realm.issued.verification).toHaveLength(1);
         expect(world.submissions).toHaveLength(1);
         expect(yield* intentsOf(world)).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
@@ -352,9 +366,11 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
             Schema.decodeSync(PortalAuthIssuanceRefSchema)(request.occurrence.occurrenceId),
           ),
         );
-        expect(issuance.expiresAt.epochMilliseconds - issuance.issuedAt.epochMilliseconds).toBe(
-          COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds * 1000,
-        );
+        // the request states the expiry Auth STORED, a few milliseconds before the callback
+        const policyMs = COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds * 1000;
+        const lifetime = issuance.expiresAt.epochMilliseconds - issuance.issuedAt.epochMilliseconds;
+        expect(lifetime).toBeLessThanOrEqual(policyMs);
+        expect(lifetime).toBeGreaterThan(policyMs - 5000);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

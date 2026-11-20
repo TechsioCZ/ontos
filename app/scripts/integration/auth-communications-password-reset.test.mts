@@ -297,9 +297,12 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           expect(issuance.providerSubjectId).toBe(subjectId);
           lifetimes.push(issuance.expiresAt.epochMilliseconds - issuance.issuedAt.epochMilliseconds);
         }
-        expect(new Set(lifetimes)).toEqual(
-          new Set([COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds * 1000]),
-        );
+        // the request states the expiry Auth STORED, a few milliseconds before the callback: the policy lifetime, whatever the language
+        const policyMs = COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds * 1000;
+        for (const lifetime of lifetimes) {
+          expect(lifetime).toBeLessThanOrEqual(policyMs);
+          expect(lifetime).toBeGreaterThan(policyMs - 5000);
+        }
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

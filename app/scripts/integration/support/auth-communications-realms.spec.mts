@@ -1,7 +1,5 @@
-import { betterAuth } from 'better-auth';
-import { memoryAdapter } from 'better-auth/adapters/memory';
 import { splitSetCookieHeader, applySetCookies } from 'better-auth/cookies';
-import { eq, like } from 'drizzle-orm';
+import { and, eq, isNotNull, like } from 'drizzle-orm';
 import { Config, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { randomInt, randomUUID } from 'node:crypto';
 
@@ -44,6 +42,7 @@ import {
 } from '../../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-database.ts';
 import { makeCommercePortalAuthRecoveryStore } from '../../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-recovery-store.ts';
 import {
+  session,
   user,
   verification,
 } from '../../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
@@ -85,6 +84,7 @@ const nextIp = () => {
 };
 
 interface IssuedTokens {
+  readonly otp: string[];
   readonly reset: string[];
   readonly verification: string[];
 }
@@ -103,10 +103,17 @@ export const makePostgresRealm = Effect.fn('AuthCommunicationsRealm.postgres')(f
   const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(Effect.provide(cryptoLive));
   // Auth's own Current lifecycle of a held issuance is read from this very ledger
   world.ledgerProbe.current = ledgerProbeOver(store);
+  world.recoveryStore.current = store;
   // the provider's callback data as the account owner's inbox would see it: only tests read it, to play that owner
-  const issued: IssuedTokens = { reset: [], verification: [] };
+  const issued: IssuedTokens = { otp: [], reset: [], verification: [] };
   const tappedDelivery = {
-    sendOTP: world.rawDelivery.sendOTP,
+    sendOTP: (
+      data: Parameters<typeof world.rawDelivery.sendOTP>[0],
+      context: Parameters<typeof world.rawDelivery.sendOTP>[1],
+    ) => {
+      issued.otp.push(data.otp);
+      return world.rawDelivery.sendOTP(data, context);
+    },
     sendResetPassword: (data: Parameters<typeof world.rawDelivery.sendResetPassword>[0]) => {
       issued.reset.push(data.token);
       return world.rawDelivery.sendResetPassword(data);
@@ -222,76 +229,57 @@ export const makeEnrollmentGateway = Effect.fn('AuthCommunicationsRealm.gateway'
   return yield* CommercePortalAuthAccountCreationGatewayService.pipe(Effect.provide(gatewayLive));
 });
 
-/** The one-time code realm: the real two-factor plugin over an in-memory adapter, delivering through the world's Auth. */
-export const makeOtpRealm = (world: AuthWorld) => {
-  const database = { account: [], session: [], twoFactor: [], user: [], verification: [] };
-  // the provider's callback data as the account owner's inbox would see it: only tests read it, to play that owner
-  const issued: string[] = [];
-  const tappedSendOtp: typeof world.rawDelivery.sendOTP = (data, context) => {
-    issued.push(data.otp);
-    return world.rawDelivery.sendOTP(data, context);
-  };
-  const auth = betterAuth({
-    advanced: { cookiePrefix: COMMERCE_PORTAL_AUTH_POLICY.cookie.namePrefix },
-    basePath: '/api/portal-auth',
-    baseURL: PORTAL_ORIGIN,
-    database: memoryAdapter(database),
-    emailAndPassword: { enabled: true, requireEmailVerification: false },
-    plugins: [
-      createCommercePortalAuthTwoFactorPlugin({
-        policy: COMMERCE_PORTAL_AUTH_MFA_POLICY,
-        sendOTP: tappedSendOtp,
-      }),
-    ],
-    secret: SECRET,
-    trustedOrigins: [PORTAL_ORIGIN],
-  });
-  const ip = nextIp();
-  const email = `auth-comm-otp-${randomUUID()}@example.test`;
-  const cookieOf = (response: Response) => {
+/**
+ * The one-time code realm: the REAL Portal Auth provider (the real two-factor plugin over the real Postgres schema), delivering
+ * through the world's Auth. The challenge Better Auth stores for each code is the very row Auth's Current-state read looks at.
+ */
+export const makeOtpRealm = Effect.fn('AuthCommunicationsRealm.otp')(function* makeOtp(world: AuthWorld) {
+  const realm = yield* makePostgresRealm(world, 'otp');
+  const { auth, email, ip } = realm;
+  const cookieOf = (responseHeaders: Headers) => {
     const headers = headersOf(ip);
-    applySetCookies(headers, splitSetCookieHeader(response.headers.get('set-cookie') ?? ''));
+    applySetCookies(headers, splitSetCookieHeader(responseHeaders.get('set-cookie') ?? ''));
     return headers;
   };
-  const post = (route: string, body: Readonly<Record<string, string>>, cookie?: string) =>
-    Effect.promise(
-      async () =>
-        await auth.handler(
-          new Request(`${PORTAL_ORIGIN}/api/portal-auth${route}`, {
-            body: JSON.stringify(body),
-            headers: headersOf(ip, cookie),
-            method: 'POST',
-          }),
-        ),
-    );
-  /** Sign up, enable the one-time-code factor, sign out and sign in again: the pending second step the code is sent for. */
+  const signIn = Effect.promise(
+    async () =>
+      await auth.api.signInEmail({
+        body: { email, password: PASSWORD },
+        headers: headersOf(ip),
+        returnHeaders: true,
+      }),
+  );
+  /** Sign up, verify the address, enable the one-time-code factor, sign out and sign in again: the pending second step the code is sent for. */
   const pendingChallenge = Effect.gen(function* challenge() {
-    const created = yield* post('/sign-up/email', {
-      email,
-      name: 'Auth communications OTP fixture',
-      password: PASSWORD,
-    });
-    const enabled = yield* post(
-      '/two-factor/enable',
-      { method: 'otp', password: PASSWORD },
-      cookieOf(created).get('cookie') ?? undefined,
-    );
-    yield* Effect.promise(async () => await auth.api.signOut({ headers: cookieOf(enabled) }));
-    const signIn = yield* Effect.promise(
+    yield* Effect.promise(
       async () =>
-        await auth.api.signInEmail({
-          body: { email, password: PASSWORD },
+        await auth.api.signUpEmail({
+          body: { email, name: 'Auth communications OTP fixture', password: PASSWORD },
           headers: headersOf(ip),
+        }),
+    );
+    // the realm requires a verified address before a sign-in; the verification flow is another suite's subject
+    yield* realm.database.executor.update(user).set({ emailVerified: true }).where(eq(user.email, email));
+    const [account] = yield* realm.accountOf(email);
+    const first = yield* signIn;
+    const enabled = yield* Effect.promise(
+      async () =>
+        await auth.api.enableTwoFactor({
+          body: { password: PASSWORD },
+          headers: cookieOf(first.headers),
           returnHeaders: true,
         }),
     );
-    const headers = headersOf(ip);
-    applySetCookies(headers, splitSetCookieHeader(signIn.headers.get('set-cookie') ?? ''));
-    const subject = yield* Effect.promise(async () => await created.clone().text()).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(SignUpAnswerSchema))),
-    );
-    return { headers, subjectId: subject.user.id };
+    yield* Effect.promise(async () => await auth.api.signOut({ headers: cookieOf(enabled.headers) }));
+    const second = yield* signIn;
+    return { headers: cookieOf(second.headers), subjectId: account?.id ?? '' };
   });
-  return { auth, database, email, ip, issued, pendingChallenge };
-};
-export type OtpRealm = ReturnType<typeof makeOtpRealm>;
+  const authenticatedSessionCount = realm.database.executor
+    .select({ id: session.id })
+    .from(session)
+    .innerJoin(user, eq(session.userId, user.id))
+    .where(and(eq(user.email, email), isNotNull(session.authenticatedAt)))
+    .pipe(Effect.map((rows) => rows.length));
+  return { auth, authenticatedSessionCount, email, ip, issued: realm.issued.otp, pendingChallenge, realm };
+});
+export type OtpRealm = Effect.Success<ReturnType<typeof makeOtpRealm>>;
