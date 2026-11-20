@@ -4,10 +4,10 @@ import type {
   PrivacyOwnerCoverageResponse,
 } from '@app/communications/api/privacy-owner-coverage';
 import type { CallOutcome } from '@app/core-runtime/sdk';
-import { Match, Option, Schema } from 'effect';
+import { DateTime, Match, Option, Schema } from 'effect';
 
 import type { OwnerInventoryOwnerLookup } from '../../shared/privacy-queries.ts';
-import type { PrivacyOwnerObservation } from '../../shared/domain/owner-inventory.ts';
+import type { PrivacyOwnerAnswerDetail, PrivacyOwnerObservation } from '../../shared/domain/owner-inventory.ts';
 
 /**
  * Privacy's side of the Communications Owner Coverage contract (#1410, #595-#597). Privacy asks the owner for the coverage of
@@ -118,7 +118,24 @@ export const refused = (observedAt: string, reason: string): CommunicationsObser
   observation: { moduleId: COMMUNICATIONS_MODULE_ID, observedAt, outcome: 'UNAVAILABLE', reason, resourceRefs: [] },
 });
 
-const observationOfAnswer = (
+/** The part of the owner's answer that is not coverage, in the public shape of the inventory entry. */
+const detailOf = (answer: PrivacyOwnerCoverageResponse): PrivacyOwnerAnswerDetail => {
+  const detail = {
+    configuration: answer.configuration.map(({ category, gapInputs, state }) => ({
+      category,
+      gapInputs: gapInputs.map(({ input, owner }) => ({ input, owner })),
+      state,
+    })),
+    externalCopies: answer.externalCopies.map((copy) => ({
+      ...copy,
+      firstObservedAt: DateTime.formatIso(copy.firstObservedAt),
+      lastObservedAt: DateTime.formatIso(copy.lastObservedAt),
+    })),
+  };
+  return Option.isSome(answer.contribution) ? { ...detail, contribution: answer.contribution.value } : detail;
+};
+
+const coverageObservationOf = (
   asked: PrivacyOwnerCoverageRequest['scope'],
   answer: PrivacyOwnerCoverageResponse,
   observedAt: string,
@@ -175,17 +192,24 @@ const observationOfAnswer = (
   };
 };
 
+const observationOfAnswer = (
+  asked: PrivacyOwnerCoverageRequest['scope'],
+  answer: PrivacyOwnerCoverageResponse,
+  observedAt: string,
+): CommunicationsObservation => {
+  const answered = coverageObservationOf(asked, answer, observedAt);
+  // only an answer to exactly the question asked brings its contribution, copies and configuration along
+  return answersTheQuestion(asked, answer.coverage.scope)
+    ? { ...answered, observation: { ...answered.observation, ...detailOf(answer) } }
+    : answered;
+};
+
 /**
- * OPEN ITEM (explicit, not wired here): the owner's answer also carries `contribution` (the right-specific, third-party
- * protected Owner Contribution), `externalCopies` (every provider that was handed a message, never provider-side
- * disposition) and `configuration` (the Privacy inputs still open per category). This function deliberately drops all three:
- * the inventory entry has no place for them. Wiring them into a real Privacy owner-measure path (the Owner Execution Outcome
- * receipt, DSR contribution assembly and the configuration-gap hand-over) is the separate, later receipt task. Until then none
- * of them may be read as "complete", "done" or "nothing to hand over" from this observation.
- *
  * What Privacy may conclude from one governed call to the owner. Only an answer to exactly the question asked becomes an
- * observation of the owner's coverage; a refusal, a missing route, an outage or a rejected request is UNAVAILABLE with its
- * kind named, so none of them can be mistaken for an empty scope.
+ * observation of the owner's coverage, together with what the same answer adds: the right-specific contribution, the external
+ * copies and the configuration gaps, exactly as the owner reported them and never completed or defaulted by Privacy. A
+ * refusal, a missing route, an outage or a rejected request is UNAVAILABLE with its kind named, so none of them can be
+ * mistaken for an empty scope.
  */
 export const communicationsObservationOf = (
   asked: PrivacyOwnerCoverageRequest['scope'],

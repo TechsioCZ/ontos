@@ -391,6 +391,17 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         },
       },
       {
+        condition: 'privacy.core.condition.communications-owner-execution-outcome',
+        entrypointKey: 'privacy.core.record-owner-execution-outcome',
+        evidence: ['privacy.core.evidence.current-communications-owner-execution-outcome'],
+        key: 'privacy.core.requirement.communications-owner-execution-outcome',
+        provider: {
+          entrypointKey: 'communications.core.api.privacy-owner-execution-outcome',
+          moduleId: communicationsOwnerModule,
+          schemaVersion: '1',
+        },
+      },
+      {
         condition: 'privacy.core.condition.native-organization-ico-facts',
         entrypointKey: 'privacy.core.api.organization-ico-applicability',
         evidence: ['privacy.core.evidence.current-organization-ico-facts'],

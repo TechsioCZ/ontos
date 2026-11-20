@@ -113,6 +113,7 @@ import { DsrOwnerInventoryAuthorityUnavailableLive } from '../src/actions/privac
 import { DsrSubstantiveDecisionAuthorityUnavailableLive } from '../src/actions/privacy-dsr-substantive-decision-authority.ts';
 import { ProcessingActivityCoverageAuthorityUnavailableLive } from '../src/actions/processing-activity-coverage-authority.ts';
 import { RetentionRuleGovernanceAuthorityUnavailableLive } from '../src/actions/retention-rule-governance-authority.ts';
+import { CommunicationsOwnerExecutionAuthorityLive } from '../src/integrations/communications-owner-execution-authority.ts';
 import { SymmyOwnerExecutionAuthorityLive } from '../src/integrations/symmy-owner-execution-authority.ts';
 import { AntiResurrectionEnforcementAuthorityUnavailableLive } from '../src/actions/privacy-anti-resurrection-enforcement-authority.ts';
 import { RetentionDispositionAuthorityUnavailableLive } from '../src/actions/privacy-retention-disposition-authority.ts';
@@ -232,7 +233,10 @@ const privacyActionAuthorityUnavailableLive = Layer.mergeAll(
   DsrOwnerInventoryAuthorityUnavailableLive,
   DsrOwnerTaskAuthorityUnavailableLive,
   DsrSubstantiveDecisionAuthorityUnavailableLive,
-  SymmyOwnerExecutionAuthorityLive.pipe(Layer.provide(nodeCryptoLayer)),
+  CommunicationsOwnerExecutionAuthorityLive.pipe(
+    Layer.provide(SymmyOwnerExecutionAuthorityLive),
+    Layer.provide(nodeCryptoLayer),
+  ),
   AntiResurrectionEnforcementAuthorityUnavailableLive,
   RetentionDispositionAuthorityUnavailableLive,
   ProcessingActivityCoverageAuthorityUnavailableLive,

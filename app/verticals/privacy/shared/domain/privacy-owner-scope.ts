@@ -46,4 +46,3 @@ export const PrivacyMeasureOwnerScopeSchema = Schema.Struct({
       : 'Owner scope parts and trusted lookup references must be unique',
   ),
 );
-export type PrivacyMeasureOwnerScope = typeof PrivacyMeasureOwnerScopeSchema.Type;

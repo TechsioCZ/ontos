@@ -114,3 +114,48 @@ it.effect('registered dispatch validates trusted Tenant before asking the owner 
     expect(harness.snapshot().committed).toEqual([]);
   }).pipe(Effect.provide(NodeCrypto.layer)),
 );
+
+const communicationsHandoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
+  ...handoff,
+  contentScopeRefs: ['communications.core.history'],
+  dispositionDecision: 'DELETE',
+  kind: 'DELETE',
+  ownerScope: {
+    controllerRef: 'TEST:controller',
+    requestedScopePartRefs: ['communications.core.history'],
+    requestedScopeRef: 'TEST:scope',
+    trustedLookups: [
+      {
+        _tag: 'SUBJECT_REFERENCE',
+        lookupRef: 'TEST:lookup',
+        moduleId: 'party.registry',
+        resourceId: 'party-1',
+        resourceType: 'party',
+      },
+    ],
+  },
+  owningCapability: 'communications.core',
+  resourceRefs: ['communications.core.intent:i1'],
+});
+
+it.effect(
+  'dispatches a Communications measure with its exact owner scope to its own consumer and refuses one without',
+  () =>
+    Effect.gen(function* communicationsDispatch() {
+      const harness = yield* harnessFor((_tenant, _legalEntity, _invocation, input) =>
+        Effect.succeed({ created: true, handoff: input }),
+      );
+      yield* harness.runtime.runAction({ ...request('communications:1'), payload: { handoff: communicationsHandoff } });
+      const { committed } = harness.snapshot();
+      expect(committed[0]?.evidence.outboxMessages[0]).toMatchObject({
+        completion: { consumerModuleKey: 'communications.core' },
+        message: { payloadJson: { handoff: communicationsHandoff }, topic: 'privacy.measure.dispatched' },
+      });
+      const { ownerScope: _scope, ...unscoped } = communicationsHandoff;
+      const refused = yield* Effect.result(
+        harness.runtime.runAction({ ...request('communications:2'), payload: { handoff: unscoped } }),
+      );
+      expect(refused).toMatchObject({ failure: { code: 'privacy_action_rejected' } });
+      expect(harness.snapshot().committed).toHaveLength(1);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+);

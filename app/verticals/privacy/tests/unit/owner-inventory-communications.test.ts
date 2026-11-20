@@ -5,7 +5,7 @@ import type {
 import { assessCommunicationsOwnerCoverage } from '@app/communications/privacy-owner/coverage';
 import { INVENTORY_CATEGORY_IDS, scopePartRefs } from '@app/communications/privacy-owner/inventory';
 import type { CallOutcome } from '@app/core-runtime/sdk';
-import { Cause, Effect, Exit, Option } from 'effect';
+import { Cause, DateTime, Effect, Exit, Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { runOwnerInventory } from '../../src/api/owner-inventory.read.ts';
@@ -295,6 +295,81 @@ describe('Privacy owner inventory with Communications coverage', () => {
         expect(asked).toEqual([]);
         expect(entryOf(answer)?.status).toBe('UNAVAILABLE');
         expect(reasonOf(answer)).toBe('ACTIVITY_SCOPE_IS_NOT_A_QUESTION_THE_OWNER_PUBLISHES');
+      }),
+  );
+
+  it.effect(
+    'carries the owner contribution, external copies and configuration gaps exactly as the owner answered them',
+    () =>
+      Effect.gen(function* answerDetail() {
+        const contribution = {
+          completion: 'INCOMPLETE' as const,
+          decisions: [
+            {
+              category: 'REQUEST_DECISION_INTENT' as const,
+              contentRef: 'communications.core.request:r1',
+              outcome: 'INCLUDE' as const,
+              reason: 'OWN_RECORD_OF_THE_SUBJECT',
+            },
+          ],
+          exclusions: [{ reason: 'AUTH_SECRET_OR_PROOF_NEVER_KEPT', scopeRef: 'communications.core.auth' }],
+          includedContentRefs: ['communications.core.request:r1'],
+          right: 'ACCESS' as const,
+          unresolvedCategories: ['PROVIDER_COPY_WORKING_COPY_PROTECTION' as const],
+        };
+        const copy = {
+          firstObservedAt: DateTime.makeUnsafe('2026-11-01T00:00:00.000Z'),
+          holderRef: 'step-22-provider:fixture',
+          lastObservedAt: DateTime.makeUnsafe('2026-11-02T00:00:00.000Z'),
+          providerSideDispositionEvidence: 'NOT_HELD_BY_COMMUNICATIONS' as const,
+          relationship: 'HISTORICAL_TRANSPORT' as const,
+        };
+        const configuration = [
+          {
+            category: 'REQUEST_DECISION_INTENT' as const,
+            gapInputs: [{ input: 'RETENTION_RULE_IDENTITY_VERSION', owner: 'PRIVACY_OWNER' }],
+            state: 'CONFIGURATION_GAP' as const,
+          },
+        ];
+        const rich = capabilitiesOf(communicationsActivity, tenantId, (request) =>
+          Effect.succeed(
+            ok({
+              ...answerFor(request),
+              configuration,
+              contribution: Option.some(contribution),
+              externalCopies: [copy],
+            }),
+          ),
+        );
+        const answer = yield* runOwnerInventory(lookupRequestOf(tenantId, 'customer-1'), rich.capabilities);
+        expect(entryOf(answer)).toMatchObject({
+          configuration,
+          contribution,
+          externalCopies: [
+            { ...copy, firstObservedAt: '2026-11-01T00:00:00.000Z', lastObservedAt: '2026-11-02T00:00:00.000Z' },
+          ],
+        });
+        // an answer to another scope than the one asked brings none of it along: it is not the owner's answer to this question
+        const foreign = capabilitiesOf(communicationsActivity, tenantId, (request) =>
+          Effect.succeed(
+            ok({
+              ...answerFor(request, observationsOf(), { controllerRef: 'another-controller' }),
+              configuration,
+              contribution: Option.some(contribution),
+              externalCopies: [copy],
+            }),
+          ),
+        );
+        const foreignAnswer = yield* runOwnerInventory(lookupRequestOf(tenantId, 'customer-1'), foreign.capabilities);
+        expect(entryOf(foreignAnswer)).not.toHaveProperty('contribution');
+        expect(entryOf(foreignAnswer)).not.toHaveProperty('externalCopies');
+        expect(entryOf(foreignAnswer)).not.toHaveProperty('configuration');
+        // no owner other than Communications ever carries one of the three
+        for (const entry of answer.result.entries.filter(({ moduleId }) => moduleId !== OWNER)) {
+          expect(new Set(Object.keys(entry))).toEqual(
+            new Set(['moduleId', 'observedAt', 'reason', 'requiredByCoverageRefs', 'resourceRefs', 'status']),
+          );
+        }
       }),
   );
 

@@ -40,6 +40,17 @@ export const PrivacyMeasureHandoffSchema = Schema.Struct({
 });
 export type PrivacyMeasureHandoff = typeof PrivacyMeasureHandoffSchema.Type;
 
+/**
+ * The request of an owner's own receipt Read for ONE dispatched measure: the exact complete handoff and the attempt. It can
+ * never carry a result. The Shell binds its hash to the handoff of the native dispatch, so it is defined once, here, for the
+ * coordinator that sends it, the Shell that attests it and every owner that answers it.
+ */
+export const OwnerExecutionReceiptRequestSchema = Schema.Struct({
+  attempt: Schema.optionalKey(Revision),
+  handoff: PrivacyMeasureHandoffSchema,
+});
+export type OwnerExecutionReceiptRequest = typeof OwnerExecutionReceiptRequestSchema.Type;
+
 export const OwnerExecutionStatusSchema = Schema.Literals([
   'RECEIVED',
   'IN_PROGRESS',

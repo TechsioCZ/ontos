@@ -45,7 +45,48 @@ export const PrivacyOwnerObservationOutcomeSchema = Schema.Literals([
 ]);
 export type PrivacyOwnerObservationOutcome = typeof PrivacyOwnerObservationOutcomeSchema.Type;
 
+/**
+ * What an owner that answers with more than its coverage adds to its inventory entry (#1410): its configuration gaps per
+ * category, its right-specific contribution and the external copies it knows. All three are optional and additive: an owner
+ * that answers only coverage never carries them, and an entry without them is exactly the entry it has always been.
+ */
+const OwnerConfigurationSchema = Schema.Struct({
+  category: Text,
+  gapInputs: Schema.Array(Schema.Struct({ input: Text, owner: Text })),
+  state: Schema.Literals(['CONFIGURATION_GAP', 'CONFIGURED', 'CONFLICTING_CONFIGURATION', 'NOT_APPLICABLE']),
+});
+const OwnerContributionSummarySchema = Schema.Struct({
+  completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
+  decisions: Schema.Array(
+    Schema.Struct({
+      category: Text,
+      contentRef: Text,
+      outcome: Schema.Literals(['EXCLUDE', 'INCLUDE', 'REDACT']),
+      reason: Text,
+    }),
+  ),
+  exclusions: Schema.Array(Schema.Struct({ reason: Text, scopeRef: Text })),
+  includedContentRefs: Schema.Array(Text),
+  right: Text,
+  unresolvedCategories: Schema.Array(Text),
+});
+const OwnerExternalCopySchema = Schema.Struct({
+  firstObservedAt: Timestamp,
+  holderRef: Text,
+  lastObservedAt: Timestamp,
+  providerSideDispositionEvidence: Schema.Literal('NOT_HELD_BY_COMMUNICATIONS'),
+  relationship: Schema.Literals(['CURRENT_TRANSPORT', 'HISTORICAL_TRANSPORT', 'PRIOR_PROVIDER']),
+});
+const OwnerAnswerDetailFields = {
+  configuration: Schema.optionalKey(Schema.Array(OwnerConfigurationSchema)),
+  contribution: Schema.optionalKey(OwnerContributionSummarySchema),
+  externalCopies: Schema.optionalKey(Schema.Array(OwnerExternalCopySchema)),
+} as const;
+const OwnerAnswerDetailSchema = Schema.Struct(OwnerAnswerDetailFields);
+export type PrivacyOwnerAnswerDetail = typeof OwnerAnswerDetailSchema.Type;
+
 export const PrivacyOwnerObservationSchema = Schema.Struct({
+  ...OwnerAnswerDetailFields,
   moduleId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyModuleId'))),
   observedAt: Timestamp,
   outcome: PrivacyOwnerObservationOutcomeSchema,
@@ -66,6 +107,7 @@ export const PrivacyOwnerInventoryStatusSchema = Schema.Literals([
 export type PrivacyOwnerInventoryStatus = typeof PrivacyOwnerInventoryStatusSchema.Type;
 
 export const PrivacyOwnerInventoryEntrySchema = Schema.Struct({
+  ...OwnerAnswerDetailFields,
   moduleId: Schema.toEncoded(Text.pipe(Schema.brand('PrivacyModuleId'))),
   observedAt: Schema.toEncoded(Schema.OptionFromNullOr(Timestamp)),
   reason: Schema.toEncoded(Schema.OptionFromNullOr(Text)),
@@ -150,6 +192,21 @@ const reasonFor = (
     : reason;
 };
 
+/** Only what the owner actually answered: an owner without these (or no observation at all) adds no key to its entry. */
+const answerDetailOf = (observation: PrivacyOwnerObservation | undefined): PrivacyOwnerAnswerDetail => {
+  const detail: { -readonly [Key in keyof PrivacyOwnerAnswerDetail]: PrivacyOwnerAnswerDetail[Key] } = {};
+  if (observation?.configuration !== undefined) {
+    detail.configuration = observation.configuration;
+  }
+  if (observation?.contribution !== undefined) {
+    detail.contribution = observation.contribution;
+  }
+  if (observation?.externalCopies !== undefined) {
+    detail.externalCopies = observation.externalCopies;
+  }
+  return detail;
+};
+
 const inventoryEntry = (
   moduleId: string,
   requiredByCoverageRefs: readonly string[],
@@ -160,6 +217,7 @@ const inventoryEntry = (
 ): PrivacyOwnerInventoryEntry => {
   const status = statusFor(moduleId, composition, observation, moduleStates, availability);
   return {
+    ...answerDetailOf(observation),
     moduleId,
     observedAt: observation?.observedAt ?? null,
     reason: reasonFor(status, observation, moduleStates.get(moduleId)),
