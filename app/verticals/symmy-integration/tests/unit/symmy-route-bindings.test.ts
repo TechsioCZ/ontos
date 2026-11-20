@@ -207,6 +207,34 @@ const scoped = ({ bindings }: { readonly bindings: readonly SymmyRequiredBinding
   );
 const workloadsOf = (bindings: readonly SymmyRequiredBinding[], identity: SymmyRequiredBinding['identity']) =>
   bindings.filter((binding) => binding.identity === identity).map(({ workloads }) => workloads.join(' | '));
+/** The bindings of a read route of this kind for a company, enrolling every read of its inventory. */
+const readRoute = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyRouteContract[]) => {
+  const inventory = inventoryOf(routeKey);
+  return deriveSymmyRouteBindings({ companyScoped: true, contracts, enrolled: inventory.operations, inventory });
+};
+/** The refusals of a plan whose every workload the integration principal holds, registered for no company. */
+const unregisteredRefusals = (bindings: readonly SymmyRequiredBinding[]) =>
+  checkSymmyRouteBindings({
+    bindings,
+    holders: new Map(
+      symmyBindingWorkloads(bindings).map(
+        (workload) =>
+          [
+            workload,
+            [
+              {
+                apiKey: true,
+                companyRegistration: 'none' as const,
+                kind: 'integration' as const,
+                principalId: integrationId,
+              },
+            ],
+          ] as const,
+      ),
+    ),
+    legalEntityId: company,
+    principalId: integrationId,
+  }).refusals;
 
 describe('Symmy route bindings', () => {
   it('derives the integration and executor bindings of a route from the active composition', () => {
@@ -641,13 +669,14 @@ describe('Symmy route bindings', () => {
     });
   });
   it('asks a registration only for the bindings whose calls run in the route company', () => {
-    // The route context and the job poll run tenant-only, the admission and the owner read in the company; a live
-    // call's gateway check needs only the binding; Catalog's calls are published without a company.
+    // The route context and the job poll run tenant-only and the admission in the company; the association read is
+    // published `forbidden`, so the Shell signs it tenant-only; a live call's gateway check needs only the binding;
+    // Catalog's calls are published without a company.
     expect(scoped(derive([symmy, catalog, priceGroups]))).toEqual([
       `integration ${admit} | ${poll}: false`,
       `integration ${admit}: true`,
       `integration ${poll}: false`,
-      `integration ${groupRead}: true`,
+      `integration ${groupRead}: false`,
       `integration ${productImport}: false`,
       `integration ${nestedWrite}: false`,
       `integration ${productRead}: false`,
@@ -676,6 +705,48 @@ describe('Symmy route bindings', () => {
       `executor ${SYMMY_JOB_KEY}: false`,
     ]);
     expect(prices(false).bindings.some(({ companyScoped }) => companyScoped)).toBe(false);
+  });
+
+  it('asks a registration of an owner read exactly when its published scope lets it run in the company', () => {
+    // The Catalog product page is published `forbidden`: the Shell reads it tenant-only on a company route too, so an
+    // integration principal registered for no company is accepted.
+    const productPage = 'commerce.catalog.api.catalog-source-product-page';
+    const productPages = readRoute('adminProducts', [
+      symmy,
+      contract('catalog', 'commerce.catalog', { operationContracts: [carrier(productPage, [productRead])] }),
+    ]);
+    expect(productPages.refusals).toEqual([]);
+    expect(scoped(productPages)).toEqual([
+      `integration ${admit} | ${poll}: false`,
+      `integration ${productRead}: false`,
+    ]);
+    expect(unregisteredRefusals(productPages.bindings)).toEqual([]);
+
+    // The market read is published `required`, the currency read `forbidden`: the same unregistered principal is refused
+    // for the market read alone, by name.
+    const marketRead = 'commerce.market-catalog.source-read';
+    const currencyRead = 'commerce.pricing.currency-read';
+    const regions = readRoute('adminRegions', [
+      symmy,
+      contract('commerce-market-catalog', 'commerce.market-catalog', {
+        operationContracts: [carrier('commerce.market-catalog.api.current-market-catalog', [marketRead])],
+      }),
+      contract('pricing', 'commerce.pricing', {
+        operationContracts: [carrier('commerce.pricing.api.current-supported-currencies', [currencyRead])],
+      }),
+    ]);
+    expect(regions.refusals).toEqual([]);
+    expect(scoped(regions)).toEqual([
+      `integration ${admit} | ${poll}: false`,
+      `integration ${marketRead}: true`,
+      `integration ${currencyRead}: false`,
+    ]);
+    expect(unregisteredRefusals(regions.bindings)).toEqual([
+      {
+        code: 'integration_company_registration_missing',
+        detail: `The integration principal ${integrationId} holds ${marketRead}, needed for commerce.market-catalog.api.current-market-catalog@1, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+      },
+    ]);
   });
 
   describe('company registrations', () => {

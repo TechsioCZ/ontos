@@ -21,11 +21,15 @@
  * one system principal holding the Symmy job workload.
  *
  * A binding a call runs under in the route's company serves it only through an active company registration of that
- * binding (D6): without one the receiving gate answers `deny.workload_unbound`. The integration principal's admission,
- * synchronous receipt and owner reads run in the route's company (the Shell signs each into it), its route context
- * read and job poll run tenant-only, and the gateway checks of a live call ask only that the integration principal
- * still holds the workload. An executor call runs in the company unless it is published `forbidden` or a call before
- * it ran without one; the job worker itself runs tenant-only.
+ * binding (D6): without one the receiving gate answers `deny.workload_unbound`. Whether a call runs in the company is
+ * decided per operation. The integration principal's admission and synchronous receipt run in the route's company (the
+ * Shell signs each into it), and its route context read and job poll run tenant-only. An owner read it makes runs in
+ * the company exactly when the scope the owner publishes it under admits one: a read published `forbidden` refuses a
+ * company (`operation_context_invalid`), so the Shell signs it tenant-only and it needs no registration whatever
+ * company the route carries; a `required` read is signed with the route's company, and so is every `optional` read
+ * the Shell makes (Party's source reads of adminCustomers). The gateway checks of a live call ask only that the
+ * integration principal still holds the workload. An executor call runs in the company unless it is published
+ * `forbidden` or a call before it ran without one; the job worker itself runs tenant-only.
  */
 import { registeredWorkloadCallReceiverIssue } from '@app/core-runtime';
 import type { OntosRegisteredWorkloadCallInput, RegisteredWorkloadCallReceiver } from '@app/core-runtime';
@@ -40,7 +44,12 @@ import { symmySyncAdmissionRead } from '../api/symmy-sync-admission.read.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../registered-workload-calls.ts';
 import type { SymmyRouteEnrollmentRefusal } from './symmy-route-enrollment-refused.ts';
 import { SymmyRouteCallerSchema, symmyOperationName } from './symmy-route-enrollment.ts';
-import type { SymmyRouteCallRef, SymmyRouteInventory, SymmyRouteInventoryOperation } from './symmy-route-enrollment.ts';
+import type {
+  SymmyRouteAdmissionRead,
+  SymmyRouteCallRef,
+  SymmyRouteInventory,
+  SymmyRouteInventoryOperation,
+} from './symmy-route-enrollment.ts';
 
 const SYMMY_MODULE = 'integration.symmy';
 export const SYMMY_JOB_KEY = 'integration.symmy.execute-symmy-job';
@@ -322,7 +331,7 @@ const symmyRouteCalls = (input: {
     followCall(input.contracts, state, { call, company: input.companyScoped, live: recoveryOf === undefined });
   };
   const recoveries: readonly Call[] = symmyIntegrationRegisteredWorkloadCalls;
-  for (const operation of input.enrolled.filter(({ caller }) => caller === 'executor')) {
+  for (const operation of input.enrolled.flatMap((enrolled) => (enrolled.caller === 'executor' ? [enrolled] : []))) {
     for (const reference of [operation, ...(operation.reads ?? [])]) {
       own(reference);
     }
@@ -376,10 +385,10 @@ export const deriveSymmyRouteBindings = (input: {
       });
     }
   }
-  const reads = [
-    ...enrolled.filter(({ caller }) => caller === 'integration'),
+  const reads: readonly SymmyRouteAdmissionRead[] = [
+    ...enrolled.flatMap((operation) => (operation.caller === 'integration' ? [operation] : [])),
     ...(inventory.admissionReads ?? []),
-    ...enrolled.flatMap(({ integrationReads }) => integrationReads ?? []),
+    ...enrolled.flatMap((operation) => (operation.caller === 'executor' ? (operation.integrationReads ?? []) : [])),
   ];
   for (const operation of reads) {
     const [first, ...rest] = publishedWorkloads(byModule(operation.moduleId), operation);
@@ -387,9 +396,10 @@ export const deriveSymmyRouteBindings = (input: {
       refusals.push(notPublished(`${symmyOperationName(operation)} is not published by ${operation.moduleId}`));
     } else {
       moduleKeys.add(operation.moduleId);
-      // The Shell signs every owner read of a company route into the route's company.
+      // The read runs in the route's company unless its owner publishes it `forbidden`, which refuses a company, so the
+      // Shell signs it tenant-only; a `required` read and every `optional` read the Shell makes carry the route's company.
       bindings.push({
-        companyScoped: input.companyScoped,
+        companyScoped: input.companyScoped && operation.legalEntityScope !== 'forbidden',
         identity: 'integration',
         purpose: symmyOperationName(operation),
         workloads: [first, ...rest],

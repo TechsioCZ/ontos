@@ -21,8 +21,13 @@
  * It grants no binding and calls no owner. It requires the integration principal to hold an active, unrevoked API-key
  * binding, and does not prove that a key is issued for that binding: issue or rotate the key through the Shell's
  * API-key management. On a company route every binding a call runs under in that company (`companyScoped` in the
- * receipt) must also be registered for the company; Core's workload registration writes that registration. A
- * deactivation checks nothing but the stored route and its token, so it stops a route of any kind.
+ * receipt) must also be registered for the company; Core's workload registration writes that registration. This
+ * command's own `verify` is the proof of those registrations: it checks each one as the company gate admits it, the
+ * integration principal by any of its active bindings registered for the company and an executor by exactly the
+ * binding it runs under. The stage workload registration's read-back (`scripts/demo/register-stage-workloads.mts`)
+ * asks only whether the principal is registered for the company through any of its bindings, so it can report an
+ * executor verified whose own binding is not registered there. A deactivation checks nothing but the stored route and
+ * its token, so it stops a route of any kind.
  */
 import { parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';

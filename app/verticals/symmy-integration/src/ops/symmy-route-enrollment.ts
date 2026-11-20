@@ -20,6 +20,7 @@
  * The owner operations come from the plan builders that call them, so a builder and its route inventory never name two
  * versions of one operation.
  */
+import type { LegalEntityScope } from '@app/core-runtime';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Option, Schema } from 'effect';
@@ -65,9 +66,19 @@ const partyModule = 'party.registry';
 const customerModule = 'commerce.customer-context';
 const priceWrites: ReadonlySet<string> = new Set([priceOperation.entrypointKey, reviseOperation.entrypointKey]);
 /** The price reads `readSymmyPriceBatchFacts` requires of the price list read route before it admits a REVISE price. */
-const revisionReads: readonly SymmyOwnerOperation[] = [
-  { entrypointKey: 'commerce.pricing.api.price-schedule', moduleId: pricingModule, schemaVersion: '1' },
-  { entrypointKey: 'commerce.pricing.api.price-group-source-prices', moduleId: pricingModule, schemaVersion: '1' },
+const revisionReads: readonly SymmyRouteAdmissionRead[] = [
+  {
+    entrypointKey: 'commerce.pricing.api.price-schedule',
+    legalEntityScope: 'required',
+    moduleId: pricingModule,
+    schemaVersion: '1',
+  },
+  {
+    entrypointKey: 'commerce.pricing.api.price-group-source-prices',
+    legalEntityScope: 'required',
+    moduleId: pricingModule,
+    schemaVersion: '1',
+  },
 ];
 
 const RouteKeySchema = SymmyRouteContextRequestSchema.fields.routeKey;
@@ -121,21 +132,33 @@ export interface SymmyRouteCallRef {
 export interface SymmyOwnerOperation extends SymmyRouteCallRef {
   readonly moduleId: string;
 }
-export interface SymmyRouteInventoryOperation extends SymmyRouteCallRef {
-  readonly caller: typeof SymmyRouteCallerSchema.Type;
-  /** The item entity kind the admission plan reads an executor operation from. */
+/**
+ * A published read the integration principal makes with its own owner assertion: the Shell, for the route's dispatch
+ * or before it admits an operation, or the Symmy admission. `legalEntityScope` is the scope the owner publishes the
+ * read under (the `legalEntityScope` of its read descriptor), which decides whether the read can run in the route's
+ * company. The installed composition publishes no scope of a read (`OntosOperationContractSchema` carries none), so
+ * the inventory states it beside the read, as Symmy's registered calls state the scope of each call they make.
+ */
+export interface SymmyRouteAdmissionRead extends SymmyOwnerOperation {
+  readonly legalEntityScope: LegalEntityScope;
+}
+/** An owner operation the route's executor calls. */
+export interface SymmyRouteExecutorOperation extends SymmyOwnerOperation {
+  readonly caller: 'executor';
+  /** The item entity kind the admission plan reads the operation from. */
   readonly entityKind?: string;
   /** Published reads the Shell makes with the integration principal's assertion before it admits this operation. */
   readonly integrationReads?: readonly SymmyRouteAdmissionRead[];
-  readonly moduleId: string;
   /** Registered reads the executor makes for this operation, besides its own call and the recoveries of it. */
   readonly reads?: readonly SymmyRouteCallRef[];
   readonly required: boolean;
 }
-/** A published read the Symmy admission makes with the integration principal's own assertion. */
-export interface SymmyRouteAdmissionRead extends SymmyRouteCallRef {
-  readonly moduleId: string;
+/** A published read the Shell's dispatch of the route makes with the integration principal's assertion. */
+export interface SymmyRouteShellRead extends SymmyRouteAdmissionRead {
+  readonly caller: 'integration';
+  readonly required: boolean;
 }
+export type SymmyRouteInventoryOperation = SymmyRouteExecutorOperation | SymmyRouteShellRead;
 /** Logical sources whose routes the readers and writers compare field by field. */
 const SourceFamilySchema = Schema.Literals(['customerGroups', 'customers', 'priceLists', 'products']);
 type SourceFamily = typeof SourceFamilySchema.Type;
@@ -162,8 +185,8 @@ const executor = (
     readonly reads?: readonly SymmyRouteCallRef[];
     readonly required?: boolean;
   } = {},
-): SymmyRouteInventoryOperation => {
-  const operation: SymmyRouteInventoryOperation = {
+): SymmyRouteExecutorOperation => {
+  const operation: SymmyRouteExecutorOperation = {
     caller: 'executor',
     entrypointKey,
     moduleId,
@@ -181,9 +204,15 @@ const executor = (
   }
   return operation;
 };
-const shellRead = (moduleId: string, entrypointKey: string, required = false): SymmyRouteInventoryOperation => ({
+const shellRead = (
+  moduleId: string,
+  entrypointKey: string,
+  legalEntityScope: LegalEntityScope,
+  required = false,
+): SymmyRouteShellRead => ({
   caller: 'integration',
   entrypointKey,
+  legalEntityScope,
   moduleId,
   required,
   schemaVersion: '1',
@@ -226,6 +255,8 @@ const customerGroupOperation = (entrypointKey: string): SymmyOwnerOperation => (
  *   and so is the regions projection (`route.legalEntityId === undefined` answers projection_not_configured).
  *   priceLists also lends its price reads to a REVISE of priceListPricesBatch (`readSymmyPriceBatchFacts`).
  *
+ * Every read the integration principal makes names the `legalEntityScope` its owner's read descriptor publishes.
+ *
  * The job read (GET jobs/{id}) has no route: it is the poll workload every job route requires of its key.
  */
 const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInventory>([
@@ -236,13 +267,13 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       companyRequired: true,
       family: 'customers',
       operations: [
-        shellRead(customerModule, 'commerce.customer-context.api.customer-profile-source-page', true),
-        shellRead(customerModule, 'commerce.customer-context.api.customer-profile-ico'),
-        shellRead(customerModule, 'commerce.customer-context.api.organization-customer-profile-ico'),
-        shellRead(customerModule, 'commerce.customer-context.api.customer-profile-source-parties'),
-        shellRead(partyModule, 'party.registry.api.source-profile-export'),
-        shellRead(partyModule, 'party.registry.api.organization-business-name-export'),
-        shellRead(partyModule, 'party.registry.api.source-party-search'),
+        shellRead(customerModule, 'commerce.customer-context.api.customer-profile-source-page', 'required', true),
+        shellRead(customerModule, 'commerce.customer-context.api.customer-profile-ico', 'required'),
+        shellRead(customerModule, 'commerce.customer-context.api.organization-customer-profile-ico', 'required'),
+        shellRead(customerModule, 'commerce.customer-context.api.customer-profile-source-parties', 'required'),
+        shellRead(partyModule, 'party.registry.api.source-profile-export', 'optional'),
+        shellRead(partyModule, 'party.registry.api.organization-business-name-export', 'optional'),
+        shellRead(partyModule, 'party.registry.api.source-party-search', 'optional'),
       ],
       uniformEntityKind: true,
     },
@@ -252,7 +283,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     {
       admission: 'read',
       family: 'products',
-      operations: [shellRead(catalogModule, 'commerce.catalog.api.catalog-source-product-page', true)],
+      operations: [shellRead(catalogModule, 'commerce.catalog.api.catalog-source-product-page', 'forbidden', true)],
     },
   ],
   [
@@ -261,8 +292,8 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'read',
       companyRequired: true,
       operations: [
-        shellRead('commerce.market-catalog', 'commerce.market-catalog.api.current-market-catalog', true),
-        shellRead(pricingModule, 'commerce.pricing.api.current-supported-currencies', true),
+        shellRead('commerce.market-catalog', 'commerce.market-catalog.api.current-market-catalog', 'required', true),
+        shellRead(pricingModule, 'commerce.pricing.api.current-supported-currencies', 'forbidden', true),
       ],
     },
   ],
@@ -295,7 +326,13 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     'customersBatch',
     {
       admission: 'job',
-      admissionReads: [{ ...read('privacy.core.api.source-processing-eligibility'), moduleId: 'privacy.core' }],
+      admissionReads: [
+        {
+          ...read('privacy.core.api.source-processing-eligibility'),
+          legalEntityScope: 'required',
+          moduleId: 'privacy.core',
+        },
+      ],
       companyRequired: true,
       completePlans: [
         [createPartyOperation, retailProfileOperation],
@@ -326,7 +363,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
           integrationReads: revisionReads,
           reads: [read('commerce.pricing.api.price-definition'), priceGroupAssociations],
         }),
-        shellRead(priceGroupModule, priceGroupAssociations.entrypointKey, true),
+        shellRead(priceGroupModule, priceGroupAssociations.entrypointKey, 'forbidden', true),
       ],
     },
   ],
@@ -336,10 +373,10 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'read',
       family: 'priceLists',
       operations: [
-        shellRead(priceGroupModule, priceGroupAssociations.entrypointKey, true),
-        shellRead(priceGroupModule, 'pricing.price-group-catalog.api.price-group-definition', true),
-        shellRead(pricingModule, 'commerce.pricing.api.price-group-source-prices'),
-        shellRead(pricingModule, 'commerce.pricing.api.price-schedule'),
+        shellRead(priceGroupModule, priceGroupAssociations.entrypointKey, 'forbidden', true),
+        shellRead(priceGroupModule, 'pricing.price-group-catalog.api.price-group-definition', 'forbidden', true),
+        shellRead(pricingModule, 'commerce.pricing.api.price-group-source-prices', 'required'),
+        shellRead(pricingModule, 'commerce.pricing.api.price-schedule', 'required'),
       ],
     },
   ],
@@ -369,7 +406,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
         executor(createVariantOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(variantFactsOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(priceOperation, { entityKind: 'PRICE' }),
-        shellRead(priceGroupModule, priceGroupAssociations.entrypointKey),
+        shellRead(priceGroupModule, priceGroupAssociations.entrypointKey, 'forbidden'),
       ],
     },
   ],
@@ -486,10 +523,11 @@ export const symmyRouteRequestRefusals = (
           ),
         ];
       }
+      const listedKind = listed.caller === 'executor' ? listed.entityKind : undefined;
       return refuseWhen(
-        listed.entityKind !== undefined && listed.entityKind !== entityKind,
+        listedKind !== undefined && listedKind !== entityKind,
         'operation_entity_kind_mismatch',
-        `${symmyOperationName(operation)} is read from a ${listed.entityKind ?? ''} item, not ${entityKind}`,
+        `${symmyOperationName(operation)} is read from a ${listedKind ?? ''} item, not ${entityKind}`,
       );
     }),
     ...refuseWhen(
