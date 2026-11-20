@@ -9,7 +9,14 @@ import type {
   StageAccountsFileError,
 } from '@app/core-runtime/install/stage-accounts-file';
 import { StageContextBootstrapCodeSchema } from '@app/core-runtime/install/stage-context-bootstrap';
-import type { StageContextBootstrapError } from '@app/core-runtime/install/stage-context-bootstrap';
+import type {
+  StageAttachment,
+  StageContextBootstrapError,
+  StageDeparture,
+  StageRetiredConnectedApp,
+} from '@app/core-runtime/install/stage-context-bootstrap';
+import { parseDatabaseConnectionPair, targetsSameDatabase } from '@app/core-runtime';
+import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
 
 export { STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY } from '@app/core-runtime/install/stage-accounts-file';
@@ -72,6 +79,12 @@ export class StageAccountsBootstrapError extends Schema.TaggedError<StageAccount
   },
 ) {}
 
+const configurationFailure = (reason: string): StageAccountsBootstrapError =>
+  new StageAccountsBootstrapError({
+    code: 'stage_accounts_configuration_invalid',
+    reason,
+  });
+
 /**
  * Core's refusal or failure as the operator command reports it: the code Core decided it under, such as
  * `stage_connected_app_not_administered` or `stage_last_administrator`, and its reason, never a cause.
@@ -79,15 +92,120 @@ export class StageAccountsBootstrapError extends Schema.TaggedError<StageAccount
 export const stageRunFailure = (error: StageContextBootstrapError): StageAccountsBootstrapError =>
   new StageAccountsBootstrapError({ code: error.code, reason: error.reason });
 
+/**
+ * The two logins of one stage run: `DATABASE_URL` (Core, the runtime login) and `DATABASE_ADMIN_URL` (Better Auth, the
+ * administrative login) must be distinct logins (the runtime one never `postgres`) of the same server, port and
+ * database, or the run is refused before either pool opens.
+ */
+export const stageAccountsDatabases = (environment: {
+  readonly DATABASE_ADMIN_URL: string;
+  readonly DATABASE_URL: string;
+}): Effect.Effect<DatabaseConnectionPair, StageAccountsBootstrapError> =>
+  parseDatabaseConnectionPair(environment).pipe(
+    Effect.mapError(({ reason }) => configurationFailure(reason)),
+    Effect.filterOrFail(
+      ({ admin, runtime }) => targetsSameDatabase(admin, runtime),
+      () =>
+        configurationFailure(
+          'DATABASE_URL and DATABASE_ADMIN_URL must name the same PostgreSQL server, port and database',
+        ),
+    ),
+  );
+
+/** What the dry run of one operator file found the real run would do. The dry run wrote none of it. */
+export interface StageAccountsRehearsal {
+  /** Each account of the file's tenants and what the run would do with its Better Auth user. */
+  readonly accounts: readonly {
+    readonly email: string;
+    readonly status: StageAccountResult['authUser'];
+    /** The run would mark the user's email as verified. */
+    readonly verifiesEmail: boolean;
+  }[];
+  readonly attachments: readonly (StageAttachment & { readonly email: string })[];
+  /** The connected apps of departures an earlier run completed, whose tokens and consent the pre-step would delete. */
+  readonly completedConnectedApps: readonly StageRetiredConnectedApp[];
+  /** Every connected app of the people the file retires, whose tokens and consent the run deletes after its commit. */
+  readonly connectedApps: readonly StageRetiredConnectedApp[];
+  readonly departures: readonly (StageDeparture & { readonly email: string })[];
+  /** The tenants somebody leaves, which the run reconciles after its commit. */
+  readonly leftTenantIds: readonly string[];
+  readonly retiredAccountEmails: readonly string[];
+  readonly retiredTenantIds: readonly string[];
+  readonly tenantIds: readonly string[];
+}
+
+/** The bindings of a departure counted by provider, subject and the status the run read them with. */
+const bindingCountsOf = (bindings: StageDeparture['bindings']): string => {
+  const counts = new Map<string, number>();
+  for (const { provider, status, subjectType } of bindings) {
+    const key = `${provider}/${subjectType}:${status}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts.size === 0
+    ? 'none'
+    : [...counts]
+        .toSorted(([left], [right]) => left.localeCompare(right))
+        .map(([key, count]) => `${key}=${count}`)
+        .join(',');
+};
+
+const accountActionOf = ({ status, verifiesEmail }: StageAccountsRehearsal['accounts'][number]): string => {
+  const action = {
+    created: 'create it',
+    existing: 'leave its password',
+    'password-reset': 'replace its password and end its sessions',
+  }[status];
+  return verifiesEmail ? `${action} and mark its email verified` : action;
+};
+
+/**
+ * What the dry run prints: what the move transaction would write, per person who leaves and per attached login, then
+ * every write of the real run the dry run did not make. A refusal is printed as the real run prints it.
+ */
+export const stageAccountsDryRunLines = (rehearsal: StageAccountsRehearsal): readonly string[] => [
+  "Stage accounts dry run: the move transaction took the real run's locks and made its writes, then rolled back; nothing was written",
+  ...rehearsal.departures.flatMap((departure) => [
+    departure.archives
+      ? `Would retire the Principal of ${departure.email}: tenant=${departure.tenantId} principal=${departure.principalId} bindings=${bindingCountsOf(departure.bindings)} memberships=${departure.ended.memberships} assignments=${departure.ended.assignments} delegations=${departure.ended.delegations} teamPlaces=${departure.ended.teamPlaces} directory=${departure.directory} auditEvents=${departure.revocationEvents}`
+      : `The Principal of ${departure.email} is retired already: tenant=${departure.tenantId} principal=${departure.principalId}; the run ends nothing of it again`,
+    ...departure.connectedApps.map(
+      (app) =>
+        `Would end connected app "${app.clientName}" (${app.clientId}) of ${departure.email}: tenant=${app.tenantId} grant=${app.grantId} was=${app.status} lastUsed=${app.lastUsedAt?.toISOString() ?? 'never'}`,
+    ),
+  ]),
+  ...rehearsal.attachments.map((attachment) =>
+    attachment.created
+      ? `Would attach login ${attachment.email}: tenant=${attachment.tenantId} principal=${attachment.principalId} binding=${attachment.authBindingId}`
+      : `Login ${attachment.email} is attached already: tenant=${attachment.tenantId} principal=${attachment.principalId} binding=${attachment.authBindingId}; the run creates nothing`,
+  ),
+  `Would write ${rehearsal.departures.reduce((total, { revocationEvents }) => total + revocationEvents, 0)} audit events (oauth.connection.revoked)`,
+  ...rehearsal.accounts.map(
+    (account) => `Dry run skipped the Better Auth account ${account.email}: the run would ${accountActionOf(account)}`,
+  ),
+  ...(rehearsal.completedConnectedApps.length === 0
+    ? []
+    : [
+        `Dry run skipped the pre-step: the run would delete the Better Auth tokens and consent of ${rehearsal.completedConnectedApps.length} connected apps whose departure an earlier run completed`,
+      ]),
+  ...(rehearsal.connectedApps.length === 0
+    ? []
+    : [
+        `Dry run skipped the clean-up after the commit: the run would delete the Better Auth tokens and consent of ${rehearsal.connectedApps.length} connected apps of the people it retires`,
+      ]),
+  ...rehearsal.leftTenantIds.map(
+    (tenantId) => `Dry run skipped the authorization reconcile of tenant ${tenantId}, which somebody leaves`,
+  ),
+  ...rehearsal.tenantIds.map(
+    (tenantId) =>
+      `Dry run skipped tenant ${tenantId} of the file: its identity rows, access bootstrap and authorization reconcile`,
+  ),
+  ...rehearsal.retiredTenantIds.map((tenantId) => `Dry run skipped retiring tenant ${tenantId}`),
+  ...rehearsal.retiredAccountEmails.map((email) => `Dry run skipped banning the retired account ${email}`),
+];
+
 /** The one line the operator command prints for a failed run: its code, then its reason. */
 export const stageAccountsFailureLine = (failure: StageAccountsBootstrapError): string =>
   `Stage accounts bootstrap failed (${failure.code}): ${failure.reason}`;
-
-const configurationFailure = (reason: string): StageAccountsBootstrapError =>
-  new StageAccountsBootstrapError({
-    code: 'stage_accounts_configuration_invalid',
-    reason,
-  });
 
 const StageEnvironmentSchema = Schema.Trim.pipe(Schema.decodeTo(Schema.Literal('stage')));
 const StageAuthSecretSchema = Schema.Redacted(Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(32)));

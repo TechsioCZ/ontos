@@ -9,6 +9,7 @@ import {
   loadDatabaseIdentityConnections,
   parseDatabaseConfig,
   parseDatabaseConnectionPair,
+  targetsSameDatabase,
 } from '../../src/db/config.ts';
 import type { DatabaseEnvironment } from '../../src/db/config.ts';
 import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
@@ -179,6 +180,29 @@ it.effect('requires distinct administrative and least-privilege runtime identiti
     expect(Predicate.isTagged(identical, 'DatabaseConfigError')).toBe(true);
     expect(Predicate.isTagged(queryParameterCollision, 'DatabaseConfigError')).toBe(true);
     expect(Predicate.isTagged(superuserCompatible, 'DatabaseConfigError')).toBe(true);
+  }),
+);
+
+/** One administrative login and the runtime URL a case names, parsed as one pair. */
+const pairOf = (runtimeUrl: string) =>
+  parseDatabaseConnectionPair({
+    DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@db.internal:5432/ontos',
+    DATABASE_URL: runtimeUrl,
+  });
+
+it.effect('compares the server, port and database two connections reach, never their logins', () =>
+  Effect.gen(function* comparesTargets() {
+    const same = yield* pairOf('postgresql://ontos_runtime:runtime@db.internal:5432/ontos');
+    const defaultPort = yield* pairOf('postgresql://ontos_runtime:runtime@db.internal/ontos');
+    const otherHost = yield* pairOf('postgresql://ontos_runtime:runtime@replica.internal:5432/ontos');
+    const otherPort = yield* pairOf('postgresql://ontos_runtime:runtime@db.internal:5433/ontos');
+    const otherDatabase = yield* pairOf('postgresql://ontos_runtime:runtime@db.internal:5432/ontos_copy');
+
+    expect(targetsSameDatabase(same.admin, same.runtime)).toBe(true);
+    expect(targetsSameDatabase(defaultPort.admin, defaultPort.runtime)).toBe(true);
+    expect(targetsSameDatabase(otherHost.admin, otherHost.runtime)).toBe(false);
+    expect(targetsSameDatabase(otherPort.admin, otherPort.runtime)).toBe(false);
+    expect(targetsSameDatabase(otherDatabase.admin, otherDatabase.runtime)).toBe(false);
   }),
 );
 

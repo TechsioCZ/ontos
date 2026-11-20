@@ -944,7 +944,7 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             ],
           })
           .pipe(failClosed);
-        expect(retired).toEqual({ accounts: [], connectedApps: [] });
+        expect(retired).toEqual({ accounts: [], connectedApps: [], moves: { attachments: [], departures: [] } });
         // The negative control: nothing of the retired tenant answers any more.
         for (const principalId of [owner, colleague]) {
           const decision = yield* stage.decide({ carrier: readCarrier, principalId, tenantId });

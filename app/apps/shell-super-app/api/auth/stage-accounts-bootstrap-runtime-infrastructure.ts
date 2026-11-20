@@ -4,13 +4,16 @@ import type { AccessTeamStore } from '@app/core-runtime/access/intent/teams';
 import {
   completedStageRetirementsOf,
   reconcileStageContextBootstraps,
+  rehearseStageContextBootstraps,
   stageTenantsFromAccountsFile,
   stageModuleIntentRefusal,
 } from '@app/core-runtime/install/stage-context-bootstrap';
 import type {
   InstallationRuntime,
   StageContextBootstrapResult,
+  StageMoves,
   StageRetiredConnectedApp,
+  StageRetiredPrincipalIdentity,
 } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
@@ -37,6 +40,7 @@ import type {
   StageAccountsFileReader,
   StageAccountsBootstrapResult,
   StageAccountsEnvironment,
+  StageAccountsRehearsal,
 } from './stage-accounts-bootstrap-contract.ts';
 
 const persistenceFailure = (cause?: unknown) =>
@@ -75,11 +79,22 @@ const replaceStagePassword = Effect.fn('StageAccountsBootstrap.replacePassword')
   return yield* Effect.void;
 });
 
-const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(function* ensureUser(
-  configuration: Pick<StageAccountsBootstrapConfig, 'authBaseUrl' | 'authSecret'>,
+/**
+ * What the run does with one account's Better Auth user, decided from reads alone: none when the user is created, else
+ * the existing user with whether the file's password still verifies against it and whether its email is verified.
+ * Every conflict is refused while deciding, so a dry run refuses exactly what the real run refuses.
+ */
+interface ExistingAuthUser {
+  readonly credentialId: string;
+  readonly emailVerified: boolean;
+  readonly passwordValid: boolean;
+  readonly userId: string;
+}
+
+const planAuthUser = Effect.fn('StageAccountsBootstrap.planAuthUser')(function* planUser(
   accountConfiguration: StageAccountConfig,
-) {
-  const { adapter, executor: database } = yield* AuthDatabase;
+): Effect.fn.Return<Option.Option<ExistingAuthUser>, StageAccountsBootstrapError, AuthDatabase> {
+  const { executor: database } = yield* AuthDatabase;
   const existingUsers = yield* database
     .select({ email: user.email, emailVerified: user.emailVerified, id: user.id, name: user.name })
     .from(user)
@@ -93,38 +108,57 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
     });
   }
   const [existingUser] = existingUsers;
-  if (existingUser !== undefined) {
-    yield* classifyExactStageAccountsRecord('Better Auth user', existingUser, {
-      email: accountConfiguration.email,
-      name: accountConfiguration.displayName,
+  if (existingUser === undefined) {
+    return Option.none();
+  }
+  yield* classifyExactStageAccountsRecord('Better Auth user', existingUser, {
+    email: accountConfiguration.email,
+    name: accountConfiguration.displayName,
+  });
+  const credentials = yield* database
+    .select({
+      accountId: account.accountId,
+      id: account.id,
+      password: account.password,
+    })
+    .from(account)
+    .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'credential')))
+    .limit(2)
+    .pipe(Effect.mapError(persistenceFailure));
+  const [credential] = credentials.length === 1 ? credentials : [];
+  if (credential?.password === null || credential?.password === undefined) {
+    return yield* new StageAccountsBootstrapError({
+      code: 'stage_accounts_conflict',
+      reason: 'The existing stage account user has conflicting credentials',
     });
-    const credentials = yield* database
-      .select({
-        accountId: account.accountId,
-        id: account.id,
-        password: account.password,
-      })
-      .from(account)
-      .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'credential')))
-      .limit(2)
-      .pipe(Effect.mapError(persistenceFailure));
-    const [credential] = credentials.length === 1 ? credentials : [];
-    if (credential?.password === null || credential?.password === undefined) {
-      return yield* new StageAccountsBootstrapError({
-        code: 'stage_accounts_conflict',
-        reason: 'The existing stage account user has conflicting credentials',
-      });
-    }
-    yield* classifyExactStageAccountsRecord('Better Auth credential account', credential, {
-      accountId: existingUser.id,
-    });
-    const hash = credential.password;
-    const validPassword = yield* Effect.tryPromise({
-      catch: persistenceFailure,
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
-      try: () => verifyPassword({ hash, password: Redacted.value(accountConfiguration.password) }),
-    }).pipe(Effect.option, Effect.map(Option.getOrElse(() => false)), bootstrapSdkTimeout);
-    if (!validPassword) {
+  }
+  yield* classifyExactStageAccountsRecord('Better Auth credential account', credential, {
+    accountId: existingUser.id,
+  });
+  const hash = credential.password;
+  const passwordValid = yield* Effect.tryPromise({
+    catch: persistenceFailure,
+    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
+    try: () => verifyPassword({ hash, password: Redacted.value(accountConfiguration.password) }),
+  }).pipe(Effect.option, Effect.map(Option.getOrElse(() => false)), bootstrapSdkTimeout);
+  return Option.some({
+    credentialId: credential.id,
+    emailVerified: existingUser.emailVerified,
+    passwordValid,
+    userId: existingUser.id,
+  });
+});
+
+/** Writes what `planAuthUser` decided: the user created, or its password replaced and its email verified. */
+const applyAuthUser = Effect.fn('StageAccountsBootstrap.applyAuthUser')(function* applyUser(
+  configuration: Pick<StageAccountsBootstrapConfig, 'authBaseUrl' | 'authSecret'>,
+  accountConfiguration: StageAccountConfig,
+  existing: Option.Option<ExistingAuthUser>,
+) {
+  const { adapter, executor: database } = yield* AuthDatabase;
+  if (Option.isSome(existing)) {
+    const plan = existing.value;
+    if (!plan.passwordValid) {
       const replacementHash = yield* Effect.tryPromise({
         catch: persistenceFailure,
         // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
@@ -133,11 +167,11 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
       const updatedAt = yield* DateTime.nowAsDate;
       yield* database
         .transaction((transaction) =>
-          replaceStagePassword(transaction, credential.id, existingUser.id, replacementHash, updatedAt),
+          replaceStagePassword(transaction, plan.credentialId, plan.userId, replacementHash, updatedAt),
         )
         .pipe(Effect.mapError(persistenceFailure));
     }
-    if (!existingUser.emailVerified) {
+    if (!plan.emailVerified) {
       // The guarded operator file attests this exact account, not arbitrary users in the database.
       const updatedAt = yield* DateTime.nowAsDate;
       const verified = yield* database
@@ -145,7 +179,7 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
         .set({ emailVerified: true, updatedAt })
         .where(
           and(
-            eq(user.id, existingUser.id),
+            eq(user.id, plan.userId),
             eq(user.email, accountConfiguration.email),
             eq(user.name, accountConfiguration.displayName),
           ),
@@ -160,8 +194,8 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
       }
     }
     return {
-      status: validPassword ? ('existing' as const) : ('password-reset' as const),
-      userId: existingUser.id,
+      status: plan.passwordValid ? ('existing' as const) : ('password-reset' as const),
+      userId: plan.userId,
     };
   }
 
@@ -194,6 +228,28 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
   }).pipe(Effect.uninterruptible);
   return { status: 'created' as const, userId: created.user.id };
 });
+
+/** Reconciles one account's Better Auth user: decided from reads, then written. */
+const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(function* ensureUser(
+  configuration: Pick<StageAccountsBootstrapConfig, 'authBaseUrl' | 'authSecret'>,
+  accountConfiguration: StageAccountConfig,
+) {
+  return yield* applyAuthUser(configuration, accountConfiguration, yield* planAuthUser(accountConfiguration));
+});
+
+/** What the run would do with one account's Better Auth user, as the dry run reports it. */
+const authUserPreviewOf = (
+  accountConfiguration: StageAccountConfig,
+  existing: Option.Option<ExistingAuthUser>,
+): StageAccountsRehearsal['accounts'][number] =>
+  Option.match(existing, {
+    onNone: () => ({ email: accountConfiguration.email, status: 'created' as const, verifiesEmail: false }),
+    onSome: ({ emailVerified, passwordValid }) => ({
+      email: accountConfiguration.email,
+      status: passwordValid ? ('existing' as const) : ('password-reset' as const),
+      verifiesEmail: !emailVerified,
+    }),
+  });
 
 export { ensureAuthUser as ensureStageAccountAuthUser };
 
@@ -367,7 +423,7 @@ const toAccountResult = (
 
 /**
  * What one operator run did: its accounts and retired accounts, the logins it attached, the people it retired and the
- * connected apps their departure ended.
+ * connected apps their departure ended, and what its move transaction wrote, which its dry run reports beforehand.
  */
 export interface StageAccountsBootstrapRunResult extends StageAccountsBootstrapResult {
   readonly attachedLogins: readonly {
@@ -385,6 +441,7 @@ export interface StageAccountsBootstrapRunResult extends StageAccountsBootstrapR
     readonly status: string;
     readonly tenantId: string;
   }[];
+  readonly moves: StageMoves;
   readonly retiredPrincipals: readonly {
     readonly email: string;
     readonly principalId: string;
@@ -399,6 +456,65 @@ export interface StageAccountsBootstrapOptions {
    */
   readonly modules: readonly AccessCatalogModule[];
 }
+
+type StageAccountsFile = StageAccountsBootstrapConfig['accountsFile'];
+
+/** A tenant of the file whose base module the running composition does not declare refuses the file first. */
+const refuseUndeclaredModules = (accountsFile: StageAccountsFile, modules: readonly AccessCatalogModule[]) => {
+  const refusal = stageModuleIntentRefusal(
+    accountsFile.tenants.map(({ moduleKey }) => moduleKey),
+    modules,
+  );
+  return refusal === undefined
+    ? Effect.void
+    : Effect.fail(
+        new StageAccountsBootstrapError({ code: 'stage_accounts_configuration_invalid', reason: refusal.reason }),
+      );
+};
+
+/** Each person the file retires, with the Better Auth user its email names. */
+const retiredPrincipalIdentitiesOf = (accountsFile: StageAccountsFile) =>
+  Effect.forEach(
+    accountsFile.retiredPrincipals ?? [],
+    (retired) =>
+      retiredLoginUser(retired.email).pipe(
+        Effect.map((providerUserId) => ({
+          principalId: retired.principalId,
+          providerUserId,
+          tenantId: retired.tenantId,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+
+/** Each login the file attaches, with the Better Auth user it already signs in as. */
+const attachedLoginIdentitiesOf = (accountsFile: StageAccountsFile) =>
+  Effect.forEach(
+    accountsFile.attachedLogins ?? [],
+    (login) =>
+      attachedLoginUser(login.email).pipe(
+        Effect.map((providerUserId) => ({
+          authBindingId: login.authBindingId,
+          displayName: login.displayName,
+          principalId: login.principalId,
+          providerUserId,
+          tenantId: login.tenantId,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+
+/** The read-only pre-step: every connected app of a person of the file whose departure an earlier run completed. */
+const completedRetirementsOf = (retiredPrincipals: readonly StageRetiredPrincipalIdentity[]) =>
+  completedStageRetirementsOf(retiredPrincipals, {
+    authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+  }).pipe(Effect.mapError(stageRunFailure));
+
+/** Every account of the file's tenants, tenant by tenant and account by account. */
+const accountConfigurationsOf = (accountsFile: StageAccountsFile): readonly StageAccountConfig[] =>
+  accountsFile.tenants.flatMap(({ accounts }) =>
+    accounts.map(({ displayName, email, password }) => ({ displayName, email, password })),
+  );
 
 /**
  * Creates each stage account's Better Auth user and then the tenant's authorization v2 authority: one
@@ -424,28 +540,8 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
   const { accountsFile } = configuration;
   const attachedLogins = accountsFile.attachedLogins ?? [];
   const retiredPrincipals = accountsFile.retiredPrincipals ?? [];
-  const moduleRefusal = stageModuleIntentRefusal(
-    accountsFile.tenants.map(({ moduleKey }) => moduleKey),
-    options.modules,
-  );
-  if (moduleRefusal !== undefined) {
-    return yield* new StageAccountsBootstrapError({
-      code: 'stage_accounts_configuration_invalid',
-      reason: moduleRefusal.reason,
-    });
-  }
-  const retiredPrincipalIdentities = yield* Effect.forEach(
-    retiredPrincipals,
-    (retired) =>
-      retiredLoginUser(retired.email).pipe(
-        Effect.map((providerUserId) => ({
-          principalId: retired.principalId,
-          providerUserId,
-          tenantId: retired.tenantId,
-        })),
-      ),
-    { concurrency: 1 },
-  );
+  yield* refuseUndeclaredModules(accountsFile, options.modules);
+  const retiredPrincipalIdentities = yield* retiredPrincipalIdentitiesOf(accountsFile);
   // The read-only pre-step finishes a departure an earlier run of this file committed first, whatever the run then
   // decides about the rest of the file: a run that stopped before its clean-up is completed even when, say, a login it
   // attached has since connected an app of its own and the attachment's exact replay refuses the file. A person of the
@@ -453,28 +549,9 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
   // retirement is one transaction that also archives the Principal; only the tokens and consent of their ended grants
   // are deleted, by grant id, which is idempotent and harmless even for a Principal archived by other means. This and
   // the Better Auth accounts below run before Core's move transaction, so a refused file may already have done them.
-  yield* finishStageConnectedAppEndings(
-    yield* completedStageRetirementsOf(retiredPrincipalIdentities, {
-      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-    }).pipe(Effect.mapError(stageRunFailure)),
-  );
-  const attachedLoginIdentities = yield* Effect.forEach(
-    attachedLogins,
-    (login) =>
-      attachedLoginUser(login.email).pipe(
-        Effect.map((providerUserId) => ({
-          authBindingId: login.authBindingId,
-          displayName: login.displayName,
-          principalId: login.principalId,
-          providerUserId,
-          tenantId: login.tenantId,
-        })),
-      ),
-    { concurrency: 1 },
-  );
-  const accountConfigurations = accountsFile.tenants.flatMap(({ accounts }) =>
-    accounts.map(({ displayName, email, password }) => ({ displayName, email, password })),
-  );
+  yield* finishStageConnectedAppEndings(yield* completedRetirementsOf(retiredPrincipalIdentities));
+  const attachedLoginIdentities = yield* attachedLoginIdentitiesOf(accountsFile);
+  const accountConfigurations = accountConfigurationsOf(accountsFile);
   const authUsers = yield* Effect.forEach(
     accountConfigurations,
     (accountConfiguration) => ensureAuthUser(configuration, accountConfiguration),
@@ -544,7 +621,65 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
           : [],
       ),
     ),
+    moves: run.moves,
     retiredAccounts,
     retiredPrincipals: retiredPrincipals.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
+  };
+});
+
+/**
+ * The dry run of `bootstrapStageAccounts` (`--dry-run`): every read and refusal of the real run, in the real run's
+ * order, then Core's move transaction with every lock, read and write of the real run, rolled back instead of
+ * committed. Nothing persists. What the real run writes outside that transaction is skipped and reported instead: the
+ * pre-step's deletion of Better Auth tokens and consent (its read runs), the reconciliation of the file's Better Auth
+ * accounts (their reads and refusals run), the deletion of the retired people's tokens and consent after the commit,
+ * the reconcile of every tenant somebody leaves, every tenant and retired tenant of the file, and every ban of a
+ * retired account.
+ */
+export const rehearseStageAccounts = Effect.fn('StageAccountsBootstrap.rehearse')(function* rehearse(
+  configuration: StageAccountsBootstrapConfig,
+  options: StageAccountsBootstrapOptions,
+): Effect.fn.Return<
+  StageAccountsRehearsal,
+  StageAccountsBootstrapError,
+  AccessPeopleStore | AccessTeamStore | AuthDatabase | DatabaseIdentityEnrollmentContext | InstallationRuntime
+> {
+  const { accountsFile } = configuration;
+  const attachedLogins = accountsFile.attachedLogins ?? [];
+  const retiredPrincipals = accountsFile.retiredPrincipals ?? [];
+  yield* refuseUndeclaredModules(accountsFile, options.modules);
+  const retiredPrincipalIdentities = yield* retiredPrincipalIdentitiesOf(accountsFile);
+  // The pre-step reads what an earlier run completed; the dry run reports the deletion instead of making it.
+  const completedConnectedApps = yield* completedRetirementsOf(retiredPrincipalIdentities);
+  const attachedLoginIdentities = yield* attachedLoginIdentitiesOf(accountsFile);
+  // Each account is decided, its refusals included, as the real run decides it; the dry run writes none of it.
+  const accounts = yield* Effect.forEach(
+    accountConfigurationsOf(accountsFile),
+    (accountConfiguration) =>
+      planAuthUser(accountConfiguration).pipe(Effect.map((plan) => authUserPreviewOf(accountConfiguration, plan))),
+    { concurrency: 1 },
+  );
+  const moved = yield* rehearseStageContextBootstraps(
+    { attachedLogins: attachedLoginIdentities, file: accountsFile, retiredPrincipals: retiredPrincipalIdentities },
+    { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID, modules: options.modules },
+  ).pipe(Effect.mapError(stageRunFailure));
+  return {
+    accounts,
+    attachments: attachedLogins.flatMap(({ email, principalId, tenantId }) =>
+      moved.moves.attachments.flatMap((attachment) =>
+        attachment.principalId === principalId && attachment.tenantId === tenantId ? [{ ...attachment, email }] : [],
+      ),
+    ),
+    completedConnectedApps,
+    connectedApps: moved.connectedApps,
+    departures: retiredPrincipals.flatMap(({ email, principalId, tenantId }) =>
+      moved.moves.departures.flatMap((departure) =>
+        departure.principalId === principalId && departure.tenantId === tenantId ? [{ ...departure, email }] : [],
+      ),
+    ),
+    leftTenantIds: [...new Set(retiredPrincipals.map(({ tenantId }) => tenantId))],
+    retiredAccountEmails: accountsFile.retiredAccountEmails,
+    retiredTenantIds: accountsFile.retiredTenants.map(({ tenantId }) => tenantId),
+    tenantIds: accountsFile.tenants.map(({ tenantId }) => tenantId),
   };
 });

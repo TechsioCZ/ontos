@@ -352,6 +352,7 @@ export {
   makeDatabaseConfigLive,
   parseDatabaseConnectionPair,
   parseDatabaseConfig,
+  targetsSameDatabase,
 } from './db/config.ts';
 export {
   ACTION_AUTH_METHODS,

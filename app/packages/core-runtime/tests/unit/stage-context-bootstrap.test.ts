@@ -328,8 +328,20 @@ it.effect('revokes the disabled bindings of connected apps the person revoked, a
     expect(ending.replay).toBe(false);
     expect(ending.connectedApps).toEqual([]);
     expect(ending.bindings).toEqual([
-      { id: loginBinding.principalAuthBindingId, revision: 1, status: 'active' },
-      ...apps.map(({ app }) => ({ id: app.authBindingId, revision: 2, status: 'disabled' })),
+      {
+        id: loginBinding.principalAuthBindingId,
+        provider: 'better_auth',
+        revision: 1,
+        status: 'active',
+        subjectType: 'user',
+      },
+      ...apps.map(({ app }) => ({
+        id: app.authBindingId,
+        provider: 'better_auth',
+        revision: 2,
+        status: 'disabled',
+        subjectType: 'oauth_grant',
+      })),
     ]);
   }),
 );
@@ -358,7 +370,15 @@ it.effect('ends a draft consent, which has no binding yet', () =>
     const pending = appOf(7, 'draft', null);
     const ending = yield* endingOf([pending]);
     expect(ending.connectedApps).toEqual([pending.app]);
-    expect(ending.bindings).toEqual([{ id: loginBinding.principalAuthBindingId, revision: 1, status: 'active' }]);
+    expect(ending.bindings).toEqual([
+      {
+        id: loginBinding.principalAuthBindingId,
+        provider: 'better_auth',
+        revision: 1,
+        status: 'active',
+        subjectType: 'user',
+      },
+    ]);
   }),
 );
 

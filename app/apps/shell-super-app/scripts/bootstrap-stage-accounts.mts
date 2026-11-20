@@ -21,30 +21,34 @@ import type { CoreDatabase } from '@app/core-runtime/db/client';
 import { readStageAccountsFileContents } from '@app/core-runtime/install/stage-accounts-file';
 import { loadStageContextBootstrapConfiguration } from '@app/core-runtime/install/stage-context-bootstrap';
 import type { InstallationRuntime } from '@app/core-runtime/install/stage-context-bootstrap';
-import {
-  AccessWorkloadSchema,
-  DatabaseConfig,
-  makeDatabaseIdentityEnrollmentLive,
-  parseDatabaseConnectionPair,
-} from '@app/core-runtime';
+import { AccessWorkloadSchema, DatabaseConfig, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import type {
+  AccessCatalogModule,
   DatabaseConnectionError,
   DatabaseConnectionPair,
   DatabaseIdentityEnrollmentContext,
 } from '@app/core-runtime';
-import { Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import { ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
+import { Command, Flag } from 'effect/cli';
 
 import { AuthDatabaseForExpectedRoleLive } from '../api/auth/db/client.ts';
+import type { AuthDatabaseConnectionError } from '../api/auth/db/connection-error.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../api/database-identity-enrollment.ts';
 import {
   StageAccountsBootstrapError,
+  stageAccountsDatabases,
+  stageAccountsDryRunLines,
   stageAccountsFailureLine,
 } from '../api/auth/stage-accounts-bootstrap-contract.ts';
-import type { StageAccountsFileReader } from '../api/auth/stage-accounts-bootstrap-contract.ts';
+import type {
+  StageAccountsBootstrapConfig,
+  StageAccountsFileReader,
+} from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
   bootstrapStageAccounts,
   loadStageAccountsConfiguration,
+  rehearseStageAccounts,
 } from '../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 
 /** Reads the operator accounts file named by `ONTOS_STAGE_ACCOUNTS_FILE`; its values are never logged. */
@@ -134,19 +138,35 @@ export interface StageAccountsConnections {
 }
 
 /**
- * The Better Auth store of a stage accounts run: the administrative connection, confirmed on its first statement to be
- * the very login `DATABASE_ADMIN_URL` names, never the runtime role it is not.
+ * Every pool this finite command opens is its own, whatever the container sets. The stage container sets
+ * `ONTOS_DATABASE_POOL_SHARED=true` for its long-running app host, which alone installs the registry shared pools draw
+ * from and turns sharing off for every finite child it starts (`finiteProcessEnvironment` in
+ * `scripts/zerops/app-host.mts`, not importable from the Shell). An operator runs this command beside that host, so it
+ * applies the same rule itself: without it, building a client fails with "Shared database pools require a scoped
+ * process host registry" before any statement. Every other pool setting is still read from the environment.
+ */
+const FinitePoolsLive = ConfigProvider.layerAdd(ConfigProvider.fromEnvRecord({ ONTOS_DATABASE_POOL_SHARED: 'false' }), {
+  asPrimary: true,
+});
+
+/**
+ * The Better Auth store of a stage accounts run: a private pool of the administrative connection, whose session is
+ * confirmed on its first statement to be the login `DATABASE_ADMIN_URL` names.
  */
 export const makeStageAccountsAuthDatabase = (databases: DatabaseConnectionPair) =>
-  AuthDatabaseForExpectedRoleLive(databases.admin);
+  AuthDatabaseForExpectedRoleLive(databases.admin).pipe(Layer.provide(FinitePoolsLive));
 
 /**
  * The whole graph of one stage accounts run, composed here because this script is a process root, and the only
- * composition the operator command and its integration test build. Core, its access writers, the projection writer
- * and the revocation events the run records in its own transaction share one pool of the runtime connection, confirmed
- * on its first statement to be the login `DATABASE_URL` names; the engine transport is opened with the graph and
- * closed when the run ends; Better Auth uses the administrative connection (`makeStageAccountsAuthDatabase`). A URL
- * handed to the wrong client fails that client's first statement, before the run writes anything.
+ * composition the operator command and its integration test build: Core from `connections.databases.runtime`
+ * (`DATABASE_URL`) and Better Auth from `connections.databases.admin` (`DATABASE_ADMIN_URL`), each on a private pool
+ * (`FinitePoolsLive`). Core, its access writers, the projection writer and the revocation events the run records in its
+ * own transaction share the runtime pool; the engine transport is opened with the graph and closed when the run ends.
+ * Each client confirms on its first statement only that its session is the login of its own URL, so it cannot notice
+ * two URLs swapped between the clients. What keeps them apart is this one function, which no caller can wire
+ * differently; the integration test, which asserts through it that Better Auth's `session_user` is the administrative
+ * login and Core's the runtime login; and Core's role check whenever it installs a scope (`scoped-transaction.ts`), which
+ * fails closed for any role but the session-setting one its enrollment names, before Core reads or writes a tenant row.
  */
 export const makeStageAccountsRuntime = (connections: StageAccountsConnections) => {
   const database = CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, connections.databases.runtime)));
@@ -160,7 +180,7 @@ export const makeStageAccountsRuntime = (connections: StageAccountsConnections) 
   return Layer.mergeAll(
     makeStageInstallationRuntime(database, engine),
     makeStageAccountsAuthDatabase(connections.databases),
-  );
+  ).pipe(Layer.provide(FinitePoolsLive));
 };
 
 const invalid = (error: { readonly reason: string }) =>
@@ -168,35 +188,63 @@ const invalid = (error: { readonly reason: string }) =>
 
 /**
  * This command's connections, from the container's own environment: `DATABASE_URL` and `DATABASE_ADMIN_URL` must be
- * two distinct logins of one database (the runtime login is never `postgres`), and the engine is stage-private SpiceDB.
+ * two distinct logins (the runtime login is never `postgres`) of the same server, port and database, refused before
+ * either pool opens, and the engine is stage-private SpiceDB.
  */
 const stageAccountsConnections = Effect.fn('StageAccountsBootstrap.connections')(function* stageAccountsConnectionsOf(
   databaseAdminUrl: string,
 ) {
   const stage = yield* loadStageContextBootstrapConfiguration().pipe(Effect.mapError(invalid));
-  const databases = yield* parseDatabaseConnectionPair({
+  const databases = yield* stageAccountsDatabases({
     DATABASE_ADMIN_URL: databaseAdminUrl,
     DATABASE_URL: Redacted.value(stage.databaseUrl),
-  }).pipe(Effect.mapError(invalid));
+  });
   return { databases, spiceDb: stage.spiceDb } satisfies StageAccountsConnections;
 });
 
-const program = Effect.gen(function* bootstrapStageAccountsProgram() {
-  const { declaredWorkloadKeys, modules } = yield* stageAccessModules;
-  const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, declaredWorkloadKeys);
-  const connections = yield* stageAccountsConnections(configuration.databaseAdminUrl);
-  // A pool that cannot be opened is this command's failure, reported with the reason it recorded.
-  const result = yield* bootstrapStageAccounts(configuration, { modules }).pipe(
-    Effect.provide(makeStageAccountsRuntime(connections)),
+/** A pool that cannot be opened is this command's failure, reported with the reason it recorded. */
+const reportUnopenedPools = function reportUnopenedPools<Value, Requirements>(
+  run: Effect.Effect<
+    Value,
+    AuthDatabaseConnectionError | DatabaseConnectionError | StageAccountsBootstrapError,
+    Requirements
+  >,
+) {
+  return run.pipe(
     Effect.catchTags({
       AuthDatabaseConnectionError: () =>
         new StageAccountsBootstrapError({
           code: 'stage_accounts_persistence_failed',
           reason: 'The stage authentication database could not be opened',
         }),
-      DatabaseConnectionError: (error) =>
-        new StageAccountsBootstrapError({ code: 'stage_accounts_persistence_failed', reason: error.reason }),
+      DatabaseConnectionError: ({ reason }) =>
+        new StageAccountsBootstrapError({ code: 'stage_accounts_persistence_failed', reason }),
     }),
+  );
+};
+
+/** The dry run (`--dry-run`): it rolls its move transaction back, writes nothing and prints what the real run would do. */
+const dryRunOf = Effect.fn('StageAccountsBootstrap.dryRun')(function* dryRunEffect(
+  configuration: StageAccountsBootstrapConfig,
+  modules: readonly AccessCatalogModule[],
+  connections: StageAccountsConnections,
+) {
+  const rehearsal = yield* rehearseStageAccounts(configuration, { modules }).pipe(
+    Effect.provide(makeStageAccountsRuntime(connections)),
+    reportUnopenedPools,
+  );
+  yield* Effect.forEach(stageAccountsDryRunLines(rehearsal), (line) => Console.log(line), { discard: true });
+});
+
+/** The real run: it reconciles the file and prints what it did. */
+const realRunOf = Effect.fn('StageAccountsBootstrap.realRun')(function* realRunEffect(
+  configuration: StageAccountsBootstrapConfig,
+  modules: readonly AccessCatalogModule[],
+  connections: StageAccountsConnections,
+) {
+  const result = yield* bootstrapStageAccounts(configuration, { modules }).pipe(
+    Effect.provide(makeStageAccountsRuntime(connections)),
+    reportUnopenedPools,
   );
   yield* Effect.forEach(
     result.accounts,
@@ -233,12 +281,44 @@ const program = Effect.gen(function* bootstrapStageAccountsProgram() {
     (account) => Console.log(`Retired stage account ${account.email}: ${account.status}`),
     { discard: true },
   );
-}).pipe(
-  Effect.tapError((failure) => Console.error(stageAccountsFailureLine(failure))),
-  Effect.tapDefect(() => Console.error('Stage accounts bootstrap failed unexpectedly')),
-);
+});
+
+/** One run of the operator command: the dry run when `dryRun`, else the real run. */
+const program = (dryRun: boolean) =>
+  Effect.gen(function* stageAccountsProgram() {
+    const { declaredWorkloadKeys, modules } = yield* stageAccessModules;
+    const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, declaredWorkloadKeys);
+    const connections = yield* stageAccountsConnections(configuration.databaseAdminUrl);
+    return yield* (dryRun ? dryRunOf : realRunOf)(configuration, modules, connections);
+  }).pipe(
+    Effect.tapError((failure) => Console.error(stageAccountsFailureLine(failure))),
+    Effect.tapDefect(() => Console.error('Stage accounts bootstrap failed unexpectedly')),
+  );
+
+/**
+ * The operator command line: no flag is the real run, `--dry-run` its dry run. The parser refuses any other argument
+ * before the command reads its file or opens a connection, so a mistyped flag never starts the real run.
+ */
+export const makeStageAccountsCommand = function makeStageAccountsCommand<Failure, Requirements>(
+  run: (dryRun: boolean) => Effect.Effect<void, Failure, Requirements>,
+) {
+  return Command.make(
+    'bootstrap-stage-accounts',
+    {
+      dryRun: Flag.Boolean('dry-run').pipe(
+        Flag.withDefault(false),
+        Flag.withDescription(
+          "Run the move transaction with the real run's locks and writes, roll it back, and print what the real run would do",
+        ),
+      ),
+    },
+    ({ dryRun }) => run(dryRun),
+  ).pipe(Command.withDescription('Reconcile the operator stage accounts file named by ONTOS_STAGE_ACCOUNTS_FILE'));
+};
+
+export const main = Command.run({ version: '1.0.0' })(makeStageAccountsCommand(program));
 
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(NodeServices.layer), Effect.scoped));
+  const exit = await Effect.runPromiseExit(main.pipe(Effect.provide(NodeServices.layer), Effect.scoped));
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

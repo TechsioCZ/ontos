@@ -188,7 +188,8 @@ const parseDatabaseConnectionPairWith = Effect.fn('Config.readDatabaseConnection
   },
 );
 
-const targetsSameDatabase = (left: DatabaseConfigValue, right: DatabaseConfigValue): boolean =>
+/** Whether two connections reach the same server, port and database, whatever login each signs in as. */
+export const targetsSameDatabase = (left: DatabaseConfigValue, right: DatabaseConfigValue): boolean =>
   left.host === right.host && left.port === right.port && left.database === right.database;
 
 const readIdentityConnection = Effect.fn('Config.readIdentityConnection')(function* readIdentityConnectionEffect(
