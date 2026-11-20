@@ -126,7 +126,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     );
 
     suite.effect(
-      'row 7: a refused, absent, foreign, unconfirmed, corrupt or unreachable asset is never AVAILABLE, and each kind keeps its own meaning',
+      'row 7: a refused, absent, foreign, unconfirmed, size-changed or unreachable asset is never AVAILABLE, and each kind keeps its own meaning (CONTROLLED FAULT INJECTION: provider unreachable, out-of-band size change)',
       (ctx) =>
         withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(

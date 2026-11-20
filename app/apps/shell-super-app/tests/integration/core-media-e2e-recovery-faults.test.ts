@@ -119,12 +119,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 path: `/core/media/assets/${id}/content`,
               });
               const ended = yield* readToEnd(truncated);
-              expect(
-                Exit.isFailure(ended) || (Exit.isSuccess(ended) && ended.value.byteLength < bytes.byteLength),
-              ).toBe(true);
-              if (Exit.isSuccess(ended)) {
-                expect(digestOf(ended.value)).not.toBe(digestOf(bytes));
-              }
+              expect(Exit.isFailure(ended)).toBe(true);
               expect(yield* rowOf(world, id)).toEqual(rowBefore);
 
               // The provider is back: the very same asset downloads again, byte for byte.
@@ -158,10 +153,10 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(refused.status).toBe(409);
               expect(textOf(refused.bytes)).not.toMatch(/"processingStatus":"ready"/u);
               const row = yield* rowOf(world, id);
-              expect(row?.processing_status).not.toBe('ready');
+              expect(row?.processing_status).toBe('uploaded');
               expect(row?.sealed_at ?? null).toBeNull();
               // Never a false ready: no download, and the metadata publishes no verified size or hash.
-              expect((yield* downloadOf(edge, reader, id)).status).not.toBe(200);
+              expect((yield* downloadOf(edge, reader, id)).status).toBe(409);
               const metadata = yield* metadataOf(edge, reader, id);
               expect(metadata.json).toMatchObject({ contentVerified: false });
               expect(textOf(metadata.bytes)).not.toContain(digestOf(declared));
@@ -201,11 +196,9 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 path: `/core/media/assets/${id}/content`,
               });
               const ended = yield* readToEnd(response);
-              // The transfer is stopped at the proof of corruption: no clean end, or an error status before any byte.
-              expect(response.status === 200 ? Exit.isFailure(ended) : response.status >= 400).toBe(true);
-              if (Exit.isSuccess(ended)) {
-                expect(digestOf(ended.value)).not.toBe(digestOf(substituted));
-              }
+              // The transfer starts, and it is stopped without a clean end at the proof of corruption.
+              expect(response.status).toBe(200);
+              expect(Exit.isFailure(ended)).toBe(true);
             }),
           ),
         ),
@@ -235,7 +228,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               yield* world.admin.unsafe('drop trigger d20_e2e_refuse_ready on core.media_assets');
               expect(refused.status).toBe(503);
               expect((yield* rowOf(world, id))?.processing_status).toBe('uploaded');
-              expect((yield* downloadOf(edge, reader, id)).status).not.toBe(200);
+              expect((yield* downloadOf(edge, reader, id)).status).toBe(409);
 
               // The bytes are in the object store already; the retry confirms them as the original intent.
               const retried = yield* putBytes(edge, uploader, id, bytes);
@@ -274,7 +267,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               yield* world.revoke(grant.incarnationId);
               const refused = yield* putBytes(edge, uploader, id, bytes);
               expect(refused.status).toBe(403);
-              expect((yield* rowOf(world, id))?.processing_status).not.toBe('ready');
+              expect((yield* rowOf(world, id))?.processing_status).toBe('uploaded');
 
               yield* world.grant(uploader, uploaderCapabilities);
               expect((yield* putBytes(edge, uploader, id, bytes)).status).toBe(200);

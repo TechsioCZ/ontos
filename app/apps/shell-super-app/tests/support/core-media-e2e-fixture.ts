@@ -35,7 +35,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import { createEffectBffTestHandler } from '@modern-js/bff-effect/effect-edge';
-import { Config, Context, Crypto, DateTime, Effect, Layer, Option, Schema, Stream } from 'effect';
+import { Config, Context, Crypto, DateTime, Effect, Layer, Match, Option, Schema, Stream } from 'effect';
 import type { Scope } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 
@@ -50,6 +50,7 @@ import {
   AccessScopeIdSchema,
   AssignmentIncarnationIdSchema,
   PrincipalIdSchema,
+  RecordKeySchema,
   RoleIdSchema,
   RoleRevisionIdSchema,
   TenantIdSchema,
@@ -478,7 +479,7 @@ export interface MediaE2eWorld {
   readonly grant: (
     person: E2eActor,
     capabilityKeys: readonly string[],
-    options?: { readonly mode?: 'propose' | 'run' },
+    options?: { readonly mode?: 'propose' | 'run'; readonly targets?: readonly [string, ...string[]] },
   ) => Effect.Effect<{ readonly incarnationId: AssignmentIncarnationId }>;
   readonly people: ReadonlyMap<string, E2eActor>;
   /** The Read runtime over the same database and engine (the Core owner reads that have no Shell route). */
@@ -601,6 +602,19 @@ const openRuntimes = (platform: E2ePlatform, graph: AccessGraph) =>
     return { actions, reads };
   });
 
+const recordKeysOf = ([head, ...tail]: readonly [string, ...string[]]) =>
+  [RecordKeySchema.make(head), ...tail.map((key) => RecordKeySchema.make(key))] as const;
+
+/** A cell that reaches every record is narrowed to the named records of its scope (Resource scope); others stay. */
+const aimCell = (cell: Cell, targets: readonly [string, ...string[]]): Cell =>
+  Match.value(cell.selector).pipe(
+    Match.tag('all', () => ({
+      ...cell,
+      selector: { _tag: 'targets' as const, recordKeys: recordKeysOf(targets) },
+    })),
+    Match.orElse(() => cell),
+  );
+
 /** The real commands that give a person a narrower role, and take it away. */
 const openAccessCommands = (graph: AccessGraph, ownerScope: OperationalScope) =>
   Effect.gen(function* openCommands() {
@@ -611,8 +625,14 @@ const openAccessCommands = (graph: AccessGraph, ownerScope: OperationalScope) =>
     const { cells } = yield* Effect.fromResult(compileFullAccessRole(release)).pipe(Effect.orDie);
     const people = Context.get(graph.context, AccessPeopleCommands);
     const tenantScope = tenantContextScopeId(TenantIdSchema.make(ownerScope.tenantId));
-    const cellsOf = (capabilityKeys: readonly string[], mode?: 'propose' | 'run'): readonly Cell[] =>
-      cells.filter((cell) => capabilityKeys.includes(cell.capabilityKey) && (mode === undefined || cell.mode === mode));
+    const cellsOf = (
+      capabilityKeys: readonly string[],
+      mode?: 'propose' | 'run',
+      targets?: readonly [string, ...string[]],
+    ): readonly Cell[] =>
+      cells
+        .filter((cell) => capabilityKeys.includes(cell.capabilityKey) && (mode === undefined || cell.mode === mode))
+        .map((cell) => (targets === undefined ? cell : aimCell(cell, targets)));
     const grant: MediaE2eWorld['grant'] = (person, capabilityKeys, options = {}) =>
       Effect.gen(function* grantRole() {
         const [roleUuid, revisionUuid, incarnationUuid] = yield* Effect.all([
@@ -622,7 +642,7 @@ const openAccessCommands = (graph: AccessGraph, ownerScope: OperationalScope) =>
         ]);
         const role = yield* writeRoleCreation({
           catalogSnapshotId: release.id,
-          cells: cellsOf(capabilityKeys, options.mode),
+          cells: cellsOf(capabilityKeys, options.mode, options.targets),
           decidedAt: yield* DateTime.nowAsDate,
           name: `E2E ${capabilityKeys.join('+')}`,
           scope: ownerScope,
