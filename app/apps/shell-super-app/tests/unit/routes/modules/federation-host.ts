@@ -59,7 +59,7 @@ const publishedManifest = {
 };
 
 /** The remotes' asset host, answering every manifest request the test DOM's network makes. */
-const assetHost = HttpRouter.add('GET', '/*', HttpServerResponse.jsonUnsafe(publishedManifest));
+export const assetHost = HttpRouter.add('GET', '/*', HttpServerResponse.jsonUnsafe(publishedManifest));
 
 /**
  * The remotes' asset origin. Like a CDN it publishes each remote's container once, and the native

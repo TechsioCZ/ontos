@@ -1,7 +1,8 @@
 import { getDocumentCompositionRevision } from '@app/shared-contracts';
+import { browserNetwork, networkIdle } from '@app/shared-contracts/testing/http-double';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Effect, Schema } from 'effect';
+import { Deferred, Effect, Layer, Queue, Schema } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
 import {
@@ -23,16 +24,16 @@ import {
   TenantIdSchema,
 } from '../../../../shared/browser-api.ts';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import type { ResolvedModuleTarget } from '../../../../shared/browser-api.ts';
+import type { ResolvedModuleTarget, ShellSearchResponse } from '../../../../shared/browser-api.ts';
 import type { AuthenticatedHomePageModel, HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import ShellHome from '../../../../src/routes/[lang]/page.tsx';
-import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
+import { registerSessionScopedReset } from '../../../../src/routes/session-scope.ts';
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
 import type { ShellBffEndpoint, ShellBffScript } from '../../../support/shell-bff-double.ts';
 import { shellTestCopy } from '../../../support/shell-i18n.tsx';
 import type { ShellLanguage } from '../../../support/shell-i18n.tsx';
 import { makeShellRouter, renderShellRoute } from '../../../support/shell-router.tsx';
-import { makeFederationHost } from '../modules/federation-host.ts';
+import { assetHost, makeFederationHost } from '../modules/federation-host.ts';
 
 const copy = {
   'shell.auth.identity.displayName': 'Name',
@@ -156,16 +157,36 @@ const renderHome = (model: HomePageModel, language: ShellLanguage = 'en') =>
       root: ShellHome,
       url: `/${language}/`,
     });
-    // A full document reload leaves the page; the test records that it was asked for.
-    const navigations = rstest.spyOn(router, 'navigate').mockResolvedValue(undefined);
-    const runs = rstest.spyOn(browserRuntime, 'runPromise');
+    // A full document reload leaves the page; the test records that it was asked for, in order.
+    const navigated = yield* Queue.unbounded<unknown>();
+    const navigations = rstest.spyOn(router, 'navigate').mockImplementation((options) => {
+      Queue.offerUnsafe(navigated, options);
+      return Promise.resolve();
+    });
     const view = yield* renderShellRoute(router, shellTestCopy(language, copy));
-    return { holder, navigations, router, runs, view };
+    /** Resolves with the next navigation the page asked for: a switch or sign-out has its answer by then. */
+    const nextNavigation = Queue.take(navigated);
+    return { holder, navigations, nextNavigation, router, view };
   });
 
-/** Every Effect the page has handed to the browser runtime, settled. */
-const pageEffectsSettled = (runs: { readonly mock: { readonly results: readonly { readonly value: unknown }[] } }) =>
-  Effect.promise(() => Promise.allSettled(runs.mock.results.map((result) => result.value)));
+/** Resets of this document's session scope, counted through the same registry the Shell's caches reset through. */
+const sessionResets = { count: 0 };
+registerSessionScopedReset(
+  Effect.sync(() => {
+    sessionResets.count += 1;
+  }),
+);
+const sessionAnnouncementKey = 'ontos.session-scope.v1';
+
+/** From now on: how often this document forgot its session scope, and whether the other documents were told. */
+const sessionBoundary = () => {
+  const resetsBefore = sessionResets.count;
+  const announcementBefore = globalThis.localStorage.getItem(sessionAnnouncementKey);
+  return () => ({
+    announced: globalThis.localStorage.getItem(sessionAnnouncementKey) !== announcementBefore,
+    resets: sessionResets.count - resetsBefore,
+  });
+};
 
 /** The Shell BFF that accepts tenant and company switches and sign-out, unless a test scripts otherwise. */
 const switchingBff = (overrides: ShellBffScript = {}) =>
@@ -275,13 +296,15 @@ it.live('successful tenant switch performs a full document reload', () => {
   const bff = switchingBff();
   return Effect.gen(function* successfulTenantSwitchPerformsAFull() {
     const user = userEvent.setup();
-    const { navigations, runs } = yield* renderHome(authenticatedModel());
+    const { nextNavigation } = yield* renderHome(authenticatedModel());
+    const boundary = sessionBoundary();
     yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current tenant' })));
     const tenantOption = yield* Effect.promise(() => screen.findByRole('option', { name: 'Zeta tenant' }));
     yield* Effect.promise(() => user.click(tenantOption));
-    yield* pageEffectsSettled(runs);
+    expect(yield* nextNavigation).toEqual({ reloadDocument: true, to: '.' });
+    yield* networkIdle;
     expect(sent(bff, 'switchTenant')).toEqual([{ acceptLanguage: 'en', body: { tenantId: tenantId2 } }]);
-    expect(navigations).toHaveBeenCalledWith({ reloadDocument: true, to: '.' });
+    expect(boundary()).toEqual({ announced: true, resets: 1 });
   }).pipe(Effect.provide(bff.browser));
 });
 
@@ -289,13 +312,15 @@ it.live('successful legal-entity switch performs a full document reload', () => 
   const bff = switchingBff();
   return Effect.gen(function* successfulLegalEntitySwitchPerformsA() {
     const user = userEvent.setup();
-    const { navigations, runs } = yield* renderHome(authenticatedModel());
+    const { nextNavigation } = yield* renderHome(authenticatedModel());
+    const boundary = sessionBoundary();
     yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
     const legalEntityOption = yield* Effect.promise(() => screen.findByRole('option', { name: 'Beta company' }));
     yield* Effect.promise(() => user.click(legalEntityOption));
-    yield* pageEffectsSettled(runs);
+    expect(yield* nextNavigation).toEqual({ reloadDocument: true, to: '.' });
+    yield* networkIdle;
     expect(sent(bff, 'switchLegalEntity')).toEqual([{ acceptLanguage: 'en', body: { legalEntityId: legalEntityId2 } }]);
-    expect(navigations).toHaveBeenCalledWith({ reloadDocument: true, to: '.' });
+    expect(boundary()).toEqual({ announced: true, resets: 1 });
   }).pipe(Effect.provide(bff.browser));
 });
 
@@ -397,33 +422,87 @@ const searchAnswer = Schema.decodeUnknownSync(ShellSearchResponseSchema)({
   ],
 });
 
-it.live('top-bar typeahead shows grouped matches after a pause and moves between them by keyboard', () => {
-  const bff = switchingBff({ search: () => Effect.succeed(searchAnswer) });
-  return Effect.gen(function* topBarTypeahead() {
-    const user = userEvent.setup();
-    yield* renderHome(authenticatedModel());
-    const searchbox = screen.getByRole('searchbox', { name: 'Search' });
-    yield* Effect.promise(() => user.type(searchbox, 'dvor'));
-    const customers = yield* Effect.promise(() => screen.findByRole('list', { name: 'Customers and suppliers' }));
-    // One request for the whole burst of keystrokes, with the final text.
-    expect(sent(bff, 'search').map(({ body }) => body)).toContainEqual({ compositionRevision, query: 'dvor' });
-    const customer = within(customers).getByRole('link', { name: /Jana Dvořáková/u });
-    expect(customer.getAttribute('aria-label')).toBe('Jana Dvořáková Customer');
-    expect(customer.textContent).toContain('Customer');
-    const contacts = screen.getByRole('list', { name: 'Contacts' });
-    expect(
-      within(contacts)
-        .getAllByRole('link')
-        .map(({ textContent }) => textContent),
-    ).toEqual(['Dvořák StavbyArchived']);
-    yield* Effect.promise(() => user.keyboard('{ArrowDown}'));
-    expect(document.activeElement).toBe(customer);
-    yield* Effect.promise(() => user.keyboard('{ArrowDown}{ArrowDown}'));
-    expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search' }));
-    yield* Effect.promise(() => user.keyboard('{Escape}'));
-    expect(screen.queryByRole('list', { name: 'Contacts' })).toBeNull();
-  }).pipe(Effect.provide(bff.browser));
+/** An answer for an earlier keystroke's text: one contact of its own, so it would be visible if it were applied. */
+const earlierAnswer = (title: string) =>
+  Schema.decodeUnknownSync(ShellSearchResponseSchema)({
+    partial: false,
+    presentation,
+    results: [
+      {
+        archived: false,
+        kind: 'party',
+        matchedViaAlias: false,
+        ref: { ...partyRef, resourceId: '00000000-0000-4000-8000-000000000304' },
+        title,
+      },
+    ],
+  });
+
+/** A search the BFF receives and then holds open until the test releases its answer. */
+const heldSearch = Effect.gen(function* makeHeldSearch() {
+  const received = yield* Deferred.make<boolean>();
+  const release = yield* Deferred.make<ShellSearchResponse>();
+  const answered = yield* Deferred.make<boolean>();
+  const answer = Deferred.succeed(received, true).pipe(
+    Effect.andThen(Deferred.await(release)),
+    Effect.tap(() => Deferred.succeed(answered, true)),
+  );
+  return { answer, answered, received, release };
 });
+
+it.live('top-bar typeahead searches each typed text, shows only the latest answer and moves by keyboard', () =>
+  Effect.gen(function* topBarTypeahead() {
+    const dv = yield* heldSearch;
+    const dvo = yield* heldSearch;
+    const held = new Map([
+      ['dv', dv.answer],
+      ['dvo', dvo.answer],
+    ]);
+    const bff = switchingBff({ search: ({ query }) => held.get(query) ?? Effect.succeed(searchAnswer) });
+    yield* Effect.gen(function* typeAndRead() {
+      const user = userEvent.setup();
+      yield* renderHome(authenticatedModel());
+      const searchbox = screen.getByRole('searchbox', { name: 'Search' });
+      // Every change searches at once, so each keystroke's search reaches the BFF before the next key is pressed.
+      yield* Effect.promise(() => user.type(searchbox, 'dv'));
+      yield* Deferred.await(dv.received);
+      yield* Effect.promise(() => user.keyboard('o'));
+      yield* Deferred.await(dvo.received);
+      yield* Effect.promise(() => user.keyboard('r'));
+      const customers = yield* Effect.promise(() => screen.findByRole('list', { name: 'Customers and suppliers' }));
+      const customer = within(customers).getByRole('link', { name: /Jana Dvořáková/u });
+      expect(customer.getAttribute('aria-label')).toBe('Jana Dvořáková Customer');
+      expect(customer.textContent).toContain('Customer');
+
+      // The answers for the earlier texts arrive only now, after the answer for the final text is on screen.
+      yield* Deferred.succeed(dv.release, earlierAnswer('Answer for dv'));
+      yield* Deferred.succeed(dvo.release, earlierAnswer('Answer for dvo'));
+      yield* Deferred.await(dv.answered);
+      yield* Deferred.await(dvo.answered);
+      // Both late answers have travelled back to the page, and anything sent after them has reached the BFF.
+      yield* networkIdle;
+      expect(sent(bff, 'search').map(({ body }) => body)).toEqual([
+        { compositionRevision, query: 'dv' },
+        { compositionRevision, query: 'dvo' },
+        { compositionRevision, query: 'dvor' },
+      ]);
+      const contacts = screen.getByRole('list', { name: 'Contacts' });
+      expect(
+        within(contacts)
+          .getAllByRole('link')
+          .map(({ textContent }) => textContent),
+      ).toEqual(['Dvořák StavbyArchived']);
+      expect(screen.queryByText(/Answer for dv/u)).toBeNull();
+
+      yield* Effect.promise(() => user.keyboard('{ArrowDown}'));
+      expect(document.activeElement).toBe(customer);
+      yield* Effect.promise(() => user.keyboard('{ArrowDown}{ArrowDown}'));
+      expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search' }));
+      yield* Effect.promise(() => user.keyboard('{Escape}'));
+      expect(screen.queryByRole('list', { name: 'Contacts' })).toBeNull();
+    }).pipe(Effect.provide(bff.browser));
+  }),
+);
 
 it.live('"/" focuses the top-bar search outside text fields', () =>
   Effect.gen(function* slashFocusesTopBarSearch() {
@@ -438,17 +517,19 @@ it.live('logout clears the authenticated composition together', () => {
   const bff = switchingBff();
   return Effect.gen(function* logoutClearsTheAuthenticatedCompositionTogether() {
     const user = userEvent.setup();
-    const { navigations, runs } = yield* renderHome(authenticatedModel());
+    const { nextNavigation } = yield* renderHome(authenticatedModel());
+    const boundary = sessionBoundary();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Ada Lovelace' })));
     const logoutItem = yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Logout' }));
     // Happy DOM has no layout. Give pointer movement distinct coordinates so
     // the menu can distinguish it from virtual focus after a prior selection.
     yield* Effect.promise(() => user.pointer({ coords: { x: 10, y: 10 }, target: logoutItem }));
     yield* Effect.promise(() => user.click(logoutItem));
-    yield* pageEffectsSettled(runs);
+    expect(yield* nextNavigation).toEqual({ reloadDocument: true, to: '/en/login' });
+    yield* networkIdle;
     // `toEqual` treats an absent body and an undefined one alike: sign-out sends none.
     expect(sent(bff, 'signOut')).toEqual([{ acceptLanguage: 'en' }]);
-    expect(navigations).toHaveBeenCalledWith({ reloadDocument: true, to: '/en/login' });
+    expect(boundary()).toEqual({ announced: true, resets: 1 });
   }).pipe(Effect.provide(bff.browser));
 });
 
@@ -534,22 +615,28 @@ it.live.each(switchFailureCases)(
     const bff = switchingBff(script);
     return Effect.gen(function* settlesTheSwitchFailureIntoItsOwnSelector() {
       const user = userEvent.setup();
-      const { navigations, runs } = yield* renderHome(authenticatedModel());
+      const { navigations, nextNavigation } = yield* renderHome(authenticatedModel());
+      const boundary = sessionBoundary();
 
       yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: comboboxName })));
       const option = yield* Effect.promise(() => screen.findByRole('option', { name: optionName }));
       yield* Effect.promise(() => user.click(option));
-      yield* pageEffectsSettled(runs);
+      if (reloads) {
+        expect(yield* nextNavigation).toEqual({ reloadDocument: true, to: '.' });
+      } else {
+        yield* Effect.promise(() => screen.findByText(failedText));
+      }
+      // The switch is over once it no longer shows as pending: that is its last step.
+      yield* Effect.promise(() => waitFor(() => expect(screen.queryByText(pendingText)).toBeNull()));
+      yield* networkIdle;
       expect(sent(bff, endpoint)).toHaveLength(1);
+      // A refused switch keeps the session; an expired one ends it before the reload.
+      expect(boundary()).toEqual({ announced: reloads, resets: reloads ? 1 : 0 });
 
       if (reloads) {
-        expect(navigations).toHaveBeenCalledWith({ reloadDocument: true, to: '.' });
-        yield* Effect.promise(() => waitFor(() => expect(screen.queryByText(pendingText)).toBeNull()));
         expect(screen.queryByText(failedText)).toBeNull();
       } else {
-        yield* Effect.promise(() => waitFor(() => expect(screen.getByText(failedText)).toBeTruthy()));
         expect(navigations).not.toHaveBeenCalled();
-        expect(screen.queryByText(pendingText)).toBeNull();
       }
 
       expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(false);
@@ -585,6 +672,8 @@ it.live('does not load an owner Home component for forbidden or unavailable Home
     const { holder, router } = yield* renderHome({ ...authenticatedModel(), homeContribution: { state: 'forbidden' } });
     holder.current = { ...authenticatedModel(), homeContribution: { state: 'unavailable' } };
     yield* Effect.promise(() => router.invalidate());
+    // An owner load the page started would be on the network (its manifest) until it settled.
+    yield* networkIdle;
     expect(fx.registered).toEqual([]);
     expect(fx.requests).toEqual([]);
   }),
@@ -620,7 +709,7 @@ const OwnerHome = ({ context, routeParams, target }: ModulePageProps & { readonl
   <p>{`${target.componentKey}|${context?.displayName ?? 'no context'}|${context?.legalEntityId ?? 'no company'}|${Object.keys(routeParams).length}`}</p>
 );
 
-it.live.each([
+const homeTargets = [
   homeTargetFixture({
     appId: 'sales-insights',
     componentKey: 'demo.sales-insights.crm-dashboard',
@@ -641,19 +730,57 @@ it.live.each([
     remoteName: 'verticalInventory',
     writable: false,
   }),
-])('hands only the document-admitted Home target $componentKey and trusted context to its owner', (target) =>
-  Effect.gen(function* admittedHomeTarget() {
-    const fx = yield* makeFederationHost({ answer: () => Effect.succeed({ default: OwnerHome }), refusedRemotes: [] });
-    yield* renderHome({ ...authenticatedModel(), homeContribution: { state: 'ready', target } });
-    const rendered = yield* Effect.promise(() =>
-      screen.findByText(`${target.componentKey}|Ada Lovelace|${legalEntityId1}|0`),
-    );
-    expect(rendered).toBeTruthy();
-    // The admitted target is loaded as it is: no other remote, no other exposed module.
-    expect(fx.registered).toEqual([{ entry: target.federation.manifest.url, name: target.federation.remoteName }]);
-    expect(fx.requests).toEqual([`${target.federation.remoteName}/${target.federation.expose.slice(2)}`]);
-  }),
+];
+
+it.live.each(homeTargets)(
+  'hands only the document-admitted Home target $componentKey and trusted context to its owner',
+  (target) =>
+    Effect.gen(function* admittedHomeTarget() {
+      const fx = yield* makeFederationHost({
+        answer: () => Effect.succeed({ default: OwnerHome }),
+        refusedRemotes: [],
+      });
+      yield* renderHome({ ...authenticatedModel(), homeContribution: { state: 'ready', target } });
+      // The SDK settled the first exposed module it asked for, and nothing it started is still on the network.
+      yield* fx.settled(yield* fx.nextRequest);
+      yield* networkIdle;
+      const rendered = yield* Effect.promise(() =>
+        screen.findByText(`${target.componentKey}|Ada Lovelace|${legalEntityId1}|0`),
+      );
+      expect(rendered).toBeTruthy();
+      // The admitted target is loaded as it is: no other remote, no other exposed module.
+      expect(fx.registered).toEqual([{ entry: target.federation.manifest.url, name: target.federation.remoteName }]);
+      expect(fx.requests).toEqual([`${target.federation.remoteName}/${target.federation.expose.slice(2)}`]);
+    }),
 );
+
+/** A Home target with a remote of its own: the SDK keeps each remote it loaded for the whole document. */
+const firstRenderTarget = homeTargetFixture({
+  appId: 'sales-insights',
+  componentKey: 'demo.sales-insights.first-render',
+  entrypointKey: 'demo.sales-insights.component.first-render',
+  expose: './FirstRender',
+  manifestUrl: 'https://first-render.example.test/mf-manifest.json',
+  moduleId: 'demo.sales-insights',
+  remoteName: 'verticalFirstRender',
+  writable: true,
+});
+
+it.live('uses the document-admitted Home target in its first render without resolving it again', () => {
+  // The BFF would answer a resolution at once, so one the page sent is recorded before the owner settles.
+  const bff = switchingBff({ resolveModuleTarget: () => Effect.succeed(firstRenderTarget) });
+  return Effect.gen(function* admittedHomeTargetNotResolvedAgain() {
+    const target = firstRenderTarget;
+    const fx = yield* makeFederationHost({ answer: () => Effect.succeed({ default: OwnerHome }), refusedRemotes: [] });
+    // The BFF and the remotes' asset host answer on one network, so a resolution the page sent reaches the BFF.
+    yield* Layer.build(browserNetwork(bff.application, assetHost));
+    yield* renderHome({ ...authenticatedModel(), homeContribution: { state: 'ready', target } });
+    yield* fx.settled(yield* fx.nextRequest);
+    yield* networkIdle;
+    expect(screen.getByText(`${target.componentKey}|Ada Lovelace|${legalEntityId1}|0`)).toBeTruthy();
+    expect([...sent(bff, 'resolveModuleTarget'), ...sent(bff, 'resolveModuleTargets')]).toEqual([]);
+  });
+});
 
 const tenantScopeLegalEntities: AuthenticatedHomePageModel['legalEntities'] = {
   items: [
@@ -669,33 +796,32 @@ it.live('offers explicit tenant scope only when admitted and reloads after selec
   return Effect.gen(function* selectTenantScope() {
     const model = authenticatedModel();
     const user = userEvent.setup();
-    const { navigations, runs } = yield* renderHome({
+    const { nextNavigation } = yield* renderHome({
       ...model,
       legalEntities: tenantScopeLegalEntities,
     });
+    const boundary = sessionBoundary();
     yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
     yield* Effect.promise(() => user.click(screen.getByRole('option', { name: 'Organization (no company)' })));
-    yield* pageEffectsSettled(runs);
+    expect(yield* nextNavigation).toEqual({ reloadDocument: true, to: '.' });
+    yield* networkIdle;
     expect(sent(bff, 'switchToTenantContext')).toEqual([{ acceptLanguage: 'en' }]);
     expect(sent(bff, 'switchLegalEntity')).toEqual([]);
-    expect(navigations).toHaveBeenCalledWith({ reloadDocument: true, to: '.' });
+    expect(boundary()).toEqual({ announced: true, resets: 1 });
   }).pipe(Effect.provide(bff.browser));
 });
 
-it.live('does not expose tenant scope from company access alone', () => {
-  const bff = switchingBff();
-  return Effect.gen(function* companyOnlyScope() {
+it.live('does not expose tenant scope from company access alone', () =>
+  Effect.gen(function* companyOnlyScope() {
     const user = userEvent.setup();
     yield* renderHome(authenticatedModel());
     yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
     expect(screen.queryByRole('option', { name: 'Organization (no company)' })).toBeNull();
-    expect(sent(bff, 'switchToTenantContext')).toEqual([]);
-  }).pipe(Effect.provide(bff.browser));
-});
+  }),
+);
 
-it.effect('renders persisted tenant scope without a selected company', () => {
-  const bff = switchingBff();
-  return Effect.gen(function* persistedTenantScope() {
+it.effect('renders persisted tenant scope without a selected company', () =>
+  Effect.gen(function* persistedTenantScope() {
     const { selectedLegalEntityId: _selected, ...tenantModel } = authenticatedModel();
     yield* renderHome({
       ...tenantModel,
@@ -706,6 +832,5 @@ it.effect('renders persisted tenant scope without a selected company', () => {
       'Organization (no company)',
     );
     expect(screen.getByText('Organization scope is active')).toBeDefined();
-    expect(sent(bff, 'switchToTenantContext')).toEqual([]);
-  }).pipe(Effect.provide(bff.browser));
-});
+  }),
+);

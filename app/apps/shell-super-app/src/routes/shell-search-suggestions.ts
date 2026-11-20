@@ -164,11 +164,11 @@ const suggestionScopeKey = (
 ): string => `${scopeKey}\u0000${compositionRevision ?? ''}\u0000${language ?? ''}`;
 
 /**
- * Typeahead for the top-bar search. Each change cancels the previous request; the request leaves only after a short
- * pause in typing, so a burst of keystrokes costs one search. A new trusted scope (tenant, company, principal,
- * composition or language) is different: its answer is dropped before paint, the old request is aborted, and its
- * filters are cleared. Selecting a family performs a fresh search with only the exact observed admitted types; it
- * never filters an answer already received.
+ * Typeahead for the top-bar search. Every eligible change searches at once, with no fixed delay: it aborts the
+ * previous request, and only the latest request's answer may be applied. A new trusted scope (tenant, company,
+ * principal, composition or language) is different: its answer is dropped before paint, the old request is aborted,
+ * and its filters are cleared. Selecting a family performs a fresh search with only the exact observed admitted types;
+ * it never filters an answer already received.
  */
 export const useShellSearchSuggestions = (compositionRevision: string | undefined, scopeKey: string | undefined) => {
   const { language } = useModernI18n();
