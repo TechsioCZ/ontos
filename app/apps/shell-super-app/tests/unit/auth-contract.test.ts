@@ -116,6 +116,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',
+    assetCurrent: '/core/operations/asset-current',
     assignAccessRole: '/shell/access/people/assign',
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',

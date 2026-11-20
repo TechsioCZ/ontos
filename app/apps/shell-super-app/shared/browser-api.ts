@@ -6,9 +6,11 @@ import {
   accessAdminPeopleGroup,
   accessAdminRolesGroup,
 } from './access-admin-api.ts';
+import { coreOperations } from '@app/core-runtime/sdk/core';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
+import { coreHostedOperationErrors } from './core-hosted-operations.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -908,6 +910,17 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         error: identityErrors,
         params: { mediaAssetId: Schema.String.check(Schema.isUUID()) },
         success: HttpApiSchema.StreamUint8Array({ contentType: 'application/octet-stream' }),
+      }),
+    ),
+  )
+  // The Core operations the Shell host serves to modules (#1443 P2). A module reaches them only by relaying its
+  // requester as an audience-scoped Bearer assertion, never with a session cookie: one endpoint per operation.
+  .add(
+    HttpApiGroup.make('coreHostedOperations').add(
+      HttpApiEndpoint.post('assetCurrent', '/core/operations/asset-current', {
+        error: coreHostedOperationErrors,
+        payload: coreOperations.assetCurrent.request,
+        success: coreOperations.assetCurrent.response,
       }),
     ),
   )
