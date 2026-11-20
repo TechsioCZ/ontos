@@ -174,6 +174,39 @@ describe('explicit draft save', () => {
     }),
   );
 
+  it.effect('a save that fails after its draft changed leaves the current draft as a change, not a retry', () =>
+    Effect.gen(function* failedAfterChange() {
+      const revised = yield* setup();
+      revised.controller.change(draft('Secret'));
+      revised.controller.save();
+      // While the save runs, the form takes out the part that made the draft sendable.
+      revised.controller.revise((value) => draft(value.name.replace('Secret', '').trim()));
+      yield* revised.reply(0, 'failed');
+      // Nothing on screen can be sent, so nothing offers to send it.
+      expect(revised.controller.status()).toBe('invalid');
+      expect(draftSavable(revised.controller.status())).toBe(false);
+
+      const typed = yield* setup();
+      typed.controller.change(draft('One'));
+      typed.controller.save();
+      typed.controller.change(draft('Two'));
+      yield* typed.reply(0, 'failed');
+      // The draft on screen is a change like any other: Save sends it.
+      expect(typed.controller.status()).toBe('dirty');
+      typed.controller.save();
+      expect(typed.sent).toEqual(['One', 'Two']);
+
+      const typedBack = yield* setup();
+      typedBack.controller.change(draft('One'));
+      typedBack.controller.save();
+      typedBack.controller.change(draft('Two'));
+      typedBack.controller.change(draft('One'));
+      yield* typedBack.reply(0, 'failed');
+      // Back at what was sent: the failure is this draft's, and Retry sends it again.
+      expect(typedBack.controller.status()).toBe('error');
+    }),
+  );
+
   it.effect('holds a draft parked for approval: save() does not send it again and nothing counts as saved', () =>
     Effect.gen(function* proposed() {
       const { controller, reply, sent } = yield* setup();
@@ -401,7 +434,8 @@ describe('explicit draft save', () => {
       controller.revise((value) => draft(value.name.replace(' Secret', '')));
       controller.confirm(draft('Written Secret'));
       yield* reply(0, 'failed');
-      expect(controller.status()).toBe('error');
+      // The draft changed while the save ran: it rests as a change, compared with what was written.
+      expect(controller.status()).toBe('dirty');
       expect(controller.confirmed()).toEqual(draft('Written'));
     }),
   );

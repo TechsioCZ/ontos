@@ -253,8 +253,12 @@ export class DraftSaveController<V, R = never> {
         this.proposed = [...this.proposed, sent];
       }
       this.setState(this.same(this.latest, sent) ? 'proposed' : this.restingState());
+    } else if (outcome === 'conflict') {
+      this.setState('conflict');
     } else {
-      this.setState(outcome === 'conflict' ? 'conflict' : 'error');
+      // A failure belongs to the draft that was sent. When the draft changed while it ran (typed, or a part taken out),
+      // the current draft rests as any change after a failure does, so no retry is offered for what is not on screen.
+      this.setState(this.same(this.latest, sent) ? 'error' : this.restingState());
     }
     this.release();
   }

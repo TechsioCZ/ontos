@@ -1,11 +1,12 @@
-import { committedResult, pendingProposalMessage } from '../../../api/action-result.ts';
+import { committedResult } from '../../../api/action-result.ts';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { selectItem } from '../../../ui/select-item.ts';
 import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import type { Types } from 'effect';
-import type { ActivityCommand } from '../../../../shared/actions/apply-command.ts';
+import type { ActivityCommand, ApplyCommandPayload } from '../../../../shared/actions/apply-command.ts';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -45,6 +46,7 @@ type Counterparty = Counterparties[number];
 type Tasks = Effect.Success<ReturnType<typeof executeWorkRecords>>['items'];
 type Card = Effect.Success<ReturnType<typeof executeCounterpartyRead>>;
 type SearchError = Effect.Error<ReturnType<typeof loadCounterpartiesClient>>;
+type ApplyFailure = Effect.Error<ReturnType<typeof executeApplyCommand>>;
 /** Governed records reads (activities and Work Tasks) share the generated read problems. */
 type LoadError = Effect.Error<ReturnType<typeof executeRecords>>;
 
@@ -114,30 +116,31 @@ const sameActivity = (left: ActivityDraft, right: ActivityDraft) =>
 const withoutContact = (draft: ActivityDraft): ActivityDraft => ({ ...draft, counterpartyRef: null });
 
 /**
- * A request this form sent: what it asked the owner to record, the revision it expected and its idempotency key.
- * Sending the same activity over the same revision again, a retry or a draft the form wrongly offers again, reuses the
- * key, so the owner records or parks it once; another activity, or the same one over a newer revision, gets its own.
+ * The one request this form sent whose outcome is still unknown: no answer came, or one that cannot say whether the
+ * owner recorded it (a transport failure, 5xx, a commit the owner has not resolved). A retry of the same activity
+ * sends exactly this request again, with its command, expected revision and idempotency key, whatever the list has
+ * been refreshed to since, so the owner records it once and answers a retry with what it answered the first time. A
+ * definite answer ends it, and the next send is a new request with a new key over the current revision.
  */
-interface SentRequest {
+interface UnresolvedRequest {
   readonly activity: ActivityDraft;
-  readonly key: string;
-  readonly revision: number;
+  readonly idempotencyKey: string;
+  readonly payload: ApplyCommandPayload;
 }
 
-/** The key under which `sent` holds this request, or a new one it keeps from now on. */
-const idempotencyKeyOf = (sent: SentRequest[], activity: ActivityDraft, revision: number) =>
-  Effect.suspend(() => {
-    const known = sent.find((request) => request.revision === revision && sameActivity(request.activity, activity));
-    return known === undefined
-      ? requestId.pipe(
-          Effect.tap((key) =>
-            Effect.sync(() => {
-              sent.push({ activity, key, revision });
-            }),
-          ),
-        )
-      : Effect.succeed(known.key);
-  });
+const noUnresolvedRequest = Option.none<UnresolvedRequest>();
+
+/**
+ * The owner refused the request for certain (400, 403, 409, 422): it recorded nothing, and it answers the same key with
+ * the same refusal, so sending the activity again is a new request.
+ */
+const refusedForCertain = (error: ApplyFailure | ActionProposalAccepted) =>
+  [
+    'ApplyCommandActionInvalidProblem',
+    'ApplyCommandActionForbiddenProblem',
+    'ApplyCommandActionConflictProblem',
+    'ApplyCommandActionIneligibleProblem',
+  ].some((tag) => Predicate.isTagged(error, tag));
 
 /** The activity after the recorded one: same contact and follow-up, an empty summary. */
 const nextActivity = (draft: ActivityDraft): ActivityDraft => ({ ...draft, summary: '' });
@@ -228,11 +231,10 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
           onFailure: (error) => {
             setPending(false);
             setMessage(
-              pendingProposalMessage(error) ??
-                Match.value(error).pipe(
-                  Match.tag('CounterpartyReadForbiddenProblem', () => t(`${key}.forbidden`)),
-                  Match.orElse(() => t(`${key}.unavailable`)),
-                ),
+              Match.value(error).pipe(
+                Match.tag('CounterpartyReadForbiddenProblem', () => t(`${key}.forbidden`)),
+                Match.orElse(() => t(`${key}.unavailable`)),
+              ),
             );
           },
           onSuccess: (result) => {
@@ -243,62 +245,84 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  /** Every request this form sent, with its idempotency key. */
-  const sentRequests = useRef<SentRequest[]>([]);
+  /** The request whose outcome is still unknown, if one is. */
+  const unresolved = useRef(noUnresolvedRequest);
+  /** The unresolved request again for the same activity, otherwise a new one over the current revision. */
+  const requestFor = (value: ActivityDraft, counterpartyRef: CounterpartyRef, current: RecordsResponse) =>
+    Option.match(unresolved.current.pipe(Option.filter((request) => sameActivity(request.activity, value))), {
+      onNone: () => {
+        const task = tasks.find((item) => item.ref.resourceId === value.taskId[0]);
+        const taskFields: FollowUpFields = {};
+        if (task !== undefined) {
+          taskFields.followUpTaskRef = task.ref;
+        }
+        return requestId.pipe(
+          Effect.map((idempotencyKey): UnresolvedRequest => ({
+            activity: value,
+            idempotencyKey,
+            payload: {
+              command: {
+                _tag: 'RecordActivity',
+                counterpartyRef,
+                kind: 'CALL',
+                occurredAt: DateTime.makeUnsafe('2026-10-05T10:00:00Z'),
+                ownerPrincipalRef: current.actorPrincipalRef,
+                summary: value.summary,
+                ...taskFields,
+              },
+              expectedRevision: current.revision,
+            },
+          })),
+        );
+      },
+      onSome: Effect.succeed,
+    });
   const send = (value: ActivityDraft): Effect.Effect<SaveOutcome> => {
-    const { counterpartyRef: sentContact } = value;
-    if (records === undefined || sentContact === null) {
+    const { counterpartyRef } = value;
+    if (records === undefined || counterpartyRef === null) {
       return Effect.succeed('failed');
     }
-    const task = tasks.find((item) => item.ref.resourceId === value.taskId[0]);
-    const taskFields: FollowUpFields = {};
-    if (task !== undefined) {
-      taskFields.followUpTaskRef = task.ref;
-    }
-    return Effect.all(
-      {
-        id: requestId,
-        idempotencyKey: idempotencyKeyOf(sentRequests.current, value, records.revision),
-        referenceCredentials: makeReferenceGatewayCredentials([
-          'party-registry',
-          ...(taskFields.followUpTaskRef === undefined ? [] : ['work-tasks']),
-        ]),
-      },
-      { concurrency: 1 },
-    ).pipe(
-      Effect.flatMap(({ id, idempotencyKey, referenceCredentials }) =>
-        executeApplyCommand(
+    return requestFor(value, counterpartyRef, records).pipe(
+      Effect.tap((request) =>
+        Effect.sync(() => {
+          unresolved.current = Option.some(request);
+        }),
+      ),
+      Effect.flatMap(({ idempotencyKey, payload }) =>
+        Effect.all(
           {
-            command: {
-              _tag: 'RecordActivity',
-              counterpartyRef: sentContact,
-              kind: 'CALL',
-              occurredAt: DateTime.makeUnsafe('2026-10-05T10:00:00Z'),
-              ownerPrincipalRef: records.actorPrincipalRef,
-              summary: value.summary,
-              ...taskFields,
-            },
-            expectedRevision: records.revision,
+            id: requestId,
+            referenceCredentials: makeReferenceGatewayCredentials([
+              'party-registry',
+              ...(payload.command.followUpTaskRef === undefined ? [] : ['work-tasks']),
+            ]),
           },
-          id,
-          { idempotencyKey, referenceCredentials },
+          { concurrency: 1 },
+        ).pipe(
+          Effect.flatMap(({ id, referenceCredentials }) =>
+            executeApplyCommand(payload, id, { idempotencyKey, referenceCredentials }),
+          ),
         ),
       ),
       Effect.flatMap(committedResult),
+      // The owner recorded this very request earlier and no longer keeps its reply: the activity is recorded.
+      Effect.catchTag('ApplyCommandActionAlreadyCommittedProblem', () => Effect.void),
       Effect.andThen(activities.refresh(input)),
       Effect.match({
         onFailure: (error): SaveOutcome => {
-          const proposal = pendingProposalMessage(error);
+          if (refusedForCertain(error)) {
+            unresolved.current = Option.none();
+          }
           setMessage(
-            proposal ??
-              Match.value(error).pipe(
-                Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.invalid`)),
-              ),
+            Match.value(error).pipe(
+              Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${key}.forbidden`)),
+              Match.orElse(() => t(`${key}.invalid`)),
+            ),
           );
-          return proposal === undefined ? 'failed' : 'proposed';
+          return 'failed';
         },
         onSuccess: (): SaveOutcome => {
+          unresolved.current = Option.none();
           setMessage(t(`${key}.saved`));
           return 'saved';
         },
@@ -336,13 +360,14 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     onDiscard: constVoid,
   });
   /**
-   * The directory refused the user: nothing it returned stays chosen, on offer, in the saved version that decides
-   * whether leaving asks, or in what a running save confirms. A draft parked for approval keeps only the contact's
-   * reference, so the same activity is not proposed twice.
+   * The directory refused the user: nothing it returned stays chosen, on offer, on screen as an opened contact card, in
+   * the saved version that decides whether leaving asks, or in what a running save confirms. A request whose outcome is
+   * unknown keeps only the contact's reference, so a retry once the contact is back is still the same request.
    */
   const refuseContacts = (error: SearchError) => {
     setSearchFailure('');
     setContact(null);
+    setCard(undefined);
     setDraft(withoutContact);
     record.revise(withoutContact);
     setMessage(
@@ -353,10 +378,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     setPending(false);
     // No earlier hit stays on offer after a failed search.
     setCounterparties([]);
-    const proposal = pendingProposalMessage(error);
-    if (proposal !== undefined) {
-      setMessage(proposal);
-    } else if (refusedLookup(error)) {
+    if (refusedLookup(error)) {
       refuseContacts(error);
     } else {
       // The lookup failed for now: the chosen contact stays chosen and the form says the search did not run.
