@@ -75,21 +75,30 @@ export class DraftSaveController<V, R = never> {
   /** Set once the form replaced this controller or went away for good: nothing is sent any more. */
   private disposed = false;
   private readonly fork: Fork<R>;
-  private inFlight = false;
   private latest: V;
   private readonly listeners = new Set<() => void>();
   private options: DraftSaveOptions<V, R>;
   /** Callers of `afterSave` that wait for the running save. */
-  private readonly waiting = new Set<(status: SaveState) => void>();
-  /** The draft last accepted for approval. It is not saved, and it is never sent again. */
-  private proposed: Option.Option<V> = Option.none();
-  /** The revisions made while the running save runs: what it confirms is its draft with them applied. */
-  private revisedSinceStart: (value: V) => V = identity;
+  private readonly waiting = new Set<(status: SaveState, confirmed: V) => void>();
+  /**
+   * Every draft accepted for approval since the last committed save, exactly as it was sent. None of them is saved,
+   * and none is sent again.
+   */
+  private proposed: readonly V[] = [];
+  /**
+   * The save on its way, while one runs: the revisions made since it started apply to the version it confirms for
+   * discarding, never to what it sent.
+   */
+  private running: Option.Option<{ readonly revisedSince: (value: V) => V }> = Option.none();
+  /** The version discarding goes back to and the draft is compared with: what the server confirmed, as revised. */
   private saved: V;
+  /** What the server last confirmed, exactly as it was sent. A revision never changes it. */
+  private server: V;
   private state: SaveState = 'idle';
 
   constructor(initial: V, options: DraftSaveOptions<V, R>, fork: Fork<R>) {
     this.saved = initial;
+    this.server = initial;
     this.latest = initial;
     this.options = options;
     this.fork = fork;
@@ -105,7 +114,7 @@ export class DraftSaveController<V, R = never> {
       return;
     }
     // A running save decides the status when it ends.
-    if (this.disposed || this.inFlight) {
+    if (this.disposed || this.saving()) {
       return;
     }
     // A conflict holds until the server version is adopted or the draft is back at the confirmed version.
@@ -120,7 +129,7 @@ export class DraftSaveController<V, R = never> {
    * rows a bulk form applies to, so the same draft can become valid (or invalid) without being typed again.
    */
   readonly revalidate = (): void => {
-    if (this.disposed || this.inFlight || (this.state !== 'dirty' && this.state !== 'invalid')) {
+    if (this.disposed || this.saving() || (this.state !== 'dirty' && this.state !== 'invalid')) {
       return;
     }
     this.setState(this.restingState());
@@ -138,15 +147,16 @@ export class DraftSaveController<V, R = never> {
   };
 
   /**
-   * Runs `done` once the running save has ended, with the status it left; at once when no save runs. For whoever
-   * started a save and has to act on its result, such as leaving the form after it.
+   * Runs `done` once the running save has ended, with the status it left and the version it confirmed; at once when
+   * no save runs. For whoever started a save and has to act on its result, such as leaving the form after it or
+   * starting the next entry from the one just saved.
    */
-  readonly afterSave = (done: (status: SaveState) => void): void => {
-    if (this.inFlight && !this.disposed) {
+  readonly afterSave = (done: (status: SaveState, confirmed: V) => void): void => {
+    if (this.saving() && !this.disposed) {
       this.waiting.add(done);
       return;
     }
-    done(this.state);
+    done(this.state, this.saved);
   };
 
   /**
@@ -155,7 +165,7 @@ export class DraftSaveController<V, R = never> {
    * again.
    */
   readonly save = (): void => {
-    if (this.disposed || this.state === 'conflict' || this.inFlight) {
+    if (this.disposed || this.state === 'conflict' || this.saving()) {
       return;
     }
     const resting = this.restingState();
@@ -175,7 +185,7 @@ export class DraftSaveController<V, R = never> {
    */
   readonly discard = (): void => {
     this.latest = this.saved;
-    if (this.disposed || this.inFlight) {
+    if (this.disposed || this.saving()) {
       return;
     }
     this.setState('idle');
@@ -186,31 +196,30 @@ export class DraftSaveController<V, R = never> {
    * The draft stays unsaved; from here on it is compared with `value`, so taking a written field back is a change.
    */
   readonly confirm = (value: V): void => {
-    this.saved = this.revisedSinceStart(value);
+    this.server = value;
+    this.saved = Option.match(this.running, { onNone: () => value, onSome: ({ revisedSince }) => revisedSince(value) });
   };
 
   /**
-   * The form takes something out of every version it holds, such as a choice the user has lost access to, or starts
-   * the next entry from the one it just saved: `revision` applies to the draft, to the confirmed version that
-   * discarding goes back to, and to the draft a running save confirms when it ends. Nothing starts over: a running
-   * save still decides, its waiting callers are still answered, and the draft parked for approval stays as it was
-   * handed over, so the same draft is still not sent again. The form puts the same change into its own draft.
+   * The form takes something out of what it shows, such as a choice the user has lost access to: `revision` applies
+   * to the draft and to the version discarding goes back to, now and when a running save ends. It never applies to
+   * what was sent: what the server confirmed, the drafts parked for approval and a running save stay as they went
+   * out, so a draft equal to one of them is still not sent again. Nothing starts over, and for the status the revised
+   * draft is a change like a typed one. The form puts the same change into its own draft.
    */
   readonly revise = (revision: (value: V) => V): void => {
-    this.latest = revision(this.latest);
     this.saved = revision(this.saved);
-    const earlier = this.revisedSinceStart;
-    this.revisedSinceStart = (value) => revision(earlier(value));
-    // A running save, an error and a conflict keep their status; "saved" stays while the draft is still the saved one.
-    if (this.disposed || this.inFlight || this.state === 'error' || this.state === 'conflict') {
-      return;
+    if (Option.isSome(this.running)) {
+      const earlier = this.running.value.revisedSince;
+      this.running = Option.some({ revisedSince: (value: V) => revision(earlier(value)) });
     }
-    if (this.state !== 'saved' || !this.same(this.latest, this.saved)) {
-      this.setState(this.restingState());
-    }
+    this.change(revision(this.latest));
   };
 
-  /** The draft the server last confirmed (or the version this controller started from). */
+  /**
+   * The draft the server last confirmed (or the version this controller started from), with the revisions made since:
+   * what discarding goes back to.
+   */
   readonly confirmed = (): V => this.saved;
 
   readonly status = (): SaveState => this.state;
@@ -222,23 +231,28 @@ export class DraftSaveController<V, R = never> {
     };
   };
 
-  private finish(value: V, outcome: SaveOutcome): void {
-    this.inFlight = false;
+  private finish(sent: V, outcome: SaveOutcome): void {
+    const revisedSince = Option.match(this.running, {
+      onNone: () => identity<V>,
+      onSome: (running) => running.revisedSince,
+    });
+    this.running = Option.none();
     if (this.disposed) {
       return;
     }
-    // The sent draft as the form holds it now, after the revisions made while it was on its way.
-    const revised = this.revisedSinceStart(value);
-    if (outcome === 'saved' || outcome === 'proposed') {
-      if (outcome === 'saved') {
-        this.saved = revised;
-        this.proposed = Option.none();
-      } else {
-        // Parked for approval: the confirmed version stays, and this draft is never sent again.
-        this.proposed = Option.some(value);
-      }
+    if (outcome === 'saved') {
+      this.server = sent;
+      // What discarding goes back to: the sent draft, unless the form took part of it out and still shows it so.
+      this.saved = this.same(this.latest, sent) ? sent : revisedSince(sent);
+      this.proposed = [];
       // Edits made while this save ran stay an unsaved draft: they wait for the next click.
-      this.setState(this.same(this.latest, revised) ? outcome : this.restingState());
+      this.setState(this.same(this.latest, this.saved) ? 'saved' : this.restingState());
+    } else if (outcome === 'proposed') {
+      // Parked for approval: the confirmed version stays, and this draft is never sent again.
+      if (!this.isProposed(sent)) {
+        this.proposed = [...this.proposed, sent];
+      }
+      this.setState(this.same(this.latest, sent) ? 'proposed' : this.restingState());
     } else {
       this.setState(outcome === 'conflict' ? 'conflict' : 'error');
     }
@@ -246,7 +260,7 @@ export class DraftSaveController<V, R = never> {
   }
 
   private isProposed(value: V): boolean {
-    return Option.isSome(this.proposed) && this.same(value, this.proposed.value);
+    return this.proposed.some((proposed) => this.same(value, proposed));
   }
 
   private notify(): void {
@@ -260,13 +274,16 @@ export class DraftSaveController<V, R = never> {
     const waiting = [...this.waiting];
     this.waiting.clear();
     for (const done of waiting) {
-      done(this.state);
+      done(this.state, this.saved);
     }
   }
 
-  /** The status of the current draft while nothing runs and nothing failed. */
+  /**
+   * The status of the current draft while nothing runs and nothing failed. A draft equal to what the server confirmed
+   * is no change, even when what discarding goes back to was revised since.
+   */
   private restingState(): 'dirty' | 'idle' | 'invalid' | 'proposed' {
-    if (this.same(this.latest, this.saved)) {
+    if (this.same(this.latest, this.saved) || this.same(this.latest, this.server)) {
       return 'idle';
     }
     if (this.isProposed(this.latest)) {
@@ -286,9 +303,12 @@ export class DraftSaveController<V, R = never> {
     }
   }
 
+  private saving(): boolean {
+    return Option.isSome(this.running);
+  }
+
   private start(value: V): void {
-    this.inFlight = true;
-    this.revisedSinceStart = identity;
+    this.running = Option.some({ revisedSince: identity<V> });
     this.setState('saving');
     this.fork(
       Effect.exit(Effect.suspend(() => this.options.save(value))).pipe(
@@ -328,6 +348,8 @@ export interface DraftSave<V> extends SavableDraft {
    * nothing was pending): the draft starts over from it, dropping an unsaved change, error or conflict.
    */
   readonly adopt: (value: V) => void;
+  /** `SavableDraft.afterSave`, also with the version the save left confirmed (`confirmed` after it). */
+  readonly afterSave: (done: (status: SaveState, confirmed: V) => void) => void;
   /**
    * The version the server last confirmed, as of this render: what a save compares the draft with, and what
    * discarding the draft goes back to. Field messages that follow the `isValid` rule read it, so they name the same

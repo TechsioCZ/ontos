@@ -4,8 +4,9 @@
 // enabled, and the save sends the chosen contact's full reference. A newer name of the chosen contact replaces the kept
 // one. When the directory refuses the user, nothing it returned stays chosen, on offer or in the version the form last
 // saved, also when a save lands after the refusal, so leaving asks nothing; a save still running, also one started from
-// the leave question, still decides, and an activity parked for approval is not proposed again for the same contact. The picker's own clear action, named after
-// the contact it drops, drops the contact and keeps the rest of the form; a failed search describes the picker. Before
+// the leave question, still decides, and an activity parked for approval is not proposed again for the same contact.
+// "Zahodit změny" on the way out leaves the form as the person sees it until the page is gone, and on the way to another
+// location of the page starts the form over. The picker's own clear action, named after the contact it drops, drops the contact and keeps the rest of the form; a failed search describes the picker. Before
 // a contact and a summary exist, Uložit is held back. The real
 // page, picker, router and i18n run; the owner's Records and Action, Work Tasks Records and the Party Registry
 // counterparty search answer in process through their HttpApi contracts behind the Shell's gateway issuer.
@@ -35,7 +36,10 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Deferred, Effect, Layer, Match, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
-import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
+import {
+  applyCommandActionProblem,
+  applyCommandActionSchemaErrorLive,
+} from '../../api/apply-command-action-problems.ts';
 import csResource from '../../locales/cs/crm-activities.json';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
@@ -180,6 +184,13 @@ const answerFor = (query: string) =>
 let holdSaves = false;
 /** Whether the owner's Action parks each command for approval instead of recording it. */
 let proposeSaves = false;
+/** Whether the owner's Action answers that it is unavailable for now instead of recording the command. */
+let failSaves = false;
+/**
+ * The owner's revision: every recorded activity moves it on, as the owner's persistence does. It never goes back, also
+ * not between tests, because the page keeps the activities it read per document.
+ */
+let ownerRevision = activityRecords.revision;
 const parked = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
   _tag: 'ActionProposalAccepted',
   expiresAt: '2026-11-10T12:00:00.000Z',
@@ -188,9 +199,25 @@ const parked = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
 let saveRelease = Deferred.makeUnsafe<boolean>();
 const releaseSave = () => Deferred.doneUnsafe(saveRelease, Effect.succeed(true));
 
-/** Every query the search received and every command the owner's Action received, in order. */
+/** How the owner's Action answers a command it took: unavailable, parked, or recorded, which moves its revision on. */
+const answerCommand = () =>
+  Match.value({ failSaves, proposeSaves }).pipe(
+    Match.when({ failSaves: true }, () =>
+      Effect.fail(applyCommandActionProblem.unavailable('activity_persistence_unavailable')),
+    ),
+    Match.when({ proposeSaves: true }, () => Effect.succeed(parked)),
+    Match.orElse(() =>
+      Effect.sync(() => {
+        ownerRevision += 1;
+        return recorded;
+      }),
+    ),
+  );
+
+/** Every query the search received and every command the owner's Action received with its idempotency key, in order. */
 const queries: string[] = [];
 const commands: (typeof ApplyCommandPayloadSchema.Encoded)[] = [];
+const idempotencyKeys: (string | undefined)[] = [];
 
 const OwnerRecordsApi = RecordsApi.prefix('/crm-activities-api');
 const OwnerActionApi = ApplyCommandActionApi.prefix('/crm-activities-api');
@@ -209,18 +236,19 @@ const network = browserNetwork(
   serveApi(
     OwnerRecordsApi,
     HttpApiBuilder.group(OwnerRecordsApi, 'records', (group) =>
-      group.handle('execute', () => Effect.succeed(activityRecords)),
+      group.handle('execute', () => Effect.sync(() => ({ ...activityRecords, revision: ownerRevision }))),
     ),
   ),
   serveApi(
     OwnerActionApi,
     HttpApiBuilder.group(OwnerActionApi, 'applyCommandAction', (group) =>
-      group.handle('execute', ({ payload }) =>
+      group.handle('execute', ({ payload, request }) =>
         Effect.sync(() => {
           commands.push(payload);
+          idempotencyKeys.push(request.headers['idempotency-key']);
         }).pipe(
           Effect.andThen(Effect.suspend(() => (holdSaves ? Deferred.await(saveRelease) : Effect.void))),
-          Effect.map(() => (proposeSaves ? parked : recorded)),
+          Effect.andThen(Effect.suspend(answerCommand)),
         ),
       ),
     ).pipe(Layer.provide(applyCommandActionSchemaErrorLive)),
@@ -381,6 +409,27 @@ const shownFromNow = () => {
   };
 };
 
+/**
+ * Records what the contact picker and the summary show after every change on screen from now on, until the form is
+ * gone, so a state committed for a single render before the page leaves is seen too.
+ */
+const formStatesFromNow = () => {
+  const states: string[] = [];
+  const observer = new MutationObserver(() => {
+    const summary = document.querySelector<HTMLInputElement>('#activity-summary');
+    if (summary !== null) {
+      states.push(`${contactShown() ?? ''} | ${summary.value}`);
+    }
+  });
+  observer.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
+  return {
+    stop: () => {
+      observer.disconnect();
+      return [...new Set(states)];
+    },
+  };
+};
+
 /** The choice as the user sees it: chosen in the native control, labelled in the trigger, Uložit enabled. */
 const expectKept = () => {
   expect(contactSelect().value).toBe(kept.ref.resourceId);
@@ -388,14 +437,40 @@ const expectKept = () => {
   expect(saveButton().disabled).toBe(false);
 };
 
+/** The summary as typed. */
+const summaryShown = () => element<HTMLInputElement>('#activity-summary').value;
+
+/** What the save bar says about the draft. */
+const saveBarSays = (label: string) => (form().textContent ?? '').includes(label);
+
+/**
+ * Uložit while the owner's Action holds the write; the directory then refuses the user before the write answers. The
+ * held write keeps the network busy, so the refusal is awaited on screen.
+ */
+const sendThenRefuse = (sent: number) =>
+  Effect.gen(function* heldWriteThenRefusal() {
+    holdSaves = true;
+    yield* acted(() => saveButton().click());
+    yield* waitUntil(() => commands.length === sent);
+    yield* ask('Zákaz');
+    yield* waitUntil(() => contactSelect().value === '' && !findButton().disabled);
+  });
+
+/** Access returns: a search finds Dolce again while the held write still keeps the network busy. */
+const findDolceAgain = ask('Dolce').pipe(
+  Effect.andThen(waitUntil(() => !findButton().disabled && offered().includes(kept.ref.resourceId))),
+);
+
 beforeEach(() => {
   lateRelease = Deferred.makeUnsafe<boolean>();
   holdSaves = false;
   proposeSaves = false;
+  failSaves = false;
   saveRelease = Deferred.makeUnsafe<boolean>();
   gatewayRefusesDirectory = false;
   queries.length = 0;
   commands.length = 0;
+  idempotencyKeys.length = 0;
 });
 
 afterEach(() => {
@@ -494,6 +569,7 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
       yield* search('Výpadek');
       expectKept();
 
+      const revision = ownerRevision;
       yield* acted(() => saveButton().click());
       yield* waitUntil(() => commands.length > 0);
       yield* networkIdle;
@@ -512,7 +588,8 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
             ownerPrincipalRef: actorPrincipalRef,
             summary: 'Domluvená ochutnávka',
           },
-          expectedRevision: 3,
+          // The revision the owner has.
+          expectedRevision: revision,
         },
       ]);
       yield* waitUntil(() => text().includes(copy(`${key}.saved`)));
@@ -749,6 +826,321 @@ it.layer(network, { excludeTestServices: true })('the activity form', (suite) =>
       yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
       expect(element<HTMLInputElement>('#activity-summary').value).toBe('Domluvená ochutnávka');
       // The same activity is already waiting for approval: Uložit holds it back.
+      expect(saveButton().disabled).toBe(true);
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      expect(commands).toHaveLength(1);
+    }),
+  );
+  suite.effect(
+    'discarding on the way out keeps the chosen contact and the summary on screen until the page is gone',
+    () =>
+      Effect.gen(function* discardKeepsFormUntilLeft() {
+        const router = yield* chooseDolce;
+        yield* acted(() => saveButton().click());
+        yield* networkIdle;
+        yield* waitUntil(
+          () => text().includes(copy(`${key}.saved`)) && element<HTMLInputElement>('#activity-summary').value === '',
+        );
+        yield* waitUntil(() => !findButton().disabled);
+        // The recorded version holds Dolce; the person now picks Novák, whom the latest search found, and types.
+        yield* search('Novák');
+        yield* chooseContact(other.ref.resourceId, 'Pekárna Novák');
+        yield* typeInto('#activity-summary', 'Jiný hovor');
+
+        const states = formStatesFromNow();
+        yield* acted(() => {
+          void router.navigate({ to: '/cs' });
+        });
+        yield* waitUntil(() => buttons(labels.discard).length > 0);
+        yield* acted(() => button(labels.discard).click());
+        yield* waitUntil(
+          () => router.state.location.href === '/cs' && document.querySelector('#activity-summary') === null,
+        );
+        // Until the page went away, the form never emptied the picker or the summary, not even for one render.
+        expect(states.stop()).toEqual(['Pekárna Novák | Jiný hovor']);
+      }),
+  );
+  suite.effect('discarding on the way to another language of the page starts the form over', () =>
+    Effect.gen(function* discardStaysStartsOver() {
+      const router = yield* chooseDolce;
+      yield* acted(() => {
+        void router.navigate({ to: '/en/aktivity' });
+      });
+      yield* waitUntil(() => buttons(labels.discard).length > 0);
+      yield* acted(() => button(labels.discard).click());
+      yield* waitUntil(() => router.state.resolvedLocation?.href === '/en/aktivity');
+      // Nothing typed is left.
+      expect(element<HTMLInputElement>('#activity-summary').value).toBe('');
+    }),
+  );
+  suite.effect(
+    'a write that lands after Dolce was refused and chosen again counts as recorded and is not sent again',
+    () =>
+      Effect.gen(function* regainedBeforeAnswer() {
+        yield* chooseDolce;
+        yield* sendThenRefuse(1);
+        yield* findDolceAgain;
+        yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+
+        releaseSave();
+        yield* networkIdle;
+        // The owner recorded exactly what the form shows: the form moves on to the next activity for Dolce.
+        yield* waitUntil(() => text().includes(copy(`${key}.saved`)) && summaryShown() === '');
+        expect(contactShown()).toBe('Kavárna Dolce');
+        expect(saveButton().disabled).toBe(true);
+        yield* acted(() => saveButton().click());
+        yield* networkIdle;
+        expect(commands).toHaveLength(1);
+      }),
+  );
+
+  suite.effect(
+    'a write that lands after Dolce was refused and the summary edited is not sent again once both are back',
+    () =>
+      Effect.gen(function* editedBackAfterAnswer() {
+        yield* chooseDolce;
+        yield* sendThenRefuse(1);
+        yield* typeInto('#activity-summary', 'Domluvená ochutnávka!');
+        releaseSave();
+        yield* networkIdle;
+        yield* waitUntil(() => text().includes(copy(`${key}.saved`)));
+        // The edit made while the write ran is kept for the next click.
+        expect(summaryShown()).toBe('Domluvená ochutnávka!');
+
+        yield* search('Dolce');
+        yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+        yield* typeInto('#activity-summary', 'Domluvená ochutnávka');
+        // This is the activity the owner has just recorded.
+        expect(saveButton().disabled).toBe(true);
+        yield* acted(() => saveButton().click());
+        yield* networkIdle;
+        expect(commands).toHaveLength(1);
+      }),
+  );
+
+  suite.effect('the next activity can repeat the one just recorded: it is a new activity', () =>
+    Effect.gen(function* repeatAfterRecorded() {
+      yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      yield* waitUntil(() => text().includes(copy(`${key}.saved`)) && summaryShown() === '');
+      yield* typeInto('#activity-summary', 'Domluvená ochutnávka');
+      expect(saveButton().disabled).toBe(false);
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 2);
+      yield* networkIdle;
+      // A new activity over the revision the first one created, so a new idempotency key.
+      const [first, second] = commands.map((sent) => sent.expectedRevision);
+      expect(second).toBe((first ?? 0) + 1);
+      expect(new Set(idempotencyKeys).size).toBe(2);
+    }),
+  );
+
+  suite.effect('a write parked after Dolce was refused and chosen again is not proposed again', () =>
+    Effect.gen(function* regainedBeforeParked() {
+      proposeSaves = true;
+      yield* chooseDolce;
+      yield* sendThenRefuse(1);
+      yield* findDolceAgain;
+      yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+      releaseSave();
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.proposed));
+      expect(saveButton().disabled).toBe(true);
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      expect(commands).toHaveLength(1);
+    }),
+  );
+
+  suite.effect(
+    'Novák chosen while a refused write for Dolce runs is a new activity, and Dolce does not come back',
+    () =>
+      Effect.gen(function* otherContactBeforeAnswer() {
+        yield* chooseDolce;
+        yield* sendThenRefuse(1);
+        yield* ask('Novák');
+        yield* waitUntil(() => !findButton().disabled && offered().includes(other.ref.resourceId));
+        yield* chooseContact(other.ref.resourceId, 'Pekárna Novák');
+        const shown = shownFromNow();
+        releaseSave();
+        yield* networkIdle;
+        yield* waitUntil(() => text().includes(copy(`${key}.saved`)));
+        expect(shown.stop().filter((line) => line.includes('Kavárna Dolce'))).toEqual([]);
+        expect(contactShown()).toBe('Pekárna Novák');
+        expect(saveButton().disabled).toBe(false);
+        holdSaves = false;
+        yield* acted(() => saveButton().click());
+        yield* waitUntil(() => commands.length === 2);
+        yield* networkIdle;
+        expect(commands.map((sent) => sent.command.counterpartyRef?.resourceId)).toEqual([
+          kept.ref.resourceId,
+          other.ref.resourceId,
+        ]);
+      }),
+  );
+
+  suite.effect('every activity parked for approval stays held back, not only the last one', () =>
+    Effect.gen(function* everyParkedActivity() {
+      proposeSaves = true;
+      yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 1);
+      yield* networkIdle;
+      yield* waitUntil(() => saveButton().disabled);
+      yield* search('Zákaz');
+      yield* search('Dolce');
+      yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+      expect(saveButton().disabled).toBe(true);
+
+      yield* typeInto('#activity-summary', 'Jiný hovor');
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 2);
+      yield* networkIdle;
+      yield* waitUntil(() => saveButton().disabled);
+
+      // Back to the first summary: that activity is still waiting for approval.
+      yield* typeInto('#activity-summary', 'Domluvená ochutnávka');
+      expect(saveBarSays(labels.proposed)).toBe(true);
+      expect(saveButton().disabled).toBe(true);
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      expect(commands).toHaveLength(2);
+    }),
+  );
+
+  suite.effect('a refusal just before a parked answer leaves the draft as one just after it does', () =>
+    Effect.gen(function* refusalBeforeParked() {
+      proposeSaves = true;
+      const router = yield* chooseDolce;
+      yield* sendThenRefuse(1);
+      releaseSave();
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.invalid) || saveBarSays(labels.proposed));
+      // The draft without a contact was never handed over: it waits for a contact, and leaving asks about it.
+      expect(saveBarSays(labels.invalid)).toBe(true);
+      yield* acted(() => {
+        void router.navigate({ to: '/cs' });
+      });
+      yield* waitUntil(() => buttons(labels.discard).length > 0);
+      expect(commands).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('a refusal just after a parked answer leaves the draft as one just before it does', () =>
+    Effect.gen(function* refusalAfterParked() {
+      proposeSaves = true;
+      const router = yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.proposed));
+      yield* search('Zákaz');
+      expect(saveBarSays(labels.invalid)).toBe(true);
+      yield* acted(() => {
+        void router.navigate({ to: '/cs' });
+      });
+      yield* waitUntil(() => buttons(labels.discard).length > 0);
+      expect(commands).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('a refusal after a failed write takes the retry away', () =>
+    Effect.gen(function* refusalAfterFailure() {
+      failSaves = true;
+      yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.failed));
+      expect(saveButton().disabled).toBe(false);
+
+      yield* search('Zákaz');
+      // Without a contact there is nothing to send again.
+      expect(saveBarSays(labels.invalid)).toBe(true);
+      expect(saveButton().disabled).toBe(true);
+      expect(commands).toHaveLength(1);
+    }),
+  );
+
+  suite.effect('a retry after a failed write sends it under the same idempotency key', () =>
+    Effect.gen(function* retrySameKey() {
+      failSaves = true;
+      yield* chooseDolce;
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.failed));
+
+      failSaves = false;
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 2);
+      yield* networkIdle;
+      yield* waitUntil(() => text().includes(copy(`${key}.saved`)));
+      // The owner can tell the retry from a new activity, even if the first write went through.
+      expect(idempotencyKeys).toHaveLength(2);
+      expect(idempotencyKeys[0]).toBeDefined();
+      expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+    }),
+  );
+
+  suite.effect('a write that fails after Dolce was refused and chosen again is retried under the same key', () =>
+    Effect.gen(function* regainedBeforeFailure() {
+      failSaves = true;
+      yield* chooseDolce;
+      yield* sendThenRefuse(1);
+      yield* findDolceAgain;
+      yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+      releaseSave();
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.failed));
+
+      failSaves = false;
+      holdSaves = false;
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 2);
+      yield* networkIdle;
+      yield* waitUntil(() => text().includes(copy(`${key}.saved`)) && summaryShown() === '');
+      // The same activity again: the owner can tell it is the retry.
+      expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+    }),
+  );
+
+  suite.effect('a write that fails after Dolce was refused is retried under the same key once Dolce is back', () =>
+    Effect.gen(function* refusedBeforeFailure() {
+      failSaves = true;
+      yield* chooseDolce;
+      yield* sendThenRefuse(1);
+      releaseSave();
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.failed));
+      // Nothing without a contact is ever sent.
+      yield* acted(() => saveButton().click());
+      yield* networkIdle;
+      expect(commands).toHaveLength(1);
+
+      failSaves = false;
+      holdSaves = false;
+      yield* search('Dolce');
+      yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+      expect(saveButton().disabled).toBe(false);
+      yield* acted(() => saveButton().click());
+      yield* waitUntil(() => commands.length === 2);
+      yield* networkIdle;
+      expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+    }),
+  );
+
+  suite.effect('a write parked after Dolce was refused is not proposed again once Dolce is back', () =>
+    Effect.gen(function* refusedBeforeParked() {
+      proposeSaves = true;
+      yield* chooseDolce;
+      yield* sendThenRefuse(1);
+      releaseSave();
+      yield* networkIdle;
+      yield* waitUntil(() => saveBarSays(labels.invalid));
+
+      yield* search('Dolce');
+      yield* chooseContact(kept.ref.resourceId, 'Kavárna Dolce');
+      expect(saveBarSays(labels.proposed)).toBe(true);
       expect(saveButton().disabled).toBe(true);
       yield* acted(() => saveButton().click());
       yield* networkIdle;

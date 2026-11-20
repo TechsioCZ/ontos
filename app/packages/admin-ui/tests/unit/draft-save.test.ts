@@ -406,6 +406,111 @@ describe('explicit draft save', () => {
     }),
   );
 
+  it.effect('a save that lands after its draft lost and regained a part counts as saved and is not sent again', () =>
+    Effect.gen(function* regained() {
+      const { controller, reply, sent } = yield* setup();
+      const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
+      controller.change(draft('Call Secret'));
+      controller.save();
+      // The part is refused while the save is on its way, then access returns and the same part is chosen again.
+      controller.revise(withoutSecret);
+      controller.change(draft('Call Secret'));
+      yield* reply(0, 'saved');
+      // The server recorded exactly this draft: it is saved, and Save has nothing to send.
+      expect(controller.status()).toBe('saved');
+      expect(draftSavable(controller.status())).toBe(false);
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(sent).toEqual(['Call Secret']);
+    }),
+  );
+
+  it.effect('a draft that lost a part while its save ran is not sent again once the part is back', () =>
+    Effect.gen(function* refusedThenTypedBack() {
+      const { controller, reply, sent } = yield* setup();
+      const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
+      controller.change(draft('Call Secret'));
+      controller.save();
+      controller.revise(withoutSecret);
+      // An edit while the save runs keeps the draft unsaved when it lands.
+      controller.change(draft('Call!'));
+      yield* reply(0, 'saved');
+      expect(controller.status()).toBe('dirty');
+      // What discarding goes back to holds no refused part.
+      expect(controller.confirmed()).toEqual(draft('Call'));
+      // The part comes back and the edit is taken back: that is what the server already has.
+      controller.change(draft('Call Secret'));
+      expect(controller.status()).toBe('idle');
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(sent).toEqual(['Call Secret']);
+    }),
+  );
+
+  it.effect('remembers every draft parked for approval, not only the last one', () =>
+    Effect.gen(function* everyProposal() {
+      const { controller, reply, sent } = yield* setup();
+      controller.change(draft('Call'));
+      controller.save();
+      yield* reply(0, 'proposed');
+      controller.change(draft('Other'));
+      controller.save();
+      yield* reply(1, 'proposed');
+      // Back to the first proposal: it is still waiting for approval, so it is not proposed again.
+      controller.change(draft('Call'));
+      expect(controller.status()).toBe('proposed');
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(sent).toEqual(['Call', 'Other']);
+    }),
+  );
+
+  it.effect('a revision leaves the same status whether it lands just before or just after a parked answer', () =>
+    Effect.gen(function* sameEitherWay() {
+      const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
+      const before = yield* setup();
+      before.controller.change(draft('Plan Secret'));
+      before.controller.save();
+      before.controller.revise(withoutSecret);
+      yield* before.reply(0, 'proposed');
+
+      const after = yield* setup();
+      after.controller.change(draft('Plan Secret'));
+      after.controller.save();
+      yield* after.reply(0, 'proposed');
+      after.controller.revise(withoutSecret);
+
+      // "Plan" was never proposed: either way it is a draft Save can send.
+      expect(before.controller.status()).toBe('dirty');
+      expect(after.controller.status()).toBe('dirty');
+    }),
+  );
+
+  it.effect('a revision that leaves a failed draft unsendable takes the retry away', () =>
+    Effect.gen(function* revisedFailure() {
+      const { controller, reply, sent } = yield* setup();
+      controller.change(draft('Secret'));
+      controller.save();
+      yield* reply(0, 'failed');
+      expect(controller.status()).toBe('error');
+      // The revised draft counts like a typed change: it cannot be sent, so nothing offers to send it.
+      controller.revise((value) => draft(value.name.replace('Secret', '').trim()));
+      expect(controller.status()).toBe('invalid');
+      expect(draftSavable(controller.status())).toBe(false);
+      expect(sent).toEqual(['Secret']);
+    }),
+  );
+
+  it.effect('a revision while no save runs does not reach what a later partial save wrote', () =>
+    Effect.gen(function* idleRevision() {
+      const { controller } = yield* setup();
+      controller.revise((value) => draft(value.name.replace(' Secret', '')));
+      // What the server reports it has is taken as it is: no earlier revision is replayed onto it.
+      controller.confirm(draft('Written Secret'));
+      expect(controller.confirmed()).toEqual(draft('Written Secret'));
+    }),
+  );
+
   it.effect('a disposed controller sends nothing and a save still running decides nothing', () =>
     Effect.gen(function* disposed() {
       const { controller, reply, sent } = yield* setup();

@@ -14,7 +14,7 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
@@ -112,6 +112,32 @@ const sameActivity = (left: ActivityDraft, right: ActivityDraft) =>
   left.taskId.join(',') === right.taskId.join(',');
 
 const withoutContact = (draft: ActivityDraft): ActivityDraft => ({ ...draft, counterpartyRef: null });
+
+/**
+ * A request this form sent: what it asked the owner to record, the revision it expected and its idempotency key.
+ * Sending the same activity over the same revision again, a retry or a draft the form wrongly offers again, reuses the
+ * key, so the owner records or parks it once; another activity, or the same one over a newer revision, gets its own.
+ */
+interface SentRequest {
+  readonly activity: ActivityDraft;
+  readonly key: string;
+  readonly revision: number;
+}
+
+/** The key under which `sent` holds this request, or a new one it keeps from now on. */
+const idempotencyKeyOf = (sent: SentRequest[], activity: ActivityDraft, revision: number) =>
+  Effect.suspend(() => {
+    const known = sent.find((request) => request.revision === revision && sameActivity(request.activity, activity));
+    return known === undefined
+      ? requestId.pipe(
+          Effect.tap((key) =>
+            Effect.sync(() => {
+              sent.push({ activity, key, revision });
+            }),
+          ),
+        )
+      : Effect.succeed(known.key);
+  });
 
 /** The activity after the recorded one: same contact and follow-up, an empty summary. */
 const nextActivity = (draft: ActivityDraft): ActivityDraft => ({ ...draft, summary: '' });
@@ -217,6 +243,8 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
+  /** Every request this form sent, with its idempotency key. */
+  const sentRequests = useRef<SentRequest[]>([]);
   const send = (value: ActivityDraft): Effect.Effect<SaveOutcome> => {
     const { counterpartyRef: sentContact } = value;
     if (records === undefined || sentContact === null) {
@@ -230,6 +258,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     return Effect.all(
       {
         id: requestId,
+        idempotencyKey: idempotencyKeyOf(sentRequests.current, value, records.revision),
         referenceCredentials: makeReferenceGatewayCredentials([
           'party-registry',
           ...(taskFields.followUpTaskRef === undefined ? [] : ['work-tasks']),
@@ -237,7 +266,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       },
       { concurrency: 1 },
     ).pipe(
-      Effect.flatMap(({ id, referenceCredentials }) =>
+      Effect.flatMap(({ id, idempotencyKey, referenceCredentials }) =>
         executeApplyCommand(
           {
             command: {
@@ -252,7 +281,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
             expectedRevision: records.revision,
           },
           id,
-          { idempotencyKey: id, referenceCredentials },
+          { idempotencyKey, referenceCredentials },
         ),
       ),
       Effect.flatMap(committedResult),
@@ -285,29 +314,31 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     value: draft,
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
-  // Uložit in the save bar and in the leave question: a recorded activity keeps the contact and the follow-up for the
-  // next one and its summary starts empty, unless the summary was edited while the save ran.
+  // Uložit in the save bar and in the leave question. Once an activity is recorded, the form starts the next one from
+  // it: same contact and follow-up, an empty summary, a new draft. An edit made while the save ran keeps the form on
+  // the recorded activity ("dirty", not "saved"), so the same activity is not sent again.
   const save = () => {
     setMessage('');
     record.save();
-    record.afterSave((status) => {
+    record.afterSave((status, confirmed) => {
       if (status === 'saved') {
-        setDraft(nextActivity);
-        record.revise(nextActivity);
+        const next = nextActivity(confirmed);
+        setDraft(next);
+        record.adopt(next);
       }
     });
   };
   const guard = useUnsavedChangesGuard({
     draft: { ...record, save },
     navigation: blocker,
-    onDiscard: () => {
-      setDraft(record.confirmed);
-    },
+    // "Zahodit změny" puts nothing back: the person leaves, and the page that stays starts its form over (RecordsPage),
+    // so the form shows what the person typed until it is gone.
+    onDiscard: constVoid,
   });
   /**
-   * The directory refused the user: nothing it returned stays chosen, on offer, in the version "Zahodit změny" goes
-   * back to or in what a running save confirms. A draft parked for approval keeps only the contact's reference, so the
-   * same activity is not proposed twice.
+   * The directory refused the user: nothing it returned stays chosen, on offer, in the saved version that decides
+   * whether leaving asks, or in what a running save confirms. A draft parked for approval keeps only the contact's
+   * reference, so the same activity is not proposed twice.
    */
   const refuseContacts = (error: SearchError) => {
     setSearchFailure('');
@@ -654,7 +685,9 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
 
 /** Rendered by the Shell with the props its `preloadPage` received; standalone it reads the query from the router. */
 export const RecordsPage = (props: Partial<ModulePageProps>) => {
-  const location = useRouterState({ select: (state) => state.location.href });
+  // The form starts over once the router has arrived at another location of this page. The location a navigation is
+  // still heading to does not count: when it leaves the page, the page would otherwise show a fresh form before it goes.
+  const location = useRouterState({ select: (state) => (state.resolvedLocation ?? state.location).href });
   const routerSearch = useRouterState({ select: (state) => state.location.searchStr });
   const input = {
     legalEntityId: props.context?.legalEntityId ?? '',
