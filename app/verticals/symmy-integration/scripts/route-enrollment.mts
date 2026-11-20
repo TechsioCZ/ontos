@@ -28,6 +28,14 @@
  * asks only whether the principal is registered for the company through any of its bindings, so it can report an
  * executor verified whose own binding is not registered there. A deactivation checks nothing but the stored route and
  * its token, so it stops a route of any kind.
+ *
+ * A customerGroupsBatch route enrolls Commerce's Group definition read beside its group create and names its company:
+ * the Shell reads each group code's current definition with the integration principal before it admits. Commerce
+ * answers that read only for a named reader of its GROUP_DEFINITION source route of that company and of the group
+ * route's source (its sourceRouteId, or its route id), configured through
+ * commerce.customer-context.configure-customer-source-route; without it, every request the route has not already
+ * admitted under its idempotency key answers 403. The command cannot check this: Commerce shows a source route only to
+ * an administrator through its customer-source-route read, which no workload reads, and the command calls no owner.
  */
 import { parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';

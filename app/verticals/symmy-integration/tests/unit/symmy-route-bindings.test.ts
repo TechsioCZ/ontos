@@ -212,8 +212,8 @@ const readRoute = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyR
   const inventory = inventoryOf(routeKey);
   return deriveSymmyRouteBindings({ companyScoped: true, contracts, enrolled: inventory.operations, inventory });
 };
-/** The refusals of a plan whose every workload the integration principal holds, registered for no company. */
-const unregisteredRefusals = (bindings: readonly SymmyRequiredBinding[]) =>
+/** The refusals of a plan whose every workload the integration principal holds, registered for the company as named. */
+const integrationRefusals = (bindings: readonly SymmyRequiredBinding[], companyRegistration: 'binding' | 'none') =>
   checkSymmyRouteBindings({
     bindings,
     holders: new Map(
@@ -221,14 +221,7 @@ const unregisteredRefusals = (bindings: readonly SymmyRequiredBinding[]) =>
         (workload) =>
           [
             workload,
-            [
-              {
-                apiKey: true,
-                companyRegistration: 'none' as const,
-                kind: 'integration' as const,
-                principalId: integrationId,
-              },
-            ],
+            [{ apiKey: true, companyRegistration, kind: 'integration' as const, principalId: integrationId }],
           ] as const,
       ),
     ),
@@ -512,6 +505,44 @@ describe('Symmy route bindings', () => {
     expect(unpublished(['commerce.pricing.define-price'], [])).toEqual([]);
   });
 
+  it('asks the integration principal for the Group definition read the Shell makes before it admits groups, registered for the route company', () => {
+    const definitionRead = 'commerce.customer-context.api.customer-group-definition-source';
+    const sourceRead = 'commerce.customer-context.source-read';
+    const groupBindings = (published: readonly string[]) =>
+      deriveSymmyRouteBindings({
+        companyScoped: true,
+        contracts: [
+          symmy,
+          contract('commerce-customer-context', 'commerce.customer-context', {
+            operationContracts: published.map((entrypointKey) => carrier(entrypointKey, [sourceRead])),
+          }),
+        ],
+        enrolled: enrolledOf('customerGroupsBatch', [
+          'commerce.customer-context.create-customer-group',
+          definitionRead,
+        ]),
+        inventory: inventoryOf('customerGroupsBatch'),
+      });
+    const reading = groupBindings([definitionRead]);
+    // Commerce publishes the read `required`, so the Shell signs it into the route's company: the integration principal
+    // needs one of its bindings registered for that company, or the company gate refuses the read there.
+    const definitionBindings = reading.bindings.filter(({ purpose }) => purpose === `${definitionRead}@1`);
+    expect(definitionBindings).toEqual([
+      { companyScoped: true, identity: 'integration', purpose: `${definitionRead}@1`, workloads: [sourceRead] },
+    ]);
+    expect(integrationRefusals(definitionBindings, 'binding')).toEqual([]);
+    expect(integrationRefusals(definitionBindings, 'none')).toEqual([
+      {
+        code: 'integration_company_registration_missing',
+        detail: `The integration principal ${integrationId} holds ${sourceRead}, needed for ${definitionRead}@1, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,
+      },
+    ]);
+    expect(reading.moduleKeys).toContain('commerce.customer-context');
+    expect(groupBindings([]).refusals.map(({ detail }) => detail)).toContain(
+      `${definitionRead}@1 is not published by commerce.customer-context`,
+    );
+  });
+
   it('refuses a company-scoped call on a route that passes no company to it', () => {
     const pricing = contract('pricing', 'commerce.pricing', {
       actions: receivingAction('commerce.pricing.define-price'),
@@ -720,7 +751,7 @@ describe('Symmy route bindings', () => {
       `integration ${admit} | ${poll}: false`,
       `integration ${productRead}: false`,
     ]);
-    expect(unregisteredRefusals(productPages.bindings)).toEqual([]);
+    expect(integrationRefusals(productPages.bindings, 'none')).toEqual([]);
 
     // The market read is published `required`, the currency read `forbidden`: the same unregistered principal is refused
     // for the market read alone, by name.
@@ -741,7 +772,7 @@ describe('Symmy route bindings', () => {
       `integration ${marketRead}: true`,
       `integration ${currencyRead}: false`,
     ]);
-    expect(unregisteredRefusals(regions.bindings)).toEqual([
+    expect(integrationRefusals(regions.bindings, 'none')).toEqual([
       {
         code: 'integration_company_registration_missing',
         detail: `The integration principal ${integrationId} holds ${marketRead}, needed for commerce.market-catalog.api.current-market-catalog@1, but none of its active bindings is registered for company ${company}, so the company gate refuses it there (deny.workload_unbound)`,

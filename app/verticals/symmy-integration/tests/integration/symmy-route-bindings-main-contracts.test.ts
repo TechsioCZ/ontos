@@ -47,10 +47,10 @@ const mainContracts = Effect.gen(function* mainContracts() {
 });
 
 /**
- * The refusals of a company route of this kind that enrolls only the operations every enrollment of it enrolls: any
- * enrollment of the route reaches these calls, so it is refused for each of them.
+ * The binding plan of a company route of this kind that enrolls only the operations every enrollment of it enrolls:
+ * any enrollment of the route reaches these calls and reads.
  */
-const requiredOnly = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyRouteContract[]) => {
+const requiredOnlyPlan = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyRouteContract[]) => {
   const found = symmyRouteInventoryOf(routeKey);
   if (!Option.isOption(found) || Option.isNone(found)) {
     throw new Error(`expected the ${routeKey} inventory`);
@@ -61,8 +61,11 @@ const requiredOnly = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly Sym
     contracts,
     enrolled: inventory.operations.filter(({ required }) => required),
     inventory,
-  }).refusals.map(({ code, detail }) => `${code}: ${detail}`);
+  });
 };
+/** The refusals of that route: any enrollment of it is refused for each of them. */
+const requiredOnly = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyRouteContract[]) =>
+  requiredOnlyPlan(routeKey, contracts).refusals.map(({ code, detail }) => `${code}: ${detail}`);
 
 /** The Privacy intake check reached by both routes, whose two organization requirements Privacy registers no call for. */
 const intakeParty =
@@ -75,7 +78,7 @@ const intakeProfileRecovery =
   'call_not_declared: The installed privacy.core requires commerce.customer-context commerce.customer-context.api.customer-profile-organization-ico-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-profile) and registers no recovery call to it under privacy.core.source-processing-check';
 
 it.effect(
-  "refuses the customers and membership routes on main's contracts by each requirement whose owner registers no call",
+  "refuses the customers and membership routes on main's contracts by each requirement whose owner registers no call, and enrolls the customer groups route with its definition read",
   () =>
     Effect.gen(function* refusedOnMain() {
       const contracts = yield* mainContracts;
@@ -93,6 +96,17 @@ it.effect(
         intakePartyRecovery,
         intakeProfileRecovery,
       ]);
+      // The Shell reads each group code's current definition with the integration principal before it admits.
+      const groups = requiredOnlyPlan('customerGroupsBatch', contracts);
+      expect(groups.refusals).toEqual([]);
+      // Commerce publishes it `required`: the Shell signs it into the route's company, which the binding must be
+      // registered for.
+      expect(groups.bindings).toContainEqual({
+        companyScoped: true,
+        identity: 'integration',
+        purpose: 'commerce.customer-context.api.customer-group-definition-source@1',
+        workloads: ['commerce.customer-context.source-read'],
+      });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   60_000,
 );
