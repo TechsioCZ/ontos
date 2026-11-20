@@ -10,6 +10,7 @@ import {
 } from '../../src/authorization/access-declaration.ts';
 import type { AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import {
+  assetCurrentRead,
   assetDownloadRead,
   assetMetadataRead,
   confirmAssetAction,
@@ -55,10 +56,11 @@ const rename = renameDisplayFilenameAction.descriptor;
 const integrity = recordAssetIntegrityFailureAction.descriptor;
 const metadata = assetMetadataRead.descriptor;
 const download = assetDownloadRead.descriptor;
+const current = assetCurrentRead.descriptor;
 const ACTIONS = [upload, confirm, rename, integrity] as const;
-const ALL = [upload, confirm, rename, integrity, metadata, download] as const;
+const ALL = [upload, confirm, rename, integrity, metadata, download, current] as const;
 
-/** The declarations of the six capabilities that exist, as ADR-0030 and the design (D-H, A09, A11) fix them. */
+/** The declarations of the seven capabilities that exist, as ADR-0030 and the design (D-H, A09, A11) fix them. */
 const EXPECTED = {
   confirm: {
     key: 'core.media.asset.confirm',
@@ -69,6 +71,16 @@ const EXPECTED = {
     selectors: [],
   },
   // The bytes of a file leave Core: the one sensitive capability, a read that agents never run on their own.
+  // Current V1 for Catalog (#1443): one tenant-wide capability for the whole set, so a denial is the whole call's and
+  // a filtered-out asset can never look absent. It grants neither metadata nor bytes.
+  current: {
+    key: 'core.media.asset-current.read',
+    kind: 'read',
+    modes: ['run'],
+    placement: { group: 'media', level: 'basic' },
+    risk: 'routine',
+    selectors: [],
+  },
   download: {
     key: 'core.media.asset-download.read',
     kind: 'read',
@@ -117,7 +129,7 @@ const EXPECTED = {
  * The source scan below refuses a key here, or any other Core Media key, being declared anywhere in `src/` today,
  * so a half-added capability fails loudly.
  */
-const OPEN_DECLARATIONS = ['core.media.asset-current.read', 'core.media.operation.read'] as const;
+const OPEN_DECLARATIONS = ['core.media.operation.read'] as const;
 
 it('declares each existing capability under its own key with the audited kind, risk, placement and selectors', () => {
   expect(upload.accessDeclaration).toEqual(EXPECTED.upload);
@@ -126,11 +138,12 @@ it('declares each existing capability under its own key with the audited kind, r
   expect(integrity.accessDeclaration).toEqual(EXPECTED.integrity);
   expect(metadata.accessDeclaration).toEqual(EXPECTED.metadata);
   expect(download.accessDeclaration).toEqual(EXPECTED.download);
+  expect(current.accessDeclaration).toEqual(EXPECTED.current);
 });
 
-it('gives the six capabilities six distinct keys, all prefixed by the Core Media owner and none shared', () => {
+it('gives the seven capabilities seven distinct keys, all prefixed by the Core Media owner and none shared', () => {
   const keys = ALL.map((descriptor) => descriptor.accessDeclaration?.key ?? '');
-  expect(new Set(keys).size).toBe(6);
+  expect(new Set(keys).size).toBe(7);
   for (const key of keys) {
     expect(key.startsWith('core.media.')).toBe(true);
   }
@@ -160,6 +173,7 @@ it('is protected and Core-owned on every entrypoint, so the one gate always asks
   }
   expect(metadata.entrypoint).toMatchObject({ access: 'read', role: 'api' });
   expect(download.entrypoint).toMatchObject({ access: 'read', role: 'api' });
+  expect(current.entrypoint).toMatchObject({ access: 'read', role: 'api' });
 });
 
 it('is routine on every capability but the download, and only the rename may be proposed or approved', () => {
@@ -175,6 +189,7 @@ it('is routine on every capability but the download, and only the rename may be 
   expect(upload.accessDeclaration?.modes).toEqual(['run']);
   expect(confirm.accessDeclaration?.modes).toEqual(['run']);
   expect(metadata.accessDeclaration?.modes).toEqual(['run']);
+  expect(current.accessDeclaration?.modes).toEqual(['run']);
   expect(rename.accessDeclaration?.modes).toEqual(['run', 'propose', 'approve']);
 });
 
@@ -182,6 +197,9 @@ it('names the one exact record on exactly the record-scoped capabilities, never 
   // The reserve leg names no record (the asset does not exist yet) and confirm acts on the reservation: both are scope-wide.
   expect(upload.accessTarget).toBeUndefined();
   expect(confirm.accessTarget).toBeUndefined();
+  // Current answers a whole set under one tenant-wide capability: no record selector, no record target.
+  expect(current.accessTarget).toBeUndefined();
+  expect(current.accessDeclaration?.selectors).toEqual([]);
   expect(upload.accessDeclaration?.selectors).toEqual([]);
   expect(confirm.accessDeclaration?.selectors).toEqual([]);
   // Record-scoped: the target is the asset id; the tenant half comes from the trusted scope.
@@ -214,9 +232,11 @@ it('rides the machine carrier on the upload legs and the integrity record only, 
   expect(metadata.accessWorkload).toBeUndefined();
   // The download is human only too: a bound machine never downloads, and an agent is refused (sensitive read).
   expect(download.accessWorkload).toBeUndefined();
+  // Current is a Catalog read decided as the requester: no machine carrier.
+  expect(current.accessWorkload).toBeUndefined();
 });
 
-it('lists exactly the six existing keys in the access catalog, with no duplicate and no workload entry', () => {
+it('lists exactly the seven existing keys in the access catalog, with no duplicate and no workload entry', () => {
   const descriptors = ALL.flatMap((descriptor) =>
     descriptor.accessDeclaration === undefined
       ? []
@@ -225,6 +245,7 @@ it('lists exactly the six existing keys in the access catalog, with no duplicate
   const catalog = Result.getOrThrow(collectAccessCatalog([{ descriptors, moduleId: 'core.media' }]));
   const keys = catalog.entries.map(({ accessDeclaration }) => accessDeclaration.key);
   expect(keys.toSorted()).toEqual([
+    'core.media.asset-current.read',
     'core.media.asset-download.read',
     'core.media.asset-integrity.fail',
     'core.media.asset-metadata.read',
@@ -274,7 +295,7 @@ const allSources = Effect.fn('CoreMediaAuthorizationAudit.sources')(function* al
 });
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('core media declarations in the source tree', (suite) => {
-  suite.effect('are exactly the six audited keys, and none of the still-open keys exists before its operation', () =>
+  suite.effect('are exactly the seven audited keys, and none of the still-open keys exists before its operation', () =>
     Effect.gen(function* sourceKeys() {
       const declared = new Set<string>();
       for (const [, text] of yield* allSources()) {
@@ -283,6 +304,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media declarat
         }
       }
       expect([...declared].toSorted()).toEqual([
+        'core.media.asset-current.read',
         'core.media.asset-download.read',
         'core.media.asset-integrity.fail',
         'core.media.asset-metadata.read',
