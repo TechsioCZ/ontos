@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { Effect, Match, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { AdmitSymmySyncPayloadSchema } from '../../shared/actions/admit-symmy-sync.ts';
 import {
   SymmyCustomerGroupDefinitionFactsSchema,
   SymmyCustomerGroupRowsSchema,
@@ -177,6 +178,27 @@ describe('Symmy customer group plan from the public groups', () => {
       expect(first.items.map(({ sourceOccurrenceId }) => sourceOccurrenceId)).not.toEqual(
         next.items.map(({ sourceOccurrenceId }) => sourceOccurrenceId),
       );
+    }),
+  );
+
+  it.effect('plans nothing for a new admission without what the owner holds for its codes', () =>
+    Effect.gen(function* withoutFacts() {
+      // The admission of a saved key's replay carries no facts; it must never plan a new admission.
+      const admission = Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema)({
+        customerGroups: [group('a')],
+        idempotencyKey: 'group-key-1',
+        routeKey: 'customerGroupsBatch',
+      });
+      const unread = yield* buildSymmyCustomerGroupPlan({
+        authority,
+        digest,
+        facts: admission.groupFacts,
+        idempotencyKey: admission.idempotencyKey,
+        rows: Option.getOrThrow(Option.fromNullishOr(admission.customerGroups)),
+        template: templateWith(create, update),
+      });
+      expect(Option.isNone(unread)).toBe(true);
+      expect(Option.isSome(yield* build([group('a')]))).toBe(true);
     }),
   );
 

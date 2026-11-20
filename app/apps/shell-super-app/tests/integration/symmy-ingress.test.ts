@@ -1715,17 +1715,21 @@ it.effect('fences the public customer groups on the owner definitions and return
   }),
 );
 
-it.effect('answers a replay from the saved group admission without reading the owner definitions', () =>
+it.effect('answers a saved group key from its admission on a still-configured route whose definition read fails', () =>
   Effect.gen(function* savedGroupAdmissionReplay() {
     const saved = [yield* groupItem(1)];
-    // The owner resolved the route only as the receipt of this key's saved admission: it enrolls no read at all.
-    const retainedRoute = {
+    // The route stays configured with the definition read, but the owner resolves a key it saved an admission for
+    // only as the receipt of that admission: it enrolls no read at all. A new key gets the configured route.
+    const configuredRoute = {
       ...internalRoute,
-      allowedOwnerOperations: [],
-      replayIdempotencyDigest: 'c'.repeat(64),
+      allowedOwnerOperations: [
+        groupOperation('commerce.customer-context.create-customer-group'),
+        groupOperation('commerce.customer-context.api.customer-group-definition-source'),
+      ],
       sourceEntityKind: 'CUSTOMER_GROUP',
       sourceNamespace: 'internal-groups',
     };
+    const retainedRoute = { ...configuredRoute, allowedOwnerOperations: [], replayIdempotencyDigest: 'c'.repeat(64) };
     let sameBody = true;
     const paths: string[] = [];
     const bodies: Schema.Json[] = [];
@@ -1733,9 +1737,12 @@ it.effect('answers a replay from the saved group admission without reading the o
       const request = new Request(input, init);
       const path = new URL(request.url).pathname;
       paths.push(path);
-      bodies.push(Schema.decodeUnknownSync(Schema.Json)(await request.json()));
+      const body = Schema.decodeUnknownSync(Schema.Json)(await request.json());
+      bodies.push(body);
       if (path.endsWith('/reads/symmy-route-context')) {
-        return Response.json(retainedRoute);
+        return Response.json(
+          JSON.stringify(body).includes(`"replayIdempotencyKey":"${idempotencyKey}"`) ? retainedRoute : configuredRoute,
+        );
       }
       if (path.endsWith('/reads/customer-group-definition-source')) {
         return Response.json(
@@ -1779,11 +1786,11 @@ it.effect('answers a replay from the saved group admission without reading the o
       ),
       (fixture) => Effect.promise(fixture.dispose),
     );
-    const post = (codes: readonly string[]) =>
+    const post = (codes: readonly string[], key = idempotencyKey) =>
       Effect.promise(() =>
         server.request(SYMMY_ROUTES.customerGroupsBatch.path, {
           body: customerGroupsJson(codes).body,
-          headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+          headers: { 'content-type': 'application/json', 'idempotency-key': key, 'x-api-key': validKey },
           method: 'POST',
         }),
       );
@@ -1811,6 +1818,11 @@ it.effect('answers a replay from the saved group admission without reading the o
       `${releasePath}/symmy-integration/actions/admit-symmy-sync`,
     ]);
     expect(paths).not.toContain(definitionPath);
+    // A new key is a new admission: it is fenced on the definition read, so the failing read answers 503.
+    paths.length = 0;
+    const fresh = yield* post(['bound-group'], 'fresh-group-key');
+    expect(fresh.status).toBe(503);
+    expect(paths).toEqual([`${releasePath}/reads/symmy-route-context`, definitionPath]);
   }),
 );
 

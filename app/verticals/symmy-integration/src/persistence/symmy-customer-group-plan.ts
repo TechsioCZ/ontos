@@ -77,8 +77,11 @@ export interface SymmyCustomerGroupPlanInput<Failure> {
   readonly authority: SymmyCustomerSourceAuthority;
   /** A stable hex digest. Replays of one Idempotency-Key must reproduce every derived identity. */
   readonly digest: Digest<Failure>;
-  /** What the owner held for each code when the request arrived. A fence, never caller intent. */
-  readonly facts: SymmyCustomerGroupDefinitionFacts;
+  /**
+   * What the owner held for each code when the request arrived. A fence, never caller intent: without it nothing is
+   * planned, so no group is planned against an owner that was not read.
+   */
+  readonly facts: SymmyCustomerGroupDefinitionFacts | undefined;
   readonly idempotencyKey: string;
   readonly rows: SymmyCustomerGroupRows;
   readonly template: SymmyFixtureExecutionPlan;
@@ -162,6 +165,9 @@ const groupItem = Effect.fn('SymmyCustomerGroupPlan.item')(function* groupItem<F
 export const buildSymmyCustomerGroupPlan = Effect.fn('SymmyCustomerGroupPlan.build')(
   function* buildSymmyCustomerGroupPlan<Failure>(input: SymmyCustomerGroupPlanInput<Failure>) {
     const { facts, rows, template } = input;
+    if (facts === undefined) {
+      return Option.none<SymmyFixtureExecutionPlan>();
+    }
     const factOf = (row: SymmyCustomerGroupRow) => facts.find(({ code }) => code === row.code);
     const updates = rows.map((row) => Option.isSome(revisedFact(row, factOf(row))));
     const needed = [
