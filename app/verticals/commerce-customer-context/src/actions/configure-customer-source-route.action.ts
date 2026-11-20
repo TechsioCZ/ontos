@@ -24,29 +24,48 @@ const domainEvents = {} as const;
 
 /**
  * Establishes or changes one Commerce source route (#1125-#1128): the binding of an exact issuer and
- * namespace to the enrolled principal that may write or read source facts through that route revision.
- * The write is a compare-and-set against the exact current route, an identical route is a no-op, and
- * an existing route never changes the source identity it was configured for.
+ * namespace to the enrolled principals that may write or read source facts through that route revision.
+ * Every named principal must be one Core currently enrolls for the route's workload, though a stored route
+ * can always be paused. The write is a compare-and-set against the stored route generation, an identical
+ * route is a no-op, and an existing route never changes the source identity it was configured for.
  */
 export const handleConfigureCustomerSourceRoute = Effect.fn('ConfigureCustomerSourceRoute.handle')(
   function* configureCustomerSourceRoute(
     payload: ConfigureCustomerSourceRoutePayload,
     context: ActionHandlerContext<typeof domainEvents, CustomerSourceRouteServices>,
   ) {
-    const result = yield* context.services.configure(payload);
-    // The routine reads the current route under its lock; a route configured from no expectation was absent.
-    const { found, outcome } = Match.value(result).pipe(
+    const { currentGeneration, previousGeneration, result } = yield* context.services.configure({
+      actingPrincipalId: context.scope.principalId,
+      actionInvocationId: context.actionInvocationId,
+      payload,
+    });
+    const outcome = Match.value(result).pipe(
       Match.tagsExhaustive({
-        CONFIGURED: () => ({ found: Option.isSome(payload.expected), outcome: 'CONFIGURED' as const }),
-        REJECTED: (rejected) => ({ found: Option.isSome(rejected.actual), outcome: rejected.reason }),
-        UNCHANGED: () => ({ found: true, outcome: 'UNCHANGED' as const }),
+        CONFIGURED: () => 'CONFIGURED' as const,
+        REJECTED: ({ reason }) => reason,
+        UNCHANGED: () => 'UNCHANGED' as const,
       }),
     );
-    yield* context.recordAuditEvidence({ outcome, reason: payload.reason, routeKind: payload.route._tag });
+    // A generation is recorded only where a route was stored; the route history holds that generation's route.
+    yield* context.recordAuditEvidence({
+      ...Option.match(currentGeneration, {
+        onNone: () => ({}),
+        onSome: (generation) => ({ currentGeneration: generation }),
+      }),
+      outcome,
+      ...Option.match(previousGeneration, {
+        onNone: () => ({}),
+        onSome: (generation) => ({ previousGeneration: generation }),
+      }),
+      reason: payload.reason,
+      routeId: payload.route.route.id,
+      routeKind: payload.route._tag,
+    });
+    // The routine read the stored route under its lock; no previous generation means none was stored.
     yield* context.recordDataAccess({
       accessKind: 'read',
       queryHash: `customer-source-route:${payload.route._tag}`,
-      resultCount: found ? 1 : 0,
+      resultCount: Option.isSome(previousGeneration) ? 1 : 0,
       servingModuleKey: MODULE_KEY,
       targetModuleKey: MODULE_KEY,
       targetResourceId: payload.route.route.id,

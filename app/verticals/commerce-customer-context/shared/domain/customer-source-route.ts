@@ -67,30 +67,66 @@ export type CustomerSourceRoute = typeof CustomerSourceRouteSchema.Type;
 
 const CustomerSourceRouteReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
 
+/** The owner's generation of one stored route: every change advances it by one and none is ever reused. */
+export const CustomerSourceRouteGenerationSchema = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isLessThanOrEqualTo(2_147_483_647),
+);
+
+/** The registry entry one route configuration addresses, whatever the route kind. */
+const CustomerSourceRouteIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
+  Schema.brand('CustomerSourceRouteId'),
+);
+
 /**
- * `expected` is the exact current route the operator last read, or none when the route must not exist
- * yet. Anything else, including an expected route of another registry entry, is an expectation mismatch.
+ * `expectedGeneration` is the generation of the route the administrator last read, or none (null) when the
+ * route must not exist yet. Any other stored generation is an expectation mismatch, so a decision taken on a
+ * stale view never overwrites a later one.
  */
 export const ConfigureCustomerSourceRoutePayloadSchema = Schema.Struct({
-  expected: Schema.OptionFromNullOr(CustomerSourceRouteSchema),
+  expectedGeneration: Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema),
   reason: CustomerSourceRouteReasonSchema,
   route: CustomerSourceRouteSchema,
 });
 export type ConfigureCustomerSourceRoutePayload = typeof ConfigureCustomerSourceRoutePayloadSchema.Type;
 
+/**
+ * A refusal names only the stored generation (none when no route is stored): the comparison never depends on a
+ * stored route still satisfying today's route contract, so even such a route can be repaired.
+ */
 export const ConfigureCustomerSourceRouteResultSchema = Schema.Union([
-  Schema.TaggedStruct('CONFIGURED', { route: CustomerSourceRouteSchema }),
-  Schema.TaggedStruct('UNCHANGED', { route: CustomerSourceRouteSchema }),
+  Schema.TaggedStruct('CONFIGURED', {
+    generation: CustomerSourceRouteGenerationSchema,
+    route: CustomerSourceRouteSchema,
+  }),
+  Schema.TaggedStruct('UNCHANGED', {
+    generation: CustomerSourceRouteGenerationSchema,
+    route: CustomerSourceRouteSchema,
+  }),
   Schema.TaggedStruct('REJECTED', {
-    actual: Schema.OptionFromNullOr(CustomerSourceRouteSchema),
-    reason: Schema.Literals(['EXPECTATION_MISMATCH', 'SOURCE_IDENTITY_IMMUTABLE']),
+    currentGeneration: Schema.OptionFromNullOr(CustomerSourceRouteGenerationSchema),
+    reason: Schema.Literals(['EXPECTATION_MISMATCH', 'PRINCIPAL_INELIGIBLE', 'SOURCE_IDENTITY_IMMUTABLE']),
   }),
 ]);
 export type ConfigureCustomerSourceRouteResult = typeof ConfigureCustomerSourceRouteResultSchema.Type;
 
+/**
+ * The stored generations before and after the decision, each absent when no route was stored; the owner's
+ * append-only route history holds the route document, acting principal, Action invocation and reason of every
+ * generation.
+ */
 export const CustomerSourceRouteAuditEvidenceSchema = Schema.Struct({
-  outcome: Schema.Literals(['CONFIGURED', 'UNCHANGED', 'EXPECTATION_MISMATCH', 'SOURCE_IDENTITY_IMMUTABLE']),
+  currentGeneration: Schema.optionalKey(CustomerSourceRouteGenerationSchema),
+  outcome: Schema.Literals([
+    'CONFIGURED',
+    'UNCHANGED',
+    'EXPECTATION_MISMATCH',
+    'PRINCIPAL_INELIGIBLE',
+    'SOURCE_IDENTITY_IMMUTABLE',
+  ]),
+  previousGeneration: Schema.optionalKey(CustomerSourceRouteGenerationSchema),
   reason: CustomerSourceRouteReasonSchema,
+  routeId: CustomerSourceRouteIdSchema,
   routeKind: Schema.Literals(['PROFILE', 'GROUP_DEFINITION', 'MEMBERSHIP', 'SAVED_ADDRESS']),
 });
 
