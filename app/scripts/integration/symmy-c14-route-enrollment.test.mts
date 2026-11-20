@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -176,6 +178,14 @@ it.live(
         }
         const issuer = yield* seedPrincipal(admin, tenantId, 'human');
         yield* bindAuth(admin, issuer, 'user', shell.providerUserId);
+        // The access scopes and Ready fences Core's Tenant bootstrap writes: every governed Action holds the Tenant's
+        // fence, the admission and the owner writes included, so a Tenant without them answers each with 503.
+        yield* testCoreDatabase.pipe(
+          Effect.provideService(PgClient.PgClient, admin),
+          Effect.flatMap((core) =>
+            writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId: issuer.principalId, tenantId }),
+          ),
+        );
         const integration = yield* seedPrincipal(admin, tenantId, 'integration');
         const system = yield* seedPrincipal(admin, tenantId, 'system');
         const integrationWorkloads = [
@@ -239,6 +249,7 @@ it.live(
           DATABASE_ADMIN_URL: isolated.connections.admin.connectionString,
           DATABASE_URL: isolated.connections.runtime.connectionString,
           ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
+          ONTOS_C14_TRACE_PROBLEMS: 'true',
           ONTOS_GATEWAY_ISSUER: shell.issuer,
           ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleKey.secret),
           ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
