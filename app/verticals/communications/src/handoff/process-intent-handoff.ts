@@ -14,6 +14,9 @@ import {
 import { MessageHandoff } from '../domain/handoff/message-handoff.ts';
 import type { PinnedHandoff, ProviderEvidence } from '../domain/handoff/message-handoff.ts';
 import { recoveryPolicyOf } from '../domain/catalog/message-type.ts';
+import { DocumentPinSchema, pinnedDocumentOf } from '../domain/documents/document-pin.ts';
+import type { DocumentPin, PinnedDocument } from '../domain/documents/document-pin.ts';
+import type { DocumentReference } from '../domain/documents/document-reference.ts';
 import { attemptMayHaveLeft } from '../domain/history/delivery-result.ts';
 import { ProviderObservationInputSchema } from '../domain/history/provider-observation.ts';
 import { attemptIdOf } from '../domain/intake/identity.ts';
@@ -37,10 +40,13 @@ import {
   workerBeginAttemptRoutine,
   workerBeginRetryAttemptRoutine,
   workerFinishAttemptRoutine,
+  workerPinDocumentRoutine,
   workerReadIntentRoutine,
   workerRecordRecoveryEvaluationRoutine,
   workerRecordStopRoutine,
 } from '../persistence/communications-routines.ts';
+import { discloseDocuments } from './document-disclosure-step.ts';
+import type { DocumentVerdict } from './document-disclosure-step.ts';
 import { storeUnavailable } from './handoff-errors.ts';
 import type { HandoffStoreUnavailable } from './handoff-errors.ts';
 import { PREPARE_MESSAGE_HANDOFF_LEASE_MS } from './handoff-lease.ts';
@@ -191,6 +197,10 @@ const AttemptAnswerSchema = Schema.Struct({
 });
 const StopAnswerSchema = Schema.Struct({ outcome: Schema.String });
 const RecoveryAnswerSchema = Schema.Struct({ outcome: Schema.Literals(['FINAL', 'MISSING', 'RECORDED', 'UNCHANGED']) });
+const PinAnswerSchema = Schema.Struct({
+  outcome: Schema.Literals(['EXISTS', 'MISSING', 'PINNED']),
+  pin: Schema.optionalKey(DocumentPinSchema),
+});
 const FinishAnswerSchema = Schema.Struct({
   outcome: Schema.Literals(['CONFLICT', 'FINISHED', 'MISSING']),
   state: Schema.optionalKey(Schema.String),
@@ -301,6 +311,8 @@ interface StepInput {
 
 /** What every gate allowed: the original endpoint to call with, and the pins the provider is told. */
 interface Cleared {
+  /** The documents the source named, as references: the document step turns them into pins AFTER the gates (#1409). */
+  readonly documentRefs: readonly DocumentReference[];
   readonly endpoint: PinnedHandoff['endpoint'];
   readonly language: typeof SelectedLanguageDecisionSchema.Type;
   readonly recipientRef: PinnedHandoff['recipientRef'];
@@ -429,7 +441,9 @@ const ownerGates = Effect.fn('Communications.ownerGates')(function* gates(docume
   }
   return MessageHandoffDecision.$match(decision, {
     AlreadyHandedOff: (): GateVerdict => ({ reasons: [own('HANDOFF_INDETERMINATE', 'UNEXPECTED_HANDED_OFF', false)] }),
-    Proceed: ({ endpoint }): GateVerdict => ({ cleared: { endpoint, language, recipientRef: binding.recipientRef } }),
+    Proceed: ({ endpoint }): GateVerdict => ({
+      cleared: { documentRefs: input.documents, endpoint, language, recipientRef: binding.recipientRef },
+    }),
     ReconciliationRequired: (): GateVerdict => ({ reasons: [own('HANDOFF_INDETERMINATE', 'EFFECT_UNKNOWN', false)] }),
     Suppressed: ({ reasons }): GateVerdict => ({ reasons: reasons.map(asStopReason) }),
   });
@@ -583,6 +597,47 @@ const loadAndGate = Effect.fn('Communications.loadAndGate')(function* load(
     : ({ assessment, document, kind: 'OPEN', pins: gate.open } satisfies Loaded);
 });
 
+/**
+ * Stores the owner's FIRST answer for each document that has no pin yet (#1409) and returns the STORED pin of each: the first
+ * writer wins, so a second caller or a retry that resolved another Asset adopts what was pinned and nothing is repointed.
+ */
+const pinDocuments = Effect.fn('Communications.pinDocuments')(function* pin(
+  invoker: ScopedRoutineInvoker,
+  intentId: typeof MessageIntentIdSchema.Type,
+  pins: readonly DocumentPin[],
+) {
+  return yield* Effect.forEach(
+    pins,
+    (candidate) =>
+      invoker
+        .invoke(workerPinDocumentRoutine, [
+          intentId,
+          candidate.position,
+          candidate.document.moduleId,
+          candidate.document.resourceType,
+          candidate.document.resourceId,
+          candidate.classification,
+          candidate.form,
+          candidate.assetRef.moduleId,
+          candidate.assetRef.resourceType,
+          candidate.assetRef.resourceId,
+          candidate.revision,
+        ])
+        .pipe(
+          Effect.mapError((cause) => storeUnavailable('The document pin could not be recorded', cause)),
+          Effect.flatMap((rows) => documentOf(rows, PinAnswerSchema, 'The document pin answer was unreadable')),
+          Effect.flatMap(({ outcome, pin: stored }) =>
+            outcome === 'MISSING' || stored === undefined
+              ? storeUnavailable('The document pin could not be stored')
+              : Effect.succeed(stored),
+          ),
+        ),
+    { concurrency: 1 },
+  );
+});
+
+const byPosition = (left: DocumentPin, right: DocumentPin) => left.position - right.position;
+
 /** Phase 1c (scoped, short): the next attempt of a message every gate cleared; the routine re-checks everything transactional. */
 const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
   input: StepInput,
@@ -590,8 +645,11 @@ const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
   document: IntentDocument,
   cleared: Cleared,
   continuation: Extract<Continuation, { readonly kind: 'BEGIN_FIRST' | 'BEGIN_RETRY' }>,
+  documents: Extract<DocumentVerdict, { readonly kind: 'CLEARED' }>,
 ) {
   const { intentId } = input;
+  // the pins are committed together with the attempt, BEFORE the provider is asked, so no handoff names an unpinned document
+  const pinned = [...documents.existing, ...(yield* pinDocuments(invoker, intentId, documents.toPin))];
   // the next attempt number: 1, or the one after an attempt that provably did not leave (`continuation.basis` says why)
   const attemptNumber = (latestAttemptOf(document)?.attemptNumber ?? 0) + 1;
   const attemptId = yield* attemptIdOf(intentId, attemptNumber);
@@ -616,19 +674,46 @@ const beginAttempt = Effect.fn('Communications.beginAttempt')(function* begin(
   if (begun.outcome !== 'BEGUN') {
     return skipped(intentId, notBegunReason(begun)) satisfies Prepared;
   }
+  const message = {
+    endpoint: cleared.endpoint,
+    intentId,
+    language: cleared.language.language,
+    purpose: document.intent.purpose,
+    recipientRef: cleared.recipientRef,
+    template: cleared.language.pin,
+    tenantId: input.tenantId,
+  } satisfies Omit<PinnedHandoff, 'attemptId' | 'documents'>;
+  // a message without documents carries no `documents` at all: it is exactly what it always was
+  const documentsOf: readonly PinnedDocument[] = pinned.toSorted(byPosition).map(pinnedDocumentOf);
   return {
     attemptId,
     kind: 'READY',
-    message: {
-      endpoint: cleared.endpoint,
-      intentId,
-      language: cleared.language.language,
-      purpose: document.intent.purpose,
-      recipientRef: cleared.recipientRef,
-      template: cleared.language.pin,
-      tenantId: input.tenantId,
-    },
+    message: pinned.length === 0 ? message : { ...message, documents: documentsOf },
   } satisfies Prepared;
+});
+
+/**
+ * The document disclosure of the step (#1409): asked only when the request names documents, with the Current gates the step has
+ * just cleared. The type's own `documents` policy decides; a type that has none stops a document the source named instead of
+ * dropping it silently. The document owner is never asked for a message that names none.
+ */
+const documentGate = Effect.fn('Communications.documentGate')(function* gate(
+  document: IntentDocument,
+  pins: OpenPins,
+  cleared: Cleared,
+) {
+  if (cleared.documentRefs.length === 0) {
+    return { existing: [], kind: 'CLEARED', toPin: [] } satisfies DocumentVerdict;
+  }
+  return yield* discloseDocuments({
+    documents: cleared.documentRefs,
+    legalEntityId: pins.request.scope.legalEntityId,
+    pinned: document.documents,
+    policy: pins.type.documents,
+    recipient: { recipientRef: pins.binding.recipientRef, role: pins.binding.role },
+    tenantId: pins.request.scope.tenantId,
+    typeId: pins.type.typeId,
+  });
 });
 
 /**
@@ -664,8 +749,13 @@ const prepareHandoff = Effect.fn('Communications.prepareHandoff')(function* deci
   if (continuation.kind === 'SKIP' || 'reasons' in verdict) {
     return skipped(input.intentId, 'RECONCILIATION_REQUIRED') satisfies Prepared;
   }
+  // AFTER the recipient and Privacy gates cleared and BEFORE the handoff: a message that names no document never gets here
+  const disclosure = yield* documentGate(document, loaded.pins, verdict.cleared);
+  if (disclosure.kind === 'STOPPED') {
+    return (yield* scoped((invoker) => stopIntent(invoker, document, disclosure.reasons))) satisfies Prepared;
+  }
   return (yield* scoped((invoker) =>
-    beginAttempt(input, invoker, document, verdict.cleared, continuation),
+    beginAttempt(input, invoker, document, verdict.cleared, continuation, disclosure),
   )) satisfies Prepared;
 });
 

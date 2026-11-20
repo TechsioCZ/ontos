@@ -160,7 +160,49 @@ export const CommunicationResendOfSchema = Schema.Struct({
 });
 export type CommunicationResendOf = typeof CommunicationResendOfSchema.Type;
 
+/**
+ * The form a document travels in: a LINK to the exact Media Asset (the default; its owner authorizes every open) or an
+ * ATTACHMENT (an irreversible disclosure, honoured only for a message type whose owner approved it explicitly).
+ */
+export const CommunicationDocumentFormSchema = Schema.Literals(['ATTACHMENT', 'LINK']);
+export type CommunicationDocumentForm = typeof CommunicationDocumentFormSchema.Type;
+
+/**
+ * The recipient scope the source asks the document to go to. Only `ORIGINAL_RECIPIENT` can ever be approved by a type; asking
+ * another one is stated so that Communications can refuse it with a closed reason instead of guessing.
+ */
+export const CommunicationDocumentRecipientScopeSchema = Schema.Literals(['ANOTHER_RECIPIENT', 'ORIGINAL_RECIPIENT']);
+export type CommunicationDocumentRecipientScope = typeof CommunicationDocumentRecipientScopeSchema.Type;
+
+/**
+ * One document the message should carry, as a SAFE REFERENCE only: the owner's business document (`document.moduleId` is the
+ * owner module that answers for it), the owner's own approved classification key and the recipient scope. It never carries
+ * bytes, a URL, a file name or a permission: the owner resolves it to its exact Media Asset and authorizes the disclosure when
+ * the message is handed off, and a reference grants nothing.
+ */
+export const CommunicationDocumentRefSchema = Schema.Struct({
+  classification: lowerDottedText.pipe(Schema.brand('CommunicationDocumentClassification')),
+  document: CommunicationResourceRefSchema,
+  /** Absent means a link, the default form. */
+  form: Schema.optionalKey(CommunicationDocumentFormSchema),
+  recipientScope: CommunicationDocumentRecipientScopeSchema,
+});
+export type CommunicationDocumentRef = typeof CommunicationDocumentRefSchema.Type;
+
+const MAX_DOCUMENTS = 4;
+
+const DocumentsSchema = Schema.NonEmptyArray(CommunicationDocumentRefSchema).check(
+  Schema.isMaxLength(MAX_DOCUMENTS),
+  Schema.makeFilter((documents) =>
+    new Set(documents.map(({ document }) => `${document.moduleId}|${document.resourceType}|${document.resourceId}`))
+      .size === documents.length
+      ? undefined
+      : 'a document may be named only once per request',
+  ),
+);
+
 export const CommunicationRequestSchema = Schema.Struct({
+  documents: Schema.optionalKey(DocumentsSchema),
   idempotency: CommunicationIdempotencySchema,
   occurrence: CommunicationSourceOccurrenceSchema,
   originalRecipients: Schema.NonEmptyArray(OriginalRecipientBindingSchema),

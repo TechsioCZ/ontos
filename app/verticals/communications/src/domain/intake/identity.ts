@@ -90,13 +90,17 @@ const textSorted = (items: readonly CanonicalValue[]) =>
 export const materialMeaningOf = Effect.fn('Communications.materialMeaning')(function* meaning(
   request: CommunicationRequest,
 ) {
-  const { idempotency, originalRecipients, safeReferences, ...rest } = yield* encodedRequestOf(request);
-  return {
+  const { documents, idempotency, originalRecipients, safeReferences, ...rest } = yield* encodedRequestOf(request);
+  const material = {
     ...rest,
     idempotencyKey: idempotency.key,
     originalRecipients: yield* textSorted(originalRecipients),
     safeReferences: yield* textSorted(safeReferences),
   } satisfies CanonicalValue;
+  // documents are a set like the references; a request without any keeps the meaning (and fingerprint) it always had
+  return documents === undefined
+    ? material
+    : ({ ...material, documents: yield* textSorted(documents) } satisfies CanonicalValue);
 });
 
 const sha256Hex = (text: string) =>

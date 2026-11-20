@@ -167,3 +167,30 @@ export const workerResolveObservationConflictRoutine = defineScopedRoutine({
   routineKey: 'communications.worker-resolve-observation-conflict',
   schema: ROUTINE_SCHEMA,
 });
+
+/**
+ * The document pin routine (#1409, migration `enforce-document-pins`). Same rules as above: no executor, the Core-verified
+ * Tenant is the first argument. It stores the owner's first answer for one document of an intent and always returns the stored
+ * pin, so a document is never repointed.
+ */
+export const workerPinDocumentRoutine = defineScopedRoutine({
+  name: 'worker_pin_document',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [
+    tenant,
+    input('uuid'),
+    input('integer'),
+    input('text'),
+    input('text'),
+    input('text'),
+    input('text'),
+    input('text'),
+    input('text'),
+    input('text'),
+    input('text'),
+    input('integer'),
+  ] as const,
+  resultSchema: documentRow,
+  routineKey: 'communications.worker-pin-document',
+  schema: ROUTINE_SCHEMA,
+});

@@ -6,6 +6,7 @@ import { usable } from '../unit/support/recipient-fixtures.ts';
 import { privacyAllowed } from '../unit/support/privacy-fixtures.ts';
 import type { PrivacyAnswer } from '../unit/support/privacy-fixtures.ts';
 import type { OwnerAnswer } from '../unit/support/recipient-fixtures.ts';
+import { documentOwnerDouble } from './document-owner-double.ts';
 import { baseIdentity, seedLanguages } from './language-fixtures.ts';
 import { nextId } from './persistence.fixture.ts';
 import type { RuntimeDatabase } from './intake-runner.ts';
@@ -48,6 +49,8 @@ export const intakeWorld = Effect.fn('CommunicationIntakeTest.world')(function* 
   const language = recipientLanguageDouble();
   const recipientAuthority = recipientOwnerDouble(ownerAnswers(recipients));
   const privacy = privacyOwnerDouble(privacyAnswers(recipients));
+  // the labelled double of Core Media V1 / the document owner (#1443, #1446): asked only for a request that names documents
+  const documents = documentOwnerDouble();
   const portsFor = (types: readonly ReturnType<typeof fixtureType>[]) =>
     Layer.mergeAll(
       catalogOf(...types),
@@ -56,6 +59,7 @@ export const intakeWorld = Effect.fn('CommunicationIntakeTest.world')(function* 
       scope.layer,
       recipientAuthority.layer,
       privacy.layer,
+      documents.layer,
       NodeCrypto.layer,
     );
   const types = options.types ?? [fixtureType()];
@@ -65,7 +69,20 @@ export const intakeWorld = Effect.fn('CommunicationIntakeTest.world')(function* 
       transaction: Parameters<Parameters<typeof database.inTenant>[1]>[0],
     ) => Effect.Effect<readonly Row[], unknown>,
   ) => database.inTenant(tenantId, select);
-  return { database, language, portsFor, privacy, read, recipientAuthority, runner, scope, source, tenantId, types };
+  return {
+    database,
+    documents,
+    language,
+    portsFor,
+    privacy,
+    read,
+    recipientAuthority,
+    runner,
+    scope,
+    source,
+    tenantId,
+    types,
+  };
 });
 
 export const requestFor = (

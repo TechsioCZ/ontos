@@ -40,6 +40,7 @@ const routineWrittenTables = [
   'provider_observation_conflicts',
   'provider_observation_conflict_resolutions',
   'intent_recovery_evaluations',
+  'intent_document_pins',
   'attempt_retry_links',
 ];
 const closableTable = 'template_activations';
@@ -56,6 +57,7 @@ const scopedRoutines = [
   'worker_close_unanswered_attempt',
   'worker_finish_attempt',
   'worker_link_retry_attempt',
+  'worker_pin_document',
   'worker_read_intent',
   'worker_read_template_snapshot',
   'worker_record_recovery_evaluation',
@@ -74,6 +76,7 @@ const intakeAppendOnlyTriggers = [
   'communications_observation_conflicts_append_only',
   'communications_conflict_resolutions_append_only',
   'communications_recovery_evaluations_append_only',
+  'communications_document_pins_append_only',
   'communications_resend_links_append_only',
   'communications_retry_links_append_only',
 ];
@@ -303,6 +306,23 @@ const historyConstraints: readonly {
     name: 'communications_recovery_evaluations_shape_ck',
     table: 'intent_recovery_evaluations',
   },
+  {
+    // a document pin is one per position of an intent, and names a Core Media Asset V1 and nothing else
+    exact: 'PRIMARY KEY (tenant_id, intent_id, "position")',
+    name: 'communications_document_pins_pk',
+    table: 'intent_document_pins',
+  },
+  {
+    contains: ['FOREIGN KEY (tenant_id, intent_id)'],
+    name: 'communications_document_pins_intent_fk',
+    table: 'intent_document_pins',
+  },
+  {
+    contains: ["'core.media'", "'core.media.asset'", 'revision = 1'],
+    name: 'communications_document_pins_asset_ck',
+    table: 'intent_document_pins',
+  },
+  { contains: ["'ATTACHMENT'", "'LINK'"], name: 'communications_document_pins_form_ck', table: 'intent_document_pins' },
 ];
 
 /** The history routines and guards: the definer or invoker nature each one must have, and the pinned search path of all. */
@@ -311,6 +331,7 @@ const historyRoutines: readonly { readonly definer: boolean; readonly name: stri
   { definer: true, name: 'worker_begin_retry_attempt' },
   { definer: true, name: 'worker_close_unanswered_attempt' },
   { definer: true, name: 'worker_link_retry_attempt' },
+  { definer: true, name: 'worker_pin_document' },
   { definer: true, name: 'worker_record_recovery_evaluation' },
   { definer: true, name: 'worker_resolve_observation_conflict' },
   // the guard runs as the caller, under the Tenant's own row-level security: it must never be a definer

@@ -2,6 +2,8 @@ import type { CommunicationRequest } from '@app/communications-contracts/communi
 import { Effect, Schema } from 'effect';
 
 import { CommunicationDecisionRequestSchema } from '../catalog/decision-request.ts';
+import { DocumentReferenceSchema, orderedReferences } from '../documents/document-reference.ts';
+import type { DocumentReference } from '../documents/document-reference.ts';
 import type { CommunicationDecisionRequest } from '../catalog/decision-request.ts';
 import { OriginalRecipientBindingSchema, RecipientScopeSchema } from '../recipient/original-binding.ts';
 import type { OriginalRecipientBinding, RecipientScope } from '../recipient/original-binding.ts';
@@ -16,6 +18,8 @@ import { encodedRequestOf } from './identity.ts';
 export interface IntakeInput {
   readonly bindings: readonly OriginalRecipientBinding[];
   readonly decisionRequest: CommunicationDecisionRequest;
+  /** The documents the source named, as safe references in their canonical order; none for a request that names none. */
+  readonly documents: readonly DocumentReference[];
   readonly request: CommunicationRequest;
   readonly scope: RecipientScope;
 }
@@ -24,6 +28,7 @@ const strict = { onExcessProperty: 'error' } as const;
 const IntakeParts = Schema.Struct({
   bindings: Schema.Array(OriginalRecipientBindingSchema),
   decisionRequest: CommunicationDecisionRequestSchema,
+  documents: Schema.Array(DocumentReferenceSchema),
   scope: RecipientScopeSchema,
 });
 
@@ -42,7 +47,8 @@ export const decodeIntakeInput = Effect.fn('Communications.decodeIntakeInput')(f
       source: encoded.source,
       tenantId: encoded.scope.tenantId,
     },
+    documents: encoded.documents ?? [],
     scope: encoded.scope,
   }).pipe(Effect.orDie);
-  return { ...parts, request } satisfies IntakeInput;
+  return { ...parts, documents: orderedReferences(parts.documents), request } satisfies IntakeInput;
 });

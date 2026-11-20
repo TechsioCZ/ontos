@@ -10,6 +10,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -695,6 +696,48 @@ export const intentRecoveryEvaluations = communicationsSchema.table.withRLS(
 );
 
 /**
+ * The document pin of one Message Intent (#1409, ACC-09): one row per document of the message, written ONCE by the pre-handoff
+ * step when the document OWNER first resolved the named document to its exact Core Media Asset (and its one logical V1) and
+ * approved the disclosure. The row is append-only, so history never silently repoints and a Technical Retry hands off the SAME
+ * pinned Asset, never the one the owner would resolve to today (new bytes are a new Asset and a new request). It is a reference
+ * and a form only: no byte, URL, file name or permission. Written only by `worker_pin_document`; the first writer wins.
+ */
+export const intentDocumentPins = communicationsSchema.table.withRLS(
+  'intent_document_pins',
+  {
+    assetId: text('asset_id').notNull(),
+    assetModule: text('asset_module').notNull(),
+    assetType: text('asset_type').notNull(),
+    classification: text('classification').notNull(),
+    documentId: text('document_id').notNull(),
+    documentModule: text('document_module').notNull(),
+    documentType: text('document_type').notNull(),
+    form: text('form').$type<'ATTACHMENT' | 'LINK'>().notNull(),
+    intentId: uuid('intent_id').notNull(),
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }).notNull(),
+    position: integer('position').notNull(),
+    revision: integer('revision').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.intentId, table.position], name: 'communications_document_pins_pk' }),
+    foreignKey({
+      columns: [table.tenantId, table.intentId],
+      foreignColumns: [messageIntents.tenantId, messageIntents.intentId],
+      name: 'communications_document_pins_intent_fk',
+    }).onDelete('restrict'),
+    check('communications_document_pins_position_ck', sql`${table.position} between 0 and 9`),
+    check('communications_document_pins_form_ck', sql`${table.form} in ('ATTACHMENT', 'LINK')`),
+    // a pin names a Core Media Asset and its one logical V1: another module, resource type or revision is not representable
+    check(
+      'communications_document_pins_asset_ck',
+      sql`${table.assetModule} = 'core.media' and ${table.assetType} = 'core.media.asset' and ${table.revision} = 1`,
+    ),
+    ...tenantRlsPolicies('intent_document_pins', table.tenantId),
+  ],
+);
+
+/**
  * Technical Retry link (#1402, H-09): a LATER attempt of the SAME intent follows an earlier one. An attempt carries no
  * recipient, language or template column, so a retry cannot change any pin: they live on the immutable intent. The link
  * records only why the earlier attempt no longer blocks the next (`basis_kind`) and a safe reason code: nothing was submitted
@@ -808,6 +851,7 @@ export const COMMUNICATIONS_TABLES = [
   providerObservationConflicts,
   providerObservationConflictResolutions,
   intentRecoveryEvaluations,
+  intentDocumentPins,
   attemptRetryLinks,
   intentResendLinks,
 ] as const;
@@ -829,6 +873,7 @@ export const COMMUNICATIONS_TABLE_INVENTORY = [
   'provider_observation_conflicts',
   'provider_observation_conflict_resolutions',
   'intent_recovery_evaluations',
+  'intent_document_pins',
   'attempt_retry_links',
   'intent_resend_links',
 ] as const;
@@ -841,6 +886,7 @@ export const communicationsRelations = defineRelations({
   communicationRequests,
   deliveryAttempts,
   gatewayAssertionRedemptions,
+  intentDocumentPins,
   intentHandoffStops,
   intentRecoveryEvaluations,
   intentResendLinks,

@@ -33,7 +33,7 @@ export const foreignDocumentRef = (id: string): CommunicationResourceRef =>
 export const documentRef = (id: string): CommunicationResourceRef =>
   decodeRef({ moduleId: 'fixture.documents', resourceId: id, resourceType: 'fixture.documents.document' });
 
-interface Assignment {
+export interface Assignment {
   asset: CommunicationResourceRef;
   /** The revision the owner CLAIMS; only 1 is a Current Media revision. */
   claimedRevision: number;

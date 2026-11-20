@@ -8,6 +8,7 @@ import { Context, Effect, Layer } from 'effect';
 import type { DeliveryAttemptIdSchema, MessageIntentIdSchema } from '../../../shared/communication-intake.ts';
 import type { TemplatePin } from '../../../shared/template-revision.ts';
 import type { CommunicationResourceRef } from '../catalog/vocabulary.ts';
+import type { PinnedDocument } from '../documents/document-pin.ts';
 import type { SupportedLanguage } from '../language/vocabulary.ts';
 import type { ProtectedEndpoint } from '../recipient/original-binding.ts';
 
@@ -23,6 +24,11 @@ import type { ProtectedEndpoint } from '../recipient/original-binding.ts';
 export interface PinnedHandoff {
   /** Identity of THIS single attempt; the provider idempotency key derives from it, never from the intent alone. */
   readonly attemptId: typeof DeliveryAttemptIdSchema.Type;
+  /**
+   * The documents the message carries, each as its form and the EXACT pinned Core Media Asset (#1409): references only, never a
+   * URL or bytes. Absent for a message without documents. The adapter asks the owner for the content at its own time.
+   */
+  readonly documents?: readonly PinnedDocument[];
   /** The ORIGINAL endpoint as its owner just handed it over for this call: protected, never stored, never logged. */
   readonly endpoint: ProtectedEndpoint;
   readonly intentId: typeof MessageIntentIdSchema.Type;

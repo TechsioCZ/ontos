@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 
 import { DeliveryAttemptIdSchema } from '../../shared/communication-intake.ts';
+import { DocumentPinSchema } from '../domain/documents/document-pin.ts';
 import { FailureClassSchema, ObservationKindSchema, AttemptStateSchema } from '../domain/history/vocabulary.ts';
 import type { IntentTimelineFacts } from '../domain/history/timeline.ts';
 
@@ -40,6 +41,8 @@ export const StoredIntentFactsSchema = Schema.Struct({
       resolvedAt: OptionalInstant,
     }),
   ),
+  /** The document pins stored for the intent (#1409), by position; none for a message without documents. */
+  documents: Schema.Array(DocumentPinSchema),
   observations: Schema.Array(
     Schema.Struct({
       attemptId: DeliveryAttemptIdSchema,

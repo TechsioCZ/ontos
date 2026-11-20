@@ -161,6 +161,51 @@ describe('Communication Request contract', () => {
     });
   });
 
+  describe('document references (#1409)', () => {
+    const document = {
+      classification: 'fixture.invoice-copy',
+      document: { moduleId: 'fixture.documents', resourceId: 'document-1', resourceType: 'fixture.documents.document' },
+      recipientScope: 'ORIGINAL_RECIPIENT',
+    } as const;
+
+    it('accepts a safe reference: owner module, resource, classification and recipient scope, a link by default', () => {
+      expect(accepted({ ...minimalRequest, documents: [document] })).toBe(true);
+      expect(accepted({ ...minimalRequest, documents: [{ ...document, form: 'ATTACHMENT' }] })).toBe(true);
+      const decoded = Schema.decodeUnknownSync(CommunicationRequestSchema)({
+        ...minimalRequest,
+        documents: [document],
+      });
+      expect(Schema.encodeSync(CommunicationRequestSchema)(decoded)).toEqual({
+        ...minimalRequest,
+        documents: [document],
+      });
+    });
+
+    it('is optional: a request without documents carries none', () => {
+      expect(Schema.decodeUnknownSync(CommunicationRequestSchema)(minimalRequest).documents).toBeUndefined();
+    });
+
+    it.each([
+      ['an empty list', []],
+      ['bytes', [{ ...document, bytes: 'JVBERi0=' }]],
+      ['a URL', [{ ...document, url: 'https://example.test/file.pdf' }]],
+      ['a file name', [{ ...document, fileName: 'invoice.pdf' }]],
+      ['an unknown form', [{ ...document, form: 'INLINE' }]],
+      ['an unknown recipient scope', [{ ...document, recipientScope: 'EVERYONE' }]],
+      ['a missing classification', [{ document: document.document, recipientScope: document.recipientScope }]],
+      ['the same document twice', [document, document]],
+      [
+        'more than four documents',
+        Array.from({ length: 5 }, (_, index) => ({
+          ...document,
+          document: { ...document.document, resourceId: `document-${String(index)}` },
+        })),
+      ],
+    ])('rejects %s', (_label, documents) => {
+      expect(accepted({ ...minimalRequest, documents })).toBe(false);
+    });
+  });
+
   it.each(['email', 'address', 'language', 'locale', 'otp', 'token', 'secret', 'proof'])(
     'does not let a nested object carry %s',
     (field) => {

@@ -55,6 +55,14 @@ export interface RequestInput {
   readonly bindings: readonly OriginalRecipientBinding[];
   readonly correlationId?: string;
   readonly counterpartyId?: string;
+  /** Documents the source names (#1409): references only; the owner module is the document's own. */
+  readonly documents?: readonly {
+    readonly classification?: string;
+    readonly documentId: string;
+    readonly form?: 'ATTACHMENT' | 'LINK';
+    readonly moduleId?: string;
+    readonly recipientScope?: 'ANOTHER_RECIPIENT' | 'ORIGINAL_RECIPIENT';
+  }[];
   readonly idempotencyKey?: string;
   readonly legalEntityId?: string | undefined;
   readonly occurrenceId?: string;
@@ -83,6 +91,18 @@ export const communicationRequest = (input: RequestInput): CommunicationRequest 
   }
   const scope = fixtureScope(scopeInput);
   const key = input.idempotencyKey ?? `fixture-key-${input.occurrenceId ?? 'occurrence-1'}`;
+  const documents = (input.documents ?? []).map((entry) => {
+    const named = {
+      classification: entry.classification ?? 'fixture.classification.customer',
+      document: {
+        moduleId: entry.moduleId ?? 'fixture.documents',
+        resourceId: entry.documentId,
+        resourceType: 'fixture.documents.document',
+      },
+      recipientScope: entry.recipientScope ?? 'ORIGINAL_RECIPIENT',
+    };
+    return entry.form === undefined ? named : { ...named, form: entry.form };
+  });
   const ordinary = {
     idempotency: input.correlationId === undefined ? { key } : { correlationId: input.correlationId, key },
     occurrence: { occurrenceId: input.occurrenceId ?? 'fixture-occurrence-1', revision: input.revision ?? 1 },
@@ -96,12 +116,14 @@ export const communicationRequest = (input: RequestInput): CommunicationRequest 
     scope,
     source: { moduleKey: input.sourceModule ?? 'fixture.source' },
   };
+  // documents are named only when the source names some (#1409)
+  const documented = documents.length === 0 ? ordinary : { ...ordinary, documents };
   // an Explicit Resend names its original intent and a closed business reason; any other request carries neither (#1403)
   return decodeRequest(
     input.resendOf === undefined
-      ? ordinary
+      ? documented
       : {
-          ...ordinary,
+          ...documented,
           resendOf: {
             originalIntentId: input.resendOf.originalIntentId,
             reason: input.resendOf.reason ?? 'SOURCE_APPROVED_RESEND',

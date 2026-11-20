@@ -39,6 +39,7 @@ describe('Communications database schema contract', () => {
       'provider_observation_conflicts',
       'provider_observation_conflict_resolutions',
       'intent_recovery_evaluations',
+      'intent_document_pins',
       'attempt_retry_links',
       'intent_resend_links',
     ]);
