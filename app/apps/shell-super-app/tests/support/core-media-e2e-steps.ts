@@ -3,7 +3,7 @@ import { assetCurrentRead, renameDisplayFilenameAction, uploadAssetAction } from
 import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
-import { principalOf } from './core-media-e2e-fixture.ts';
+import { principalOf, skipScenario } from './core-media-e2e-fixture.ts';
 import type { E2eActor, MediaE2eWorld, ShellEdge } from './core-media-e2e-fixture.ts';
 
 /*
@@ -130,9 +130,10 @@ export const rowOf = (world: MediaE2eWorld, mediaAssetId: string) =>
   rowsOf(world).pipe(Effect.map((rows) => rows.find((row) => row.media_asset_id === mediaAssetId)));
 
 /** The fault relays, or the scenario is skipped: without them the run cannot say what a fault does. */
-export const requireFaultInjection = (ctx: { readonly skip: () => void }, world: MediaE2eWorld) =>
+export const requireFaultInjection = (ctx: { readonly skip: (note?: string) => void }, world: MediaE2eWorld) =>
   Option.match(world.faultInjection, {
-    onNone: () => Effect.sync(() => ctx.skip()).pipe(Effect.andThen(Effect.never)),
+    onNone: () =>
+      skipScenario(ctx, 'BLOCKED: the run names no fault relays (D20_E2E_S3_UPSTREAM, D20_E2E_ENGINE_UPSTREAM)'),
     onSome: Effect.succeed,
   });
 
