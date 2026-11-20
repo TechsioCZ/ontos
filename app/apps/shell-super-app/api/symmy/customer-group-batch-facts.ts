@@ -1,5 +1,8 @@
-import { CustomerGroupDefinitionSourceRequestSchema } from '@app/commerce-customer-context/api/customer-group-definition-source';
-import { executeCustomerGroupDefinitionSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-group-definition-source/client';
+import {
+  CustomerGroupDefinitionSourceApi,
+  CustomerGroupDefinitionSourceRequestSchema,
+} from '@app/commerce-customer-context/api/customer-group-definition-source';
+import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { SymmyCustomerGroupDefinitionFactsSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import type {
   SymmyCustomerGroupDefinitionFacts,
@@ -17,6 +20,7 @@ type RequestIdentifier = Effect.Effect<string, typeof symmyUnavailableProblem>;
 
 const customerContextModule = 'commerce.customer-context';
 const customerContextAudience = 'commerce-customer-context';
+const customerContextApiPrefix = '/commerce-customer-context-api';
 const definitionSourceRead = 'commerce.customer-context.api.customer-group-definition-source';
 const unavailable = () => Effect.fail(symmyUnavailableProblem);
 
@@ -62,12 +66,19 @@ export const readSymmyCustomerGroupDefinitionFacts = Effect.fn('SymmyCustomerGro
           customerContextAudience,
           routeScope.legalEntityId,
         );
-        const current = yield* executeCustomerGroupDefinitionSourceWithAuthorization(
-          request,
-          `Bearer ${Redacted.value(assertion.assertion)}`,
-          yield* newRequestIdentifier,
+        // The governed client of the owner's published Read contract, as the generated client builds it.
+        const current = yield* makeGovernedEffectBffClient(
+          {
+            api: CustomerGroupDefinitionSourceApi,
+            credential: Redacted.make(`Bearer ${Redacted.value(assertion.assertion)}`),
+            defaultApiPrefix: customerContextApiPrefix,
+            requestCorrelation: yield* newRequestIdentifier,
+          },
           { baseUrl: assertion.apiBaseUrl, compositionRevision: assertion.compositionRevision },
-        ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
+        ).pipe(
+          Effect.flatMap((client) => client.customerGroupDefinitionSource.execute({ payload: request })),
+          Effect.mapError(mapSymmyOwnerReadProblem),
+        );
         return yield* Match.value(current).pipe(
           Match.tag('ABSENT', () => Effect.succeed(Option.none())),
           Match.tag('CURRENT', ({ group, source }) =>
