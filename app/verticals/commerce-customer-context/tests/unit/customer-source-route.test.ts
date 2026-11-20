@@ -306,8 +306,15 @@ it.effect('records the route, its generations, the outcome and the reason, and e
     });
     expect(alreadyPaused.evidence.auditEvidence).toMatchObject({ currentGeneration: 1, outcome: 'UNCHANGED' });
 
+    // The generation is compared first: only a request that names the stored generation reaches the later checks.
+    const revised = payloadOf({
+      _tag: 'CONFIGURE',
+      expectedGeneration: 2,
+      reason: 'Bind the ERP route',
+      route: membership,
+    });
     for (const reason of ['EXPECTATION_MISMATCH', 'PRINCIPAL_INELIGIBLE', 'SOURCE_IDENTITY_IMMUTABLE'] as const) {
-      const rejected = yield* run(created, {
+      const rejected = yield* run(reason === 'EXPECTATION_MISMATCH' ? created : revised, {
         currentGeneration: Option.some(2),
         previousGeneration: Option.some(2),
         result: resultOf({ _tag: 'REJECTED', currentGeneration: 2, reason }),
@@ -333,11 +340,14 @@ it.effect('records the route, its generations, the outcome and the reason, and e
     });
     expect(absent.evidence.dataAccessEvents[0]).toMatchObject({ resultCount: 0 });
 
-    const unchanged = yield* run(created, {
-      currentGeneration: Option.some(1),
-      previousGeneration: Option.some(1),
-      result: resultOf({ _tag: 'UNCHANGED', generation: 1, route: membership }),
-    });
+    const unchanged = yield* run(
+      payloadOf({ _tag: 'CONFIGURE', expectedGeneration: 1, reason: 'Bind the ERP route', route: membership }),
+      {
+        currentGeneration: Option.some(1),
+        previousGeneration: Option.some(1),
+        result: resultOf({ _tag: 'UNCHANGED', generation: 1, route: membership }),
+      },
+    );
     expect(unchanged.evidence.auditEvidence).toMatchObject({ outcome: 'UNCHANGED' });
     expect(unchanged.evidence.dataAccessEvents[0]).toMatchObject({ resultCount: 1 });
   }),

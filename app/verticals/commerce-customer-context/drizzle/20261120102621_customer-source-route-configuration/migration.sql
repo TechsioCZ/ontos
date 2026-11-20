@@ -43,6 +43,8 @@ REVOKE ALL ON TABLE commerce_customer_context.customer_source_route_history FROM
 --> statement-breakpoint
 CREATE TRIGGER ccc_source_route_history_append_only BEFORE UPDATE OR DELETE ON commerce_customer_context.customer_source_route_history FOR EACH ROW EXECUTE FUNCTION commerce_customer_context.reject_append_only_mutation();
 --> statement-breakpoint
+CREATE TRIGGER ccc_source_route_history_no_truncate BEFORE TRUNCATE ON commerce_customer_context.customer_source_route_history FOR EACH STATEMENT EXECUTE FUNCTION commerce_customer_context.reject_append_only_mutation();
+--> statement-breakpoint
 -- The canonical route document: lower-case principal ids, and the reader principals as a sorted set.
 CREATE FUNCTION commerce_customer_context.customer_source_route_document(p_route jsonb)
 RETURNS jsonb LANGUAGE sql IMMUTABLE STRICT
@@ -130,6 +132,10 @@ REVOKE ALL ON FUNCTION commerce_customer_context.lock_customer_source_route(uuid
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION commerce_customer_context.lock_customer_source_route(uuid,uuid,text,text) TO ontos_runtime;
 --> statement-breakpoint
+-- The one writer of the four route registries, for both decisions an administrator takes: CONFIGURE states the whole
+-- route, PAUSE clears only its active flag. The expected generation is compared before anything else is decided.
+-- Its Action passes the acting identity and Core's enrollment, read under this route's lock in the same transaction:
+-- Commerce's database role never reads Core's tables, and owner routines trust the actor their Action passes.
 CREATE FUNCTION commerce_customer_context.configure_customer_source_route(p_tenant_id uuid,p_legal_entity_id uuid,p_input jsonb)
 RETURNS TABLE(outcome text,previous_generation integer,current_generation integer,stored_route jsonb) LANGUAGE plpgsql SECURITY DEFINER
 SET row_security = on
@@ -137,19 +143,53 @@ SET search_path=pg_catalog,commerce_customer_context,pg_temp
 AS $$
 DECLARE
   v_route jsonb:=commerce_customer_context.customer_source_route_document(p_input->'route');
-  v_kind text:=p_input->'route'->>'_tag';
-  v_id text:=p_input->'route'->'route'->>'id';
+  v_kind text:=CASE WHEN p_input->>'_tag'='PAUSE' THEN p_input->>'routeKind' ELSE p_input->'route'->>'_tag' END;
+  v_id text:=CASE WHEN p_input->>'_tag'='PAUSE' THEN p_input->>'routeId' ELSE p_input->'route'->'route'->>'id' END;
   v_current jsonb;
   v_generation integer;
   v_next integer;
 BEGIN
-  IF jsonb_typeof(p_input->'enrolledReaderPrincipalIds') IS DISTINCT FROM 'array'
-    OR coalesce(jsonb_typeof(p_input->'enrolledWriterPrincipalId'),'') NOT IN ('string','null') THEN
-    RAISE EXCEPTION 'the principals Core enrolls for the route are required' USING ERRCODE = '22023';
+  IF CASE p_input->>'_tag'
+      WHEN 'CONFIGURE' THEN coalesce(jsonb_typeof(p_input->'expectedGeneration'),'') NOT IN ('number','null')
+        OR jsonb_typeof(p_input->'enrolledReaderPrincipalIds') IS DISTINCT FROM 'array'
+        OR coalesce(jsonb_typeof(p_input->'enrolledWriterPrincipalId'),'') NOT IN ('string','null')
+      WHEN 'PAUSE' THEN jsonb_typeof(p_input->'expectedGeneration') IS DISTINCT FROM 'number'
+      ELSE true END THEN
+    RAISE EXCEPTION 'one Commerce source route decision is required' USING ERRCODE = '22023';
   END IF;
   PERFORM commerce_customer_context.lock_customer_source_route(p_tenant_id,p_legal_entity_id,v_kind,v_id);
   SELECT state.route,state.generation INTO v_current,v_generation
     FROM commerce_customer_context.customer_source_route_state(p_tenant_id,p_legal_entity_id,v_kind,v_id) AS state;
+  -- The administrator decided against the generation they last read, none when the route must not exist yet. Any other
+  -- stored generation refuses the decision first, so one taken on a stale view never overwrites or repeats a later one.
+  IF v_generation IS DISTINCT FROM (p_input->>'expectedGeneration')::integer THEN
+    RETURN QUERY SELECT 'EXPECTATION_MISMATCH'::text,v_generation,v_generation,v_current; RETURN;
+  END IF;
+  -- A pause changes nothing but the stored active flag. It needs no Core enrollment and restates no route fact, so every
+  -- stored route, one stored before this Action existed included, can always be paused; an inactive one keeps its generation.
+  IF p_input->>'_tag'='PAUSE' THEN
+    IF v_current->'active'='false'::jsonb THEN
+      RETURN QUERY SELECT 'PAUSED'::text,v_generation,v_generation,v_current; RETURN;
+    END IF;
+    IF v_kind='PROFILE' THEN
+      UPDATE commerce_customer_context.customer_profile_source_routes r SET active=false,generation=v_generation+1
+        WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_id=v_id;
+    ELSIF v_kind='GROUP_DEFINITION' THEN
+      UPDATE commerce_customer_context.customer_group_definition_source_routes r SET active=false,generation=v_generation+1
+        WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_id=v_id;
+    ELSIF v_kind='MEMBERSHIP' THEN
+      UPDATE commerce_customer_context.customer_group_membership_source_routes r SET active=false,generation=v_generation+1
+        WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_id=v_id;
+    ELSE
+      UPDATE commerce_customer_context.saved_address_source_routes r SET active=false,generation=v_generation+1
+        WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_ref=v_id;
+    END IF;
+    INSERT INTO commerce_customer_context.customer_source_route_history(tenant_id,legal_entity_id,route_kind,route_id,generation,
+        previous_route,current_route,acting_principal_id,action_invocation_id,reason)
+      VALUES(p_tenant_id,p_legal_entity_id,v_kind,v_id,v_generation+1,v_current,v_current||'{"active":false}'::jsonb,
+        (p_input->>'actingPrincipalId')::uuid,(p_input->>'actionInvocationId')::uuid,p_input->>'reason');
+    RETURN QUERY SELECT 'PAUSED'::text,v_generation,v_generation+1,v_current||'{"active":false}'::jsonb; RETURN;
+  END IF;
   -- A route grants nothing to a principal Core does not enroll for it. The Action read Core's enrollment under this
   -- route's lock: the writer must be the system principal Core enrolls for source writes, each reader one it binds.
   IF v_route->>'principalId' IS DISTINCT FROM (p_input->>'enrolledWriterPrincipalId')::uuid::text
@@ -158,17 +198,13 @@ BEGIN
         WHERE enrolled.reader::uuid=requested.reader::uuid)) THEN
     RETURN QUERY SELECT 'PRINCIPAL_INELIGIBLE'::text,v_generation,v_generation,v_current; RETURN;
   END IF;
-  IF v_current=v_route THEN
-    RETURN QUERY SELECT 'UNCHANGED'::text,v_generation,v_generation,v_current; RETURN;
-  END IF;
-  -- The administrator decided against the generation they last read; a later decision is never overwritten.
-  IF v_generation IS DISTINCT FROM (p_input->>'expectedGeneration')::integer THEN
-    RETURN QUERY SELECT 'EXPECTATION_MISMATCH'::text,v_generation,v_generation,v_current; RETURN;
-  END IF;
   -- A route keeps the source it was configured for; another source needs its own route.
   IF v_current IS NOT NULL AND (v_current->>'issuer',v_current->>'namespace',v_current->>'sourceNamespace',v_current->>'recordType')
      IS DISTINCT FROM (v_route->>'issuer',v_route->>'namespace',v_route->>'sourceNamespace',v_route->>'recordType') THEN
     RETURN QUERY SELECT 'SOURCE_IDENTITY_IMMUTABLE'::text,v_generation,v_generation,v_current; RETURN;
+  END IF;
+  IF v_current=v_route THEN
+    RETURN QUERY SELECT 'UNCHANGED'::text,v_generation,v_generation,v_current; RETURN;
   END IF;
   v_next:=coalesce(v_generation,0)+1;
   IF v_kind='PROFILE' THEN
@@ -223,55 +259,6 @@ END;$$;
 REVOKE ALL ON FUNCTION commerce_customer_context.configure_customer_source_route(uuid,uuid,jsonb) FROM PUBLIC;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION commerce_customer_context.configure_customer_source_route(uuid,uuid,jsonb) TO ontos_runtime;
---> statement-breakpoint
--- Pausing changes nothing but the stored active flag. It needs no Core enrollment and restates no route fact, so every
--- stored route, one stored before this Action existed included, can always be paused.
-CREATE FUNCTION commerce_customer_context.pause_customer_source_route(p_tenant_id uuid,p_legal_entity_id uuid,p_input jsonb)
-RETURNS TABLE(outcome text,previous_generation integer,current_generation integer) LANGUAGE plpgsql SECURITY DEFINER
-SET row_security = on
-SET search_path=pg_catalog,commerce_customer_context,pg_temp
-AS $$
-DECLARE
-  v_kind text:=p_input->>'routeKind';
-  v_id text:=p_input->>'routeId';
-  v_current jsonb;
-  v_generation integer;
-BEGIN
-  IF jsonb_typeof(p_input->'expectedGeneration') IS DISTINCT FROM 'number' THEN
-    RAISE EXCEPTION 'the expected Commerce source route generation is required' USING ERRCODE = '22023';
-  END IF;
-  PERFORM commerce_customer_context.lock_customer_source_route(p_tenant_id,p_legal_entity_id,v_kind,v_id);
-  SELECT state.route,state.generation INTO v_current,v_generation
-    FROM commerce_customer_context.customer_source_route_state(p_tenant_id,p_legal_entity_id,v_kind,v_id) AS state;
-  IF v_generation IS DISTINCT FROM (p_input->>'expectedGeneration')::integer THEN
-    RETURN QUERY SELECT 'EXPECTATION_MISMATCH'::text,v_generation,v_generation; RETURN;
-  END IF;
-  IF v_current->'active'='false'::jsonb THEN
-    RETURN QUERY SELECT 'UNCHANGED'::text,v_generation,v_generation; RETURN;
-  END IF;
-  IF v_kind='PROFILE' THEN
-    UPDATE commerce_customer_context.customer_profile_source_routes r SET active=false,generation=v_generation+1
-      WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_id=v_id;
-  ELSIF v_kind='GROUP_DEFINITION' THEN
-    UPDATE commerce_customer_context.customer_group_definition_source_routes r SET active=false,generation=v_generation+1
-      WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_id=v_id;
-  ELSIF v_kind='MEMBERSHIP' THEN
-    UPDATE commerce_customer_context.customer_group_membership_source_routes r SET active=false,generation=v_generation+1
-      WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_id=v_id;
-  ELSE
-    UPDATE commerce_customer_context.saved_address_source_routes r SET active=false,generation=v_generation+1
-      WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.route_ref=v_id;
-  END IF;
-  INSERT INTO commerce_customer_context.customer_source_route_history(tenant_id,legal_entity_id,route_kind,route_id,generation,
-      previous_route,current_route,acting_principal_id,action_invocation_id,reason)
-    VALUES(p_tenant_id,p_legal_entity_id,v_kind,v_id,v_generation+1,v_current,v_current||'{"active":false}'::jsonb,
-      (p_input->>'actingPrincipalId')::uuid,(p_input->>'actionInvocationId')::uuid,p_input->>'reason');
-  RETURN QUERY SELECT 'PAUSED'::text,v_generation,v_generation+1;
-END;$$;
---> statement-breakpoint
-REVOKE ALL ON FUNCTION commerce_customer_context.pause_customer_source_route(uuid,uuid,jsonb) FROM PUBLIC;
---> statement-breakpoint
-GRANT EXECUTE ON FUNCTION commerce_customer_context.pause_customer_source_route(uuid,uuid,jsonb) TO ontos_runtime;
 --> statement-breakpoint
 -- One stored route as its owner holds it, legacy NULL facts included, with one page of its history, newest first.
 CREATE FUNCTION commerce_customer_context.read_customer_source_route(p_tenant_id uuid,p_legal_entity_id uuid,p_input jsonb)
@@ -328,24 +315,30 @@ SET search_path = pg_catalog, commerce_customer_context, pg_temp SET row_securit
 DECLARE
   v_binding commerce_customer_context.customer_group_definition_source_bindings%ROWTYPE;
   v_receipt commerce_customer_context.customer_group_definition_source_receipts%ROWTYPE;
+  v_reader boolean;
 BEGIN
   IF p_tenant_id IS NULL OR p_legal_entity_id IS NULL
     OR p_tenant_id IS DISTINCT FROM nullif(current_setting('ontos.tenant_id',true),'')::uuid
     OR p_legal_entity_id IS DISTINCT FROM nullif(current_setting('ontos.legal_entity_id',true),'')::uuid
   THEN RAISE EXCEPTION 'Commerce scope mismatch' USING ERRCODE = '42501'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM commerce_customer_context.customer_group_definition_source_routes r
+  -- The route's writer reads in every mode, as on main; a reader it names reads current definitions only, never a receipt.
+  SELECT r.principal_id IS DISTINCT FROM p_actor_principal_id INTO v_reader
+    FROM commerce_customer_context.customer_group_definition_source_routes r
     WHERE r.tenant_id=p_tenant_id AND r.legal_entity_id=p_legal_entity_id AND r.active
       AND r.route_id=p_input->'route'->>'id' AND r.route_revision=p_input->'route'->>'revision'
-      -- The route's writer reads in every mode; a reader it names reads current definitions only, never a receipt.
       AND (r.principal_id=p_actor_principal_id OR (p_input->>'mode'='CURRENT' AND p_actor_principal_id=ANY(r.source_reader_principal_ids)))
       AND r.issuer=p_input->>'issuer' AND r.namespace=p_input->>'namespace'
-      AND r.mapping_revision=p_input->>'mappingRevision')
-  THEN RETURN QUERY SELECT 'SOURCE_AUTHORITY_DENIED'::text,NULL::jsonb; RETURN; END IF;
+      AND r.mapping_revision=p_input->>'mappingRevision';
+  IF NOT FOUND THEN RETURN QUERY SELECT 'SOURCE_AUTHORITY_DENIED'::text,NULL::jsonb; RETURN; END IF;
   IF p_input->>'mode'='CURRENT' THEN
     SELECT * INTO v_binding FROM commerce_customer_context.customer_group_definition_source_bindings b
       WHERE b.tenant_id=p_tenant_id AND b.legal_entity_id=p_legal_entity_id AND b.issuer=p_input->>'issuer'
         AND b.namespace=p_input->>'namespace' AND b.record_id=p_input->>'recordId';
     IF NOT FOUND THEN RETURN QUERY SELECT 'FOUND'::text,jsonb_build_object('_tag','ABSENT'); RETURN; END IF;
+    -- A reader reads only a definition last stored through the route that names it, never one another route of the
+    -- same issuer and namespace stored.
+    IF v_reader AND v_binding.source_intent->'payload'->'source'->'route'->>'id' IS DISTINCT FROM p_input->'route'->>'id'
+    THEN RETURN QUERY SELECT 'SOURCE_AUTHORITY_DENIED'::text,NULL::jsonb; RETURN; END IF;
     RETURN QUERY SELECT 'FOUND'::text,jsonb_build_object('_tag','CURRENT',
       'group',commerce_customer_context.customer_group_document(p_tenant_id,p_legal_entity_id,v_binding.customer_group_id),
       'source',v_binding.source_intent->'payload'->'source'); RETURN;
