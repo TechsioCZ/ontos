@@ -23,10 +23,15 @@ import type { InstallationRuntime } from '@app/core-runtime/install/stage-contex
 import {
   AccessWorkloadSchema,
   DatabaseConfig,
+  OAuthAuthenticationAuditLive,
   makeDatabaseIdentityEnrollmentLive,
   parseDatabaseConfig,
 } from '@app/core-runtime';
-import type { DatabaseConnectionError, DatabaseIdentityEnrollmentContext } from '@app/core-runtime';
+import type {
+  DatabaseConnectionError,
+  DatabaseIdentityEnrollmentContext,
+  OAuthAuthenticationAudit,
+} from '@app/core-runtime';
 import { Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
@@ -112,17 +117,20 @@ export const makeStageInstallationRuntime = (
   const catalog = AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores));
   const writer = AccessProjectionWriterLive.pipe(Layer.provide(Layer.mergeAll(stores, platform)));
   const bootstrap = TenantAccessBootstrapLive.pipe(Layer.provide(Layer.mergeAll(stores, platform, catalog, writer)));
-  return Layer.mergeAll(bootstrap, writer, catalog, stores, platform) satisfies Layer.Layer<
-    InstallationRuntime | DatabaseIdentityEnrollmentContext,
+  // The product's own OAuth audit writer, over the run's database: a connected app the run ended is recorded as the
+  // product records a revocation.
+  const audit = OAuthAuthenticationAuditLive.pipe(Layer.provide(platform));
+  return Layer.mergeAll(bootstrap, writer, catalog, stores, platform, audit) satisfies Layer.Layer<
+    InstallationRuntime | DatabaseIdentityEnrollmentContext | OAuthAuthenticationAudit,
     DatabaseConnectionError,
     Crypto.Crypto
   >;
 };
 
 /**
- * The installation runtime of this command: one runtime pool, one engine transport and the six access
- * writers, composed here because this script is a process root. The administrative connection is separate
- * and used only by Better Auth below.
+ * The installation runtime of this command: one runtime pool, one engine transport, the six access
+ * writers and the OAuth audit writer, composed here because this script is a process root. The
+ * administrative connection is separate and used only by Better Auth below.
  */
 const stageInstallationRuntime = Effect.gen(function* buildStageInstallationRuntime() {
   const stage = yield* loadStageContextBootstrapConfiguration();

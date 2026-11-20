@@ -41,6 +41,7 @@ import {
   accessAgentConnections,
   accessAssignments,
   accessMemberships,
+  auditEvents,
   legalEntities,
   oauthConnectionGrants,
   principalAuthBindings,
@@ -897,9 +898,29 @@ export interface StageConnectedApp {
   /** The company the connection acts in: only somebody who administers it ends somebody else's connection there. */
   readonly legalEntityId: string;
   readonly principalId: string;
+  readonly revokedByPrincipalId: string | null;
+  readonly revokeReason: string | null;
   readonly status: string;
   readonly tenantId: string;
+  /** The person the connection was approved by, as the product's revocation event names them. */
+  readonly userPrincipalId: string;
 }
+
+/** The grant columns a connected app is read with. */
+const connectedAppColumns = {
+  authBindingId: oauthConnectionGrants.authBindingId,
+  clientId: oauthConnectionGrants.clientId,
+  clientName: oauthConnectionGrants.clientName,
+  grantId: oauthConnectionGrants.grantId,
+  lastUsedAt: oauthConnectionGrants.lastUsedAt,
+  legalEntityId: oauthConnectionGrants.legalEntityId,
+  principalId: oauthConnectionGrants.actingPrincipalId,
+  revokedByPrincipalId: oauthConnectionGrants.revokedByPrincipalId,
+  revokeReason: oauthConnectionGrants.revokeReason,
+  status: oauthConnectionGrants.status,
+  tenantId: oauthConnectionGrants.tenantId,
+  userPrincipalId: oauthConnectionGrants.userPrincipalId,
+};
 
 /** What a departure ends of the leaver's sign-ins, decided from the rows the run holds locked. */
 export interface StageCredentialEnding {
@@ -992,10 +1013,30 @@ export const stageCredentialEndingOf = (input: {
   });
 };
 
-/** One connected app of a person the run retired; `endedByThisRun` when this run ended it, otherwise it had ended. */
+/**
+ * One connected app of a person the file retires, `status` as the run found it: `endedByThisRun` when this run ended
+ * it, otherwise it had ended. `revokedByAdministrator` names who revoked it as a company administrator (`revoked`, reason
+ * `admin`) as it stands after the run: the acting owner for an active grant this run ended, or whoever such an ending
+ * recorded before; `null` for any other ending. The Shell records the product's `oauth.connection.revoked` event for
+ * such an app when none names it yet.
+ */
 export interface StageRetiredConnectedApp extends StageConnectedApp {
   readonly endedByThisRun: boolean;
+  readonly revokedByAdministrator: string | null;
 }
+
+/** A connected app as it stands after a run that ended it as `endedBy`, or left it as it was found. */
+const retiredConnectedAppOf = (app: StageConnectedApp, endedBy?: string): StageRetiredConnectedApp => {
+  if (endedBy !== undefined) {
+    // An active grant the run ended is revoked by the acting owner with reason `admin`; a draft is denied.
+    return { ...app, endedByThisRun: true, revokedByAdministrator: app.status === 'active' ? endedBy : null };
+  }
+  return {
+    ...app,
+    endedByThisRun: false,
+    revokedByAdministrator: app.status === 'revoked' && app.revokeReason === 'admin' ? app.revokedByPrincipalId : null,
+  };
+};
 
 /** Everything one departure writes, decided before anything of the run is written. */
 interface PrincipalRetirement {
@@ -1098,17 +1139,7 @@ const lockLeavers = Effect.fn('StageContextBootstrap.lockLeavers')(function* loc
   );
   const leaverIds = leavers.map(({ principalId }) => principalId);
   const connectedApps = yield* transaction
-    .select({
-      authBindingId: oauthConnectionGrants.authBindingId,
-      clientId: oauthConnectionGrants.clientId,
-      clientName: oauthConnectionGrants.clientName,
-      grantId: oauthConnectionGrants.grantId,
-      lastUsedAt: oauthConnectionGrants.lastUsedAt,
-      legalEntityId: oauthConnectionGrants.legalEntityId,
-      principalId: oauthConnectionGrants.actingPrincipalId,
-      status: oauthConnectionGrants.status,
-      tenantId: oauthConnectionGrants.tenantId,
-    })
+    .select(connectedAppColumns)
     .from(oauthConnectionGrants)
     .where(
       and(
@@ -1919,8 +1950,12 @@ const moveLogins = Effect.fn('StageContextBootstrap.moveLogins')(function* moveL
       discard: true,
     },
   );
-  const ending = new Set(plans.flatMap(({ retirement }) => retirement.connectedApps.map(({ grantId }) => grantId)));
-  return connectedApps.map((app): StageRetiredConnectedApp => ({ ...app, endedByThisRun: ending.has(app.grantId) }));
+  const endedBy = new Map(
+    plans.flatMap(({ retirement }) =>
+      retirement.connectedApps.map(({ grantId }) => [grantId, retirement.scope.principalId] as const),
+    ),
+  );
+  return connectedApps.map((app) => retiredConnectedAppOf(app, endedBy.get(app.grantId)));
 });
 
 const runTenantTransaction = <Value, Requirements>(
@@ -1937,6 +1972,188 @@ export interface StageContextBootstrapRun {
   readonly accounts: readonly StageContextBootstrapResult[];
   readonly connectedApps: readonly StageRetiredConnectedApp[];
 }
+
+/**
+ * Every connected app of a tenant's people of the file whose departure an earlier run of it completed: the person is
+ * archived, every binding of theirs is revoked and one of them is the login's (the exact replay
+ * `stageCredentialEndingOf` accepts), and no app of theirs is still live. Anybody else is left to the run.
+ */
+const completedRetirementsOfTenant = Effect.fn('StageContextBootstrap.completedRetirementsOfTenant')(
+  function* completedRetirementsOfTenantEffect(
+    transaction: CoreTransaction,
+    leavers: readonly StageRetiredPrincipalIdentity[],
+    context: { readonly authenticationNamespaceId: string; readonly enrollment: DatabaseIdentityEnrollment },
+  ): Effect.fn.Return<readonly StageRetiredConnectedApp[], StageContextBootstrapError> {
+    const [first] = leavers;
+    if (first === undefined) {
+      return [];
+    }
+    // A leaver's installer scope only selects the tenant for row security; it locks and attributes nothing.
+    yield* installOperationalScope(transaction, yield* stageScopeOf(first), context.enrollment).pipe(
+      Effect.mapError(bootstrapFailureFromCause),
+    );
+    const leaverIds = leavers.map(({ principalId }) => principalId);
+    const [people, bindings, apps] = yield* Effect.all(
+      [
+        transaction
+          .select({ kind: principals.kind, principalId: principals.principalId, status: principals.status })
+          .from(principals)
+          .where(and(eq(principals.tenantId, first.tenantId), inArray(principals.principalId, leaverIds))),
+        transaction
+          .select({
+            authenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
+            bindingRevision: principalAuthBindings.bindingRevision,
+            principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
+            principalId: principalAuthBindings.principalId,
+            provider: principalAuthBindings.provider,
+            providerSubjectId: principalAuthBindings.providerSubjectId,
+            status: principalAuthBindings.status,
+            subjectType: principalAuthBindings.subjectType,
+          })
+          .from(principalAuthBindings)
+          .where(
+            and(
+              eq(principalAuthBindings.tenantId, first.tenantId),
+              inArray(principalAuthBindings.principalId, leaverIds),
+            ),
+          )
+          .orderBy(principalAuthBindings.principalAuthBindingId),
+        transaction
+          .select(connectedAppColumns)
+          .from(oauthConnectionGrants)
+          .where(
+            and(
+              eq(oauthConnectionGrants.tenantId, first.tenantId),
+              inArray(oauthConnectionGrants.actingPrincipalId, leaverIds),
+            ),
+          )
+          .orderBy(oauthConnectionGrants.grantId),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.mapError(bootstrapFailureFromCause));
+    const completed = yield* Effect.forEach(
+      leavers,
+      (retired): Effect.Effect<readonly StageRetiredConnectedApp[]> => {
+        const person = people.find(({ principalId }) => principalId === retired.principalId);
+        const own = apps.filter(({ principalId }) => principalId === retired.principalId);
+        if (person?.kind !== 'human' || person.status !== 'archived') {
+          return Effect.succeed([]);
+        }
+        return stageCredentialEndingOf({
+          // A completed departure has nothing live left to end, so nobody's administration is asked.
+          actingOwnerAdministers: () => false,
+          authenticationNamespaceId: context.authenticationNamespaceId,
+          bindings: bindings.filter(({ principalId }) => principalId === retired.principalId),
+          connectedApps: own,
+          principalStatus: person.status,
+          providerUserId: retired.providerUserId,
+        }).pipe(
+          Effect.option,
+          Effect.map((ending) =>
+            Option.isSome(ending) && ending.value.replay && ending.value.connectedApps.length === 0
+              ? own.map((app) => retiredConnectedAppOf(app))
+              : [],
+          ),
+        );
+      },
+      { concurrency: 1 },
+    );
+    return completed.flat();
+  },
+);
+
+/**
+ * Every connected app of the people of the file whose departure an earlier run of it already completed, read in a
+ * transaction of its own that writes and locks nothing, before the run. The Shell finishes the clean-up after such a
+ * departure (the Better Auth tokens and consent, and the revocation event) from it, so a run that stopped between its
+ * commit and that clean-up is finished by the same file even when the run itself then refuses the file for something
+ * else in it, such as a login it attached whose Principal has since connected an app. The run's own rules, the exact
+ * replay of a departure and of an attachment included, are unchanged.
+ */
+export const completedStageRetirementsOf = Effect.fn('StageContextBootstrap.completedStageRetirementsOf')(
+  function* completedStageRetirementsOfEffect(
+    retiredPrincipals: readonly StageRetiredPrincipalIdentity[],
+    options: Pick<StageContextBootstrapOptions, 'authenticationNamespaceId'>,
+  ): Effect.fn.Return<
+    readonly StageRetiredConnectedApp[],
+    StageContextBootstrapError,
+    CoreDatabase | DatabaseIdentityEnrollmentContext
+  > {
+    if (retiredPrincipals.length === 0) {
+      return [];
+    }
+    const { executor } = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    const tenantIds = [...new Set(retiredPrincipals.map(({ tenantId }) => tenantId))].toSorted();
+    const completed = yield* runTenantTransaction(executor, (transaction) =>
+      Effect.forEach(
+        tenantIds,
+        (tenantId) =>
+          completedRetirementsOfTenant(
+            transaction,
+            retiredPrincipals.filter((retired) => retired.tenantId === tenantId),
+            { authenticationNamespaceId: options.authenticationNamespaceId, enrollment },
+          ),
+        { concurrency: 1 },
+      ),
+    );
+    return completed.flat();
+  },
+);
+
+/** The grants among `grantIds` that an `oauth.connection.revoked` event of one company names. */
+const recordedRevocationsInCompany = Effect.fn('StageContextBootstrap.recordedRevocationsInCompany')(
+  function* recordedRevocationsInCompanyEffect(
+    transaction: CoreTransaction,
+    company: { readonly grantIds: readonly string[]; readonly legalEntityId: string; readonly tenantId: string },
+  ) {
+    const grantIdOf = sql<string>`${auditEvents.evidenceJson} ->> 'grantId'`;
+    // The observation scope the product's audit writer records in.
+    yield* transaction.execute(
+      sql`select set_config('ontos.tenant_id', ${company.tenantId}, true), set_config('ontos.legal_entity_id', ${company.legalEntityId}, true)`,
+    );
+    return yield* transaction
+      .select({ grantId: grantIdOf })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.tenantId, company.tenantId),
+          eq(auditEvents.legalEntityId, company.legalEntityId),
+          eq(auditEvents.eventType, 'oauth.connection.revoked'),
+          inArray(grantIdOf, [...company.grantIds]),
+        ),
+      );
+  },
+  Effect.mapError(bootstrapFailureFromCause),
+);
+
+/** The company a connected app acts in, as one key. */
+const companyKeyOf = ({ legalEntityId, tenantId }: Pick<StageConnectedApp, 'legalEntityId' | 'tenantId'>) =>
+  `${tenantId}:${legalEntityId}`;
+
+/**
+ * The grants among `apps` whose revocation the product's audit already records: an `oauth.connection.revoked` event
+ * naming the grant, in the company the product's audit writer records it in. The Shell writes that event for a
+ * connected app an administrator revoked only when this finds none, so the same file run again never writes it twice.
+ */
+export const recordedConnectionRevocationsOf = Effect.fn('StageContextBootstrap.recordedConnectionRevocationsOf')(
+  function* recordedConnectionRevocationsOfEffect(
+    apps: readonly Pick<StageConnectedApp, 'grantId' | 'legalEntityId' | 'tenantId'>[],
+  ): Effect.fn.Return<ReadonlySet<string>, StageContextBootstrapError, CoreDatabase> {
+    const { executor } = yield* CoreDatabase;
+    const companies = [...new Map(apps.map((app) => [companyKeyOf(app), app] as const)).values()].map((first) => ({
+      grantIds: apps.flatMap((app) => (companyKeyOf(app) === companyKeyOf(first) ? [app.grantId] : [])),
+      legalEntityId: first.legalEntityId,
+      tenantId: first.tenantId,
+    }));
+    const recorded = yield* Effect.forEach(
+      companies,
+      (company) => runTenantTransaction(executor, (transaction) => recordedRevocationsInCompany(transaction, company)),
+      { concurrency: 1 },
+    );
+    return new Set(recorded.flat().map(({ grantId }) => grantId));
+  },
+);
 
 /** Everything one stage run reconciles, as the operator accounts file names it. */
 export interface StageContextBootstrapInput {

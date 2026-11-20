@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { DatabaseIdentityEnrollmentContext } from '@app/core-runtime';
+import { DatabaseIdentityEnrollmentContext, OAuthAuthenticationAudit } from '@app/core-runtime';
 import { TenantAccessBootstrap } from '@app/core-runtime/access/bootstrap';
 import { AccessMembershipStore } from '@app/core-runtime/access/intent/memberships';
 import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
@@ -67,6 +67,8 @@ it.effect('builds the production installation graph with the actual Shell enroll
       expect(Context.get(context, TenantAccessBootstrap).bootstrapTenantAccess).toBeDefined();
       expect(Context.get(context, AccessMembershipStore).loadTenantMemberships).toBeDefined();
       expect(Context.get(context, AccessProjectionWriter).reconcileTenant).toBeDefined();
+      // A connected app the run ends is recorded through the product's own OAuth audit writer.
+      expect(Context.get(context, OAuthAuthenticationAudit).record).toBeDefined();
       expect(queries).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeCrypto.layer)),

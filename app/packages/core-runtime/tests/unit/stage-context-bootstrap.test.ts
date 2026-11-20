@@ -281,8 +281,11 @@ const appOf = (n: number, grant: string, binding: StageLeaverBinding['status'] |
     lastUsedAt: null,
     legalEntityId: administeredCompany,
     principalId: leaverId,
+    revokedByPrincipalId: grant === 'revoked' ? leaverId : null,
+    revokeReason: grant === 'revoked' ? 'user' : null,
     status: grant,
     tenantId: '10000000-0000-4000-8000-0000000000d0',
+    userPrincipalId: leaverId,
   };
   const bindings: readonly StageLeaverBinding[] =
     binding === null

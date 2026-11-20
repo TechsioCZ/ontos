@@ -1,8 +1,12 @@
+import { OAuthAuthenticationAudit } from '@app/core-runtime';
 import type { AccessCatalogModule, DatabaseIdentityEnrollmentContext } from '@app/core-runtime';
 import type { AccessPeopleStore } from '@app/core-runtime/access/intent/people-store';
 import type { AccessTeamStore } from '@app/core-runtime/access/intent/teams';
 import {
+  STAGE_RETIREMENT_REASON,
+  completedStageRetirementsOf,
   reconcileStageContextBootstraps,
+  recordedConnectionRevocationsOf,
   stageTenantsFromAccountsFile,
   stageModuleIntentRefusal,
 } from '@app/core-runtime/install/stage-context-bootstrap';
@@ -274,20 +278,31 @@ const retireAuthUser = Effect.fn('StageAccountsBootstrap.retireAuthUser')(functi
   return { email, status: banned === 0 ? ('absent' as const) : ('banned' as const) };
 });
 
+const revocationAuditFailure = (cause: unknown) =>
+  new StageAccountsBootstrapError({
+    cause,
+    code: 'stage_accounts_persistence_failed',
+    reason: 'The revocation of a retired connected app could not be recorded',
+  });
+
 /**
- * Deletes the Better Auth tokens and consent of every connected app of a Principal this run retired, as the product's
- * revocation does once Core has ended a grant: Core ended the grant in the run's transaction (or the product had ended
- * it), and a refresh token of an ended grant would otherwise keep minting access tokens that nothing admits. What is
- * already gone deletes nothing, so the same file again changes nothing here either.
+ * Finishes the ending of every connected app of a person the file retired after Core committed it, as the product's
+ * revocation finishes one after its own commit (`finishRevocation`). It deletes the Better Auth tokens and consent of
+ * each grant by grant id, so no refresh token of an ended grant keeps minting access tokens, and nothing of another
+ * grant of the same Better Auth user. Then, for each app a company administrator revoked (`revokedByAdministrator`:
+ * the acting tenant owner for one this run ended), it records the product's `oauth.connection.revoked` event through
+ * the product's own audit writer, with that administrator as actor, reason `admin` and a note naming the stage
+ * accounts bootstrap, unless an event of that grant is recorded already. What is deleted or recorded already is left
+ * alone, so running it again changes nothing.
  */
-const retireConnectedAppTokens = Effect.fn('StageAccountsBootstrap.retireConnectedAppTokens')(
-  function* retireConnectedAppTokens(connectedApps: readonly StageRetiredConnectedApp[]) {
+export const finishStageConnectedAppEndings = Effect.fn('StageAccountsBootstrap.finishConnectedAppEndings')(
+  function* finishStageConnectedAppEndingsEffect(connectedApps: readonly StageRetiredConnectedApp[]) {
     const grantIds = connectedApps.map(({ grantId }) => grantId);
     if (grantIds.length === 0) {
       return yield* Effect.void;
     }
     const { executor: database } = yield* AuthDatabase;
-    return yield* database
+    yield* database
       .transaction((transaction) =>
         Effect.all(
           [
@@ -299,6 +314,38 @@ const retireConnectedAppTokens = Effect.fn('StageAccountsBootstrap.retireConnect
         ),
       )
       .pipe(Effect.mapError(persistenceFailure));
+    const revoked = connectedApps.flatMap((app) =>
+      app.revokedByAdministrator === null ? [] : [{ ...app, actorPrincipalId: app.revokedByAdministrator }],
+    );
+    if (revoked.length === 0) {
+      return yield* Effect.void;
+    }
+    const recorded = yield* recordedConnectionRevocationsOf(revoked).pipe(Effect.mapError(revocationAuditFailure));
+    const audit = yield* OAuthAuthenticationAudit;
+    return yield* Effect.forEach(
+      revoked.filter(({ grantId }) => !recorded.has(grantId)),
+      (app) =>
+        audit
+          .record({
+            authBindingId: null,
+            authMethod: 'session',
+            eventType: 'oauth.connection.revoked',
+            evidence: { note: STAGE_RETIREMENT_REASON, reason: 'admin', revokedByPrincipalId: app.actorPrincipalId },
+            grant: {
+              clientId: app.clientId,
+              clientName: app.clientName,
+              grantId: app.grantId,
+              legalEntityId: app.legalEntityId,
+              tenantId: app.tenantId,
+              userPrincipalId: app.userPrincipalId,
+            },
+            outcome: 'succeeded',
+            outcomeCode: 'admin',
+            principalId: app.actorPrincipalId,
+          })
+          .pipe(Effect.mapError(revocationAuditFailure)),
+      { concurrency: 1, discard: true },
+    );
   },
 );
 
@@ -416,6 +463,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
   | Crypto.Crypto
   | DatabaseIdentityEnrollmentContext
   | InstallationRuntime
+  | OAuthAuthenticationAudit
 > {
   const { accountsFile } = configuration;
   const attachedLogins = accountsFile.attachedLogins ?? [];
@@ -430,6 +478,34 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
       reason: moduleRefusal.reason,
     });
   }
+  const retiredPrincipalIdentities = yield* Effect.forEach(
+    retiredPrincipals,
+    (retired) =>
+      retiredLoginUser(retired.email).pipe(
+        Effect.map((providerUserId) => ({
+          principalId: retired.principalId,
+          providerUserId,
+          tenantId: retired.tenantId,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+  // A departure an earlier run of this file committed is finished first, whatever the run then decides about the rest
+  // of the file: a run that stopped before its clean-up is completed even when, say, a login it attached has since
+  // connected an app of its own and the attachment's exact replay refuses the file.
+  yield* finishStageConnectedAppEndings(
+    yield* completedStageRetirementsOf(retiredPrincipalIdentities, {
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new StageAccountsBootstrapError({
+            code: 'stage_accounts_persistence_failed',
+            reason: error.reason,
+          }),
+      ),
+    ),
+  );
   const attachedLoginIdentities = yield* Effect.forEach(
     attachedLogins,
     (login) =>
@@ -440,18 +516,6 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
           principalId: login.principalId,
           providerUserId,
           tenantId: login.tenantId,
-        })),
-      ),
-    { concurrency: 1 },
-  );
-  const retiredPrincipalIdentities = yield* Effect.forEach(
-    retiredPrincipals,
-    (retired) =>
-      retiredLoginUser(retired.email).pipe(
-        Effect.map((providerUserId) => ({
-          principalId: retired.principalId,
-          providerUserId,
-          tenantId: retired.tenantId,
         })),
       ),
     { concurrency: 1 },
@@ -504,7 +568,7 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
         }),
     ),
   );
-  yield* retireConnectedAppTokens(run.connectedApps);
+  yield* finishStageConnectedAppEndings(run.connectedApps);
   const retiredAccounts = yield* Effect.forEach(accountsFile.retiredAccountEmails, retireAuthUser, {
     concurrency: 1,
   });
@@ -515,24 +579,25 @@ export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstra
       ? []
       : [toAccountResult(accountConfiguration, authUser, result)];
   });
-  const emailOf = new Map<string, string>(retiredPrincipals.map(({ email, principalId }) => [principalId, email]));
   return {
     accounts,
     attachedLogins: attachedLogins.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
-    endedConnectedApps: run.connectedApps.flatMap((app) =>
-      app.endedByThisRun
-        ? [
-            {
-              clientId: app.clientId,
-              clientName: app.clientName,
-              email: emailOf.get(app.principalId) ?? app.principalId,
-              grantId: app.grantId,
-              lastUsedAt: app.lastUsedAt,
-              status: app.status,
-              tenantId: app.tenantId,
-            },
-          ]
-        : [],
+    endedConnectedApps: retiredPrincipals.flatMap(({ email, principalId, tenantId }) =>
+      run.connectedApps.flatMap((app) =>
+        app.endedByThisRun && app.principalId === principalId && app.tenantId === tenantId
+          ? [
+              {
+                clientId: app.clientId,
+                clientName: app.clientName,
+                email,
+                grantId: app.grantId,
+                lastUsedAt: app.lastUsedAt,
+                status: app.status,
+                tenantId: app.tenantId,
+              },
+            ]
+          : [],
+      ),
     ),
     retiredAccounts,
     retiredPrincipals: retiredPrincipals.map(({ email, principalId, tenantId }) => ({ email, principalId, tenantId })),
@@ -558,6 +623,7 @@ export const bootstrapStageAccountsFromEnvironment = Effect.fn('StageAccountsBoo
     | Crypto.Crypto
     | DatabaseIdentityEnrollmentContext
     | InstallationRuntime
+    | OAuthAuthenticationAudit
   > {
     const configuration = yield* loadStageAccountsConfiguration(readAccountsFile, input.declaredWorkloadKeys);
     return yield* bootstrapStageAccounts(configuration, { modules: input.modules });

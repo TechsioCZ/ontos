@@ -46,10 +46,15 @@ import type { OperationalScope } from '../../src/operations/context.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import { STAGE_RETIREMENT_REASON, reconcileStageContextBootstraps } from '../../src/install/stage-context-bootstrap.ts';
+import {
+  STAGE_RETIREMENT_REASON,
+  completedStageRetirementsOf,
+  reconcileStageContextBootstraps,
+} from '../../src/install/stage-context-bootstrap.ts';
 import type {
   StageAccountIdentity,
   StageContextBootstrapRun,
+  StageRetiredConnectedApp,
   StageTenantBootstrap,
 } from '../../src/install/stage-context-bootstrap.ts';
 import { createTemplateDatabase, replacedDatabase } from '../support/access-scenarios/database.ts';
@@ -223,6 +228,10 @@ const failClosed = <A>(effect: Effect.Effect<A, StageFailure>): Effect.Effect<A>
 
 interface Stage {
   readonly admin: PgClient.PgClient;
+  /** The connected apps of the file's departures an earlier run completed, as the Shell reads them before the run. */
+  readonly completed: (
+    retiredPrincipals: Parameters<typeof reconcileStageContextBootstraps>[0]['retiredPrincipals'],
+  ) => Effect.Effect<readonly StageRetiredConnectedApp[], StageFailure>;
   /** One protected capability of the release, asked the way an entrypoint asks it. */
   readonly decide: (input: {
     readonly carrier: { readonly accessDeclaration: ReturnType<typeof decodeAccessDeclarationOrThrow> };
@@ -324,6 +333,11 @@ const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, F
     const projectionWriter = Context.get(context, AccessProjectionWriter);
     return yield* run({
       admin,
+      completed: (retiredPrincipals) =>
+        completedStageRetirementsOf(retiredPrincipals, INSTALLATION_OPTIONS).pipe(
+          Effect.mapError(asStageFailure),
+          Effect.provide(context),
+        ),
       decide: ({ carrier, principalId, tenantId }) =>
         Effect.flatMap(scopeFor(tenantId, principalId), (scope) =>
           gate.decide({ carrier, legalEntityScope: 'forbidden', now: decisionAt, scope }),
@@ -413,8 +427,16 @@ const directoryRow = (tenantId: string, principalId: string) =>
  */
 const connectedApp = (
   stage: Stage,
-  input: { readonly binding: string; readonly grant: string; readonly live: boolean; readonly person: string },
+  input: {
+    readonly binding: string;
+    readonly grant: string;
+    readonly live: boolean;
+    readonly person: string;
+    /** Another tenant and company than the case's own, for a person of the destination tenant. */
+    readonly where?: { readonly legalEntityId: string; readonly tenantId: string };
+  },
 ) => {
+  const { legalEntityId, tenantId } = input.where ?? { legalEntityId: company, tenantId: stage.tenantId };
   const client = input.grant.slice(-3);
   const ended = input.live
     ? { at: 'null', by: 'null', reason: 'null', status: 'active' }
@@ -424,7 +446,7 @@ const connectedApp = (
        (grant_id, tenant_id, legal_entity_id, user_id, user_principal_id, acting_principal_id, acting_kind, client_id,
         client_name, client_host, client_kind, modules_json, write_policy, profile_id, auth_binding_id, status,
         consented_at, last_used_at, revoked_at, revoked_by_principal_id, revoke_reason)
-     values ('${input.grant}', '${stage.tenantId}', '${company}', 'better-auth-${input.person}', '${input.person}',
+     values ('${input.grant}', '${tenantId}', '${legalEntityId}', 'better-auth-${input.person}', '${input.person}',
              '${input.person}', 'human', 'https://client-${client}.example/metadata', 'Client ${client}',
              'client-${client}.example', 'cimd', '"all"'::jsonb, 'direct', gen_random_uuid(), '${input.binding}',
              '${ended.status}', now() - interval '10 days', now() - interval '1 day', ${ended.at}, ${ended.by},
@@ -432,7 +454,7 @@ const connectedApp = (
     `insert into core.principal_auth_bindings
        (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type,
         provider_subject_id, status)
-     values ('${input.binding}', '${stage.tenantId}', '${input.person}', 'staff', 'better_auth', 'oauth_grant',
+     values ('${input.binding}', '${tenantId}', '${input.person}', 'staff', 'better_auth', 'oauth_grant',
              '${input.grant}', '${input.live ? 'active' : 'disabled'}')`,
   ];
 };
@@ -1379,6 +1401,8 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
               directoryRow(tenantId, dispatcher),
               directoryRow(tenantId, other),
               companyAdministrators(stage),
+              // The e-shop login's one live connection in the tenant it leaves.
+              ...connectedApp(stage, { binding: uid(151), grant: uid(150), live: true, person: colleague }),
               // A bystander's access change that a People command committed and never projected.
               `update core.access_assignments set status = 'revoked'
                  where tenant_id = '${tenantId}' and principal_id = '${pendingPerson}' and status = 'active'`,
@@ -1480,6 +1504,38 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             expect(yield* destinationRows()).toEqual(attached);
             const converged = yield* stage.project(yield* scopeFor(tenantId, owner)).pipe(failClosed);
             expect([converged.touches, converged.deletions, converged.verified]).toEqual([0, 0, true]);
+            // The moved login then connects an app in the destination. The same file is refused at the attachment's
+            // exact replay, as before, and writes nothing; the departure it completed still hands its connected app to
+            // the Shell's clean-up, so a run that stopped before that clean-up is finished by the same file.
+            yield* seed(
+              stage,
+              ...connectedApp(stage, {
+                binding: uid(153),
+                grant: uid(152),
+                live: true,
+                person: uid(140),
+                where: { legalEntityId: uid(105), tenantId: destination },
+              }),
+            );
+            expect(yield* refusalOf(stage, operatorFile, everyone)).toMatch(/fresh Principal and staff binding/u);
+            const completed = yield* stage.completed(operatorFile.retiredPrincipals).pipe(failClosed);
+            expect(
+              completed.map(({ endedByThisRun, grantId, principalId, revokedByAdministrator, tenantId: at }) => ({
+                at,
+                endedByThisRun,
+                grantId,
+                principalId,
+                revokedByAdministrator,
+              })),
+            ).toEqual([
+              {
+                at: tenantId,
+                endedByThisRun: false,
+                grantId: uid(150),
+                principalId: colleague,
+                revokedByAdministrator: owner,
+              },
+            ]);
           }),
         ),
       ),
@@ -1705,17 +1761,20 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             const operatorFile = { ...emptyRun, retiredPrincipals: [leaving(tenantId, colleague, 'colleague')] };
             const run = yield* stage.reconcile(operatorFile).pipe(failClosed);
             // The run reports every connected app of the leaver and ended exactly the live one.
+            // Only the app this run revoked as an administrator is owed the product's revocation event, by the owner.
             expect(
-              run.connectedApps.map(({ endedByThisRun, grantId, principalId }) => ({
+              run.connectedApps.map(({ endedByThisRun, grantId, principalId, revokedByAdministrator }) => ({
                 endedByThisRun,
                 grantId,
                 principalId,
+                revokedByAdministrator,
               })),
             ).toEqual(
               [...revokedApps, liveApp].map(({ grant, live }) => ({
                 endedByThisRun: live,
                 grantId: grant,
                 principalId: colleague,
+                revokedByAdministrator: live ? owner : null,
               })),
             );
             // The live connection ended as an administrator ends somebody else's, attributed to the acting owner; the
@@ -1748,14 +1807,19 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
             const settled = yield* peopleRowsOf(stage, [colleague]);
             const grantsSettled = yield* grantRowsOf(stage, colleague);
             const again = yield* stage.reconcile(operatorFile).pipe(failClosed);
-            expect(again.connectedApps.map(({ endedByThisRun }) => endedByThisRun)).toEqual([
-              false,
-              false,
-              false,
-              false,
-              false,
-              false,
+            // The replay still names who revoked the live one, so a run that stopped before the Shell recorded it does.
+            expect(
+              again.connectedApps.map(({ endedByThisRun, revokedByAdministrator }) => ({
+                endedByThisRun,
+                revokedByAdministrator,
+              })),
+            ).toEqual([
+              ...revokedApps.map(() => ({ endedByThisRun: false, revokedByAdministrator: null })),
+              { endedByThisRun: false, revokedByAdministrator: owner },
             ]);
+            // Before the run, the same departure is read as completed and hands over the same apps.
+            const completed = yield* stage.completed(operatorFile.retiredPrincipals).pipe(failClosed);
+            expect(completed.map(({ grantId }) => grantId)).toEqual(again.connectedApps.map(({ grantId }) => grantId));
             expect(yield* peopleRowsOf(stage, [colleague])).toBe(settled);
             expect(yield* grantRowsOf(stage, colleague)).toEqual(grantsSettled);
           }),
@@ -1825,7 +1889,6 @@ it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
         ),
       ),
   );
-
   suite.effect(
     'refuses, writing nothing, to end a connected app in a company the acting owner is suspended in, and ends it once the owner administers it again',
     () =>

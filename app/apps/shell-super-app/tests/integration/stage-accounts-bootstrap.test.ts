@@ -1,4 +1,12 @@
-import { SHARED_RUNTIME_IDENTITY, DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  SHARED_RUNTIME_IDENTITY,
+  DatabaseConfig,
+  OAuthAuthenticationAuditLive,
+  loadDatabaseConnectionPair,
+} from '@app/core-runtime';
+import { CoreDatabaseLive } from '@app/core-runtime/db/client';
+import { STAGE_RETIREMENT_REASON } from '@app/core-runtime/install/stage-context-bootstrap';
+import type { StageRetiredConnectedApp } from '@app/core-runtime/install/stage-context-bootstrap';
 import { randomUUID } from 'node:crypto';
 
 import { memoryAdapter } from 'better-auth/adapters/memory';
@@ -10,8 +18,19 @@ import { describe, expect, it, rstest } from 'effect-rstest';
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
-import { account, session, user } from '../../api/auth/db/schema.ts';
-import { ensureStageAccountAuthUser } from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
+import {
+  account,
+  oauthAccessToken,
+  oauthClient,
+  oauthConsent,
+  oauthRefreshToken,
+  session,
+  user,
+} from '../../api/auth/db/schema.ts';
+import {
+  ensureStageAccountAuthUser,
+  finishStageConnectedAppEndings,
+} from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 import { evaluateLiveChecks } from '../../api/oauth-connections/connection-service.ts';
 import { loadUserAccount } from '../../api/oauth-connections/grant-store.ts';
 
@@ -280,5 +299,163 @@ describe('stage-accounts-bootstrap', () => {
         expect(store.account).toHaveLength(1);
       }),
     10_000,
+  );
+  it.live(
+    "finishes an ended connected app by grant id, leaves the same login's surviving app alone and records the revocation once",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* finishesConnectedAppEndings() {
+          const connections = yield* loadDatabaseConnectionPair();
+          const authContext = yield* Layer.build(
+            AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, connections.admin))),
+          );
+          // The product's own audit writer, over the runtime connection the stage run writes Core with.
+          const coreContext = yield* Layer.build(
+            OAuthAuthenticationAuditLive.pipe(
+              Layer.provideMerge(CoreDatabaseLive),
+              Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+            ),
+          );
+          const context = Context.merge(authContext, coreContext);
+          const database = Context.get(authContext, AuthDatabase).executor;
+          const tenantId = randomUUID();
+          const legalEntityId = randomUUID();
+          const owner = randomUUID();
+          const leaver = randomUUID();
+          const userId = randomUUID();
+          const clientId = `https://stage-retired-${randomUUID()}.example/metadata`;
+          // One Better Auth user signs in as the person who left and, moved to another tenant, as the destination
+          // Principal: the app the departure ended is one grant, the app connected since is another.
+          const endedGrant = randomUUID();
+          const survivingGrant = randomUUID();
+          const cleanup = Effect.gen(function* cleanupConnectedAppFixture() {
+            yield* database.execute(sql`delete from core.audit_events where tenant_id = ${tenantId}`);
+            yield* database.execute(sql`delete from core.principals where tenant_id = ${tenantId}`);
+            yield* database.execute(sql`delete from core.legal_entities where tenant_id = ${tenantId}`);
+            yield* database.execute(sql`delete from core.tenants where tenant_id = ${tenantId}`);
+            yield* database.delete(oauthClient).where(eq(oauthClient.clientId, clientId));
+            yield* database.delete(user).where(eq(user.id, userId));
+          }).pipe(Effect.orDie);
+          yield* Effect.addFinalizer(() => cleanup);
+          const slug = `stage-retired-${tenantId}`;
+          yield* database.execute(
+            sql`insert into core.tenants (tenant_id, slug, name, status, default_locale)
+                values (${tenantId}, ${slug}, 'Stage retirement fixture', 'active', 'cs')`,
+          );
+          yield* database.execute(
+            sql`insert into core.legal_entities
+                  (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+                values (${legalEntityId}, ${tenantId}, 'Stage retirement s.r.o.', 'CZ', ${tenantId}, 'active')`,
+          );
+          yield* database.execute(
+            sql`insert into core.principals (principal_id, tenant_id, kind, display_name, status)
+                values (${owner}, ${tenantId}, 'human', 'Owner', 'active'),
+                       (${leaver}, ${tenantId}, 'human', 'Leaver', 'archived')`,
+          );
+          yield* database.insert(user).values({
+            email: `stage-retired-${userId}@example.test`,
+            emailVerified: true,
+            id: userId,
+            name: 'Moved login',
+          });
+          yield* database
+            .insert(oauthClient)
+            .values({ clientId, id: randomUUID(), redirectUris: ['http://127.0.0.1/cb'] });
+          const issue = (grantId: string) =>
+            Effect.gen(function* issueGrantTokens() {
+              const refreshId = randomUUID();
+              const scopes = ['openid'];
+              yield* database
+                .insert(oauthRefreshToken)
+                .values({ clientId, id: refreshId, referenceId: grantId, scopes, token: randomUUID(), userId });
+              yield* database.insert(oauthAccessToken).values({
+                clientId,
+                id: randomUUID(),
+                referenceId: grantId,
+                refreshId,
+                scopes,
+                token: randomUUID(),
+                userId,
+              });
+              yield* database
+                .insert(oauthConsent)
+                .values({ clientId, id: randomUUID(), referenceId: grantId, scopes, userId });
+            });
+          yield* issue(endedGrant);
+          yield* issue(survivingGrant);
+          const tokensOf = (grantId: string) =>
+            Effect.all(
+              [
+                database
+                  .select({ id: oauthAccessToken.id })
+                  .from(oauthAccessToken)
+                  .where(eq(oauthAccessToken.referenceId, grantId)),
+                database
+                  .select({ id: oauthRefreshToken.id })
+                  .from(oauthRefreshToken)
+                  .where(eq(oauthRefreshToken.referenceId, grantId)),
+                database
+                  .select({ id: oauthConsent.id })
+                  .from(oauthConsent)
+                  .where(eq(oauthConsent.referenceId, grantId)),
+              ],
+              { concurrency: 1 },
+            );
+          const revocationsOf = (grantId: string) =>
+            database.execute<{
+              readonly evidence: unknown;
+              readonly outcome_code: string;
+              readonly principal_id: string;
+            }>(
+              sql`select principal_id::text as principal_id, outcome_code, evidence_json as evidence from core.audit_events
+                    where tenant_id = ${tenantId} and event_type = 'oauth.connection.revoked'
+                      and evidence_json ->> 'grantId' = ${grantId}`,
+              'objects',
+            );
+          const surviving = yield* tokensOf(survivingGrant);
+          // The app the departure ended, as the run hands it over: revoked by the acting owner as an administrator.
+          const ended: StageRetiredConnectedApp = {
+            authBindingId: randomUUID(),
+            clientId,
+            clientName: 'Ended client',
+            endedByThisRun: true,
+            grantId: endedGrant,
+            lastUsedAt: null,
+            legalEntityId,
+            principalId: leaver,
+            revokedByAdministrator: owner,
+            revokedByPrincipalId: null,
+            revokeReason: null,
+            status: 'active',
+            tenantId,
+            userPrincipalId: leaver,
+          };
+          yield* finishStageConnectedAppEndings([ended]).pipe(Effect.provide(context));
+          expect(yield* tokensOf(endedGrant)).toEqual([[], [], []]);
+          expect(yield* tokensOf(survivingGrant)).toEqual(surviving);
+          expect(surviving.map((rows) => rows.length)).toEqual([1, 1, 1]);
+          const recorded = yield* revocationsOf(endedGrant);
+          expect(recorded).toEqual([
+            {
+              evidence: expect.objectContaining({
+                clientId,
+                grantId: endedGrant,
+                note: STAGE_RETIREMENT_REASON,
+                reason: 'admin',
+                revokedByPrincipalId: owner,
+                userPrincipalId: leaver,
+              }),
+              outcome_code: 'admin',
+              principal_id: owner,
+            },
+          ]);
+          // The same clean-up again, as a rerun of the file performs it, deletes and records nothing more.
+          yield* finishStageConnectedAppEndings([ended]).pipe(Effect.provide(context));
+          expect(yield* tokensOf(endedGrant)).toEqual([[], [], []]);
+          expect(yield* tokensOf(survivingGrant)).toEqual(surviving);
+          expect(yield* revocationsOf(endedGrant)).toEqual(recorded);
+          expect(yield* revocationsOf(survivingGrant)).toEqual([]);
+        }),
+      ),
   );
 });
