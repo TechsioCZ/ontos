@@ -54,6 +54,8 @@ const InconsistentMetadataReasonSchema = Schema.Literals([
   'identity_invalid',
   /** The provider declares another length than the recorded one: a streaming consumer refuses before a byte. */
   'declared_size_differs',
+  /** The provider's technical version pin is not the one recorded for the confirmed object. */
+  'object_replaced',
 ]);
 type MediaInconsistentMetadataReason = typeof InconsistentMetadataReasonSchema.Type;
 
@@ -328,5 +330,56 @@ export const verifyReadyMediaAsset = Effect.fn('MediaVerifiedRead.verify')(funct
     providerFailure: outcome.outcome === 'unavailable' ? outcome.providerFailure : undefined,
     ref: mediaRecoveryRef(asset.storageKey),
   });
+  return outcome;
+});
+
+/** What a stat of a ready asset's stored object found: no byte was read, so nothing here proves corruption. */
+export type MediaStatOutcome =
+  | Exclude<MediaUnverifiedRead, { readonly outcome: 'integrity_failed' }>
+  | { readonly byteSize: MediaByteSize; readonly outcome: 'present' };
+
+/**
+ * The present-availability check of one READY asset (Current V1, #1443): the provider's stat of the stored object
+ * against the recorded identity. It reads no byte, so it is the cheap check Current may repeat on every answer and
+ * it can never say `integrity_failed`; a different size or a replaced version pin is `inconsistent_metadata`
+ * (not proven corruption), a missing object is `missing_object`, and a provider that cannot answer is
+ * `unavailable`. Like the full verification it never fails and changes nothing.
+ */
+export const statReadyMediaAsset = Effect.fn('MediaVerifiedRead.stat')(function* statReadyMediaAsset(
+  asset: MediaVerifiableAsset,
+) {
+  const check = Effect.gen(function* check() {
+    const recorded = yield* recordedIdentityOf(asset);
+    const storage = yield* ObjectStorage;
+    if (storage.providerId !== asset.storageProvider) {
+      return yield* interrupted({ outcome: 'unavailable', reason: 'provider_mismatch' });
+    }
+    const stat = yield* storage.stat(recorded.storageKey).pipe(Effect.mapError(providerInterruption));
+    const refusal = statRefusalOf(stat, recorded);
+    if (refusal !== undefined) {
+      return yield* interrupted({ outcome: 'inconsistent_metadata', reason: refusal });
+    }
+    // A pin that was recorded must still be the provider's: another one is another stored object.
+    if (recorded.versionRef !== undefined && stat.versionRef !== recorded.versionRef) {
+      return yield* interrupted({ outcome: 'inconsistent_metadata', reason: 'object_replaced' });
+    }
+    return { byteSize: recorded.byteSize, outcome: 'present' } as const satisfies MediaStatOutcome;
+  });
+  const outcome = yield* check.pipe(
+    Effect.catchTag('MediaVerifiedReadInterrupted', ({ read: unverified }) =>
+      // A stat reads no byte, so the proof of corruption is unreachable here.
+      unverified.outcome === 'integrity_failed'
+        ? Effect.die('A stat cannot prove corruption')
+        : Effect.succeed<MediaStatOutcome>(unverified),
+    ),
+  );
+  if (outcome.outcome !== 'present') {
+    yield* logMediaRecovery({
+      category: outcome.outcome,
+      operation: 'verified_read',
+      providerFailure: outcome.outcome === 'unavailable' ? outcome.providerFailure : undefined,
+      ref: mediaRecoveryRef(asset.storageKey),
+    });
+  }
   return outcome;
 });
