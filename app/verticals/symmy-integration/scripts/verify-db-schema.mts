@@ -18,6 +18,7 @@ import {
   symmyJobRetentionTombstones,
   symmySyncAdmissions,
 } from '../src/db/schema.ts';
+import { ROUTE_ENROLLMENT_RECORD_CHECKS, normalizeConstraintDefinition } from './route-enrollment-record-checks.mts';
 
 class SymmySchemaVerificationError extends Schema.TaggedError<SymmySchemaVerificationError>()(
   'SymmySchemaVerificationError',
@@ -25,33 +26,7 @@ class SymmySchemaVerificationError extends Schema.TaggedError<SymmySchemaVerific
 ) {}
 
 /**
- * The predicates of the record checks, as PostgreSQL prints the stored expression (`pg_get_expr`), lowercased and
- * without parentheses, whitespace or identifier quotes. PostgreSQL stores a CHECK as its analysed expression, not its
- * text: an IN list prints as `= ANY (ARRAY[...])`, a literal compared with a text column as `'...'::text`, a BETWEEN as
- * its `>=` and `<=` comparisons joined by AND, and a null test as `IS NULL`; the normalisation leaves out how it
- * parenthesises and quotes them, as the Pricing schema verifier compares its checks.
- */
-const RECORD_CHECK_PREDICATES = [
-  [
-    'symmy_route_enrollment_records_change_ck',
-    "change=anyarray['enroll'::text,'replace'::text,'deactivate'::text]" +
-      "andchange='enroll'::text=previous_revisionisnull" +
-      "andchange='enroll'::text=previous_change_tokenisnull" +
-      'andprevious_change_tokenisnullorchange_token<>previous_change_token' +
-      'andchange_token>=1' +
-      "andchange<>'deactivate'::textorprevious_revision=route_revision",
-  ],
-  [
-    'symmy_route_enrollment_records_text_ck',
-    'char_lengthstated_operator_ref>=1andchar_lengthstated_operator_ref<=200' +
-      'andchar_lengthreason>=1andchar_lengthreason<=500' +
-      'andchar_lengthroute_revision>=1andchar_lengthroute_revision<=80' +
-      'andprevious_revisionisnullorchar_lengthprevious_revision>=1andchar_lengthprevious_revision<=80',
-  ],
-].map(([name, predicate]) => `${name}=${predicate}`);
-
-/**
- * The enrollment records keep their key, route index and check predicates, and the change tokens come from a sequence
+ * The enrollment records keep their key, route index and check definitions, and the change tokens come from a sequence
  * no other role may use, which gives every route row its token by default.
  */
 const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmentRecords')(function* verifyRecords(
@@ -61,7 +36,6 @@ const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmen
     readonly change_token_default: boolean;
     readonly change_token_sequence: boolean;
     readonly change_token_sequence_private: boolean;
-    readonly check_predicates: readonly string[] | null;
     readonly constraints: readonly string[] | null;
     readonly primary_key: boolean;
     readonly route_index: boolean;
@@ -70,11 +44,6 @@ const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmen
       (select array_agg(c.conname::text || ':' || c.contype::text || ':' || c.convalidated::text order by c.conname)
         from pg_catalog.pg_constraint c
         where c.conrelid = 'symmy_integration.route_enrollment_records'::regclass and c.contype <> 'n') as constraints,
-      (select array_agg(c.conname::text || '=' || pg_catalog.regexp_replace(
-          pg_catalog.lower(pg_catalog.pg_get_expr(c.conbin, c.conrelid)), '[()[:space:]"]', '', 'g') order by c.conname)
-        from pg_catalog.pg_constraint c
-        where c.conrelid = 'symmy_integration.route_enrollment_records'::regclass and c.contype = 'c')
-        as check_predicates,
       exists(select 1 from pg_catalog.pg_constraint c join pg_catalog.pg_attribute a
           on a.attrelid = c.conrelid and a.attname = 'record_id'
         where c.conrelid = 'symmy_integration.route_enrollment_records'::regclass and c.contype = 'p'
@@ -113,11 +82,27 @@ const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmen
         'route_enrollment_records_pkey:p:true',
         'symmy_route_enrollment_records_change_ck:c:true',
         'symmy_route_enrollment_records_text_ck:c:true',
-      ].join(',') ||
-    records.check_predicates?.join(',') !== RECORD_CHECK_PREDICATES.join(',')
+      ].join(',')
   ) {
     yield* new SymmySchemaVerificationError({
-      reason: 'Symmy route enrollment record key, index or check predicates, or the change token sequence, mismatch',
+      reason: 'Symmy route enrollment record key, index or constraints, or the change token sequence, mismatch',
+    });
+  }
+  const checks = yield* client<{ readonly definition: string; readonly name: string }>`
+    select c.conname as name, pg_catalog.pg_get_constraintdef(c.oid) as definition
+    from pg_catalog.pg_constraint c
+    where c.conrelid = 'symmy_integration.route_enrollment_records'::regclass and c.contype = 'c'
+  `;
+  // Each mismatch prints PostgreSQL's own text, so one failed run shows the exact definition to compare with.
+  const mismatches = ROUTE_ENROLLMENT_RECORD_CHECKS.flatMap(([name, expected]) => {
+    const actual = checks.find((check) => check.name === name)?.definition;
+    return actual !== undefined && normalizeConstraintDefinition(actual) === normalizeConstraintDefinition(expected)
+      ? []
+      : [`constraint: ${name}`, `expected: ${expected}`, `actual: ${actual ?? '(none)'}`];
+  });
+  if (mismatches.length > 0) {
+    yield* new SymmySchemaVerificationError({
+      reason: ['Symmy route enrollment record check definitions mismatch', ...mismatches].join('\n'),
     });
   }
 });
