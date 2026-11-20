@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "67ea2ffb-c2d5-441b-a4c7-648af6c2bb60",
+  "id": "f6f6ddb2-acad-44c9-a2da-180cd9db6a97",
   "prevIds": [
     "502bfed6-09ff-4f48-8e50-bfc001e90a1f"
   ],
@@ -2748,6 +2748,19 @@
       "generated": null,
       "identity": null,
       "name": "route_revision",
+      "entityType": "columns",
+      "schema": "commerce_customer_context",
+      "table": "customer_group_definition_source_routes"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 1,
+      "default": "ARRAY[]",
+      "generated": null,
+      "identity": null,
+      "name": "source_reader_principal_ids",
       "entityType": "columns",
       "schema": "commerce_customer_context",
       "table": "customer_group_definition_source_routes"
@@ -13969,6 +13982,13 @@
     {
       "value": "\"generation\" > 0",
       "name": "ccc_group_def_source_route_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_customer_context",
+      "table": "customer_group_definition_source_routes"
+    },
+    {
+      "value": "cardinality(\"source_reader_principal_ids\") <= 32 and array_position(\"source_reader_principal_ids\", null) is null",
+      "name": "ccc_group_def_source_readers_ck",
       "entityType": "checks",
       "schema": "commerce_customer_context",
       "table": "customer_group_definition_source_routes"

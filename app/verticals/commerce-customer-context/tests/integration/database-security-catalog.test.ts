@@ -51,7 +51,6 @@ const privateInvokerSearchPaths = {
   customer_profile_source_search_match: 'search_path=pg_catalog, pg_temp',
   customer_source_route_document: 'search_path=pg_catalog, pg_temp',
   customer_source_route_state: 'search_path=pg_catalog, pg_temp',
-  customer_source_route_writer_held: 'search_path=pg_catalog, pg_temp',
   lock_customer_group_membership_scope: 'search_path=pg_catalog, pg_temp',
   project_membership_source_result: 'search_path=pg_catalog, pg_temp',
   project_organization_membership_result: 'search_path=pg_catalog, pg_temp',

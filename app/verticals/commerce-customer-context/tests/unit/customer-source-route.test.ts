@@ -48,6 +48,16 @@ const profile = {
   route: { id: 'internal-profile-route', revision: '1' },
   sourceReaderPrincipalIds: [reader],
 } as const;
+const group = {
+  _tag: 'GROUP_DEFINITION',
+  active: true,
+  issuer: 'internal-ebs',
+  mappingRevision: '1',
+  namespace: 'customer-groups',
+  principalId: writer,
+  route: { id: 'internal-group-route', revision: '1' },
+  sourceReaderPrincipalIds: [reader],
+} as const;
 const decodePayload = Schema.decodeUnknownExit(ConfigureCustomerSourceRoutePayloadSchema, {
   onExcessProperty: 'error',
 });
@@ -63,15 +73,7 @@ it('admits exactly one route per registry entry with every fact its owner routin
   ).toBe(true);
   for (const route of [
     profile,
-    {
-      _tag: 'GROUP_DEFINITION',
-      active: true,
-      issuer: 'internal-ebs',
-      mappingRevision: '1',
-      namespace: 'customer-groups',
-      principalId: writer,
-      route: { id: 'internal-group-route', revision: '1' },
-    },
+    group,
     {
       _tag: 'SAVED_ADDRESS',
       active: true,
@@ -93,23 +95,56 @@ it('admits exactly one route per registry entry with every fact its owner routin
       ),
     ).toBe(true);
   }
+  // A route with readers states them, an empty set included; the owner never assumes one.
+  for (const route of [profile, group]) {
+    const { sourceReaderPrincipalIds: _omitted, ...withoutReaders } = route;
+    expect(
+      Exit.isFailure(
+        decodePayload({ _tag: 'CONFIGURE', expectedGeneration: null, reason: 'Bind', route: withoutReaders }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isSuccess(
+        decodePayload({
+          _tag: 'CONFIGURE',
+          expectedGeneration: null,
+          reason: 'Bind',
+          route: { ...route, sourceReaderPrincipalIds: [] },
+        }),
+      ),
+    ).toBe(true);
+  }
 });
 
-it('rejects an implicit completeness claim, a duplicate reader in any case, a blank reason and a non-generation', () => {
+it('rejects an implicit completeness claim, a duplicate reader in any case, over 32 readers, a blank reason and a non-generation', () => {
   for (const invalid of [
     { _tag: 'CONFIGURE', expectedGeneration: null, reason: 'Bind', route: { ...membership, allowComplete: true } },
-    {
-      _tag: 'CONFIGURE',
-      expectedGeneration: null,
-      reason: 'Bind',
-      route: { ...profile, sourceReaderPrincipalIds: [reader, reader] },
-    },
-    {
-      _tag: 'CONFIGURE',
-      expectedGeneration: null,
-      reason: 'Bind',
-      route: { ...profile, sourceReaderPrincipalIds: [reader, reader.toUpperCase()] },
-    },
+    ...[profile, group].flatMap((route) => [
+      {
+        _tag: 'CONFIGURE',
+        expectedGeneration: null,
+        reason: 'Bind',
+        route: { ...route, sourceReaderPrincipalIds: [reader, reader] },
+      },
+      {
+        _tag: 'CONFIGURE',
+        expectedGeneration: null,
+        reason: 'Bind',
+        route: { ...route, sourceReaderPrincipalIds: [reader, reader.toUpperCase()] },
+      },
+      {
+        _tag: 'CONFIGURE',
+        expectedGeneration: null,
+        reason: 'Bind',
+        route: {
+          ...route,
+          sourceReaderPrincipalIds: Array.from(
+            { length: 33 },
+            (_, index) => `aaaaaaaa-6666-4666-8666-${index.toString(16).padStart(12, '0')}`,
+          ),
+        },
+      },
+    ]),
     { _tag: 'CONFIGURE', expectedGeneration: null, reason: '   ', route: membership },
     { _tag: 'CONFIGURE', expectedGeneration: 0, reason: 'Bind', route: membership },
     { _tag: 'CONFIGURE', expectedGeneration: 1.5, reason: 'Bind', route: membership },

@@ -94,7 +94,7 @@ const readCustomerSourceRouteRoutine = defineScopedRoutine({
   schema: DATABASE_SCHEMA,
 });
 
-/** Every source write of this owner runs as the source-write workload; Profile source reads as source-read. */
+/** Source writes of this owner run as the source-write workload; Profile and Group source reads as source-read. */
 const SOURCE_WRITE_WORKLOAD = 'commerce.customer-context.source-write';
 const SOURCE_READ_WORKLOAD = 'commerce.customer-context.source-read';
 
@@ -135,8 +135,9 @@ export interface CustomerSourceRouteServices {
 export const customerSourceRouteServices: ReadServiceFactory<CustomerSourceRouteServices> = (transaction) => {
   /**
    * Core's enrollment for the route, read in this transaction after the route's lock is held: the Tenant's one
-   * enrolled system principal of the source-write workload, and those requested Profile readers Core binds as
-   * active integration principals to the source-read workload. The routine compares the route with them.
+   * enrolled system principal of the source-write workload, and those requested Profile or Group definition
+   * readers Core binds as active integration principals to the source-read workload. The routine compares the
+   * route with them.
    */
   const enrolledPrincipals = Effect.fn('CustomerSourceRoute.enrolledPrincipals')(function* enrolledPrincipals(
     route: CustomerSourceRoute,
@@ -146,7 +147,7 @@ export const customerSourceRouteServices: ReadServiceFactory<CustomerSourceRoute
     );
     const readers = yield* Effect.forEach(
       Match.value(route).pipe(
-        Match.tag('PROFILE', ({ sourceReaderPrincipalIds }) => sourceReaderPrincipalIds),
+        Match.tag('PROFILE', 'GROUP_DEFINITION', ({ sourceReaderPrincipalIds }) => sourceReaderPrincipalIds),
         Match.orElse(() => []),
       ),
       (principalId) =>

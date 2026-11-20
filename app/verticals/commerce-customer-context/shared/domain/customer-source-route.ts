@@ -7,6 +7,19 @@ import { CustomerGroupDefinitionSourceSchema } from './group-contract.ts';
 import { SavedAddressSourceAssertionSchema } from './saved-address-source.ts';
 
 /**
+ * The integration principals that may read through a route; a reader never writes through it. The owner stores
+ * them as a set: at most 32, each once in any letter case, in sorted lower-case form.
+ */
+const SourceReaderPrincipalIdsSchema = Schema.Array(PrincipalIdSchema).check(
+  Schema.isMaxLength(32),
+  Schema.makeFilter((readers) =>
+    new Set(readers.map((reader) => reader.toLowerCase())).size === readers.length
+      ? undefined
+      : 'Source reader principals must be distinct',
+  ),
+);
+
+/**
  * One owner-side source route: it binds an exact issuer and namespace to the one enrolled principal that
  * may act for them through this route revision. Each variant carries exactly the facts the owner
  * routines of its registry compare at runtime; none of them is defaulted or inferred.
@@ -15,15 +28,9 @@ export const CustomerProfileSourceRouteSchema = Schema.TaggedStruct('PROFILE', {
   ...CustomerProfileSourceAuthoritySchema.fields,
   active: Schema.Boolean,
   principalId: PrincipalIdSchema,
-  sourceReaderPrincipalIds: Schema.Array(PrincipalIdSchema).check(
-    Schema.isMaxLength(32),
-    Schema.makeFilter((readers) =>
-      new Set(readers.map((reader) => reader.toLowerCase())).size === readers.length
-        ? undefined
-        : 'Source reader principals must be distinct',
-    ),
-  ),
+  sourceReaderPrincipalIds: SourceReaderPrincipalIdsSchema,
 });
+/** A Group definition reader reads current source definitions only; a receipt is recovered by the writer alone. */
 export const CustomerGroupDefinitionSourceRouteSchema = Schema.TaggedStruct('GROUP_DEFINITION', {
   active: Schema.Boolean,
   issuer: CustomerGroupDefinitionSourceSchema.fields.issuer,
@@ -31,6 +38,7 @@ export const CustomerGroupDefinitionSourceRouteSchema = Schema.TaggedStruct('GRO
   namespace: CustomerGroupDefinitionSourceSchema.fields.namespace,
   principalId: PrincipalIdSchema,
   route: CustomerGroupDefinitionSourceSchema.fields.route,
+  sourceReaderPrincipalIds: SourceReaderPrincipalIdsSchema,
 });
 export const CustomerGroupMembershipSourceRouteSchema = Schema.TaggedStruct('MEMBERSHIP', {
   active: Schema.Boolean,
@@ -89,6 +97,11 @@ export const CustomerSourceRouteKindSchema = Schema.Literals([
  * last read, or none (null) when the route must not exist yet. `PAUSE` names only the stored route and the
  * generation read, and changes nothing but its active flag. Any other stored generation is an expectation
  * mismatch, so a decision taken on a stale view never overwrites a later one.
+ *
+ * Limitation of both: a source recovers the receipt of an effect whose reply it lost only under the route's
+ * current active revision. Pausing or revising a route while the source still has imports in flight leaves
+ * such a reply unrecoverable until the route is active again at that revision; nothing committed is lost,
+ * and restoring the route restores recovery. Change a route only after the source's outstanding work has settled.
  */
 export const ConfigureCustomerSourceRoutePayloadSchema = Schema.Union([
   Schema.TaggedStruct('CONFIGURE', {
@@ -173,6 +186,7 @@ export const StoredCustomerSourceRouteSchema = Schema.Union([
     namespace: Schema.String,
     principalId: PrincipalIdSchema,
     route: StoredRouteRefSchema,
+    sourceReaderPrincipalIds: Schema.Array(PrincipalIdSchema),
   }),
   Schema.TaggedStruct('MEMBERSHIP', {
     active: Schema.Boolean,

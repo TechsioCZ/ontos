@@ -48,9 +48,8 @@ const storedSourceResponseSchema = Schema.Union([
   CustomerProfileSourceResponseSchema.members[0],
   CustomerProfileSourceResponseSchema.members[1],
   CustomerProfileSourceResponseSchema.members[2],
-  // The owner names the live Profile only under current route authority; historical recovery is the receipt alone.
   Schema.TaggedStruct('RECEIPT', {
-    current: Schema.optionalKey(CustomerProfileSourceItemSchema),
+    current: CustomerProfileSourceItemSchema,
     receipt: CustomerProfileSourceReceiptSchema,
   }),
 ]);
@@ -610,12 +609,6 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
             current,
             receipt,
           }: Extract<StoredSourceResponse, { readonly _tag: 'RECEIPT' }>) {
-            if (current === undefined) {
-              return yield* new ReadPermissionDenied({
-                code: 'read_permission_denied',
-                reason: 'Only current route authority discloses the current source Profile',
-              });
-            }
             yield* checkItem(current);
             const original = receipt.intent.source;
             const originalPartyReference = receipt.intent.partySourceReference;

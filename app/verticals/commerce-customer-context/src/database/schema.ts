@@ -2826,6 +2826,10 @@ export const customerGroupDefinitionSourceRoutes = commerceCustomerContextSchema
     principalId: uuid('principal_id').notNull(),
     routeId: text('route_id').notNull(),
     routeRevision: text('route_revision').notNull(),
+    sourceReaderPrincipalIds: uuid('source_reader_principal_ids')
+      .array()
+      .default(sql`ARRAY[]::uuid[]`)
+      .notNull(),
   },
   (table) => [
     primaryKey({
@@ -2833,6 +2837,10 @@ export const customerGroupDefinitionSourceRoutes = commerceCustomerContextSchema
       name: 'ccc_group_def_source_routes_pk',
     }),
     positiveRevision('ccc_group_def_source_route_generation_ck', table.generation),
+    check(
+      'ccc_group_def_source_readers_ck',
+      sql`cardinality(${table.sourceReaderPrincipalIds}) <= 32 and array_position(${table.sourceReaderPrincipalIds}, null) is null`,
+    ),
     optionalTrimmed('ccc_group_def_source_route_mapping_ck', table.mappingRevision),
     trimmed('ccc_group_def_source_route_id_ck', table.routeId),
     trimmed('ccc_group_def_source_route_revision_ck', table.routeRevision),
@@ -3150,9 +3158,8 @@ export const savedAddressSourceRoutes = commerceCustomerContextSchema.table.with
 );
 
 /**
- * Append-only ledger of every configured Commerce source route generation: the stored route document
- * before and after the change, with the acting principal, Action invocation and reason. A since paused
- * or superseded route state stays here, so recovery of an effect written under it remains provable.
+ * Append-only audit record of every Commerce source route generation: the stored route document before and
+ * after the change, with the acting principal, Action invocation and reason. No source authorization reads it.
  */
 export const customerSourceRouteHistory = commerceCustomerContextSchema.table.withRLS(
   'customer_source_route_history',
