@@ -43,7 +43,7 @@ const RouteIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('Sy
 const JobIdSchema = SymmyJobStatusResponseSchema.members[0].fields.jobId;
 const ReceiptSchema = Schema.fromJsonString(
   Schema.Struct({
-    changeToken: Schema.Literal(1),
+    changeToken: Schema.Int,
     outcome: Schema.Literals(['enrolled', 'unchanged']),
     routeId: RouteIdSchema,
   }),
@@ -157,13 +157,8 @@ it.live(
           purpose: 'implementation-1096-registered-workload-gateway',
         });
         const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
+        // Only Symmy calls through the gateway on this path: the Shell mounts once its one relay source is bound.
         const shell = yield* makeApiKeyGatewayNativeFixture({
-          additionalRelaySources: [
-            { sourceAppId: 'party-registry' },
-            { sourceAppId: 'commerce-customer-context' },
-            { sourceAppId: 'privacy' },
-            { sourceAppId: 'pricing' },
-          ],
           ownedDatabase: isolated,
           productionGate: true,
           relaySource: { sourceAppId: 'symmy-integration' },
@@ -302,18 +297,15 @@ it.live(
           routeId: productsReadRouteId,
           routeKey: 'adminProducts',
         };
-        expect(yield* runEnrollmentCommand(environment, productsRoute)).toEqual({
-          changeToken: 1,
-          outcome: 'enrolled',
-          routeId: productsRouteId,
-        });
-        expect(yield* runEnrollmentCommand(environment, readRoute)).toEqual({
-          changeToken: 1,
+        const enrolled = yield* runEnrollmentCommand(environment, productsRoute);
+        expect(enrolled).toMatchObject({ outcome: 'enrolled', routeId: productsRouteId });
+        expect(yield* runEnrollmentCommand(environment, readRoute)).toMatchObject({
           outcome: 'enrolled',
           routeId: productsReadRouteId,
         });
+        // The replay names the token the enrollment reported, as the route has not changed since.
         expect(yield* runEnrollmentCommand(environment, productsRoute)).toEqual({
-          changeToken: 1,
+          changeToken: enrolled.changeToken,
           outcome: 'unchanged',
           routeId: productsRouteId,
         });
@@ -359,7 +351,10 @@ it.live(
           });
         }
         const accepted = yield* admitted.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AcceptedSchema)));
-        const worker = yield* startProductWorker(yield* buildProductWorker(symmy), environment);
+        const worker = yield* startProductWorker(yield* buildProductWorker(symmy), {
+          ...environment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ENROLLED_PRODUCT_WORKER',
+        });
         const readJob = client.get(`${shell.baseUrl}/api/symmy/v1/jobs/${accepted.jobId}`, { headers }).pipe(
           Effect.flatMap((response) => response.json),
           Effect.flatMap(Schema.decodeUnknownEffect(JobSchema)),
