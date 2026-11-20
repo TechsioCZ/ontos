@@ -55,6 +55,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'change_purchase_limit_policy',
   'claim_portal_enrollment_sweep',
   'claim_portal_enrollment_transition',
+  'configure_customer_source_route',
   'consume_invitation_claim_proof',
   'consume_purchase_approval',
   'create_access_invitation',

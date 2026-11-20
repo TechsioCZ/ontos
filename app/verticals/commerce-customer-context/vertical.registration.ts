@@ -33,6 +33,7 @@ import { clearDefaultBillingAddressAction } from './src/actions/clear-default-bi
 import { clearDefaultDeliveryDestinationAction } from './src/actions/clear-default-delivery-destination.action.ts';
 import { commerceQuantityResolutionRead } from './src/api/commerce-quantity-resolution.read.ts';
 import { completePurchaseProposalBasisAction } from './src/actions/complete-purchase-proposal-basis.action.ts';
+import { configureCustomerSourceRouteAction } from './src/actions/configure-customer-source-route.action.ts';
 import { consumeOrderPurchaseApprovalAction } from './src/actions/consume-order-purchase-approval.action.ts';
 import { consumePurchaseApprovalAction } from './src/actions/consume-purchase-approval.action.ts';
 import { counterpartyAccessInvitationReadRead } from './src/api/counterparty-access-invitation-read.read.ts';
@@ -172,6 +173,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     clearDefaultBillingAddressAction,
     clearDefaultDeliveryDestinationAction,
     completePurchaseProposalBasisAction,
+    configureCustomerSourceRouteAction,
     consumeOrderPurchaseApprovalAction,
     consumePurchaseApprovalAction,
     createApprovalHierarchyAction,

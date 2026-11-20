@@ -8281,6 +8281,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.customer-context.customer-source-route.configure",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "customer-source-routes",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.customer-context.configure-customer-source-route",
+            "moduleKey": "commerce.customer-context",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.customer-context.delivery-destination.clear-default",
             "kind": "action",
             "modes": [
