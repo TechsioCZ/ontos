@@ -4,7 +4,6 @@ import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './te
 import { Effect, Schema } from 'effect';
 
 import { AccessKeySyntaxSchema, WorkloadKeySchema } from '../authorization/access-key-syntax.ts';
-import { shellHostedCoreOperations } from '../sdk/core-operations.ts';
 import { CoreOperationRouteSchema, RequirementCallerSchema } from '../sdk/index.ts';
 import type { AnyDeclaredCall, DeclaredCalls } from '../sdk/index.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
@@ -100,14 +99,21 @@ export type OntosOperationContract = typeof OntosOperationContractSchema.Type;
 const unique = (values: readonly string[]): boolean => new Set(values).size === values.length;
 const owns = (moduleId: string, key: string): boolean => key.startsWith(`${moduleId}.`);
 
-/** A Core operation the Shell host serves to modules over the module route (#1443): the closed set in `core-operations`. */
+/**
+ * The closed set of Core operations the Shell host serves to modules over the module route (#1443), as plain data: the
+ * provider identity of each. Kept here, not derived from the operation references, so manifest validation never
+ * depends on the Core operation schemas; a test pins it to `shellHostedCoreOperations` in `sdk/core-operations.ts`.
+ */
+export const SHELL_HOSTED_CORE_PROVIDERS = Object.freeze([
+  Object.freeze({ entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media' }),
+]);
+
 export const isShellHostedCoreProvider = (provider: {
   readonly entrypointKey: string;
   readonly moduleId: string;
 }): boolean =>
-  shellHostedCoreOperations.some(
-    (operation) =>
-      operation.provider.moduleId === provider.moduleId && operation.provider.entrypointKey === provider.entrypointKey,
+  SHELL_HOSTED_CORE_PROVIDERS.some(
+    (hosted) => hosted.moduleId === provider.moduleId && hosted.entrypointKey === provider.entrypointKey,
   );
 
 /**

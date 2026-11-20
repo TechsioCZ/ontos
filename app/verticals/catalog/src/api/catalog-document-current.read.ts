@@ -9,35 +9,19 @@ import { declaredCall } from '@app/core-runtime/sdk';
 import { coreOperations } from '@app/core-runtime/sdk/core';
 import { readAnswer } from '@app/core-runtime/sdk/read';
 import type { NoAccessQuestions, ReadRunContext } from '@app/core-runtime/sdk/read';
-import { Context, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 
 import {
   CatalogDocumentCurrentRequestSchema,
   CatalogDocumentCurrentResponseSchema,
 } from '../../shared/apis/catalog-document-current.ts';
 import type { CatalogDocumentCurrentRequest } from '../../shared/apis/catalog-document-current.ts';
-import type {
-  CatalogDocumentAvailability,
-  CatalogDocumentResourceRef,
-} from '../../shared/domain/catalog-media-assignment.ts';
 import { coreMediaOwnerAvailability } from '../integrations/core-media-owner.ts';
 import { catalogDocumentReadsForScope } from '../persistence/catalog-document-reads.ts';
 import type { CatalogDocumentReads } from '../persistence/catalog-document-reads.ts';
 
 const readKey = 'commerce.catalog.api.catalog-document-current';
 const moduleKey = 'commerce.catalog';
-
-export interface CatalogDocumentOwnerAvailabilityPort {
-  readonly readCurrentAvailability: (input: {
-    readonly resources: readonly CatalogDocumentResourceRef[];
-    readonly target: CatalogDocumentCurrentRequest['target'];
-  }) => Effect.Effect<readonly CatalogDocumentAvailability[], { readonly _tag: string }>;
-}
-
-export class CatalogDocumentOwnerAvailability extends Context.Service<
-  CatalogDocumentOwnerAvailability,
-  CatalogDocumentOwnerAvailabilityPort
->()('@app/catalog/api/catalog-document-current.read/CatalogDocumentOwnerAvailability') {}
 
 /**
  * The one owner call this read makes: Core Media's Current V1, through the SDK `call`. Core carries the requester,

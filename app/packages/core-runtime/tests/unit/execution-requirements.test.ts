@@ -11,6 +11,7 @@ import {
   declaredCallsIssues,
   isCoreOperationProvider,
   isShellHostedCoreProvider,
+  SHELL_HOSTED_CORE_PROVIDERS,
   moduleDependencyDeclarationsIssue,
   OntosModuleRequirementsSchema,
 } from '../../src/modules/module-dependency-contracts.ts';
@@ -21,7 +22,7 @@ import { OntosRegisteredWorkloadCallsSchema } from '../../src/modules/registered
 import type { OntosRegisteredWorkloadCall } from '../../src/modules/registered-workload-calls.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { defineRead } from '../../src/reads/definition.ts';
-import { SHELL_HOST_APP_ID, coreOperations } from '../../src/sdk/core-operations.ts';
+import { SHELL_HOST_APP_ID, coreOperations, shellHostedCoreOperations } from '../../src/sdk/core-operations.ts';
 import {
   declaredCall,
   declaredWriteCall,
@@ -296,6 +297,15 @@ it('refuses missing or empty callers on a vertical provider and any callers on a
   expect(validate(core, requirementsWith({ callers: person, coreCallers: person }))).toEqual([
     expect.stringContaining('must declare no callers'),
   ]);
+});
+
+it('names the hosted Core providers once as data and once as operation references, and the two agree', () => {
+  expect(
+    shellHostedCoreOperations.map((operation) => ({
+      entrypointKey: operation.provider.entrypointKey,
+      moduleId: operation.provider.moduleId,
+    })),
+  ).toEqual(SHELL_HOSTED_CORE_PROVIDERS);
 });
 
 it('reaches a Core operation the Shell host serves over the module route, relaying only the requester', () => {
