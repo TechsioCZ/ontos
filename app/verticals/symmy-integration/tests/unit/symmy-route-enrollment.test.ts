@@ -25,6 +25,8 @@ import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollmen
 import {
   SymmyOutstandingWorkSchema,
   SymmyRouteEnrollmentRequestSchema,
+  SymmyRouteReferenceSchema,
+  decideSymmyRouteDeactivation,
   decideSymmyRouteWrite,
   symmyCoreRefusals,
   symmyOutstandingRefusals,
@@ -245,26 +247,30 @@ const storedRow = (enrollment: SymmyRouteEnrollmentRequest, changes: Partial<Rou
   lifecyclePolicy: enrollment.lifecyclePolicy ?? null,
   ...changes,
 });
-const enroll: SymmyRouteChange = { kind: 'enroll' };
-const replaceAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'replace' });
-const deactivateAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'deactivate' });
+type WriteChange = Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>;
+const enroll: WriteChange = { kind: 'enroll' };
+const replaceAt = (expectedChangeToken: number): WriteChange => ({ expectedChangeToken, kind: 'replace' });
 const decided = (
   enrollment: SymmyRouteEnrollmentRequest,
   existing: { readonly byRouteId?: RouteRow; readonly bySelector?: RouteRow },
-  change: SymmyRouteChange = enroll,
+  change: WriteChange = enroll,
 ) =>
   decideSymmyRouteWrite(
     enrollment,
     { byRouteId: Option.fromUndefinedOr(existing.byRouteId), bySelector: Option.fromUndefinedOr(existing.bySelector) },
     change,
   );
+/** A deactivation of the request's route at a token, with the route its selector holds. */
+const stopAt = (enrollment: SymmyRouteEnrollmentRequest, expectedChangeToken: number, bySelector?: RouteRow) =>
+  decideSymmyRouteDeactivation(enrollment, Option.fromUndefinedOr(bySelector), expectedChangeToken);
 /** The related-route refusals of a request, each as code and detail. */
 const relatedRefusals = (enrollment: SymmyRouteEnrollmentRequest, related: readonly RouteRow[]) =>
   symmyRelatedRouteRefusals(enrollment, inventoryOf(enrollment.routeKey), related).refusals.map(
     ({ code, detail }) => `${code}: ${detail}`,
   );
-const refusalCodes = (decision: ReturnType<typeof decideSymmyRouteWrite>) =>
-  Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : [];
+const refusalCodes = (
+  decision: ReturnType<typeof decideSymmyRouteDeactivation> | ReturnType<typeof decideSymmyRouteWrite>,
+) => (Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : []);
 
 describe('Symmy route inventories', () => {
   it('refuses the stock route with its own reason and names no inventory for an operator fixture route', () => {
@@ -495,6 +501,15 @@ describe('Symmy route request refusals', () => {
       active: false,
     });
     expect(Result.isFailure(decoded)).toBe(true);
+  });
+
+  it('names a route for a deactivation by the reference fields of its request alone', () => {
+    const decodeReference = Schema.decodeUnknownResult(SymmyRouteReferenceSchema, { onExcessProperty: 'error' });
+    const encoded = Schema.encodeSync(SymmyRouteEnrollmentRequestSchema)(request('customerGroupCustomersBatch'));
+    const reference = without(encoded, ['configuration', 'lifecyclePolicy', 'mappingVersion', 'routeRevision']);
+    expect(new Set(Object.keys(reference))).toEqual(new Set(Object.keys(SymmyRouteReferenceSchema.fields)));
+    expect(Result.isSuccess(decodeReference(reference))).toBe(true);
+    expect(Result.isFailure(decodeReference({ ...reference, routeRevision: encoded.routeRevision }))).toBe(true);
   });
 });
 
@@ -795,32 +810,24 @@ describe('Symmy route write decisions', () => {
     expect(refusalCodes(decided(b, { byRouteId: backAtA, bySelector: backAtA }, replaceAt(1)))).toEqual([
       'change_token_not_current',
     ]);
-    expect(refusalCodes(decided(a, { byRouteId: backAtA, bySelector: backAtA }, deactivateAt(1)))).toEqual([
-      'change_token_not_current',
-    ]);
+    expect(refusalCodes(stopAt(a, 1, backAtA))).toEqual(['change_token_not_current']);
   });
 
   it('deactivates a route only at its current change token, once, and only when it is enrolled', () => {
     const enrollment = request('productsBatch');
     const stored = storedRow(enrollment, { changeToken: 5 });
-    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt(5))).toEqual({
-      kind: 'deactivate',
-      previous: { changeToken: 5, routeRevision: 'route-v1' },
-    });
-    expect(refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt(4)))).toEqual([
-      'change_token_not_current',
-    ]);
+    expect(stopAt(enrollment, 5, stored)).toEqual({ kind: 'deactivate', route: stored });
+    expect(refusalCodes(stopAt(enrollment, 4, stored))).toEqual(['change_token_not_current']);
     const inactive = storedRow(enrollment, { active: false, changeToken: 6 });
-    expect(decided(enrollment, { byRouteId: inactive, bySelector: inactive }, deactivateAt(5))).toEqual({
-      kind: 'unchanged',
-    });
-    expect(refusalCodes(decided(enrollment, {}, deactivateAt(1)))).toEqual(['route_not_enrolled']);
+    expect(stopAt(enrollment, 5, inactive)).toEqual({ kind: 'unchanged', route: inactive });
+    expect(refusalCodes(stopAt(enrollment, 1))).toEqual(['route_not_enrolled']);
   });
 
   it('never rebinds a route id or a selector to another route', () => {
     const enrollment = request('productsBatch');
     const other = storedRow(enrollment, { routeId: peerRouteId });
     expect(refusalCodes(decided(enrollment, { bySelector: other }, replaceAt(1)))).toEqual(['route_id_conflict']);
+    expect(refusalCodes(stopAt(enrollment, 1, other))).toEqual(['route_id_conflict']);
     const elsewhere = storedRow(enrollment, { routeKey: 'adminProducts' });
     expect(refusalCodes(decided(enrollment, { byRouteId: elsewhere }))).toEqual(['route_id_conflict']);
   });

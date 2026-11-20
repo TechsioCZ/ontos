@@ -2,20 +2,26 @@
 /**
  * Operator command: enroll, replace or deactivate one Symmy route of one Tenant and company.
  *
- *   pnpm --filter @app/symmy-integration ops:route-enrollment dry-run --request route.json [--replace <token> | --deactivate <token>]
- *   pnpm --filter @app/symmy-integration ops:route-enrollment apply --request route.json --operator <ref> --reason <text> [--replace <token> | --deactivate <token>]
+ *   pnpm --filter @app/symmy-integration ops:route-enrollment dry-run --request route.json [--replace <token>]
+ *   pnpm --filter @app/symmy-integration ops:route-enrollment apply --request route.json --operator <ref> --reason <text> [--replace <token>]
  *   pnpm --filter @app/symmy-integration ops:route-enrollment verify --request route.json
+ *   pnpm --filter @app/symmy-integration ops:route-enrollment dry-run --request reference.json --deactivate <token>
+ *   pnpm --filter @app/symmy-integration ops:route-enrollment apply --request reference.json --operator <ref> --reason <text> --deactivate <token>
  *
- * The request is the reviewed route (`SymmyRouteEnrollmentRequestSchema`). --replace and --deactivate name the change
- * token the operator read from the stored route (every receipt reports it); the change is refused once the route
- * carries another. An apply records the operator reference and reason, as stated, with the change. The command connects with DATABASE_ADMIN_URL (the route is
- * writable only by the migration and operator login), reads the active Application Composition from
- * ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL and the retention configuration from ONTOS_SYMMY_JOB_RETENTION_POLICIES. It
- * prints every refusal, or the receipt with the bindings the route needs, the system principal that runs each executor
- * workload and the runtime configuration it cannot check. It grants no binding and calls no owner. It requires the
- * integration principal to hold an active, unrevoked API-key binding, and does not prove that a key is issued for
- * that binding: issue or rotate the key through the Shell's API-key management. A deactivation checks nothing but
- * the stored route and its token, so it stops a route of any kind.
+ * The request is the reviewed route (`SymmyRouteEnrollmentRequestSchema`): the reference of the route (tenantId,
+ * legalEntityId, principalId, routeKey, routeCode, routeId; `SymmyRouteReferenceSchema`) and what it enrolls
+ * (configuration, lifecyclePolicy, mappingVersion, routeRevision). A deactivation takes the reference alone and
+ * refuses a request carrying anything else, as it stops the stored route whatever that route enrolls. --replace and
+ * --deactivate name the change token the operator read from the stored route (every receipt reports it); the change
+ * is refused once the route carries another. An apply records the operator reference and reason, as stated, with the
+ * change. The command connects with DATABASE_ADMIN_URL (the route is writable only by the migration and operator
+ * login), reads the active Application Composition from ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL and the retention
+ * configuration from ONTOS_SYMMY_JOB_RETENTION_POLICIES. It prints every refusal, or the receipt with the bindings the
+ * route needs, the system principal that runs each executor workload and the runtime configuration it cannot check.
+ * It grants no binding and calls no owner. It requires the integration principal to hold an active, unrevoked API-key
+ * binding, and does not prove that a key is issued for that binding: issue or rotate the key through the Shell's
+ * API-key management. A deactivation checks nothing but the stored route and its token, so it stops a route of any
+ * kind.
  */
 import { parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -66,7 +72,9 @@ const CompositionLive = ActiveApplicationCompositionConfigLive.pipe(
 
 const EnrollmentLive = Layer.mergeAll(AdminDatabaseLive, CompositionLive);
 
-const requestFlag = Flag.String('request').pipe(Flag.withDescription('Path of the reviewed route request JSON'));
+const requestFlag = Flag.String('request').pipe(
+  Flag.withDescription('Path of the reviewed route request JSON; with --deactivate, of the route reference alone'),
+);
 const replaceFlag = Flag.Int('replace').pipe(
   Flag.withDescription(
     'Replace the enrolled route of this selector, which carries this change token; refused while it has outstanding jobs',
@@ -75,7 +83,7 @@ const replaceFlag = Flag.Int('replace').pipe(
 );
 const deactivateFlag = Flag.Int('deactivate').pipe(
   Flag.withDescription(
-    'Deactivate the enrolled route of this selector, which carries this change token; the receipt lists the work it strands',
+    'Deactivate the enrolled route the reference names, which carries this change token; the receipt lists the work it strands',
   ),
   Flag.optional,
 );
