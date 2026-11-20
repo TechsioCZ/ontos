@@ -4,7 +4,6 @@ import { Result, Schema } from 'effect';
 import { SymmyJobStatusRequestSchema } from '../../shared/apis/symmy-job-status.ts';
 import { AdmitSymmySyncPayloadSchema } from '../../shared/actions/admit-symmy-sync.ts';
 import { AdmitSymmyJobPayloadSchema, AdmitSymmyJobResultSchema } from '../../shared/domain/symmy-job-admission.ts';
-import { SymmyInternalExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import { admitSymmyJobAction } from '../../src/actions/admit-symmy-job.action.ts';
 import { symmyJobStatusRead } from '../../src/api/symmy-job-status.read.ts';
 
@@ -235,7 +234,7 @@ describe('Symmy internal job owner contracts', () => {
     ).toBe(true);
   });
 
-  it('admits an internal plan on the coded route only when it states no customer group definition or membership', () => {
+  it('admits an internal plan on the coded route, with its group definitions and memberships, only with its code', () => {
     const tenantId = '11111111-1111-4111-8111-111111111111';
     const profileRef = {
       moduleId: 'commerce.customer-context',
@@ -345,16 +344,14 @@ describe('Symmy internal job owner contracts', () => {
     expect(Result.isFailure(parseAdmission({ ...internal, fixtureId: 'fixture-safe' }))).toBe(true);
     const { profile } = membership.intent.payload;
     expect(Result.isFailure(parseAdmission({ ...internal, groupCustomers: [{ profile }] }))).toBe(true);
-    // Each effect is a valid owner intent on its own, so only the restriction refuses it.
+    // A plan may state a group definition or a membership as well; the admission orders each membership on its
+    // lineage ledger, whatever order the plan carries.
     for (const effect of [membership, groupCreate, groupUpdate]) {
-      expect(Result.isSuccess(Schema.decodeUnknownResult(SymmyInternalExecutionPlanSchema)(customerPlan(effect)))).toBe(
-        true,
-      );
-      expect(Result.isFailure(parseAdmission({ ...internal, plan: customerPlan(effect) })), effect.effectKey).toBe(
+      expect(Result.isSuccess(parseAdmission({ ...internal, plan: customerPlan(effect) })), effect.effectKey).toBe(
         true,
       );
       expect(
-        Result.isFailure(parseAdmission({ ...internal, plan: customerPlan(assignment, effect) })),
+        Result.isSuccess(parseAdmission({ ...internal, plan: customerPlan(assignment, effect) })),
         effect.effectKey,
       ).toBe(true);
     }

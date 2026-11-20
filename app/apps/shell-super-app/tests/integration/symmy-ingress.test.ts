@@ -27,7 +27,6 @@ import {
   SymmyRouteContextResponseSchema,
 } from '@app/symmy-integration/api/symmy-route-context';
 import { AdmitSymmyJobPayloadSchema } from '@app/symmy-integration/api/admit-symmy-job-action';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect, it } from 'effect-rstest';
 
 import { SymmyIngressDefectLive } from '../../api/index.ts';
@@ -1012,7 +1011,7 @@ const internalGroupRef = {
   resourceType: 'commerce.customer-context.customer-group',
   tenantId: customersTenantId,
 };
-/** A membership comes only through the public customers body, which takes its order from the lineage ledger. */
+/** A membership an internal plan states; the owner admission replaces its order with the lineage ledger's. */
 const membershipEffect = {
   effectKey: 'customer-group-membership',
   intent: {
@@ -1040,7 +1039,7 @@ const membershipEffect = {
   },
   operation: groupOperation('commerce.customer-context.apply-customer-group-membership-source'),
 };
-/** A group definition comes only through the public groups body, which fences it on what the owner holds. */
+/** A group definition an internal plan states, executed as the plan states it. */
 const groupCreateEffect = {
   effectKey: 'customer-group-create',
   intent: {
@@ -1059,7 +1058,7 @@ const groupCreateEffect = {
   operation: groupOperation('commerce.customer-context.create-customer-group'),
 };
 
-it.effect('refuses fixtures, removals, price fields and internal group or membership plans on the group routes', () =>
+it.effect('refuses fixtures, removals, price fields and internal plans of the groups route on the group routes', () =>
   Effect.gen(function* publicGroupBodies() {
     let calls = 0;
     const server = yield* Effect.acquireRelease(
@@ -1098,17 +1097,7 @@ it.effect('refuses fixtures, removals, price fields and internal group or member
     }
     const profileRef = { ...customersProfile.profileRef, resourceId: 'abcdef00-6666-4666-8666-666666666666' };
     const membersPath = SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode);
-    // Each plan is a valid internal plan, refused only because it states a group definition or membership.
-    const groupFamilyPlans = [
-      groupRoutePlan(membershipEffect),
-      groupRoutePlan(groupCreateEffect),
-      groupRoutePlan(priceGroupAssignmentEffect, membershipEffect),
-    ];
-    for (const { plan } of groupFamilyPlans) {
-      expect(Result.isSuccess(Schema.decodeUnknownResult(SymmyInternalExecutionPlanSchema)(plan))).toBe(true);
-    }
     for (const body of [
-      ...groupFamilyPlans,
       { fixtureId },
       { customers: [] },
       { customers: [{ customerId: 'customer-1' }] },
@@ -3257,7 +3246,7 @@ it.effect('uses the generated owner Action and Read with distinct fresh assertio
   }),
 );
 
-it.effect('forwards an internal price group assignment plan on the selected group route to the owner admission', () =>
+it.effect('forwards internal plans on the selected group route to the owner admission, memberships included', () =>
   Effect.gen(function* forwardsInternalGroupRoutePlan() {
     const forwarded: SymmyIngressRequest[] = [];
     const calls: { readonly path: string; readonly payload: Schema.Json }[] = [];
@@ -3285,25 +3274,40 @@ it.effect('forwards an internal price group assignment plan on the selected grou
       ),
       (fixture) => Effect.promise(fixture.dispose),
     );
-    const body = groupRoutePlan(priceGroupAssignmentEffect);
-    const response = yield* Effect.promise(() =>
-      server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode), {
-        body: JSON.stringify(body),
-        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
-        method: 'POST',
-      }),
-    );
-    expect(response.status).toBe(202);
-    expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
-    expect(forwarded).toEqual([{ ...body, code: groupCode, idempotencyKey, route: 'customerGroupCustomersBatch' }]);
-    expect(calls.map(({ path }) => path)).toEqual([
-      `${releasePath}/reads/symmy-route-context`,
-      `${releasePath}/symmy-integration/actions/admit-symmy-job`,
-    ]);
-    // The owner admission receives the plan exactly as its own contract admits it.
-    const admitted = { ...body, code: groupCode, idempotencyKey, routeKey: 'customerGroupCustomersBatch' };
-    expect(calls[1]?.payload).toEqual(admitted);
-    expect(Result.isSuccess(Schema.decodeUnknownResult(AdmitSymmyJobPayloadSchema)(admitted))).toBe(true);
+    // A price group assignment has no public body. A plan may also state a membership, whose order the owner
+    // admission takes from the lineage ledger, or a group definition.
+    const bodies = [
+      groupRoutePlan(priceGroupAssignmentEffect),
+      groupRoutePlan(membershipEffect),
+      groupRoutePlan(groupCreateEffect),
+      groupRoutePlan(priceGroupAssignmentEffect, membershipEffect),
+    ];
+    for (const [index, body] of bodies.entries()) {
+      const response = yield* Effect.promise(() =>
+        server.request(SYMMY_ROUTES.customerGroupCustomersBatch.path.replace('{code}', groupCode), {
+          body: JSON.stringify(body),
+          headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey, 'x-api-key': validKey },
+          method: 'POST',
+        }),
+      );
+      expect(response.status).toBe(202);
+      expect(yield* Effect.promise(() => response.json())).toEqual({ jobId, status: 'queued' });
+      expect(forwarded[index]).toEqual({
+        ...body,
+        code: groupCode,
+        idempotencyKey,
+        route: 'customerGroupCustomersBatch',
+      });
+      expect(calls.slice(2 * index).map(({ path }) => path)).toEqual([
+        `${releasePath}/reads/symmy-route-context`,
+        `${releasePath}/symmy-integration/actions/admit-symmy-job`,
+      ]);
+      // The owner admission receives the plan exactly as its own contract admits it.
+      const admitted = { ...body, code: groupCode, idempotencyKey, routeKey: 'customerGroupCustomersBatch' };
+      expect(calls[2 * index + 1]?.payload).toEqual(admitted);
+      expect(Result.isSuccess(Schema.decodeUnknownResult(AdmitSymmyJobPayloadSchema)(admitted))).toBe(true);
+    }
+    expect(forwarded).toHaveLength(bodies.length);
   }),
 );
 

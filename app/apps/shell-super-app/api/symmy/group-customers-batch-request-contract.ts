@@ -37,10 +37,7 @@ export const SymmyGroupCustomersBatchRequestSchema = Schema.Struct({
 });
 export type SymmyGroupCustomersBatchRequest = typeof SymmyGroupCustomersBatchRequestSchema.Type;
 
-/**
- * What the route accepts: the public customers, or an internal plan of owner intents no public body states. A plan
- * that states a customer group definition or membership is refused with 400.
- */
+/** What the route accepts: the public customers, or an internal plan. */
 export const SymmyGroupCustomersBatchPayloadSchema = Schema.Union([
   SymmyGroupCustomersBatchRequestSchema,
   SymmyInternalPlanPayloadSchema,

@@ -549,8 +549,8 @@ it.live(
         const admittedJobs = admin`select job_id from symmy_integration.import_jobs where tenant_id=${tenantId} and route_id=${memberRouteId} order by job_id`;
         const beforeRemoval = yield* membershipInvocations;
         const jobsBeforeRemoval = yield* admittedJobs;
-        // The assignment-only route has no removal, and an internal plan on it states no membership: the membership
-        // takes its order only from the public body. The plan restates the pinned assignment and is otherwise valid.
+        // The assignment-only route has no removal. An internal plan that restates the pinned assignment, order 1
+        // included, is admitted further below with the order the ledger gives its lineage.
         const membershipPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(
           yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
             items: [
@@ -577,13 +577,12 @@ it.live(
             ],
           }),
         );
-        for (const [idempotencyKey, body] of [
-          ['INTERNAL_C14_SELECTED_MEMBERSHIP_REMOVE', { customers: [{ ...customer, operation: 'REMOVE' }] }],
-          ['INTERNAL_C14_SELECTED_MEMBERSHIP_PLAN', { contractVersion: 'INTERNAL_C14', plan: membershipPlan }],
-        ] as const) {
-          const rejectedRemoval = yield* submit(selectedCode, idempotencyKey, HttpBody.jsonUnsafe(body));
-          expect(rejectedRemoval.status).toBe(400);
-        }
+        const rejectedRemoval = yield* submit(
+          selectedCode,
+          'INTERNAL_C14_SELECTED_MEMBERSHIP_REMOVE',
+          HttpBody.jsonUnsafe({ customers: [{ ...customer, operation: 'REMOVE' }] }),
+        );
+        expect(rejectedRemoval.status).toBe(400);
         expect(yield* membershipInvocations).toEqual(beforeRemoval);
         expect(yield* admittedJobs).toEqual(jobsBeforeRemoval);
         expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
@@ -626,6 +625,29 @@ it.live(
         yield* deniedWorker.child.kill();
         yield* deniedWorker.child.exitCode;
         expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
+        // The restating plan claims order 1, which the lineage already used. The admission pins the next order of the
+        // lineage, 3, and records it in the ledger. Its exact replay reuses that job; the ledger holds no other order.
+        const planKey = 'INTERNAL_C14_SELECTED_MEMBERSHIP_PLAN';
+        const planBody = HttpBody.jsonUnsafe({ contractVersion: 'INTERNAL_C14', plan: membershipPlan });
+        const planResponse = yield* submit(selectedCode, planKey, planBody);
+        expect(planResponse.status).toBe(202);
+        const planJob = yield* planResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
+        const planReplay = yield* submit(selectedCode, planKey, planBody);
+        expect(planReplay.status).toBe(202);
+        expect(yield* planReplay.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)))).toEqual(planJob);
+        const [planPinned] = yield* pinnedMemberships(planJob.jobId);
+        assert.isDefined(planPinned);
+        expect(planPinned.payload).toEqual({
+          ...pinned.payload,
+          source: { ...pinned.payload.source, effectId: planPinned.effectId, order: 3 },
+        });
+        expect(
+          yield* admin`select effect_id::text as "effectId",source_order as "order" from symmy_integration.membership_source_orders where tenant_id=${tenantId} order by source_order`,
+        ).toEqual([
+          { effectId: pinned.effectId, order: 1 },
+          { effectId: deniedPinned.effectId, order: 2 },
+          { effectId: planPinned.effectId, order: 3 },
+        ]);
         const [implicit] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and (action_key like 'commerce.pricing.%' or action_key like 'commerce.assortment.%' or action_key like '%promotion%' or action_key in ('commerce.customer-context.assign-customer-price-group','commerce.customer-context.assign-counterparty-price-group'))`;

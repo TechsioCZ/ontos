@@ -1,9 +1,10 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Match, Option, Order, Schema } from 'effect';
 
 import { SYMMY_EFFECT_ASSIGNED_AT_ADMISSION } from '../../shared/domain/symmy-customer-batch.ts';
 import {
   SYMMY_GROUP_MEMBERSHIP_REASON,
   canonicalSymmyGroupCustomers,
+  canonicalSymmyProfileId,
   symmyGroupMembershipRecordSeed,
 } from '../../shared/domain/symmy-customer-group-batch.ts';
 import type { SymmyGroupCustomerRows } from '../../shared/domain/symmy-customer-group-batch.ts';
@@ -35,6 +36,18 @@ export interface SymmyGroupMembershipOrder {
   readonly effectiveAt: DateTime.Utc;
   readonly order: number;
 }
+
+/**
+ * The one order in which every admission reserves its lineages: by canonical profile, then issuer, then namespace.
+ * Two admissions that share lineages take their locks in the same order, so they never deadlock.
+ */
+const lineageOrder: Order.Order<SymmyGroupMembershipLineage> = Order.combine(
+  Order.mapInput(Order.String, ({ profileId }: SymmyGroupMembershipLineage) => profileId),
+  Order.combine(
+    Order.mapInput(Order.String, ({ issuer }: SymmyGroupMembershipLineage) => issuer),
+    Order.mapInput(Order.String, ({ namespace }: SymmyGroupMembershipLineage) => namespace),
+  ),
+);
 
 const profileId = (row: SymmyGroupCustomerRows[number]) => row.profile.profileRef.resourceId;
 
@@ -146,14 +159,18 @@ export const buildSymmyGroupMembershipPlan = Effect.fn('SymmyGroupMembershipPlan
         sourceOccurrenceId: occurrenceId,
       };
     });
-    // Lineages are reserved in one canonical order, so two admissions that share profiles never deadlock.
+    // Lineages are reserved in the one canonical order, so two admissions that share lineages never deadlock.
     const canonicalOrder = rows
-      .map((row, index) => ({ index, row }))
-      .toSorted((left, right) => (profileId(left.row) < profileId(right.row) ? -1 : 1));
+      .map((row, index) => ({
+        index,
+        lineage: { issuer: source.issuerId, namespace: source.sourceNamespace, profileId: profileId(row) },
+        row,
+      }))
+      .toSorted((left, right) => lineageOrder(left.lineage, right.lineage));
     const built = yield* Effect.forEach(
       canonicalOrder,
-      ({ index, row }) =>
-        reserve({ issuer: source.issuerId, namespace: source.sourceNamespace, profileId: profileId(row) }).pipe(
+      ({ index, lineage, row }) =>
+        reserve(lineage).pipe(
           Effect.flatMap((order) => membershipItem(row, index, order)),
           Effect.map((item) => ({ index, item })),
         ),
@@ -161,5 +178,108 @@ export const buildSymmyGroupMembershipPlan = Effect.fn('SymmyGroupMembershipPlan
     );
     const items = built.toSorted((left, right) => left.index - right.index).map(({ item }) => item);
     return Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema)({ items });
+  },
+);
+
+type PlanItem = SymmyFixtureExecutionPlan['items'][number];
+type PlanEffect = PlanItem['effects'][number];
+type MembershipPayload = Extract<
+  NonNullable<PlanEffect['intent']>,
+  { readonly _tag: 'CustomerGroupMembership' }
+>['payload'];
+
+/** The membership an effect states, if it states one. */
+const membershipOf = ({ intent }: PlanEffect): Option.Option<MembershipPayload> =>
+  intent === undefined
+    ? Option.none()
+    : Match.value(intent).pipe(
+        Match.tag('CustomerGroupMembership', ({ payload }) => Option.some(payload)),
+        Match.orElse(() => Option.none()),
+      );
+/** The owner keys a membership by its profile and its manager, so they name its lineage. */
+const membershipLineage = (payload: MembershipPayload): SymmyGroupMembershipLineage => ({
+  issuer: payload.manager.issuer,
+  namespace: payload.manager.sourceNamespace,
+  profileId: canonicalSymmyProfileId(payload.profile.profileRef.resourceId),
+});
+const sameLineage = (left: SymmyGroupMembershipLineage, right: SymmyGroupMembershipLineage) =>
+  lineageOrder(left, right) === 0;
+const isUuid = Schema.is(Schema.String.check(Schema.isUUID()));
+
+/** The plan with the memberships of one lineage at consecutive orders from `first`, in the plan's own order. */
+const withLineageOrders = (
+  plan: SymmyFixtureExecutionPlan,
+  lineage: SymmyGroupMembershipLineage,
+  first: number,
+): SymmyFixtureExecutionPlan => {
+  let next = first;
+  const ordered = (effect: PlanEffect): PlanEffect =>
+    effect.intent === undefined
+      ? effect
+      : Match.value(effect.intent).pipe(
+          Match.tag('CustomerGroupMembership', (intent) => {
+            if (!sameLineage(membershipLineage(intent.payload), lineage)) {
+              return effect;
+            }
+            const order = next;
+            next = order + 1;
+            const { payload } = intent;
+            return { ...effect, intent: { ...intent, payload: { ...payload, source: { ...payload.source, order } } } };
+          }),
+          Match.orElse(() => effect),
+        );
+  return {
+    ...plan,
+    items: EffectArray.map<SymmyFixtureExecutionPlan['items'], PlanItem>((item) => ({
+      ...item,
+      effects: EffectArray.map<PlanItem['effects'], PlanEffect>(ordered)(item.effects),
+    }))(plan.items),
+  };
+};
+
+export interface SymmyPlanMembershipOrderInput<ReserveFailure> {
+  /** The legal entity of the membership owner. It comes from the route scope, never from the plan. */
+  readonly legalEntityId: string | undefined;
+  readonly plan: SymmyFixtureExecutionPlan;
+  /** Reserves the next order of one lineage inside the admission transaction, exactly as for the public customers. */
+  readonly reserve: (lineage: SymmyGroupMembershipLineage) => Effect.Effect<SymmyGroupMembershipOrder, ReserveFailure>;
+  readonly tenantId: string;
+}
+
+/**
+ * Gives every customer group membership an internal plan or a route template states the order the lineage ledger
+ * reserves, as for the public customers: the same lineage of the canonical profile and the manager, the same
+ * reservation and lock, in the same canonical order. The order the plan carries is never read: it is replaced, so no
+ * caller places a membership outside the ledger. Memberships of one lineage take consecutive orders from its one
+ * reservation, in the order the plan states them. A plan without a membership reserves nothing and is returned as it
+ * is. A membership whose profile is not a UUID of the route's tenant, or a route without a legal entity, has no
+ * lineage: there is no plan and nothing is reserved.
+ */
+export const orderSymmyPlanMemberships = Effect.fn('SymmyGroupMembershipPlan.orderPlanMemberships')(
+  function* orderSymmyPlanMemberships<ReserveFailure>(input: SymmyPlanMembershipOrderInput<ReserveFailure>) {
+    const { legalEntityId, plan, reserve, tenantId } = input;
+    const memberships = plan.items.flatMap(({ effects }) =>
+      effects.flatMap((effect) => Option.toArray(membershipOf(effect))),
+    );
+    if (memberships.length === 0) {
+      return Option.some(plan);
+    }
+    if (
+      legalEntityId === undefined ||
+      memberships.some(
+        ({ profile }) => profile.profileRef.tenantId !== tenantId || !isUuid(profile.profileRef.resourceId),
+      )
+    ) {
+      return Option.none<SymmyFixtureExecutionPlan>();
+    }
+    const lineages = EffectArray.dedupeWith(memberships.map(membershipLineage), sameLineage).toSorted(lineageOrder);
+    return Option.some(
+      yield* Effect.reduce(
+        lineages,
+        () => plan,
+        (current, lineage) =>
+          reserve(lineage).pipe(Effect.map(({ order }) => withLineageOrders(current, lineage, order))),
+      ),
+    );
   },
 );

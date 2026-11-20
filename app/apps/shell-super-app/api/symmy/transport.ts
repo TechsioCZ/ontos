@@ -179,7 +179,7 @@ interface GroupCustomersSubmit {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
   readonly route: SelectedWrites;
 }
-/** An internal plan on the selected customer group route; its decoder refused any group definition or membership. */
+/** An internal plan on the selected customer group route. The owner admission orders each membership it states. */
 type GroupPlanSubmit = typeof SymmyInternalPlanPayloadSchema.Type & {
   readonly code: string;
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
@@ -630,7 +630,7 @@ const groupRequest = (
     ? { customerGroups, route: 'customerGroupsBatch' }
     : { customerGroups, idempotencyKey, route: 'customerGroupsBatch' };
 
-/** The customers of the selected group, or an internal plan of the owner intents no public body states. */
+/** The customers of the selected group, or an internal plan. */
 const groupCustomersRequest = (
   code: string,
   payload: typeof SymmyGroupCustomersBatchPayloadSchema.Type,

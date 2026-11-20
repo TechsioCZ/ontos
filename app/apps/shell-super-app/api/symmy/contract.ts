@@ -7,7 +7,7 @@ import {
 import type { GatewayInternalProblemSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { SymmyItemOutcomeSchema, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
-import { SymmyGroupRouteInternalPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
 import { Schema, SchemaTransformation } from 'effect';
 import { HttpApiMiddleware } from 'effect/http-api';
@@ -222,12 +222,12 @@ export const SymmyFixtureIdSchema = Schema.String.check(Schema.isPattern(/^[a-zA
   Schema.brand('SymmyFixtureId'),
 );
 /**
- * The internal plan body of the selected customer group route, for owner intents no public body states. A plan that
- * states a customer group definition or membership is invalid: those come only through the public group routes.
+ * The internal plan body of the selected customer group route. The owner admission gives each membership it states
+ * the order of its lineage ledger, never the order the plan carries.
  */
 export const SymmyInternalPlanPayloadSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
-  plan: SymmyGroupRouteInternalPlanSchema,
+  plan: SymmyInternalExecutionPlanSchema,
 });
 export const SymmyFixtureSubmitPayloadSchema = Schema.Struct({ fixtureId: SymmyFixtureIdSchema });
 export const symmyCodeParams = Schema.Struct({

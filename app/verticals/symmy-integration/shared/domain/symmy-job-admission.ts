@@ -1,4 +1,4 @@
-import { Match, Schema } from 'effect';
+import { Schema } from 'effect';
 import { SymmyDurableJobRouteKeySchema, SymmyJobIdSchema } from './symmy-job-identities.ts';
 import { SymmyCustomerRowsSchema } from './symmy-customer-batch.ts';
 import { SymmyGroupCustomerRowsSchema } from './symmy-customer-group-batch.ts';
@@ -60,31 +60,6 @@ const productsAdmissionValid = (fields: AdmissionFields) =>
   fields.reviseFacts === undefined &&
   carriesNoCustomerSource(fields) &&
   carriesNoFixtureSource(fields);
-type InternalPlan = typeof SymmyInternalExecutionPlanSchema.Type;
-type InternalIntent = NonNullable<InternalPlan['items'][number]['effects'][number]['intent']>;
-/**
- * The intents only the public customer group routes carry: a group definition is fenced on what the owner holds for
- * its code, and a membership takes its order from the lineage ledger. An internal plan would bypass both.
- */
-const isPublicGroupRouteIntent = (intent: InternalIntent) =>
-  Match.value(intent).pipe(
-    Match.tag('CustomerGroupCreate', 'CustomerGroupMembership', 'CustomerGroupUpdate', () => true),
-    Match.orElse(() => false),
-  );
-const statesPublicGroupIntent = ({ items }: InternalPlan) =>
-  items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined && isPublicGroupRouteIntent(intent)));
-/**
- * The internal plan the selected customer group route carries: owner intents no public body states, such as a price
- * group assignment. A plan that states a customer group definition or membership is refused before admission.
- */
-export const SymmyGroupRouteInternalPlanSchema = SymmyInternalExecutionPlanSchema.check(
-  Schema.makeFilter(
-    (plan) =>
-      !statesPublicGroupIntent(plan) ||
-      'A customer group definition or membership comes only through the public customer group routes',
-  ),
-);
-
 const customersAdmissionValid = (fields: AdmissionFields) =>
   fields.customers !== undefined &&
   fields.groupCustomers === undefined &&
@@ -104,11 +79,11 @@ const groupCustomersAdmissionValid = (fields: AdmissionFields) =>
   fields.priceBatch === undefined &&
   fields.reviseFacts === undefined &&
   carriesNoProductSource(fields);
-const groupPlanAdmissionValid = (fields: AdmissionFields & { readonly plan?: InternalPlan }) =>
+/** An internal plan on the selected group route; the admission orders each membership it states on the ledger. */
+const groupPlanAdmissionValid = (fields: AdmissionFields) =>
   fields.code !== undefined &&
   fields.contractVersion === 'INTERNAL_C14' &&
   fields.plan !== undefined &&
-  !statesPublicGroupIntent(fields.plan) &&
   fields.fixtureId === undefined &&
   fields.priceLists === undefined &&
   fields.priceBatch === undefined &&
@@ -170,7 +145,7 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
       return (
         groupCustomersAdmissionValid(fields) ||
         groupPlanAdmissionValid(fields) ||
-        'The customer group route takes its code with its customers, or with an internal plan that states no customer group definition or membership'
+        'The customer group route takes its code with its customers or with an internal plan'
       );
     }
     return (

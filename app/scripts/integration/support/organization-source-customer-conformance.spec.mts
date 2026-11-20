@@ -528,6 +528,16 @@ const runKnownOrganizationFollowup = Effect.fn('OrganizationSourceCustomer.known
     ONTOS_PRIVACY_ORGANIZATION_BUSINESS_CONTEXTS: JSON.stringify(fixture.prepared.flatMap((policy) => policy.contexts)),
   });
   const admitted = yield* fixture.submitFor('INTERNAL_ORGANIZATION_KNOWN_TARGET_JOB', plan);
+  // The ledger, not the plan, orders the membership: the job pins the order the ledger recorded for its effect, the
+  // first one of the profile's lineage.
+  const [pinnedOrder] = yield* fixture.admin<{
+    ledgerOrder: number;
+    order: number;
+  }>`select (e.effect#>>'{intent,payload,source,order}')::integer as "order",o.source_order as "ledgerOrder" from symmy_integration.job_effects e join symmy_integration.membership_source_orders o on o.tenant_id=e.tenant_id and o.effect_id=e.effect_id where e.tenant_id=${fixture.tenantId} and e.job_id=${admitted.jobId} and e.effect_key=${MEMBERSHIP_EFFECT}`;
+  expect(pinnedOrder).toEqual({ ledgerOrder: 1, order: 1 });
+  if (pinnedOrder === undefined) {
+    return yield* Effect.die('The admitted membership must be pinned with its ledger order');
+  }
   const observe = (effectKey: string) =>
     observeAcceptedEffectIdNativeFixture({
       adminConnectionString: Redacted.make(fixture.isolated.connections.admin.connectionString),
@@ -542,7 +552,7 @@ const runKnownOrganizationFollowup = Effect.fn('OrganizationSourceCustomer.known
     });
   const actualMembership = {
     ...encodedMembership,
-    source: { ...encodedMembership.source, effectId: yield* observe(MEMBERSHIP_EFFECT) },
+    source: { ...encodedMembership.source, effectId: yield* observe(MEMBERSHIP_EFFECT), order: pinnedOrder.order },
   };
   const actualAssignment = {
     ...encodedAssignment,

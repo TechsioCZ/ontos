@@ -65,7 +65,8 @@ import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
 import { buildSymmyCustomerPlan } from './symmy-customer-plan.ts';
 import { buildSymmyCustomerGroupPlan } from './symmy-customer-group-plan.ts';
-import { buildSymmyGroupMembershipPlan } from './symmy-customer-group-membership-plan.ts';
+import { buildSymmyGroupMembershipPlan, orderSymmyPlanMemberships } from './symmy-customer-group-membership-plan.ts';
+import type { SymmyGroupMembershipLineage } from './symmy-customer-group-membership-plan.ts';
 import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyProductPlan } from './symmy-product-plan.ts';
@@ -606,6 +607,22 @@ const sourceAuthority = (route: typeof symmyJobRoutes.$inferSelect, template: Sy
   return { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision };
 };
 
+/** Reserves the next order of one membership lineage inside the admission transaction, under its lock. */
+const reserveLineageOrder =
+  (transaction: ScopedTransactionExecutor) =>
+  ({ issuer, namespace, profileId }: SymmyGroupMembershipLineage) =>
+    transaction.invoke(reserveMembershipOrder, [issuer, namespace, profileId]).pipe(
+      Effect.mapError(unavailable),
+      Effect.flatMap(([reserved]) =>
+        reserved === undefined
+          ? Effect.fail(unavailable())
+          : Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(reserved.effective_at).pipe(
+              Effect.mapError(unavailable),
+              Effect.map((effectiveAt) => ({ effectiveAt, order: reserved.source_order })),
+            ),
+      ),
+    );
+
 /**
  * The membership plan of the selected group. Each customer's lineage order is reserved inside this admission
  * transaction, which makes no owner call, and is recorded with the job it admits: a replay reads the saved plan.
@@ -622,18 +639,7 @@ const membershipPlanSource = Effect.fn('SymmyJobStore.membershipPlanSource')(fun
     digest: hash,
     idempotencyKey: input.idempotencyKey,
     legalEntityId: scope.legalEntityId,
-    reserve: ({ issuer, namespace, profileId }) =>
-      transaction.invoke(reserveMembershipOrder, [issuer, namespace, profileId]).pipe(
-        Effect.mapError(unavailable),
-        Effect.flatMap(([reserved]) =>
-          reserved === undefined
-            ? Effect.fail(unavailable())
-            : Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(reserved.effective_at).pipe(
-                Effect.mapError(unavailable),
-                Effect.map((effectiveAt) => ({ effectiveAt, order: reserved.source_order })),
-              ),
-        ),
-      ),
+    reserve: reserveLineageOrder(transaction),
     rows: input.groupCustomers,
     template,
     tenantId: scope.tenantId,
@@ -681,10 +687,25 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
     if (Option.isNone(source)) {
       return yield* routeDenied();
     }
-    const plan = configuredPlan(source.value, template);
-    if (!configuredEffectsAllowed(input.routeKey, plan)) {
+    const configured = configuredPlan(source.value, template);
+    if (!configuredEffectsAllowed(input.routeKey, configured)) {
       return yield* routeDenied();
     }
+    // A membership an internal plan or the template states takes the order the ledger reserves for its lineage,
+    // exactly as one of the public customers; the order the plan carries is replaced before anything is pinned.
+    const ordered =
+      groupCustomers === undefined
+        ? yield* orderSymmyPlanMemberships({
+            legalEntityId: scope.legalEntityId,
+            plan: configured,
+            reserve: reserveLineageOrder(transaction),
+            tenantId: scope.tenantId,
+          })
+        : Option.some(configured);
+    if (Option.isNone(ordered)) {
+      return yield* routeDenied();
+    }
+    const plan = ordered.value;
     const executionPlanJson = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyFixtureExecutionPlanSchema))(
       plan,
     ).pipe(Effect.mapError(unavailable));
