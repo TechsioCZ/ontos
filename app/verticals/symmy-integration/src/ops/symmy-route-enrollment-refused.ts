@@ -15,6 +15,7 @@ const SymmyRouteEnrollmentRefusalCodeSchema = Schema.Literals([
   'company_scope_required',
   'source_identity_mixed',
   'source_identity_differs_from_counterpart',
+  'price_revision_reads_missing',
   'lifecycle_policy_required',
   'lifecycle_policy_not_configured',
   'operation_not_published',
@@ -30,7 +31,7 @@ const SymmyRouteEnrollmentRefusalCodeSchema = Schema.Literals([
   'route_id_conflict',
   'route_drift',
   'revision_not_advanced',
-  'revision_not_current',
+  'change_token_not_current',
   'outstanding_work',
   'route_not_enrolled',
 ]);

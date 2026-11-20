@@ -23,6 +23,7 @@ import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-wo
 import { symmyCallInMode } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
 import {
+  SymmyOutstandingWorkSchema,
   SymmyRouteEnrollmentRequestSchema,
   decideSymmyRouteWrite,
   symmyCoreRefusals,
@@ -97,6 +98,8 @@ const applyMembership = operation(
   'commerce.customer-context.apply-customer-group-membership-source',
 );
 const currentMarkets = operation('commerce.market-catalog', 'commerce.market-catalog.api.current-market-catalog');
+const priceSchedule = operation('commerce.pricing', 'commerce.pricing.api.price-schedule');
+const groupSourcePrices = operation('commerce.pricing', 'commerce.pricing.api.price-group-source-prices');
 const currencies = operation('commerce.pricing', 'commerce.pricing.api.current-supported-currencies');
 
 type EncodedRequest = typeof SymmyRouteEnrollmentRequestSchema.Encoded;
@@ -236,13 +239,14 @@ const codes = (enrollment: SymmyRouteEnrollmentRequest) =>
 type RouteRow = typeof symmyJobRoutes.$inferSelect;
 const storedRow = (enrollment: SymmyRouteEnrollmentRequest, changes: Partial<RouteRow> = {}): RouteRow => ({
   ...symmyPlannedRouteRow(enrollment),
+  changeToken: 1,
   fixturePlan: enrollment.configuration,
   lifecyclePolicy: enrollment.lifecyclePolicy ?? null,
   ...changes,
 });
 const enroll: SymmyRouteChange = { kind: 'enroll' };
-const replaceAt = (currentRevision: string): SymmyRouteChange => ({ currentRevision, kind: 'replace' });
-const deactivateAt = (currentRevision: string): SymmyRouteChange => ({ currentRevision, kind: 'deactivate' });
+const replaceAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'replace' });
+const deactivateAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'deactivate' });
 const decided = (
   enrollment: SymmyRouteEnrollmentRequest,
   existing: { readonly byRouteId?: RouteRow; readonly bySelector?: RouteRow },
@@ -252,6 +256,11 @@ const decided = (
     enrollment,
     { byRouteId: Option.fromUndefinedOr(existing.byRouteId), bySelector: Option.fromUndefinedOr(existing.bySelector) },
     change,
+  );
+/** The related-route refusals of a request, each as code and detail. */
+const relatedRefusals = (enrollment: SymmyRouteEnrollmentRequest, related: readonly RouteRow[]) =>
+  symmyRelatedRouteRefusals(enrollment, inventoryOf(enrollment.routeKey), related).refusals.map(
+    ({ code, detail }) => `${code}: ${detail}`,
   );
 const refusalCodes = (decision: ReturnType<typeof decideSymmyRouteWrite>) =>
   Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : [];
@@ -614,84 +623,178 @@ describe('Symmy route state refusals', () => {
   });
 
   it('names outstanding jobs, the retention way to resolve a blocked one, and unerased synchronous admissions', () => {
-    expect(symmyOutstandingRefusals({ admissions: [], jobs: [] })).toEqual([]);
-    const refusals = symmyOutstandingRefusals({
-      admissions: [peerRouteId],
-      jobs: [
-        { jobId: routeId, state: 'indeterminate' },
-        { jobId: groupId, state: 'blocked' },
-      ],
-    });
+    const outstanding = Schema.decodeUnknownSync(SymmyOutstandingWorkSchema);
+    expect(symmyOutstandingRefusals(outstanding({ admissions: [], jobs: [], listedAll: true }))).toEqual([]);
+    const refusals = symmyOutstandingRefusals(
+      outstanding({
+        admissions: [peerRouteId],
+        jobs: [
+          { jobId: routeId, state: 'indeterminate' },
+          { jobId: groupId, state: 'blocked' },
+        ],
+        listedAll: true,
+      }),
+    );
     expect(refusals.map(({ code }) => code)).toEqual(['outstanding_work', 'outstanding_work', 'outstanding_work']);
     expect(refusals[0]?.detail).toContain(`${routeId} (indeterminate)`);
     expect(refusals[1]?.detail).toContain('integration.symmy.execute-symmy-retention');
     expect(refusals[1]?.detail).toContain(groupId);
     expect(refusals[2]?.detail).toContain(peerRouteId);
+    expect(
+      symmyOutstandingRefusals(
+        outstanding({ admissions: [], jobs: [{ jobId: routeId, state: 'planned' }], listedAll: false }),
+      ).map(({ detail }) => detail),
+    ).toEqual([`Settle these jobs first: ${routeId} (planned)`, 'The route has more outstanding work than is listed']);
+  });
+
+  it('keeps the group route and the membership route of one source in one company', () => {
+    const membership = request('customerGroupCustomersBatch');
+    const groupIn = (company: string) =>
+      storedRow(
+        request('customerGroupsBatch', {
+          configuration: { items: [item('CUSTOMER_GROUP', [createGroup])], sourceRouteId },
+          legalEntityId: company,
+          routeId: peerRouteId,
+        }),
+      );
+    const peers = (group: RouteRow) =>
+      symmyRelatedRouteRefusals(membership, inventoryOf('customerGroupCustomersBatch'), [group]).refusals.map(
+        ({ detail }) => detail,
+      );
+    expect(peers(groupIn(legalEntityId))).toEqual([]);
+    expect(peers(groupIn(unitRef.resourceId))).toEqual([
+      `Route ${peerRouteId} (customerGroupsBatch) of the same source names another legalEntityId`,
+    ]);
+  });
+
+  it('requires the active priceLists route and its price reads of a prices route that revises, both ways', () => {
+    const revising = withConfiguration('priceListPricesBatch', { sourceRouteId });
+    const lists = (operations: readonly [Operation, ...Operation[]]) =>
+      storedRow(
+        request('priceLists', {
+          configuration: { items: [item('PRICE_GROUP', operations)], sourceRouteId },
+          routeId: peerRouteId,
+        }),
+      );
+    expect(relatedRefusals(revising, [])).toEqual([
+      'price_revision_reads_missing: A REVISE price is read through the active priceLists route of this principal, and none is enrolled',
+    ]);
+    const withoutPrices = lists([associations, groupDefinition]);
+    expect(relatedRefusals(revising, [withoutPrices])).toEqual([
+      `price_revision_reads_missing: Route ${peerRouteId} (priceLists) does not enroll commerce.pricing.api.price-schedule@1, which a REVISE price reads`,
+      `price_revision_reads_missing: Route ${peerRouteId} (priceLists) does not enroll commerce.pricing.api.price-group-source-prices@1, which a REVISE price reads`,
+    ]);
+    const withPrices = lists([associations, groupDefinition, priceSchedule, groupSourcePrices]);
+    expect(relatedRefusals(revising, [withPrices])).toEqual([]);
+    expect(
+      relatedRefusals(
+        withConfiguration('priceListPricesBatch', { items: [item('PRICE', [definePrice])], sourceRouteId }),
+        [],
+      ),
+    ).toEqual([]);
+    // A priceLists route keeps both reads while a prices route of the principal revises.
+    const listsRoute = withConfiguration('priceLists', { sourceRouteId });
+    const revisingRow = storedRow(
+      request('priceListPricesBatch', {
+        configuration: { ...valid.priceListPricesBatch().configuration, sourceRouteId },
+        routeId: peerRouteId,
+      }),
+    );
+    expect(relatedRefusals(listsRoute, [revisingRow]).map((line) => line.split(':')[0])).toEqual([
+      'price_revision_reads_missing',
+      'price_revision_reads_missing',
+    ]);
+    const listsWithPrices = withConfiguration('priceLists', {
+      items: [item('PRICE_GROUP', [associations, groupDefinition, priceSchedule, groupSourcePrices])],
+      sourceRouteId,
+    });
+    expect(relatedRefusals(listsWithPrices, [revisingRow])).toEqual([]);
   });
 });
 
 describe('Symmy route write decisions', () => {
-  it('inserts a new route and leaves an exact replay, a retried replacement included, unchanged', () => {
+  it('inserts a new route and leaves an exact replay, a retried replacement at any token included, unchanged', () => {
     for (const routeKey of ['productsBatch', 'customerGroupCustomersBatch'] as const) {
       const enrollment = request(routeKey);
       expect(decided(enrollment, {})).toEqual({ kind: 'insert' });
-      const stored = storedRow(enrollment);
+      const stored = storedRow(enrollment, { changeToken: 2 });
       expect(decided(enrollment, { byRouteId: stored, bySelector: stored })).toEqual({ kind: 'unchanged' });
-      expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt('route-v0'))).toEqual({
+      expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt(1))).toEqual({
         kind: 'unchanged',
       });
     }
   });
 
-  it('refuses drift unless a replacement from the current revision to a new one is asked for', () => {
+  it('refuses drift unless a replacement at the current change token to a new revision is asked for', () => {
     const enrollment = request('productsBatch');
-    const stored = storedRow(enrollment, { routeRevision: 'route-v0' });
+    const stored = storedRow(enrollment, { changeToken: 4, routeRevision: 'route-v0' });
     expect(refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }))).toEqual(['route_drift']);
-    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt('route-v0'))).toEqual({
+    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt(4))).toEqual({
       changed: ['routeRevision'],
       kind: 'replace',
-      previousRevision: 'route-v0',
+      previous: { changeToken: 4, routeRevision: 'route-v0' },
     });
     const sameRevision = storedRow(enrollment, { mappingVersion: 'map-v0' });
     expect(
-      refusalCodes(decided(enrollment, { byRouteId: sameRevision, bySelector: sameRevision }, replaceAt('route-v1'))),
+      refusalCodes(decided(enrollment, { byRouteId: sameRevision, bySelector: sameRevision }, replaceAt(1))),
     ).toEqual(['revision_not_advanced']);
     const inactive = storedRow(enrollment, { active: false });
     expect(refusalCodes(decided(enrollment, { byRouteId: inactive, bySelector: inactive }))).toEqual(['route_drift']);
   });
 
-  it('refuses a stale replacement that would reinstall an older configuration over a newer one', () => {
-    // route-v1 replaced route-v0, then route-v2 replaced route-v1: retrying the first replacement changes nothing.
-    const older = request('productsBatch');
-    const newer = storedRow(request('productsBatch', { mappingVersion: 'map-v2', routeRevision: 'route-v2' }));
-    expect(refusalCodes(decided(older, { byRouteId: newer, bySelector: newer }, replaceAt('route-v0')))).toEqual([
-      'revision_not_current',
+  it('refuses a replacement prepared before the route was stopped, at the revision it still carries', () => {
+    // Prepared at token 1, revision route-v0; the route was then deactivated, which keeps route-v0 and raises the token.
+    const enrollment = request('productsBatch');
+    const running = storedRow(enrollment, { routeRevision: 'route-v0' });
+    expect(decided(enrollment, { byRouteId: running, bySelector: running }, replaceAt(1))).toMatchObject({
+      kind: 'replace',
+    });
+    const stopped = storedRow(enrollment, { active: false, changeToken: 2, routeRevision: 'route-v0' });
+    expect(refusalCodes(decided(enrollment, { byRouteId: stopped, bySelector: stopped }, replaceAt(1)))).toEqual([
+      'change_token_not_current',
+    ]);
+    expect(decided(enrollment, { byRouteId: stopped, bySelector: stopped }, replaceAt(2))).toMatchObject({
+      changed: ['active', 'routeRevision'],
+      kind: 'replace',
+    });
+  });
+
+  it('refuses a stale replacement after the route went back to the configuration it was prepared against', () => {
+    // A (token 1) was replaced by B (token 2), then B by A again (token 3): retrying A -> B at token 1 writes nothing.
+    const a = request('productsBatch', { mappingVersion: 'map-a', routeRevision: 'route-a' });
+    const b = request('productsBatch', { mappingVersion: 'map-b', routeRevision: 'route-b' });
+    const atA = storedRow(a);
+    expect(decided(b, { byRouteId: atA, bySelector: atA }, replaceAt(1))).toMatchObject({ kind: 'replace' });
+    const backAtA = storedRow(a, { changeToken: 3 });
+    expect(refusalCodes(decided(b, { byRouteId: backAtA, bySelector: backAtA }, replaceAt(1)))).toEqual([
+      'change_token_not_current',
+    ]);
+    expect(refusalCodes(decided(a, { byRouteId: backAtA, bySelector: backAtA }, deactivateAt(1)))).toEqual([
+      'change_token_not_current',
     ]);
   });
 
-  it('deactivates a route only at its current revision, once, and only when it is enrolled', () => {
+  it('deactivates a route only at its current change token, once, and only when it is enrolled', () => {
     const enrollment = request('productsBatch');
-    const stored = storedRow(enrollment);
-    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt('route-v1'))).toEqual({
+    const stored = storedRow(enrollment, { changeToken: 5 });
+    expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt(5))).toEqual({
       kind: 'deactivate',
-      revision: 'route-v1',
+      previous: { changeToken: 5, routeRevision: 'route-v1' },
     });
-    expect(
-      refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt('route-v0'))),
-    ).toEqual(['revision_not_current']);
-    const inactive = storedRow(enrollment, { active: false });
-    expect(decided(enrollment, { byRouteId: inactive, bySelector: inactive }, deactivateAt('route-v1'))).toEqual({
+    expect(refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }, deactivateAt(4)))).toEqual([
+      'change_token_not_current',
+    ]);
+    const inactive = storedRow(enrollment, { active: false, changeToken: 6 });
+    expect(decided(enrollment, { byRouteId: inactive, bySelector: inactive }, deactivateAt(5))).toEqual({
       kind: 'unchanged',
     });
-    expect(refusalCodes(decided(enrollment, {}, deactivateAt('route-v1')))).toEqual(['route_not_enrolled']);
+    expect(refusalCodes(decided(enrollment, {}, deactivateAt(1)))).toEqual(['route_not_enrolled']);
   });
 
   it('never rebinds a route id or a selector to another route', () => {
     const enrollment = request('productsBatch');
     const other = storedRow(enrollment, { routeId: peerRouteId });
-    expect(refusalCodes(decided(enrollment, { bySelector: other }, replaceAt('route-v1')))).toEqual([
-      'route_id_conflict',
-    ]);
+    expect(refusalCodes(decided(enrollment, { bySelector: other }, replaceAt(1)))).toEqual(['route_id_conflict']);
     const elsewhere = storedRow(enrollment, { routeKey: 'adminProducts' });
     expect(refusalCodes(decided(enrollment, { byRouteId: elsewhere }))).toEqual(['route_id_conflict']);
   });

@@ -13,7 +13,8 @@
  * - the routes of one source share the logical source identity their readers and writers compare;
  * - the lifecycle policy is one the retention configuration names for exactly this route;
  * - an exact replay changes nothing, any other difference is refused unless the operator asks to replace the route at
- *   its current revision, and a replacement or deactivation is refused while the route has outstanding work.
+ *   the change token it read, and a replacement is refused while the route has outstanding work;
+ * - a route that revises prices has the price list read route the Shell reads a REVISE through, with its price reads.
  *
  * The owner operations come from the plan builders that call them, so a builder and its route inventory never name two
  * versions of one operation.
@@ -24,6 +25,7 @@ import { Option, Schema } from 'effect';
 
 import { SymmyRouteContextRequestSchema } from '../../shared/apis/symmy-route-context.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
+import { SymmyJobIdSchema } from '../../shared/domain/symmy-job-identities.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import {
   SymmyJobLifecyclePolicyRefSchema,
@@ -31,6 +33,7 @@ import {
 } from '../../shared/domain/symmy-job-notification.ts';
 import type { SymmyJobRetentionPolicy } from '../../shared/domain/symmy-job-retention.ts';
 import { SymmyDecodedSourceSelectorSchema } from '../../shared/domain/symmy-source-selector.ts';
+import { SyncAdmissionIdSchema } from '../../shared/resources/sync-admission.ts';
 import type { symmyJobRoutes } from '../db/schema.ts';
 import {
   addAddressOperation,
@@ -60,6 +63,11 @@ const priceGroupModule = 'pricing.price-group-catalog';
 const partyModule = 'party.registry';
 const customerModule = 'commerce.customer-context';
 const priceWrites: ReadonlySet<string> = new Set([priceOperation.entrypointKey, reviseOperation.entrypointKey]);
+/** The price reads `readSymmyPriceBatchFacts` requires of the price list read route before it admits a REVISE price. */
+const revisionReads: readonly SymmyOwnerOperation[] = [
+  { entrypointKey: 'commerce.pricing.api.price-schedule', moduleId: pricingModule, schemaVersion: '1' },
+  { entrypointKey: 'commerce.pricing.api.price-group-source-prices', moduleId: pricingModule, schemaVersion: '1' },
+];
 
 const RouteKeySchema = SymmyRouteContextRequestSchema.fields.routeKey;
 export type SymmyEnrollmentRouteKey = typeof RouteKeySchema.Type;
@@ -519,7 +527,15 @@ export const symmyRouteRequestRefusals = (
 
 /** The fields of a source family's logical identity, as its readers and writers compare them. */
 const familyFields = {
-  customerGroups: ['issuerId', 'sourceNamespace', 'sourceRouteId', 'sourceRouteRevision', 'sourceMappingVersion'],
+  // Commerce resolves the group a membership route writes to by its company, so both routes name the same one.
+  customerGroups: [
+    'issuerId',
+    'legalEntityId',
+    'sourceNamespace',
+    'sourceRouteId',
+    'sourceRouteRevision',
+    'sourceMappingVersion',
+  ],
   // The customer reader reads the profiles of its route's company, which the writer creates for its own company.
   customers: [
     'entityKind',
@@ -701,18 +717,26 @@ export const symmyPlannedRouteRow = (request: SymmyRouteEnrollmentRequest) => ({
 });
 
 /**
- * What the operator asks of the route: enroll it as requested, or replace or deactivate it at the revision the operator
- * read as current, so a retried or stale change never undoes a newer one.
+ * What the operator asks of the route: enroll it as requested, or replace or deactivate it at the change token the
+ * operator read from the stored route. The database raises a route's token by one with every change, deactivation and
+ * reactivation included, and never hands it out again, so a change prepared against a state that has changed since is
+ * refused, even when the route went back to the configuration and revision the operator saw.
  */
 export type SymmyRouteChange =
   | { readonly kind: 'enroll' }
-  | { readonly currentRevision: string; readonly kind: 'deactivate' | 'replace' };
+  | { readonly expectedChangeToken: number; readonly kind: 'deactivate' | 'replace' };
 
-/** The decided change, with the revision of the enrolled route it changes. */
+/** The revision and change token of the stored route a change starts from. */
+export interface SymmyRouteVersion {
+  readonly changeToken: number;
+  readonly routeRevision: string;
+}
+
+/** The decided change, with the stored route it changes. */
 export type SymmyRouteEnrollmentWrite =
-  | { readonly kind: 'deactivate'; readonly revision: string }
+  | { readonly kind: 'deactivate'; readonly previous: SymmyRouteVersion }
   | { readonly kind: 'insert' }
-  | { readonly changed: readonly SymmyRouteField[]; readonly kind: 'replace'; readonly previousRevision: string }
+  | { readonly changed: readonly SymmyRouteField[]; readonly kind: 'replace'; readonly previous: SymmyRouteVersion }
   | { readonly kind: 'unchanged' };
 
 const refused = (code: SymmyRouteEnrollmentRefusalCode, detail: string) =>
@@ -720,8 +744,9 @@ const refused = (code: SymmyRouteEnrollmentRefusalCode, detail: string) =>
 
 /**
  * What one change does with the routes already holding its selector (Tenant, principal, company, route kind and code)
- * or its route id, decided under the enrollment lock. A replacement or deactivation is decided here only as allowed;
- * the store refuses it while work is outstanding. A replay of an applied change is unchanged.
+ * or its route id, decided under the enrollment lock. A change that writes is decided only at the token the operator
+ * names; a request the stored route already satisfies writes nothing, so the replay of an applied change is unchanged
+ * at any token. A replacement is decided here only as allowed: the store refuses it while work is outstanding.
  */
 export const decideSymmyRouteWrite = (
   request: SymmyRouteEnrollmentRequest,
@@ -743,20 +768,21 @@ export const decideSymmyRouteWrite = (
       `The selector is enrolled as route ${current.routeId}; a route id is never rebound`,
     );
   }
+  const previous = { changeToken: current.changeToken, routeRevision: current.routeRevision };
   const stale =
-    change.kind !== 'enroll' && current.routeRevision !== change.currentRevision
+    change.kind !== 'enroll' && current.changeToken !== change.expectedChangeToken
       ? Option.some(
           refused(
-            'revision_not_current',
-            `Route ${current.routeId} is at revision ${current.routeRevision}, not ${change.currentRevision}`,
+            'change_token_not_current',
+            `Route ${current.routeId} is at change token ${String(current.changeToken)}, not ${String(change.expectedChangeToken)}`,
           ),
         )
       : Option.none();
   if (change.kind === 'deactivate') {
-    if (Option.isSome(stale)) {
-      return stale.value;
+    if (!current.active) {
+      return { kind: 'unchanged' };
     }
-    return current.active ? { kind: 'deactivate', revision: current.routeRevision } : { kind: 'unchanged' };
+    return Option.isSome(stale) ? stale.value : { kind: 'deactivate', previous };
   }
   const changed = symmyRouteDifferences(request, current);
   if (changed.length === 0) {
@@ -765,7 +791,7 @@ export const decideSymmyRouteWrite = (
   if (change.kind === 'enroll') {
     return refused(
       'route_drift',
-      `Route ${current.routeId} at revision ${current.routeRevision} is enrolled with another ${changed.join(', ')}`,
+      `Route ${current.routeId} at change token ${String(current.changeToken)} is enrolled with another ${changed.join(', ')}`,
     );
   }
   if (Option.isSome(stale)) {
@@ -774,7 +800,7 @@ export const decideSymmyRouteWrite = (
   if (current.routeRevision === request.routeRevision) {
     return refused('revision_not_advanced', 'A replacement names a new route revision');
   }
-  return { changed, kind: 'replace', previousRevision: current.routeRevision };
+  return { changed, kind: 'replace', previous };
 };
 
 /**
@@ -830,6 +856,53 @@ const sameSelectedSource = (stored: RouteRow['fixturePlan'], requested: SymmyFix
       selector.source.route.integrationRouteId === requested.source.route.integrationRouteId,
   );
 
+const enrolls = (configuration: SymmyFixtureExecutionPlan, operation: SymmyOwnerOperation) =>
+  enrolledOperations(configuration).some((enrolled) => sameOperation(enrolled.operation, operation));
+
+/**
+ * The Shell admits a REVISE price only through the principal's active priceLists route and its price schedule and
+ * source price reads (`readSymmyPriceBatchFacts`): a prices route that revises needs that route with both reads, and a
+ * priceLists route keeps both while an active prices route of the principal revises.
+ */
+const revisionSupportRefusals = (
+  request: SymmyRouteEnrollmentRequest,
+  peers: readonly SymmyEnrolledSource[],
+): readonly SymmyRouteEnrollmentRefusal[] => {
+  if (request.routeKey === 'priceListPricesBatch' && enrolls(request.configuration, reviseOperation)) {
+    const lists = peers.filter(({ routeKey }) => routeKey === 'priceLists');
+    return lists.length === 0
+      ? [
+          refusal(
+            'price_revision_reads_missing',
+            'A REVISE price is read through the active priceLists route of this principal, and none is enrolled',
+          ),
+        ]
+      : lists.flatMap(({ configuration, routeId }) =>
+          revisionReads.flatMap((needed) =>
+            refuseWhen(
+              !enrolls(configuration, needed),
+              'price_revision_reads_missing',
+              `Route ${routeId} (priceLists) does not enroll ${symmyOperationName(needed)}, which a REVISE price reads`,
+            ),
+          ),
+        );
+  }
+  if (request.routeKey !== 'priceLists') {
+    return [];
+  }
+  return peers.flatMap(({ configuration, routeId, routeKey }) =>
+    routeKey === 'priceListPricesBatch' && enrolls(configuration, reviseOperation)
+      ? revisionReads.flatMap((needed) =>
+          refuseWhen(
+            !enrolls(request.configuration, needed),
+            'price_revision_reads_missing',
+            `Route ${routeId} (priceListPricesBatch) revises prices, which are read through ${symmyOperationName(needed)} of this route`,
+          ),
+        )
+      : [],
+  );
+};
+
 /**
  * The principal's other active routes of this kind and of the kinds sharing its source. The route context resolves a
  * route by Tenant, principal, kind and code (or qualified selector) across companies, so a second active route that
@@ -870,11 +943,13 @@ export const symmyRelatedRouteRefusals = (
         ),
       ),
       ...symmyFamilyRefusals({ ...request, legalEntityId: request.legalEntityId ?? null }, readable),
+      ...revisionSupportRefusals(request, readable),
     ],
   };
 };
 
-const RETENTION_ACTION = 'integration.symmy.execute-symmy-retention';
+/** The governed Action that erases the intents of a route's outstanding work once its retention has elapsed. */
+export const SYMMY_RETENTION_ACTION = 'integration.symmy.execute-symmy-retention';
 
 /**
  * Runtime configuration a route depends on that the command cannot read, because it is the Shell's or Symmy's own
@@ -944,21 +1019,40 @@ export const symmyRuntimePrerequisites = (
             symmyRouteInventories.get(request.routeKey)?.admission === 'sync'
               ? 'as 503 SymmyUnavailableProblem'
               : 'as 403 gateway forbidden'
-          }, and ${RETENTION_ACTION} cannot erase what the route admitted`,
+          }, and ${SYMMY_RETENTION_ACTION} cannot erase what the route admitted`,
         } as const,
       ]),
 ];
 
 /**
- * Work a replacement would strand: jobs with an effect that has not settled and whose intents retention has not
- * erased, and synchronous admissions whose intents retention has not erased. A blocked effect never settles by
- * itself, so the refusal names the governed retention Action that erases a blocked job's intents once the retention
- * of its lifecycle policy has elapsed; an erased job carries no intent and can never call an owner again.
+ * The outstanding work of a route: jobs with an effect that has not settled and whose intents retention has not
+ * erased, and synchronous admissions whose intents retention has not erased, as many of each as a receipt or refusal lists.
  */
-export const symmyOutstandingRefusals = (work: {
-  readonly admissions: readonly string[];
-  readonly jobs: readonly { readonly jobId: string; readonly state: string }[];
-}): readonly SymmyRouteEnrollmentRefusal[] => {
+export const SymmyOutstandingWorkSchema = Schema.Struct({
+  admissions: Schema.Array(SyncAdmissionIdSchema),
+  jobs: Schema.Array(Schema.Struct({ jobId: SymmyJobIdSchema, state: Schema.String })),
+  /** False when the route has more outstanding jobs or admissions than are listed. */
+  listedAll: Schema.Boolean,
+});
+export type SymmyOutstandingWork = typeof SymmyOutstandingWorkSchema.Type;
+
+/**
+ * Work a deactivation strands, as its receipt names it: a deactivation stops the route whatever it has admitted, and
+ * with the route inactive its outstanding jobs and admissions never complete; the governed retention Action erases
+ * their intents once the retention of their lifecycle policy has elapsed.
+ */
+export const SymmyStrandedWorkSchema = Schema.Struct({
+  ...SymmyOutstandingWorkSchema.fields,
+  resolvedBy: Schema.Literal(SYMMY_RETENTION_ACTION),
+});
+
+/**
+ * Work a replacement would strand, which refuses it: the rotated epoch would close the fence of every job the route
+ * admitted. A blocked effect never settles by itself, so the refusal names the governed retention Action that erases
+ * a blocked job's intents once the retention of its lifecycle policy has elapsed; an erased job carries no intent and
+ * can never call an owner again.
+ */
+export const symmyOutstandingRefusals = (work: SymmyOutstandingWork): readonly SymmyRouteEnrollmentRefusal[] => {
   const blocked = work.jobs.flatMap(({ jobId, state }) => (state === 'blocked' ? [jobId] : []));
   const listed = work.jobs.map(({ jobId, state }) => `${jobId} (${state})`).join(', ');
   return [
@@ -966,12 +1060,13 @@ export const symmyOutstandingRefusals = (work: {
     ...refuseWhen(
       blocked.length > 0,
       'outstanding_work',
-      `Blocked jobs ${blocked.join(', ')} never settle by themselves: ${RETENTION_ACTION} erases their intents once the retention of their lifecycle policy has elapsed, and an erased job is no outstanding work`,
+      `Blocked jobs ${blocked.join(', ')} never settle by themselves: ${SYMMY_RETENTION_ACTION} erases their intents once the retention of their lifecycle policy has elapsed, and an erased job is no outstanding work`,
     ),
     ...refuseWhen(
       work.admissions.length > 0,
       'outstanding_work',
-      `${RETENTION_ACTION} must erase these synchronous admissions first: ${work.admissions.join(', ')}`,
+      `${SYMMY_RETENTION_ACTION} must erase these synchronous admissions first: ${work.admissions.join(', ')}`,
     ),
+    ...refuseWhen(!work.listedAll, 'outstanding_work', 'The route has more outstanding work than is listed'),
   ];
 };
