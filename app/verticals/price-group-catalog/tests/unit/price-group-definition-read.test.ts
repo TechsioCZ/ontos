@@ -6,7 +6,7 @@ import { getReadPermissionTargetResolver } from '../../../../packages/core-runti
 import {
   PriceGroupDefinitionRequestSchema,
   PriceGroupDefinitionResponseSchema,
-} from '../../shared/apis/price-group-definition.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 import { PriceGroupDefinitionRevisionSchema, PriceGroupIdentitySchema } from '../../shared/domain/price-group.ts';
 import {
   PriceGroupCurrentnessFailure,

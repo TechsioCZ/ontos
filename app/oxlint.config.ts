@@ -929,45 +929,14 @@ export default defineConfig({
       rules: { 'perfectionist/sort-objects': 'off' },
     },
     {
-      // Codesmith emits these exact owner shims as re-exports of canonical public contracts.
-      // The module API boundary checker verifies their generated source and target specifier.
+      // Pricing's Action forwarders to @app/pricing-contracts. The module entrypoint check accepts the two
+      // shared/apis/*-action.ts files only as one `export *` of the package contract that claims the Action
+      // (hasPublishedGeneratedActionContractShim); the two shared/actions files are value forwarders no check reads.
       files: [
-        'verticals/commerce-cart/shared/apis/final-cart-candidate.ts',
-        'verticals/commerce-cart/shared/apis/open-selection-population.ts',
-        'verticals/commerce-cart/src/api/final-cart-candidate-client.ts',
-        'verticals/commerce-cart/src/api/open-selection-population-client.ts',
-        'verticals/commerce-order/shared/apis/committed-order-approval-evidence.ts',
-        'verticals/commerce-order/shared/apis/prepared-order-approval-binding.ts',
-        'verticals/commerce-order/shared/apis/prepared-order-pricing-binding.ts',
-        'verticals/commerce-order/shared/apis/verify-order-commitment-binding.ts',
         'verticals/pricing/shared/actions/manage-commitment-confirmation.ts',
         'verticals/pricing/shared/actions/manage-quotation.ts',
-        'verticals/pricing/shared/apis/commitment-confirmation-verification.ts',
         'verticals/pricing/shared/apis/manage-commitment-confirmation-action.ts',
         'verticals/pricing/shared/apis/manage-quotation-action.ts',
-        'verticals/pricing/shared/apis/quotation-verification.ts',
-        'verticals/commerce-customer-context/shared/apis/market-affected-use-assessment.ts',
-        'verticals/commerce-customer-context/shared/apis/market-subject-restrictions-current.ts',
-        'verticals/commerce-customer-context/shared/apis/payment-term-affected-use-assessment.ts',
-        'verticals/commerce-customer-context/src/api/market-affected-use-assessment-client.ts',
-        'verticals/commerce-customer-context/src/api/market-subject-restrictions-current-client.ts',
-        'verticals/commerce-customer-context/src/api/payment-term-affected-use-assessment-client.ts',
-        'verticals/payment-term-catalog/shared/apis/current-payment-terms.ts',
-        'verticals/payment-term-catalog/src/api/current-payment-terms-client.ts',
-        'verticals/price-group-catalog/shared/apis/price-group-definition.ts',
-        'verticals/price-group-catalog/shared/apis/validate-price-group-compatibility.ts',
-        'verticals/price-group-catalog/src/api/price-group-definition-client.ts',
-        'verticals/price-group-catalog/src/api/validate-price-group-compatibility-client.ts',
-        'verticals/pricing/shared/apis/current-pricing-decision.ts',
-        'verticals/pricing/shared/apis/current-supported-currencies.ts',
-        'verticals/pricing/shared/apis/price-definition.ts',
-        'verticals/pricing/src/api/current-pricing-decision-client.ts',
-        'verticals/pricing/src/api/current-supported-currencies-client.ts',
-        'verticals/pricing/src/api/price-definition-client.ts',
-        'verticals/storefront-registry/shared/apis/current-storefront-application.ts',
-        'verticals/storefront-registry/shared/apis/verify-current-storefront-application-v1.ts',
-        'verticals/storefront-registry/src/api/current-storefront-application-client.ts',
-        'verticals/storefront-registry/src/api/verify-current-storefront-application-v1-client.ts',
       ],
       rules: {
         'oxc/no-barrel-file': 'off',

@@ -12,7 +12,7 @@ import {
   CommittedOrderApprovalEvidencePolicyConflictProblemSchema,
   CommittedOrderApprovalEvidencePolicyProblemSchema,
   CommittedOrderApprovalEvidenceUnavailableProblemSchema,
-} from '../shared/apis/committed-order-approval-evidence.ts';
+} from '@app/commerce-order-contracts/committed-order-approval-evidence';
 import { committedOrderApprovalEvidenceRead } from '../src/api/committed-order-approval-evidence.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

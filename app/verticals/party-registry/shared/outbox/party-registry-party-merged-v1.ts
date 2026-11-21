@@ -7,7 +7,7 @@ import { PartyRefSchema } from '../resources/party.ts';
 import {
   PartyRegistryResourceIdJsonSchema,
   PartyRegistryTenantIdJsonSchema,
-} from '../resources/resource-ref-identifiers.ts';
+} from '@app/party-registry-contracts/resources/resource-ref-identifiers';
 
 /**
  * Identity-only public merge event. Consumers resolve mutable Party state through governed

@@ -1,6 +1,6 @@
 import { DateTime, Schema } from 'effect';
 
-import type { CatalogSelectionRevision } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
   ProductConfiguration,
   ProductConfigurationDefinitionRevision,

@@ -24,9 +24,9 @@ export const commerceCartRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
-      'final-cart-candidate': () => import('./src/api/final-cart-candidate-client.ts'),
-      'open-selection-population': () => import('./src/api/open-selection-population-client.ts'),
-      'preapproval-cart-observation': () => import('./src/api/preapproval-cart-observation-client.ts'),
+      'final-cart-candidate': () => import('@app/commerce-cart-finalization-contracts/final-cart-candidate/client'),
+      'open-selection-population': () => import('@app/commerce-cart-contracts/open-selection-population/client'),
+      'preapproval-cart-observation': () => import('@app/commerce-cart-contracts/preapproval-cart-observation/client'),
       // </generated-module-registration-apis>
     },
     components: {

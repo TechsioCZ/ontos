@@ -17,5 +17,7 @@
     "src",
     "tests"
   ],
-  "references": []
+  "references": [
+    { "path": "../shared-contracts" }
+  ]
 }

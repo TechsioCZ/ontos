@@ -22,8 +22,8 @@ import {
   CurrentPricingDecisionResponseSchema,
   PricingDecisionSubjectSchema,
   projectCurrentPricingDecisionResponse,
-} from '../../shared/apis/current-pricing-decision.ts';
-import type { CurrentPricingDecisionRequest } from '../../shared/apis/current-pricing-decision.ts';
+} from '@app/pricing-contracts/current-pricing-decision';
+import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';
 import { currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment } from '../integrations/customer-context-subject-authority.ts';
 import { pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope } from '../integrations/current-pricing-decision-owner-final-fence.ts';
 import { currentPricingDecisionWholeEvaluationForScope } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';

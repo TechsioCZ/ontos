@@ -4,7 +4,7 @@
 import { Schema } from 'effect';
 import { PublishProductConfigurationPayloadSchema } from '../actions/publish-product-configuration.ts';
 import { PRODUCT_CONFIGURATION_DEFINITION_RESOURCE_TYPE } from '../domain/configuration-definition.ts';
-import { ProductRefSchema as CatalogProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema as CatalogProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 // Publication uses the stable ID domain accepted by the owning Action and persistence.
 const MODULE_ID = 'commerce.catalog';

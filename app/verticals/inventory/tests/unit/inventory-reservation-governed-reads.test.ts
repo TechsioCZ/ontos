@@ -1,7 +1,7 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { ReadHandlerNotFound, ReadPermissionDenied, allowOwnerAuthorizationOverlay } from '@app/core-runtime';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 

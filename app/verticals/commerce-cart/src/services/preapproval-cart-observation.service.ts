@@ -8,8 +8,8 @@ import {
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Schema } from 'effect';
-import { CartDraftSchema } from '../../shared/domain/cart-draft.ts';
-import type { PreapprovalCartObservationRequest } from '../../shared/apis/preapproval-cart-observation.ts';
+import { CartDraftSchema } from '@app/commerce-cart-contracts/domain/cart-draft';
+import type { PreapprovalCartObservationRequest } from '@app/commerce-cart-contracts/preapproval-cart-observation';
 import { carts, cartRevisions } from '../database/schema.ts';
 
 const unavailable = (cause?: unknown) =>

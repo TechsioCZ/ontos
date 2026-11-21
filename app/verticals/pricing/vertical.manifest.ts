@@ -11,13 +11,13 @@ import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definit
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
 import { CommercialFeeResultLookupApi } from './shared/apis/commercial-fee-result-lookup.ts';
 import { CommercialFeeScheduleApi } from './shared/apis/commercial-fee-schedule.ts';
-import { CommitmentConfirmationVerificationApi } from './shared/apis/commitment-confirmation-verification.ts';
+import { CommitmentConfirmationVerificationApi } from '@app/pricing-contracts/commitment-confirmation-verification';
 import { compensateCurrencySupportRecoveryAction } from './src/actions/compensate-currency-support-recovery.action.ts';
 import { ContractualDiscountResultLookupApi } from './shared/apis/contractual-discount-result-lookup.ts';
 import { CurrencySupportResultLookupApi } from './shared/apis/currency-support-result-lookup.ts';
-import { CurrentPricingDecisionApi } from './shared/apis/current-pricing-decision.ts';
+import { CurrentPricingDecisionApi } from '@app/pricing-contracts/current-pricing-decision';
 import { currentPricingDecisionRead } from './src/api/current-pricing-decision.read.ts';
-import { CurrentSupportedCurrenciesApi } from './shared/apis/current-supported-currencies.ts';
+import { CurrentSupportedCurrenciesApi } from '@app/pricing-contracts/current-supported-currencies';
 import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
@@ -29,7 +29,7 @@ import { manageProductPricesBulkAction } from './src/actions/manage-product-pric
 import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.action.ts';
 import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
-import { PriceDefinitionApi } from './shared/apis/price-definition.ts';
+import { PriceDefinitionApi } from '@app/pricing-contracts/price-definition';
 import { PriceGroupSourcePricesApi } from './shared/apis/price-group-source-prices.ts';
 import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
 import { priceResourceDescriptor } from './shared/resources/price.ts';
@@ -40,7 +40,7 @@ import { PriceSourceResultLookupApi } from './shared/apis/price-source-result-lo
 import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
 import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
-import { QuotationVerificationApi } from './shared/apis/quotation-verification.ts';
+import { QuotationVerificationApi } from '@app/pricing-contracts/quotation-verification';
 import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';

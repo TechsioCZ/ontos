@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
 import { BrandRefSchema } from '../resources/brand.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 const ReasonSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const EvidenceRefsSchema = Schema.NonEmptyArray(

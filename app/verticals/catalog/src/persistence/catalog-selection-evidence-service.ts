@@ -4,11 +4,11 @@ import type { Crypto } from 'effect';
 
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
-  CatalogSelection,
   CatalogSelectionBasisRole,
   CatalogSelectionEvidence,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type {
   CatalogSelectionInjectedOwnerEvidence,
   CatalogSelectionOwnerAssessmentResult,

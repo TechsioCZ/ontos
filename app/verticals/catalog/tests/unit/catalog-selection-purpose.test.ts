@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
-import { CatalogSelectionBasisSchema, CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionBasisSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   requiredCatalogSelectionRoles,
   selectSmallestCompleteCatalogSelectionBasis,

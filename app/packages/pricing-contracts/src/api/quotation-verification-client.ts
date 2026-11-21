@@ -3,6 +3,7 @@ import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtim
 import { Effect, Match, Redacted, Schema } from 'effect';
 import { QuotationVerificationApi, QuotationVerificationRequestSchema } from '../apis/quotation-verification.ts';
 import type { QuotationVerificationRequest } from '../apis/quotation-verification.ts';
+import { operationGateway } from './action-gateway.ts';
 
 export interface QuotationVerificationClientOptions {
   readonly baseUrl?: string | URL;
@@ -11,6 +12,11 @@ export interface QuotationVerificationClientOptions {
 
 type QuotationVerificationAuthorizedInvocation = readonly [
   credential: string,
+  requestCorrelation: string,
+  options?: QuotationVerificationClientOptions,
+];
+
+type QuotationVerificationOperationInvocation = readonly [
   requestCorrelation: string,
   options?: QuotationVerificationClientOptions,
 ];
@@ -46,4 +52,16 @@ export const executeQuotationVerificationWithAuthorization = (
         Match.orElse((invocation) => client.quotationVerification.execute({ payload: invocation })),
       ),
     ),
+  );
+
+export const executeQuotationVerification = (
+  payload: QuotationVerificationRequest,
+  ...[requestCorrelation, options = {}]: QuotationVerificationOperationInvocation
+) =>
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeQuotationVerificationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

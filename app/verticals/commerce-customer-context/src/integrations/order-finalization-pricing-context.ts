@@ -24,7 +24,7 @@ import {
   PurchaseCurrencySubjectSchema,
 } from '../../shared/domain/purchase-currency-resolution.ts';
 import { CommerceCustomerProfileRefSchema } from '../../shared/domain/profile-decisions.ts';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { readOrderBuyerPermissionForVerifiedSubject } from '../persistence/purchase-approval-currentness-persistence.ts';
 import { customerCommercePolicyRepositoryForScope } from '../persistence/customer-commerce-policy-persistence.ts';
 import { customerPriceGroupAssignmentStoreForTransaction } from '../persistence/price-group-persistence.ts';

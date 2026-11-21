@@ -30,6 +30,9 @@
       "path": "../../packages/core-runtime"
     },
     {
+      "path": "../../packages/pricing-contracts"
+    },
+    {
       "path": "../../packages/gateway-principal-verifier"
     },
     {
@@ -58,6 +61,12 @@
     },
     {
       "path": "../tax"
+    },
+    {
+      "path": "../../packages/catalog-selection-contracts"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ]
 }

@@ -74,11 +74,11 @@ import { createProductCategoryAction } from '../../src/actions/create-product-ca
 import { addProductCategoryAssignmentAction } from '../../src/actions/add-product-category-assignment.action.ts';
 import { reviseProductUnitAction } from '../../src/actions/revise-product-unit.action.ts';
 import { executeQuantityPreparationWithAuthorization } from '../../src/api/quantity-preparation-client.ts';
-import { CatalogQuantityHandoffReadySchema } from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { CartOpenSelectionPopulationService } from '../../shared/domain/catalog-open-selection-population.ts';
-import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';

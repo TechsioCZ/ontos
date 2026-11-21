@@ -7,7 +7,7 @@ import {
   hasGeneratedActionClientPublication,
   hasOwnerLocalReadServiceFactory,
   ownerActionClientPublication,
-  hasPublishedGeneratedContractShim,
+  hasPublishedGeneratedActionContractShim,
 } from '../generated-governed-http-boundary.mts';
 import {
   hasGeneratedGovernedClientContract,
@@ -642,11 +642,11 @@ it.live('rejects disconnected Action API constructor decoys from the actual gene
     const wrapper = paths[7] ?? '';
     const original = sources.get(target) ?? '';
     const bridge = sources.get(wrapper) ?? '';
-    expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(true);
+    expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(true);
     const decoy = original.replace('export const ManageQuotationActionApi =', UNUSED_NATIVE_API_DECLARATION);
     expect(decoy).not.toBe(original);
     sources.set(target, `${decoy}\nexport const ManageQuotationActionApi = { unsafe: true };`);
-    expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+    expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(false);
     for (const [binding, field] of [
       ['ManageQuotationActionApi', 'groups'],
       ['manageQuotationActionGroupDefinition', 'endpoints'],
@@ -658,9 +658,9 @@ it.live('rejects disconnected Action API constructor decoys from the actual gene
       );
       expect(inside).not.toBe(original);
       sources.set(target, inside);
-      expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+      expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(false);
       sources.set(target, `${original}\n${capture};`);
-      expect(hasPublishedGeneratedContractShim(sources, wrapper, bridge)).toBe(false);
+      expect(hasPublishedGeneratedActionContractShim(sources, wrapper, bridge)).toBe(false);
     }
   }),
 );
@@ -920,7 +920,36 @@ it.live('checks actual Party typed client foreign API contamination', () =>
   }),
 );
 
-it.live('binds actual published-package Read clients back to the enrolled owner aggregate', () =>
+it.live('exempts from the barrel-file lint only the Pricing Action forwarders that still exist', () =>
+  Effect.gen(function* actionForwarderLintExemption() {
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    const configModule: unknown = yield* Effect.promise(() => import(path.join(workspace, 'oxlint.config.ts')));
+    const forwarders = Schema.decodeUnknownSync(
+      Schema.Struct({
+        default: Schema.Struct({
+          overrides: Schema.Array(Schema.Struct({ files: Schema.Array(Schema.String) })),
+        }),
+      }),
+    )(configModule).default.overrides.filter(({ files }) =>
+      files.includes('verticals/pricing/shared/apis/manage-quotation-action.ts'),
+    );
+    expect(forwarders).toHaveLength(1);
+    const sources = new Map(yield* readPricingSourceTree(workspace, 'verticals/pricing'));
+    for (const file of forwarders[0]?.files ?? []) {
+      expect(sources.get(file) ?? '', file).toMatch(
+        /^export \* from '@app\/pricing-contracts\/[a-z-]+(?:\/api)?';\n$/u,
+      );
+    }
+  }),
+);
+
+const shellManifest = (dependencies: readonly string[]) =>
+  JSON.stringify({
+    dependencies: Object.fromEntries(dependencies.map((name) => [name, WORKSPACE_DEPENDENCY_VERSION])),
+    name: SHELL_PACKAGE_SPECIFIER,
+  });
+
+it.live('binds actual package Read clients to their package and the owner aggregate to owner reads only', () =>
   Effect.gen(function* actualPublishedPackageClient() {
     const root = yield* makeFixture();
     const workspace = path.resolve(import.meta.dirname, '../..');
@@ -945,14 +974,8 @@ it.live('binds actual published-package Read clients back to the enrolled owner 
         yield* write(root, file, source);
       }
     }
-    yield* write(
-      root,
-      SHELL_PACKAGE_JSON_PATH,
-      JSON.stringify({
-        dependencies: { [packageName]: WORKSPACE_DEPENDENCY_VERSION },
-        name: SHELL_PACKAGE_SPECIFIER,
-      }),
-    );
+    const contractPackageName = '@app/price-group-catalog-contracts';
+    yield* write(root, SHELL_PACKAGE_JSON_PATH, shellManifest([packageName, contractPackageName]));
     yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
     for (const [name, folder] of [
       ['price-group-catalog', owner],
@@ -967,19 +990,27 @@ it.live('binds actual published-package Read clients back to the enrolled owner 
     const aggregate = yield* Effect.promise(() => readFile(path.join(root, aggregateFile), 'utf-8'));
     yield* write(root, aggregateFile, `${aggregate}\nexport const unclaimedClientCallable = () => globalThis;`);
     const consumer = 'apps/shell-super-app/src/published-package-client-consumer.ts';
-    for (const [binding, allowed] of [
-      ['executePriceGroupDefinitionWithAuthorization, executePriceGroupSourceAssociationsWithAuthorization', true],
-      ['unclaimedClientCallable', false],
+    const packageClient = `import { executePriceGroupDefinitionWithAuthorization } from '${contractPackageName}/price-group-definition/client';\n`;
+    for (const [source, allowed] of [
+      [`import { executePriceGroupSourceAssociationsWithAuthorization } from '${packageName}/api/client';\n`, true],
+      [packageClient, true],
+      // The owner aggregate holds owner reads only: a package read is not reachable through it.
+      [`import { executePriceGroupDefinitionWithAuthorization } from '${packageName}/api/client';\n`, false],
+      [`import { unclaimedClientCallable } from '${packageName}/api/client';\n`, false],
     ] as const) {
-      yield* write(root, consumer, `import { ${binding} } from '${packageName}/api/client';\n`);
+      yield* write(root, consumer, source);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(allowed);
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : source).toBe(allowed);
     }
-    yield* write(
-      root,
-      consumer,
-      `import { executePriceGroupDefinitionWithAuthorization } from '${packageName}/api/client';\n`,
-    );
+    yield* write(root, consumer, packageClient);
+    // A production import of a package read needs its contract package declared, as an import through the owner does.
+    yield* write(root, SHELL_PACKAGE_JSON_PATH, shellManifest([packageName]));
+    const undeclared = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(undeclared)).toBe(true);
+    if (Exit.isFailure(undeclared)) {
+      expect(Cause.pretty(undeclared.cause)).toContain('is a package read: declare its contract package');
+    }
+    yield* write(root, SHELL_PACKAGE_JSON_PATH, shellManifest([packageName, contractPackageName]));
     const packageFile = `${contractPackage}/package.json`;
     const metadata = yield* Effect.promise(() => readFile(path.join(root, packageFile), 'utf-8'));
     yield* write(root, packageFile, metadata.replace('pricing.price-group-catalog', 'foreign.owner'));

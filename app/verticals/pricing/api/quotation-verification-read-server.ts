@@ -12,7 +12,7 @@ import {
   QuotationVerificationPolicyConflictProblemSchema,
   QuotationVerificationPolicyProblemSchema,
   QuotationVerificationUnavailableProblemSchema,
-} from '../shared/apis/quotation-verification.ts';
+} from '@app/pricing-contracts/quotation-verification';
 import { quotationVerificationRead } from '../src/api/quotation-verification.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

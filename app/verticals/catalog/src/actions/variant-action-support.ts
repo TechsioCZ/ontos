@@ -1,7 +1,7 @@
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import { CatalogPersistenceUnavailable } from '../persistence/errors.ts';
 import { VariantCombinationConflict } from './variant-combination-conflict.ts';
 import {

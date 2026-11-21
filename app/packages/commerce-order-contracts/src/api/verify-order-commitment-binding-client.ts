@@ -3,6 +3,7 @@ import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtim
 import { Effect, Redacted } from 'effect';
 import { VerifyOrderCommitmentBindingApi } from '../apis/verify-order-commitment-binding.ts';
 import type { VerifyOrderCommitmentBindingRequest } from '../apis/verify-order-commitment-binding.ts';
+import { operationGateway } from './action-gateway.ts';
 
 export interface VerifyOrderCommitmentBindingClientOptions {
   readonly baseUrl?: string | URL;
@@ -11,6 +12,11 @@ export interface VerifyOrderCommitmentBindingClientOptions {
 
 type VerifyOrderCommitmentBindingAuthorizedInvocation = readonly [
   credential: string,
+  requestCorrelation: string,
+  options?: VerifyOrderCommitmentBindingClientOptions,
+];
+
+type VerifyOrderCommitmentBindingOperationInvocation = readonly [
   requestCorrelation: string,
   options?: VerifyOrderCommitmentBindingClientOptions,
 ];
@@ -49,4 +55,16 @@ export const executeVerifyOrderCommitmentBindingWithAuthorization = (
           })
         : client.verifyOrderCommitmentBinding.execute({ payload }),
     ),
+  );
+
+export const executeVerifyOrderCommitmentBinding = (
+  payload: VerifyOrderCommitmentBindingRequest,
+  ...[requestCorrelation, options = {}]: VerifyOrderCommitmentBindingOperationInvocation
+) =>
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeVerifyOrderCommitmentBindingWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

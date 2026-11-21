@@ -16,10 +16,6 @@ import type { OperationContext, StorefrontRegistryReadiness } from '../../shared
 
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- This generated public compatibility surface remains until the vertical adds a centralized browser runtime.
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
-export {
-  executeCurrentStorefrontApplication,
-  executeCurrentStorefrontApplicationWithAuthorization,
-} from './current-storefront-application-client.ts';
 
 type StorefrontRegistryApiGroups =
   typeof storefrontRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;

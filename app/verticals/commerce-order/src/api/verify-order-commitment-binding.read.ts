@@ -6,7 +6,7 @@ import { orderCommitmentReadServices } from './order-commitment-read-support.ts'
 import {
   VerifyOrderCommitmentBindingRequestSchema,
   VerifyOrderCommitmentBindingResponseSchema,
-} from '../../shared/apis/verify-order-commitment-binding.ts';
+} from '@app/commerce-order-contracts/verify-order-commitment-binding';
 
 const moduleKey = 'commerce.order' as const;
 

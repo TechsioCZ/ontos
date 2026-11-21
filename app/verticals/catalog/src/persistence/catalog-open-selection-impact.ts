@@ -6,7 +6,7 @@ import type {
   CatalogSelectionEvidenceReader,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import { openSelectionReferencesProduct } from '../../shared/domain/catalog-open-selection-population.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import { assessCatalogOpenSelectionImpact } from './catalog-selection-open-population.ts';
 import { catalogSelectionEvidenceForScope } from './catalog-selection-evidence-service.ts';
 

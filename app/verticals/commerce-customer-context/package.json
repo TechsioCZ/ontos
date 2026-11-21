@@ -64,8 +64,6 @@
     "./api/effective-customer-group-membership-set-v1/client": "./src/api/effective-customer-group-membership-set-v1-client.ts",
     "./api/ensure-retail-customer-profile-action": "./shared/apis/ensure-retail-customer-profile-action.ts",
     "./api/ensure-retail-customer-profile-action/client": "./src/api/ensure-retail-customer-profile-action-client.ts",
-    "./api/market-subject-restrictions-current": "./shared/apis/market-subject-restrictions-current.ts",
-    "./api/market-subject-restrictions-current/client": "./src/api/market-subject-restrictions-current-client.ts",
     "./api/migrate-customer-profile-ico-action": "./shared/apis/migrate-customer-profile-ico-action.ts",
     "./api/migrate-customer-profile-ico-action/client": "./src/api/migrate-customer-profile-ico-action-client.ts",
     "./api/order-commitment-approval-evidence": "./shared/apis/order-commitment-approval-evidence.ts",
@@ -259,6 +257,7 @@
     "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/party-registry": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/payment-term-catalog-contracts": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
@@ -282,10 +281,10 @@
     "@app/commerce-cart-contracts": "workspace:*",
     "@app/commerce-cart-finalization-contracts": "workspace:*",
     "@app/storefront-registry-contracts": "workspace:*",
-    "@app/commerce-cart": "workspace:*",
     "@app/catalog-selection-contracts": "workspace:*"
   },
   "devDependencies": {
+    "@app/commerce-cart": "workspace:*",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",

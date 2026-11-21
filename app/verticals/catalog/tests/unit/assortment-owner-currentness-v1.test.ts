@@ -11,7 +11,7 @@ import {
   AssortmentSetCompositionV1ResponseSchema,
 } from '../../shared/apis/assortment-set-composition-v1.ts';
 import { AssortmentSelectionAssessmentV1RequestSchema } from '../../shared/apis/assortment-selection-assessment-v1.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { SetCompositionRevisionSchema } from '../../shared/domain/set-composition.ts';
 import { CategoryPersistenceUnavailable } from '../../src/persistence/category-persistence.ts';
 import type { AssortmentProductClassificationV1Source } from '../../src/persistence/assortment-product-classification-v1.ts';

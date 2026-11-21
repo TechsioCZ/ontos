@@ -10,16 +10,16 @@ import type {
   ProductTypeCurrentBasis,
   ProductTypeCurrentRulesRevision,
 } from '../../shared/domain/product-type-rules.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { ProductTypeRef } from '../../shared/resources/product-type.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   CatalogSelectionBasisSchema,
   sameCatalogSelectionBasis,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { effectiveValueItemKeyHash, variantAxisPersistenceForScope } from './variant-axis-persistence.ts';
 import type { CurrentVariantAxes, CurrentVariantAxisValue } from './variant-axis-persistence.ts';
 import { evaluateCurrentProductTypeReadiness } from './product-type-readiness-evaluator.ts';

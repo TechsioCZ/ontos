@@ -4,8 +4,9 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { ProductInstantSchema } from '../domain/product.ts';
-import { CatalogSelectionSchema, CatalogSelectionValidEvidenceSchema } from '../domain/catalog-selection-evidence.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 const sameResourceRef = (
   left: {

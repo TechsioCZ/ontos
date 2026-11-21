@@ -39,7 +39,7 @@ import type { CreateProductRecoveryResponseSchema } from '@app/catalog/api/creat
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
 import type { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
-import type { ProductRef } from '@app/catalog/resources/product';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import {
   executeImportSourceAssertionWithAuthorization,
   executeInventorySourceImportReceiptWithAuthorization,
@@ -56,10 +56,10 @@ import {
 } from '@app/price-group-catalog/api/client';
 import {
   executeDefinePriceWithAuthorization,
-  executePriceDefinitionWithAuthorization,
   executeRevisePriceWithAuthorization,
   executePriceSourceResultLookupWithAuthorization,
 } from '@app/pricing/api/client';
+import { executePriceDefinitionWithAuthorization } from '@app/pricing-contracts/price-definition/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Layer, Match, Option, Schema, Stream } from 'effect';

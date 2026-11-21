@@ -5,7 +5,7 @@ import type {
   OwnerAuthorizationOverlayService,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
-import type { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
+import type { CartDraftRejected } from '@app/commerce-cart-contracts/domain/cart-draft';
 import { cartAuthorityForScope } from '../services/cart-population.service.ts';
 import { Effect, Layer, Match, Schema } from 'effect';
 import {

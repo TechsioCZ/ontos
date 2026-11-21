@@ -47,9 +47,9 @@ import { SetVariantAttributeOverrideResultSchema } from '../../shared/actions/se
 import { UpdateProductResultSchema } from '../../shared/actions/update-product.ts';
 import { QuantityPreparationResponseSchema } from '../../shared/apis/quantity-preparation.ts';
 import { VariantHistoryResponseSchema } from '../../shared/apis/variant-history.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductConfigurationSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
-import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { requireExecutionResult } from './action-execution-result.ts';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';

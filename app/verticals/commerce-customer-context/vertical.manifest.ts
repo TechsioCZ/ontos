@@ -125,15 +125,15 @@ import { GuestPaymentTermsResolutionApi } from './shared/apis/guest-payment-term
 import { guestPaymentTermsResolutionRead } from './src/api/guest-payment-terms-resolution.read.ts';
 import { InvoiceRecipientResolutionApi } from './shared/apis/invoice-recipient-resolution.ts';
 import { invoiceRecipientResolutionRead } from './src/api/invoice-recipient-resolution.read.ts';
-import { MarketAffectedUseAssessmentApi } from './shared/apis/market-affected-use-assessment.ts';
+import { MarketAffectedUseAssessmentApi } from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
 import { marketAffectedUseAssessmentRead } from './src/api/market-affected-use-assessment.read.ts';
 import { MarketBootstrapPolicyCurrentApi } from './shared/apis/market-bootstrap-policy-current.ts';
 import { marketBootstrapPolicyResourceDescriptor } from './shared/resources/market-bootstrap-policy.ts';
 import { MarketBootstrapResolutionApi } from './shared/apis/market-bootstrap-resolution.ts';
 import { marketBootstrapResolutionRead } from './src/api/market-bootstrap-resolution.read.ts';
-import { MarketRetirementReservationRecoveryApi } from './shared/apis/market-retirement-reservation-recovery.ts';
+import { MarketRetirementReservationRecoveryApi } from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
 import { marketRetirementReservationRecoveryRead } from './src/api/market-retirement-reservation-recovery.read.ts';
-import { MarketSubjectRestrictionsCurrentApi } from './shared/apis/market-subject-restrictions-current.ts';
+import { MarketSubjectRestrictionsCurrentApi } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { marketSubjectRestrictionsCurrentRead } from './src/api/market-subject-restrictions-current.read.ts';
 import { migrateCounterpartyPriceGroupAction } from './src/actions/migrate-counterparty-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from './src/actions/migrate-customer-price-group.action.ts';
@@ -146,7 +146,7 @@ import { OrganizationCustomerProfileIcoApi } from './shared/apis/organization-cu
 import { OrganizationCustomerProfileIcoMigrationApi } from './shared/apis/organization-customer-profile-ico-migration.ts';
 import { organizationCustomerProfileIcoMigrationRead } from './src/api/organization-customer-profile-ico-migration.read.ts';
 import { organizationCustomerProfileIcoRead } from './src/api/organization-customer-profile-ico.read.ts';
-import { PaymentTermAffectedUseAssessmentApi } from './shared/apis/payment-term-affected-use-assessment.ts';
+import { PaymentTermAffectedUseAssessmentApi } from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import { paymentTermAffectedUseAssessmentRead } from './src/api/payment-term-affected-use-assessment.read.ts';
 import { PaymentTermPolicyCurrentApi } from './shared/apis/payment-term-policy-current.ts';
 import { paymentTermPolicyResourceDescriptor } from './shared/resources/payment-term-policy.ts';

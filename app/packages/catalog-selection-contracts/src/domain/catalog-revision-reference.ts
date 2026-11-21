@@ -1,31 +1,13 @@
 import { Schema } from 'effect';
 
+import { ProductRefSchema } from '../resources/product.ts';
+import { VariantRefSchema } from '../resources/variant.ts';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionIdSchema,
   CatalogRevisionInstantSchema,
   CatalogRevisionNumberSchema,
-} from '@app/catalog-selection-contracts/catalog-resource-reference';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
-
-export {
-  CatalogResourceRefSchema,
-  CatalogRevisionIdSchema,
-  CatalogRevisionInstantSchema,
-  CatalogRevisionNumberSchema,
-  CatalogRevisionResourceIdSchema,
-  CatalogRevisionTenantIdSchema,
-} from '@app/catalog-selection-contracts/catalog-resource-reference';
-export type {
-  CatalogResourceRef,
-  CatalogResourceRefInput,
-  CatalogRevisionId,
-  CatalogRevisionInstant,
-  CatalogRevisionNumber,
-  CatalogRevisionResourceId,
-  CatalogRevisionTenantId,
-} from '@app/catalog-selection-contracts/catalog-resource-reference';
+} from './catalog-resource-reference.ts';
 
 const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 
@@ -186,8 +168,6 @@ export const CatalogRevisionLookupResultSchema = Schema.Union([
   CatalogRevisionLookupUnavailableSchema,
 ]);
 export type CatalogRevisionLookupResult = typeof CatalogRevisionLookupResultSchema.Type;
-
-export const CatalogHistoricalLookupResultSchema = CatalogRevisionLookupResultSchema;
 
 /** A lookup result is safe to compose only when it preserves the requested exact reference. */
 export const catalogRevisionLookupPreservesReference = (

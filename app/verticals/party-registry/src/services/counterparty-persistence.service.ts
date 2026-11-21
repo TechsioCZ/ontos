@@ -22,8 +22,8 @@ import {
   rolePeriodStorageStateAt,
 } from '../../shared/domain/counterparty-role-period.ts';
 import type { CounterpartyRolePeriodRef } from '../../shared/resources/counterparty-role-period.ts';
-import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
-import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import {

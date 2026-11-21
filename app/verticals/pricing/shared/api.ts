@@ -11,11 +11,11 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { CommercialFeeDefinitionApi } from './apis/commercial-fee-definition.ts';
 import { CommercialFeeResultLookupApi } from './apis/commercial-fee-result-lookup.ts';
 import { CommercialFeeScheduleApi } from './apis/commercial-fee-schedule.ts';
-import { CommitmentConfirmationVerificationApi } from './apis/commitment-confirmation-verification.ts';
+import { CommitmentConfirmationVerificationApi } from '@app/pricing-contracts/commitment-confirmation-verification';
 import { ContractualDiscountResultLookupApi } from './apis/contractual-discount-result-lookup.ts';
 import { CurrencySupportResultLookupApi } from './apis/currency-support-result-lookup.ts';
-import { CurrentPricingDecisionApi } from './apis/current-pricing-decision.ts';
-import { CurrentSupportedCurrenciesApi } from './apis/current-supported-currencies.ts';
+import { CurrentPricingDecisionApi } from '@app/pricing-contracts/current-pricing-decision';
+import { CurrentSupportedCurrenciesApi } from '@app/pricing-contracts/current-supported-currencies';
 import { DefineCommercialFeeActionApi } from './apis/define-commercial-fee-action.ts';
 import { DefinePriceActionApi } from './apis/define-price-action.ts';
 import { ExactPriceResolutionApi } from './apis/exact-price-resolution.ts';
@@ -26,14 +26,14 @@ import { ManageProductPricesBulkActionApi } from './apis/manage-product-prices-b
 import { ManageQuantityTierActionApi } from './apis/manage-quantity-tier-action.ts';
 import { ManageQuotationActionApi } from './apis/manage-quotation-action.ts';
 import { ManageZeroFloorAuthorizationActionApi } from './apis/manage-zero-floor-authorization-action.ts';
-import { PriceDefinitionApi } from './apis/price-definition.ts';
+import { PriceDefinitionApi } from '@app/pricing-contracts/price-definition';
 import { PriceGroupSourcePricesApi } from './apis/price-group-source-prices.ts';
 import { PriceResultLookupApi } from './apis/price-result-lookup.ts';
 import { PriceScheduleApi } from './apis/price-schedule.ts';
 import { PriceSourceResultLookupApi } from './apis/price-source-result-lookup.ts';
 import { QuantityTierResultLookupApi } from './apis/quantity-tier-result-lookup.ts';
 import { QuotationResultLookupApi } from './apis/quotation-result-lookup.ts';
-import { QuotationVerificationApi } from './apis/quotation-verification.ts';
+import { QuotationVerificationApi } from '@app/pricing-contracts/quotation-verification';
 import { ReviseCommercialFeeActionApi } from './apis/revise-commercial-fee-action.ts';
 import { RevisePriceActionApi } from './apis/revise-price-action.ts';
 import { SetSupportedCurrenciesActionApi } from './apis/set-supported-currencies-action.ts';
@@ -62,42 +62,6 @@ export const pricingFoundationApi = HttpApi.make('PricingApiFoundation').add(
     }),
   ),
 );
-
-export {
-  CurrentSupportedCurrenciesApi,
-  CurrentSupportedCurrenciesAuthenticationProblemSchema,
-  CurrentSupportedCurrenciesInternalProblemSchema,
-  CurrentSupportedCurrenciesInvalidProblemSchema,
-  CurrentSupportedCurrenciesInvalidSchema,
-  CurrentSupportedCurrenciesNotFoundProblemSchema,
-  CurrentSupportedCurrenciesPolicyConflictProblemSchema,
-  CurrentSupportedCurrenciesPolicyProblemSchema,
-  CurrentSupportedCurrenciesRequestSchema,
-  CurrentSupportedCurrenciesResponseSchema,
-  CurrentSupportedCurrenciesStaleSchema,
-  CurrentSupportedCurrenciesSuccessSchema,
-  CurrentSupportedCurrenciesUnavailableProblemSchema,
-  CurrentSupportedCurrenciesUnavailableSchema,
-  CurrentSupportedCurrenciesUnverifiableSchema,
-  PricingCartIdSchema,
-  PricingChannelIdSchema,
-  PricingContextRevisionSchema,
-  PricingCurrencyCodeSchema,
-  PricingCurrencyCodeSetSchema,
-  PricingCurrencySubjectSchema,
-  PricingInstantSchema,
-  PricingMarketIdSchema,
-  PricingRevisionSchema,
-  PricingSellingLegalEntityIdSchema,
-  PricingStorefrontIdSchema,
-  PricingTenantIdSchema,
-} from './apis/current-supported-currencies.ts';
-export type {
-  CurrentSupportedCurrenciesRequest,
-  CurrentSupportedCurrenciesResponse,
-  CurrentSupportedCurrenciesSuccess,
-  PricingCurrencySubject,
-} from './apis/current-supported-currencies.ts';
 
 export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(pricingFoundationApi)

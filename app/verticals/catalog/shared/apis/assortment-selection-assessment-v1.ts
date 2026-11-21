@@ -5,10 +5,10 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import {
   CatalogSelectionBasisListSchema,
   CatalogSelectionBasisRoles,
-  CatalogSelectionSchema,
-} from '../domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { CatalogSelectionOwnerAssessmentResultSchema } from '../domain/catalog-selection-owner-contract.ts';
-import { CatalogRevisionInstantSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 const AssortmentSelectionSourceProofV1Schema = Schema.Struct({
   assessedAt: CatalogRevisionInstantSchema,

@@ -5,9 +5,9 @@ import type {
   PricingZeroFloorAuthorization,
   PricingZeroFloorCurrentAuthorizationSet,
 } from '@app/pricing-contracts/domain/line-composition';
-import type { CatalogResourceRef } from '@app/catalog/domain/catalog-revision-reference';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
-import type { ProductUnitRef } from '@app/catalog/resources/product-unit';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import type { ProductUnitRef } from '@app/catalog-selection-contracts/resources/product-unit';
 import {
   PricingCommercialFeeCalculationResultSchema,
   pricingCommercialFeeCurrentSetPredicateRef,

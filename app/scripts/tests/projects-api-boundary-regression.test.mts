@@ -14,7 +14,7 @@ const readSources = (directory: string, sources = new Map<string, string>()) => 
     const file = `${directory}/${entry.name}`;
     if (entry.isDirectory()) {
       readSources(file, sources);
-    } else if (entry.name.endsWith('.ts') || entry.name === 'package.json') {
+    } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.json')) {
       sources.set(file, readFileSync(path.join(root, file), 'utf-8'));
     }
   }

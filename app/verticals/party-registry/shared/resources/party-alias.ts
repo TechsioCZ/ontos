@@ -7,7 +7,10 @@ import { Schema } from 'effect';
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import { PartyMergeRefSchema } from './party-merge.ts';
 import { PartyRefSchema } from './party.ts';
-import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from '@app/party-registry-contracts/resources/resource-ref-identifiers';
 
 // oxlint-disable-next-line eslint/no-unused-vars -- Reserved generated ResourceRef schema retained without publishing a new API.
 const PartyAliasRefSchema = Schema.Struct({

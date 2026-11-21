@@ -46,7 +46,7 @@ import {
   executeInitializePopulationAuthorityWithAuthorization,
   executeReviseCartDraftWithAuthorization,
 } from '@app/commerce-cart/api/client';
-import { executePreapprovalCartObservationWithAuthorization } from '@app/commerce-cart/api/preapproval-cart-observation/client';
+import { executePreapprovalCartObservationWithAuthorization } from '@app/commerce-cart-contracts/preapproval-cart-observation/client';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -55,7 +55,7 @@ import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate'
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { SetSupportedCurrenciesV2ResultSchema } from '@app/pricing-contracts/domain/currency-support';
 import { PriceSourceAssertionAssessmentSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import {
@@ -64,7 +64,7 @@ import {
   DuplicateCandidateDetailResponseSchema,
   PartyMatchDecisionResponseSchema,
 } from '@app/party-registry/api';
-import { CatalogQuantityHandoffSchema } from '@app/catalog/domain/catalog-quantity-handoff';
+import { CatalogQuantityHandoffSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import type { CreatePartyResultSchema } from '@app/party-registry/api';
 import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,

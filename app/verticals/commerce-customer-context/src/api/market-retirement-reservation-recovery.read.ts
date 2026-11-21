@@ -11,13 +11,13 @@ import { Effect } from 'effect';
 import type {
   MarketRetirementReservationRecoveryRequest,
   MarketRetirementReservationRecoveryResponse,
-} from '../../shared/apis/market-retirement-reservation-recovery.ts';
+} from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
 import { marketRetirementReservationRecoveryForInvoker } from '../persistence/market-retirement-persistence.ts';
 import type { MarketRetirementReservationRecoveryRepository } from '../services/market-retirement-reservation-recovery.service.ts';
 import {
   MarketRetirementReservationRecoveryRequestSchema,
   MarketRetirementReservationRecoveryResponseSchema,
-} from '../../shared/apis/market-retirement-reservation-recovery.ts';
+} from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
 
 const moduleKey = 'commerce.customer-context';
 

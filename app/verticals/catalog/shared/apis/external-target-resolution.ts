@@ -7,7 +7,7 @@ import {
   CatalogExternalTargetRequestSchema,
   CatalogExternalTargetKindSchema,
 } from '../domain/external-target-resolution.ts';
-import { CatalogResourceRefSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 export const ExternalTargetResolutionRequestSchema = CatalogExternalTargetRequestSchema;
 export type ExternalTargetResolutionRequest = typeof ExternalTargetResolutionRequestSchema.Type;

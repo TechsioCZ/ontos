@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { CatalogResourceRefSchema } from './catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 const qualifiedPart = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 const issuerId = qualifiedPart.pipe(Schema.brand('CatalogExternalIssuerId'));

@@ -19,11 +19,11 @@ import type {
   ProductVariantSnapshotRequest,
   ProductVariantSnapshotResponse,
 } from '../../shared/apis/product-variant-snapshot.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
-import { CatalogSelectionValidEvidenceSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import { ProductRevisionSchema } from '../../shared/domain/product.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import type { CatalogSelectionEvidenceServiceResult } from '../persistence/catalog-selection-evidence-service.ts';
 import { catalogSelectionEvidenceForScope } from '../persistence/catalog-selection-evidence-service.ts';
 import type {

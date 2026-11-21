@@ -45,6 +45,9 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ]
 }

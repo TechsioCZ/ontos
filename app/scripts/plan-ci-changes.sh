@@ -8,6 +8,8 @@ paths_file="${1:?Pass the changed-paths output file}"
 
 mode=full
 reason='This event requires the complete suite.'
+# The commit baselines are held to (Lean Core Dependencies): the exact comparison base when there is one.
+comparison_base=
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
   reason="${QUEUE_PROOF_RUN:?A proven commit names its proving run} already passed every gate of this workflow on this exact tree."
@@ -58,6 +60,7 @@ elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_req
     [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]] &&
     git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA" &&
     git diff --name-only --no-renames -z "$BASE_SHA" "$HEAD_SHA" >"$paths_file"; then
+    comparison_base="$BASE_SHA"
     count=0
     documentation=true
     while IFS= read -r -d '' path; do
@@ -80,6 +83,24 @@ elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_req
     reason='The exact comparison is unavailable; the complete suite is required.'
   fi
 fi
+
+# A push holds baselines to the commit its comparison stands on, whether or not the exact comparison above
+# could run: event.before on a branch with a merge queue, which a multi-commit push or a ruleset bypass leaves
+# outside this two-commit checkout (the Lean Core row fetches the base by SHA, so it need not be here), and on
+# a branch without one the newest green push the lookup above found, or none. A new branch (an all-zero
+# before) names no base, and the check that needs one fails. Schedule and dispatch runs have no comparison and
+# hold baselines to the first parent, which their two-commit checkout holds. This names a commit only; mode,
+# reason and the changed paths stay those of the comparison above.
+case "${GITHUB_EVENT_NAME:-}" in
+  push)
+    if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ && ! "$BASE_SHA" =~ ^0+$ ]]; then
+      comparison_base="$BASE_SHA"
+    fi
+    ;;
+  schedule | workflow_dispatch)
+    comparison_base="$(git rev-parse --verify --quiet 'HEAD^1^{commit}')" || comparison_base=''
+    ;;
+esac
 
 # A formatter, linter or hook configuration reformats or re-lints files nobody touched: the one real
 # failure a changed-file lint would miss. Such a run, the nightly run and any run without the exact
@@ -104,6 +125,7 @@ fi
 printf 'mode=%s\n' "$mode" >>"$GITHUB_OUTPUT"
 printf 'lintSweep=%s\n' "$lint_sweep" >>"$GITHUB_OUTPUT"
 printf 'reason=%s\n' "$reason" >>"$GITHUB_OUTPUT"
+printf 'base=%s\n' "$comparison_base" >>"$GITHUB_OUTPUT"
 if [[ "$mode" == docs || "$mode" == proven ]]; then
   jq -cn '{
     "workspace-gate":"skipped", "workspace-unit":"skipped", "static-contracts":"skipped",

@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 
 import { StockItemIdSchema, StockItemRefSchema } from '../resources/stock-item.ts';
 

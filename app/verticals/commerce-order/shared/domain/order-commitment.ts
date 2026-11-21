@@ -1,5 +1,5 @@
 import { CoreSearchResourceRefSchema } from '@app/core-runtime';
-import { FinalCartCandidateRefSchema } from '@app/commerce-cart-finalization-contracts/final-candidate';
+import { FinalCartCandidateRefSchema } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import {
   OrderCommitmentApprovalProofSchema,
   OrderCommitmentApprovalRequestSnapshotSchema,

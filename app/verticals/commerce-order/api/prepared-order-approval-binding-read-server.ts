@@ -12,7 +12,7 @@ import {
   PreparedOrderApprovalBindingPolicyConflictProblemSchema,
   PreparedOrderApprovalBindingPolicyProblemSchema,
   PreparedOrderApprovalBindingUnavailableProblemSchema,
-} from '../shared/apis/prepared-order-approval-binding.ts';
+} from '@app/commerce-order-contracts/prepared-order-approval-binding';
 import { preparedOrderApprovalBindingRead } from '../src/api/prepared-order-approval-binding.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

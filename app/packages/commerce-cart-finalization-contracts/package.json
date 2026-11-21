@@ -5,8 +5,6 @@
   "type": "module",
   "description": "Cart-owned immutable final candidate public schemas and governed client.",
   "exports": {
-    "./final-candidate": "./src/apis/final-cart-candidate.ts",
-    "./final-candidate/client": "./src/api/final-cart-candidate-client.ts",
     "./final-cart-candidate": "./src/apis/final-cart-candidate.ts",
     "./final-cart-candidate/client": "./src/api/final-cart-candidate-client.ts"
   },

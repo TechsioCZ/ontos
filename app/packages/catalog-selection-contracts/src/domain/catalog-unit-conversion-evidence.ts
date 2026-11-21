@@ -1,8 +1,9 @@
 import { Schema } from 'effect';
 
-import { CatalogRevisionInstantSchema, sameCatalogRevisionReference } from './catalog-revision-reference.ts';
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
-import { CatalogSelectionRevisionSchema } from './catalog-selection-evidence.ts';
+import { CatalogRevisionInstantSchema } from './catalog-resource-reference.ts';
+import type { CatalogResourceRef } from './catalog-resource-reference.ts';
+import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
+import { CatalogSelectionRevisionSchema } from './catalog-selection.ts';
 
 const decimalPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/u;
 

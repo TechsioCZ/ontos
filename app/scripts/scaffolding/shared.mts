@@ -963,7 +963,7 @@ export const isModuleRegistrationImport = (candidate: string): boolean =>
 
 export const isModuleManifestImport = (candidate: string): boolean =>
   isModuleReadImport(candidate) ||
-  /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';)$/u.test(
+  /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '(?:\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts|@app\/[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*)';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';)$/u.test(
     candidate,
   );
 
@@ -2208,7 +2208,7 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
   return entries;
 };
 
-const normalizeGeneratedSlotEntry = (entry: string): string =>
+export const normalizeGeneratedSlotEntry = (entry: string): string =>
   entry
     .replaceAll(/,\s*(?<closing>[\]})])/gu, '$<closing>')
     .replaceAll(/\s+/gu, ' ')

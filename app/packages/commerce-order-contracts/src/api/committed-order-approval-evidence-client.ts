@@ -3,6 +3,7 @@ import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtim
 import { Effect, Redacted } from 'effect';
 import { CommittedOrderApprovalEvidenceApi } from '../apis/committed-order-approval-evidence.ts';
 import type { CommittedOrderApprovalEvidenceRequest } from '../apis/committed-order-approval-evidence.ts';
+import { operationGateway } from './action-gateway.ts';
 
 export interface CommittedOrderApprovalEvidenceClientOptions {
   readonly baseUrl?: string | URL;
@@ -11,6 +12,11 @@ export interface CommittedOrderApprovalEvidenceClientOptions {
 
 type CommittedOrderApprovalEvidenceAuthorizedInvocation = readonly [
   credential: string,
+  requestCorrelation: string,
+  options?: CommittedOrderApprovalEvidenceClientOptions,
+];
+
+type CommittedOrderApprovalEvidenceOperationInvocation = readonly [
   requestCorrelation: string,
   options?: CommittedOrderApprovalEvidenceClientOptions,
 ];
@@ -36,4 +42,16 @@ export const executeCommittedOrderApprovalEvidenceWithAuthorization = (
 ) =>
   committedOrderApprovalEvidenceClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) => client.committedOrderApprovalEvidence.execute({ payload })),
+  );
+
+export const executeCommittedOrderApprovalEvidence = (
+  payload: CommittedOrderApprovalEvidenceRequest,
+  ...[requestCorrelation, options = {}]: CommittedOrderApprovalEvidenceOperationInvocation
+) =>
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCommittedOrderApprovalEvidenceWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

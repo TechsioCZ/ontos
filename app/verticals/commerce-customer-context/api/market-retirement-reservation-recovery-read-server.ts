@@ -12,7 +12,7 @@ import {
   MarketRetirementReservationRecoveryPolicyConflictProblemSchema,
   MarketRetirementReservationRecoveryPolicyProblemSchema,
   MarketRetirementReservationRecoveryUnavailableProblemSchema,
-} from '../shared/apis/market-retirement-reservation-recovery.ts';
+} from '@app/customer-market-retirement-contracts/market-retirement-reservation-recovery';
 import { marketRetirementReservationRecoveryRead } from '../src/api/market-retirement-reservation-recovery.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

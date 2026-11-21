@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
 import { ProductEvidenceReferenceSchema, ProductReasonSchema, ProductVariantSchema } from '../domain/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 export const ReactivateVariantPayloadSchema = Schema.Struct({
   evidenceRefs: Schema.NonEmptyArray(ProductEvidenceReferenceSchema),

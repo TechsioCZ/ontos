@@ -5,7 +5,7 @@ import { expect, it } from 'effect-rstest';
 import {
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedActionHttpRunnerBinding,
-  hasPublishedGeneratedContractShim,
+  hasPublishedGeneratedActionContractShim,
   hasGeneratedGovernedServerContract,
 } from '../generated-governed-http-boundary.mts';
 import { hasGeneratedModuleApiContract, hasGeneratedSourceHeader } from '../generated-module-api-boundary.mts';
@@ -1333,7 +1333,7 @@ it('binds native handler audiences to the actual owner and preserves thin server
   }
 });
 
-it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
+it('classifies only exact published Action HTTP contract shims and no read forwarder', () => {
   const owner = INVENTORY_VERTICAL_PATH;
   const packageFile = 'packages/inventory-public-contracts/package.json';
   const readContractFile = `${owner}/shared/apis/stock-list.ts`;
@@ -1369,15 +1369,11 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(HttpApiGrou
     [STOCK_LIST_PUBLISHED_SOURCE, readTarget],
     [RESERVE_PUBLISHED_SOURCE, actionTarget],
   ]);
-  const acceptsRead = (source = readShim) => hasPublishedGeneratedContractShim(sources, readContractFile, source);
-  const acceptsAction = (source = actionShim) => hasPublishedGeneratedContractShim(sources, actionFile, source);
-  expect(acceptsRead()).toBe(true);
+  const acceptsRead = (source = readShim) => hasPublishedGeneratedActionContractShim(sources, readContractFile, source);
+  const acceptsAction = (source = actionShim) => hasPublishedGeneratedActionContractShim(sources, actionFile, source);
+  // A module read is published from its package with no owner file; an owner read forwarder is never accepted.
+  expect(acceptsRead()).toBe(false);
   expect(acceptsAction()).toBe(true);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget.replace(NATIVE_HTTP_SOURCE_IMPORT, FAKE_HTTP_SOURCE_IMPORT));
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, `${readTarget}\nconst HttpApiGroup = fakeGroup;`);
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget);
   const disconnected = `${actionTarget.replace(
     'export const ReserveActionApi =',
     UNUSED_NATIVE_API_DECLARATION,
@@ -1434,15 +1430,14 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(ReserveActi
   sources.set(RESERVE_PUBLISHED_SOURCE, actionTarget);
   for (const invalid of [
     { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, packageName: '@app/other' } },
-    { ...metadata, exports: { ...metadata.exports, './stock-list': '../private.ts' } },
-    { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
+    { ...metadata, exports: { ...metadata.exports, './reserve-action': '../private.ts' } },
   ]) {
     sources.set(packageFile, JSON.stringify(invalid));
-    expect(acceptsRead()).toBe(false);
+    expect(acceptsAction()).toBe(false);
   }
   sources.set(packageFile, JSON.stringify(metadata));
   sources.set('packages/ambiguous/package.json', JSON.stringify(metadata));
-  expect(acceptsRead()).toBe(false);
+  expect(acceptsAction()).toBe(false);
 });
 
 it.live('binds actual governed Action HTTP runners across formatting and an authenticated observer', () =>
@@ -1931,17 +1926,104 @@ for (const [name, imported, allowed] of [
   );
 }
 
-for (const [subpath, publicBinding] of [
-  ['catalog-selection-purpose', 'selectSmallestCompleteCatalogSelectionBasis'],
-  ['catalog-unit-conversion-evidence', 'catalogUnitConversionProves'],
+const PRIVATE_ROUTINE_SOURCE = 'export const privateRoutine = () => true;\n';
+const CATALOG_PRIVATE_ROUTINE = 'verticals/catalog/src/handlers/private-contract.ts';
+
+const VALUE_ONLY_CLAIM = { moduleApis: [], moduleId: 'commerce.catalog', packageName: '@app/catalog' } as const;
+
+it.live('rejects a vertical that claims another deployment identity as a value-only contract owner', () =>
+  Effect.gen(function* verticalClaimingForeignIdentity() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const manifest = 'verticals/inventory/package.json';
+    yield* write(
+      root,
+      manifest,
+      JSON.stringify({
+        name: INVENTORY_PACKAGE_SPECIFIER,
+        ontosContractOwner: { ...VALUE_ONLY_CLAIM, appId: 'catalog' },
+      }),
+    );
+    // With the claimed identity, Inventory would read Catalog's private source as its own.
+    yield* write(root, CATALOG_PRIVATE_ROUTINE, PRIVATE_ROUTINE_SOURCE);
+    yield* write(
+      root,
+      'verticals/inventory/shared/catalog-private-consumer.ts',
+      "import { privateRoutine } from '../../catalog/src/handlers/private-contract.ts';\nexport const run = privateRoutine;\n",
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        `${manifest}: a value-only ontosContractOwner claims catalog's identity`,
+      );
+    }
+  }),
+);
+
+it.live("rejects a value-only contract package that imports its owner's private source", () =>
+  Effect.gen(function* kernelReachingOwnerPrivateSource() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const kernelFile = 'packages/catalog-selection-contracts/src/domain/private-reach.ts';
+    const privateOrigin = CATALOG_PRIVATE_ROUTINE;
+    yield* write(root, privateOrigin, PRIVATE_ROUTINE_SOURCE);
+    yield* write(
+      root,
+      kernelFile,
+      "import { privateRoutine } from '../../../../verticals/catalog/src/handlers/private-contract.ts';\nexport const run = privateRoutine;\n",
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(kernelFile);
+      expect(Cause.pretty(result.cause)).toContain(privateOrigin);
+    }
+  }),
+);
+
+it.live('rejects a value-only contract package that names an owner the topology does not know', () =>
+  Effect.gen(function* packageClaimingUnknownOwner() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const manifest = 'packages/billing-value-contracts/package.json';
+    yield* write(
+      root,
+      manifest,
+      JSON.stringify({
+        exports: { './value': './src/value.ts' },
+        name: '@app/billing-value-contracts',
+        ontosContractOwner: { ...VALUE_ONLY_CLAIM, appId: 'billing' },
+      }),
+    );
+    yield* write(root, 'packages/billing-value-contracts/src/value.ts', "export const billingValue = 'value';\n");
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        `${manifest}: a value-only ontosContractOwner names owner billing, which the topology does not know`,
+      );
+    }
+  }),
+);
+
+for (const [owner, file, specifier, publicBinding] of [
+  [
+    'verticals/catalog',
+    'verticals/catalog/shared/domain/catalog-selection-purpose.ts',
+    '@app/catalog/domain/catalog-selection-purpose',
+    'selectSmallestCompleteCatalogSelectionBasis',
+  ],
+  [
+    'packages/catalog-selection-contracts',
+    'packages/catalog-selection-contracts/src/domain/catalog-unit-conversion-evidence.ts',
+    '@app/catalog-selection-contracts/catalog-unit-conversion-evidence',
+    'catalogUnitConversionProves',
+  ],
 ] as const) {
   for (const privateSelection of [false, true]) {
     it.live(`checks actual published Catalog routine ${publicBinding} private=${privateSelection}`, () =>
       Effect.gen(function* actualPublishedCatalogRoutine() {
-        const file = `verticals/catalog/shared/domain/${subpath}.ts`;
         const root = yield* makeActualCatalogSelectionFixture(file);
-        const privateOrigin = 'verticals/catalog/src/handlers/private-contract.ts';
-        yield* write(root, privateOrigin, 'export const privateRoutine = () => true;\n');
+        const privateOrigin = `${owner}/src/handlers/private-contract.ts`;
+        yield* write(root, privateOrigin, PRIVATE_ROUTINE_SOURCE);
         const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
         yield* write(
           root,
@@ -1954,7 +2036,7 @@ for (const [subpath, publicBinding] of [
         yield* write(
           root,
           'apps/shell-super-app/src/catalog-routine-consumer.ts',
-          `import { ${binding} } from '@app/catalog/domain/${subpath}';\n`,
+          `import { ${binding} } from '${specifier}';\n`,
         );
         const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
         expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(

@@ -1,4 +1,4 @@
-import { CatalogQuantityBasisSchema } from '@app/catalog/domain/catalog-quantity-handoff';
+import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { DateTime, Schema } from 'effect';
 

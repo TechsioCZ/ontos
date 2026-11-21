@@ -1,7 +1,7 @@
-import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
-import type { CatalogSelectionRevision } from './catalog-selection-evidence.ts';
-import type { VariantExactForm } from './variant-exact-form.ts';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogIdentityScope } from '@app/catalog-selection-contracts/identity-scope';
 
 /** A revision is immutable after issue; storage must reject mutation of an issued key. */
 export interface PackageContentRevision {
@@ -9,7 +9,7 @@ export interface PackageContentRevision {
   readonly amount: string;
   /** Complete configuration identity is pinned by its canonical immutable selection value. */
   readonly configurationKey?: string;
-  readonly form: VariantExactForm;
+  readonly form: CatalogIdentityScope;
   /** Optional exact lower-level revision; count is packages, not loose Variant units. */
   readonly lower?: { readonly count: string; readonly revision: CatalogSelectionRevision };
   readonly reference: CatalogSelectionRevision;
@@ -49,7 +49,7 @@ const sameRef = (a: CatalogResourceRef, b: CatalogResourceRef): boolean =>
   a.resourceType === b.resourceType &&
   a.resourceId === b.resourceId &&
   a.tenantId === b.tenantId;
-const sameForm = (a: VariantExactForm, b: VariantExactForm): boolean =>
+const sameForm = (a: CatalogIdentityScope, b: CatalogIdentityScope): boolean =>
   a.productRef.resourceId === b.productRef.resourceId &&
   a.variantRef.resourceId === b.variantRef.resourceId &&
   a.productRef.tenantId === b.productRef.tenantId &&

@@ -1,12 +1,15 @@
-import type { CatalogResourceRef, CatalogRevisionInstant } from './catalog-revision-reference.ts';
-import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
+import type {
+  CatalogResourceRef,
+  CatalogRevisionInstant,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import {
   classifyConfigurationChoiceKind,
   inspectProductConfigurationDefinitionOwnership,
 } from './configuration-definition.ts';
-import type { CatalogSelectionRevision } from './catalog-selection-evidence.ts';
-import type { ProductRef } from '../resources/product.ts';
-import type { VariantRef } from '../resources/variant.ts';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 
 /** Stable keys are issued by Catalog; labels and presentation order are not identity. */
 interface ConfigurationSingleChoiceDefinition {

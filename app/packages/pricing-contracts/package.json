@@ -55,8 +55,6 @@
     "./manage-commitment-confirmation": "./src/actions/manage-commitment-confirmation.ts",
     "./manage-commitment-confirmation/api": "./src/apis/manage-commitment-confirmation-action.ts",
     "./manage-commitment-confirmation/client": "./src/api/manage-commitment-confirmation-client.ts",
-    "./commitment-confirmation": "./src/apis/commitment-confirmation-verification.ts",
-    "./commitment-confirmation/client": "./src/api/commitment-confirmation-verification-client.ts",
     "./quotation-verification": "./src/apis/quotation-verification.ts",
     "./quotation-verification/client": "./src/api/quotation-verification-client.ts",
     "./commitment-confirmation-verification": "./src/apis/commitment-confirmation-verification.ts",
@@ -67,9 +65,9 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "@app/catalog": "workspace:*",
+    "@app/catalog-selection-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
-    "@app/party-registry": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "effect": "4.0.7"
