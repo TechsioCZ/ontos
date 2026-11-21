@@ -29,6 +29,8 @@ export interface ModuleReference {
 }
 
 export interface ModuleBindings {
+  /** Every declaring identifier, of a module binding or a local one, that an assignment or update writes again. */
+  readonly assigned: ReadonlySet<Node>;
   readonly bindings: readonly ModuleBinding[];
   /** Each reference an inner scope binds (a parameter, a local declaration), to the identifier that declares it. */
   readonly local: ReadonlyMap<Node, Node>;
@@ -398,7 +400,39 @@ const moduleBinding = (
     : binding;
 };
 
-/** Parse source and resolve each of its references; undefined when it does not parse. */
+/** Whether a reference is written by an assignment, an update or the head of a `for … in` or `for … of` loop. */
+const isAssignmentTarget = (parents: ReadonlyMap<Node, Node>, identifier: Node): boolean => {
+  let child = identifier;
+  for (const ancestor of ancestors(parents, identifier)) {
+    if (
+      ancestor.type === 'AssignmentExpression' ||
+      ancestor.type === 'ForInStatement' ||
+      ancestor.type === 'ForOfStatement'
+    ) {
+      return ancestor.left === child;
+    }
+    if (ancestor.type === 'UpdateExpression') {
+      return true;
+    }
+    const inTarget =
+      ancestor.type === 'ObjectPattern' ||
+      ancestor.type === 'ArrayPattern' ||
+      ancestor.type === 'RestElement' ||
+      ancestor.type === 'ParenthesizedExpression' ||
+      ancestor.type === 'TSAsExpression' ||
+      ancestor.type === 'TSSatisfiesExpression' ||
+      ancestor.type === 'TSNonNullExpression' ||
+      ancestor.type === 'TSTypeAssertion' ||
+      (ancestor.type === 'Property' && ancestor.value === child) ||
+      (ancestor.type === 'AssignmentPattern' && ancestor.left === child);
+    if (!inTarget) {
+      return false;
+    }
+    child = ancestor;
+  }
+  return false;
+};
+
 /** Where and why a source does not parse; undefined for one that does. */
 export const parseProblem = (
   file: string,
@@ -412,6 +446,7 @@ export const parseProblem = (
   return error === undefined ? undefined : { message: error.message, start: error.labels[0]?.start ?? 0 };
 };
 
+/** Parse source and resolve each of its references; undefined when it does not parse. */
 export const moduleBindings = (file: string, source: string): ModuleBindings | undefined => {
   const parsed = parseSync(file, source, {
     astType: 'ts',
@@ -493,7 +528,18 @@ export const moduleBindings = (file: string, source: string): ModuleBindings | u
       },
     ];
   });
+  const assigned = new Set(
+    references.flatMap((reference) =>
+      isAssignmentTarget(parents, reference.identifier) ? reference.bindings.map((binding) => binding.identifier) : [],
+    ),
+  );
+  for (const [identifier, declaration] of local) {
+    if (isAssignmentTarget(parents, identifier)) {
+      assigned.add(declaration);
+    }
+  }
   return {
+    assigned,
     bindings,
     local,
     parents,
@@ -620,6 +666,60 @@ const NO_MEMBER: Pending = { member: [] };
 /** The target of a global: what no module declares. */
 const GLOBAL = 'globalThis';
 
+/** A call of `require`: a module load. */
+const isRequireCall = (node: Node): boolean =>
+  node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require';
+
+/** What a node writes as a module specifier, when it takes one: null or undefined when it names none. */
+const writtenSpecifier = (node: Node): Node | null | undefined => {
+  if (
+    node.type === 'ImportDeclaration' ||
+    node.type === 'ExportAllDeclaration' ||
+    node.type === 'ExportNamedDeclaration' ||
+    node.type === 'ImportExpression' ||
+    node.type === 'TSImportType'
+  ) {
+    return node.source;
+  }
+  if (node.type === 'TSExternalModuleReference') {
+    return node.expression;
+  }
+  return node.type === 'CallExpression' && isRequireCall(node) ? (node.arguments[0] ?? null) : undefined;
+};
+
+/** The text a node writes statically: a literal, or a template literal without interpolation. */
+const staticText = (written: Node): string | undefined => {
+  if (written.type === 'Literal') {
+    return String(written.value);
+  }
+  return written.type === 'TemplateLiteral' && written.expressions.length === 0
+    ? (written.quasis[0]?.value.cooked ?? undefined)
+    : undefined;
+};
+
+/** A member written so that it cannot be read statically: `Read[key]`, `const { [key]: B } = Read`. */
+const UNREAD_MEMBER = '[computed]';
+
+/**
+ * The member a key or a member access names: a name, or what a literal or a template literal without interpolation
+ * writes, computed or not (`Read.X`, `Read['X']`, `{ 'X': B }`, `{ [\`X\`]: B }`); `UNREAD_MEMBER` for anything else.
+ */
+const memberName = (key: Node, computed: boolean): string => {
+  if (!computed && key.type === 'Identifier') {
+    return key.name;
+  }
+  return staticText(key) ?? UNREAD_MEMBER;
+};
+
+/** The module load a node is, under parentheses and `await`: `import('…')` or `require('…')`. */
+const moduleLoad = (node: Node): Node | undefined => {
+  let inner = node;
+  while (inner.type === 'ParenthesizedExpression' || inner.type === 'AwaitExpression') {
+    inner = inner.type === 'AwaitExpression' ? inner.argument : inner.expression;
+  }
+  return inner.type === 'ImportExpression' || isRequireCall(inner) ? inner : undefined;
+};
+
 const specifierName = (node: Node): string => {
   if (node.type === 'Identifier') {
     return node.name;
@@ -651,18 +751,24 @@ const namedIn = (graph: ModuleGraph, step: ExportStep, specifier: string, name: 
     : { ...NO_MEMBER, file: target, kind: 'name', name, star: false, trail: step.trail };
 };
 
-/** Parentheses, `as`, `satisfies`, `!`, `<T>x` and `typeof`: what they wrap is still the same binding. */
+/**
+ * Parentheses (of a value or a type), an optional chain, `as`, `satisfies`, `!`, `<T>x` and `typeof`: what they wrap is
+ * still the same binding.
+ */
 const unwrappedName = (node: Node): Node => {
   let inner = node;
   for (;;) {
     if (
       inner.type === 'ParenthesizedExpression' ||
+      inner.type === 'ChainExpression' ||
       inner.type === 'TSAsExpression' ||
       inner.type === 'TSSatisfiesExpression' ||
       inner.type === 'TSNonNullExpression' ||
       inner.type === 'TSTypeAssertion'
     ) {
       inner = inner.expression;
+    } else if (inner.type === 'TSParenthesizedType') {
+      inner = inner.typeAnnotation;
     } else if (inner.type === 'TSTypeQuery' && inner.typeArguments === null) {
       inner = inner.exprName;
     } else if (inner.type === 'TSTypeReference' && inner.typeArguments === null) {
@@ -673,22 +779,36 @@ const unwrappedName = (node: Node): Node => {
   }
 };
 
-/** `A`, `A.B`, `A.B.C` (as an expression or a qualified type name): the leftmost name and the members after it. */
+/**
+ * `A`, `A.B`, `A['B']`, `(await import('…')).B`, `(typeof A)['B']`, `import('…').B` (as an expression, a qualified
+ * type name or an indexed type): the root, a name, a module load or an import type, and the members after it.
+ */
 const memberPath = (node: Node): readonly [Node, readonly string[]] | undefined => {
-  if (node.type === 'Identifier') {
-    return [node, []];
+  const load = moduleLoad(node);
+  if (
+    load !== undefined ||
+    node.type === 'Identifier' ||
+    (node.type === 'TSImportType' && node.typeArguments === null)
+  ) {
+    return [load ?? node, []];
   }
   let object: Node;
-  let property: Node;
+  let member: string;
   if (node.type === 'TSQualifiedName') {
-    ({ left: object, right: property } = node);
-  } else if (node.type === 'MemberExpression' && !node.computed) {
-    ({ object, property } = node);
+    object = node.left;
+    member = memberName(node.right, false);
+  } else if (node.type === 'MemberExpression') {
+    ({ object } = node);
+    member = memberName(node.property, node.computed);
+  } else if (node.type === 'TSIndexedAccessType') {
+    // `(typeof Read)['A']` is the type of `Read.A`.
+    object = node.objectType;
+    member = node.indexType.type === 'TSLiteralType' ? memberName(node.indexType.literal, true) : UNREAD_MEMBER;
   } else {
     return undefined;
   }
   const inner = memberPath(unwrappedName(object));
-  return inner === undefined || property.type !== 'Identifier' ? undefined : [inner[0], [...inner[1], property.name]];
+  return inner === undefined ? undefined : [inner[0], [...inner[1], member]];
 };
 
 /** An expansion with the members the link it came from still owes, after its own; an origin takes them. */
@@ -701,6 +821,14 @@ const owedBy = (item: Expansion, owed: Pending): Expansion => {
     return item;
   }
   if (item.kind === 'namespace') {
+    if (first === UNREAD_MEMBER) {
+      return {
+        file: item.file,
+        kind: 'unresolved',
+        reason: 'is taken a member that cannot be read statically',
+        trail: item.trail,
+      };
+    }
     return {
       file: item.file,
       holder: owed.holder,
@@ -724,25 +852,44 @@ interface Written {
   readonly written: Node;
 }
 
+/** The object pattern a destructured identifier stands in, and the member it takes there; none for an array pattern. */
+const destructuredStep = (
+  bindings: ModuleBindings,
+  node: Node,
+): { readonly member?: string; readonly pattern: Node } | undefined => {
+  const parent = bindings.parents.get(node);
+  // A default (`{ A: B = d }`) is used only when the member is missing, and a missing member fails on its own.
+  if (parent?.type === 'AssignmentPattern' && parent.left === node) {
+    return { pattern: parent };
+  }
+  const pattern = parent === undefined ? undefined : bindings.parents.get(parent);
+  if (pattern?.type !== 'ObjectPattern') {
+    return undefined;
+  }
+  if (parent?.type === 'Property' && parent.value === node) {
+    return { member: memberName(parent.key, parent.computed), pattern };
+  }
+  // The rest of a destructuring holds the rest of what is written: a whole module stays a whole module.
+  return parent?.type === 'RestElement' ? { pattern } : undefined;
+};
+
 /** What the declaration of `identifier` writes for it: an initializer, a type, an import reference. */
 const writtenFor = (bindings: ModuleBindings, identifier: Node): Written | undefined => {
   const taken: string[] = [];
   let node = identifier;
-  let parent = bindings.parents.get(node);
-  while (parent?.type === 'Property' && !parent.computed && parent.value === node && parent.key.type === 'Identifier') {
-    const pattern = bindings.parents.get(parent);
-    if (pattern?.type !== 'ObjectPattern') {
-      return undefined;
+  for (let step = destructuredStep(bindings, node); step !== undefined; step = destructuredStep(bindings, node)) {
+    if (step.member !== undefined) {
+      taken.unshift(step.member);
     }
-    taken.unshift(parent.key.name);
-    node = pattern;
-    parent = bindings.parents.get(pattern);
+    node = step.pattern;
   }
+  const parent = bindings.parents.get(node);
   if (parent?.type === 'VariableDeclarator') {
     return parent.id === node && parent.init !== null ? { taken, written: parent.init } : undefined;
   }
+  // An alias's own type parameters make it no new type: `type B<_T = unknown> = A` is still `A`.
   if (parent?.type === 'TSTypeAliasDeclaration') {
-    return parent.typeParameters === null ? { taken, written: parent.typeAnnotation } : undefined;
+    return { taken, written: parent.typeAnnotation };
   }
   return parent?.type === 'TSImportEqualsDeclaration' ? { taken, written: parent.moduleReference } : undefined;
 };
@@ -768,12 +915,39 @@ const importTypeLinks = (
       ];
 };
 
+/** What a member path is from its root: what a name refers to, or the module a load names, statically or not at all. */
+const rootLinks = (graph: ModuleGraph, step: ExportStep, root: Node, owed: Pending): readonly Expansion[] => {
+  if (root.type === 'Identifier') {
+    return [{ ...owed, identifier: root, kind: 'reference', step }];
+  }
+  if (root.type === 'TSImportType') {
+    return (
+      importTypeLinks(graph, step, root, owed) ?? [
+        {
+          file: step.file,
+          kind: 'unresolved',
+          reason: 'names a member of an import type it cannot read',
+          trail: step.trail,
+        },
+      ]
+    );
+  }
+  const written = writtenSpecifier(root);
+  const specifier = written === null || written === undefined ? undefined : staticText(written);
+  return specifier === undefined
+    ? [{ file: step.file, kind: 'unresolved', reason: 'loads a module it does not name statically', trail: step.trail }]
+    : [owedBy(wholeModule(graph, step, specifier), owed)];
+};
+
 /**
  * What a declaration is only another name for, when it is one (`OWNER_ENTRY_READ_FORMS` states the boundary): `const B =
- * A`, `const B = Read.A`, `const { A: B } = Read`, `type B = A`, `type B = typeof Read.A`, `type B = import('…').A`,
- * `import B = Read.A`, `import B = require('…')`, each with or without parentheses, `as`, `satisfies`, `!`, `<T>` and a
- * type annotation. Anything else, a call, an object, array or struct it builds, an operator, type arguments, is a
- * declaration of its own.
+ * A`, `const B = Read.A`, `const B = Read['A']`, `const { A: B } = Read`, `const { 'A': B = d, ...Rest } = Read`,
+ * `const B = (await import('…')).A`, `const B = require('…').A`, `type B = A`, `type B<_T = unknown> = A`, `type B =
+ * typeof Read.A`, `type B = import('…').A`, `import B = Read.A`, `import B = require('…')`, each with or without
+ * parentheses (of a value or a type), `as`, `satisfies`, `!`, `<T>` and a type annotation. Anything else, a call, an
+ * object, array or struct it builds, an array pattern, an operator, type arguments, is a declaration of its own. A
+ * `let`, a `var` or a binding written again (`rebinding`), a member no literal names (`UNREAD_MEMBER`) taken of a whole
+ * module, and a module load no literal names cannot be followed.
  */
 const aliasLinks = (
   graph: ModuleGraph,
@@ -787,15 +961,34 @@ const aliasLinks = (
   if (inner?.type === 'TSExternalModuleReference') {
     return [owedBy(wholeModule(graph, step, inner.expression.value), { holder: declared, member: taken })];
   }
-  if (inner?.type === 'TSImportType') {
-    return inner.typeArguments === null
-      ? importTypeLinks(graph, step, inner, { holder: declared, member: taken })
-      : undefined;
-  }
   const path = inner === undefined ? undefined : memberPath(inner);
   return path === undefined
     ? undefined
-    : [{ holder: declared, identifier: path[0], kind: 'reference', member: [...path[1], ...taken], step }];
+    : rootLinks(graph, step, path[0], { holder: declared, member: [...path[1], ...taken] });
+};
+
+const destructuringParts = new Set(['ArrayPattern', 'AssignmentPattern', 'ObjectPattern', 'Property', 'RestElement']);
+
+/**
+ * Why what an identifier declares cannot be read from its declaration alone: it is declared with `let` or `var`, or
+ * an assignment or update writes it again; undefined for a binding that holds only what its declaration gives it.
+ */
+export const rebinding = (bindings: ModuleBindings, identifier: Node): string | undefined => {
+  const name = specifierName(identifier);
+  if (bindings.assigned.has(identifier)) {
+    return `${name} is assigned after its declaration, so what it holds cannot be read from it`;
+  }
+  for (const ancestor of ancestors(bindings.parents, identifier)) {
+    if (ancestor.type === 'VariableDeclaration') {
+      return ancestor.kind === 'let' || ancestor.kind === 'var'
+        ? `${name} is declared with ${ancestor.kind}, so what it holds cannot be read from its declaration`
+        : undefined;
+    }
+    if (ancestor.type !== 'VariableDeclarator' && !destructuringParts.has(ancestor.type)) {
+      return undefined;
+    }
+  }
+  return undefined;
 };
 
 /** A binding, followed while it is only another name: an import, an alias. */
@@ -807,6 +1000,10 @@ const bindingLinks = (graph: ModuleGraph, { binding, step }: BindingLink): reado
         ? wholeModule(graph, step, imported.source)
         : namedIn(graph, step, imported.source, imported.name),
     ];
+  }
+  const changing = rebinding(step.bindings, binding.identifier);
+  if (changing !== undefined) {
+    return [{ file: step.file, kind: 'unresolved', reason: changing, trail: step.trail }];
   }
   const declared: DeclaredExport = {
     bindings: step.bindings,
@@ -869,7 +1066,7 @@ const statementLinks = (graph: ModuleGraph, step: ExportStep, statement: Node, n
     const path = memberPath(unwrappedName(exported));
     return path === undefined
       ? [{ bindings: step.bindings, file: step.file, kind: 'declared', node: exported, trail: step.trail }]
-      : [{ identifier: path[0], kind: 'reference', member: path[1], step }];
+      : rootLinks(graph, step, path[0], { member: path[1] });
   }
   return statement.type === 'ExportAllDeclaration' &&
     statement.exported !== null &&
@@ -1006,25 +1203,62 @@ export const referenceOrigins = (
       );
 };
 
-/** The members a reference takes where it stands: `X` of `Read.X` or of the type name `Read.X`. */
-export const takenMembers = (bindings: ModuleBindings, identifier: Node): readonly string[] => {
+const wrappers = new Set([
+  'ChainExpression',
+  'ParenthesizedExpression',
+  'TSAsExpression',
+  'TSNonNullExpression',
+  'TSParenthesizedType',
+  'TSSatisfiesExpression',
+  'TSTypeAssertion',
+]);
+
+/** What a member access of a name or a module load takes where it stands, and the node the access ends at. */
+interface MemberChain {
+  readonly members: readonly string[];
+  readonly outer: Node;
+}
+
+/**
+ * The members a reference or a module load takes where it stands (`X` of `Read.X`, `Read['X']`, the type name
+ * `Read.X`, `(await import('…')).X`), through parentheses, `as`, `satisfies`, `!` and `<T>`, and the outermost node.
+ */
+export const memberChain = (bindings: ModuleBindings, node: Node): MemberChain => {
   const members: string[] = [];
-  let child = identifier;
-  for (let parent = bindings.parents.get(child); parent !== undefined; parent = bindings.parents.get(child)) {
-    let property: Node | undefined;
-    if (parent.type === 'MemberExpression' && !parent.computed && parent.object === child) {
-      ({ property } = parent);
-    } else if (parent.type === 'TSQualifiedName' && parent.left === child) {
-      property = parent.right;
+  let outer = node;
+  for (let parent = bindings.parents.get(outer); parent !== undefined; parent = bindings.parents.get(outer)) {
+    if (parent.type === 'MemberExpression' && parent.object === outer) {
+      members.push(memberName(parent.property, parent.computed));
+    } else if (parent.type === 'TSQualifiedName' && parent.left === outer) {
+      members.push(memberName(parent.right, false));
+    } else if (!wrappers.has(parent.type) && !(parent.type === 'AwaitExpression' && moduleLoad(outer) !== undefined)) {
+      return { members, outer };
     }
-    if (property?.type !== 'Identifier') {
-      return members;
-    }
-    members.push(property.name);
-    child = parent;
+    outer = parent;
   }
-  return members;
+  return { members, outer };
 };
+
+/** The members a reference takes where it stands. */
+export const takenMembers = (bindings: ModuleBindings, identifier: Node): readonly string[] =>
+  memberChain(bindings, identifier).members;
+
+/** Every `import()` and `require()` of a source: what a declaration loads at run time. */
+export const moduleLoads = (bindings: ModuleBindings): readonly Node[] =>
+  [...bindings.parents.keys()].filter((node) => node.type === 'ImportExpression' || isRequireCall(node));
+
+/** What a module load of `file` gives, with the members taken of it where it stands, followed as `exportOrigins` does. */
+export const loadOrigins = (
+  graph: ModuleGraph,
+  file: string,
+  bindings: ModuleBindings,
+  load: Node,
+): readonly ExportOrigin[] =>
+  followedOrigins(
+    graph,
+    rootLinks(graph, { bindings, file, trail: [file] }, load, { member: memberChain(bindings, load).members }),
+    file,
+  );
 
 /** Every name a file exports, and every `export *` of a module the graph does not read, whose names it cannot list. */
 interface ModuleExports {
@@ -1091,35 +1325,6 @@ interface ModuleSpecifier {
   readonly specifier: string;
 }
 
-/** What a node writes as a module specifier, when it takes one: null or undefined when it names none. */
-const writtenSpecifier = (node: Node): Node | null | undefined => {
-  if (
-    node.type === 'ImportDeclaration' ||
-    node.type === 'ExportAllDeclaration' ||
-    node.type === 'ExportNamedDeclaration' ||
-    node.type === 'ImportExpression' ||
-    node.type === 'TSImportType'
-  ) {
-    return node.source;
-  }
-  if (node.type === 'TSExternalModuleReference') {
-    return node.expression;
-  }
-  return node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require'
-    ? (node.arguments[0] ?? null)
-    : undefined;
-};
-
-/** The text of a specifier written statically: a string literal, or a template literal without interpolation. */
-const staticSpecifier = (written: Node): string | undefined => {
-  if (written.type === 'Literal') {
-    return String(written.value);
-  }
-  return written.type === 'TemplateLiteral' && written.expressions.length === 0
-    ? (written.quasis[0]?.value.cooked ?? undefined)
-    : undefined;
-};
-
 /**
  * Every module specifier of a source, of any kind, written as a string literal or a template literal without
  * interpolation: a static import, an `export … from`, an `import()` expression, an `import('…')` type, a
@@ -1128,7 +1333,7 @@ const staticSpecifier = (written: Node): string | undefined => {
 export const moduleSpecifiers = (bindings: ModuleBindings): readonly ModuleSpecifier[] =>
   [...bindings.parents.keys()].flatMap((node): readonly ModuleSpecifier[] => {
     const written = writtenSpecifier(node);
-    const specifier = written === null || written === undefined ? undefined : staticSpecifier(written);
+    const specifier = written === null || written === undefined ? undefined : staticText(written);
     return written === null || written === undefined || specifier === undefined
       ? []
       : [{ literal: written, node, specifier }];
@@ -1141,6 +1346,6 @@ export const unreadableSpecifiers = (bindings: ModuleBindings): readonly Node[] 
     return (
       (node.type === 'ImportExpression' || node.type === 'CallExpression') &&
       written !== undefined &&
-      (written === null || staticSpecifier(written) === undefined)
+      (written === null || staticText(written) === undefined)
     );
   });
