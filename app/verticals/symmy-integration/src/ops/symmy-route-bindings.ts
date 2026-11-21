@@ -118,12 +118,15 @@ const operationRequirements = (caller: Contract, served: string) =>
     ({ entrypointKey, provider }) => entrypointKey === served && !provider.moduleId.startsWith('core.'),
   );
 /**
- * Whether the owner makes a requirement's call only by relaying the requester it serves: it declares its callers and
- * none is `registered`, the only caller a verified workload or a recovery calls as (`selectCaller` in Core), so no
- * registered call of the route's workloads serves it.
+ * Whether the owner makes a requirement's call only by relaying the requester it serves: it declares a `person`
+ * caller and no `registered` one, the only caller a verified workload or a recovery calls as (`selectCaller` in
+ * Core), so no registered call of the route's workloads serves it. A requirement that names neither, such as one a
+ * worker delivery alone calls, relays nobody and keeps its registered call.
  */
 const relayedOnly = ({ callers }: OperationRequirement) =>
-  callers !== undefined && !callers.some(({ kind }) => kind === 'registered');
+  callers !== undefined &&
+  callers.some(({ kind }) => kind === 'person') &&
+  !callers.some(({ kind }) => kind === 'registered');
 
 /** The installed module of the app a call is addressed to. */
 const receivingModule = (contracts: readonly Contract[], call: Call) =>
