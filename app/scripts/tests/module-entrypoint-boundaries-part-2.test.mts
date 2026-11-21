@@ -1931,6 +1931,9 @@ for (const [name, imported, allowed] of [
   );
 }
 
+const PRIVATE_ROUTINE_SOURCE = 'export const privateRoutine = () => true;\n';
+const CATALOG_PRIVATE_ROUTINE = 'verticals/catalog/src/handlers/private-contract.ts';
+
 const VALUE_ONLY_CLAIM = { moduleApis: [], moduleId: 'commerce.catalog', packageName: '@app/catalog' } as const;
 
 it.live('rejects a vertical that claims another deployment identity as a value-only contract owner', () =>
@@ -1946,11 +1949,7 @@ it.live('rejects a vertical that claims another deployment identity as a value-o
       }),
     );
     // With the claimed identity, Inventory would read Catalog's private source as its own.
-    yield* write(
-      root,
-      'verticals/catalog/src/handlers/private-contract.ts',
-      'export const privateRoutine = () => true;\n',
-    );
+    yield* write(root, CATALOG_PRIVATE_ROUTINE, PRIVATE_ROUTINE_SOURCE);
     yield* write(
       root,
       'verticals/inventory/shared/catalog-private-consumer.ts',
@@ -1962,6 +1961,26 @@ it.live('rejects a vertical that claims another deployment identity as a value-o
       expect(Cause.pretty(result.cause)).toContain(
         `${manifest}: a value-only ontosContractOwner claims catalog's identity`,
       );
+    }
+  }),
+);
+
+it.live("rejects a value-only contract package that imports its owner's private source", () =>
+  Effect.gen(function* kernelReachingOwnerPrivateSource() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const kernelFile = 'packages/catalog-selection-contracts/src/domain/private-reach.ts';
+    const privateOrigin = CATALOG_PRIVATE_ROUTINE;
+    yield* write(root, privateOrigin, PRIVATE_ROUTINE_SOURCE);
+    yield* write(
+      root,
+      kernelFile,
+      "import { privateRoutine } from '../../../../verticals/catalog/src/handlers/private-contract.ts';\nexport const run = privateRoutine;\n",
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(kernelFile);
+      expect(Cause.pretty(result.cause)).toContain(privateOrigin);
     }
   }),
 );
@@ -2009,7 +2028,7 @@ for (const [owner, file, specifier, publicBinding] of [
       Effect.gen(function* actualPublishedCatalogRoutine() {
         const root = yield* makeActualCatalogSelectionFixture(file);
         const privateOrigin = `${owner}/src/handlers/private-contract.ts`;
-        yield* write(root, privateOrigin, 'export const privateRoutine = () => true;\n');
+        yield* write(root, privateOrigin, PRIVATE_ROUTINE_SOURCE);
         const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
         yield* write(
           root,
