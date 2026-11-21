@@ -8,7 +8,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import {
   hasCompleteGeneratedModuleApiSeam,
   isNamedByPackageRead,
-  unownedPackageReads,
+  packageReadProblems,
 } from './generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
@@ -248,7 +248,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     const topologyOwners = new Map(
       (topology.verticals ?? []).map((vertical) => [vertical.path ?? `verticals/${vertical.id}`, vertical.id] as const),
     );
-    for (const problem of unownedPackageReads(sourceByFile, topologyOwners)) {
+    for (const problem of packageReadProblems(sourceByFile, topologyOwners)) {
       fail(problem);
     }
   });

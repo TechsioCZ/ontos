@@ -75,7 +75,7 @@ import {
   isExportedPackageRead,
   isNamedByPackageRead,
   publishedPackageReads,
-  unownedPackageReads,
+  packageReadProblems,
 } from './generated-governed-http-boundary.mts';
 import {
   toPascalCase,
@@ -5022,7 +5022,7 @@ const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>
         yield* validatePackageReadDependencies(state, file, readImportedModuleSpecifiers(source));
       }
     }
-    for (const problem of unownedPackageReads(sourceMap, state.owners)) {
+    for (const problem of packageReadProblems(sourceMap, state.owners)) {
       yield* fail(problem.slice(0, problem.indexOf(': ')), problem.slice(problem.indexOf(': ') + 2));
     }
     yield* validateCanonicalModuleRoute(state);

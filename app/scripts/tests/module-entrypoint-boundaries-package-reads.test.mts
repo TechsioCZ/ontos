@@ -384,14 +384,79 @@ it.live('binds every owner file of a package read to its package and keeps the o
         aggregateFile,
         `${aggregate}\nexport { CurrentPaymentTermsRequestSchema } from '${contractSpecifier}';\n`,
       ],
+      // A declaration reaches the read through every local alias that does, whatever the aliases are called.
+      [
+        './api exports a type alias of a local alias of the read',
+        sharedApiFile,
+        `${sharedApi}\ntype Mounted = typeof CurrentPaymentTermsApi;\nexport type CurrentApi = Mounted;\n`,
+      ],
+      [
+        './api exports a type alias of a local alias of the read declared after it',
+        sharedApiFile,
+        `${sharedApi}\nexport type CurrentApi = Mounted;\ntype Mounted = Shape;\ntype Shape = typeof CurrentPaymentTermsApi;\n`,
+      ],
+      [
+        './api exports an interface whose member has a local alias of the read',
+        sharedApiFile,
+        `${sharedApi}\ntype Shape = typeof CurrentPaymentTermsApi;\nexport interface Public {\n  api: Shape;\n}\n`,
+      ],
+      [
+        './api exports a value annotated with a local alias of the read',
+        sharedApiFile,
+        `${sharedApi}\ntype Shape = typeof CurrentPaymentTermsApi;\nexport const leaked: Shape = paymentTermCatalogFoundationApi;\n`,
+      ],
+      [
+        './api exports a second HttpApi that mounts the read',
+        sharedApiFile,
+        `${sharedApi}\nexport const other = HttpApi.make('Other').addHttpApi(CurrentPaymentTermsApi);\n`,
+      ],
+      [
+        './api loads the read',
+        sharedApiFile,
+        `${sharedApi}\nexport const load = () => import('${contractSpecifier}');\n`,
+      ],
+      [
+        './api/client aggregate exports an import type of the read',
+        aggregateFile,
+        `${aggregate}\nexport type Request = import('${contractSpecifier}').CurrentPaymentTermsRequest;\n`,
+      ],
     ] as const) {
       expect(source, label).not.toBe(sources.get(file));
       expect(seam(sources, [[file, source]]), label).toBe(false);
     }
+    // Free: a local type that reaches no read, a parameter that only shares the read's name, and the aliases the
+    // module's own HttpApi value is annotated with, which reach the read only in that annotation.
+    for (const [label, source] of [
+      ['an unrelated local type exported', `${sharedApi}\ntype Currency = string;\nexport type { Currency };\n`],
+      [
+        'a parameter named like the read',
+        `${sharedApi}\nexport const describeApi = (CurrentPaymentTermsApi: string): string => CurrentPaymentTermsApi;\n`,
+      ],
+      [
+        'the typed union of the mounted groups annotating the module HttpApi value',
+        replaced(
+          sharedApi,
+          "export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')",
+          [
+            'type GroupsOf<Api> = Api extends HttpApi.HttpApi<string, infer Groups> ? Groups : never;',
+            'type PaymentTermCatalogApiGroups = GroupsOf<',
+            '  | typeof paymentTermCatalogFoundationApi',
+            '  | typeof CurrentPaymentTermsApi',
+            '>;',
+            "type PaymentTermCatalogHttpApi = HttpApi.HttpApi<'PaymentTermCatalogApi', PaymentTermCatalogApiGroups>;",
+            "export const paymentTermCatalogApi: PaymentTermCatalogHttpApi = HttpApi.make('PaymentTermCatalogApi')",
+          ].join('\n'),
+        ),
+      ],
+    ] as const) {
+      expect(seam(sources, [[sharedApiFile, source]]), label).toBe(true);
+    }
   }),
 );
 
-it.live('resolves every mount and read handler layer of the owner entries to a read of the module', () =>
+const unknown = (file: string, binding: string) => `${file}: ${binding} is no read, Action or own API of this module`;
+
+it.live('resolves every mount and handler layer of the owner entries, wherever it stands, to the module', () =>
   Effect.gen(function* packageReadMounts() {
     const sources = yield* loadSources([owner, contracts, 'packages/customer-payment-term-contracts']);
     expect(seam(sources)).toBe(true);
@@ -401,8 +466,22 @@ it.live('resolves every mount and read handler layer of the owner entries to a r
     const manifest = required(sources, manifestFile);
     const registration = required(sources, registrationFile);
     const packageManifestSource = required(sources, packageManifest);
+    const mountLine = '  .addHttpApi(CurrentPaymentTermsApi)\n';
+    const mountImport = `import { CurrentPaymentTermsApi } from '${contractSpecifier}';\n`;
+    const layerImport = `import { currentPaymentTermsReadApiLive } from './${name}-read-server.ts';\n`;
+    const layerLine = '    currentPaymentTermsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),\n';
+    const additionsStart = '  // <generated-governed-http-api-additions>\n';
+    const layersStart = '    // <generated-governed-http-handler-layers>\n';
+    /** Each line moved from its generated slot to just before the slot's opening marker. */
+    const beforeMarkers = (source: string, moves: readonly (readonly [string, string])[]): string => {
+      let next = source;
+      for (const [line, marker] of moves) {
+        next = replaced(replaced(next, line, ''), marker, `${line}${marker}`);
+      }
+      return next;
+    };
     // The read is gone everywhere but the mount, the handler layer and their imports.
-    const removed = judged(sources, [
+    const retiredElsewhere: readonly (readonly [string, string | undefined])[] = [
       [packageContract, undefined],
       [packageClient, undefined],
       [`${owner}/src/api/${name}.read.ts`, undefined],
@@ -432,33 +511,158 @@ it.live('resolves every mount and read handler layer of the owner entries to a r
           `import { currentPaymentTermsRead } from './src/api/${name}.read.ts';\n`,
         ]),
       ],
-    ]);
-    expect(removed.valid).toBe(false);
-    expect(removed.diagnostics).toContain(
-      `${sharedApiFile}: CurrentPaymentTermsApi is no read or Action of this module`,
-    );
-    expect(removed.diagnostics).toContain(
-      `${handlerFile}: currentPaymentTermsReadApiLive is no read or Action of this module`,
-    );
-    // Another module's real package read mounted in Payment, which neither declares nor registers it.
-    const foreign = 'PaymentTermAffectedUseAssessmentApi';
-    const mounted = judged(sources, [
+    ];
+    for (const [label, sharedApiSource, handlerSource] of [
+      ['inside the generated slots', sharedApi, handler],
       [
-        sharedApiFile,
+        'just before the opening slot markers',
+        beforeMarkers(sharedApi, [
+          [mountImport, '// <generated-governed-http-api-imports>\n'],
+          [mountLine, additionsStart],
+        ]),
+        beforeMarkers(handler, [
+          [layerImport, '// <generated-governed-http-handler-imports>\n'],
+          [layerLine, layersStart],
+        ]),
+      ],
+    ] as const) {
+      const removed = judged(sources, [
+        ...retiredElsewhere,
+        [sharedApiFile, sharedApiSource],
+        [handlerFile, handlerSource],
+      ]);
+      expect(removed.valid, label).toBe(false);
+      expect(removed.diagnostics, label).toContain(unknown(sharedApiFile, 'CurrentPaymentTermsApi'));
+      expect(removed.diagnostics, label).toContain(unknown(handlerFile, 'currentPaymentTermsReadApiLive'));
+    }
+    // Another module's real package read, mounted in Payment, which neither declares nor registers it.
+    const foreign = 'PaymentTermAffectedUseAssessmentApi';
+    const foreignSpecifier = '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
+    for (const [label, mounted] of [
+      [
+        'inside the generated slots',
         replaced(
           replaced(
             sharedApi,
             '// </generated-governed-http-api-imports>',
-            `import { ${foreign} } from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';\n// </generated-governed-http-api-imports>`,
+            `import { ${foreign} } from '${foreignSpecifier}';\n// </generated-governed-http-api-imports>`,
           ),
           '  // </generated-governed-http-api-additions>',
           `  .addHttpApi(${foreign})\n  // </generated-governed-http-api-additions>`,
         ),
       ],
-    ]);
-    expect(mounted.valid).toBe(false);
-    expect(mounted.diagnostics).toContain(`${sharedApiFile}: ${foreign} is no read or Action of this module`);
-    expect(handler).toContain('currentPaymentTermsReadApiLive');
+      [
+        'just before the opening slot markers',
+        replaced(
+          `import { ${foreign} } from '${foreignSpecifier}';\n${sharedApi}`,
+          additionsStart,
+          `  .addHttpApi(${foreign})\n${additionsStart}`,
+        ),
+      ],
+    ] as const) {
+      const verdict = judged(sources, [[sharedApiFile, mounted]]);
+      expect(verdict.valid, label).toBe(false);
+      expect(verdict.diagnostics, label).toContain(unknown(sharedApiFile, foreign));
+    }
+    // Through a file of the owner, as an alias or mounted in an API of its own, the foreign read is still another
+    // module's API.
+    for (const [label, declaration] of [
+      ['an alias', `export const LaunderedApi = ${foreign};`],
+      [
+        'an API of the owner mounting it',
+        `export const LaunderedApi = HttpApi.make('Laundered').addHttpApi(${foreign});`,
+      ],
+    ] as const) {
+      const laundered = judged(sources, [
+        [
+          `${owner}/shared/laundered-api.ts`,
+          [
+            "import { HttpApi } from '@modern-js/bff-effect/effect-client';",
+            `import { ${foreign} } from '${foreignSpecifier}';`,
+            '',
+            declaration,
+            '',
+          ].join('\n'),
+        ],
+        [
+          sharedApiFile,
+          replaced(
+            `import { LaunderedApi } from './laundered-api.ts';\n${sharedApi}`,
+            additionsStart,
+            `  .addHttpApi(LaunderedApi)\n${additionsStart}`,
+          ),
+        ],
+      ]);
+      expect(laundered.valid, label).toBe(false);
+      expect(laundered.diagnostics, label).toContain(unknown(sharedApiFile, 'LaunderedApi'));
+    }
+    // A handler layer from a package, and one passed on by a declaration of the entry from a server of no read.
+    for (const [label, changes, layer] of [
+      [
+        'a package layer',
+        [
+          [
+            handlerFile,
+            replaced(
+              `import { ForeignHandlersLive } from '@app/zz-handlers';\n${handler}`,
+              layersStart,
+              `    ForeignHandlersLive,\n${layersStart}`,
+            ),
+          ],
+        ],
+        'ForeignHandlersLive',
+      ],
+      [
+        'an alias of a server of no read',
+        [
+          [`${owner}/api/stale-read-server.ts`, 'export const staleReadApiLive = {};\n'],
+          [
+            handlerFile,
+            replaced(
+              `import { staleReadApiLive } from './stale-read-server.ts';\nconst staleLive = staleReadApiLive;\n${handler}`,
+              layersStart,
+              `    staleLive,\n${layersStart}`,
+            ),
+          ],
+        ],
+        'staleLive',
+      ],
+    ] as const) {
+      const verdict = judged(sources, changes);
+      expect(verdict.valid, label).toBe(false);
+      expect(verdict.diagnostics, label).toContain(unknown(handlerFile, layer));
+    }
+    // An import alone, outside the slots, of another module's read or of a server of no read.
+    for (const [label, file, source, binding] of [
+      ['a foreign read', sharedApiFile, `import { ${foreign} } from '${foreignSpecifier}';\n${sharedApi}`, foreign],
+      [
+        'a server of no read',
+        handlerFile,
+        `import { staleReadApiLive } from './stale-read-server.ts';\n${handler}`,
+        'staleReadApiLive',
+      ],
+    ] as const) {
+      const verdict = judged(sources, [[file, source]]);
+      expect(verdict.valid, label).toBe(false);
+      expect(verdict.diagnostics, label).toContain(unknown(file, binding));
+    }
+    // The module's own API, declared in a file of the owner and mounted outside the slots, is the module's.
+    expect(
+      seam(sources, [
+        [
+          `${owner}/shared/extra-api.ts`,
+          "import { HttpApi } from '@modern-js/bff-effect/effect-client';\n\nexport const ExtraApi = HttpApi.make('Extra');\n",
+        ],
+        [
+          sharedApiFile,
+          replaced(
+            `import { ExtraApi } from './extra-api.ts';\n${sharedApi}`,
+            additionsStart,
+            `  .addHttpApi(ExtraApi)\n${additionsStart}`,
+          ),
+        ],
+      ]),
+    ).toBe(true);
   }),
 );
 
@@ -587,6 +791,27 @@ it.live('judges every header-carrying package leaf against the modules of the to
     expect(yield* entrypointFailure(root)).toContain(
       'a module-api contract in a package without a valid ontosContractOwner',
     );
+  }),
+);
+
+it.live('fails a header-carrying package file outside the canonical read and client places', () =>
+  Effect.gen(function* misplacedPackageReads() {
+    const contractsSource = 'packages/price-group-catalog-contracts/src';
+    for (const [form, file] of [
+      ['a read name not in kebab case', `${contractsSource}/apis/orphanRead.ts`],
+      ['a read in a subdirectory', `${contractsSource}/apis/nested/orphan-read.ts`],
+      ['a .mts read', `${contractsSource}/apis/orphan-read.mts`],
+      ['a .tsx read', `${contractsSource}/apis/orphan-read.tsx`],
+      ['a read in another directory', `${contractsSource}/reads/orphan-read.ts`],
+      ['a client without its read', `${contractsSource}/api/orphan-read-client.ts`],
+    ] as const) {
+      const root = yield* makePackageReadWorkspace();
+      expect(yield* entrypointFailure(root), form).toBeUndefined();
+      yield* write(root, file, `${HEADER}export const OrphanReadApi = {};\n`);
+      const failure = yield* entrypointFailure(root);
+      expect(failure, form).toContain(file);
+      expect(failure, form).toContain('a module-api file outside packages/<package>/src/apis/<read>.ts');
+    }
   }),
 );
 
