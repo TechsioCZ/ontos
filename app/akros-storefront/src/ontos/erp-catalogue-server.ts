@@ -1,10 +1,11 @@
 import "server-only";
 // The products Symmy imported into main's owners, read only through their governed reads, as the storefront workload
 // (`commerce.storefront-client`): Catalog's product page (Tenant-wide, so no company is sent), Inventory's on-hand
-// page and Pricing's catalogue page prices (both for this storefront's company).
+// page and Pricing's catalogue page prices (both for this storefront's company). An import leaves its Products DRAFT
+// with WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
 import { cache } from "react";
 import {
-  activeVariantRefs,
+  shownVariantRefs,
   toErpProducts,
   type CatalogPagePrices,
   type CatalogProductPage,
@@ -33,7 +34,7 @@ const readCatalogPage = async (locale: string, offset: number, limit: number) =>
   (await readRecords(
     "catalog",
     "product-page",
-    { lifecycles: ["ACTIVE"], locale, limit, offset },
+    { lifecycles: ["DRAFT", "ACTIVE"], locale, limit, offset },
     { company: false },
   )) as CatalogProductPage;
 
@@ -101,7 +102,7 @@ const readPrices = async (
 };
 
 const withOffers = async (offer: ErpOffer, page: CatalogProductPage): Promise<ErpProduct[]> => {
-  const variantRefs = activeVariantRefs(page);
+  const variantRefs = shownVariantRefs(page);
   if (variantRefs.length === 0) return toErpProducts(page, [], undefined);
   const [onHand, prices] = await Promise.all([
     readOnHand(offer, variantRefs),
@@ -112,11 +113,12 @@ const withOffers = async (offer: ErpOffer, page: CatalogProductPage): Promise<Er
 
 const requireOffer = (): ErpOffer => {
   const offer = getErpOffer();
-  if (offer === undefined) throw new Error("ONTOS_STOREFRONT_ERP_OFFER is not configured");
+  if (offer === undefined)
+    throw new Error("ONTOS_STOREFRONT_ERP_OFFERS has no offer for this storefront's company");
   return offer;
 };
 
-/** One page of ACTIVE imported products, in Catalog's order (by name in the market language). */
+/** One page of imported (DRAFT or ACTIVE) products, in Catalog's order (by name in the market language). */
 export const readErpCataloguePage = cache(
   async (offset: number, limit: number): Promise<{ count: number; products: ErpProduct[] }> => {
     const offer = requireOffer();
@@ -126,7 +128,7 @@ export const readErpCataloguePage = cache(
   },
 );
 
-/** One ACTIVE imported product, or undefined when Catalog lists none with this id. */
+/** One imported (DRAFT or ACTIVE) product, or undefined when Catalog lists none with this id. */
 export const readErpProduct = cache(async (productId: string): Promise<ErpProduct | undefined> => {
   const offer = requireOffer();
   const { locale } = await getActiveMarket();

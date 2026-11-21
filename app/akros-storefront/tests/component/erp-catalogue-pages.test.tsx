@@ -33,7 +33,7 @@ const catalogPage = {
   items: [
     {
       productRef,
-      lifecycle: "ACTIVE",
+      lifecycle: "DRAFT",
       revision: 1,
       localized: {
         kind: "PRESENT",
@@ -45,8 +45,9 @@ const catalogPage = {
       media: [],
       variants: [1, 2, 3].map((n) => ({
         variantRef: variantRef(n),
-        lifecycle: "ACTIVE",
-        sku: `ERP-${n}`,
+        lifecycle: "WORK_IN_PROGRESS",
+        // Symmy may import a Variant without SKU: its SKU cell stays empty.
+        ...(n === 3 ? {} : { sku: `ERP-${n}` }),
         localized: { kind: "MISSING_TRANSLATION", requestedLocale: "cs" },
         options: [{ values: [{ kind: "TEXT", text: `M${n}` }] }],
       })),
@@ -113,7 +114,7 @@ async function setup() {
   vi.stubEnv("ONTOS_SHELL_URL", network.origin);
   vi.stubEnv("ONTOS_AKROS_STOREFRONT_API_KEY", "erp-test-key");
   vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", legalEntityId);
-  vi.stubEnv("ONTOS_STOREFRONT_ERP_OFFER", JSON.stringify(offer));
+  vi.stubEnv("ONTOS_STOREFRONT_ERP_OFFERS", JSON.stringify({ [legalEntityId]: offer }));
   vi.stubEnv("STOREFRONT_BRAND", "akros");
   const request = nextRequest(`${network.origin}/cs`, {
     headers: { "x-akros-market-locale": "cs" },
@@ -183,6 +184,18 @@ const ownerReads = () =>
   runtime.reads.filter(({ audience }) => audience !== "commerce-market-catalog");
 
 describe("ERP product pages", () => {
+  it("is off when the offers name no entry for this storefront's company", async () => {
+    vi.stubEnv(
+      "ONTOS_STOREFRONT_ERP_OFFERS",
+      JSON.stringify({ "71000000-0000-4000-8000-000000000024": offer }),
+    );
+    const { Listing } = runtime;
+    await expect(Promise.resolve().then(() => Listing())).rejects.toMatchObject({
+      digest: expect.stringContaining("404"),
+    });
+    expect(ownerReads()).toEqual([]);
+  });
+
   it("lists the imported products from Catalog with their ERP price and stock", async () => {
     const { Listing } = runtime;
     const { container, screen } = await runtime.renderPage(<Listing />, "/novinky-z-erp");
@@ -190,7 +203,7 @@ describe("ERP product pages", () => {
       {
         audience: "catalog",
         readName: "product-page",
-        query: { lifecycles: ["ACTIVE"], locale: "cs", limit: 48, offset: 0 },
+        query: { lifecycles: ["DRAFT", "ACTIVE"], locale: "cs", limit: 48, offset: 0 },
       },
       {
         audience: "inventory",
@@ -251,7 +264,7 @@ describe("ERP product pages", () => {
     expect(rows).toEqual([
       ["M1", "ERP-1", "M1", "249,90\u00a0Kč bez DPH", "Skladem: 42 ks"],
       ["M2", "ERP-2", "M2", "Cena na dotaz", "Není skladem"],
-      ["M3", "ERP-3", "M3", "Cena na dotaz", "Dostupnost ověřujeme"],
+      ["M3", "", "M3", "Cena na dotaz", "Dostupnost ověřujeme"],
     ]);
     expect(container.textContent).toContain("Dovezeno ze Symmy.");
     expect(container.textContent).toContain("Objednání této položky připravujeme.");

@@ -1,6 +1,8 @@
 // Page model of the ERP-imported products: Catalog's product page, Inventory's on-hand page and Pricing's catalogue
 // page prices, read as they answer. Nothing is invented: a variant without a found Price is „Cena na dotaz“, a figure
-// that is not an exact ON_HAND total is „Dostupnost ověřujeme“, and the image is the shop's no-image placeholder.
+// that is not an exact ON_HAND total is „Dostupnost ověřujeme“, a variant without SKU has an empty SKU, and the image is
+// the shop's no-image placeholder. Imported Products stay DRAFT with WORK_IN_PROGRESS Variants, so every Variant that is
+// not RETIRED is shown.
 import { imagePlaceholder } from "@/ontos/media-path";
 
 /** An owner resource reference (`{moduleId, resourceType, resourceId, tenantId}`). */
@@ -129,6 +131,7 @@ export const erpCopy = {
   description: "Popis",
   descriptionUnavailable: "Popis zatím není k dispozici.",
   categories: "Kategorie",
+  untranslatedName: "Název zatím není přeložen",
   noImage: (name: string) => `${name} – obrázek zatím není k dispozici`,
 } as const;
 
@@ -144,13 +147,12 @@ const optionText = (value: AttributeValue): string | undefined =>
 const nameOf = (localized: Localized): string | undefined =>
   localized.kind === "PRESENT" ? localized.name : undefined;
 
-/** Variant refs of every ACTIVE variant of the page, in page order: the stock and price reads ask for exactly these. */
-export const activeVariantRefs = (page: CatalogProductPage): OwnerRef[] =>
-  page.items.flatMap((item) =>
-    item.variants
-      .filter((variant) => variant.lifecycle === "ACTIVE")
-      .map(({ variantRef }) => variantRef),
-  );
+/** A Variant the pages show: WORK_IN_PROGRESS (every import's) or ACTIVE, never RETIRED. */
+const shown = (variant: { readonly lifecycle: string }) => variant.lifecycle !== "RETIRED";
+
+/** Variant refs of every shown variant of the page, in page order: the stock and price reads ask for exactly these. */
+export const shownVariantRefs = (page: CatalogProductPage): OwnerRef[] =>
+  page.items.flatMap((item) => item.variants.filter(shown).map(({ variantRef }) => variantRef));
 
 export const toErpStock = (item: CatalogVariantOnHand | undefined): ErpStock => {
   if (item?.outcome !== "ON_HAND") return { kind: "unknown" };
@@ -171,7 +173,7 @@ const pricesByVariant = (prices: CatalogPagePrices | undefined): Map<string, Erp
   return found;
 };
 
-/** The products of one Catalog page with each ACTIVE variant's ERP price and stock. */
+/** The products of one Catalog page with each shown variant's ERP price and stock. */
 export function toErpProducts(
   page: CatalogProductPage,
   onHand: readonly CatalogVariantOnHand[],
@@ -180,26 +182,29 @@ export function toErpProducts(
   const stockById = new Map(onHand.map((item) => [keyOf(item.variantRef), item]));
   const priceById = pricesByVariant(prices);
   return page.items.flatMap((item) => {
-    const variants = item.variants
-      .filter((variant) => variant.lifecycle === "ACTIVE")
-      .map((variant): ErpVariant => {
-        const id = keyOf(variant.variantRef);
-        const options = variant.options.flatMap(({ values }) =>
-          values.flatMap((value) => optionText(value) ?? []),
-        );
-        return {
-          id,
-          name:
-            nameOf(variant.localized) ??
-            (options.length > 0 ? options.join(", ") : (variant.sku ?? id)),
-          ...(variant.sku === undefined ? {} : { sku: variant.sku }),
-          options,
-          price: priceById.get(id) ?? { kind: "on-request" },
-          stock: toErpStock(stockById.get(id)),
-        };
-      });
+    const variants = item.variants.filter(shown).map((variant): ErpVariant => {
+      const id = keyOf(variant.variantRef);
+      const options = variant.options.flatMap(({ values }) =>
+        values.flatMap((value) => optionText(value) ?? []),
+      );
+      return {
+        id,
+        name:
+          nameOf(variant.localized) ??
+          (options.length > 0 ? options.join(", ") : (variant.sku ?? id)),
+        ...(variant.sku === undefined ? {} : { sku: variant.sku }),
+        options,
+        price: priceById.get(id) ?? { kind: "on-request" },
+        stock: toErpStock(stockById.get(id)),
+      };
+    });
     if (variants.length === 0) return [];
-    const name = nameOf(item.localized) ?? variants[0]?.sku ?? keyOf(item.productRef);
+    // A DRAFT import often has no product text in the market language yet: its first Variant's name stands in.
+    const [first] = item.variants.filter(shown);
+    const name =
+      nameOf(item.localized) ??
+      (first === undefined ? undefined : nameOf(first.localized)) ??
+      erpCopy.untranslatedName;
     const description = item.localized.kind === "PRESENT" ? (item.localized.description ?? "") : "";
     return [
       {

@@ -70,6 +70,8 @@ zerops:
         NEXT_TELEMETRY_DISABLED: '1'
         NODE_ENV: production
         ONTOS_SHELL_URL: http://app:3000
+        # „Novinky z ERP“ per company: each brand service takes the entry of its ONTOS_STOREFRONT_LEGAL_ENTITY_ID, none is off.
+        ONTOS_STOREFRONT_ERP_OFFERS: '{"c0c78a3e-6e2a-57e0-9d0d-86253499fee7":{"customerConfigurationId":"__CC__","channelId":"__CHANNEL__","marketId":"__MARKET__","currencyCode":"CZK","unitId":"43d5c797-2b36-4877-85ad-caac3a674d9c","unitQuantity":"1"}}'
         PORT: '3070'
         STOREFRONT_IMAGE_HOSTS: ''
       healthCheck:
