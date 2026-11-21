@@ -53,7 +53,7 @@
     {
       "from": "verticals/commerce-customer-context",
       "to": "verticals/commerce-cart",
-      "class": "runtime"
+      "class": "test"
     },
     {
       "from": "verticals/commerce-customer-context",
