@@ -1378,6 +1378,73 @@ it.live('counts a recognised load with any argument beyond its one literal as co
   }),
 );
 
+/** Helpers outside the one form whose call literals are its loader's targets, each loading @app/beta unseen. */
+const helperEscapes: readonly (readonly [form: string, file: string, source: string, line: number])[] = [
+  [
+    'an erased this parameter that shifts the positions',
+    'src/this-load.ts',
+    "function load(this: void, a: string, b: string) {\n  return require(a);\n}\nexport const e = load('@app/beta', 'effect');\n",
+    2,
+  ],
+  [
+    'an erased this parameter before a relative target',
+    'field.ts',
+    "function field(this: void, specifier: string, key: string) {\n  return require(specifier)[key];\n}\nexport const version = field('../beta/package.json', 'version');\n",
+    2,
+  ],
+  [
+    'a destructured parameter',
+    'src/destructured-load.ts',
+    "function load({ x }: { x: string }, p: string) {\n  return require(p) + x;\n}\nexport const e = load({ x: '' }, '@app/beta');\n",
+    2,
+  ],
+  [
+    'a var that redeclares the parameter',
+    'src/var-load.ts',
+    "function load(p) {\n  var p = '@app/beta';\n  return require(p);\n}\nexport const e = load('effect');\n",
+    3,
+  ],
+  [
+    'a for-of var that redeclares the parameter',
+    'src/for-load.ts',
+    "function load(p) {\n  for (var p of ['@app/beta']) require(p);\n}\nload('effect');\n",
+    2,
+  ],
+  [
+    'an assignment to the parameter through as',
+    'src/as-load.ts',
+    "const load = (p: string) => {\n  (p as string) = '@app/beta';\n  return require(p);\n};\nexport const e = load('effect');\n",
+    3,
+  ],
+  [
+    'an assignment to the parameter through a non-null assertion',
+    'src/non-null-load.ts',
+    "const load = (p: string) => {\n  p! = '@app/beta';\n  return require(p);\n};\nexport const e = load('effect');\n",
+    3,
+  ],
+  [
+    'arguments in a sloppy CommonJS function',
+    'src/arguments-load.cjs',
+    "function load(p) {\n  arguments[0] = '@app/beta';\n  return require(p);\n}\nmodule.exports = load('effect');\n",
+    3,
+  ],
+  [
+    'eval in the function',
+    'src/eval-load.ts',
+    "function load(p: string) {\n  eval(\"p = '@app/beta'\");\n  return require(p);\n}\nexport const e = load('effect');\n",
+    3,
+  ],
+];
+
+for (const [form, relative, source, line] of helperEscapes) {
+  it.live(`keeps the load of a helper with ${form} computed`, () =>
+    Effect.gen(function* helperEscape() {
+      const file = `${alphaModule}/${relative}`;
+      expect(yield* freezeViolations({ [file]: source })).toEqual([computedLoad(file, [line])]);
+    }),
+  );
+}
+
 it.live('resolves the literals a same-file helper passes to its loader, and counts any other helper as computed', () =>
   Effect.gen(function* helperParameter() {
     const config = 'verticals/alpha/backend-federation.config.ts';
