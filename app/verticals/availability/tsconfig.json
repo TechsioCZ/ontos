@@ -36,6 +36,9 @@
     },
     {
       "path": "../inventory"
+    },
+    {
+      "path": "../../packages/catalog-selection-contracts"
     }
   ]
 }

@@ -58,6 +58,12 @@
     },
     {
       "path": "../tax"
+    },
+    {
+      "path": "../../packages/catalog-selection-contracts"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ]
 }
