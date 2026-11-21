@@ -4703,11 +4703,13 @@ export const makeShellAuthenticationApiRuntime = (
     transport: Layer.mergeAll(
       ShellTransportLive,
       LiveChangesRouteLive,
-      Layer.mergeAll(SymmyIngressTransportLive, SymmyDocsLive).pipe(Layer.provide(SymmyHostMountLive)),
+      SymmyIngressTransportLive.pipe(Layer.provide(SymmyHostMountLive)),
       PaymentGatewayRelayTransportLive.pipe(Layer.provide(PaymentGatewayHostMountLive)),
     ).pipe(
       // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
       Layer.provide(mcpEndpointRoutesLive),
+      // The Symmy documentation routes are registered the same way, beside the Symmy mount's own routes.
+      Layer.provide(SymmyDocsLive),
       Layer.provide(shellTransportServicesLive),
       Layer.provide(apiServicesLive),
     ),

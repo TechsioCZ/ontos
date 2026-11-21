@@ -1,15 +1,12 @@
-import { SYMMY_REST_PREFIX, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
+import { SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import type { SymmyRouteKey } from '@app/shared-contracts/symmy';
 import { HttpApi } from '@modern-js/bff-effect/effect-client';
-import { Layer, Result, Schema } from 'effect';
+import { Effect, Layer } from 'effect';
+import type { Schema } from 'effect';
 import { HttpRouter, HttpServerResponse } from 'effect/http';
 import { HttpApiScalar, OpenApi } from 'effect/http-api';
 
 import { SymmyIngressGroup } from '../../shared/api.ts';
-
-/** Where a Symmy developer reads the API: the Scalar page and the OpenAPI document it renders. */
-export const SYMMY_DOCS_PATH = `${SYMMY_REST_PREFIX}/docs` as const;
-export const SYMMY_OPENAPI_PATH = `${SYMMY_REST_PREFIX}/openapi.json` as const;
 
 const apiKeyScheme = 'SymmyApiKey';
 
@@ -350,36 +347,9 @@ const tags = [
   { description: 'Price lists and their prices, for example wholesale.', name: priceListsTag },
 ];
 
-// The parts of the generated document this module rewrites; every other field passes through unchanged.
-const Fields = Schema.Record(Schema.String, Schema.Unknown);
-const MediaTypes = Schema.Record(Schema.String, Fields);
-const GeneratedOperationSchema = Schema.StructWithRest(
-  Schema.Struct({
-    parameters: Schema.Array(Schema.StructWithRest(Schema.Struct({ name: Schema.String }), [Fields])),
-    requestBody: Schema.optionalKey(Schema.StructWithRest(Schema.Struct({ content: MediaTypes }), [Fields])),
-    responses: Schema.Record(
-      Schema.String,
-      Schema.StructWithRest(Schema.Struct({ content: Schema.optionalKey(MediaTypes) }), [Fields]),
-    ),
-  }),
-  [Fields],
-);
-const GeneratedSpecSchema = Schema.StructWithRest(
-  Schema.Struct({
-    components: Fields,
-    paths: Schema.Record(Schema.String, Schema.Record(Schema.String, GeneratedOperationSchema)),
-  }),
-  [Fields],
-);
-const decodeGeneratedSpec = Schema.decodeUnknownResult(GeneratedSpecSchema);
-
 const apiKeySecurity = [{ [apiKeyScheme]: [] }];
 
-const describeOperation = (
-  operation: typeof GeneratedOperationSchema.Type,
-  route: DocumentedRoute,
-  successStatus: number,
-) => ({
+const describeOperation = (operation: OpenApi.OpenAPISpecOperation, route: DocumentedRoute, successStatus: number) => ({
   ...operation,
   description: route.description,
   parameters: operation.parameters.filter(({ name }) => name !== 'x-api-key'),
@@ -402,7 +372,10 @@ const describeOperation = (
             ...response,
             content: {
               ...response.content,
-              [jsonMediaType]: { ...response.content[jsonMediaType], example: route.responseExample },
+              [jsonMediaType]: {
+                ...response.content[jsonMediaType],
+                examples: { answer: { value: route.responseExample } },
+              },
             },
           },
     ]),
@@ -412,45 +385,52 @@ const describeOperation = (
   tags: [route.tag],
 });
 
-const describeSpec = (generated: typeof Fields.Type) => {
-  // A generated document of another shape is a defect of this module, caught by its unit test.
-  const spec = Result.getOrThrow(decodeGeneratedSpec(generated));
-  return {
-    ...spec,
-    components: {
-      ...spec.components,
-      securitySchemes: { [apiKeyScheme]: { in: 'header', name: 'x-api-key', type: 'apiKey' } },
-    },
-    paths: Object.fromEntries(
-      documentedOrder.flatMap((key) => {
-        const { method, path, successStatus } = SYMMY_ROUTES[key];
-        const verb = method.toLowerCase();
-        const operation = spec.paths[path]?.[verb];
-        return operation === undefined
-          ? []
-          : [[path, { [verb]: describeOperation(operation, symmyDocumentedRoutes[key], successStatus) }]];
-      }),
-    ),
-    security: apiKeySecurity,
-    tags,
-  };
-};
+const describeDocument = (generated: OpenApi.OpenAPISpec) => ({
+  ...generated,
+  components: {
+    ...generated.components,
+    securitySchemes: { [apiKeyScheme]: { in: 'header', name: 'x-api-key', type: 'apiKey' } },
+  },
+  paths: Object.fromEntries(
+    documentedOrder.flatMap((key) => {
+      const { method, path, successStatus } = SYMMY_ROUTES[key];
+      const item = generated.paths[path];
+      const operation = method === 'GET' ? item?.get : item?.post;
+      if (operation === undefined) {
+        return [];
+      }
+      const described = describeOperation(operation, symmyDocumentedRoutes[key], successStatus);
+      return [[path, method === 'GET' ? { get: described } : { post: described }]];
+    }),
+  ),
+  security: apiKeySecurity,
+  tags,
+});
 
-/**
- * The public Symmy API as Symmy's developers read it: the routes that work on the Akros stage, each with a plain
- * description and a request that can be sent as it stands. Schemas come from the same group the handlers serve.
- */
-export const SymmyDocsApi = HttpApi.make('symmyDocsApi')
+// The handlers' own group, shown instead of hidden: its schemas are the ones the routes decode with.
+const SymmyRoutesApi = HttpApi.make('symmyRoutesApi')
   .add(SymmyIngressGroup.annotate(OpenApi.Exclude, false))
   .annotate(OpenApi.Title, 'Symmy → OntOS API (Akros demo)')
   .annotate(OpenApi.Version, '1')
-  .annotate(OpenApi.Description, guide)
-  .annotate(OpenApi.Transform, describeSpec);
+  .annotate(OpenApi.Description, guide);
+
+/**
+ * The public Symmy API as Symmy's developers read it: the routes that work on the Akros stage, each with a plain
+ * description and a request that can be sent as it stands.
+ */
+export const symmyOpenApiDocument = describeDocument(OpenApi.fromApi(SymmyRoutesApi));
+
+// Scalar renders the document of the API it is given; this API's document is the described one.
+const SymmyDocsApi = HttpApi.make('symmyDocsApi').annotate(OpenApi.Transform, () => symmyOpenApiDocument);
+
+const serveOpenApi = Effect.fn('SymmyDocs.serveOpenApi')(function* serveSymmyOpenApi() {
+  return yield* Effect.succeed(HttpServerResponse.jsonUnsafe(symmyOpenApiDocument));
+});
 
 /** The Scalar page and the OpenAPI document, served under the Symmy mount without a key. */
 export const SymmyDocsLive = Layer.mergeAll(
   HttpApiScalar.layer(SymmyDocsApi, {
-    path: SYMMY_DOCS_PATH,
+    path: '/api/symmy/v1/docs',
     scalar: {
       authentication: { preferredSecurityScheme: apiKeyScheme },
       defaultOpenAllTags: true,
@@ -458,5 +438,5 @@ export const SymmyDocsLive = Layer.mergeAll(
       layout: 'modern',
     },
   }),
-  HttpRouter.add('GET', SYMMY_OPENAPI_PATH, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(SymmyDocsApi))),
+  HttpRouter.add('GET', '/api/symmy/v1/openapi.json', serveOpenApi),
 );

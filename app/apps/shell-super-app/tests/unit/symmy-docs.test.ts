@@ -1,10 +1,9 @@
 import { SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import { Result, Schema } from 'effect';
-import { OpenApi } from 'effect/http-api';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyCustomerGroupsBatchRequestSchema } from '../../api/symmy/customer-groups-batch-request-contract.ts';
-import { SymmyDocsApi, symmyDocumentedRoutes } from '../../api/symmy/docs.ts';
+import { symmyDocumentedRoutes, symmyOpenApiDocument } from '../../api/symmy/docs.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyProductsBatchRequestSchema } from '../../api/symmy/products-batch-request-contract.ts';
@@ -29,7 +28,7 @@ describe('Symmy API documentation', () => {
   });
 
   it('describes only the working routes, each behind the API key', () => {
-    const spec = OpenApi.fromApi(SymmyDocsApi);
+    const spec = symmyOpenApiDocument;
     expect(Object.keys(spec.paths).toSorted()).toEqual(
       [
         SYMMY_ROUTES.adminProducts.path,
