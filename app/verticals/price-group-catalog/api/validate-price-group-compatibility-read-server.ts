@@ -8,7 +8,7 @@ import { priceGroupCatalogApi } from '../shared/api.ts';
 import type {
   ValidatePriceGroupCompatibilityDomainConflictProblem,
   ValidatePriceGroupCompatibilityDomainUnavailableProblem,
-} from '../shared/apis/validate-price-group-compatibility.ts';
+} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import {
   ValidatePriceGroupCompatibilityAuthenticationProblemSchema,
   ValidatePriceGroupCompatibilityDomainConflictProblemSchema,
@@ -20,7 +20,7 @@ import {
   ValidatePriceGroupCompatibilityPolicyConflictProblemSchema,
   ValidatePriceGroupCompatibilityPolicyProblemSchema,
   ValidatePriceGroupCompatibilityUnavailableProblemSchema,
-} from '../shared/apis/validate-price-group-compatibility.ts';
+} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { validatePriceGroupCompatibilityRead } from '../src/api/validate-price-group-compatibility.read.ts';
 import type { ValidatePriceGroupCompatibilityDomainError } from '../src/api/validate-price-group-compatibility.read.ts';
 import {

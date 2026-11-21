@@ -10,11 +10,11 @@ import { DateTime, Effect, Schema } from 'effect';
 import type {
   PriceGroupDefinitionRequest,
   PriceGroupDefinitionResponse,
-} from '../../shared/apis/price-group-definition.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 import {
   PriceGroupDefinitionRequestSchema,
   PriceGroupDefinitionResponseSchema,
-} from '../../shared/apis/price-group-definition.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 import type { PriceGroupDefinitionRevision, PriceGroupIdentity } from '../../shared/domain/price-group.ts';
 import { priceGroupPeriodContains } from '../../shared/domain/price-group.ts';
 import {

@@ -6,8 +6,8 @@ import { PricingCommitmentConfirmationBindingSchema } from '@app/pricing-contrac
 import {
   CommitmentConfirmationVerificationRequestSchema,
   CommitmentConfirmationVerificationResponseSchema,
-} from '../../shared/apis/commitment-confirmation-verification.ts';
-import type { CommitmentConfirmationVerificationRequest } from '../../shared/apis/commitment-confirmation-verification.ts';
+} from '@app/pricing-contracts/commitment-confirmation-verification';
+import type { CommitmentConfirmationVerificationRequest } from '@app/pricing-contracts/commitment-confirmation-verification';
 import { commitmentConfirmationProductionForScope } from '../integrations/commitment-confirmation-production.ts';
 
 const MODULE_KEY = 'commerce.pricing' as const;

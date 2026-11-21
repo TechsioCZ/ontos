@@ -4,7 +4,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { MarketSubjectRestrictionsCurrentRequestSchema } from '../../shared/apis/market-subject-restrictions-current.ts';
+import { MarketSubjectRestrictionsCurrentRequestSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import {
   readCurrentMarketSubjectRestrictionsFromServices,
   marketSubjectRestrictionsCurrentRead,

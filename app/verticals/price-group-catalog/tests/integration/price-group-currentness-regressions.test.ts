@@ -11,7 +11,7 @@ import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { PriceGroupDefinitionResponseSchema } from '../../shared/apis/price-group-definition.ts';
+import { PriceGroupDefinitionResponseSchema } from '@app/price-group-catalog-contracts/price-group-definition';
 import type {
   ExpectedPriceGroupCurrentEvidence,
   PriceGroupDefinitionRevision,

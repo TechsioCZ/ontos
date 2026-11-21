@@ -12,7 +12,7 @@ import {
   CurrentPricingDecisionPolicyConflictProblemSchema,
   CurrentPricingDecisionPolicyProblemSchema,
   CurrentPricingDecisionUnavailableProblemSchema,
-} from '../shared/apis/current-pricing-decision.ts';
+} from '@app/pricing-contracts/current-pricing-decision';
 import { currentPricingDecisionRead } from '../src/api/current-pricing-decision.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

@@ -4,12 +4,12 @@ import { ReadPermissionDenied, defineRead, defineTenantModuleEntrypoint } from '
 import {
   CurrentSupportedCurrenciesRequestSchema,
   CurrentSupportedCurrenciesResponseSchema,
-} from '../../shared/apis/current-supported-currencies.ts';
+} from '@app/pricing-contracts/current-supported-currencies';
 import type {
   CurrentSupportedCurrenciesRequest,
   CurrentSupportedCurrenciesResponse,
   CurrentSupportedCurrenciesSuccess,
-} from '../../shared/apis/current-supported-currencies.ts';
+} from '@app/pricing-contracts/current-supported-currencies';
 import { Effect, Match } from 'effect';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import type { CurrencySupportPersistence, StoredCurrencySupport } from '../persistence/currency-support-persistence.ts';

@@ -12,7 +12,7 @@ import {
   PaymentTermAffectedUseAssessmentPolicyConflictProblemSchema,
   PaymentTermAffectedUseAssessmentPolicyProblemSchema,
   PaymentTermAffectedUseAssessmentUnavailableProblemSchema,
-} from '../shared/apis/payment-term-affected-use-assessment.ts';
+} from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import { paymentTermAffectedUseAssessmentRead } from '../src/api/payment-term-affected-use-assessment.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

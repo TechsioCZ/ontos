@@ -52,7 +52,7 @@ import {
   PriceGroupDefinitionRequestSchema,
   PriceGroupDefinitionResponseSchema,
   PriceGroupDefinitionUnavailableProblemSchema,
-} from '../../shared/apis/price-group-definition.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 import {
   ValidatePriceGroupCompatibilityAuthenticationProblemSchema,
   ValidatePriceGroupCompatibilityDomainConflictProblemSchema,
@@ -61,15 +61,15 @@ import {
   ValidatePriceGroupCompatibilityRequestSchema,
   ValidatePriceGroupCompatibilityResponseSchema,
   ValidatePriceGroupCompatibilityUnavailableProblemSchema,
-} from '../../shared/apis/validate-price-group-compatibility.ts';
+} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import {
   PriceGroupCurrentnessFailure,
   PriceGroupExpectedCurrentConflict,
   PriceGroupPersistenceUnavailable,
 } from '../../shared/domain/price-group-errors.ts';
 import { PriceGroupDefinitionRevisionSchema, PriceGroupIdentitySchema } from '../../shared/domain/price-group.ts';
-import { executePriceGroupDefinitionWithAuthorization } from '../../src/api/price-group-definition-client.ts';
-import { executeValidatePriceGroupCompatibilityWithAuthorization } from '../../src/api/validate-price-group-compatibility-client.ts';
+import { executePriceGroupDefinitionWithAuthorization } from '@app/price-group-catalog-contracts/price-group-definition/client';
+import { executeValidatePriceGroupCompatibilityWithAuthorization } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '22222222-2222-4222-8222-222222222222';

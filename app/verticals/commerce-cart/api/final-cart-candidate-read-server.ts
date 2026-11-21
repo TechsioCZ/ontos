@@ -12,7 +12,7 @@ import {
   FinalCartCandidatePolicyConflictProblemSchema,
   FinalCartCandidatePolicyProblemSchema,
   FinalCartCandidateUnavailableProblemSchema,
-} from '../shared/apis/final-cart-candidate.ts';
+} from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { finalCartCandidateRead } from '../src/api/final-cart-candidate.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

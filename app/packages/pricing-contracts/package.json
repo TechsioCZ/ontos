@@ -55,8 +55,6 @@
     "./manage-commitment-confirmation": "./src/actions/manage-commitment-confirmation.ts",
     "./manage-commitment-confirmation/api": "./src/apis/manage-commitment-confirmation-action.ts",
     "./manage-commitment-confirmation/client": "./src/api/manage-commitment-confirmation-client.ts",
-    "./commitment-confirmation": "./src/apis/commitment-confirmation-verification.ts",
-    "./commitment-confirmation/client": "./src/api/commitment-confirmation-verification-client.ts",
     "./quotation-verification": "./src/apis/quotation-verification.ts",
     "./quotation-verification/client": "./src/api/quotation-verification-client.ts",
     "./commitment-confirmation-verification": "./src/apis/commitment-confirmation-verification.ts",

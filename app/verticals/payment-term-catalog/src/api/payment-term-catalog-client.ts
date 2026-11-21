@@ -24,7 +24,7 @@ export * from './create-payment-term-action-client.ts';
 export * from './reconcile-payment-term-reference-action-client.ts';
 export * from './retire-payment-term-action-client.ts';
 // </generated-action-http-client-exports>
-export * from './current-payment-terms-client.ts';
+export * from '@app/payment-term-catalog-contracts/current-payment-terms/client';
 export * from './payment-term-history-client.ts';
 export {
   CurrentPaymentTermsRequestSchema,

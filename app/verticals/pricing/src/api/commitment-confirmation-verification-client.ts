@@ -4,8 +4,8 @@ import { Effect, Match, Redacted, Schema } from 'effect';
 import {
   CommitmentConfirmationVerificationApi,
   CommitmentConfirmationVerificationRequestSchema,
-} from '../../shared/apis/commitment-confirmation-verification.ts';
-import type { CommitmentConfirmationVerificationRequest } from '../../shared/apis/commitment-confirmation-verification.ts';
+} from '@app/pricing-contracts/commitment-confirmation-verification';
+import type { CommitmentConfirmationVerificationRequest } from '@app/pricing-contracts/commitment-confirmation-verification';
 import { operationGateway } from './action-gateway.ts';
 
 export interface CommitmentConfirmationVerificationClientOptions {

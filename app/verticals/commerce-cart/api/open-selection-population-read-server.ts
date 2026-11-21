@@ -12,7 +12,7 @@ import {
   OpenSelectionPopulationPolicyConflictProblemSchema,
   OpenSelectionPopulationPolicyProblemSchema,
   OpenSelectionPopulationUnavailableProblemSchema,
-} from '../shared/apis/open-selection-population.ts';
+} from '@app/commerce-cart-contracts/open-selection-population';
 import { openSelectionPopulationRead } from '../src/api/open-selection-population.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

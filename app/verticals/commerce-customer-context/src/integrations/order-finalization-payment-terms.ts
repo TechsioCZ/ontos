@@ -1,6 +1,6 @@
 import { OperationContextUnavailable, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-candidate';
+import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { DateTime, Effect, Schema, Predicate } from 'effect';
 import type { Crypto } from 'effect';
 import { PaymentTermsResolutionRequestSchema } from '../../shared/apis/payment-terms-resolution.ts';

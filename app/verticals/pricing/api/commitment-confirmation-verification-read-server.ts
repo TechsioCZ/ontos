@@ -12,7 +12,7 @@ import {
   CommitmentConfirmationVerificationPolicyConflictProblemSchema,
   CommitmentConfirmationVerificationPolicyProblemSchema,
   CommitmentConfirmationVerificationUnavailableProblemSchema,
-} from '../shared/apis/commitment-confirmation-verification.ts';
+} from '@app/pricing-contracts/commitment-confirmation-verification';
 import { commitmentConfirmationVerificationRead } from '../src/api/commitment-confirmation-verification.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

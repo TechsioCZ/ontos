@@ -7,12 +7,12 @@ import {
 import {
   FinalCartCandidateRequestSchema,
   FinalCartCandidateSchema,
-} from '@app/commerce-cart-finalization-contracts/final-candidate';
+} from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import type {
   FinalCartCandidate,
   FinalCartCandidateRequest,
-} from '@app/commerce-cart-finalization-contracts/final-candidate';
-import { executeFinalCartCandidateWithAuthorization } from '@app/commerce-cart-finalization-contracts/final-candidate/client';
+} from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
+import { executeFinalCartCandidateWithAuthorization } from '@app/commerce-cart-finalization-contracts/final-cart-candidate/client';
 import {
   PricingCommitmentConfirmationBindingSchema,
   PricingCommitmentConfirmationVerifiedSchema,
@@ -23,7 +23,7 @@ import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import { ManageCommitmentConfirmationActionAlreadyCommittedProblemSchema } from '@app/pricing-contracts/manage-commitment-confirmation/api';
 import { executeManageCommitmentConfirmationWithAuthorization } from '@app/pricing-contracts/manage-commitment-confirmation/client';
 import { ManageCommitmentConfirmationResultSchema } from '@app/pricing-contracts/manage-commitment-confirmation';
-import { executeCommitmentConfirmationVerificationWithAuthorization } from '@app/pricing-contracts/commitment-confirmation/client';
+import { executeCommitmentConfirmationVerificationWithAuthorization } from '@app/pricing-contracts/commitment-confirmation-verification/client';
 import { executeQuotationVerificationWithAuthorization } from '@app/pricing-contracts/quotation-verification/client';
 import { CoreSearchResourceRefSchema } from '@app/core-runtime';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';

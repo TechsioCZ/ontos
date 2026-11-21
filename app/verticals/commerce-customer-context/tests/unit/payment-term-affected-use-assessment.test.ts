@@ -4,11 +4,11 @@ import { Effect, Option, Schema } from 'effect';
 import {
   PaymentTermAffectedUseAssessmentRequestSchema,
   PaymentTermAffectedUseAssessmentResponseSchema,
-} from '../../shared/apis/payment-term-affected-use-assessment.ts';
+} from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import type {
   PaymentTermAffectedUseAssessmentRequest,
   PaymentTermAffectedUseAssessmentResponse,
-} from '../../shared/apis/payment-term-affected-use-assessment.ts';
+} from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';
 import {
   handlePaymentTermAffectedUseAssessment,
   makePaymentTermAffectedUseAssessmentServices,
