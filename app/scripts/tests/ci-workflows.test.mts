@@ -892,12 +892,13 @@ const gitIn =
     }).trim();
 
 const PLAN_BRANCH = 'demo';
+const PROVING_RUN = 'https://github.com/TechsioCZ/ontos/actions/runs/44500000001';
 const PLAN_REPOSITORY = 'TechsioCZ/ontos';
 const PLAN_RUN_ID = '44500000000';
 const PLAN_WORKFLOW_ID = 342_952_200;
 
 it.live(
-  'names the base the planner compared with, else the first parent where a merge queue or no comparison stands behind the run',
+  "names the base the planner compared with, else a push's event.before and the first parent on schedule and dispatch",
   () =>
     Effect.sync(() => {
       const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-base-'));
@@ -1010,13 +1011,31 @@ it.live(
           }),
           'pull request': plan(merge, { GITHUB_EVENT_NAME: 'pull_request' }),
           'pull request that is no merge commit': plan(depthTwo, { GITHUB_EVENT_NAME: 'pull_request' }),
+          'push behind the merge queue, creating the branch': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: '0'.repeat(40),
+          }),
           'push behind the merge queue, event.before in the checkout': plan(whole, {
             ...queueBranchPush,
             BASE_SHA: c0,
           }),
           'push behind the merge queue, one commit': plan(depthTwo, { ...queueBranchPush, BASE_SHA: c2 }),
-          'push behind the merge queue, several commits': plan(depthTwo, { ...queueBranchPush, BASE_SHA: c0 }),
-          'push behind the merge queue, unproven by it': plan(depthTwo, { ...queueBranchPush, QUEUE_PROOF: 'failure' }),
+          'push behind the merge queue, several commits the queue proved': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: c0,
+            QUEUE_PROOF_RUN: PROVING_RUN,
+            QUEUE_PROVEN: 'true',
+          }),
+          'push behind the merge queue, the queue proof lookup failed': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: c0,
+            QUEUE_PROOF: 'failure',
+          }),
+          'push behind the merge queue, without a commit before it': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: 'not-a-commit',
+          }),
+          'push past the merge queue by a ruleset bypass, c1..c3': plan(depthTwo, { ...queueBranchPush, BASE_SHA: c0 }),
           'push without a merge queue, with a green push': withGreenPush,
           'push without a merge queue, without a green push': withoutGreenPush,
           schedule: plan(depthTwo, { GITHUB_EVENT_NAME: 'schedule' }),
@@ -1032,12 +1051,18 @@ it.live(
           'merge queue with an unreachable base': ` full: ${unavailable}`,
           'pull request': `${c3} affected: ${affected}`,
           'pull request that is no merge commit': ` full: ${unavailable}`,
-          // The exact comparison base wins over the first parent whenever the checkout holds it.
+          // An all-zero before names no commit, so the push has no base and the Lean Core row fails.
+          'push behind the merge queue, creating the branch': ` full: ${unavailable}`,
+          // The exact comparison stands on event.before whenever the checkout holds it.
           'push behind the merge queue, event.before in the checkout': `${c0} affected: ${affected}`,
           'push behind the merge queue, one commit': `${c2} affected: ${affected}`,
-          // event.before lies outside the two-commit checkout: the plan stays complete, the base is the parent.
-          'push behind the merge queue, several commits': `${c2} full: ${unavailable}`,
-          'push behind the merge queue, unproven by it': `${c2} full: ${unavailable}`,
+          'push behind the merge queue, several commits the queue proved': `${c0} proven: ${PROVING_RUN} already passed every gate of this workflow on this exact tree.`,
+          'push behind the merge queue, the queue proof lookup failed': `${c0} full: ${unavailable}`,
+          'push behind the merge queue, without a commit before it': ` full: ${unavailable}`,
+          // event.before lies outside the two-commit checkout, so the plan stays complete; the base is still
+          // event.before, never HEAD^1: c2 holds whatever edge and baseline entry c1 added, so comparing with
+          // it would admit them.
+          'push past the merge queue by a ruleset bypass, c1..c3': `${c0} full: ${unavailable}`,
           'push without a merge queue, with a green push': `${c1} affected: ${affected}`,
           'push without a merge queue, without a green push': ` full: ${unavailable}`,
           schedule: `${c2} full: ${complete}`,
