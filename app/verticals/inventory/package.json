@@ -74,7 +74,6 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
-    "@app/catalog": "workspace:*",
     "@app/catalog-selection-contracts": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
