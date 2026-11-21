@@ -32,6 +32,9 @@ const productPageEntrypoint = defineTenantModuleEntrypoint({
 });
 
 /**
+ * Catalog Products carry no company, so the page is decided in the tenant context. Its scope is optional: a staff
+ * member pages it from a Shell session with a selected company, a storefront workload with or without one.
+ *
  * Whoever may read the detail of any Product, whatever its lifecycle, may also page Products that are not ACTIVE.
  * A registered storefront workload is never admitted to that declaration, so it pages ACTIVE Products only.
  */
@@ -200,7 +203,7 @@ export const productPageRead = defineRead(
       policyKey: 'commerce.catalog.api.product-page.evidence.v1',
     },
     inputSchema: ProductPageRequestSchema,
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: catalogModuleKey,
     policies: [],
     readKey: 'commerce.catalog.api.product-page',

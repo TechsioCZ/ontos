@@ -170,7 +170,7 @@ describe('Catalog product page request', () => {
 });
 
 describe('Catalog product page admission and SQL', () => {
-  it('declares the storefront workload beside the staff declaration, scope-wide and with no company', () => {
+  it('declares the storefront workload beside the staff declaration, decided in the tenant context', () => {
     const { descriptor } = productPageRead;
     expect(descriptor.accessWorkload?.workloads).toEqual([storefrontWorkload]);
     expect(descriptor.accessDeclaration).toMatchObject({
@@ -180,7 +180,7 @@ describe('Catalog product page admission and SQL', () => {
       risk: 'routine',
       selectors: [],
     });
-    expect(descriptor.legalEntityScope).toBe('forbidden');
+    expect(descriptor.legalEntityScope).toBe('optional');
     // The question the read asks for non-ACTIVE states targets a declaration no workload is admitted to.
     expect(productDetailRead.descriptor.accessDeclaration?.key).toBe(detailCapability);
     expect(productDetailRead.descriptor.accessWorkload).toBeUndefined();
