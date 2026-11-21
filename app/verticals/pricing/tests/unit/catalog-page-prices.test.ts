@@ -4,6 +4,11 @@ import type { AccessPrincipalKind, GateInput } from '@app/core-runtime/access/en
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import type { ExactPriceLookupRequest } from '@app/pricing-contracts/domain/exact-price-lookup';
 import type { ExactPriceResolution } from '@app/pricing-contracts/domain/exact-price-resolution';
+import type {
+  PriceGroupAssignmentProfile,
+  PriceGroupAssignmentResolutionResponse,
+} from '@app/pricing-contracts/domain/price-group-interpretation';
+import type { StablePriceGroupRef } from '@app/price-group-catalog-contracts/price-group';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -18,10 +23,19 @@ import {
 import { CatalogPagePricesRequestSchema } from '../../shared/apis/catalog-page-prices.ts';
 import type { CatalogPagePrice, CatalogPagePriceItem } from '../../shared/apis/catalog-page-prices.ts';
 import { catalogPagePricesRead } from '../../src/api/catalog-page-prices.read.ts';
-import { readCatalogPagePrices } from '../../src/services/catalog-page-prices.service.ts';
-import type { CatalogPagePricesOwnerReads } from '../../src/services/catalog-page-prices.service.ts';
+import {
+  customerCatalogPageVariants,
+  guestCatalogPageVariants,
+  readCatalogPagePrices,
+} from '../../src/services/catalog-page-prices.service.ts';
+import type {
+  CatalogPagePricesOwnerReads,
+  CatalogPageVariant,
+} from '../../src/services/catalog-page-prices.service.ts';
 import { makeExactPriceResolutionService } from '../../src/services/exact-price-resolution.service.ts';
 import type { ExactPriceResolutionDependencies } from '../../src/services/exact-price-resolution.service.ts';
+import { makePriceGroupInterpretationService } from '../../src/services/price-group-interpretation.service.ts';
+import type { CommercePriceGroupResolutionPort } from '../../src/services/price-group-interpretation.service.ts';
 import { ReadCurrentQuantityTierSetPersistenceOutcomeSchema } from '../../src/services/quantity-tier-persistence.service.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -107,6 +121,13 @@ const priceRefFor = (resourceId: string) => ({
   tenantId,
 });
 const pricedRef = priceRefFor('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1');
+const groupPricedRef = priceRefFor('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb9');
+const priceGroupRef = {
+  moduleId: 'pricing.price-group-catalog',
+  resourceId: '55555555-5555-4555-8555-555555555555',
+  resourceType: 'pricing.price-group-catalog.price-group',
+  tenantId,
+} as const;
 const tieredRef = priceRefFor('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4');
 const evidence = { effectiveAt, observedAt, ownerRevision: 'pricing-current-state:41' } as const;
 const found = (lookup: ExactPriceLookupRequest, priceRef: typeof pricedRef, amount: string, revisionId: string) => ({
@@ -144,6 +165,15 @@ const lookupExact =
   (lookup) => {
     lookups.push(lookup);
     const variantId = lookup.exactKey.catalogSelection.variantRef.resourceId;
+    const selector = lookup.exactKey.priceGroupSelector;
+    if (selector.kind === 'PRICE_GROUP') {
+      // The wholesale group prices only the first variant; every other variant has no Price of that group.
+      return Effect.succeed(
+        variantId === variantIds.priced && selector.priceGroupRef.resourceId === priceGroupRef.resourceId
+          ? found(lookup, groupPricedRef, '95.000000000', 'cccccccc-cccc-4ccc-8ccc-ccccccccccc9')
+          : { _tag: 'ABSENT' as const, evidence, request: lookup },
+      );
+    }
     if (variantId === variantIds.priced) {
       return Effect.succeed(found(lookup, pricedRef, '120.500000000', 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'));
     }
@@ -279,7 +309,12 @@ const harness = (
       ),
     resolveExactPrice: makeExactPriceResolutionService(exactDependencies).resolve,
   };
-  return { exactDependencies, lookups, read: () => readCatalogPagePrices(request, trusted, owner) };
+  return {
+    exactDependencies,
+    lookups,
+    read: (variants: readonly CatalogPageVariant[] = guestCatalogPageVariants(request, trusted)) =>
+      readCatalogPagePrices(trusted, owner, variants),
+  };
 };
 
 type PageResult = Effect.Success<ReturnType<typeof readCatalogPagePrices>>;
@@ -381,6 +416,76 @@ const guestInputFor = (
     effectiveAt,
   },
 });
+
+const customer = {
+  authorizationSubject: { kind: 'RETAIL' },
+  profile: {
+    kind: 'RETAIL',
+    moduleId: 'commerce.customer-context',
+    resourceId: '66666666-6666-4666-8666-666666666666',
+    resourceType: 'commerce.customer-context.retail-customer-profile',
+    tenantId,
+  },
+} as const;
+const compatibilityFor = (group: StablePriceGroupRef) => ({
+  catalogRevision: 7,
+  definitionEffectivePeriod: { effectiveFrom: '2026-01-01T00:00:00.000Z', effectiveTo: null },
+  definitionRevisionId: '77777777-7777-4777-8777-777777777777',
+  definitionRevisionNumber: 1,
+  meaningFingerprint: 'a'.repeat(64),
+  priceGroupRef: group,
+  requiredContract: { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
+  trustedOperationAt: effectiveAt,
+  // The Catalog verifies on its own clock, after the instant its proof binds.
+  verifiedAt: observedAt,
+});
+/** Commerce's answer: the customer's profile holds the wholesale group from November on. */
+const assigned = (
+  group: StablePriceGroupRef = priceGroupRef,
+  profile: PriceGroupAssignmentProfile = customer.profile,
+): PriceGroupAssignmentResolutionResponse => ({
+  effectiveAt,
+  profile,
+  resolution: {
+    _tag: 'ASSIGNED',
+    assignmentRef: {
+      moduleId: 'commerce.customer-context',
+      resourceId: '88888888-8888-4888-8888-888888888888',
+      resourceType: 'commerce.customer-context.customer-price-group-assignment',
+      tenantId: group.tenantId,
+    },
+    assignmentRevision: 1,
+    compatibility: compatibilityFor(group),
+    effectiveFrom: '2026-11-01T00:00:00.000Z',
+    effectiveTo: null,
+    priceGroupRef: group,
+  },
+});
+const unassigned: PriceGroupAssignmentResolutionResponse = {
+  effectiveAt,
+  profile: customer.profile,
+  resolution: { _tag: 'NONE' },
+};
+type CommerceQuestion = Parameters<CommercePriceGroupResolutionPort['resolve']>[0];
+/** The customer's variants as the read prepares them, with Commerce and the Price Group Catalog scripted. */
+const customerVariants = (response: PriceGroupAssignmentResolutionResponse, questions: CommerceQuestion[] = []) =>
+  customerCatalogPageVariants(
+    request,
+    customer,
+    trusted,
+    makePriceGroupInterpretationService({
+      commerce: {
+        resolve: (question) => {
+          questions.push(question);
+          return Effect.succeed(response);
+        },
+      },
+      compatibility: {
+        validate: (validation) =>
+          Effect.succeed({ evidence: compatibilityFor(validation.priceGroupRef), kind: 'USABLE' as const }),
+      },
+    }).interpret,
+  );
 
 describe('catalogue page Prices', () => {
   it('accepts one to a hundred variants of one Tenant and nothing beyond', () => {
@@ -536,6 +641,108 @@ describe('catalogue page Prices', () => {
   );
 });
 
+describe('signed-in customer catalogue page Prices', () => {
+  it.effect('prices a customer Commerce assigns no group exactly as a guest, asking Commerce for that profile', () =>
+    Effect.gen(function* withoutAssignment() {
+      const guest = pricesOf(yield* harness().read());
+      const questions: CommerceQuestion[] = [];
+      const signedIn = harness();
+      const prices = pricesOf(yield* signedIn.read(yield* customerVariants(unassigned, questions)));
+      expect(prices.map(answerOf)).toEqual(guest.map(answerOf));
+      expect(signedIn.lookups.map(({ exactKey }) => exactKey.priceGroupSelector.kind)).toEqual([
+        'NO_GROUP',
+        'NO_GROUP',
+        'NO_GROUP',
+        'NO_GROUP',
+      ]);
+      expect(questions).toHaveLength(request.items.length);
+      for (const question of questions) {
+        expect(question).toEqual({
+          request: { authorizationSubject: { kind: 'RETAIL' }, effectiveAt, profile: customer.profile },
+          sellingLegalEntityId: legalEntityId,
+        });
+      }
+    }),
+  );
+
+  it.effect(
+    'prices an assigned customer with the group Price, and with the no-group Price where the group has none',
+    () =>
+      Effect.gen(function* withAssignment() {
+        const signedIn = harness();
+        const prices = pricesOf(yield* signedIn.read(yield* customerVariants(assigned())));
+        expect(prices.map(answerOf)).toEqual([
+          {
+            channelId: 'B2C',
+            kind: 'PRICE_FOUND',
+            priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef },
+            priceRef: groupPricedRef,
+            priceRevision: {
+              effectiveFrom: '2026-09-01T00:00:00.000Z',
+              monetaryAmount: { amount: '95.000000000', currencyCode: 'CZK' },
+              monetaryBoundary: 'PRE_TAX',
+              revision: 2,
+              revisionId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc9',
+            },
+          },
+          { kind: 'NO_APPLICABLE_PRICE', retryable: false },
+          { kind: 'PRICING_CONFLICT', reason: 'COMPETING_CURRENT_EXACT_PRICES', retryable: false },
+          {
+            channelId: 'B2C',
+            kind: 'PRICE_FOUND',
+            priceGroupSelector: { kind: 'NO_GROUP' },
+            priceRef: tieredRef,
+            priceRevision: {
+              effectiveFrom: '2026-09-01T00:00:00.000Z',
+              monetaryAmount: { amount: '100.000000000', currencyCode: 'CZK' },
+              monetaryBoundary: 'PRE_TAX',
+              revision: 2,
+              revisionId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc4',
+            },
+          },
+        ]);
+        // The group key is read first for every variant; the no-group key only once the group key is proven absent.
+        expect(
+          signedIn.lookups.map(({ exactKey }) => [
+            exactKey.catalogSelection.variantRef.resourceId,
+            exactKey.priceGroupSelector.kind,
+          ]),
+        ).toEqual([
+          [variantIds.priced, 'PRICE_GROUP'],
+          [variantIds.absent, 'PRICE_GROUP'],
+          [variantIds.absent, 'NO_GROUP'],
+          [variantIds.conflict, 'PRICE_GROUP'],
+          [variantIds.conflict, 'NO_GROUP'],
+          [variantIds.tiered, 'PRICE_GROUP'],
+          [variantIds.tiered, 'NO_GROUP'],
+        ]);
+      }),
+  );
+
+  it.effect("never prices with another Tenant's group or with Commerce's answer for another profile", () =>
+    Effect.gen(function* noLeak() {
+      const blocked = { kind: 'PRICING_INDETERMINATE', reason: 'OWNER_STATE_UNVERIFIABLE', retryable: true };
+      const otherTenant = '99999999-9999-4999-8999-999999999999';
+      const foreignGroup = harness();
+      const foreign = pricesOf(
+        yield* foreignGroup.read(yield* customerVariants(assigned({ ...priceGroupRef, tenantId: otherTenant }))),
+      );
+      expect(foreign.map(answerOf)).toEqual(request.items.map(() => blocked));
+      expect(foreignGroup.lookups).toHaveLength(0);
+      const otherProfile = harness();
+      const answered = pricesOf(
+        yield* otherProfile.read(
+          yield* customerVariants(
+            assigned(priceGroupRef, { ...customer.profile, resourceId: '67676767-6767-4767-8767-676767676767' }),
+          ),
+        ),
+      );
+      expect(answered.map(answerOf)).toEqual(request.items.map(() => blocked));
+      expect(otherProfile.lookups).toHaveLength(0);
+    }),
+  );
+});
+
 /*
  * Who may run the read is answered by Core's own decision service over the read's real carriers; only its identity,
  * workload registry and role-cell ports are scripted.
@@ -600,6 +807,8 @@ describe('catalogue page Price admission', () => {
       risk: 'sensitive',
     });
     expect(descriptor.legalEntityScope).toBe('required');
+    // The signed-in variant: only Customer Context, acting for the customer it admitted.
+    expect(descriptor.accessActor).toMatchObject({ callers: ['commerce-customer-context'], subject: 'identity' });
   });
 
   it.effect('admits the storefront service principal bound to commerce.storefront-client in its own company', () =>

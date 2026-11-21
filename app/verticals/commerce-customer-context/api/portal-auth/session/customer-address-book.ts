@@ -1,15 +1,12 @@
-import { ReadHandlerUnavailable, ReadRuntime, isVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import type { ReadCoreError, TrustedPrincipalContext } from '@app/core-runtime';
+import { ReadHandlerUnavailable, ReadRuntime } from '@app/core-runtime';
+import type { ReadCoreError } from '@app/core-runtime';
 import { Crypto, Effect, Schema } from 'effect';
 
 import type { SavedAddressListResponse } from '../../../shared/apis/saved-address-list.ts';
 import type { SavedAddressDefaultsResponse } from '../../../shared/apis/saved-address-defaults.ts';
-import type { CurrentCustomerAuthority } from './customer-authority.ts';
 import { logCustomerAddressBookReadFailure } from './customer-address-book-diagnostics.ts';
-import {
-  COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-  CommerceSessionReferenceSchema,
-} from '../../../shared/portal-auth-contracts.ts';
+import { admittedCustomerPrincipal } from './own-customer-principal.ts';
+import type { CustomerOwnPortalScope } from './own-customer-principal.ts';
 import { SavedAddressListResponseSchema } from '../../../shared/apis/saved-address-list.ts';
 import { SavedAddressDefaultsResponseSchema } from '../../../shared/apis/saved-address-defaults.ts';
 import { savedAddressListRead } from '../../../src/api/saved-address-list.read.ts';
@@ -18,13 +15,7 @@ import { isAddressEligibleFor } from '../../../shared/domain/address-book.ts';
 import type { AddressBookProfile, SavedAddress } from '../../../shared/domain/address-book.ts';
 
 /** Server-only values obtained from admitCustomerAccount, never from a request payload. */
-export interface CustomerOwnAddressBookScope {
-  readonly authority: CurrentCustomerAuthority;
-  readonly legalEntityId: string;
-  readonly sessionRef: string;
-  readonly tenantId: string;
-  readonly workloadPrincipal: Readonly<TrustedPrincipalContext>;
-}
+export type CustomerOwnAddressBookScope = CustomerOwnPortalScope;
 
 export type CustomerOwnAddressBook = SavedAddressListResponse & SavedAddressDefaultsResponse;
 
@@ -60,28 +51,7 @@ const belongsToParty = (address: SavedAddress, scope: CustomerOwnAddressBookScop
 export const readCustomerOwnAddressBook = Effect.fn('CustomerOwnAddressBook.read')(function* readAddressBook(
   scope: CustomerOwnAddressBookScope,
 ) {
-  if (
-    scope.tenantId !== scope.workloadPrincipal.tenantId ||
-    scope.legalEntityId !== scope.workloadPrincipal.legalEntityId
-  ) {
-    return yield* unavailable();
-  }
-  const sessionRef = yield* Schema.decodeEffect(CommerceSessionReferenceSchema)(scope.sessionRef).pipe(
-    Effect.catchTag('SchemaError', () => unavailable()),
-  );
-  const { principal } = scope.authority;
-  if (
-    !isVerifiedGatewayPrincipalContext(principal) ||
-    principal.authBindingId !== scope.authority.authBindingId ||
-    principal.authContextRef !== sessionRef ||
-    principal.authenticationNamespaceId !== COMMERCE_AUTHENTICATION_NAMESPACE_ID ||
-    principal.authMethod !== 'session' ||
-    principal.legalEntityId !== scope.legalEntityId ||
-    principal.principalId !== scope.authority.principalId ||
-    principal.tenantId !== scope.tenantId
-  ) {
-    return yield* unavailable();
-  }
+  const principal = yield* admittedCustomerPrincipal(scope, unavailable);
   const profile = {
     kind: 'RETAIL',
     profileRef: {

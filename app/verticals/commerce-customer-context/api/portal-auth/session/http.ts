@@ -4,11 +4,13 @@ import { getCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
 import { DateTime, Duration, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
 import type { ReadCoreError } from '@app/core-runtime';
+import type { CatalogPagePricesPage } from '@app/pricing-contracts/catalog-page-prices';
 import type { HttpServerRequest } from 'effect/http';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/http/Cookies';
 
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
 import { readCustomerOwnAddressBook } from './customer-address-book.ts';
+import { readCustomerOwnCatalogPagePrices } from './customer-catalog-page-prices.ts';
 import { logCustomerAddressBookBoundaryFailure } from './customer-address-book-diagnostics.ts';
 import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
@@ -764,6 +766,33 @@ const portalAuthSessionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTrans
 );
 
 /** Root provides the Better Auth transport port, the session lifecycle and the realm config. */
+const getCustomerCatalogPagePrices = Effect.fn('CommercePortalAuthSessionHttp.getCustomerCatalogPagePrices')(
+  function* getCustomerCatalogPagePricesEffect(
+    request: HttpServerRequest.HttpServerRequest,
+    page: CatalogPagePricesPage,
+  ) {
+    yield* noStoreHeaders;
+    const current = yield* admitCustomerAccount(request);
+    if (current.state !== 'authenticated') {
+      return yield* Effect.fail(authenticationProblem('authentication_failed'));
+    }
+    const { legalEntityId } = current.workloadPrincipal;
+    if (legalEntityId === undefined) {
+      return yield* Effect.fail(unavailableProblem());
+    }
+    return yield* readCustomerOwnCatalogPagePrices(
+      {
+        authority: current.customerAuthority,
+        legalEntityId,
+        sessionRef: current.session.sessionRef,
+        tenantId: current.account.tenantId,
+        workloadPrincipal: current.workloadPrincipal,
+      },
+      page,
+    ).pipe(Effect.catch(answerUnavailable()));
+  },
+);
+
 export const portalAuthSessionApiLive = HttpApiBuilder.group(
   commerceCustomerContextApi,
   'portalAuthSession',
@@ -774,7 +803,8 @@ export const portalAuthSessionApiLive = HttpApiBuilder.group(
       .handle('refresh', ({ request }) => refresh(request))
       .handle('getSession', ({ request }) => getSession(request))
       .handle('getCustomerAccount', ({ request }) => getCustomerAccount(request))
-      .handle('getCustomerAddressBook', ({ request }) => getCustomerAddressBook(request)),
+      .handle('getCustomerAddressBook', ({ request }) => getCustomerAddressBook(request))
+      .handle('getCustomerCatalogPagePrices', ({ payload, request }) => getCustomerCatalogPagePrices(request, payload)),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /**
@@ -799,7 +829,8 @@ export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
       .handle('refresh', ({ request }) => refresh(request))
       .handle('getSession', ({ request }) => getSession(request))
       .handle('getCustomerAccount', () => Effect.fail(unavailableProblem()))
-      .handle('getCustomerAddressBook', () => Effect.fail(unavailableProblem())),
+      .handle('getCustomerAddressBook', () => Effect.fail(unavailableProblem()))
+      .handle('getCustomerCatalogPagePrices', () => Effect.fail(unavailableProblem())),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
 /** The constructed realm stays a visible requirement; the composition root supplies it once. */
