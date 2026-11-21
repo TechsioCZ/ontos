@@ -1892,17 +1892,66 @@ const settleCapability = (analysis: LoadAnalysis, start: Node, capability: Capab
 
 const byIndex = Order.mapInput(Order.Number, (reference: ModuleReference) => reference.index);
 
+const manifestName = 'package.json';
+
+const isPackageFormatted = (file: string): boolean => ['.js', '.jsx'].includes(posixPath.extname(file));
+
 /**
- * How a source is parsed: `.cjs` as CommonJS; `.js` and `.jsx`, whose format the nearest package.json
- * decides, as a module and, when that does not parse, as CommonJS; every other format as a module.
+ * How a source is parsed: `.cjs` as CommonJS; `.js` and `.jsx` as the `type` of their nearest
+ * package.json says, `module` or `commonjs`, and without one as Node decides by syntax, as a module and,
+ * when that does not parse, as CommonJS; every other format as a module.
  */
-const sourceTypesOf = (file: string): readonly ('commonjs' | 'module')[] => {
-  const extension = posixPath.extname(file);
-  if (extension === '.cjs') {
+const sourceTypesOf = (file: string, packageType: string | undefined): readonly ('commonjs' | 'module')[] => {
+  if (posixPath.extname(file) === '.cjs') {
     return ['commonjs'];
   }
-  return extension === '.js' || extension === '.jsx' ? ['module', 'commonjs'] : ['module'];
+  if (!isPackageFormatted(file)) {
+    return ['module'];
+  }
+  return packageType === 'module' || packageType === 'commonjs' ? [packageType] : ['module', 'commonjs'];
 };
+
+const PackageTypeFromJson = Schema.fromJsonString(Schema.Struct({ type: Schema.optional(Schema.String) }));
+
+/** The listed package.json in directory or the nearest one above it. */
+const nearestManifest = (manifests: ReadonlySet<string>, directory: string): string | undefined => {
+  const manifest = directory === '.' ? manifestName : `${directory}/${manifestName}`;
+  if (manifests.has(manifest)) {
+    return manifest;
+  }
+  return directory === '.' ? undefined : nearestManifest(manifests, posixPath.dirname(directory));
+};
+
+/** Each `.js` and `.jsx` source among files with the `type` of its nearest listed package.json. */
+const packageTypes = (
+  root: string,
+  listed: readonly string[],
+  files: readonly string[],
+): Effect.Effect<ReadonlyMap<string, string | undefined>, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* packageTypesProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const manifests = new Set(listed.filter((file) => posixPath.basename(file) === manifestName));
+    const nearest = new Map(
+      files
+        .filter(isPackageFormatted)
+        .map((file) => [file, nearestManifest(manifests, posixPath.dirname(file))] as const),
+    );
+    const types = new Map(
+      yield* Effect.all(
+        [...new Set(nearest.values())].filter(Predicate.isString).map((manifest) =>
+          fileSystem.readFileString(path.join(root, manifest), 'utf-8').pipe(
+            Effect.flatMap((raw) => Schema.decodeUnknownEffect(PackageTypeFromJson)(raw).pipe(Effect.orDie)),
+            Effect.map(({ type }) => [manifest, type] as const),
+          ),
+        ),
+        { concurrency: 32 },
+      ),
+    );
+    return new Map(
+      [...nearest].map(([file, manifest]) => [file, manifest === undefined ? undefined : types.get(manifest)] as const),
+    );
+  });
 
 /**
  * What the file loads. Specifiers: static imports and re-exports at any depth, literal `import()`, TypeScript
@@ -1912,8 +1961,8 @@ const sourceTypesOf = (file: string): readonly ('commonjs' | 'module')[] => {
  * `import()` of it) and a non-literal `import()`; every other use of one is a computed load, whose target the
  * check cannot read. None when the file parses in none of its formats, so its loads are unknown.
  */
-const loadsIn = (file: string, source: string): Option.Option<SourceLoads> => {
-  const parsed = sourceTypesOf(file)
+const loadsIn = (file: string, source: string, packageType: string | undefined): Option.Option<SourceLoads> => {
+  const parsed = sourceTypesOf(file, packageType)
     .map((sourceType) => ({
       result: parseSync(file, source, { astType: 'ts', lang: moduleLanguage(file), sourceType }),
       sourceType,
@@ -2133,7 +2182,7 @@ const derivePackageGraph = (
     const path = yield* Path.Path;
     const listed = yield* listing(root);
     const packages = yield* listedWorkspacePackages(root, listed);
-    const rootManifest = listed.includes('package.json') ? yield* readEdgeManifest(root, 'package.json') : {};
+    const rootManifest = listed.includes(manifestName) ? yield* readEdgeManifest(root, manifestName) : {};
     const { declaredTarget, referenceTargets } = workspaceResolver(root, path, packages, rootManifest);
     const sitesByEdge = new Map<string, { readonly from: string; readonly sites: EdgeSite[]; readonly to: string }>();
     const recordSite = (from: string, to: string | undefined, site: EdgeSite): void => {
@@ -2163,10 +2212,15 @@ const derivePackageGraph = (
       packages.map((workspacePackage) => packageSources(root, listed, workspacePackage)),
       { concurrency: 4 },
     ).pipe(Effect.map((perPackage) => perPackage.flat()));
+    const types = yield* packageTypes(
+      root,
+      listed,
+      sources.map(([, relative]) => relative),
+    );
     const unparsable: string[] = [];
     const computedLoads = new Map<string, readonly number[]>();
     for (const [workspacePackage, relative, source] of sources) {
-      const loads = loadsIn(relative, source);
+      const loads = loadsIn(relative, source, types.get(relative));
       if (Option.isNone(loads)) {
         unparsable.push(relative);
         continue;
