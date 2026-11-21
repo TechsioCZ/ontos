@@ -18,15 +18,17 @@ const unavailable = (cause?: unknown) =>
   );
 
 /**
- * Pricing's catalogue page Prices for the signed-in customer. The freshly admitted customer is the person Pricing acts
- * for, and the customer's own Retail profile (the one the session is bound to) is the profile whose Price Group Pricing
- * asks this module for. Commerce's Price Group rule then decides inside that call; nothing here names a group.
+ * Pricing's catalogue page Prices for the signed-in customer. The session's customer is freshly admitted first; the
+ * call to Pricing is then made for the Storefront client whose request carried that session (the request's own
+ * admitted workload, as the profile routes call Party), because the Shell delegates only a subject it authenticated
+ * itself, and a portal session is this module's own. The customer's own Retail profile (the one the session is bound
+ * to) is the profile whose Price Group Pricing asks this module for; nothing here names a group.
  */
 export const readCustomerOwnCatalogPagePrices = Effect.fn('CustomerOwnCatalogPagePrices.read')(function* read(
   scope: CustomerOwnPortalScope,
   page: CatalogPagePricesPage,
 ) {
-  const principal = yield* admittedCustomerPrincipal(scope, unavailable);
+  yield* admittedCustomerPrincipal(scope, unavailable);
   const crypto = yield* Crypto.Crypto;
   const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
   const issued = yield* acquireDelegatedGatewayContext(
@@ -35,7 +37,7 @@ export const readCustomerOwnCatalogPagePrices = Effect.fn('CustomerOwnCatalogPag
       callingAppId: 'commerce-customer-context',
       legalEntityScope: 'subject',
       requestCorrelation,
-      subject: { _tag: 'Assertion', scope: principal },
+      subject: { _tag: 'Assertion', scope: scope.workloadPrincipal },
     },
     crypto,
   ).pipe(Effect.mapError(unavailable));

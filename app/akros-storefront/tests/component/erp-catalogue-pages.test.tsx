@@ -85,8 +85,25 @@ let runtime: Awaited<ReturnType<typeof setup>>;
 
 async function setup() {
   const reads: GatewayRead[] = [];
+  /** What Commerce's portal answers the signed-in customer's page price call, and what it was asked. */
+  const portal = {
+    answer: (): Response => new Response("Unexpected portal request", { status: 404 }),
+    calls: [] as { cookie: string | null; body: unknown }[],
+  };
   const network = await serveHttp(async (request) => {
-    if (new URL(request.url).pathname !== "/shell-super-app-api/auth/api-key/gateway-read")
+    const path = new URL(request.url).pathname;
+    if (path === "/shell-super-app-api/auth/api-key/gateway-context")
+      return Response.json({
+        apiBaseUrl: "/shell-super-app-api/owner",
+        token: "portal-test-assertion",
+        compositionRevision: "a".repeat(64),
+        expiresAt: Date.now() + 60_000,
+      });
+    if (path === "/shell-super-app-api/owner/api/portal-auth/catalog-page-prices") {
+      portal.calls.push({ cookie: request.headers.get("cookie"), body: await request.json() });
+      return portal.answer();
+    }
+    if (path !== "/shell-super-app-api/auth/api-key/gateway-read")
       return new Response("Unexpected gateway request", { status: 404 });
     const body = (await request.json()) as GatewayRead;
     reads.push(body);
@@ -117,6 +134,7 @@ async function setup() {
   vi.stubEnv("ONTOS_STOREFRONT_LEGAL_ENTITY_ID", legalEntityId);
   vi.stubEnv("ONTOS_STOREFRONT_ERP_OFFERS", JSON.stringify({ [legalEntityId]: offer }));
   vi.stubEnv("STOREFRONT_BRAND", "akros");
+  // A real storefront request always carries its host: the portal origin is derived from it.
   const request = nextRequest(`${network.origin}/cs`, {
     headers: { host: new URL(network.origin).host, "x-akros-market-locale": "cs" },
   });
@@ -136,8 +154,8 @@ async function setup() {
   const { AppRouterContext } = routerContext;
   const { PathnameContext, SearchParamsContext } = hooksContext;
   const browser = new Window();
-  async function renderPage(page: ReactNode, pathname: string) {
-    const stream = await request.run(() =>
+  async function renderPage(page: ReactNode, pathname: string, context = request) {
+    const stream = await context.run(() =>
       renderToReadableStream(
         <AppRouterContext.Provider value={adapters.adaptForAppRouterInstance(router.default)}>
           <PathnameContext.Provider value={pathname}>
@@ -158,6 +176,7 @@ async function setup() {
   }
   return {
     network,
+    portal,
     request,
     reads,
     browser,
@@ -183,6 +202,20 @@ afterEach(async () => {
 
 const ownerReads = () =>
   runtime.reads.filter(({ audience }) => audience !== "commerce-market-catalog");
+
+/** The same storefront request, carrying a portal session cookie beside an unrelated one. */
+const signedInRequest = () =>
+  nextRequest(`${runtime.network.origin}/cs`, {
+    headers: {
+      cookie: "theme=dark; commerce-portal.session_token=customer",
+      host: new URL(runtime.network.origin).host,
+      "x-akros-market-locale": "cs",
+    },
+  });
+const variantRows = (container: { querySelectorAll: (selector: string) => Iterable<Element> }) =>
+  [...container.querySelectorAll("[data-sf-erp-variant]")].map((row) =>
+    [...row.querySelectorAll("td")].map((cell) => cell.textContent?.trim()),
+  );
 
 describe("ERP product pages", () => {
   it("is off when the offers name no entry for this storefront's company", async () => {
@@ -273,5 +306,74 @@ describe("ERP product pages", () => {
       "image-unavailable.svg",
     );
     expect(screen.queryByRole("button", { name: /košík/iu })).toBeNull();
+  });
+});
+
+describe("ERP product pages for a signed-in customer", () => {
+  it("prices the page through Commerce's portal with the customer's own Price Group", async () => {
+    runtime.portal.answer = () =>
+      Response.json({
+        ...prices,
+        prices: [
+          {
+            ...prices.prices[0],
+            priceGroupSelector: { kind: "PRICE_GROUP" },
+            priceRevision: { monetaryAmount: { amount: "2.25", currencyCode: "CZK" } },
+          },
+          ...prices.prices.slice(1),
+        ],
+      });
+    const signedIn = signedInRequest();
+    try {
+      const { Detail } = runtime;
+      const { container } = await runtime.renderPage(
+        <Detail params={Promise.resolve({ productId })} />,
+        `/novinky-z-erp/${productId}`,
+        signedIn,
+      );
+      expect(runtime.portal.calls).toHaveLength(1);
+      expect(runtime.portal.calls[0]?.cookie).toBe("commerce-portal.session_token=customer");
+      expect(ownerReads().map(({ audience }) => audience)).toEqual(["catalog", "inventory"]);
+      expect(variantRows(container)[0]?.[3]).toContain("2,25\u00a0Kč bez DPH");
+      expect(container.textContent).toContain("Vaše cena");
+    } finally {
+      await signedIn.close();
+    }
+  });
+
+  it.each([
+    [
+      "the portal is unavailable",
+      () => Response.json({ code: "authentication_unavailable" }, { status: 503 }),
+    ],
+    ["the portal answers an internal error", () => new Response("boom", { status: 500 })],
+    [
+      "the session is not admitted",
+      () => Response.json({ code: "account_disabled" }, { status: 403 }),
+    ],
+    ["the portal answers no JSON", () => new Response("not json", { status: 200 })],
+  ])("prices the page as a guest when %s", async (_case, answer) => {
+    runtime.portal.answer = answer;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const signedIn = signedInRequest();
+    try {
+      const { Detail } = runtime;
+      const { container } = await runtime.renderPage(
+        <Detail params={Promise.resolve({ productId })} />,
+        `/novinky-z-erp/${productId}`,
+        signedIn,
+      );
+      expect(runtime.portal.calls).toHaveLength(1);
+      expect(ownerReads().map(({ audience }) => audience)).toEqual([
+        "catalog",
+        "inventory",
+        "pricing",
+      ]);
+      expect(variantRows(container)[0]?.[3]).toBe("249,90\u00a0Kč bez DPH");
+      expect(container.textContent).not.toContain("Vaše cena");
+    } finally {
+      errors.mockRestore();
+      await signedIn.close();
+    }
   });
 });

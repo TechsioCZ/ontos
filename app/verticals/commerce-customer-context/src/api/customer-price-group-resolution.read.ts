@@ -294,8 +294,10 @@ export const customerPriceGroupResolutionRead = defineRead(
   {
     accessActor: {
       callers: ['pricing'],
-      reason: "Pricing resolves a customer's Price Group for a verified subject during quotation and commitment.",
+      reason:
+        "Pricing resolves a customer's Price Group for a verified subject during quotation and commitment, and for the signed-in customer whose catalogue page the Commerce portal prices for the Storefront client.",
       subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
     },
     accessDeclaration: {
       key: 'commerce.customer-context.customer-price-group.resolve',

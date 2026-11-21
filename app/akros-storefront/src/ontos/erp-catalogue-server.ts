@@ -3,7 +3,7 @@ import "server-only";
 // (`commerce.storefront-client`): Catalog's product page (Tenant-wide, so no company is sent), Inventory's on-hand
 // page and Pricing's catalogue page prices (both for this storefront's company). A visitor with a portal session has
 // the prices read through Commerce's portal for that signed-in customer, with the customer's own Price Group; a guest,
-// or a session Commerce no longer admits, is priced as before. An import leaves its Products DRAFT with
+// a session Commerce no longer admits, or a portal price call that fails is priced as before. An import leaves its Products DRAFT with
 // WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
 import { Predicate } from "effect";
 import { cache } from "react";
@@ -58,24 +58,34 @@ const readOnHand = async (offer: ErpOffer, variantRefs: readonly OwnerRef[]) =>
   ).flat();
 
 /**
- * One page of variants priced for the signed-in customer through Commerce's portal, or as a guest. The portal answers
- * 401 or 403 for a session it does not admit as a storefront customer (expired, signed out, disabled): that visitor is a
- * guest. An unavailable portal fails the page as an unavailable Pricing read does.
+ * The page priced for the signed-in customer through Commerce's portal, or undefined when the visitor is priced as a
+ * guest: no portal session, a session the portal does not admit (401/403), or any other failure of the customer call.
+ * A signed-in customer never loses the page to their own price call; only a Shell that cannot be reached at all fails
+ * it, as it fails every other read of the page.
  */
-const pricePage = async (page: unknown): Promise<CatalogPagePrices> => {
+const customerPricePage = async (page: unknown): Promise<CatalogPagePrices | undefined> => {
   const { origin, cookie } = await requestPortal();
-  if (portalCookie(cookie) !== "") {
+  if (portalCookie(cookie) === "") return undefined;
+  try {
     const response = await portalRequest("/catalog-page-prices", origin, cookie, page);
     if (response.ok) return (await response.json()) as CatalogPagePrices;
-    await response.body?.cancel();
+    const text = await response.text();
     if (response.status !== 401 && response.status !== 403)
-      throw new OntosError(
-        `OntOS customer catalogue page prices failed: HTTP ${response.status}`,
-        response.status,
+      console.error(
+        `[ontos] customer catalogue page prices -> HTTP ${response.status} ${/"code":"([\w.-]+)"/u.exec(text)?.[1] ?? ""}; priced as a guest`,
       );
+  } catch (error) {
+    if (OntosError.is(error) && error.code === "backend_unreachable") throw error;
+    console.error(
+      `[ontos] customer catalogue page prices failed (${String(error)}); priced as a guest`,
+    );
   }
-  return (await readRecords("pricing", "catalog-page-prices", page)) as CatalogPagePrices;
+  return undefined;
 };
+
+const pricePage = async (page: unknown): Promise<CatalogPagePrices> =>
+  (await customerPricePage(page)) ??
+  ((await readRecords("pricing", "catalog-page-prices", page)) as CatalogPagePrices);
 
 const readPrices = async (
   offer: ErpOffer,
