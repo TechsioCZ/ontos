@@ -894,17 +894,15 @@ it.live(
     }),
 );
 
-const PUBLISHING_PROVIDER_PACKAGES = [
-  'verticals/commerce-market-catalog/package.json',
-  'verticals/party-registry/package.json',
-] as const;
+/** The modules whose published module-api contracts these owners' reads call, read where those contracts are declared. */
+const PUBLISHING_PROVIDERS = ['verticals/commerce-market-catalog', 'verticals/party-registry'] as const;
 
 for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
   it.live(`proves the full native operationContracts array for ${owner}, independent of marker placement`, () =>
     Effect.gen(function* nativeOwnerOperationInventory() {
       const root = path.resolve(import.meta.dirname, '../..');
       const trees = yield* Effect.all(
-        [`${owner}/api`, `${owner}/shared`, `${owner}/src`, 'packages'].map((folder) =>
+        [`${owner}/api`, `${owner}/shared`, `${owner}/src`, 'packages', ...PUBLISHING_PROVIDERS].map((folder) =>
           readPricingSourceTree(root, folder),
         ),
       );
@@ -920,8 +918,6 @@ for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
           `${owner}/vertical.manifest.ts`,
           `${owner}/vertical.registration.ts`,
           ...(hasRuntimeDeclaration ? [runtimeDeclarationFile] : []),
-          // The modules whose published module-api contracts this owner's reads call.
-          ...PUBLISHING_PROVIDER_PACKAGES,
         ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),
