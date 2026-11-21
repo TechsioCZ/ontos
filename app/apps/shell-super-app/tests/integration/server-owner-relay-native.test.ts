@@ -13,8 +13,8 @@ import {
   executeEnsureRetailCustomerProfileWithAuthorization,
   executeMarketBootstrapResolutionWithAuthorization,
   executeAssignCustomerPriceGroupWithAuthorization,
-  executeMarketSubjectRestrictionsCurrentWithAuthorization,
 } from '@app/commerce-customer-context/api/client';
+import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
 import {
   issueApiKeyGatewayContext,
   issueDelegatedGatewayContext,
@@ -22,11 +22,9 @@ import {
 import { executeCustomerPriceGroupResolutionWithAuthorization } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';
 import { migratePriceGroupCatalogNativeBaseline } from '@app/price-group-catalog/testing/server-owner-native';
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
-import {
-  executeCreatePriceGroupWithAuthorization,
-  executePriceGroupDefinitionWithAuthorization,
-  executeValidatePriceGroupCompatibilityWithAuthorization,
-} from '@app/price-group-catalog/api/client';
+import { executeCreatePriceGroupWithAuthorization } from '@app/price-group-catalog/api/client';
+import { executePriceGroupDefinitionWithAuthorization } from '@app/price-group-catalog-contracts/price-group-definition/client';
+import { executeValidatePriceGroupCompatibilityWithAuthorization } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
 import { SignJWT, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
   ActiveApplicationCompositionSnapshotSchema,

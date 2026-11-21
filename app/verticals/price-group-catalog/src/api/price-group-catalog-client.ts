@@ -22,32 +22,6 @@ export * from './create-price-group-action-client.ts';
 export * from './create-price-group-definition-revision-action-client.ts';
 export * from './retire-price-group-action-client.ts';
 // </generated-action-http-client-exports>
-export {
-  executePriceGroupDefinition,
-  executePriceGroupDefinitionWithAuthorization,
-} from '@app/price-group-catalog-contracts/price-group-definition/client';
-export type { PriceGroupDefinitionClientOptions } from '@app/price-group-catalog-contracts/price-group-definition/client';
-export {
-  executeValidatePriceGroupCompatibility,
-  executeValidatePriceGroupCompatibilityWithAuthorization,
-} from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
-export type { ValidatePriceGroupCompatibilityClientOptions } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
-export {
-  PriceGroupDefinitionRequestSchema,
-  PriceGroupDefinitionResponseSchema,
-} from '@app/price-group-catalog-contracts/price-group-definition';
-export {
-  ValidatePriceGroupCompatibilityRequestSchema,
-  ValidatePriceGroupCompatibilityResponseSchema,
-} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
-export type {
-  PriceGroupDefinitionRequest,
-  PriceGroupDefinitionResponse,
-} from '@app/price-group-catalog-contracts/price-group-definition';
-export type {
-  ValidatePriceGroupCompatibilityRequest,
-  ValidatePriceGroupCompatibilityResponse,
-} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 
 type PriceGroupCatalogApiGroups =
   typeof priceGroupCatalogApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;

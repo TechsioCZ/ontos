@@ -43,7 +43,6 @@ export const paymentTermCatalogFoundationApi = HttpApi.make('PaymentTermCatalogA
   ),
 );
 
-export * from '@app/payment-term-catalog-contracts/current-payment-terms';
 export * from './apis/payment-term-history.ts';
 
 export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')
