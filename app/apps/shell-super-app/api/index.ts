@@ -225,6 +225,7 @@ import {
   SymmyIngressSchemaErrorLive,
   SymmyIngressTransportLive,
 } from './symmy/transport.ts';
+import { SymmyDocsLive } from './symmy/docs.ts';
 import { symmyUnavailableProblem } from './symmy/contract.ts';
 import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
 import {
@@ -4702,7 +4703,7 @@ export const makeShellAuthenticationApiRuntime = (
     transport: Layer.mergeAll(
       ShellTransportLive,
       LiveChangesRouteLive,
-      SymmyIngressTransportLive.pipe(Layer.provide(SymmyHostMountLive)),
+      Layer.mergeAll(SymmyIngressTransportLive, SymmyDocsLive).pipe(Layer.provide(SymmyHostMountLive)),
       PaymentGatewayRelayTransportLive.pipe(Layer.provide(PaymentGatewayHostMountLive)),
     ).pipe(
       // Building the MCP endpoint's route Layer registers it beside the other Shell routes.
