@@ -1124,14 +1124,23 @@ const specifierPackageName = (specifier: string): string =>
 
 const workspacePackageManifest = /^(?<parent>apps|packages|verticals)\/(?<entry>[^/]+)\/package\.json$/u;
 
+const readEdgeManifest = (
+  root: string,
+  file: string,
+): Effect.Effect<PackageEdgeManifest, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* readEdgeManifestProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const raw = yield* fileSystem.readFileString(path.join(root, file), 'utf-8');
+    return yield* Schema.decodeUnknownEffect(PackageEdgeManifestFromJson)(raw).pipe(Effect.orDie);
+  });
+
 /** The workspace packages among the listed files: each package.json one level under apps/, packages/, verticals/. */
 const listedWorkspacePackages = (
   root: string,
   listed: readonly string[],
 ): Effect.Effect<readonly WorkspacePackage[], PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* listedWorkspacePackagesProgram() {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const manifests = EffectArray.sort(listed, Order.String).flatMap((file) => {
       const groups = workspacePackageManifest.exec(file)?.groups;
       const kind = workspacePackageParents.find(([parent]) => parent === groups?.parent)?.[1];
@@ -1141,10 +1150,7 @@ const listedWorkspacePackages = (
     });
     return yield* Effect.all(
       manifests.map(({ directory, file, kind }) =>
-        fileSystem.readFileString(path.join(root, file), 'utf-8').pipe(
-          Effect.flatMap((raw) => Schema.decodeUnknownEffect(PackageEdgeManifestFromJson)(raw).pipe(Effect.orDie)),
-          Effect.map((manifest): WorkspacePackage => ({ directory, kind, manifest })),
-        ),
+        readEdgeManifest(root, file).pipe(Effect.map((manifest): WorkspacePackage => ({ directory, kind, manifest }))),
       ),
       { concurrency: 32 },
     );
@@ -1274,8 +1280,34 @@ const versionProtocol = /^(?<protocol>[a-z][a-z+]*):(?<rest>.*)$/u;
 const aliasedPackage = /^(?<name>@[^/@]+\/[^/@]+|[^/@]+)(?:@|$)/u;
 const pathProtocols = new Set(['file', 'link', 'portal']);
 
+/** Whether an `imports` key with one `*` matches specifier, as Node matches it. */
+const matchesSubpathPattern = (key: string, specifier: string): boolean => {
+  const star = key.indexOf('*');
+  if (star === -1 || star !== key.lastIndexOf('*')) {
+    return false;
+  }
+  const base = key.slice(0, star);
+  return (
+    specifier.startsWith(base) &&
+    specifier !== base &&
+    specifier.endsWith(key.slice(star + 1)) &&
+    specifier.length >= key.length
+  );
+};
+
+/** Node's order of `imports` patterns: the longer prefix before `*` first, then the longer key. */
+const SubpathPatternOrder = Order.combine(
+  Order.mapInput(Order.flip(Order.Number), ([key]: readonly [string, PackageImportsTarget]) => key.indexOf('*')),
+  Order.mapInput(Order.flip(Order.Number), ([key]: readonly [string, PackageImportsTarget]) => key.length),
+);
+
 /** How specifiers and dependency declarations of the workspace at root land on its packages. */
-const workspaceResolver = (root: string, path: Path.Path, packages: readonly WorkspacePackage[]) => {
+const workspaceResolver = (
+  root: string,
+  path: Path.Path,
+  packages: readonly WorkspacePackage[],
+  rootManifest: PackageEdgeManifest,
+) => {
   const directoryByName = new Map(
     packages.flatMap(({ directory, manifest }) =>
       manifest.name === undefined ? [] : [[manifest.name, directory] as const],
@@ -1308,45 +1340,57 @@ const workspaceResolver = (root: string, path: Path.Path, packages: readonly Wor
     }
     return protocol === 'catalog' || protocol === 'workspace' ? directoryByName.get(name) : undefined;
   };
+  const declarations = (directory: string, manifest: PackageEdgeManifest) =>
+    new Map(
+      dependencyFields
+        .flatMap((field) => Object.entries(manifest[field] ?? {}))
+        .map(([name, range]) => [name, declaredTarget(directory, name, range)] as const),
+    );
   const declared = new Map(
-    packages.map(
-      ({ directory, manifest }) =>
-        [
-          directory,
-          new Map(
-            dependencyFields
-              .flatMap((field) => Object.entries(manifest[field] ?? {}))
-              .map(([name, range]) => [name, declaredTarget(directory, name, range)] as const),
-          ),
-        ] as const,
-    ),
+    packages.map(({ directory, manifest }) => [directory, declarations(directory, manifest)] as const),
   );
-  /** A bare specifier loads what its package declares under that name, else the hoisted workspace package. */
+  const rootDeclared = declarations('.', rootManifest);
+  /**
+   * A bare specifier loads what its package declares under that name, else what the root package.json
+   * declares under it (installed where every package finds it), else the workspace package of that name.
+   */
   const bareTarget = (directory: string, specifier: string): string | undefined => {
     const name = specifierPackageName(specifier);
     const own = declared.get(directory);
-    return own?.has(name) === true ? own.get(name) : directoryByName.get(name);
+    if (own?.has(name) === true) {
+      return own.get(name);
+    }
+    return rootDeclared.has(name) ? rootDeclared.get(name) : directoryByName.get(name);
   };
   const importsEntryTargets = (directory: string, target: PackageImportsTarget, star: string) =>
     importsTargetStrings(target).map((selected) => {
       const expanded = selected.replaceAll('*', star);
       return expanded.startsWith('.') ? ownerOfPath(directory, expanded) : bareTarget(directory, expanded);
     });
-  /** A `#` specifier loads every target its package's `imports` entry (exact or one `*` pattern) maps it to. */
+  /**
+   * A `#` specifier loads every target of the one `imports` entry Node selects for it: the key equal to it,
+   * else the matching `*` pattern with the longest prefix before its `*`, then the longest key.
+   */
   const subpathImportTargets = (
     { directory, manifest }: WorkspacePackage,
     specifier: string,
-  ): readonly (string | undefined)[] =>
-    Object.entries(manifest.imports ?? {}).flatMap(([key, target]) => {
-      const [prefix = '', suffix] = key.split('*');
-      if (suffix === undefined) {
-        return key === specifier ? importsEntryTargets(directory, target, '') : [];
-      }
-      const matched = specifier.startsWith(prefix) && specifier.endsWith(suffix) && specifier.length >= key.length - 1;
-      return matched
-        ? importsEntryTargets(directory, target, specifier.slice(prefix.length, specifier.length - suffix.length))
-        : [];
-    });
+  ): readonly (string | undefined)[] => {
+    const entries = Object.entries(manifest.imports ?? {});
+    const exact = entries.find(([key]) => key === specifier && !key.includes('*'));
+    if (exact !== undefined) {
+      return importsEntryTargets(directory, exact[1], '');
+    }
+    const [pattern] = EffectArray.sort(
+      entries.filter(([key]) => matchesSubpathPattern(key, specifier)),
+      SubpathPatternOrder,
+    );
+    if (pattern === undefined) {
+      return [];
+    }
+    const [key, target] = pattern;
+    const star = key.indexOf('*');
+    return importsEntryTargets(directory, target, specifier.slice(star, specifier.length - (key.length - star - 1)));
+  };
   /** The packages a specifier written in `relative`, a file of `workspacePackage`, loads. */
   const referenceTargets = (
     workspacePackage: WorkspacePackage,
@@ -1395,7 +1439,8 @@ const derivePackageGraph = (
     const path = yield* Path.Path;
     const listed = yield* listing(root);
     const packages = yield* listedWorkspacePackages(root, listed);
-    const { declaredTarget, referenceTargets } = workspaceResolver(root, path, packages);
+    const rootManifest = listed.includes('package.json') ? yield* readEdgeManifest(root, 'package.json') : {};
+    const { declaredTarget, referenceTargets } = workspaceResolver(root, path, packages, rootManifest);
     const sitesByEdge = new Map<string, { readonly from: string; readonly sites: EdgeSite[]; readonly to: string }>();
     const recordSite = (from: string, to: string | undefined, site: EdgeSite): void => {
       if (to === undefined || to === from) {
