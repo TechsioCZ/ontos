@@ -1,0 +1,99 @@
+# Operator workflow, not part of the delivery: builds the stage app release (.zerops-release) of one trunk commit
+# exactly as the Zerops `app` build does (app/zerops.yaml, setup app: prepareCommands and buildCommands), in the same
+# Alpine/Node image family and at the same path, from the unit builds an earlier stage delivery run produced.
+# It exists for the Zerops incident of 2026-11-21, during which Zerops could not build: the release is then unpacked
+# in the running stage container by hand. Runs only for pushes to its own branch.
+name: AKROS stage release build (operator)
+
+on:
+  push:
+    branches:
+      - ops/akros-stage-release-build
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  release:
+    name: Build the stage app release as Zerops builds it
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container:
+      image: node:26-alpine
+    env:
+      TRUNK_SHA: a53f6211c79407a1e1acdde5e773f042eb225598
+      UNITS_RUN_ID: '44863236129'
+    steps:
+      - name: Install the tools of the Zerops build image
+        run: apk add --no-cache bash git curl tar unzip zstd jq findutils coreutils
+
+      - name: Checkout the trunk commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.TRUNK_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: src
+
+      - name: Download that commit's unit builds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: zerops-units-*
+          path: units
+          run-id: ${{ env.UNITS_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Build and pack the release
+        shell: bash
+        env:
+          BUILD_JOBS: '2'
+          ONTOS_INTERNAL_SYMMY_INGRESS: '1'
+          ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
+          ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
+          ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
+          PNPM_CONFIG_STORE_DIR: /build/source/app/.zerops/pnpm-store
+          PNPM_CONFIG_PACKAGE_IMPORT_METHOD: hardlink
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ZE_FAIL_BUILD: 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p /build /tmp/dists
+          cp -a "$GITHUB_WORKSPACE/src" /build/source
+          git config --global --add safe.directory /build/source
+          for archive in "$GITHUB_WORKSPACE"/units/*/units.tar.zst; do tar --extract --zstd --file "$archive" -C /tmp/dists; done
+          cd /build/source
+          test "$(git rev-parse HEAD)" = "$TRUNK_SHA"
+          cp -a /tmp/dists/apps /tmp/dists/verticals app/
+          dirty="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$dirty" ]; then echo "the tree is not clean after laying out the units:"; printf '%s\n' "$dirty" | head -20; exit 1; fi
+          npm install --global pnpm@12.16.1
+          sh app/scripts/install-zerops-bun.sh 1.4.4
+          cd app
+          pnpm install --frozen-lockfile
+          node scripts/verify-zerops-workspace-install.mts
+          sh scripts/zerops/build-app.sh --digests-only /tmp/zerops-unit-digests.tsv
+          mismatch="$(awk -F'\t' '{d=($1=="shell-super-app"?"apps/":"verticals/")$1"/dist/.zerops-build-digest";r="";getline r<d;close(d);if(r!=$2)print "MISMATCH",$1}' /tmp/zerops-unit-digests.tsv)"
+          if [ -n "$mismatch" ]; then echo "$mismatch"; echo "a unit build does not match this commit: stopping before any rebuild"; exit 1; fi
+          ZEROPS_UNIT_DIGESTS=/tmp/zerops-unit-digests.tsv sh scripts/zerops/build-app.sh
+          mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
+          mkdir -p .zerops/state && printf '[]' >.zerops/state/module-credential-boots.json
+          prove=0
+          node scripts/zerops/prove-app-runtime.mts || prove=$?
+          echo "PROVE_APP_RUNTIME_EXIT=$prove"
+          cd ..
+          sh app/scripts/zerops/pack-app-release.sh sh -c 'cd app && ZEROPS_UNIT_DIGESTS=/tmp/zerops-unit-digests.tsv sh scripts/zerops/build-app.sh --outbox-host'
+          ls -la .zerops-release
+          cat .zerops-release/*.sha256
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp -a .zerops-release "$GITHUB_WORKSPACE/out/"
+          echo "PROVE_APP_RUNTIME_EXIT=$prove (0 means the runtime tree was proven complete)"
+
+      - name: Keep the release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: akros-stage-release
+          path: out/.zerops-release
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 3
