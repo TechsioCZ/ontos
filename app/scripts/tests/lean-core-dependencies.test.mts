@@ -939,16 +939,27 @@ it.live('fails a baseline entry whose class is wider than the edge the tree has'
   }),
 );
 
+/**
+ * How a test runs Git in its temporary repository. A commit must not start Git's background maintenance:
+ * it writes and removes lock files under `.git` while the test lists the files of the repository.
+ */
+const fixtureGitOptions = [
+  '-c',
+  'user.name=Lean Core test',
+  '-c',
+  'user.email=lean-core@example.invalid',
+  '-c',
+  'gc.auto=0',
+  '-c',
+  'maintenance.auto=false',
+] as const;
+
 /** A repository whose first commit holds base and whose second holds head on top of it; root is its top. */
 const comparisonRepository = (base: FreezeFiles, head: FreezeFiles) =>
   Effect.gen(function* comparisonRepositoryProgram() {
     const root = yield* freezeRoot(base);
     const git = (...args: readonly string[]) =>
-      execFileSync(
-        '/usr/bin/git',
-        ['-c', 'user.name=Lean Core test', '-c', 'user.email=lean-core@example.invalid', ...args],
-        { cwd: root, encoding: 'utf-8' },
-      ).trim();
+      execFileSync('/usr/bin/git', [...fixtureGitOptions, ...args], { cwd: root, encoding: 'utf-8' }).trim();
     git('init', '--quiet');
     git('add', '--all');
     git('commit', '--quiet', '-m', 'base');
@@ -1956,11 +1967,7 @@ const trackedRepository = (files: FreezeFiles) =>
       ['add', '--all'],
       ['commit', '--quiet', '-m', 'tracked'],
     ]) {
-      execFileSync(
-        '/usr/bin/git',
-        ['-c', 'user.name=Lean Core test', '-c', 'user.email=lean-core@example.invalid', ...args],
-        { cwd: root },
-      );
+      execFileSync('/usr/bin/git', [...fixtureGitOptions, ...args], { cwd: root });
     }
     return root;
   });
