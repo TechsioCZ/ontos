@@ -25,6 +25,15 @@ type SelectionEvidenceExecutor = (
   options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<SelectionEvidenceResponse, SelectionEvidenceFailure>;
 
+/**
+ * The question Pricing asks Catalog: PRICING is readiness of a selection for a price decision; PRICE_SOURCE_ASSERTION
+ * is only whether a Price an external source asserts names an existing, not retired Product and its Variant.
+ */
+export type PricingCatalogSelectionPurpose = Extract<
+  SelectionEvidenceRequest['purpose'],
+  'PRICE_SOURCE_ASSERTION' | 'PRICING'
+>;
+
 export interface CatalogSelectionAssessmentPort {
   readonly assess: (
     selection: CatalogSelection,
@@ -53,15 +62,16 @@ const unavailable = (reason: string, cause?: unknown): PricingCatalogSelectionUn
 const assessmentMatchesRequest = (
   assessment: CatalogSelectionOwnerAssessmentResult,
   selection: CatalogSelection,
+  purpose: PricingCatalogSelectionPurpose,
 ): boolean => {
   if ('status' in assessment) {
-    return assessment.purpose === 'PRICING' && sameSelection(assessment.selection, selection);
+    return assessment.purpose === purpose && sameSelection(assessment.selection, selection);
   }
   if (assessment.kind === 'NOT_FOUND') {
     return sameSelection(assessment.requested, selection);
   }
   if (assessment.kind === 'NOT_CATALOG_OWNED') {
-    return assessment.purpose === 'PRICING' && sameSelection(assessment.selection, selection);
+    return assessment.purpose === purpose && sameSelection(assessment.selection, selection);
   }
   if (assessment.kind === 'UNVERIFIABLE_OWNER_EVIDENCE') {
     return sameSelection(assessment.selection, selection);
@@ -73,6 +83,7 @@ interface CatalogSelectionAssessmentContext {
   readonly compositionRevision: string;
   readonly legalEntityId: string;
   readonly operationRequirementKey: CatalogSelectionOperationRequirement;
+  readonly purpose: PricingCatalogSelectionPurpose;
   readonly requestCorrelation: string;
   readonly scope: OperationalScope;
 }
@@ -89,7 +100,7 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
           audience: 'catalog',
           compositionRevision: dependencies.context.compositionRevision,
           conditionalRead: {
-            input: { purpose: 'PRICING', selection },
+            input: { purpose: dependencies.context.purpose, selection },
             kind: 'CATALOG_SELECTION',
             operationRequirementKey: dependencies.context.operationRequirementKey,
           },
@@ -100,7 +111,7 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
         .pipe(
           Effect.flatMap(({ baseUrl, credential }) =>
             dependencies.execute(
-              { purpose: 'PRICING', selection },
+              { purpose: dependencies.context.purpose, selection },
               credential,
               dependencies.context.requestCorrelation,
               {
@@ -115,7 +126,7 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
               : unavailable('Catalog selection assessment is unavailable', cause),
           ),
           Effect.flatMap((response) => {
-            if (!assessmentMatchesRequest(response.evidence, selection)) {
+            if (!assessmentMatchesRequest(response.evidence, selection, dependencies.context.purpose)) {
               return Effect.fail(unavailable('Catalog returned an assessment for a different selection or purpose'));
             }
             if (

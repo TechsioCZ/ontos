@@ -8,6 +8,7 @@ import {
 } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductRefSchema } from '../resources/product.ts';
+import type { CatalogPriceSourceSelectionPurpose } from './catalog-selection-purpose.ts';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionInstantSchema,
@@ -24,6 +25,9 @@ export {
   VariantSelectionRevisionSchema,
 } from '@app/catalog-selection-contracts/catalog-selection';
 export type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+
+/** The membership-only question of a source-asserted Price (see the purpose module); it decides no readiness. */
+const priceSourceSelectionPurpose: CatalogPriceSourceSelectionPurpose = 'PRICE_SOURCE_ASSERTION';
 
 const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 const membershipAttestationIdSchema = nonEmptyText.pipe(Schema.brand('CatalogMembershipAttestationId'));
@@ -268,7 +272,7 @@ export const CatalogSelectionValidEvidenceSchema = Schema.Struct({
   membership: CatalogSelectionMembershipSchema,
   status: Schema.Literal('VALID'),
 }).check(
-  Schema.makeFilter(({ assessedAt, basis, membership, selection, validUntil }) =>
+  Schema.makeFilter(({ assessedAt, basis, membership, purpose, selection, validUntil }) =>
     sameRef(membership.productRef, selection.productRef) &&
     sameRef(membership.variant.resourceRef, selection.variantRef) &&
     membership.observedAt === assessedAt &&
@@ -287,7 +291,7 @@ export const CatalogSelectionValidEvidenceSchema = Schema.Struct({
         subject === undefined && role === 'PRODUCT' && sameRef(source.resourceRef, selection.productRef),
     ) &&
     hasExactBasis(basis, 'VARIANT', membership.variant) &&
-    hasExclusiveTypeProof(basis, selection.productRef) &&
+    (purpose === priceSourceSelectionPurpose || hasExclusiveTypeProof(basis, selection.productRef)) &&
     (selection.packageOption === undefined ||
       hasExactBasis(basis, 'PACKAGE_CONTENT', selection.packageOption.contentRevision)) &&
     (selection.setComposition === undefined || hasExactBasis(basis, 'SET_COMPOSITION', selection.setComposition)) &&
@@ -299,7 +303,7 @@ export const CatalogSelectionValidEvidenceSchema = Schema.Struct({
             (unit === undefined || hasExactBasis(basis, 'UNIT', unit)),
         )))
       ? undefined
-      : 'VALID evidence requires exact membership, one type proof, and every selected source revision',
+      : 'VALID evidence requires exact membership, one type proof (except a price source answer), and every selected source revision',
   ),
 );
 const CatalogSelectionInvalidEvidenceSchema = Schema.Struct({

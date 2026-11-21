@@ -8,11 +8,14 @@ import {
   CatalogSelectionInjectedOwnerEvidenceSchema,
   CatalogSelectionUnverifiableOwnerEvidenceSchema,
 } from '../domain/catalog-selection-owner-contract.ts';
-import { CatalogSelectionPurposeSchema } from '../domain/catalog-selection-purpose.ts';
+import {
+  CatalogPriceSourceSelectionPurposeSchema,
+  CatalogSelectionPurposeSchema,
+} from '../domain/catalog-selection-purpose.ts';
 import { CatalogSelectionValidityAttestationSchema } from '../domain/catalog-selection-validity.ts';
 
 export const SelectionEvidenceRequestSchema = Schema.Struct({
-  purpose: CatalogSelectionPurposeSchema,
+  purpose: Schema.Union([CatalogSelectionPurposeSchema, CatalogPriceSourceSelectionPurposeSchema]),
   selection: CatalogSelectionSchema,
 });
 export type SelectionEvidenceRequest = typeof SelectionEvidenceRequestSchema.Type;

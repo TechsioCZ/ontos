@@ -30,7 +30,10 @@ import {
   requirePricingCatalogOperation,
   requirePricingCommercialContextOperation,
 } from '../integrations/pricing-operation-requirements.ts';
-import type { CatalogSelectionAssessmentPort } from '../integrations/catalog-selection-evidence.ts';
+import type {
+  CatalogSelectionAssessmentPort,
+  PricingCatalogSelectionPurpose,
+} from '../integrations/catalog-selection-evidence.ts';
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import { commercialContextAssessmentPortFromEnvironment } from '../integrations/commercial-context-evidence.ts';
@@ -43,6 +46,11 @@ import { ExternalPriceInputBoundaryFactory } from '../services/external-price-in
 
 const DEFINE_PRICE_CATALOG_REQUIREMENT = 'commerce.pricing.requirement.define-price-catalog';
 const DEFINE_PRICE_MARKET_REQUIREMENT = 'commerce.pricing.requirement.define-price-market';
+/**
+ * A defined Price is asserted by an external source, which prices what it imports before anyone activates it: the
+ * selection must name an existing, not retired Product and its Variant, not one ready for sale.
+ */
+const DEFINE_PRICE_CATALOG_PURPOSE = 'PRICE_SOURCE_ASSERTION' satisfies PricingCatalogSelectionPurpose;
 
 export { DefinePriceRejected } from './define-price-rejected.ts';
 
@@ -348,6 +356,7 @@ export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepare
     context: ActionServicePreparationContext,
     requirements: {
       readonly catalog: Parameters<typeof requirePricingCatalogOperation>[0];
+      readonly catalogPurpose: PricingCatalogSelectionPurpose;
       readonly market: Parameters<typeof requirePricingCommercialContextOperation>[0];
     },
   ) {
@@ -376,6 +385,7 @@ export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepare
         catalogSelectionAssessmentPortFromEnvironment({
           ...environment,
           operationRequirementKey: DEFINE_PRICE_CATALOG_REQUIREMENT,
+          purpose: requirements.catalogPurpose,
         }),
         commercialContextAssessmentPortFromEnvironment({
           ...environment,
@@ -486,6 +496,7 @@ const definePriceServicesForScope: ActionServiceFactory<
           compositionRevision,
           legalEntityId,
           operationRequirementKey: DEFINE_PRICE_CATALOG_REQUIREMENT,
+          purpose: DEFINE_PRICE_CATALOG_PURPOSE,
           requestCorrelation: scope.correlationId,
           scope,
         }),
@@ -538,6 +549,7 @@ const prepareDefinePriceServices = Effect.fn('DefinePriceAction.prepareServices'
 ) {
   const owners = yield* prepareDefinePriceOwnerPorts([payload], context, {
     catalog: DEFINE_PRICE_CATALOG_REQUIREMENT,
+    catalogPurpose: DEFINE_PRICE_CATALOG_PURPOSE,
     market: DEFINE_PRICE_MARKET_REQUIREMENT,
   });
   const factory: ActionServiceFactory<DefinePriceActionServices, Crypto.Crypto | ExternalPriceInputBoundaryFactory> = (
