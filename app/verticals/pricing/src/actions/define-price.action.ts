@@ -40,7 +40,10 @@ import { commercialContextAssessmentPortFromEnvironment } from '../integrations/
 import type { CommercialContextAssessmentPort } from '../integrations/commercial-context-evidence.ts';
 import { DefinePriceConflict } from './define-price-conflict.ts';
 import { DefinePriceRejected } from './define-price-rejected.ts';
-import { acceptedPriceSourceProvenanceMatches } from '../services/price-source-provenance.service.ts';
+import {
+  acceptedPriceSourceProvenanceMatches,
+  unchangedPriceSourceProvenanceMatches,
+} from '../services/price-source-provenance.service.ts';
 import type { ExternalPriceInputBoundaryService } from '../services/external-price-input-boundary.service.ts';
 import { ExternalPriceInputBoundaryFactory } from '../services/external-price-input-boundary.service.ts';
 
@@ -301,12 +304,17 @@ export const applyPriceDefinition = Effect.fn('DefinePriceAction.apply')(functio
   if (outcome.outcome === 'EFFECTIVE_TIME_INVALID') {
     return sourceInvalid(payload.sourceAssertion.sourceAssertionId, 'MAPPING_REJECTED');
   }
+  const provenanceInput = {
+    definition: outcome.definition,
+    expectedEvidence: readiness.evidence,
+    provenance: outcome.provenance,
+  };
   if (
-    !acceptedPriceSourceProvenanceMatches({
-      definition: outcome.definition,
-      expectedEvidence: readiness.evidence,
-      provenance: outcome.provenance,
-    })
+    !acceptedPriceSourceProvenanceMatches(provenanceInput) &&
+    !(
+      outcome.outcome === 'REUSED' &&
+      unchangedPriceSourceProvenanceMatches({ ...provenanceInput, monetaryAmount: payload.monetaryAmount })
+    )
   ) {
     return yield* new PricePersistenceUnavailable({
       reason: 'Pricing Price storage returned unverifiable source provenance',
@@ -474,6 +482,16 @@ export const prepareDefinePriceOwnerPorts = Effect.fn('DefinePriceAction.prepare
   },
 );
 
+/**
+ * The define a source sends: an exact key whose Current Revision the same source authority and mapping asserted takes
+ * the new amount as that Price's next revision, and the same amount changes nothing. Product bulk management keeps
+ * the plain define, which conflicts.
+ */
+export const defineSupersedingSameSource =
+  (define: PricePersistence['define']): DefinePriceActionServices['define'] =>
+  (command) =>
+    define({ ...command, onExactKeyBound: 'SUPERSEDE_SAME_SOURCE' });
+
 const definePriceServicesForScope: ActionServiceFactory<
   DefinePriceActionServices,
   Crypto.Crypto | ExternalPriceInputBoundaryFactory
@@ -517,7 +535,7 @@ const definePriceServicesForScope: ActionServiceFactory<
       assessCatalogSelection: catalog.assess,
       assessCommercialContext: commercialContext.assess,
       assessExternalPriceInput: externalPriceInputBoundary.assess,
-      define: persistence.define,
+      define: defineSupersedingSameSource(persistence.define),
       loadCurrencySupport: currencySupport.loadCurrent,
     } satisfies DefinePriceActionServices;
   });
