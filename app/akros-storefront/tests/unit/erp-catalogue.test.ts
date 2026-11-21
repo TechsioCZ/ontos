@@ -7,7 +7,9 @@ import {
   erpPriceLabel,
   isYourPrice,
   erpStockLabel,
+  hasUndecidedPrice,
   toErpProducts,
+  withGuestPricesWhereUndecided,
   type CatalogPagePrices,
   type CatalogProductPage,
   type CatalogVariantOnHand,
@@ -151,6 +153,56 @@ describe("ERP product page model", () => {
       yourPrice: true,
     });
     expect(erpCopy.yourPrice).toBe("Vaše cena");
+  });
+
+  it("shows the guest price without „Vaše cena“ where the customer's own price is undecided, and keeps an explicit no-price", () => {
+    const undecided = (n: number) => ({
+      _tag: "PRICING_INDETERMINATE",
+      catalogSelection: { variantRef: variantRef(n) },
+    });
+    const none = (n: number) => ({
+      _tag: "NO_APPLICABLE_PRICE",
+      catalogSelection: { variantRef: variantRef(n) },
+    });
+    const customer: CatalogPagePrices = {
+      _tag: "CATALOG_PAGE_PRICED",
+      prices: [
+        found(1, "2.25", "PRICE_GROUP"),
+        undecided(2),
+        none(3),
+        undecided(4),
+        undecided(5),
+        found(6, "7"),
+      ],
+    };
+    const guest: CatalogPagePrices = {
+      _tag: "CATALOG_PAGE_PRICED",
+      prices: [found(1, "2.75"), found(2, "99"), none(3), undecided(4), none(5), found(6, "7")],
+    };
+    expect(hasUndecidedPrice(customer)).toBe(true);
+    expect(hasUndecidedPrice(guest)).toBe(true);
+    expect(
+      hasUndecidedPrice({ _tag: "CATALOG_PAGE_PRICED", prices: [found(1, "2.25"), none(3)] }),
+    ).toBe(false);
+    expect(hasUndecidedPrice({ _tag: "CURRENCY_SUPPORT_NOT_CURRENT" })).toBe(false);
+    const [product] = toErpProducts(page, onHand, withGuestPricesWhereUndecided(customer, guest));
+    expect(
+      product!.variants.map(({ price }) => [erpPriceLabel(price, "cs"), isYourPrice(price)]),
+    ).toEqual([
+      // The customer's own Price Group price stays the customer's.
+      ["2,25\u00a0Kč bez DPH", true],
+      // Undecided for the customer, priced for a guest: the guest price, never labelled „Vaše cena“.
+      ["99,00\u00a0Kč bez DPH", false],
+      // No price for anyone stays on request, and so does an item the guest page cannot price either.
+      ["Cena na dotaz", false],
+      ["Cena na dotaz", false],
+      ["Cena na dotaz", false],
+      ["7,00\u00a0Kč bez DPH", false],
+    ]);
+    // A guest page that is itself not priced leaves the customer's page as it answered.
+    expect(withGuestPricesWhereUndecided(customer, { _tag: "CURRENCY_SUPPORT_NOT_CURRENT" })).toBe(
+      customer,
+    );
   });
 
   it("prices nothing when Currency Support is not current, and shows unknown stock without a figure", () => {

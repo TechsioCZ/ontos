@@ -2,14 +2,17 @@ import "server-only";
 // The products Symmy imported into main's owners, read only through their governed reads, as the storefront workload
 // (`commerce.storefront-client`): Catalog's product page (Tenant-wide, so no company is sent), Inventory's on-hand
 // page and Pricing's catalogue page prices (both for this storefront's company). A visitor with a portal session has
-// the prices read through Commerce's portal for that signed-in customer, with the customer's own Price Group; a guest,
-// a session Commerce no longer admits, or a portal price call that fails is priced as before. An import leaves its Products DRAFT with
+// the prices read through Commerce's portal for that signed-in customer, with the customer's own Price Group (an item
+// Pricing could not decide for the customer takes the guest price of the same page); a guest, a session Commerce no
+// longer admits, or a portal price call that fails is priced as before. An import leaves its Products DRAFT with
 // WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
 import { Predicate } from "effect";
 import { cache } from "react";
 import {
+  hasUndecidedPrice,
   shownVariantRefs,
   toErpProducts,
+  withGuestPricesWhereUndecided,
   type CatalogPagePrices,
   type CatalogProductPage,
   type CatalogVariantOnHand,
@@ -83,9 +86,20 @@ const customerPricePage = async (page: unknown): Promise<CatalogPagePrices | und
   return undefined;
 };
 
-const pricePage = async (page: unknown): Promise<CatalogPagePrices> =>
-  (await customerPricePage(page)) ??
-  ((await readRecords("pricing", "catalog-page-prices", page)) as CatalogPagePrices);
+const guestPricePage = async (page: unknown): Promise<CatalogPagePrices> =>
+  (await readRecords("pricing", "catalog-page-prices", page)) as CatalogPagePrices;
+
+/**
+ * The page priced for the signed-in customer, else as a guest. When Pricing could not decide some item of the
+ * customer's page, the page is read once more as a guest and those items show the guest price, so a signed-in customer
+ * never sees „Cena na dotaz“ where a guest sees a price.
+ */
+const pricePage = async (page: unknown): Promise<CatalogPagePrices> => {
+  const customer = await customerPricePage(page);
+  if (customer === undefined) return await guestPricePage(page);
+  if (!hasUndecidedPrice(customer)) return customer;
+  return withGuestPricesWhereUndecided(customer, await guestPricePage(page));
+};
 
 const readPrices = async (
   offer: ErpOffer,

@@ -1,6 +1,7 @@
 // Page model of the ERP-imported products: Catalog's product page, Inventory's on-hand page and Pricing's catalogue
 // page prices, read as they answer. A Price of the signed-in customer's own Price Group carries the quiet „Vaše cena“;
-// every other found Price is the no-group Price. Nothing is invented: a variant without a found Price is „Cena na
+// every other found Price is the no-group Price. A variant whose customer Price Pricing could not decide shows the guest
+// Price of the same page, without „Vaše cena“. Nothing is invented: a variant without a found Price is „Cena na
 // dotaz“, a figure that is not an exact ON_HAND total is „Dostupnost ověřujeme“, a variant without SKU has an empty
 // SKU, and the image is the shop's no-image placeholder. Imported Products stay DRAFT with WORK_IN_PROGRESS Variants, so
 // every Variant that is not RETIRED is shown.
@@ -170,6 +171,53 @@ export const toErpStock = (item: CatalogVariantOnHand | undefined): ErpStock => 
   return Number(item.total.amount) > 0
     ? { kind: "in-stock", quantity: item.total.amount }
     : { kind: "out-of-stock" };
+};
+
+type PagePrice = Extract<
+  CatalogPagePrices,
+  { readonly _tag: "CATALOG_PAGE_PRICED" }
+>["prices"][number];
+
+/** Pricing could not decide this item for the customer (an owner state it could not read or prove): not „no price“. */
+const undecided = (price: PagePrice): boolean => Predicate.isTagged(price, "PRICING_INDETERMINATE");
+
+/** Whether the signed-in customer's page has an item Pricing could not decide, so the page is also read as a guest. */
+export const hasUndecidedPrice = (prices: CatalogPagePrices): boolean =>
+  Predicate.isTagged(prices, "CATALOG_PAGE_PRICED") && prices.prices.some(undecided);
+
+/**
+ * The signed-in customer's page with the guest Price of the same page wherever the customer's own Price could not be
+ * decided, because such an item would otherwise read „Cena na dotaz“ where a guest sees a price. A guest Price is the
+ * no-group Price, so it never carries „Vaše cena“. An explicit no-price answer stays „Cena na dotaz“, and so does an
+ * item the guest page cannot price either.
+ */
+export const withGuestPricesWhereUndecided = (
+  customer: CatalogPagePrices,
+  guest: CatalogPagePrices,
+): CatalogPagePrices => {
+  if (
+    !Predicate.isTagged(customer, "CATALOG_PAGE_PRICED") ||
+    !Predicate.isTagged(guest, "CATALOG_PAGE_PRICED")
+  )
+    return customer;
+  const guestFound = new Map(
+    guest.prices.flatMap((price) =>
+      Predicate.isTagged(price, "PRICE_FOUND") && "priceRevision" in price
+        ? [[keyOf(price.catalogSelection.variantRef), price] as const]
+        : [],
+    ),
+  );
+  return {
+    _tag: "CATALOG_PAGE_PRICED",
+    prices: customer.prices.map((price) => {
+      const fallback = undecided(price)
+        ? guestFound.get(keyOf(price.catalogSelection.variantRef))
+        : undefined;
+      return fallback === undefined
+        ? price
+        : { ...fallback, priceGroupSelector: { kind: "NO_GROUP" } };
+    }),
+  };
 };
 
 const pricesByVariant = (prices: CatalogPagePrices | undefined): Map<string, ErpPrice> => {
