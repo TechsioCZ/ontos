@@ -6,7 +6,7 @@ import { ActivityPersistenceUnavailable } from '../errors/activity-persistence-u
 import { ActivityReferenceUnavailable } from '../errors/activity-reference-unavailable.ts';
 import { ActivityReferenceIneligible } from '../errors/activity-reference-ineligible.ts';
 import { ActivityPermissionDenied } from '../errors/activity-permission-denied.ts';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { TaskRefSchema } from '@app/work-tasks/resources/task';
 import { ActivityKindSchema, ActivitySchema, ContextRefSchema } from '../apis/records.ts';

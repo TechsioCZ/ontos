@@ -1,8 +1,8 @@
 import { Schema } from 'effect';
 
 import { ProductEvidenceReferenceSchema, ProductReasonSchema, ProductVariantSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 export const VariantChangeClassificationSchema = Schema.Literals([
   'SAME_MEANING_RENAME',

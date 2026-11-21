@@ -6,14 +6,14 @@ import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import type { SetComponentCurrentProof } from '../../shared/domain/set-component-validation.ts';
 import { validateSetComponents } from '../../shared/domain/set-component-validation.ts';
-import type { CatalogRevisionInstant } from '../../shared/domain/catalog-revision-reference.ts';
-import { CatalogSelectionBasisSchema, setComponentIdSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogRevisionInstant } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import {
+  CatalogSelectionBasisSchema,
+  setComponentIdSchema,
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import { productSelectionTypeValueAxisBasisForScope } from './product-type-readiness-source.ts';
-import type {
-  CatalogSelectionBasis,
-  CatalogSelection,
-  CatalogSelectionRevision,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelectionBasis } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import type { ConfigurationUnitRevision } from '../../shared/domain/configuration-unit.ts';
 import type { SetComponent, SetCompositionRevision } from '../../shared/domain/set-composition.ts';
 import { productVariants, products, setCompositions } from '../database/schema.ts';

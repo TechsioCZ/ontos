@@ -8,7 +8,7 @@ import {
   executeCounterpartyReadWithAuthorization as readCounterparty,
   loadCounterpartiesClientWithAuthorization as searchCounterparties,
 } from '@app/party-registry/api/client';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { executeApplyCommandWithAuthorization as executeAgreementCommand } from '@app/legal-agreements/api/client';
 import { executeRecordsWithAuthorization as readAgreements } from '@app/legal-agreements/clients/records';
 import { ApplyCommandPayloadSchema as AgreementPayloadSchema } from '@app/legal-agreements/contracts/apply-command';

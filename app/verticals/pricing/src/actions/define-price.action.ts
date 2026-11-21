@@ -3,7 +3,7 @@
 // @ontos-action-slug define-price
 import type { ActionHandlerContext, ActionServicePreparationContext, ActionServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import { PricingCurrencyCodeSchema } from '@app/pricing-contracts/current-supported-currencies';
 import type {
   PriceSourceAssertionAssessment,
@@ -23,7 +23,7 @@ import type { CurrencySupportPersistence } from '../persistence/currency-support
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import { externalPriceSourceAuthorityForScope } from '../persistence/external-price-source-authority-persistence.ts';
 import { assertPreparedPricingScope } from '../integrations/commercial-fee-catalog-target-evidence.ts';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
 import { catalogSelectionAssessmentPortFromEnvironment } from '../integrations/catalog-selection-evidence.ts';
 import {

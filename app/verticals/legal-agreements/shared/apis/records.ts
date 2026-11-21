@@ -4,7 +4,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { OccupancyRefSchema } from '@app/property-leasing/resources/occupancy';
 import { PropertyRefSchema } from '@app/property-portfolio/resources/property';
 import { UnitRefSchema } from '@app/property-portfolio/resources/unit';

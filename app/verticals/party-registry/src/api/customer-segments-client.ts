@@ -23,8 +23,8 @@ import { makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem
 import { DateTime, Effect, Option, Random, Redacted, Schedule, Schema, SchemaGetter } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
-import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { customerSegmentDefinitions } from '@app/shared-contracts/demo/sales-customer-fixtures';
 import type { CustomerSegmentCode } from '@app/shared-contracts/demo/sales-customer-fixtures';
 

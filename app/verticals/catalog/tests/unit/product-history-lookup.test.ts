@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 
 import { ProductHistorySchema } from '../../shared/domain/product.ts';
-import { ProductRevisionReferenceSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { ProductRevisionReferenceSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import { ReadHandlerNotFound } from '@app/core-runtime';
 import { readProductHistory } from '../../src/api/product-history.read.ts';
 import { ProductHistoricalLocalizedRevisionSchema } from '../../shared/apis/product-history.ts';

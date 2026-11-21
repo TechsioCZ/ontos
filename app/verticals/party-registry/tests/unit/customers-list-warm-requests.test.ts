@@ -17,7 +17,7 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { Deferred, Effect, Exit, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { CounterpartyReadApi, CounterpartyReadResponseSchema } from '../../shared/apis/counterparty-read.ts';
 import type { CounterpartyReadRequest } from '../../shared/apis/counterparty-read.ts';

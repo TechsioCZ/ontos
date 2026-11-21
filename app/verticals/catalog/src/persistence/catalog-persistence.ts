@@ -17,12 +17,12 @@ import {
   type ProductRevisionRecord,
   type ProductVariant,
 } from '../../shared/domain/product.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import { CreateProductResultSchema } from '../../shared/actions/create-product.ts';
 import type { CreateProductResult } from '../../shared/actions/create-product.ts';
 import { UpdateProductResultSchema } from '../../shared/actions/update-product.ts';
 import type { UpdateProductResult } from '../../shared/actions/update-product.ts';
-import { ProductRevisionReferenceSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { ProductRevisionReferenceSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import type { CatalogSelectionEvidenceReader } from '../../shared/domain/catalog-open-selection-population.ts';
 import type { CatalogSelectionOwnerAssessmentResult } from '../../shared/domain/catalog-selection-owner-contract.ts';
 import {

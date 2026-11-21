@@ -27,7 +27,7 @@ import type { SetProductAttributeValuesPayload } from '../../shared/actions/attr
 import { cartOpenSelectionPopulationForScope } from '../../shared/domain/catalog-open-selection-population.ts';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import { OutboxPayloadSchema as SelectionSourceChangedEventSchema } from '../../shared/outbox/commerce-catalog-selection-source-changed-v1.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import {
   AttributeValuesConflict,
   attributeValuesPersistenceForScope,

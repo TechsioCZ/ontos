@@ -1,13 +1,12 @@
 import { Schema } from 'effect';
 
-import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
+import type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
-  CatalogSelection,
   CatalogSelectionEvidence,
   CatalogSelectionMembership,
-  CatalogSelectionRevision,
-} from './catalog-selection-evidence.ts';
-import { CatalogSelectionSchema } from './catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 
 type Basis = CatalogSelectionEvidence['basis'];
 

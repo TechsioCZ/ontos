@@ -1,5 +1,5 @@
 /* oxlint-disable sonarjs/no-nested-functions -- Focused in-memory owner ports keep each protection invariant explicit; expires: 2027-03-31. */
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { Effect, Exit, Match, Option, Predicate, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';

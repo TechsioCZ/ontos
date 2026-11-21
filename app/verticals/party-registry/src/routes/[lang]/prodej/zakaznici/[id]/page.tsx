@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import type { CustomerListItem } from '../../../../../api/customers-client.ts';
 import { partyRegistryI18nResources } from '../../../../../i18n/resources.ts';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
-import type { CounterpartyRef } from '../../../../../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import '../../../../index.css';
 import { CUSTOMER_DETAIL_KEY, CustomerDetailContent, CustomerDetailSaveBar } from '../customer-detail-content.tsx';

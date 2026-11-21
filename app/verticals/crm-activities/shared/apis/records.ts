@@ -1,7 +1,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { TaskRefSchema } from '@app/work-tasks/resources/task';
 import { ActivityRefSchema } from '../resources/activity.ts';

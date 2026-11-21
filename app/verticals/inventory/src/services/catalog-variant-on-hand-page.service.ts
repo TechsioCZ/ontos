@@ -1,6 +1,6 @@
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import type { VariantRef } from '@app/catalog/resources/variant';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import { Array as EffectArray, Effect, Match, Option, Schema } from 'effect';
 
 import { CatalogVariantOnHandPageResponseSchema } from '../../shared/apis/catalog-variant-on-hand-page.ts';

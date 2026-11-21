@@ -1,14 +1,14 @@
 import { Option, Schema } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductTypeRefSchema } from '../resources/product-type.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionIdSchema,
   CatalogRevisionInstantSchema,
   CatalogRevisionNumberSchema,
-} from './catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 /** The Definition resource is owned by #402; a type only references its identity. */
 const AttributeDefinitionRefSchema = CatalogResourceRefSchema.check(

@@ -1,9 +1,9 @@
 import { Schema } from 'effect';
 
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductEvidenceReferenceSchema, ProductReasonSchema } from '../domain/product.ts';
 import { AttributeDefinitionRefSchema } from '../resources/attribute-definition.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 const AxisDefinitionSchema = Schema.Struct({
   attributeDefinitionRef: AttributeDefinitionRefSchema,

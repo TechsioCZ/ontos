@@ -40,6 +40,9 @@
     },
     {
       "path": "../tax"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ]
 }

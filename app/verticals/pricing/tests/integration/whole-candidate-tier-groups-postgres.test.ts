@@ -111,13 +111,13 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '@app/catalog/api/pricing-purpose-equivalence';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import { executePricingPurposeEquivalenceWithAuthorization } from '@app/catalog/api/pricing-purpose-equivalence-client';
 import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/quantity-preparation-client';
 import { executeQuantityBasisCompatibilityWithAuthorization } from '@app/catalog/api/quantity-basis-compatibility-client';

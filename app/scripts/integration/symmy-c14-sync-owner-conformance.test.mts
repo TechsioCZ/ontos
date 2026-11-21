@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { executeCreateProductUnitWithAuthorization } from '@app/catalog/api/client';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import {
   CustomerGroupSourceAuthorityFixtureUnavailable,
   seedCustomerGroupSourceAuthority,

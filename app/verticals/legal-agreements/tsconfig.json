@@ -34,6 +34,9 @@
     },
     {
       "path": "../party-registry"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ]
 }

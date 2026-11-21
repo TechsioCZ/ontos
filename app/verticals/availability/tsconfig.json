@@ -29,13 +29,13 @@
       "path": "../../packages/core-runtime"
     },
     {
-      "path": "../catalog"
-    },
-    {
       "path": "../commerce-customer-context"
     },
     {
       "path": "../inventory"
+    },
+    {
+      "path": "../../packages/catalog-selection-contracts"
     }
   ]
 }

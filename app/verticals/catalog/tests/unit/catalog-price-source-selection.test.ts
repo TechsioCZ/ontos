@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { assessCatalogPriceSourceSelection } from '../../src/persistence/catalog-price-source-selection.ts';
 import type { CatalogPriceSourceSelectionRows } from '../../src/persistence/catalog-price-source-selection.ts';
 

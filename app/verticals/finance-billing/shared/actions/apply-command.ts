@@ -5,7 +5,7 @@ import { FinanceConflict } from './errors/finance-conflict.ts';
 import { FinanceForbidden } from './errors/finance-forbidden.ts';
 import { FinanceRejected } from './errors/finance-rejected.ts';
 import { Schema } from 'effect';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { OccupancyRefSchema } from '@app/property-leasing/resources/occupancy';
 import { ContractRefSchema } from '@app/legal-agreements/resources/contract';
 import { PropertyRefSchema } from '@app/property-portfolio/resources/property';

@@ -3,7 +3,7 @@ import { Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CatalogDocumentResourceRefSchema } from '../../shared/domain/catalog-media-assignment.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { catalogMediaPersistenceForScope } from '../../src/persistence/catalog-media-persistence.ts';
 
 const tenantId = '00000000-0000-4000-8000-000000000001';

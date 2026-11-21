@@ -4,9 +4,9 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { CounterpartyIsoTimestampSchema } from '../domain/counterparty-contract.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '../resources/party.ts';
-import { PartyRegistryResourceIdJsonSchema } from '../resources/resource-ref-identifiers.ts';
+import { PartyRegistryResourceIdJsonSchema } from '@app/party-registry-contracts/resources/resource-ref-identifiers';
 
 export const CUSTOMER_LIST_DEFAULT_LIMIT = 500;
 

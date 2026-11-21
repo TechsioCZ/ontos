@@ -45,8 +45,8 @@ import type { CreateProductRecoveryResponseSchema } from '@app/catalog/api/creat
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
 import type { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
-import type { ProductRef } from '@app/catalog/resources/product';
-import type { VariantRef } from '@app/catalog/resources/variant';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import {
   executeImportSourceAssertionWithAuthorization,
   executeInventorySourceImportReceiptWithAuthorization,

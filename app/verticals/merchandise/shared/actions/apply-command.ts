@@ -7,7 +7,7 @@ import {
   AiChangeIdSchema,
   AiRunIdSchema as OwnerAiRunIdSchema,
 } from '@app/shared-contracts/ai-approvals';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { MerchandiseScopeMismatch } from '../errors/merchandise-scope-mismatch.ts';
 import { MerchandiseNotFound } from '../errors/merchandise-not-found.ts';

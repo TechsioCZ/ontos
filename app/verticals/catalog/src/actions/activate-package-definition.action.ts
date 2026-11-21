@@ -26,7 +26,7 @@ import {
   PackageDefinitionActionErrorSchema,
   PackageDefinitionAuditEvidenceSchema,
 } from '../../shared/actions/package-definition-contract.ts';
-import { PackageDefinitionSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { PackageDefinitionRefSchema } from '../../shared/resources/package-definition.ts';
 import { packageActivationPersistenceForScope } from '../persistence/package-activation-persistence.ts';
 import type { PackageActivationPersistence } from '../persistence/package-activation-persistence.ts';

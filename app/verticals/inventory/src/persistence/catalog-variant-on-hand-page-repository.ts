@@ -1,5 +1,5 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 

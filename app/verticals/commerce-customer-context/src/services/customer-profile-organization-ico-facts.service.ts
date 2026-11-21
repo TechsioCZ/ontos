@@ -10,7 +10,7 @@ import {
   CounterpartyOrganizationIcoFactsResponseSchema,
 } from '@app/party-registry/apis/counterparty-organization-ico-facts';
 import { executeCounterpartyOrganizationIcoFactsWithAuthorization } from '@app/party-registry/apis/counterparty-organization-ico-facts/client';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Crypto, Effect, Schema } from 'effect';
 import type {

@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 export class ExternalCorrelationAmbiguous extends Schema.TaggedError<ExternalCorrelationAmbiguous>()(
   'ExternalCorrelationAmbiguous',

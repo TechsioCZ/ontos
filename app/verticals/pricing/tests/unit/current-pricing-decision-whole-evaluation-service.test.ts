@@ -3,10 +3,10 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '@app/catalog/api/pricing-purpose-equivalence';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
 import type { QuantityBasisCompatibilityRequest } from '@app/catalog/api/quantity-basis-compatibility';
-import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import {
   PricingCurrentMarketEvidenceRequestSchema,
   PricingCurrentMarketEvidenceResponseSchema,

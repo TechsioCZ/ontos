@@ -1,12 +1,10 @@
 import type { OperationalScope } from '@app/core-runtime';
 import type { QuantityBasisCompatibilityRequest } from '@app/catalog/api/quantity-basis-compatibility';
-import {
-  QuantityBasisCompatibilityRequestSchema,
-  QuantityBasisCompatibilityResponseSchema,
-} from '@app/catalog/api/quantity-basis-compatibility';
+import { QuantityBasisCompatibilityRequestSchema } from '@app/catalog-selection-contracts/quantity-basis-compatibility';
+import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import { executeQuantityBasisCompatibilityWithAuthorization } from '@app/catalog/api/quantity-basis-compatibility-client';
-import { CatalogQuantityBasisSchema } from '@app/catalog/domain/catalog-quantity-handoff';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
 import { PricingCatalogQuantityBasisDecisionSchema } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
 import type { PricingCatalogQuantityBasisDecision } from '@app/pricing-contracts/domain/quantity-unit-package-basis';

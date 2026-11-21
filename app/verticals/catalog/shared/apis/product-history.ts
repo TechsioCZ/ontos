@@ -15,8 +15,8 @@ import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
 import {
   CatalogRevisionLookupResultSchema,
   ProductRevisionReferenceSchema,
-} from '../domain/catalog-revision-reference.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+} from '@app/catalog-selection-contracts/catalog-revision-reference';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const ProductHistoryRequestSchema = Schema.Struct({
   locale: Schema.optionalKey(

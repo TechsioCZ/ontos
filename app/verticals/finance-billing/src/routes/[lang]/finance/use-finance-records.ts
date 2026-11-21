@@ -1,5 +1,5 @@
 import type { CustomerListItem } from '@app/party-registry/api/client';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';

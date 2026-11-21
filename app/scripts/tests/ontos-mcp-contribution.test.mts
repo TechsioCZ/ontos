@@ -15,7 +15,7 @@ import { LeaseInvoicesApi } from '../../verticals/finance-billing/shared/apis/le
 import { RecordsApi as FinanceRecordsApi } from '../../verticals/finance-billing/shared/apis/records.ts';
 import { VatChoicesApi } from '../../verticals/finance-billing/shared/apis/vat-choices.ts';
 import { financeBillingMcpContribution } from '../../verticals/finance-billing/shared/mcp/contribution.ts';
-import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { crmRuntimeManifest } from '../../verticals/crm/vertical.runtime-declaration.ts';
 import { crmMcpContribution } from '../../verticals/crm/shared/mcp/contribution.ts';
 import { facilityOperationsRuntimeManifest } from '../../verticals/facility-operations/vertical.runtime-declaration.ts';

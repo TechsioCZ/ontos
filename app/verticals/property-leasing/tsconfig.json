@@ -43,6 +43,9 @@
     },
     {
       "path": "../finance-billing"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ]
 }

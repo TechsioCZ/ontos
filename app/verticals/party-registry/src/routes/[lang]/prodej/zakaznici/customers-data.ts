@@ -79,7 +79,7 @@ import type { ContactPointInput, PartyContactPoint } from '../../../../../shared
 import { OfficialIdentifierInputSchema } from '../../../../../shared/domain/identifier-contracts.ts';
 import type { OfficialIdentifierAssertion } from '../../../../../shared/domain/identifier-contracts.ts';
 import type { PartyRef } from '../../../../../shared/resources/party.ts';
-import type { CounterpartyRef } from '../../../../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import {
   changedCustomerFields,
   customerDraftChanges,

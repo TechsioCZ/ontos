@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
-import { CatalogRevisionInstantSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
   CatalogSelectionBasisListSchema,
   CatalogSelectionEvidenceSchema,
-  CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionValidityRequest } from '../../shared/domain/catalog-selection-validity.ts';
 import {
   CatalogSelectionValidityAttestationSchema,

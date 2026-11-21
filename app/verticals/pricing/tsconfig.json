@@ -34,6 +34,7 @@
     { "path": "../../packages/price-group-catalog-contracts" },
     { "path": "../../packages/party-registry-identity-contracts" },
     { "path": "../../packages/pricing-contracts" },
-    { "path": "../../packages/shared-contracts" }
+    { "path": "../../packages/shared-contracts" },
+    { "path": "../../packages/catalog-selection-contracts" }
   ]
 }

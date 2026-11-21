@@ -27,7 +27,7 @@ import { UpdateCustomerGroupPayloadSchema } from '@app/commerce-customer-context
 import { Match, Option, Schema, Struct } from 'effect';
 import type { SymmyOwnerEffectRef } from '@app/shared-contracts/symmy';
 import { PartySourceContactResultSchema } from '@app/party-registry/apis/party-source-effect-receipt';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyContactPointRefSchema } from '@app/party-registry/resources/party-contact-point';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { RetailCustomerProfileRefSchema } from '@app/commerce-customer-context/resources/retail-customer-profile';

@@ -44,6 +44,7 @@
     "@app/core-runtime": "workspace:*",
     "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",

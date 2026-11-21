@@ -4,10 +4,8 @@ import { ReadHandlerNotFound, defineRead, defineTenantModuleEntrypoint } from '@
 import { Effect } from 'effect';
 import type { Crypto } from 'effect';
 
-import {
-  QuantityBasisCompatibilityRequestSchema,
-  QuantityBasisCompatibilityResponseSchema,
-} from '../../shared/apis/quantity-basis-compatibility.ts';
+import { QuantityBasisCompatibilityRequestSchema } from '@app/catalog-selection-contracts/quantity-basis-compatibility';
+import { QuantityBasisCompatibilityResponseSchema } from '../../shared/apis/quantity-basis-compatibility.ts';
 import type {
   QuantityBasisCompatibilityRequest,
   QuantityBasisCompatibilityResponse,

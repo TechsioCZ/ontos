@@ -26,6 +26,7 @@ import {
   WORKSPACE_DEPENDENCY_VERSION,
   WORKSPACE_MANIFEST_PATH,
   checkModuleEntrypointBoundaries,
+  INVENTORY_PACKAGE_SPECIFIER,
   makeActualCatalogSelectionFixture,
   makeActualCustomerContextAggregateFixture,
   makeActualMarketClientFixture,
@@ -453,8 +454,8 @@ for (const [variant, addition, privateSelection, allowed] of [
         root,
         'apps/shell-super-app/src/catalog-quantity-consumer.ts',
         privateSelection
-          ? "import { privateQuantityDispatch } from '@app/catalog/domain/catalog-quantity-handoff';\n"
-          : "import { CatalogQuantityBasisSchema, CatalogQuantityHandoffReadySchema, CatalogQuantityHandoffSchema } from '@app/catalog/domain/catalog-quantity-handoff';\nimport type { CatalogQuantityHandoff, CatalogQuantityHandoffReady } from '@app/catalog/domain/catalog-quantity-handoff';\n",
+          ? "import { privateQuantityDispatch } from '@app/catalog-selection-contracts/catalog-quantity-handoff';\n"
+          : "import { CatalogQuantityBasisSchema, CatalogQuantityHandoffReadySchema, CatalogQuantityHandoffSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';\nimport type { CatalogQuantityHandoff, CatalogQuantityHandoffReady } from '@app/catalog-selection-contracts/catalog-quantity-handoff';\n",
       );
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
       expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : variant).toBe(allowed);
@@ -465,17 +466,104 @@ for (const [variant, addition, privateSelection, allowed] of [
   );
 }
 
-for (const [subpath, publicBinding] of [
-  ['catalog-selection-purpose', 'selectSmallestCompleteCatalogSelectionBasis'],
-  ['catalog-unit-conversion-evidence', 'catalogUnitConversionProves'],
+const PRIVATE_ROUTINE_SOURCE = 'export const privateRoutine = () => true;\n';
+const CATALOG_PRIVATE_ROUTINE = 'verticals/catalog/src/handlers/private-contract.ts';
+
+const VALUE_ONLY_CLAIM = { moduleApis: [], moduleId: 'commerce.catalog', packageName: '@app/catalog' } as const;
+
+it.live('rejects a vertical that claims another deployment identity as a value-only contract owner', () =>
+  Effect.gen(function* verticalClaimingForeignIdentity() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const manifest = 'verticals/inventory/package.json';
+    yield* write(
+      root,
+      manifest,
+      JSON.stringify({
+        name: INVENTORY_PACKAGE_SPECIFIER,
+        ontosContractOwner: { ...VALUE_ONLY_CLAIM, appId: 'catalog' },
+      }),
+    );
+    // With the claimed identity, Inventory would read Catalog's private source as its own.
+    yield* write(root, CATALOG_PRIVATE_ROUTINE, PRIVATE_ROUTINE_SOURCE);
+    yield* write(
+      root,
+      'verticals/inventory/shared/catalog-private-consumer.ts',
+      "import { privateRoutine } from '../../catalog/src/handlers/private-contract.ts';\nexport const run = privateRoutine;\n",
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        `${manifest}: a value-only ontosContractOwner claims catalog's identity`,
+      );
+    }
+  }),
+);
+
+it.live("rejects a value-only contract package that imports its owner's private source", () =>
+  Effect.gen(function* kernelReachingOwnerPrivateSource() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const kernelFile = 'packages/catalog-selection-contracts/src/domain/private-reach.ts';
+    const privateOrigin = CATALOG_PRIVATE_ROUTINE;
+    yield* write(root, privateOrigin, PRIVATE_ROUTINE_SOURCE);
+    yield* write(
+      root,
+      kernelFile,
+      "import { privateRoutine } from '../../../../verticals/catalog/src/handlers/private-contract.ts';\nexport const run = privateRoutine;\n",
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(kernelFile);
+      expect(Cause.pretty(result.cause)).toContain(privateOrigin);
+    }
+  }),
+);
+
+it.live('rejects a value-only contract package that names an owner the topology does not know', () =>
+  Effect.gen(function* packageClaimingUnknownOwner() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const manifest = 'packages/billing-value-contracts/package.json';
+    yield* write(
+      root,
+      manifest,
+      JSON.stringify({
+        exports: { './value': './src/value.ts' },
+        name: '@app/billing-value-contracts',
+        ontosContractOwner: { ...VALUE_ONLY_CLAIM, appId: 'billing' },
+      }),
+    );
+    yield* write(root, 'packages/billing-value-contracts/src/value.ts', "export const billingValue = 'value';\n");
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        `${manifest}: a value-only ontosContractOwner names owner billing, which the topology does not know`,
+      );
+    }
+  }),
+);
+
+for (const [owner, file, specifier, publicBinding] of [
+  [
+    'verticals/catalog',
+    'verticals/catalog/shared/domain/catalog-selection-purpose.ts',
+    '@app/catalog/domain/catalog-selection-purpose',
+    'selectSmallestCompleteCatalogSelectionBasis',
+  ],
+  [
+    'packages/catalog-selection-contracts',
+    'packages/catalog-selection-contracts/src/domain/catalog-unit-conversion-evidence.ts',
+    '@app/catalog-selection-contracts/catalog-unit-conversion-evidence',
+    'catalogUnitConversionProves',
+  ],
 ] as const) {
   for (const privateSelection of [false, true]) {
     it.live(`checks actual published Catalog routine ${publicBinding} private=${privateSelection}`, () =>
       Effect.gen(function* actualPublishedCatalogRoutine() {
-        const file = `verticals/catalog/shared/domain/${subpath}.ts`;
         const root = yield* makeActualCatalogSelectionFixture(file);
-        const privateOrigin = 'verticals/catalog/src/handlers/private-contract.ts';
-        yield* write(root, privateOrigin, 'export const privateRoutine = () => true;\n');
+        const privateOrigin = `${owner}/src/handlers/private-contract.ts`;
+        yield* write(root, privateOrigin, PRIVATE_ROUTINE_SOURCE);
         const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
         yield* write(
           root,
@@ -488,7 +576,7 @@ for (const [subpath, publicBinding] of [
         yield* write(
           root,
           'apps/shell-super-app/src/catalog-routine-consumer.ts',
-          `import { ${binding} } from '@app/catalog/domain/${subpath}';\n`,
+          `import { ${binding} } from '${specifier}';\n`,
         );
         const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
         expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(

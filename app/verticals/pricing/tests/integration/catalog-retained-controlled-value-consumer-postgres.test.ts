@@ -1,11 +1,11 @@
 import { fileURLToPath } from 'node:url';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { CatalogRevisionNumberSchema } from '@app/catalog/domain/catalog-revision-reference';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { ControlledAttributeValueRefSchema } from '@app/catalog/resources/controlled-attribute-value';
 import { AttributeDefinitionRefSchema } from '@app/catalog/resources/attribute-definition';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { executeRetireControlledAttributeValueWithAuthorization } from '@app/catalog/api/client';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,

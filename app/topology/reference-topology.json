@@ -12561,6 +12561,12 @@
       "description": "Storefront Registry-owned public Current Storefront Application contract and generated Effect client."
     },
     {
+      "id": "party-registry-contracts",
+      "package": "@app/party-registry-contracts",
+      "path": "packages/party-registry-contracts",
+      "description": "Party Registry-owned schema-only Counterparty ResourceRef value kernel."
+    },
+    {
       "id": "party-registry-identity-contracts",
       "package": "@app/party-registry-identity-contracts",
       "path": "packages/party-registry-identity-contracts",

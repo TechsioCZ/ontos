@@ -12,7 +12,7 @@ import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
 import { SearchLabelsRequestSchema, SearchLabelsResponseSchema } from '../../shared/apis/search-labels.ts';
 import type { SearchLabelSourceRef } from '../../shared/apis/search-labels.ts';
-import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import {
   deduplicateSearchLabelRefs,

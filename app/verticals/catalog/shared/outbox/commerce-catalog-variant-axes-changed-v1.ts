@@ -2,8 +2,8 @@
 // @ontos-outbox-producer commerce.catalog
 // @ontos-outbox-topic commerce.catalog.variant-axes-changed.v1
 import { Schema } from 'effect';
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const OutboxPayloadSchema = Schema.Struct({
   axisRevision: CatalogRevisionNumberSchema,

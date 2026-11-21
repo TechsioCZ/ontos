@@ -3,7 +3,7 @@ import { OccupancyNotFound } from './errors/occupancy-not-found.ts';
 import { OccupancyConflict } from './errors/occupancy-conflict.ts';
 import { OccupancyRejected } from './errors/occupancy-rejected.ts';
 import { ContractRefSchema } from '@app/legal-agreements/resources/contract';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { Match, Schema } from 'effect';
 
 import {

@@ -9,7 +9,7 @@ import {
   LegalEntityRefSchema,
   CounterpartyRolePeriodSchema,
 } from '../domain/counterparty-contract.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 
 export const CounterpartyReadRequestSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

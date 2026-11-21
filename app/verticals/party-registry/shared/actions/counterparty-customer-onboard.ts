@@ -9,7 +9,7 @@ import {
   CounterpartyProvenanceSchema,
   LegalEntityRefSchema,
 } from '../domain/counterparty-contract.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 

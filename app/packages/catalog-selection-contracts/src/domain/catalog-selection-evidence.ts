@@ -1,32 +1,26 @@
 import { Match, Schema } from 'effect';
 
-import {
-  CatalogSelectionRevisionSchema,
-  CatalogSelectionSchema,
-  SetCompositionSelectionRevisionSchema,
-  VariantSelectionRevisionSchema,
-} from '@app/catalog-selection-contracts/catalog-selection';
-import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductRefSchema } from '../resources/product.ts';
-import type { CatalogPriceSourceSelectionPurpose } from './catalog-selection-purpose.ts';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionInstantSchema,
   CatalogRevisionNumberSchema,
-} from './catalog-revision-reference.ts';
-
-export {
+} from './catalog-resource-reference.ts';
+import {
   CatalogSelectionRevisionSchema,
   CatalogSelectionSchema,
-  PackageDefinitionSelectionRevisionSchema,
-  ProductConfigurationSelectionSchema,
-  ProductSelectionRevisionSchema,
   SetCompositionSelectionRevisionSchema,
   VariantSelectionRevisionSchema,
-} from '@app/catalog-selection-contracts/catalog-selection';
-export type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+} from './catalog-selection.ts';
+import type { CatalogSelectionRevision } from './catalog-selection.ts';
 
-/** The membership-only question of a source-asserted Price (see the purpose module); it decides no readiness. */
+/**
+ * The one question asked beside the readiness taxonomy: whether a Price an external source asserts names an
+ * existing Variant of its existing Product, neither retired, in the trusted Tenant. It decides that membership only,
+ * never readiness, so its VALID answer carries no Product Type proof and no readiness purpose ever receives it.
+ */
+export const CatalogPriceSourceSelectionPurposeSchema = Schema.Literal('PRICE_SOURCE_ASSERTION');
+export type CatalogPriceSourceSelectionPurpose = typeof CatalogPriceSourceSelectionPurposeSchema.Type;
 const priceSourceSelectionPurpose: CatalogPriceSourceSelectionPurpose = 'PRICE_SOURCE_ASSERTION';
 
 const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());

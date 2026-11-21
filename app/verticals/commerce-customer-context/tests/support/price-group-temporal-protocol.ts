@@ -35,7 +35,7 @@ import {
   PriceGroupRetirementAcceptanceSchema,
 } from '@app/price-group-catalog-contracts/price-group';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PgClient } from '@effect/sql-pg';
 import {
   Config,
@@ -128,13 +128,15 @@ export const PriceGroupTemporalWireBootstrapSchema = Schema.Struct({
   ...PriceGroupTemporalBootstrapSchema.fields,
   composition: PrivateFixtureCompositionReferenceSchema,
 }).annotate(strict);
-export const encodePriceGroupTemporalBootstrap = Effect.fn('TemporalNative.encodeBootstrap')(function*  encodePriceGroupTemporalBootstrap(
-  socketPath: string,
-  bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
-) {
-  const composition = yield* writePrivateFixtureComposition(socketPath, bootstrap.composition);
-  return yield* Schema.encodeEffect(PriceGroupTemporalWireBootstrapSchema)({ ...bootstrap, composition });
-});
+export const encodePriceGroupTemporalBootstrap = Effect.fn('TemporalNative.encodeBootstrap')(
+  function* encodePriceGroupTemporalBootstrap(
+    socketPath: string,
+    bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
+  ) {
+    const composition = yield* writePrivateFixtureComposition(socketPath, bootstrap.composition);
+    return yield* Schema.encodeEffect(PriceGroupTemporalWireBootstrapSchema)({ ...bootstrap, composition });
+  },
+);
 
 export const PriceGroupTemporalResponseSchema = Schema.Union([
   Schema.Struct({

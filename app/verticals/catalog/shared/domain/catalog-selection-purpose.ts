@@ -1,11 +1,10 @@
 import { Match, Schema } from 'effect';
 
+import type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
-  CatalogSelection,
   CatalogSelectionBasis,
   CatalogSelectionBasisRole,
-  CatalogSelectionRevision,
-} from './catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
 
 /**
  * Closed purpose taxonomy. Every purpose decides which Catalog facts are the smallest complete
@@ -20,14 +19,6 @@ export const CatalogSelectionPurposeSchema = Schema.Literals([
   'ORDER_HISTORY',
 ]);
 export type CatalogSelectionPurpose = typeof CatalogSelectionPurposeSchema.Type;
-
-/**
- * The one question asked beside the readiness taxonomy: whether a Price an external source asserts names an
- * existing Variant of its existing Product, neither retired, in the trusted Tenant. It decides that membership only,
- * never readiness, so its VALID answer carries no Product Type proof and no readiness purpose ever receives it.
- */
-export const CatalogPriceSourceSelectionPurposeSchema = Schema.Literal('PRICE_SOURCE_ASSERTION');
-export type CatalogPriceSourceSelectionPurpose = typeof CatalogPriceSourceSelectionPurposeSchema.Type;
 
 interface RefIdentity {
   readonly moduleId: string;

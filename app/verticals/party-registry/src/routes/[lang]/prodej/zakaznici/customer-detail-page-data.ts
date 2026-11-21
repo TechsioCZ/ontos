@@ -11,7 +11,7 @@ import type { CounterpartyReadResponse } from '../../../../../shared/apis/counte
 import type { PartyContactPointsResponse } from '../../../../../shared/apis/party-contact-points.ts';
 import type { PartyDetailResponse } from '../../../../../shared/apis/party-detail.ts';
 import type { PartyOfficialIdentifierHistoryResponse } from '../../../../../shared/apis/party-official-identifier-history.ts';
-import type { CounterpartyRef } from '../../../../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { CustomerSection } from './customers-data.ts';
 import { cachedCustomerDetailByRef } from './customers-data.ts';
 

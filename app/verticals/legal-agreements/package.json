@@ -33,6 +33,7 @@
     "@app/core-runtime": "workspace:*",
     "@app/facility-operations": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/property-leasing": "workspace:*",
     "@app/property-portfolio": "workspace:*",

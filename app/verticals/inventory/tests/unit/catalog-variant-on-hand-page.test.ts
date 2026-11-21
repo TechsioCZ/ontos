@@ -17,7 +17,7 @@ import {
   CatalogVariantOnHandPageRequestSchema,
   CatalogVariantOnHandPageResponseSchema,
 } from '../../shared/apis/catalog-variant-on-hand-page.ts';
-import type { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
 import { InventorySourceAssertionSchema } from '../../shared/domain/inventory-source-assertion.ts';

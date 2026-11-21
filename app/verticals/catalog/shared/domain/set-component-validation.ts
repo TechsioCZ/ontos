@@ -1,8 +1,11 @@
 import { Schema } from 'effect';
 
-import type { CatalogResourceRef, CatalogRevisionInstant } from './catalog-revision-reference.ts';
-import type { CatalogSelection } from './catalog-selection-evidence.ts';
-import { CatalogSelectionSchema } from './catalog-selection-evidence.ts';
+import type {
+  CatalogResourceRef,
+  CatalogRevisionInstant,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { SetComponent, SetCompositionRevision } from './set-composition.ts';
 
 /** Owner-issued Current facts for one exact component, including indirect selection dependencies. */

@@ -4,8 +4,8 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { AttributeValueSchema } from '../domain/attribute-values.ts';
 import { AttributeDefinitionRefSchema } from '../resources/attribute-definition.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 export const EffectiveAttributeValuesCurrentRequestSchema = Schema.Struct({
   attributeDefinitionRef: AttributeDefinitionRefSchema,

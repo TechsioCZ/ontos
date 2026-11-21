@@ -43,6 +43,9 @@
     },
     {
       "path": "../../verticals/tax"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ]
 }

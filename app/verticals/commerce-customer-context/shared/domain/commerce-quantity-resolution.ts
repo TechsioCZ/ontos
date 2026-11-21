@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, effect-native/no-sync-schema-codec, effect-native/no-unbranded-identifier-schema, effect-native/prefer-match-over-tag-switch, eslint/default-case, eslint/no-nested-ternary, eslint/prefer-destructuring, react-doctor/js-cache-property-access, react-doctor/js-combine-iterations, sonarjs/too-many-break-or-continue-in-loop, typescript/array-type, typescript/consistent-return, typescript/no-unsafe-type-assertion, unicorn/no-array-reduce, unicorn/no-array-sort, unicorn/switch-case-braces -- This pure, schema-validated resolver is the explicit policy decision table; tracked in: #333; remove-when: the resolver is generated from the approved quantity-policy contract. */
 import { Schema } from 'effect';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
 import type {

@@ -34,6 +34,7 @@
     "@app/finance-billing": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/legal-agreements": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/property-portfolio": "workspace:*",
     "@app/shared-contracts": "workspace:*",

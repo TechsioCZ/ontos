@@ -2,16 +2,17 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { CatalogSelectionSchema, CatalogSelectionBasisRoles } from '../domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import {
+  CatalogPriceSourceSelectionPurposeSchema,
+  CatalogSelectionBasisRoles,
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import {
   CatalogSelectionOwnerAssessmentResultSchema,
   CatalogSelectionInjectedOwnerEvidenceSchema,
   CatalogSelectionUnverifiableOwnerEvidenceSchema,
 } from '../domain/catalog-selection-owner-contract.ts';
-import {
-  CatalogPriceSourceSelectionPurposeSchema,
-  CatalogSelectionPurposeSchema,
-} from '../domain/catalog-selection-purpose.ts';
+import { CatalogSelectionPurposeSchema } from '../domain/catalog-selection-purpose.ts';
 import { CatalogSelectionValidityAttestationSchema } from '../domain/catalog-selection-validity.ts';
 
 export const SelectionEvidenceRequestSchema = Schema.Struct({

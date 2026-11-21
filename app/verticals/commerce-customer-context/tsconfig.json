@@ -76,6 +76,9 @@
       "path": "../../packages/consent-authority-contracts"
     },
     {
+      "path": "../../packages/party-registry-contracts"
+    },
+    {
       "path": "../privacy"
     }
   ],

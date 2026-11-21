@@ -1,11 +1,14 @@
 import { Schema } from 'effect';
 
-import { CatalogResourceRefSchema, CatalogRevisionInstantSchema } from '../domain/catalog-revision-reference.ts';
+import {
+  CatalogResourceRefSchema,
+  CatalogRevisionInstantSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
   PackageDefinitionSelectionRevisionSchema,
   SetCompositionSelectionRevisionSchema,
-} from '../domain/catalog-selection-evidence.ts';
-import { VariantExactFormSchema } from '../domain/variant-exact-form.ts';
+} from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogIdentityScopeSchema } from '@app/catalog-selection-contracts/identity-scope';
 import { PackageDefinitionRefSchema } from '../resources/package-definition.ts';
 
 const positiveDecimal = Schema.String.check(
@@ -36,7 +39,7 @@ export const PackageDefinitionContentInputSchema = Schema.Struct({
     Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed()).pipe(Schema.brand('CatalogPackageConfigurationKey')),
   ),
   effectiveAt: CatalogRevisionInstantSchema,
-  form: VariantExactFormSchema,
+  form: CatalogIdentityScopeSchema,
   lower: Schema.optionalKey(
     Schema.Struct({ count: positiveWhole, revision: PackageDefinitionSelectionRevisionSchema }),
   ),

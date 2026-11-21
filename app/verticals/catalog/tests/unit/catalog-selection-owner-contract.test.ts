@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   CatalogSelectionInjectedOwnerEvidenceSchema,
   CatalogSelectionOwnerAssessmentResultSchema,

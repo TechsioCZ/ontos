@@ -28,7 +28,7 @@ import {
   transitionFinance,
 } from '../../verticals/finance-billing/src/services/persistence.service.ts';
 import { NodeServices } from '@effect/platform-node';
-import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/party.ts';
 import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Predicate, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';

@@ -31,12 +31,12 @@ import {
   SelectionEvidenceUnavailableProblemSchema,
 } from '../../shared/apis/selection-evidence.ts';
 import { executeSelectionEvidenceWithAuthorization } from '../../src/api/selection-evidence-client.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { AttributeDefinitionRefSchema } from '../../shared/resources/attribute-definition.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
-import { ProductUnitRefSchema } from '../../shared/resources/product-unit.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { attributeApplicabilityPersistenceForScope } from '../../src/persistence/attribute-applicability-persistence.ts';
 import { attributePersistenceForScope } from '../../src/persistence/attribute-persistence.ts';

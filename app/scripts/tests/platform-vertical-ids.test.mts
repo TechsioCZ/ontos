@@ -8,6 +8,8 @@ import { expect, it } from 'effect-rstest';
 
 import {
   checkPlatformVerticalIds,
+  filesOnDisk,
+  trackedFiles,
   discoverPlatformVerticals,
   platformVerticalIdViolations,
 } from '../check-lean-core-dependencies.mts';
@@ -124,7 +126,7 @@ it.live('rejects another Payment gateway file that names a vertical in a workspa
             "export const owner = 'payment';\n",
           );
         });
-        expect(yield* checkPlatformVerticalIds(root)).toEqual([
+        expect(yield* checkPlatformVerticalIds(root, filesOnDisk)).toEqual([
           {
             file: 'apps/shell-super-app/api/payment-gateway/defect-boundary.ts',
             line: 1,
@@ -151,6 +153,6 @@ it.effect('finds no vertical id in the Core and Shell platform of this workspace
   Effect.gen(function* platformHasNoVerticalIds() {
     const path = yield* Path.Path;
     const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
-    expect(yield* checkPlatformVerticalIds(root)).toEqual([]);
+    expect(yield* checkPlatformVerticalIds(root, trackedFiles)).toEqual([]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );

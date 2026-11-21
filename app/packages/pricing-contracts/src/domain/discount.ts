@@ -1,6 +1,6 @@
 import { PriceGroupRefSchema } from '@app/price-group-catalog-contracts/resources/price-group';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
-import { CatalogSelectionValidEvidenceSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
+import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import { Match, Schema } from 'effect';
 
 import { PricingCurrencyCodeSchema, PricingInstantSchema } from '../apis/current-supported-currencies.ts';

@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { ProductNameSchema, ProductSchema } from '../domain/product.ts';
 import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const ProductDetailRequestSchema = Schema.Struct({
   locale: CatalogLocaleSchema.check(

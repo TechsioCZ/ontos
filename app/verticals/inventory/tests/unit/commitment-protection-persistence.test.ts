@@ -1,4 +1,4 @@
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

@@ -3,9 +3,6 @@
 // @ontos-resource-slug variant
 import type { OntosResourceType } from '@app/core-runtime';
 
-export { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
-export type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
-
 export const variantResourceDescriptor = {
   capabilities: {
     graphVisible: false,
