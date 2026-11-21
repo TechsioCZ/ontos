@@ -7,6 +7,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import { parseSync } from 'oxc-parser';
 
 import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
 import { runScaffoldEffect } from '../cli.mts';
@@ -422,11 +423,16 @@ const sourceTree = async (root: string, directory: string): Promise<readonly (re
   return nested.flat();
 };
 
-/** Retire one read of the actual Payment Term Catalog in a copy, and judge the module that remains. */
-const retireInCopy = Effect.fn(function* retireInCopy(name: string) {
+/** Retire one read of an actual module in a copy, and return the module and its contract package as they remain. */
+const retireInCopy = Effect.fn(function* retireInCopy(
+  name: string,
+  vertical: string = paymentVertical,
+  contracts: string = paymentContracts,
+  slug: string = paymentSlug,
+) {
   const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-retire-read-')));
   return yield* Effect.gen(function* retireAndRead() {
-    for (const relative of [paymentVertical, paymentContracts, 'topology/reference-topology.json']) {
+    for (const relative of [vertical, contracts, 'topology/reference-topology.json']) {
       yield* Effect.promise(() =>
         cp(path.join(appRoot, relative), path.join(root, relative), {
           filter: (source) => !source.includes(`${path.sep}node_modules`),
@@ -434,17 +440,41 @@ const retireInCopy = Effect.fn(function* retireInCopy(name: string) {
         }),
       );
     }
-    yield* runScaffoldEffect(
-      RETIRE_CONTRIBUTION_COMMAND,
-      [VERTICAL_FLAG, paymentSlug, '--kind', 'api', '--name', name],
-      { workspaceRoot: root },
-    ).pipe(Effect.provide(NodeServices.layer));
+    yield* runScaffoldEffect(RETIRE_CONTRIBUTION_COMMAND, [VERTICAL_FLAG, slug, '--kind', 'api', '--name', name], {
+      workspaceRoot: root,
+    }).pipe(Effect.provide(NodeServices.layer));
     const trees = yield* Effect.promise(() =>
-      Promise.all([paymentVertical, paymentContracts].map((folder) => sourceTree(root, folder))),
+      Promise.all([vertical, contracts].map((folder) => sourceTree(root, folder))),
     );
     return new Map(trees.flat());
   }).pipe(Effect.ensuring(Effect.promise(() => rm(root, { force: true, recursive: true }))));
 });
+
+/** Every relative import and export of the owner entries names a file that is still there. */
+const expectNoReferenceToDeletedFiles = (sources: ReadonlyMap<string, string>, vertical: string, aggregate: string) => {
+  for (const file of [
+    `${vertical}/vertical.manifest.ts`,
+    `${vertical}/vertical.registration.ts`,
+    `${vertical}/shared/api.ts`,
+    `${vertical}/api/index.ts`,
+    aggregate,
+  ]) {
+    expect(sources.has(file), file).toBe(true);
+    const { errors, module } = parseSync(file, sources.get(file) ?? '', { lang: 'ts', sourceType: 'module' });
+    expect(errors, file).toEqual([]);
+    const specifiers = [
+      ...module.staticImports.map((entry) => entry.moduleRequest.value),
+      ...module.staticExports.flatMap((entry) => entry.entries.flatMap((item) => item.moduleRequest?.value ?? [])),
+    ].filter((specifier) => specifier.startsWith('.'));
+    for (const specifier of specifiers) {
+      const target = path.posix.join(path.posix.dirname(file), specifier);
+      expect(
+        [target, `${target}.ts`, `${target}/index.ts`].some((candidate) => sources.has(candidate)),
+        `${file} -> ${specifier}`,
+      ).toBe(true);
+    }
+  }
+};
 
 it.live(
   'retires a package read completely: the remaining module passes the read checks and the package no longer claims it',
@@ -459,6 +489,11 @@ it.live(
     expect(packageManifest).not.toContain('"./current-payment-terms"');
     expect(packageManifest).not.toContain('"./current-payment-terms/client"');
     expect(packageManifest).toContain('"moduleApis": []');
+    expectNoReferenceToDeletedFiles(
+      sources,
+      paymentVertical,
+      `${paymentVertical}/src/api/payment-term-catalog-client.ts`,
+    );
     for (const file of [
       `${paymentVertical}/vertical.manifest.ts`,
       `${paymentVertical}/vertical.registration.ts`,
@@ -486,10 +521,36 @@ it.live(
       `${paymentVertical}/vertical.registration.ts`,
       `${paymentVertical}/shared/api.ts`,
       `${paymentVertical}/api/index.ts`,
+      `${paymentVertical}/src/api/payment-term-catalog-client.ts`,
     ]) {
       expect(sources.get(file) ?? '', file).not.toMatch(
-        /PaymentTermHistory(?:Api|Read)|paymentTermHistory(?:Read|ReadApiLive)\b/u,
+        /PaymentTermHistory|paymentTermHistory|payment-term-history\b/u,
       );
     }
+    expectNoReferenceToDeletedFiles(
+      sources,
+      paymentVertical,
+      `${paymentVertical}/src/api/payment-term-catalog-client.ts`,
+    );
+  }),
+);
+
+it.live(
+  'retires a read whose registration the formatter wrapped after the arrow',
+  Effect.fn(function* retireWrappedRegistration() {
+    const vertical = 'verticals/commerce-order';
+    const read = 'committed-order-approval-evidence';
+    const wrappedRegistration = yield* Effect.promise(() =>
+      readFile(path.join(appRoot, vertical, 'vertical.registration.ts'), 'utf-8'),
+    );
+    expect(wrappedRegistration).toMatch(new RegExp(`'${read}': \\(\\) =>\\n\\s+import\\(`, 'u'));
+    const sources = yield* retireInCopy(read, vertical, 'packages/commerce-order-contracts', 'commerce-order');
+    const diagnostics: string[] = [];
+    expect(
+      hasCompleteGeneratedModuleApiSeam(sources, `${vertical}/shared/api.ts`, 'commerce-order', diagnostics),
+      diagnostics.join('\n'),
+    ).toBe(true);
+    expect(sources.get(`${vertical}/vertical.registration.ts`) ?? '').not.toContain(read);
+    expectNoReferenceToDeletedFiles(sources, vertical, `${vertical}/shared/commerce-order-client.ts`);
   }),
 );
