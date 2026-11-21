@@ -60,6 +60,7 @@
     "@app/party-registry-contracts": "workspace:*",
     "@app/price-group-catalog": "workspace:*",
     "@app/pricing": "workspace:*",
+    "@app/pricing-contracts": "workspace:*",
     "@app/privacy": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/tax": "workspace:*",
