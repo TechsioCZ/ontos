@@ -4,6 +4,7 @@ import { Effect, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { makeCatalogSelectionAssessmentPort } from '../../src/integrations/catalog-selection-evidence.ts';
+import type { PricingCatalogSelectionPurpose } from '../../src/integrations/catalog-selection-evidence.ts';
 import type { OwnerGatewayConnectionAcquire } from '../../src/integrations/owner-gateway-connection.ts';
 import { ownerConnectionStub, verifiedTestScope } from '../support/owner-gateway-connection.fixture.ts';
 
@@ -56,6 +57,25 @@ const evidence = Schema.decodeSync(CatalogSelectionOwnerAssessmentResultSchema)(
   status: 'VALID',
 });
 
+/** The membership-only answer a source-asserted Price receives: Product and Variant, no Product Type proof. */
+const priceSourceEvidence = Schema.decodeSync(CatalogSelectionOwnerAssessmentResultSchema)({
+  assessedAt,
+  basis: [
+    { role: 'PRODUCT', source: { resourceRef: selection.productRef, revision: 1 } },
+    { role: 'VARIANT', source: { resourceRef: selection.variantRef, revision: 1 } },
+  ],
+  membership: {
+    attestationId: 'catalog-membership-v1',
+    observedAt: assessedAt,
+    productRef: selection.productRef,
+    source: 'CATALOG_OWNER_CURRENT_READ',
+    variant: { resourceRef: selection.variantRef, revision: 1 },
+  },
+  purpose: 'PRICE_SOURCE_ASSERTION',
+  selection,
+  status: 'VALID',
+});
+
 const principalId = '44444444-4444-4444-8444-444444444444';
 const catalogOwner = ownerConnectionStub('Bearer catalog-owner-assertion', 'https://catalog.example.test');
 
@@ -68,6 +88,7 @@ const portFromEnvironment = (
   },
   execute: Parameters<typeof makeCatalogSelectionAssessmentPort>[0]['execute'],
   acquire: OwnerGatewayConnectionAcquire = catalogOwner,
+  purpose: PricingCatalogSelectionPurpose = 'PRICING',
 ) =>
   Effect.succeed(
     makeCatalogSelectionAssessmentPort({
@@ -75,6 +96,7 @@ const portFromEnvironment = (
       context: {
         ...context,
         operationRequirementKey: 'commerce.pricing.requirement.define-price-catalog',
+        purpose,
         scope: verifiedTestScope({
           correlationId: context.requestCorrelation,
           legalEntityId: context.legalEntityId,
@@ -120,6 +142,44 @@ describe('Pricing Catalog selection evidence integration', () => {
           requestCorrelation: 'define-price-correlation',
         },
       ]);
+    }),
+  );
+
+  it.effect('asks the membership-only price source question and accepts its answer without a type proof', () =>
+    Effect.gen(function* assessPriceSource() {
+      const requests: unknown[] = [];
+      const acquisitions: Parameters<OwnerGatewayConnectionAcquire>[0][] = [];
+      const port = yield* portFromEnvironment(
+        { compositionRevision, legalEntityId, requestCorrelation: 'define-price-correlation' },
+        (payload) =>
+          Effect.sync(() => {
+            requests.push(payload);
+            return { evidence: priceSourceEvidence, missingRoles: [] };
+          }),
+        (input) => {
+          acquisitions.push(input);
+          return catalogOwner(input);
+        },
+        'PRICE_SOURCE_ASSERTION',
+      );
+
+      expect(yield* port.assess(selection)).toEqual(priceSourceEvidence);
+      expect(acquisitions[0]?.conditionalRead?.input).toEqual({ purpose: 'PRICE_SOURCE_ASSERTION', selection });
+      expect(requests).toEqual([{ purpose: 'PRICE_SOURCE_ASSERTION', selection }]);
+    }),
+  );
+
+  it.effect('refuses a PRICING answer to the price source question', () =>
+    Effect.gen(function* rejectOtherPurpose() {
+      const port = yield* portFromEnvironment(
+        { compositionRevision, legalEntityId, requestCorrelation: 'define-price-correlation' },
+        () => Effect.succeed({ evidence, missingRoles: [] }),
+        catalogOwner,
+        'PRICE_SOURCE_ASSERTION',
+      );
+
+      const failure = yield* port.assess(selection).pipe(Effect.flip);
+      expect(failure).toMatchObject({ code: 'pricing_catalog_selection_unavailable', retryable: true });
     }),
   );
 
