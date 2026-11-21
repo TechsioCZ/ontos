@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { Effect, Match, Option, Result } from 'effect';
 
 import {
@@ -197,5 +197,36 @@ export const insertSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment
       return yield* enrollmentUnavailable();
     }
     return created.principalId;
+  },
+);
+
+/**
+ * Archives the ended enrollment's system Principal. Archived is final in Core's Principal lifecycle, so a later
+ * enrollment creates a new Principal and this one never holds a workload again. Only a system Principal without a
+ * platform role is an enrollment's, so the Tenant's access release actor is never archived here.
+ */
+export const archiveSystemWorkloadPrincipal = Effect.fn('SystemWorkloadEnrollment.archiveSystemWorkloadPrincipal')(
+  function* archiveSystemWorkloadPrincipal(transaction: ScopedTransactionExecutor, principalId: string) {
+    const [archived] = yield* transaction
+      .update(principals)
+      .set({ status: 'archived' })
+      .where(
+        and(
+          eq(principals.tenantId, transaction.scope.tenantId),
+          eq(principals.principalId, principalId),
+          eq(principals.kind, 'system'),
+          eq(principals.status, 'active'),
+          isNull(principals.platformRole),
+        ),
+      )
+      .returning({ principalId: principals.principalId })
+      .pipe(Effect.mapError(enrollmentUnavailable));
+    if (archived === undefined) {
+      return yield* new IdentityLifecycleConflictError({
+        code: 'identity_lifecycle_conflict',
+        reason: 'The system principal of the enrollment changed concurrently',
+      });
+    }
+    return yield* Effect.void;
   },
 );

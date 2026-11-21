@@ -11,6 +11,7 @@ import {
   declaresSystemWorkload,
   enrolledWorkloadCalls,
   enrollmentStoreFailure,
+  archiveSystemWorkloadPrincipal,
   enrollmentUnavailable,
   insertSystemWorkloadPrincipal,
   lockActiveTenantForEnrollment,
@@ -23,7 +24,6 @@ import { EntrypointKeySchema } from '../../auth/registered-gateway-workload-keys
 import { PrincipalIdSchema, TenantIdSchema } from '../../access/ids.ts';
 import { WorkloadKeySchema } from '../../authorization/access-declaration.ts';
 import { IdentityTargetInvalidError, PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
-import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import { InstalledModuleCatalogService } from '../catalog.ts';
@@ -87,10 +87,6 @@ const ChangeSystemWorkloadEnrollmentAuditEvidenceSchema = Schema.Struct({
 });
 
 interface ChangeSystemWorkloadEnrollmentServices {
-  readonly archive: (input: {
-    readonly principalId: string;
-    readonly reason: string;
-  }) => Effect.Effect<unknown, typeof PrincipalManagementErrorSchema.Type>;
   readonly scope: OperationalScope;
   readonly transaction: ScopedTransactionExecutor;
 }
@@ -172,8 +168,9 @@ const end = Effect.fn('ChangeSystemWorkloadEnrollmentAction.end')(function* endS
     bindingId: AccessWorkloadBindingIdSchema.make(holder.bindingId),
     revokedAt: DateTime.toDateUtc(yield* DateTime.now),
   }).pipe(Effect.mapError(enrollmentStoreFailure));
-  // Archived is final in Core's Principal lifecycle, so a later enrollment creates a new Principal.
-  yield* context.services.archive({ principalId, reason: payload.reason });
+  // Archived is final in Core's Principal lifecycle, so a later enrollment creates a new Principal. The generic status
+  // change refuses every system Principal, so the enrollment's own writer archives it.
+  yield* archiveSystemWorkloadPrincipal(transaction, principalId);
   yield* context.recordAuditEvidence({
     bindingIncarnation: holder.bindingIncarnation,
     change: 'ENDED',
@@ -298,19 +295,5 @@ export const changeSystemWorkloadEnrollmentAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction, scope) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
-    return Effect.succeed({
-      archive: (input: { readonly principalId: string; readonly reason: string }) =>
-        repository.changePrincipalStatus({
-          expectedStatus: 'active',
-          newStatus: 'archived',
-          principalId: input.principalId,
-          reason: input.reason,
-          tenantId: scope.tenantId,
-        }),
-      scope,
-      transaction,
-    });
-  },
+  (transaction, scope) => Effect.succeed({ scope, transaction }),
 );
