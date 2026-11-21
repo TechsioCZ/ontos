@@ -17,6 +17,7 @@ import { currentSupportedCurrenciesRead } from './src/api/current-supported-curr
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
 import { exactPriceResolutionRead } from './src/api/exact-price-resolution.read.ts';
+import { grantExternalPriceSourceAuthorityAction } from './src/actions/grant-external-price-source-authority.action.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
 import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
 import { manageProductCommercialFeesBulkAction } from './src/actions/manage-product-commercial-fees-bulk.action.ts';
@@ -43,6 +44,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
     compensateCurrencySupportRecoveryAction,
     defineCommercialFeeAction,
     definePriceAction,
+    grantExternalPriceSourceAuthorityAction,
     manageCommitmentConfirmationAction,
     manageContractualDiscountAction,
     manageProductCommercialFeesBulkAction,

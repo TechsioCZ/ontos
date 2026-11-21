@@ -7,9 +7,6 @@ import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { CatalogPagePricesApi } from './shared/apis/catalog-page-prices.ts';
 import { catalogPagePricesRead } from './src/api/catalog-page-prices.read.ts';
-import { priceDefinitionRead } from './src/api/price-definition.read.ts';
-import { DefinePriceActionApi } from './shared/apis/define-price-action.ts';
-import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
 import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
 import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
@@ -30,8 +27,10 @@ import { CurrentSupportedCurrenciesApi } from './shared/apis/current-supported-c
 import { currentSupportedCurrenciesRead } from './src/api/current-supported-currencies.read.ts';
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
+import { DefinePriceActionApi } from './shared/apis/define-price-action.ts';
 import { ExactPriceResolutionApi } from './shared/apis/exact-price-resolution.ts';
 import { exactPriceResolutionRead } from './src/api/exact-price-resolution.read.ts';
+import { grantExternalPriceSourceAuthorityAction } from './src/actions/grant-external-price-source-authority.action.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
 import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
 import { manageProductCommercialFeesBulkAction } from './src/actions/manage-product-commercial-fees-bulk.action.ts';
@@ -40,6 +39,7 @@ import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.act
 import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
 import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
 import { PriceDefinitionApi } from './shared/apis/price-definition.ts';
+import { priceDefinitionRead } from './src/api/price-definition.read.ts';
 import { PriceGroupSourcePricesApi } from './shared/apis/price-group-source-prices.ts';
 import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
 import { priceResourceDescriptor } from './shared/resources/price.ts';
@@ -61,6 +61,7 @@ import { QuotationVerificationApi } from './shared/apis/quotation-verification.t
 import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
 import { revisePriceAction } from './src/actions/revise-price.action.ts';
+import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
 import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
 import { zeroFloorAuthorizationResultLookupRead } from './src/api/zero-floor-authorization-result-lookup.read.ts';
@@ -100,6 +101,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       compensateCurrencySupportRecoveryAction,
       defineCommercialFeeAction,
       definePriceAction,
+      grantExternalPriceSourceAuthorityAction,
       manageCommitmentConfirmationAction,
       manageContractualDiscountAction,
       manageProductCommercialFeesBulkAction,
