@@ -156,6 +156,7 @@ import { productCategoryClassificationReadApiLive } from './product-category-cla
 import { productCategoryHistoryReadApiLive } from './product-category-history-read-server.ts';
 import { productDetailReadApiLive } from './product-detail-read-server.ts';
 import { productHistoryReadApiLive } from './product-history-read-server.ts';
+import { productPageReadApiLive } from './product-page-read-server.ts';
 import { productRelationshipCurrentReadApiLive } from './product-relationship-current-read-server.ts';
 import { productRelationshipHistoryReadApiLive } from './product-relationship-history-read-server.ts';
 import { productSizeCurrentReadApiLive } from './product-size-current-read-server.ts';
@@ -545,6 +546,7 @@ export const makeCatalogApiRuntime = (
     productCategoryHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    productPageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productRelationshipCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productRelationshipHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productSizeCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -635,7 +637,10 @@ export const makeCatalogApiRuntime = (
     setProductBrandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setProductBrandRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setProductLocalizedFactsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    setProductLocalizedFactsRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    setProductLocalizedFactsRecoveryReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      Layer.provide(governedActionRuntimeLive),
+    ),
     setProductManufacturerActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setProductManufacturerRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setProductTypeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

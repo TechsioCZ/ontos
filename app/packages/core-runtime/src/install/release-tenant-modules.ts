@@ -7,10 +7,8 @@ import type { TenantProjectionWrite } from '../access/intent/projection-writer.t
 import type { AccessProjectionWriteError } from '../access/intent/projection-write-error.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../access/release/activation.ts';
 import { tenantServesPeople } from '../auth/module-credentials.ts';
-import {
-  registerSystemWorkload,
-  SystemPrincipalContextResolverFromCoreDatabase,
-} from '../auth/system-principal-context.ts';
+import { SystemPrincipalContextResolverFromCoreDatabase } from '../auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../auth/system-workload-registration.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';

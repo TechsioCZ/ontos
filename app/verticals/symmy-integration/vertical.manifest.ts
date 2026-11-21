@@ -22,6 +22,7 @@ import { symmySyncAdmissionRead } from './src/api/symmy-sync-admission.read.ts';
 import { syncAdmissionResourceDescriptor } from './shared/resources/sync-admission.ts';
 // </generated-module-manifest-imports>
 import { symmyIntegrationRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
+import { symmyExecutionRegistration } from './src/services/symmy-worker-identity.service.ts';
 
 const privacyModuleId = 'privacy.core' as const;
 const ownerOperationProviders = [
@@ -42,6 +43,7 @@ const ownerOperationProviders = [
       { entrypointKey: 'commerce.catalog.correct-product', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.bind-initial-variant-source', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.set-variant-localized-facts', schemaVersion: '1' },
+      { entrypointKey: 'commerce.catalog.set-product-localized-facts', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.catalog-source-products', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.create-product-recovery', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.create-variant-recovery', schemaVersion: '1' },
@@ -49,6 +51,7 @@ const ownerOperationProviders = [
       { entrypointKey: 'commerce.catalog.api.correct-product-recovery', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.bind-initial-variant-source-recovery', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.set-variant-localized-facts-recovery', schemaVersion: '1' },
+      { entrypointKey: 'commerce.catalog.api.set-product-localized-facts-recovery', schemaVersion: '1' },
     ],
   },
   {
@@ -307,4 +310,6 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
     ],
     schemaVersion: '1',
   },
+  // The Symmy job worker resolves the Tenant's one enrolled system Principal under this key (resolveEnrolled).
+  systemWorkloads: [symmyExecutionRegistration],
 });

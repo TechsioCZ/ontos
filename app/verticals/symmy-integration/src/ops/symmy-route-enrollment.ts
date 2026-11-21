@@ -5,15 +5,18 @@
  * runtime role can only read it. This module decides what one enrollment of one route for one Tenant and company may
  * write, and why it refuses otherwise:
  *
- * - every route kind has an operation inventory except the stock route, which waits on its Inventory backend;
+ * - every Symmy route kind has an operation inventory; an operator fixture route has none;
  * - the configuration names owner operations only (never an executable intent), each one in the route's inventory
  *   (what the route's admission plan and executor call and what its Shell dispatch reads), with every required one;
  * - a route that reads or writes one company's data names that company, and a customers route enrolls at least one
  *   complete customer plan;
+ * - the stock route names the Inventory backend it asserts for and the positions of that backend and Tenant it admits
+ *   rows for, and every other route names neither;
  * - the routes of one source share the logical source identity their readers and writers compare;
  * - the lifecycle policy is one the retention configuration names for exactly this route;
  * - an exact replay changes nothing, any other difference is refused unless the operator asks to replace the route at
- *   the change token it read, and a replacement is refused while the route has outstanding work;
+ *   the change token it read, and a replacement is refused while the route has outstanding work; a replacement of the
+ *   stock route that only adds positions keeps the synchronous admissions of the stored revision as they were admitted;
  * - a route that revises prices has the price list read route of its own company, which the Shell reads a REVISE
  *   through, with its price reads.
  *
@@ -35,6 +38,7 @@ import {
 } from '../../shared/domain/symmy-job-notification.ts';
 import type { SymmyJobRetentionPolicy } from '../../shared/domain/symmy-job-retention.ts';
 import { SymmyDecodedSourceSelectorSchema } from '../../shared/domain/symmy-source-selector.ts';
+import { SymmyStockScopeEntrySchema, symmyStockScopeKey } from '../../shared/domain/symmy-stock-batch.ts';
 import { SyncAdmissionIdSchema } from '../../shared/resources/sync-admission.ts';
 import type { symmyJobRoutes } from '../db/schema.ts';
 import {
@@ -51,9 +55,11 @@ import { groupOperation, priceOperation } from '../persistence/symmy-price-list-
 import {
   createProductOperation,
   createVariantOperation,
+  productFactsOperation,
   updateProductOperation,
   variantFactsOperation,
 } from '../persistence/symmy-product-plan.ts';
+import { stockOperation } from '../persistence/symmy-stock-plan.ts';
 import { SymmyRouteEnrollmentRefused } from './symmy-route-enrollment-refused.ts';
 import type { SymmyRouteEnrollmentRefusal, SymmyRouteEnrollmentRefusalCode } from './symmy-route-enrollment-refused.ts';
 
@@ -174,6 +180,8 @@ export interface SymmyRouteInventory {
   readonly operations: readonly SymmyRouteInventoryOperation[];
   /** The route is one per selected Customer Group: it names a route code and the selector it resolves to. */
   readonly selected?: boolean;
+  /** The route names the Inventory backend it asserts for and the stock positions it admits rows for. */
+  readonly stock?: boolean;
   /** Every item names one entity kind: the record type its reader asks the owner for. */
   readonly uniformEntityKind?: boolean;
 }
@@ -251,6 +259,15 @@ const customerGroupOperation = (entrypointKey: string): SymmyOwnerOperation => (
  *   it makes only for a route that enrolls it and names a company (`readSymmyCustomerGroupDefinitionFacts`).
  * - customerGroupCustomersBatch: the membership apply of one selected Customer Group and the group definition read
  *   the adapter makes before it (`currentMembershipDefinition`).
+ * - inventoryStockBatch: the Inventory import `buildSymmyStockPlan` plans for every row, which a synchronous admission
+ *   executes (`syncIntentAllowed`) and recovers through Inventory's import receipt read; the Shell reads nothing
+ *   before it admits (`syncAdmissionSource`). The route names its Inventory backend and positions (`stockScope`):
+ *   one row whose item and location keys name no position of that backend admits no row of its request
+ *   (`buildSymmyStockPlan`). It names no company: Inventory publishes the import without one, as one backend serves
+ *   the whole Customer Configuration (ADR-0026), and the synchronous admission passes the route's company to every
+ *   call. A position is served only once Inventory holds, for its Customer Configuration, the External Business System
+ *   selection of the route's backend, the position's Stock Item, Stock Location and Stock Position, and the
+ *   correlations of its item and location keys, which the command cannot read (`scripts/route-enrollment.mts`).
  * - adminProducts, adminCustomers, priceLists, adminRegions: the reads `SymmyGovernedDispatch.read` and its
  *   projections require (`requireRouteRead`, `requireReadOperation`) or use when the route enrolls them
  *   (`routeAllows`). The customer page read is published for a company only (its `legalEntityScope: 'required'`)
@@ -358,6 +375,14 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     },
   ],
   [
+    'inventoryStockBatch',
+    {
+      admission: 'sync',
+      operations: [executor(stockOperation, { required: true })],
+      stock: true,
+    },
+  ],
+  [
     'priceListPricesBatch',
     {
       admission: 'job',
@@ -409,6 +434,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       operations: [
         executor(createProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts], required: true }),
         executor(updateProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
+        executor(productFactsOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
         executor(createVariantOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(variantFactsOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(priceOperation, { entityKind: 'PRICE' }),
@@ -425,18 +451,9 @@ const sameOperation = (left: SymmyOwnerOperation, right: SymmyOwnerOperation) =>
 export const symmyOperationName = ({ entrypointKey, schemaVersion }: SymmyRouteCallRef) =>
   `${entrypointKey}@${schemaVersion}`;
 
-/** The inventory of the route, or the typed reason it cannot be enrolled. */
-export const symmyRouteInventoryOf = (
-  routeKey: SymmyEnrollmentRouteKey,
-): Option.Option<SymmyRouteInventory> | SymmyRouteEnrollmentRefusal => {
-  if (routeKey === 'inventoryStockBatch') {
-    return refusal(
-      'stock_route_pending_inventory_setup',
-      'The stock route is enrolled by its own slice once its Inventory backend and positions are set up',
-    );
-  }
-  return Option.fromUndefinedOr(symmyRouteInventories.get(routeKey));
-};
+/** The inventory of a Symmy route; an operator fixture route has none. */
+export const symmyRouteInventoryOf = (routeKey: SymmyEnrollmentRouteKey): Option.Option<SymmyRouteInventory> =>
+  Option.fromUndefinedOr(symmyRouteInventories.get(routeKey));
 
 /** The operations a configuration enrolls, with the entity kind of the item naming each. */
 const enrolledOperations = (configuration: SymmyFixtureExecutionPlan) =>
@@ -462,6 +479,43 @@ const completePlanRefusals = (
     'required_operation_missing',
     `${routeKey} enrolls no complete plan: ${plans.map((plan) => plan.map(symmyOperationName).join(' + ')).join(' or ')}`,
   );
+};
+
+/**
+ * The stock route names the Inventory backend it asserts for and the positions it admits rows for, each issued by that
+ * backend (`buildSymmyStockPlan` admits no row of a position another backend issues) and of this Tenant (the plan
+ * targets the position, which `pin_symmy_fixture_plan` refuses outside the route's Tenant); no other route names either.
+ */
+const stockRefusals = (request: SymmyRouteEnrollmentRequest, inventory: SymmyRouteInventory) => {
+  const { inventoryBackendId, stockScope } = request.configuration;
+  if (inventory.stock !== true) {
+    return refuseWhen(
+      stockScope !== undefined || inventoryBackendId !== undefined,
+      'configuration_field_not_allowed',
+      `${request.routeKey} enrolls no stock positions or Inventory backend`,
+    );
+  }
+  const backendId: string | undefined = inventoryBackendId;
+  if (backendId === undefined || stockScope === undefined) {
+    return [
+      refusal(
+        'stock_scope_required',
+        `${request.routeKey} names the Inventory backend it asserts for and the stock positions it admits rows for`,
+      ),
+    ];
+  }
+  return stockScope.flatMap(({ issuerBackendId, itemKey, locationKey, positionRef }) => [
+    ...refuseWhen(
+      issuerBackendId !== backendId,
+      'stock_scope_invalid',
+      `The position of item ${itemKey} at location ${locationKey} is issued by backend ${issuerBackendId}, not ${backendId}, so none of its rows is admitted`,
+    ),
+    ...refuseWhen(
+      positionRef.tenantId !== request.tenantId,
+      'stock_scope_invalid',
+      `The position of item ${itemKey} at location ${locationKey} belongs to another Tenant`,
+    ),
+  ]);
 };
 
 const selectorRefusals = (request: SymmyRouteEnrollmentRequest, inventory: SymmyRouteInventory) => {
@@ -513,11 +567,7 @@ export const symmyRouteRequestRefusals = (
       'owner_intent_enrolled',
       'A route names the owner operations it may use, never an executable intent',
     ),
-    ...refuseWhen(
-      configuration.stockScope !== undefined || configuration.inventoryBackendId !== undefined,
-      'configuration_field_not_allowed',
-      `${request.routeKey} enrolls no stock positions or Inventory backend`,
-    ),
+    ...stockRefusals(request, inventory),
     ...selectorRefusals(request, inventory),
     ...enrolled.flatMap(({ entityKind, operation }) => {
       const listed = inventory.operations.find((candidate) => sameOperation(candidate, operation));
@@ -797,11 +847,50 @@ export interface SymmyRouteVersion {
   readonly routeRevision: string;
 }
 
-/** The decided enrollment or replacement, with the stored route it changes. */
+/**
+ * The decided enrollment or replacement, with the stored route it changes. A replacement names whether the
+ * synchronous admissions of the stored route stay outstanding work it refuses on, or are kept as they were admitted.
+ */
 export type SymmyRouteEnrollmentWrite =
   | { readonly kind: 'insert' }
-  | { readonly changed: readonly SymmyRouteField[]; readonly kind: 'replace'; readonly previous: SymmyRouteVersion }
+  | {
+      readonly admissions: 'kept' | 'outstanding';
+      readonly changed: readonly SymmyRouteField[];
+      readonly kind: 'replace';
+      readonly previous: SymmyRouteVersion;
+    }
   | { readonly kind: 'unchanged' };
+
+const sameStockPosition = Schema.toEquivalence(SymmyStockScopeEntrySchema);
+
+/**
+ * Whether a replacement keeps every synchronous admission of the stored route as it was admitted: it names a new
+ * revision and adds stock positions, and changes nothing else, every stored position included. A synchronous
+ * admission never reads its route again for what it asserted: it pinned its plan, positions included, when it was
+ * admitted, its receipt is read through the route id, principal and company, and its retention through the route id
+ * and lifecycle policy, all of which such a replacement keeps; a row for an added position is a new admission. Any
+ * other change could reinterpret what an earlier admission asserted, so its admissions stay outstanding work.
+ */
+const keepsAdmissions = (
+  request: SymmyRouteEnrollmentRequest,
+  stored: RouteRow,
+  changed: readonly SymmyRouteField[],
+): boolean => {
+  const storedPlan = decodeStoredConfiguration(stored.fixturePlan);
+  if (Option.isNone(storedPlan) || !changed.every((field) => field === 'configuration' || field === 'routeRevision')) {
+    return false;
+  }
+  const { stockScope: storedScope, ...storedRest } = storedPlan.value;
+  const { stockScope: requestedScope, ...requestedRest } = request.configuration;
+  if (storedScope === undefined || requestedScope === undefined || !sameConfiguration(storedRest, requestedRest)) {
+    return false;
+  }
+  const requested = new Map(requestedScope.map((entry) => [symmyStockScopeKey(entry), entry]));
+  return storedScope.every((entry) => {
+    const kept = requested.get(symmyStockScopeKey(entry));
+    return kept !== undefined && sameStockPosition(kept, entry);
+  });
+};
 
 const refused = (code: SymmyRouteEnrollmentRefusalCode, detail: string) =>
   new SymmyRouteEnrollmentRefused({ refusals: [refusal(code, detail)] });
@@ -818,7 +907,7 @@ const reboundSelector = (current: RouteRow) =>
  * route kind and code) or its route id, decided under the enrollment lock. A replacement is decided only at the token
  * the operator names; a request the stored route already satisfies writes nothing, so the replay of an applied change
  * is unchanged at any token. A replacement is decided here only as allowed: the store refuses it while work is
- * outstanding.
+ * outstanding, the synchronous admissions it keeps excepted.
  */
 export const decideSymmyRouteWrite = (
   request: SymmyRouteEnrollmentRequest,
@@ -854,6 +943,7 @@ export const decideSymmyRouteWrite = (
     return refused('revision_not_advanced', 'A replacement names a new route revision');
   }
   return {
+    admissions: keepsAdmissions(request, current, changed) ? 'kept' : 'outstanding',
     changed,
     kind: 'replace',
     previous: { changeToken: current.changeToken, routeRevision: current.routeRevision },

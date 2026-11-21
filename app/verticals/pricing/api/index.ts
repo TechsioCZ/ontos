@@ -63,6 +63,7 @@ import {
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { catalogPagePricesReadApiLive } from './catalog-page-prices-read-server.ts';
 import { commercialFeeDefinitionReadApiLive } from './commercial-fee-definition-read-server.ts';
 import { commercialFeeResultLookupReadApiLive } from './commercial-fee-result-lookup-read-server.ts';
 import { commercialFeeScheduleReadApiLive } from './commercial-fee-schedule-read-server.ts';
@@ -74,6 +75,7 @@ import { currentSupportedCurrenciesReadApiLive } from './current-supported-curre
 import { defineCommercialFeeActionApiLive } from './define-commercial-fee-action-server.ts';
 import { definePriceActionApiLive } from './define-price-action-server.ts';
 import { exactPriceResolutionReadApiLive } from './exact-price-resolution-read-server.ts';
+import { grantExternalPriceSourceAuthorityActionApiLive } from './grant-external-price-source-authority-action-server.ts';
 import { manageCommitmentConfirmationActionApiLive } from './manage-commitment-confirmation-action-server.ts';
 import { manageContractualDiscountActionApiLive } from './manage-contractual-discount-action-server.ts';
 import { manageProductCommercialFeesBulkActionApiLive } from './manage-product-commercial-fees-bulk-action-server.ts';
@@ -237,6 +239,7 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
     GovernedReadLayer.provide(governedActionRuntimeLive),
   ),
   // <generated-governed-http-handler-layers>
+  catalogPagePricesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeScheduleReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -256,6 +259,7 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   defineCommercialFeeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   definePriceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   exactPriceResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  grantExternalPriceSourceAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageCommitmentConfirmationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageContractualDiscountActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageProductCommercialFeesBulkActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

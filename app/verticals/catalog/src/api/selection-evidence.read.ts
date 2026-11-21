@@ -10,6 +10,8 @@ import {
 } from '../../shared/apis/selection-evidence.ts';
 import type { SelectionEvidenceRequest, SelectionEvidenceResponse } from '../../shared/apis/selection-evidence.ts';
 import type { CatalogSelectionInjectedOwnerEvidence } from '../../shared/domain/catalog-selection-owner-contract.ts';
+import { catalogPriceSourceSelectionForScope } from '../persistence/catalog-price-source-selection.ts';
+import type { CatalogSelectionEvidenceRequest } from '../persistence/catalog-selection-evidence-service.ts';
 import { catalogSelectionEvidenceForScope } from '../persistence/catalog-selection-evidence-service.ts';
 
 const readKey = 'commerce.catalog.api.selection-evidence';
@@ -28,8 +30,12 @@ export class CatalogSelectionOwnerEvidence extends Context.Service<
 
 export interface SelectionEvidenceServices {
   readonly assess: (
-    request: SelectionEvidenceRequest,
+    request: Pick<CatalogSelectionEvidenceRequest, 'purpose' | 'selection'>,
     ownerEvidence?: CatalogSelectionInjectedOwnerEvidence,
+  ) => Effect.Effect<SelectionEvidenceResponse, never, Crypto.Crypto>;
+  /** The membership-only answer for a Price an external source asserts; it never runs the readiness assessment. */
+  readonly assessPriceSource: (
+    selection: SelectionEvidenceRequest['selection'],
   ) => Effect.Effect<SelectionEvidenceResponse, never, Crypto.Crypto>;
   readonly readCartEvidence: CatalogSelectionOwnerEvidencePort['readCartEvidence'];
 }
@@ -44,6 +50,7 @@ const selectionEvidenceServices = (
   ownerEvidence: CatalogSelectionOwnerEvidencePort,
 ): SelectionEvidenceServices => ({
   assess: (request, evidence) => catalogSelectionEvidenceForScope(transaction, scope, evidence).assess(request),
+  assessPriceSource: (selection) => catalogPriceSourceSelectionForScope(transaction, scope).assess(selection),
   readCartEvidence: ownerEvidence.readCartEvidence,
 });
 
@@ -72,14 +79,21 @@ export const readSelectionEvidence = Effect.fn('SelectionEvidenceRead.read')(fun
   if (input.selection.productRef.tenantId !== tenantId) {
     return yield* unavailable('Cross-Tenant selection');
   }
-  if (input.purpose === 'PRICING') {
-    return yield* services.assess(input).pipe(Effect.mapError(unavailable));
+  if (input.purpose === 'PRICE_SOURCE_ASSERTION') {
+    return yield* services.assessPriceSource(input.selection);
+  }
+  const request = { purpose: input.purpose, selection: input.selection };
+  if (request.purpose === 'PRICING') {
+    return yield* services.assess(request).pipe(Effect.mapError(unavailable));
   }
   const ownerEvidence = yield* services.readCartEvidence(input).pipe(Effect.mapError(unavailable));
-  return yield* services.assess(input, ownerEvidence).pipe(Effect.mapError(unavailable));
+  return yield* services.assess(request, ownerEvidence).pipe(Effect.mapError(unavailable));
 });
 
-/** Cart-qualified purposes remain unbound until Cart publishes its owner read; PRICING is Catalog-local. */
+/**
+ * Cart-qualified purposes remain unbound until Cart publishes its owner read; PRICING is Catalog-local, and so is
+ * PRICE_SOURCE_ASSERTION, the membership-only question a source-asserted Price asks.
+ */
 export const selectionEvidenceRead = defineRead(
   {
     accessActor: {

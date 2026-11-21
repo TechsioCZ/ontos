@@ -645,7 +645,7 @@ it('proves every published native request metadata codec in the owner inventory'
       expect(contextualProof(file, match.groups?.name ?? ''), `${file}:${match.groups?.name ?? ''}`).toBe(true);
     }
   }
-  expect(count).toBe(31);
+  expect(count).toBe(32);
 });
 
 it('keeps literal version specialization bounded to its genuine parameter constraint', () => {

@@ -2,10 +2,8 @@ import { eq } from 'drizzle-orm';
 import { Clock, DateTime, Duration, Effect, Match, Option, Result, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../../actions/principal-context.ts';
-import {
-  SystemPrincipalContextResolverFromCoreDatabase,
-  registerSystemWorkload,
-} from '../../auth/system-principal-context.ts';
+import { SystemPrincipalContextResolverFromCoreDatabase } from '../../auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../../auth/system-workload-registration.ts';
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
 import type { AccessCatalogModule } from '../../authorization/access-declaration.ts';
 import { CoreDatabase } from '../../db/client.ts';

@@ -66,6 +66,7 @@ import { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-cl
 import { AKROS_PLAYGROUND_TENANT_ID } from './stage-tenant-modules.mts';
 import { demoTenantId } from './fixture-ids.mts';
 import { N1_TENANT_ID } from './n1-stage-grants.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 type LegalEntityId = typeof LegalEntityIdSchema.Type;
 type PrincipalId = typeof PrincipalIdSchema.Type;
@@ -1122,6 +1123,8 @@ const command = Command.make(
 if (import.meta.main) {
   const result = await Effect.runPromiseExit(
     Command.run(command, { version: '1.0.0' }).pipe(
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
       Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
     ),
   );

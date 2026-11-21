@@ -8,6 +8,7 @@ import { Command, Flag } from 'effect/cli';
 import { demoAgentProfileSetup } from '../../apps/shell-super-app/api/auth/demo-seed/agent-profiles.ts';
 import { explicitProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 const command = Command.make(
   'ai-profiles',
@@ -26,5 +27,11 @@ const command = Command.make(
 ).pipe(Command.provide(AgentProfileOperatorLive));
 
 if (import.meta.main) {
-  await Effect.runPromise(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));
+  await Effect.runPromise(
+    Command.run(command, { version: '1.0.0' }).pipe(
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 }

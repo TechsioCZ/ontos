@@ -110,6 +110,8 @@ import { ProductCategoryClassificationApi } from './shared/apis/product-category
 import { ProductCategoryHistoryApi } from './shared/apis/product-category-history.ts';
 import { ProductDetailApi } from './shared/apis/product-detail.ts';
 import { ProductHistoryApi } from './shared/apis/product-history.ts';
+import { ProductPageApi } from './shared/apis/product-page.ts';
+import { productPageRead } from './src/api/product-page.read.ts';
 import { ProductRelationshipCurrentApi } from './shared/apis/product-relationship-current.ts';
 import { ProductRelationshipHistoryApi } from './shared/apis/product-relationship-history.ts';
 import { ProductSizeCurrentApi } from './shared/apis/product-size-current.ts';
@@ -230,7 +232,9 @@ import { catalogSourceProductPageRead } from './src/api/catalog-source-product-p
 import { CatalogSourceProductsApi } from './shared/apis/catalog-source-products.ts';
 import { catalogSourceProductsRead } from './src/api/catalog-source-products.read.ts';
 import { SetVariantLocalizedFactsActionApi } from './shared/apis/set-variant-localized-facts-action.ts';
+import { SetProductLocalizedFactsActionApi } from './shared/apis/set-product-localized-facts-action.ts';
 import { setVariantLocalizedFactsRecoveryRead } from './src/api/set-variant-localized-facts-recovery.read.ts';
+import { setProductLocalizedFactsRecoveryRead } from './src/api/set-product-localized-facts-recovery.read.ts';
 import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
 import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
 import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
@@ -249,9 +253,9 @@ type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
 type PublicComponentContributionInput = typeof ShellPublicComponentContributionSchema.Encoded;
 type ReportContributionInput = typeof ShellReportContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
-const _navigationContribution = (value: NavigationContributionInput) =>
+const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
-const _pageContribution = (value: PageContributionInput) =>
+const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 const publicComponentContribution = (value: PublicComponentContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
@@ -264,11 +268,13 @@ const partyDetailProviderEntrypoint = 'party.registry.api.party-detail';
 const manufacturerPartyCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.party-current';
 const manufacturerExactRevisionEvidence = 'commerce.catalog.evidence.manufacturer-target.exact-revision';
 const manufacturerLegalEntityCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.legal-entity-current';
+const catalogModuleKey = 'commerce.catalog';
+const productsPageKey = 'commerce.catalog.page.products';
 export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
     description: 'Catalog business capability.',
     displayName: 'Catalog',
-    id: 'commerce.catalog',
+    id: catalogModuleKey,
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
@@ -431,6 +437,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'product-category-history': ProductCategoryHistoryApi,
       'product-detail': ProductDetailApi,
       'product-history': ProductHistoryApi,
+      'product-page': ProductPageApi,
       'product-relationship-current': ProductRelationshipCurrentApi,
       'product-relationship-history': ProductRelationshipHistoryApi,
       'product-size-current': ProductSizeCurrentApi,
@@ -480,6 +487,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'set-composition-history': SetCompositionHistoryApi,
       'set-product-attribute-values-recovery': SetProductAttributeValuesRecoveryApi,
       'set-product-brand-recovery': SetProductBrandRecoveryApi,
+      'set-product-localized-facts-action': SetProductLocalizedFactsActionApi,
       'set-product-localized-facts-recovery': SetProductLocalizedFactsRecoveryApi,
       'set-product-manufacturer-recovery': SetProductManufacturerRecoveryApi,
       'set-product-type-recovery': SetProductTypeRecoveryApi,
@@ -542,6 +550,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: setVariantLocalizedFactsAction,
       },
       {
+        apiKey: 'set-product-localized-facts-action',
+        operationKey: 'setProductLocalizedFactsAction.execute',
+        registration: setProductLocalizedFactsAction,
+      },
+      {
         apiKey: 'create-variant-action',
         operationKey: 'createVariantAction.execute',
         registration: createVariantAction,
@@ -565,6 +578,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         apiKey: 'set-variant-localized-facts-recovery',
         operationKey: 'setVariantLocalizedFactsRecovery.execute',
         registration: setVariantLocalizedFactsRecoveryRead,
+      },
+      {
+        apiKey: 'set-product-localized-facts-recovery',
+        operationKey: 'setProductLocalizedFactsRecovery.execute',
+        registration: setProductLocalizedFactsRecoveryRead,
       },
       {
         apiKey: 'create-variant-recovery',
@@ -591,16 +609,63 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         operationKey: 'catalogSourceProducts.execute',
         registration: catalogSourceProductsRead,
       },
+      { apiKey: 'product-page', operationKey: 'productPage.execute', registration: productPageRead },
       // </generated-module-manifest-operation-contracts>
     ],
     shellContributions: {
       mediaAttachments: [],
       navigation: [
         // <generated-module-shell-navigation>
+        navigationContribution({
+          accessDeclaration: {
+            key: 'commerce.catalog.navigation-products.read',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'product', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          contributionKey: 'commerce.catalog.navigation.products',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: productsPageKey,
+            moduleKey: catalogModuleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
+          groupKey: 'shell.navigation.commerce',
+          icon: 'icon-[mdi--package-variant]',
+          label: { cs: 'Produkty', en: 'Products' },
+          order: 505,
+          pageKey: productsPageKey,
+        }),
         // </generated-module-shell-navigation>
       ],
       pages: [
         // <generated-module-shell-pages>
+        pageContribution({
+          accessDeclaration: {
+            key: 'commerce.catalog.products.view',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'product', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          componentKey: 'commerce.catalog.page-products',
+          contributionKey: productsPageKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: productsPageKey,
+            moduleKey: catalogModuleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageProducts',
+          routePath: '/katalog/produkty',
+        }),
         // </generated-module-shell-pages>
       ],
       publicComponents: [
@@ -695,11 +760,13 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     correctProductRecoveryRead,
     updateProductRecoveryRead,
     setVariantLocalizedFactsRecoveryRead,
+    setProductLocalizedFactsRecoveryRead,
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,
     catalogSourceProductPageRead,
     catalogSourceProductsRead,
+    productPageRead,
     // </generated-module-registration-reads>
   ],
 };

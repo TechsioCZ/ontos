@@ -19,6 +19,7 @@ import {
   catalogRuntimeManifest as runtimeManifest,
 } from '../../vertical.runtime-declaration.ts';
 import { CatalogWidget } from '../../src/components/catalog-widget.tsx';
+import { ProductsPage } from '../../src/routes/[lang]/katalog/produkty/page.tsx';
 import { selectionEvidenceRead } from '../../src/api/selection-evidence.read.ts';
 import { quantityPreparationRead } from '../../src/api/quantity-preparation.read.ts';
 import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-compatibility.read.ts';
@@ -29,11 +30,13 @@ import { assortmentProductClassificationV1Read } from '../../src/api/assortment-
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
 import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
 import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-localized-facts-recovery.read.ts';
+import { setProductLocalizedFactsRecoveryRead } from '../../src/api/set-product-localized-facts-recovery.read.ts';
 import { createVariantRecoveryRead } from '../../src/api/create-variant-recovery.read.ts';
 import { createProductRecoveryRead } from '../../src/api/create-product-recovery.read.ts';
 import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
 import { catalogSourceProductPageRead } from '../../src/api/catalog-source-product-page.read.ts';
 import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
+import { productPageRead } from '../../src/api/product-page.read.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -68,11 +71,13 @@ describe('Catalog backend declaration and full publication', () => {
       correctProductRecoveryRead,
       updateProductRecoveryRead,
       setVariantLocalizedFactsRecoveryRead,
+      setProductLocalizedFactsRecoveryRead,
       createVariantRecoveryRead,
       createProductRecoveryRead,
       bindInitialVariantSourceRecoveryRead,
       catalogSourceProductPageRead,
       catalogSourceProductsRead,
+      productPageRead,
     ];
     expect(declaration.reads).toHaveLength(reads.length);
     for (const [index, read] of reads.entries()) {
@@ -91,6 +96,7 @@ describe('Catalog backend declaration and full publication', () => {
   it('retains the complete frontend publication and actual component exports', () => {
     expect(manifest.publicSurface.components).toEqual({
       'catalog-widget': CatalogWidget,
+      'page-products': ProductsPage,
     });
     expect(manifest.publicSurface.resourceTypes).toHaveLength(11);
     expect(new Set(Object.keys(manifest.publicSurface))).toEqual(

@@ -54,7 +54,11 @@ import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-r
 import { allocateLoopbackPort, startCompiledSymmyShell } from '../support/server-owner-relay-native-fixture.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
-import { SwitchLegalEntityPayloadSchema } from '../../shared/browser-api.ts';
+import {
+  ChangeSystemWorkloadEnrollmentPayloadSchema,
+  SwitchLegalEntityPayloadSchema,
+  SystemWorkloadEnrollmentResponseSchema,
+} from '../../shared/browser-api.ts';
 import { resolveOwnerReleaseIdentity } from '../../../../scripts/ci/kept-unit-identity.mts';
 import { SymmyRegionsProjectionConfigurationSchema } from '../../api/symmy/regions-projection.ts';
 import { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
@@ -76,6 +80,7 @@ const gatewayDiagnosticsTag = 'gateway-diagnostics';
 const issuerDiagnosticsTag = 'issuer-diagnostics';
 const requestDiagnosticsTag = 'request-diagnostics';
 const releaseDiagnosticsTag = 'release-diagnostics';
+const systemWorkloadEnrollmentTag = 'system-workload-enrollment';
 const marketAppId = 'commerce-market-catalog';
 const customerContextAppId = 'commerce-customer-context';
 export interface ApiKeyGatewayNativeFixtureOptions {
@@ -167,6 +172,19 @@ export const ShellNativeSetupGatewayResponseSchema = Schema.TaggedStruct('setup-
   gateway: GatewayContextResponseSchema,
 });
 export const ShellNativeBoundCommandSchema = Schema.TaggedStruct('bound', {});
+/**
+ * The signed-in Tenant administrator changes a system workload enrollment through the Shell's own HTTP endpoint of
+ * `core.identity.change-system-workload-enrollment`, in the session the child holds for that human.
+ */
+export const ShellNativeSystemWorkloadEnrollmentCommandSchema = Schema.TaggedStruct(systemWorkloadEnrollmentTag, {
+  idempotencyKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+    Schema.brand('IdempotencyKey'),
+  ),
+  payload: ChangeSystemWorkloadEnrollmentPayloadSchema,
+});
+export const ShellNativeSystemWorkloadEnrollmentResponseSchema = Schema.TaggedStruct(systemWorkloadEnrollmentTag, {
+  enrollment: SystemWorkloadEnrollmentResponseSchema,
+});
 /** The relay source module's credential, provisioned by the platform exactly as every environment provisions it. */
 export const ShellNativeRelaySourceProvisionCommandSchema = Schema.TaggedStruct('relay-source-provision', {});
 /** An additional source module's credential, provisioned the same way; the parent names only the configured module. */
@@ -322,6 +340,7 @@ export const ShellNativeChildCommandSchema = Schema.Union([
   ShellNativeSetupKeyIssueCommandSchema,
   ShellNativeSetupKeyBoundCommandSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
+  ShellNativeSystemWorkloadEnrollmentCommandSchema,
   Schema.TaggedStruct('enabled', { enabled: Schema.Boolean }),
 ]);
 export const ShellNativeIssuedResponseSchema = Schema.TaggedStruct('issued', {
@@ -353,9 +372,27 @@ export const ShellNativeSafeFailureSchema = Schema.Union([
   ]),
   ...ShellNativeGatewayProblemSchema.members.map((problem) => problem.fields._tag),
 ]);
+const shellNativeRefusalText = Schema.String.check(Schema.isMaxLength(500));
+/** The public Problem Details fields of a Shell refusal; a problem body holds no credential. */
+export const ShellNativeRefusalProblemSchema = Schema.Struct({
+  _tag: Schema.optionalKey(shellNativeRefusalText),
+  code: Schema.optionalKey(shellNativeRefusalText),
+  detail: Schema.optionalKey(shellNativeRefusalText),
+});
+/** How the Shell refused one request the child made: its HTTP status and its public problem. */
+export const ShellNativeRefusalSchema = Schema.Struct({
+  problem: ShellNativeRefusalProblemSchema,
+  status: Schema.Int.check(Schema.isGreaterThanOrEqualTo(100), Schema.isLessThanOrEqualTo(599)),
+});
 export const ShellNativeUnavailableResponseSchema = Schema.TaggedStruct('unavailable', {
   failure: Schema.optionalKey(ShellNativeSafeFailureSchema),
+  refusal: Schema.optionalKey(ShellNativeRefusalSchema),
 });
+/** The Shell's refusal, named in the test failure: one CI run then says which answer it was. */
+const refused = (command: string, refusal: typeof ShellNativeRefusalSchema.Type) =>
+  new ApiKeyGatewayNativeFixtureError({
+    reason: `The Shell refused the ${command} command with ${String(refusal.status)} ${JSON.stringify(refusal.problem)}`,
+  });
 export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeIssuedResponseSchema,
   ShellNativeProvisionedResponseSchema,
@@ -366,6 +403,7 @@ export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeReleaseDiagnosticsResponseSchema,
   ShellNativeSetupKeyIssuedResponseSchema,
   ShellNativeSetupGatewayResponseSchema,
+  ShellNativeSystemWorkloadEnrollmentResponseSchema,
   Schema.TaggedStruct('ack', {}),
   ShellNativeUnavailableResponseSchema,
 ]);
@@ -923,13 +961,25 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         yield* Effect.logWarning('Shell native private command refused', {
           command: command._tag,
           failure: response.failure ?? 'unclassified',
+          refusal: response.refusal ?? 'none',
         });
-        return yield* unavailable();
+        return yield* response.refusal === undefined ? unavailable() : refused(command._tag, response.refusal);
       }
       return response;
     });
     return Object.freeze({
       baseUrl: ready.baseUrl,
+      changeFixtureSystemWorkloadEnrollment: Effect.fn('ApiKeyGatewayNativeFixture.changeSystemWorkloadEnrollment')(
+        function* changeFixtureSystemWorkloadEnrollment(
+          input: Omit<typeof ShellNativeSystemWorkloadEnrollmentCommandSchema.Encoded, '_tag'>,
+        ) {
+          yield* ensureOpen;
+          const response = yield* exchange({ _tag: systemWorkloadEnrollmentTag, ...input });
+          return Schema.is(ShellNativeSystemWorkloadEnrollmentResponseSchema)(response)
+            ? response.enrollment
+            : yield* unavailable();
+        },
+      ),
       compositionSourceUrl: sourceUrl,
       gatewayDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.gatewayDiagnostics')(function* gatewayDiagnostics() {
         yield* ensureOpen;

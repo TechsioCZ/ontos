@@ -14,6 +14,7 @@ import {
 import { listDeadOutboxDeliveries } from '../../packages/core-runtime/src/outbox/dead-delivery-resolution.ts';
 import { CORE_SEARCH_FORMAT_VERSION } from '../../packages/core-runtime/src/search/evidence-codec.ts';
 import { ApplicationCompositionAuthorityAdminDatabaseLive } from '../application-composition-authority-publication.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 export const searchStageOwners = [
   'party.registry',
@@ -338,6 +339,8 @@ if (import.meta.main) {
       Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(StateSchema))),
       Effect.flatMap(Console.log),
       Effect.provide(ApplicationCompositionAuthorityAdminDatabaseLive),
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
       Effect.provide(NodeServices.layer),
     ),
   );

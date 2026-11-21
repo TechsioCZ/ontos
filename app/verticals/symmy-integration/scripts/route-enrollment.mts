@@ -36,6 +36,20 @@
  * commerce.customer-context.configure-customer-source-route; without it, every request the route has not already
  * admitted under its idempotency key answers 403. The command cannot check this: Commerce shows a source route only to
  * an administrator through its customer-source-route read, which no workload reads, and the command calls no owner.
+ *
+ * An inventoryStockBatch route names no company, its Inventory backend (inventoryBackendId) and its positions
+ * (stockScope), each a Stock Position with the item and location keys, namespace, scope and Customer Configuration its
+ * rows are asserted under. Inventory accepts a row only once an operator has, through its governed Actions and for that
+ * Customer Configuration: selected the External Business System of the route's backend id
+ * (commerce.inventory.select-inventory-backend), before the business time of the rows it sends; registered the Stock
+ * Item (register-stock-item), created the Stock Location (create-stock-location) and established the Stock Position of
+ * that Item, Location and Unit under the selection (establish-stock-position); and correlated the entry's item key as an
+ * ITEM and its location key as a LOCATION, in its namespace and scope and issued by that backend, to the Item and the
+ * Location (establish-external-stock-correlation). A row names the Position's Unit. Until then every row of a request
+ * is not accepted: Inventory answers its effect unavailable while the Customer Configuration has selected no backend,
+ * and invalid or stale while the selection, the Position or a correlation differs. The command cannot check this:
+ * Inventory shows its selection only through its backend-configuration read, which an operator's permission and no
+ * workload carries, and the command calls no owner.
  */
 import { parseDatabaseConnectionPair, ActiveApplicationCompositionConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';

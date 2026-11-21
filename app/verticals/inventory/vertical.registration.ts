@@ -5,6 +5,7 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { inventoryManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { catalogToStockBindingResolutionRead } from './src/api/catalog-to-stock-binding-resolution.read.ts';
+import { catalogVariantOnHandPageRead } from './src/api/catalog-variant-on-hand-page.read.ts';
 import { changeStockSharingEligibilityAction } from './src/actions/change-stock-sharing-eligibility.action.ts';
 import { commitmentProtectionVerificationRead } from './src/api/commitment-protection-verification.read.ts';
 import { compensateInventoryPreCommitAction } from './src/actions/compensate-inventory-pre-commit.action.ts';
@@ -77,6 +78,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'catalog-to-stock-binding-resolution': () => import('./src/api/catalog-to-stock-binding-resolution-client.ts'),
+      'catalog-variant-on-hand-page': () => import('./src/api/catalog-variant-on-hand-page-client.ts'),
       'commitment-protection-verification': () => import('./src/api/commitment-protection-verification-client.ts'),
       'current-relevant-stock-position-set': () => import('./src/api/current-relevant-stock-position-set-client.ts'),
       'current-stock-evidence-for-availability': () =>
@@ -125,6 +127,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
   reads: [
     // <generated-module-registration-reads>
     catalogToStockBindingResolutionRead,
+    catalogVariantOnHandPageRead,
     commitmentProtectionVerificationRead,
     currentRelevantStockPositionSetRead,
     currentStockEvidenceForAvailabilityRead,

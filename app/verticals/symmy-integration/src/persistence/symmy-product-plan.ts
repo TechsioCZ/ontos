@@ -35,6 +35,11 @@ export const variantFactsOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
+export const productFactsOperation = {
+  entrypointKey: 'commerce.catalog.set-product-localized-facts',
+  moduleId: catalogModule,
+  schemaVersion: '1',
+} as const;
 
 const productCreateKey = 'product-create';
 const productUpdateKey = 'product-update';
@@ -66,10 +71,12 @@ const catalogSource = (rows: SymmyProductRows, template: SymmyFixtureExecutionPl
   const variants = rows.flatMap(({ variants: rowVariants }) => rowVariants);
   const updates = rows.some((row) => row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
   const texts = variants.some(({ localized }) => localized.length > 0);
+  const productTexts = rows.some(({ localized }) => (localized ?? []).length > 0);
   const further = rows.some(({ variants: rowVariants }) => rowVariants.length > 1);
   const product = enrolledItem(template, 'PRODUCT', createProductOperation);
   const required = [
     ...(updates ? [enrolledItem(template, 'PRODUCT', updateProductOperation)] : []),
+    ...(productTexts ? [enrolledItem(template, 'PRODUCT', productFactsOperation)] : []),
     ...(further ? [enrolledItem(template, 'VARIANT', createVariantOperation)] : []),
     ...(texts ? [enrolledItem(template, 'VARIANT', variantFactsOperation)] : []),
   ];
@@ -382,7 +389,6 @@ const buildVariantItem = (
         _tag: 'SetVariantLocalizedFacts',
         payload: {
           evidenceRefs,
-          expectedRevision: 0,
           facts: { ...present('description', text.description), ...present('name', text.name) },
           locale: text.locale,
           reason: SYMMY_PRODUCT_REASON,
@@ -445,11 +451,36 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const variantItems = variants.map((variant, position) =>
     buildVariantItem({ ...facts, enrollment, evidenceRefs, parent, position, productRecord, variant }),
   );
+  // The Product's own texts, one per locale, each the localized facts of the Product the create settled on: a text
+  // the owner already holds is reported as unchanged, any other one is written at the owner's current revision.
+  const productTexts = (row.localized ?? []).map((text, textIndex) => ({
+    dependsOn: [productCreateKey],
+    effectKey: `product-facts-${textIndex}`,
+    intent: {
+      _tag: 'CatalogProductDependentEffect',
+      parent,
+      request: {
+        _tag: 'SetProductLocalizedFacts',
+        payload: {
+          evidenceRefs,
+          facts: { ...present('description', text.description), ...present('name', text.name) },
+          locale: text.locale,
+          reason: SYMMY_PRODUCT_REASON,
+        },
+      },
+    },
+    operation: productFactsOperation,
+  }));
   const updates = row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED';
   const updateEffect = updates
     ? [
         {
-          dependsOn: [productCreateKey, ...variantItems.flatMap(({ created }) => created)],
+          // An activation needs a current localized name, so the lifecycle waits for the Product's texts.
+          dependsOn: [
+            productCreateKey,
+            ...productTexts.map(({ effectKey }) => effectKey),
+            ...variantItems.flatMap(({ created }) => created),
+          ],
           effectKey: productUpdateKey,
           intent: {
             _tag: 'CatalogProductDependentEffect',
@@ -529,6 +560,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
         },
         operation: createProductOperation,
       },
+      ...productTexts,
       ...updateEffect,
     ],
     itemKey: productItemKey,
@@ -564,7 +596,7 @@ export interface SymmyProductPlanInput<Failure> {
 }
 
 /**
- * Maps the public products to one internal plan. A product is an item with its create (and its lifecycle update),
+ * Maps the public products to one internal plan. A product is an item with its create, its texts (and its lifecycle update),
  * each variant that has effects of its own is an item (a source record belongs to one item) and so is each
  * price. Everything that needs the Product reference the same job creates waits for that create and takes the
  * reference from its receipt. Every field no intent can write is an unsupported branch of the product item. A

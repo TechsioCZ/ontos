@@ -16,9 +16,11 @@ import { groupOperation, priceOperation } from '../../src/persistence/symmy-pric
 import {
   createProductOperation,
   createVariantOperation,
+  productFactsOperation,
   updateProductOperation,
   variantFactsOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
+import { stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
 import { symmyCallInMode } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
@@ -109,6 +111,8 @@ const currentMarkets = operation('commerce.market-catalog', 'commerce.market-cat
 const priceSchedule = operation('commerce.pricing', 'commerce.pricing.api.price-schedule');
 const groupSourcePrices = operation('commerce.pricing', 'commerce.pricing.api.price-group-source-prices');
 const currencies = operation('commerce.pricing', 'commerce.pricing.api.current-supported-currencies');
+const importStock = operation('commerce.inventory', 'commerce.inventory.import-source-assertion');
+const stockBackend = 'AKROS_ERP';
 
 type EncodedRequest = typeof SymmyRouteEnrollmentRequestSchema.Encoded;
 type EncodedConfiguration = EncodedRequest['configuration'];
@@ -156,12 +160,29 @@ const selector: NonNullable<EncodedConfiguration['selector']> = {
   },
 };
 
+/** One position of the ERP's stock the stock route admits rows for. */
+const stockPosition = (
+  itemKey: string,
+  changes: Partial<NonNullable<EncodedConfiguration['stockScope']>[number]> = {},
+): NonNullable<EncodedConfiguration['stockScope']>[number] => ({
+  customerConfigurationId: 'AKROS',
+  issuerBackendId: stockBackend,
+  itemKey,
+  locationKey: 'WH-MAIN',
+  namespace: 'AKROS_STOCK',
+  positionRef: {
+    moduleId: 'commerce.inventory',
+    resourceId: groupId,
+    resourceType: 'commerce.inventory.stock-position',
+    tenantId,
+  },
+  scope: 'AKROS_COMPANY',
+  ...changes,
+});
+
 const decode = Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema);
 const write = { legalEntityId, lifecyclePolicy };
-type Enrollable = Exclude<
-  SymmyEnrollmentRouteKey,
-  'assortmentRulesFixtureBatch' | 'inventoryStockBatch' | 'sellerVatDeclarationsFixtureBatch'
->;
+type Enrollable = Exclude<SymmyEnrollmentRouteKey, 'assortmentRulesFixtureBatch' | 'sellerVatDeclarationsFixtureBatch'>;
 type RouteFields = Omit<
   EncodedRequest,
   'mappingVersion' | 'principalId' | 'routeId' | 'routeKey' | 'routeRevision' | 'tenantId'
@@ -181,6 +202,14 @@ const valid = {
     configuration: { items: [item('CUSTOMER_GROUP', [createGroup, groupDefinitionSource])] },
   }),
   customersBatch: () => ({ ...write, configuration: { items: [item('CUSTOMER', [createParty, retailProfile])] } }),
+  inventoryStockBatch: () => ({
+    configuration: {
+      inventoryBackendId: stockBackend,
+      items: [item('STOCK', [importStock])],
+      stockScope: [stockPosition('SKU-1')],
+    },
+    lifecyclePolicy,
+  }),
   priceListPricesBatch: () => ({
     ...write,
     configuration: { items: [item('PRICE', [definePrice, revisePrice, associations])], ...priceSource },
@@ -205,6 +234,7 @@ const enrollable: readonly Enrollable[] = [
   'customerGroupCustomersBatch',
   'customerGroupsBatch',
   'customersBatch',
+  'inventoryStockBatch',
   'priceListPricesBatch',
   'priceLists',
   'priceListsBatchUpsert',
@@ -239,7 +269,7 @@ const withConfiguration = (
 
 const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => {
   const found = symmyRouteInventoryOf(routeKey);
-  if (!Option.isOption(found) || Option.isNone(found)) {
+  if (Option.isNone(found)) {
     throw new Error(`expected an inventory of ${routeKey}`);
   }
   return found.value;
@@ -286,10 +316,9 @@ const refusalCodes = (
 ) => (Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : []);
 
 describe('Symmy route inventories', () => {
-  it('refuses the stock route with its own reason and names no inventory for an operator fixture route', () => {
-    const stock = symmyRouteInventoryOf('inventoryStockBatch');
-    expect(Option.isOption(stock) ? undefined : stock.code).toBe('stock_route_pending_inventory_setup');
+  it('names no inventory for an operator fixture route', () => {
     expect(symmyRouteInventoryOf('assortmentRulesFixtureBatch')).toEqual(Option.none());
+    expect(symmyRouteInventoryOf('sellerVatDeclarationsFixtureBatch')).toEqual(Option.none());
   });
 
   it('resolves every executor operation and adapter read to exactly one call Symmy registers in its mode', () => {
@@ -318,6 +347,7 @@ describe('Symmy route inventories', () => {
     ])[] = [
       ['productsBatch', createProductOperation, 'PRODUCT'],
       ['productsBatch', updateProductOperation, 'PRODUCT'],
+      ['productsBatch', productFactsOperation, 'PRODUCT'],
       ['productsBatch', createVariantOperation, 'VARIANT'],
       ['productsBatch', variantFactsOperation, 'VARIANT'],
       ['productsBatch', priceOperation, 'PRICE'],
@@ -332,6 +362,7 @@ describe('Symmy route inventories', () => {
       ['customersBatch', counterpartyProfileOperation, undefined],
       ['customersBatch', addAddressOperation, undefined],
       ['customersBatch', organizationIcoOperation, undefined],
+      ['inventoryStockBatch', stockOperation, undefined],
     ];
     for (const [routeKey, builderOperation, entityKind] of built) {
       const listed = inventoryOf(routeKey).operations.flatMap((candidate) =>
@@ -467,6 +498,41 @@ describe('Symmy route request refusals', () => {
         ]),
       ),
     ).toEqual([]);
+  });
+
+  it('requires the stock route to name its Inventory backend and positions of that backend and Tenant', () => {
+    expect(requestRefusals(withConfiguration('inventoryStockBatch', {}, ['stockScope']))).toEqual([
+      'stock_scope_required: inventoryStockBatch names the Inventory backend it asserts for and the stock positions it admits rows for',
+    ]);
+    expect(codes(withConfiguration('inventoryStockBatch', {}, ['inventoryBackendId']))).toEqual([
+      'stock_scope_required',
+    ]);
+    const otherTenant = { ...stockPosition('SKU-3').positionRef, tenantId: legalEntityId };
+    expect(
+      requestRefusals(
+        withConfiguration('inventoryStockBatch', {
+          stockScope: [
+            stockPosition('SKU-1'),
+            stockPosition('SKU-2', { issuerBackendId: 'OTHER_ERP' }),
+            stockPosition('SKU-3', { positionRef: otherTenant }),
+          ],
+        }),
+      ),
+    ).toEqual([
+      'stock_scope_invalid: The position of item SKU-2 at location WH-MAIN is issued by backend OTHER_ERP, not AKROS_ERP, so none of its rows is admitted',
+      'stock_scope_invalid: The position of item SKU-3 at location WH-MAIN belongs to another Tenant',
+    ]);
+    // The Inventory import is the stock route's one owner operation, and its admission pins a lifecycle policy.
+    expect(codes(withConfiguration('inventoryStockBatch', { items: [item('STOCK', [createProduct])] }))).toEqual([
+      'operation_not_in_route_inventory',
+      'required_operation_missing',
+      'required_operation_missing',
+    ]);
+    expect(codes(request('inventoryStockBatch', {}, ['lifecyclePolicy']))).toEqual(['lifecycle_policy_required']);
+    // Stock positions belong to the stock route alone.
+    expect(codes(withConfiguration('customerGroupsBatch', { stockScope: [stockPosition('SKU-1')] }))).toEqual([
+      'configuration_field_not_allowed',
+    ]);
   });
 
   it('keeps the routes of one company off a Tenant-only route', () => {
@@ -810,6 +876,7 @@ describe('Symmy route write decisions', () => {
     const stored = storedRow(enrollment, { changeToken: 4, routeRevision: 'route-v0' });
     expect(refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }))).toEqual(['route_drift']);
     expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt(4))).toEqual({
+      admissions: 'outstanding',
       changed: ['routeRevision'],
       kind: 'replace',
       previous: { changeToken: 4, routeRevision: 'route-v0' },
@@ -820,6 +887,67 @@ describe('Symmy route write decisions', () => {
     ).toEqual(['revision_not_advanced']);
     const inactive = storedRow(enrollment, { active: false });
     expect(refusalCodes(decided(enrollment, { byRouteId: inactive, bySelector: inactive }))).toEqual(['route_drift']);
+  });
+
+  it('keeps the synchronous admissions of a stock route whose replacement only adds positions, and no others', () => {
+    // One enrolled route: its items are built once, so every revision below differs only where it says.
+    const base = fields('inventoryStockBatch');
+    const v2 = (
+      changes: Partial<EncodedRequest>,
+      configuration: Partial<EncodedConfiguration>,
+      routeRevision = 'route-v2',
+    ) => decode({ ...base, ...changes, configuration: { ...base.configuration, ...configuration }, routeRevision });
+    const v1 = v2({}, { stockScope: [stockPosition('SKU-1')] }, 'route-v1');
+    const stored = storedRow(v1, { changeToken: 7 });
+    const admissionsOf = (replacement: SymmyRouteEnrollmentRequest) => {
+      const decision = decided(replacement, { byRouteId: stored, bySelector: stored }, replaceAt(7));
+      return 'admissions' in decision ? decision.admissions : decision;
+    };
+    // Every stored position kept as it was, one added: the admissions of route-v1 stay as they were admitted.
+    expect(admissionsOf(v2({}, { stockScope: [stockPosition('SKU-2'), stockPosition('SKU-1')] }))).toBe('kept');
+    // A stored position removed or changed, or anything else changed, could reinterpret an earlier admission.
+    expect(admissionsOf(v2({}, { stockScope: [stockPosition('SKU-2')] }))).toBe('outstanding');
+    expect(
+      admissionsOf(v2({}, { stockScope: [stockPosition('SKU-1', { locationKey: 'WH-2' }), stockPosition('SKU-2')] })),
+    ).toBe('outstanding');
+    expect(
+      admissionsOf(v2({}, { stockScope: [stockPosition('SKU-1', { scope: 'OTHER' }), stockPosition('SKU-2')] })),
+    ).toBe('outstanding');
+    expect(
+      admissionsOf(
+        v2({}, { items: [item('STOCK', [importStock], 'OTHER_ISSUER')], stockScope: [stockPosition('SKU-1')] }),
+      ),
+    ).toBe('outstanding');
+    expect(admissionsOf(v2({ mappingVersion: 'map-v2' }, { stockScope: [stockPosition('SKU-1')] }))).toBe(
+      'outstanding',
+    );
+    expect(
+      admissionsOf(
+        v2({ lifecyclePolicy: { policyId: 'other-policy', revision: 'r1' } }, { stockScope: [stockPosition('SKU-1')] }),
+      ),
+    ).toBe('outstanding');
+    // A stopped route, and every route without stock positions, keeps nothing.
+    const stopped = storedRow(v1, { active: false, changeToken: 7 });
+    const restarted = decided(
+      v2({}, { stockScope: [stockPosition('SKU-1'), stockPosition('SKU-2')] }),
+      { byRouteId: stopped, bySelector: stopped },
+      replaceAt(7),
+    );
+    expect(restarted).toMatchObject({ admissions: 'outstanding', kind: 'replace' });
+    const groups = request('customerGroupsBatch');
+    const storedGroups = storedRow(groups, { routeRevision: 'route-v0' });
+    expect(decided(groups, { byRouteId: storedGroups, bySelector: storedGroups }, replaceAt(1))).toMatchObject({
+      admissions: 'outstanding',
+      kind: 'replace',
+    });
+    // Kept admissions are not outstanding work, but a job of the route still is.
+    const outstanding = Schema.decodeUnknownSync(SymmyOutstandingWorkSchema);
+    expect(symmyOutstandingRefusals(outstanding({ admissions: [], jobs: [], listedAll: true }))).toEqual([]);
+    expect(
+      symmyOutstandingRefusals(
+        outstanding({ admissions: [], jobs: [{ jobId: routeId, state: 'planned' }], listedAll: true }),
+      ).map(({ code }) => code),
+    ).toEqual(['outstanding_work']);
   });
 
   it('refuses a replacement prepared before the route was stopped, at the revision it still carries', () => {
@@ -884,6 +1012,9 @@ describe('Symmy route write decisions', () => {
     expect(symmyRouteEnrollmentLockKey(request('adminRegions'))).toBe(
       `symmy-route-enrollment:${tenantId}:${principalId}:adminRegions`,
     );
+    expect(symmyRouteEnrollmentLockKey(request('inventoryStockBatch'))).toBe(
+      `symmy-route-enrollment:${tenantId}:${principalId}:inventoryStockBatch`,
+    );
   });
 });
 
@@ -900,6 +1031,10 @@ describe('Symmy route runtime prerequisites', () => {
     ]);
     expect(prerequisitesOf('productsBatch')).toEqual(['ONTOS_SYMMY_JOB_RETENTION_POLICIES:operator_copy_only']);
     expect(prerequisitesOf('adminProducts')).toEqual([]);
+    // A synchronous admission refused for its policy answers 503, a job admission 403.
+    expect(symmyRuntimePrerequisites(request('inventoryStockBatch')).map(({ whenMissing }) => whenMissing)).toEqual([
+      expect.stringContaining('as 503 SymmyUnavailableProblem'),
+    ]);
     for (const prerequisite of symmyRuntimePrerequisites(request('adminRegions'))) {
       expect(prerequisite.whenMissing).toContain('projection_not_configured');
     }

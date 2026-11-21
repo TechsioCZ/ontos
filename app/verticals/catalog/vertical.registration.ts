@@ -80,6 +80,7 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
       'product-category-history': () => import('./src/api/product-category-history-client.ts'),
       'product-detail': () => import('./src/api/product-detail-client.ts'),
       'product-history': () => import('./src/api/product-history-client.ts'),
+      'product-page': () => import('./src/api/product-page-client.ts'),
       'product-relationship-current': () => import('./src/api/product-relationship-current-client.ts'),
       'product-relationship-history': () => import('./src/api/product-relationship-history-client.ts'),
       'product-size-current': () => import('./src/api/product-size-current-client.ts'),
@@ -159,6 +160,7 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
     },
     pages: {
       // <generated-module-registration-pages>
+      'page-products': () => import('./src/routes/[lang]/katalog/produkty/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {

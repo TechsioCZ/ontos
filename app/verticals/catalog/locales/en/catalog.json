@@ -16,6 +16,74 @@
     "role": "catalog",
     "routeSurface": "Route surface owned by this vertical.",
     "title": "Catalog Vertical",
-    "widgetBody": "Owns a vertical route surface."
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "products": {
+        "title": "Products",
+        "description": "Catalog products imported from the ERP with the ERP price and stock.",
+        "intro": "Products the ERP (Symmy) imported into the OntOS catalog, in every state. Each variant shows the ERP price and stock. This page is read-only.",
+        "offerMissing": "ERP price and stock are not shown: the ERP offer is missing. Open the page with customerConfigurationId, channelId, marketId, currencyCode and unitId in the address; the browser remembers them.",
+        "search": "Search by name",
+        "searchSubmit": "Search",
+        "loading": "Loading products…",
+        "failed": "Products could not be loaded",
+        "failedDescription": "The catalog did not answer, or you may not read it. Try loading the page again.",
+        "empty": "No products",
+        "emptyDescription": "The catalog holds no product that matches the search yet.",
+        "noCompany": "Select a company",
+        "noCompanyDescription": "ERP price and stock belong to a company. Select a company in the header.",
+        "noName": "No name in this language",
+        "showVariants": "Show variants",
+        "hideVariants": "Hide variants",
+        "range": "{{from}}–{{to}} of {{total}}",
+        "rangeEmpty": "0 products",
+        "previous": "Previous",
+        "next": "Next",
+        "columns": {
+          "name": "Name",
+          "lifecycle": "State",
+          "variants": "Variants",
+          "detail": "Detail"
+        },
+        "lifecycle": {
+          "DRAFT": "Draft",
+          "ACTIVE": "Active",
+          "RETIRED": "Retired"
+        },
+        "variantLifecycle": {
+          "WORK_IN_PROGRESS": "In progress",
+          "ACTIVE": "Active",
+          "RETIRED": "Retired"
+        },
+        "variants": {
+          "caption": "Product variants with ERP price and stock",
+          "loading": "Loading price and stock…",
+          "failed": "Price and stock could not be loaded.",
+          "sku": "SKU",
+          "noSku": "No SKU",
+          "options": "Variant",
+          "lifecycle": "State",
+          "price": "ERP price (excl. VAT)",
+          "stock": "ERP stock"
+        },
+        "price": {
+          "NO_PRICE": "No price",
+          "PRICING_CONFLICT": "Price in conflict",
+          "PRICING_INDETERMINATE": "Price cannot be determined now",
+          "CURRENCY_NOT_SUPPORTED": "Currency not supported",
+          "NOT_CONFIGURED": "Not set",
+          "READ_FAILED": "Could not be loaded"
+        },
+        "stock": {
+          "ON_HAND": "{{quantity}} pcs",
+          "NO_STOCK_ITEM": "No stock item",
+          "CONFLICTING_BINDINGS": "Ambiguous stock item",
+          "NO_POSITION": "No stock position",
+          "ON_HAND_UNKNOWN": "Unknown",
+          "NOT_CONFIGURED": "Not set",
+          "READ_FAILED": "Could not be loaded"
+        }
+      }
+    }
   }
 }

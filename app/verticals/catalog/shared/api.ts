@@ -109,6 +109,7 @@ import { ProductCategoryClassificationApi } from './apis/product-category-classi
 import { ProductCategoryHistoryApi } from './apis/product-category-history.ts';
 import { ProductDetailApi } from './apis/product-detail.ts';
 import { ProductHistoryApi } from './apis/product-history.ts';
+import { ProductPageApi } from './apis/product-page.ts';
 import { ProductRelationshipCurrentApi } from './apis/product-relationship-current.ts';
 import { ProductRelationshipHistoryApi } from './apis/product-relationship-history.ts';
 import { ProductSizeCurrentApi } from './apis/product-size-current.ts';
@@ -344,6 +345,7 @@ type CatalogApiGroups = GroupsOf<
   | typeof ProductCategoryHistoryApi
   | typeof ProductDetailApi
   | typeof ProductHistoryApi
+  | typeof ProductPageApi
   | typeof ProductRelationshipCurrentApi
   | typeof ProductRelationshipHistoryApi
   | typeof ProductSizeCurrentApi
@@ -558,6 +560,7 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(ProductCategoryHistoryApi)
   .addHttpApi(ProductDetailApi)
   .addHttpApi(ProductHistoryApi)
+  .addHttpApi(ProductPageApi)
   .addHttpApi(ProductRelationshipCurrentApi)
   .addHttpApi(ProductRelationshipHistoryApi)
   .addHttpApi(ProductSizeCurrentApi)
@@ -1251,6 +1254,14 @@ export const catalogPublicOperationContracts = {
     authorityBundle: 'CATALOG_READER',
     businessTarget: 'product',
     permission: 'commerce.catalog.read.product-history',
+    scope: 'tenant',
+    version: '1',
+  },
+  'commerce.catalog.api.product-page': {
+    accessKind: 'read',
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: 'product',
+    permission: 'commerce.catalog.read.product-page',
     scope: 'tenant',
     version: '1',
   },
@@ -2506,6 +2517,7 @@ export const catalogAuthorityBundles = {
     'commerce.catalog.read.product-brand-current',
     'commerce.catalog.read.product-brand-history',
     'commerce.catalog.read.product-detail',
+    'commerce.catalog.read.product-page',
     'commerce.catalog.read.product-variant-snapshot',
     'commerce.catalog.read.pricing-purpose-equivalence',
     'commerce.catalog.read.effective-attribute-values-current',

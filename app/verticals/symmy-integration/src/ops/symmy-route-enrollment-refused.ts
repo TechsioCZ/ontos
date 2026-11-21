@@ -2,7 +2,6 @@ import { Schema } from 'effect';
 
 const SymmyRouteEnrollmentRefusalCodeSchema = Schema.Literals([
   'invalid_request',
-  'stock_route_pending_inventory_setup',
   'route_not_inventoried',
   'owner_intent_enrolled',
   'configuration_field_not_allowed',
@@ -12,7 +11,10 @@ const SymmyRouteEnrollmentRefusalCodeSchema = Schema.Literals([
   'required_operation_missing',
   'operation_entity_kind_mismatch',
   'price_source_mismatch',
+  'stock_scope_required',
+  'stock_scope_invalid',
   'company_scope_required',
+  'company_scope_forbidden',
   'source_identity_mixed',
   'source_identity_differs_from_counterpart',
   'price_revision_reads_missing',

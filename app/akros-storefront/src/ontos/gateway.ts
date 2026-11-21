@@ -180,11 +180,15 @@ const parseResponse = async (response: Response, path: string): Promise<unknown>
 const READ_UNAVAILABLE_BUDGET_MS = 30_000;
 const READ_BACKOFF_CAP_MS = 3_000;
 
-/** Governed records read, with a fresh assertion issued and redeemed inside the combined gateway. */
+/**
+ * Governed records read, with a fresh assertion issued and redeemed inside the combined gateway. `company: false`
+ * sends no Legal Entity: a read whose scope forbids a company (Catalog's product page) is refused with one.
+ */
 export const readRecords = async (
   vertical: string,
   readName: string,
   query: unknown,
+  { company = true }: { company?: boolean } = {},
 ): Promise<unknown> => {
   // Reads are safe to repeat: ride out a shell/vertical restart (503) or a just-published composition (409).
   const startedAt = Date.now();
@@ -193,7 +197,7 @@ export const readRecords = async (
       const path = `/reads/${segment(readName)}`;
       const response = await credentialRequest(GATEWAY_READ_PATH, {
         audience: vertical,
-        legalEntityId: getConfig().legalEntityId,
+        ...(company ? { legalEntityId: getConfig().legalEntityId } : {}),
         readName: segment(readName),
         query,
       });

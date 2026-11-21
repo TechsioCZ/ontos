@@ -384,6 +384,12 @@ export interface DefinePricePersistenceCommand {
   readonly effectiveFrom: string;
   readonly identityKey: PriceIdentityKey;
   readonly monetaryAmount: PriceDefinition['revision']['monetaryAmount'];
+  /**
+   * What an exact key already bound to another amount does. Without it the define conflicts. With
+   * `SUPERSEDE_SAME_SOURCE`, a Current Revision asserted by the same source authority and mapping takes this assertion
+   * as its next revision (`CREATED`), or stays as it is for the same amount (`REUSED` with the Current fact).
+   */
+  readonly onExactKeyBound?: 'SUPERSEDE_SAME_SOURCE';
   readonly priceRef: PriceRef;
   readonly reason: string;
   readonly requestCorrelationId: string;

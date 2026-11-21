@@ -4,6 +4,7 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { pricingManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { catalogPagePricesRead } from './src/api/catalog-page-prices.read.ts';
 import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
 import { commercialFeeResultLookupRead } from './src/api/commercial-fee-result-lookup.read.ts';
 import { commercialFeeScheduleRead } from './src/api/commercial-fee-schedule.read.ts';
@@ -16,6 +17,7 @@ import { currentSupportedCurrenciesRead } from './src/api/current-supported-curr
 import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
 import { definePriceAction } from './src/actions/define-price.action.ts';
 import { exactPriceResolutionRead } from './src/api/exact-price-resolution.read.ts';
+import { grantExternalPriceSourceAuthorityAction } from './src/actions/grant-external-price-source-authority.action.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
 import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
 import { manageProductCommercialFeesBulkAction } from './src/actions/manage-product-commercial-fees-bulk.action.ts';
@@ -42,6 +44,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
     compensateCurrencySupportRecoveryAction,
     defineCommercialFeeAction,
     definePriceAction,
+    grantExternalPriceSourceAuthorityAction,
     manageCommitmentConfirmationAction,
     manageContractualDiscountAction,
     manageProductCommercialFeesBulkAction,
@@ -57,6 +60,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'catalog-page-prices': () => import('./src/api/catalog-page-prices-client.ts'),
       'commercial-fee-definition': () => import('./src/api/commercial-fee-definition-client.ts'),
       'commercial-fee-result-lookup': () => import('./src/api/commercial-fee-result-lookup-client.ts'),
       'commercial-fee-schedule': () => import('./src/api/commercial-fee-schedule-client.ts'),
@@ -103,6 +107,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    catalogPagePricesRead,
     commercialFeeDefinitionRead,
     commercialFeeResultLookupRead,
     commercialFeeScheduleRead,

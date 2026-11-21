@@ -58,6 +58,7 @@ describe('Catalog selection-evidence read owner routing', () => {
           receivedOwnerEvidence = ownerEvidence;
           return Effect.succeed(unavailableResponse);
         },
+        assessPriceSource: () => Effect.die('PRICING must not ask the price source question'),
         readCartEvidence: () => {
           cartReads += 1;
           return Effect.die('PRICING must not request Cart evidence');
@@ -95,6 +96,7 @@ describe('Catalog selection-evidence read owner routing', () => {
           receivedOwnerEvidence = evidence;
           return Effect.succeed(unavailableResponse);
         },
+        assessPriceSource: () => Effect.die('CART_VALIDATION must not ask the price source question'),
         readCartEvidence: () => Effect.succeed(ownerEvidence),
       };
 
@@ -102,6 +104,27 @@ describe('Catalog selection-evidence read owner routing', () => {
 
       expect(result).toEqual(unavailableResponse);
       expect(receivedOwnerEvidence).toEqual(ownerEvidence);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('answers PRICE_SOURCE_ASSERTION from the membership-only answer, never the readiness assessment', () =>
+    Effect.gen(function* priceSourceEvidence() {
+      const request = Schema.decodeSync(SelectionEvidenceRequestSchema)({
+        purpose: 'PRICE_SOURCE_ASSERTION',
+        selection,
+      });
+      const asked: unknown[] = [];
+      const services: SelectionEvidenceServices = {
+        assess: () => Effect.die('A price source must not run the readiness assessment'),
+        assessPriceSource: (requested) => {
+          asked.push(requested);
+          return Effect.succeed(unavailableResponse);
+        },
+        readCartEvidence: () => Effect.die('A price source must not request Cart evidence'),
+      };
+
+      expect(yield* readSelectionEvidence(request, tenantId, services)).toEqual(unavailableResponse);
+      expect(asked).toEqual([selection]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

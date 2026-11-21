@@ -1,9 +1,11 @@
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
 import {
+  ChangeSystemWorkloadEnrollmentPayloadSchema,
   shellAuthenticationApiContract,
   SwitchLegalEntityPayloadSchema,
   SwitchLegalEntityResponseSchema,
+  SystemWorkloadEnrollmentResponseSchema,
 } from '../../shared/browser-api.ts';
 import { issueGatewayContext } from '@app/shared-contracts';
 import type { GatewayContextRequestSchema } from '@app/shared-contracts';
@@ -86,6 +88,9 @@ import {
   ShellNativeSetupKeyBoundCommandSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
   ShellNativeSafeFailureSchema,
+  ShellNativeSystemWorkloadEnrollmentCommandSchema,
+  ShellNativeRefusalProblemSchema,
+  ShellNativeRefusalSchema,
 } from '../fixtures/api-key-gateway-native.ts';
 import type {
   ShellNativeGatewayDiagnosticSchema,
@@ -98,13 +103,31 @@ import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
 
 class ShellNativeChildUnavailable extends Schema.TaggedError<ShellNativeChildUnavailable>()(
   'ShellNativeChildUnavailable',
-  { cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())), reason: Schema.String },
+  {
+    cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())),
+    reason: Schema.String,
+    refusal: Schema.optionalKey(ShellNativeRefusalSchema),
+  },
 ) {}
 const unavailable = (cause?: unknown) =>
   new ShellNativeChildUnavailable({
     cause: Redacted.make(cause),
     reason: 'The owned Shell child is unavailable',
   });
+/** The Shell refused a request: the failure carries its status and public problem fields back to the parent. */
+const refusedBy = (response: Response) =>
+  Effect.tryPromise(async () => await response.json()).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ShellNativeRefusalProblemSchema)),
+    Effect.orElseSucceed((): typeof ShellNativeRefusalProblemSchema.Type => ({})),
+    Effect.flatMap((problem) =>
+      Effect.fail(
+        new ShellNativeChildUnavailable({
+          reason: 'The Shell refused the request',
+          refusal: { problem, status: response.status },
+        }),
+      ),
+    ),
+  );
 const bounded = Effect.timeoutOrElse({ duration: Duration.seconds(20), orElse: () => Effect.fail(unavailable()) });
 const startupStage = (stage: typeof ShellNativeStartupStageSchema.Type) =>
   Schema.encodeEffect(Schema.fromJsonString(ShellNativeStartupEventSchema))({ stage }).pipe(
@@ -510,7 +533,7 @@ const serve = Effect.scoped(
               }),
           }).pipe(bounded);
           if (!response.ok) {
-            return yield* unavailable();
+            return yield* refusedBy(response);
           }
           const switched = yield* Effect.tryPromise({
             catch: unavailable,
@@ -541,6 +564,50 @@ const serve = Effect.scoped(
       }).pipe(Effect.provide(FetchHttpClient.layer));
       return yield* sendPrivate(writer, { _tag: 'session-gateway', gateway });
     });
+    // The signed-in human runs Core's system workload enrollment Action through the Shell's own HTTP endpoint.
+    const changeSystemWorkloadEnrollment = Effect.fn('ShellNativeChild.changeSystemWorkloadEnrollment')(
+      function* changeSystemWorkloadEnrollment(command: typeof ShellNativeSystemWorkloadEnrollmentCommandSchema.Type) {
+        if (!(yield* Ref.get(mounted))) {
+          yield* startupStage('awaiting_module_bindings');
+          return yield* unavailable();
+        }
+        const cookie = yield* Ref.get(sessionCookie);
+        if (Option.isNone(cookie)) {
+          return yield* unavailable();
+        }
+        const body = yield* Schema.encodeEffect(Schema.fromJsonString(ChangeSystemWorkloadEnrollmentPayloadSchema))(
+          command.payload,
+        ).pipe(Effect.mapError(unavailable));
+        const response = yield* Effect.tryPromise({
+          catch: unavailable,
+          try: async () =>
+            await fetch(
+              `${baseUrl}${shellAuthenticationApiContract.apiPrefix}/auth/identity/system-workload-enrollments`,
+              {
+                body,
+                headers: {
+                  'content-type': 'application/json',
+                  cookie: cookie.value,
+                  'idempotency-key': command.idempotencyKey,
+                  origin: configuration.baseUrl,
+                },
+                method: 'POST',
+              },
+            ),
+        }).pipe(bounded);
+        if (!response.ok) {
+          return yield* refusedBy(response);
+        }
+        const enrollment = yield* Effect.tryPromise({
+          catch: unavailable,
+          try: async () => await response.json(),
+        }).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(SystemWorkloadEnrollmentResponseSchema)),
+          Effect.mapError(unavailable),
+        );
+        return yield* sendPrivate(writer, { _tag: 'system-workload-enrollment', enrollment });
+      },
+    );
     const issueSetupKey = Effect.fn('ShellNativeChild.issueSetupKey')(function* issueSetupKey() {
       const actor = yield* Ref.get(sessionPrincipal);
       const cookie = yield* Ref.get(sessionCookie);
@@ -724,6 +791,9 @@ const serve = Effect.scoped(
           if (Schema.is(ShellNativeSessionGatewayCommandSchema)(command)) {
             return yield* sessionGateway(command.request);
           }
+          if (Schema.is(ShellNativeSystemWorkloadEnrollmentCommandSchema)(command)) {
+            return yield* changeSystemWorkloadEnrollment(command);
+          }
           if (Schema.is(ShellNativeModuleSourceProvisionCommandSchema)(command)) {
             return yield* provisionModuleSource(command);
           }
@@ -746,7 +816,14 @@ const serve = Effect.scoped(
           Effect.catch((error) =>
             Schema.decodeUnknownEffect(ShellNativeSafeFailureSchema)(error._tag).pipe(
               Effect.orElseSucceed(() => 'unclassified' as const),
-              Effect.flatMap((failure) => sendPrivate(writer, { _tag: 'unavailable', failure })),
+              Effect.flatMap((failure) =>
+                sendPrivate(
+                  writer,
+                  Schema.is(ShellNativeChildUnavailable)(error) && error.refusal !== undefined
+                    ? { _tag: 'unavailable', failure, refusal: error.refusal }
+                    : { _tag: 'unavailable', failure },
+                ),
+              ),
             ),
           ),
         ),

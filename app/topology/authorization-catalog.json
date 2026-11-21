@@ -3,6 +3,8 @@
     "commerce.assortment.symmy-fixture-currentness",
     "commerce.assortment.symmy-fixture-rule-import",
     "commerce.catalog.symmy-product-import",
+    "commerce.catalog.symmy-product-localized-facts",
+    "commerce.catalog.symmy-product-localized-facts-recovery",
     "commerce.catalog.symmy-product-read",
     "commerce.catalog.symmy-variant-localized-facts",
     "commerce.catalog.symmy-variant-localized-facts-recovery",
@@ -3045,6 +3047,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.catalog.navigation-products.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "product",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.page.products",
+            "moduleKey": "commerce.catalog",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.catalog.package-definition-history.read",
             "kind": "read",
             "modes": [
@@ -3929,6 +3957,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.catalog.product-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "product",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.api.product-page",
+            "moduleKey": "commerce.catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.catalog.product-relationship-current.read",
             "kind": "read",
             "modes": [
@@ -4510,6 +4564,32 @@
             "entrypointKey": "commerce.catalog.update-product",
             "moduleKey": "commerce.catalog",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.catalog.products.view",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "product",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.page.products",
+            "moduleKey": "commerce.catalog",
+            "role": "page",
             "scope": "tenant"
           }
         },
@@ -10693,6 +10773,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.inventory.catalog-variant-on-hand-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "stock",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.catalog-variant-on-hand-page",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.inventory.commitment-protection.establish",
             "kind": "action",
             "modes": [
@@ -13094,6 +13200,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.pricing.external-price-source-authority.grant",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "external-price-source-authority",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.grant-external-price-source-authority",
+            "moduleKey": "commerce.pricing",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.pricing.price-group-source-prices.read",
             "kind": "read",
             "modes": [
@@ -13198,6 +13332,32 @@
             "entrypointKey": "commerce.pricing.manage-product-prices-bulk",
             "moduleKey": "commerce.pricing",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.pricing.price.read-catalog-page",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "prices",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.catalog-page-prices",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
             "scope": "tenant"
           }
         },
@@ -15476,6 +15636,32 @@
               "kind": "protected"
             },
             "entrypointKey": "core.identity.record-support-impersonation",
+            "moduleKey": "core.identity",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.identity.system-workload-enrollment.change",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "identity",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.identity.change-system-workload-enrollment",
             "moduleKey": "core.identity",
             "role": "action",
             "scope": "system"

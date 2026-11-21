@@ -3,10 +3,12 @@ import { describe, expect, it } from 'effect-rstest';
 import { catalogManifest } from '../../vertical.manifest.ts';
 import { catalogRegistration } from '../../vertical.registration.ts';
 import { removeProductManufacturerAction } from '../../src/actions/remove-product-manufacturer.action.ts';
+import { setProductLocalizedFactsAction } from '../../src/actions/set-product-localized-facts.action.ts';
 import { setVariantLocalizedFactsAction } from '../../src/actions/set-variant-localized-facts.action.ts';
 import { assortmentProductClassificationV1Read } from '../../src/api/assortment-product-classification-v1.read.ts';
 import { createProductRecoveryRead } from '../../src/api/create-product-recovery.read.ts';
 import { createVariantRecoveryRead } from '../../src/api/create-variant-recovery.read.ts';
+import { setProductLocalizedFactsRecoveryRead } from '../../src/api/set-product-localized-facts-recovery.read.ts';
 import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-localized-facts-recovery.read.ts';
 import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
@@ -42,6 +44,12 @@ describe('Catalog owner-authored dependency contracts', () => {
         'set-variant-localized-facts-recovery',
         'setVariantLocalizedFactsRecovery.execute',
         setVariantLocalizedFactsRecoveryRead,
+      ],
+      ['set-product-localized-facts-action', 'setProductLocalizedFactsAction.execute', setProductLocalizedFactsAction],
+      [
+        'set-product-localized-facts-recovery',
+        'setProductLocalizedFactsRecovery.execute',
+        setProductLocalizedFactsRecoveryRead,
       ],
       [
         'assortment-product-classification-v1',
@@ -101,7 +109,7 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(20);
+    expect(safe.operationContracts).toHaveLength(23);
     for (const contract of safe.operationContracts) {
       expect(contract.entrypoint.moduleKey).toBe('commerce.catalog');
       expect(['1', '2']).toContain(contract.schemaVersion);

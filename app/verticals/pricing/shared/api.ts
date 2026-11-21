@@ -9,6 +9,7 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
+import { CatalogPagePricesApi } from './apis/catalog-page-prices.ts';
 import { CommercialFeeDefinitionApi } from './apis/commercial-fee-definition.ts';
 import { CommercialFeeResultLookupApi } from './apis/commercial-fee-result-lookup.ts';
 import { CommercialFeeScheduleApi } from './apis/commercial-fee-schedule.ts';
@@ -20,6 +21,7 @@ import { CurrentSupportedCurrenciesApi } from './apis/current-supported-currenci
 import { DefineCommercialFeeActionApi } from './apis/define-commercial-fee-action.ts';
 import { DefinePriceActionApi } from './apis/define-price-action.ts';
 import { ExactPriceResolutionApi } from './apis/exact-price-resolution.ts';
+import { GrantExternalPriceSourceAuthorityActionApi } from './apis/grant-external-price-source-authority-action.ts';
 import { ManageCommitmentConfirmationActionApi } from './apis/manage-commitment-confirmation-action.ts';
 import { ManageContractualDiscountActionApi } from './apis/manage-contractual-discount-action.ts';
 import { ManageProductCommercialFeesBulkActionApi } from './apis/manage-product-commercial-fees-bulk-action.ts';
@@ -105,6 +107,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(OwnerActionApprovalApi)
   .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })
   // <generated-governed-http-api-additions>
+  .addHttpApi(CatalogPagePricesApi)
   .addHttpApi(CommercialFeeDefinitionApi)
   .addHttpApi(CommercialFeeResultLookupApi)
   .addHttpApi(CommercialFeeScheduleApi)
@@ -116,6 +119,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(DefineCommercialFeeActionApi)
   .addHttpApi(DefinePriceActionApi)
   .addHttpApi(ExactPriceResolutionApi)
+  .addHttpApi(GrantExternalPriceSourceAuthorityActionApi)
   .addHttpApi(ManageCommitmentConfirmationActionApi)
   .addHttpApi(ManageContractualDiscountActionApi)
   .addHttpApi(ManageProductCommercialFeesBulkActionApi)

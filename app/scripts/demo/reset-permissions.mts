@@ -77,6 +77,7 @@ import {
   reviewedWorkloadBindings,
   storefrontPrincipal,
 } from './permissions.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('DemoPermissionsError', {
   reason: Schema.String,
@@ -839,6 +840,9 @@ const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' 
   Layer.provide(NodeServices.layer),
 );
 if (import.meta.main) {
-  const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
+  const exit = await Effect.runPromiseExit(
+    // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+    Effect.scoped(Layer.build(runtimeLive)).pipe(Effect.provide(ProcessDatabasePoolsLive)),
+  );
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

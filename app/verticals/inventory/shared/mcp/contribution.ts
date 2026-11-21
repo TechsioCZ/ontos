@@ -142,6 +142,12 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
   },
   reads: {
     'catalog-to-stock-binding-resolution': 'hidden',
+    'catalog-variant-on-hand-page': {
+      title: {
+        cs: 'Skladové zásoby variant katalogu',
+        en: 'On-hand stock of catalog variants',
+      },
+    },
     'commitment-protection-verification': 'hidden',
     'current-relevant-stock-position-set': {
       title: {

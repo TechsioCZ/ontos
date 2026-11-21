@@ -48,6 +48,7 @@ import {
   STOREFRONT_CLIENT_WORKLOAD,
   unmappedServicePrincipals,
 } from './permissions.mts';
+import { ProcessDatabasePoolsLive } from '../zerops/process-database-pools.mts';
 
 const SHELL_AUDIENCE = 'shell-super-app';
 const PARTY_REGISTRY_AUDIENCE = 'party-registry';
@@ -414,6 +415,8 @@ if (import.meta.main) {
   const exit = await Effect.runPromiseExit(
     Command.run(command, { version: '1.0.0' }).pipe(
       Effect.provide(AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive))),
+      // Operator processes own their database pool registry like every Node host (Core pools are host-scoped).
+      Effect.provide(ProcessDatabasePoolsLive),
       Effect.provide(FetchHttpClient.layer),
       Effect.provide(NodeServices.layer),
       Effect.tapError((problem) =>

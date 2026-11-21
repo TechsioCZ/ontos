@@ -528,6 +528,7 @@ const productPriceBulkServicesWithOwners = Effect.fn('ProductPriceBulkService.wi
         compositionRevision,
         legalEntityId,
         operationRequirementKey: 'commerce.pricing.requirement.manage-product-prices-bulk-catalog',
+        purpose: 'PRICING',
         requestCorrelation: scope.correlationId,
         scope,
       }),
@@ -585,6 +586,7 @@ export const prepareProductPriceBulkServices: ActionServicePreflight<
     context,
     {
       catalog: 'commerce.pricing.requirement.manage-product-prices-bulk-catalog',
+      catalogPurpose: 'PRICING',
       market: 'commerce.pricing.requirement.manage-product-prices-bulk-market',
     },
   );

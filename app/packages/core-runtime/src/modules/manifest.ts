@@ -8,8 +8,12 @@ import {
   AccessKeySyntaxSchema,
   AccessActorSchema,
   AccessWorkloadSchema,
+  WorkloadKeySchema,
   accessCarrierIssue,
+  workloadKeyBelongsToModule,
 } from '../authorization/access-declaration.ts';
+import { isRegisteredSystemWorkload } from '../auth/system-workload-registration.ts';
+import type { SystemWorkloadRegistration } from '../auth/system-workload-registration.ts';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
 import type { AnyReadRegistration } from '../reads/definition.ts';
@@ -304,6 +308,12 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
    */
   registeredWorkloadCalls: Schema.optionalKey(OntosRegisteredWorkloadCallsSchema),
   requirements: Schema.optionalKey(OntosModuleRequirementsSchema),
+  /**
+   * The system workloads this module's own code runs as (absent: none), each the key under which Core resolves the
+   * Tenant's one enrolled system Principal for that work. `core.identity.change-system-workload-enrollment` enrolls a
+   * Tenant's system Principal only for a key the active module declares here.
+   */
+  systemWorkloads: Schema.optionalKey(Schema.Array(WorkloadKeySchema).check(Schema.isUnique())),
 }).check(
   Schema.makeFilter((manifest) => {
     const pageIssue = shellSearchPresentationPageIssue(manifest.publicSurface.shellContributions);
@@ -405,6 +415,11 @@ export interface OntosModuleManifestInput {
   /** See `OntosSerializedModuleManifestSchema.registeredWorkloadCalls`. */
   readonly registeredWorkloadCalls?: readonly OntosRegisteredWorkloadCallInput[];
   readonly requirements?: OntosModuleRequirements;
+  /**
+   * The module's own `registerSystemWorkload` values, never a look-alike; the contract publishes their keys as
+   * `OntosSerializedModuleManifestSchema.systemWorkloads`.
+   */
+  readonly systemWorkloads?: readonly SystemWorkloadRegistration[];
 }
 
 /** Owner-authored backend declaration consumed by the existing runtime registration, without UI values. */
@@ -575,7 +590,15 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
 ): void => {
   assertExactKeys(
     input,
-    ['activation', 'module', 'originatorActions', 'publicSurface', 'registeredWorkloadCalls', 'requirements'],
+    [
+      'activation',
+      'module',
+      'originatorActions',
+      'publicSurface',
+      'registeredWorkloadCalls',
+      'requirements',
+      'systemWorkloads',
+    ],
     'manifest',
   );
   assertExactKeys(
@@ -662,6 +685,32 @@ const validateActivationDeclaration = (moduleId: string, activation: OntosModule
   }
 };
 
+/** The module's own system workload registrations, each once, in its own namespace and admitting only a system Principal. */
+const declaredSystemWorkloads = (
+  registrations: readonly SystemWorkloadRegistration[] | undefined,
+  moduleId: string,
+): readonly SystemWorkloadRegistration[] => {
+  const declared = (registrations ?? []).map((registration) => {
+    if (!isRegisteredSystemWorkload(registration)) {
+      throw invalidManifest('manifest systemWorkloads must be real values created by registerSystemWorkload');
+    }
+    // Core enrolls a Principal of kind `system` only, so a declared workload never also admits a service Principal.
+    if (registration.allowServicePrincipal) {
+      throw invalidManifest(`system workload ${registration.jobKey} must admit only a system Principal`);
+    }
+    const key = exactDecode(WorkloadKeySchema, registration.jobKey);
+    if (!workloadKeyBelongsToModule(key, moduleId)) {
+      throw invalidManifest(`system workload ${key} must belong to module ${moduleId}`);
+    }
+    return registration;
+  });
+  assertUnique(
+    declared.map(({ jobKey }) => jobKey),
+    'system workload key',
+  );
+  return declared;
+};
+
 /**
  * Defines the owner-authored contract. Executable values remain direct references in this
  * in-process value and are never part of the serializable deployment contract.
@@ -682,6 +731,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     input.registeredWorkloadCalls === undefined
       ? undefined
       : exactDecode(OntosRegisteredWorkloadCallsSchema, input.registeredWorkloadCalls);
+  const systemWorkloads = declaredSystemWorkloads(input.systemWorkloads, input.module.id);
 
   validateOntosModuleExecutableReferences(
     input.publicSurface.actions,
@@ -864,6 +914,9 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     Object.assign(manifest, {
       registeredWorkloadCalls: Object.freeze(registeredWorkloadCalls.map((call) => freezePlain({ ...call }))),
     });
+  }
+  if (input.systemWorkloads !== undefined) {
+    Object.assign(manifest, { systemWorkloads: Object.freeze(systemWorkloads) });
   }
   return Object.freeze(manifest);
 };

@@ -21,6 +21,14 @@ export const CatalogSelectionPurposeSchema = Schema.Literals([
 ]);
 export type CatalogSelectionPurpose = typeof CatalogSelectionPurposeSchema.Type;
 
+/**
+ * The one question asked beside the readiness taxonomy: whether a Price an external source asserts names an
+ * existing Variant of its existing Product, neither retired, in the trusted Tenant. It decides that membership only,
+ * never readiness, so its VALID answer carries no Product Type proof and no readiness purpose ever receives it.
+ */
+export const CatalogPriceSourceSelectionPurposeSchema = Schema.Literal('PRICE_SOURCE_ASSERTION');
+export type CatalogPriceSourceSelectionPurpose = typeof CatalogPriceSourceSelectionPurposeSchema.Type;
+
 interface RefIdentity {
   readonly moduleId: string;
   readonly resourceId: string;

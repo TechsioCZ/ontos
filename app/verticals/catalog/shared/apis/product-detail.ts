@@ -20,7 +20,7 @@ export const ProductDetailRequestSchema = Schema.Struct({
   productRef: ProductRefSchema,
 });
 export type ProductDetailRequest = typeof ProductDetailRequestSchema.Type;
-const ProductDetailLocalizedSchema = Schema.Union([
+export const ProductDetailLocalizedSchema = Schema.Union([
   Schema.Struct({
     description: Schema.optionalKey(Schema.String),
     kind: Schema.Literal('PRESENT'),

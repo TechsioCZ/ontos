@@ -14,6 +14,7 @@ export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
 // <generated-action-http-client-exports>
 export * from './define-commercial-fee-action-client.ts';
 export * from './define-price-action-client.ts';
+export * from './grant-external-price-source-authority-action-client.ts';
 export * from './manage-commitment-confirmation-action-client.ts';
 export * from './manage-contractual-discount-action-client.ts';
 export * from './manage-product-commercial-fees-bulk-action-client.ts';
@@ -145,6 +146,9 @@ export {
   executePriceSourceResultLookupWithAuthorization,
 } from './price-source-result-lookup-client.ts';
 export type { PriceSourceResultLookupClientOptions } from './price-source-result-lookup-client.ts';
+
+export { executeCatalogPagePrices, executeCatalogPagePricesWithAuthorization } from './catalog-page-prices-client.ts';
+export type { CatalogPagePricesClientOptions } from './catalog-page-prices-client.ts';
 
 export {
   executePriceGroupSourcePrices,

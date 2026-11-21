@@ -2,6 +2,7 @@ import { BindInitialVariantSourcePayloadSchema } from '@app/catalog/api/bind-ini
 import { CorrectProductPayloadSchema } from '@app/catalog/api/correct-product-action';
 import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-action';
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
+import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
 import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
 import { UpdateProductPayloadSchema } from '@app/catalog/api/update-product-action';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
@@ -18,6 +19,7 @@ import { Schema } from 'effect';
 
 import { SymmyPriceGroupRefSchema } from './symmy-price-batch.ts';
 
+const localizedEvidenceRequired = 'Localized source facts require evidence';
 const dependencyKey = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/u));
 const productEffectReference = Schema.Struct({
   effectKey: dependencyKey.pipe(Schema.brand('SymmyExecutionEffectKey')),
@@ -70,6 +72,17 @@ const definePriceFromGroupEffectPayload = Schema.Struct({
 
 const updatedProduct = UpdateProductPayloadSchema.fields;
 const localizedFacts = SetVariantLocalizedFactsPayloadSchema.fields;
+/**
+ * A localized text of the Product or of one of its Variants. The revision it expects is the owner's current one when
+ * the text is written, so the adapter reads it right before the owner call and records the resolved command; every
+ * other field is explicit.
+ */
+const localizedTextRequest = Schema.Struct({
+  evidenceRefs: localizedFacts.evidenceRefs,
+  facts: localizedFacts.facts,
+  locale: localizedFacts.locale,
+  reason: localizedFacts.reason,
+}).check(Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || localizedEvidenceRequired));
 const pricedIdentity = DefinePricePayloadSchema.fields.identityKey.fields;
 /**
  * A command on a Product, or on one of its Variants, that the same job creates. The Product and the Variant
@@ -86,17 +99,8 @@ const productDependentRequest = Schema.Union([
       targetLifecycle: updatedProduct.targetLifecycle,
     }),
   }),
-  Schema.TaggedStruct('SetVariantLocalizedFacts', {
-    payload: Schema.Struct({
-      evidenceRefs: localizedFacts.evidenceRefs,
-      expectedRevision: localizedFacts.expectedRevision,
-      facts: localizedFacts.facts,
-      locale: localizedFacts.locale,
-      reason: localizedFacts.reason,
-    }).check(
-      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
-    ),
-  }),
+  Schema.TaggedStruct('SetVariantLocalizedFacts', { payload: localizedTextRequest }),
+  Schema.TaggedStruct('SetProductLocalizedFacts', { payload: localizedTextRequest }),
   Schema.TaggedStruct('DefinePrice', {
     payload: Schema.Struct({
       ...DefinePricePayloadSchema.fields,
@@ -174,9 +178,14 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   }),
   Schema.TaggedStruct('CatalogSetVariantLocalizedFacts', {
     payload: SetVariantLocalizedFactsPayloadSchema.check(
-      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
+      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || localizedEvidenceRequired),
     ),
   }),
   Schema.TaggedStruct('PriceGroupCreateAtCatalogHead', { payload: Schema.Struct(priceGroupAtHeadFields) }),
+  Schema.TaggedStruct('CatalogSetProductLocalizedFacts', {
+    payload: SetProductLocalizedFactsPayloadSchema.check(
+      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || localizedEvidenceRequired),
+    ),
+  }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

@@ -26,8 +26,19 @@ Server environment:
 | `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL` | Default `http://127.0.0.1:3041/active`                             |
 | `ONTOS_COMPOSITION_REVISION`               | Optional fallback if publisher unavailable                         |
 | `STOREFRONT_IMAGE_HOSTS`                   | Optional comma-separated extra https image hosts (build AND start) |
+| `ONTOS_STOREFRONT_ERP_OFFERS`              | Optional JSON by company; enables „Novinky z ERP“ (see below)      |
 
 A commented template is in `.env.example`.
+
+`ONTOS_STOREFRONT_ERP_OFFERS` enables `/novinky-z-erp`: the products Symmy imported into Catalog (DRAFT, with
+WORK_IN_PROGRESS Variants, as every import leaves them; ACTIVE ones too; RETIRED Variants are not shown), read with
+Catalog's `product-page` (no company), Inventory's `catalog-variant-on-hand-page` and Pricing's `catalog-page-prices`
+(the storefront's company), all as `commerce.storefront-client`. Its value names the Inventory Customer Configuration and
+the exact Price key scope of the imported prices, one entry per company (Legal Entity id), because every brand service
+runs the same `setup: storefront` (`app/zerops.yaml`). A storefront takes the entry of its own
+`ONTOS_STOREFRONT_LEGAL_ENTITY_ID`; no entry turns the pages off. Every entry must be valid:
+`{"<Legal Entity UUID>":{"customerConfigurationId":"…","channelId":"B2C","marketId":"…","currencyCode":"CZK","unitId":"<Catalog Product Unit UUID>","unitQuantity":"1"}}`.
+Imported products cannot be ordered yet and show the no-image placeholder (no admitted read serves Catalog media).
 
 ## Production deploy
 

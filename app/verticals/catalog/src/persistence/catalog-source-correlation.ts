@@ -19,6 +19,7 @@ import { CatalogPersistenceUnavailable } from './errors.ts';
 import type { CatalogSourceProductPageRequest } from '../../shared/apis/catalog-source-product-page.ts';
 import type { CatalogSourceProductsRequest } from '../../shared/apis/catalog-source-products.ts';
 import { catalogPersistenceWithCurrentSelectionEvidenceForScope } from './catalog-persistence.ts';
+import { localizedFactsReadsForScope } from './localized-facts-reads.ts';
 
 const sourceCorrelationConflict = () =>
   new ProductPersistenceConflict({
@@ -47,6 +48,23 @@ const businessSourcePayload = <Payload extends { readonly sourceCorrelation?: Ca
   payload.sourceCorrelation === undefined
     ? payload
     : { ...payload, sourceCorrelation: businessSourceCorrelation(payload.sourceCorrelation) };
+
+/**
+ * The create intent with the Product text the original create stated. The legacy name and description are not part
+ * of a source record's identity: a source that re-sends an imported record with another text asks for the same
+ * Product, and changes its text through the localized facts.
+ */
+const withOriginalText = (payload: CreateProductPayload, original: CreateProductResult['product']) => {
+  const { description: _description, name: _name, ...intent } = payload;
+  const restated: CreateProductPayload = { ...intent };
+  if (original.name !== undefined) {
+    Object.assign(restated, { name: original.name });
+  }
+  if (original.description !== undefined) {
+    Object.assign(restated, { description: original.description });
+  }
+  return restated;
+};
 
 const fingerprint = (payload: CreateProductPayload) =>
   Schema.encodeEffect(Schema.fromJsonString(CreateProductPayloadSchema))(businessSourcePayload(payload)).pipe(
@@ -84,7 +102,7 @@ export const catalogSourceCorrelationForScope = (transaction: ScopedTransactionE
     if (row === undefined) {
       return null;
     }
-    if (row.actingPrincipalId !== scope.principalId || row.intentFingerprint !== (yield* fingerprint(payload))) {
+    if (row.actingPrincipalId !== scope.principalId) {
       return yield* sourceCorrelationConflict();
     }
     const [snapshot] = yield* transaction
@@ -104,6 +122,12 @@ export const catalogSourceCorrelationForScope = (transaction: ScopedTransactionE
     const result = yield* Schema.decodeUnknownEffect(CreateProductResultSchema)(snapshot.encodedResult).pipe(
       Effect.mapError(unavailable),
     );
+    if (
+      row.intentFingerprint !== (yield* fingerprint(payload)) &&
+      row.intentFingerprint !== (yield* fingerprint(withOriginalText(payload, result.product)))
+    ) {
+      return yield* sourceCorrelationConflict();
+    }
     if (
       result.businessOriginalCreateInvocationId !== undefined &&
       result.businessOriginalCreateInvocationId !== row.actionInvocationId
@@ -272,6 +296,8 @@ export const catalogSourceProductsForScope = (
 ) =>
   catalogPersistenceWithCurrentSelectionEvidenceForScope(transaction, scope).pipe(
     Effect.map((catalog) => ({
+      currentProduct: localizedFactsReadsForScope(transaction, scope).currentProduct,
+      currentVariant: localizedFactsReadsForScope(transaction, scope).currentVariant,
       getCurrent: catalog.getCurrent,
       rows: (input: CatalogSourceProductsRequest) =>
         transaction
@@ -310,7 +336,7 @@ export const catalogSourceProductsForScope = (
   );
 
 /** `%`, `_` and the escape character itself match literally inside a LIKE pattern. */
-const containsPattern = (text: string) => {
+export const containsPattern = (text: string) => {
   const literal = text.replaceAll(/[\\%_]/gu, String.raw`\$&`);
   return `%${literal}%`;
 };

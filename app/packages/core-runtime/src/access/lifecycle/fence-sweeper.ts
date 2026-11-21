@@ -5,10 +5,8 @@ import { AccessReleaseStore } from '../changes/persistence/release-store.ts';
 import { AccessProjectionWriter, isFenceBusy } from '../intent/projection-writer.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../release/activation.ts';
 import { tenantServesPeople } from '../../auth/module-credentials.ts';
-import {
-  registerSystemWorkload,
-  SystemPrincipalContextResolverFromCoreDatabase,
-} from '../../auth/system-principal-context.ts';
+import { SystemPrincipalContextResolverFromCoreDatabase } from '../../auth/system-principal-context.ts';
+import { registerSystemWorkload } from '../../auth/system-workload-registration.ts';
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../db/client.ts';
 import type { OperationalScope } from '../../operations/context.ts';

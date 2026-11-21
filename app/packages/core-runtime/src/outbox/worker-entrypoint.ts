@@ -1,9 +1,9 @@
 export {
   SystemPrincipalContextResolver,
   SystemPrincipalContextResolverLive,
-  registerSystemWorkload,
   registeredAdmissionAuthContextRef,
 } from '../auth/system-principal-context.ts';
+export { registerSystemWorkload } from '../auth/system-workload-registration.ts';
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
 export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 export { databaseRuntime } from '#database-runtime';

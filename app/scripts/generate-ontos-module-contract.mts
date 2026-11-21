@@ -586,6 +586,10 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
       }
       Object.assign(manifest, { registeredWorkloadCalls });
     }
+    const { systemWorkloads } = owner.manifest;
+    if (systemWorkloads !== undefined) {
+      Object.assign(manifest, { systemWorkloads: systemWorkloads.map(({ jobKey }) => jobKey) });
+    }
     const contract = {
       deployment: { appId, buildMarker: releaseIdentity.buildMarker },
       manifest,
