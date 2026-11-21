@@ -5,6 +5,8 @@ import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { CatalogPagePricesApi } from './shared/apis/catalog-page-prices.ts';
+import { catalogPagePricesRead } from './src/api/catalog-page-prices.read.ts';
 import { priceDefinitionRead } from './src/api/price-definition.read.ts';
 import { DefinePriceActionApi } from './shared/apis/define-price-action.ts';
 import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
@@ -112,6 +114,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
     ],
     api: {
       // <generated-module-manifest-apis>
+      'catalog-page-prices': CatalogPagePricesApi,
       'commercial-fee-definition': CommercialFeeDefinitionApi,
       'commercial-fee-result-lookup': CommercialFeeResultLookupApi,
       'commercial-fee-schedule': CommercialFeeScheduleApi,
@@ -151,6 +154,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
     mcp: pricingMcpContribution,
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      { apiKey: 'catalog-page-prices', operationKey: 'catalogPagePrices.execute', registration: catalogPagePricesRead },
       { apiKey: 'price-definition', operationKey: 'priceDefinition.execute', registration: priceDefinitionRead },
       { apiKey: 'define-price-action', operationKey: 'definePriceAction.execute', registration: definePriceAction },
       { apiKey: 'revise-price-action', operationKey: 'revisePriceAction.execute', registration: revisePriceAction },
