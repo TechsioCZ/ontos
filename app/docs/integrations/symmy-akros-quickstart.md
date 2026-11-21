@@ -34,8 +34,10 @@ only; never copy them to another environment.
 
 ## 2. Products, texts and prices: `POST /products/batch`
 
-One ERP item is **one product with one variant**. Prices and stock attach to the variant, so this is the shape that
-works end to end today.
+One ERP item is usually **one product with one variant**: prices, stock and the item number attach to the variant.
+A product with several variants also works end to end (it ran on the stage with two): each further variant counts as
+one more item of the batch, and each needs its own price, stock position and item number. Variants cannot yet be
+told apart by attributes such as size, only by their own names.
 
 | Field                  | Rule                                                                                     |
 | ---------------------- | ---------------------------------------------------------------------------------------- |
@@ -245,7 +247,7 @@ Example (Akros stage): the price of `AKROS-DEMO-0001-V1` changed from 125.50 to 
 ### Not supported yet
 
 `lifecycle`, the product-level `sku` (send it on the variant), `gtin`, `categories`, `attributes`, `media`, `brand`,
-`productType`, `manufacturer`, `relationships`, `sizes` and more than one variant per product. They are refused or reported `unsupported`; leave them
+`productType`, `manufacturer`, `relationships` and `sizes`. They are refused or reported `unsupported`; leave them
 out. Never send `lifecycle`.
 
 ## 3. Job result: `GET /jobs/{jobId}`
