@@ -116,6 +116,33 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
         .join('\n'),
     );
   }
+  // The owner's mounts and handler layers keep only the focused read, as its declarations do.
+  for (const [file, start, end] of [
+    [customerSharedApiFile, '// <generated-governed-http-api-imports>', '// </generated-governed-http-api-imports>'],
+    [
+      customerSharedApiFile,
+      '// <generated-governed-http-api-additions>',
+      '// </generated-governed-http-api-additions>',
+    ],
+    [
+      `${customerVerticalPath}/api/index.ts`,
+      '// <generated-governed-http-handler-imports>',
+      '// </generated-governed-http-handler-imports>',
+    ],
+    [
+      `${customerVerticalPath}/api/index.ts`,
+      '// <generated-governed-http-handler-layers>',
+      '// </generated-governed-http-handler-layers>',
+    ],
+  ] as const) {
+    let source = focused.get(file) ?? '';
+    for (const entry of readGeneratedSlotEntries(source, start, end)) {
+      if (!/PaymentTermAffectedUseAssessment|paymentTermAffectedUseAssessment/u.test(entry)) {
+        source = removeGeneratedSlotEntry(source, start, end, (candidate) => candidate === entry, 'unfocused entry');
+      }
+    }
+    focused.set(file, source);
+  }
   const manifestFile = `${customerVerticalPath}/vertical.manifest.ts`;
   const operationStart = '// <generated-module-manifest-operation-contracts>';
   const operationEnd = '// </generated-module-manifest-operation-contracts>';

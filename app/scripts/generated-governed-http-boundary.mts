@@ -43,6 +43,8 @@ import {
 
 const GOVERNED_API_SLOT_END = '// </generated-governed-http-api-additions>';
 const GOVERNED_API_SLOT_START = '// <generated-governed-http-api-additions>';
+const GOVERNED_HANDLER_IMPORT_SLOT_START = '// <generated-governed-http-handler-imports>';
+const GOVERNED_HANDLER_IMPORT_SLOT_END = '// </generated-governed-http-handler-imports>';
 const EFFECT_EDGE_MODULE = '@modern-js/bff-effect/effect-edge';
 const BFF_ASSEMBLY_MODULE = '@modern-js/bff-effect/assembly';
 const EFFECT_CLIENT_MODULE = '@modern-js/bff-effect/effect-client';
@@ -1990,8 +1992,8 @@ export const hasValidGovernedHttpCompositionRoot = (
   );
   const handlerImports = generatedSlotRange(
     handlerRoot,
-    '// <generated-governed-http-handler-imports>',
-    '// </generated-governed-http-handler-imports>',
+    GOVERNED_HANDLER_IMPORT_SLOT_START,
+    GOVERNED_HANDLER_IMPORT_SLOT_END,
   );
   const mounted =
     expectedApi !== undefined &&
@@ -4435,24 +4437,86 @@ const publishesSharedApiContribution = (sharedApi: string, apiValue: string, con
   );
 };
 
-/** The contract and client subpaths of a package read named by `statement` (`import`/`export` … `from`) in `source`. */
-const namesPackageRead = (
+/**
+ * What an owner entry takes from a package read: `./api` (`shared/api.ts`) imports the read's API value under its
+ * own name and uses it only as the argument of its `.addHttpApi(...)` mount (`mountedValue`); the `./api/client`
+ * aggregate takes nothing (`mountedValue` undefined). Neither exports anything of the read, under any name or form.
+ */
+const takesOnlyPackageReadMount = (
+  file: string,
   source: string,
   contribution: GovernedReadContribution,
-  statement: 'export' | 'import|export',
+  mountedValue?: string,
 ): boolean => {
+  const program = parseTypeScript(file, source);
+  if (program === undefined) {
+    return false;
+  }
   const contract = contributionImports(contribution).sharedApi;
-  return [
-    ...maskComments(source).matchAll(
-      new RegExp(`\\b(?:${statement})\\b[^;]*?\\bfrom\\s*['"](?<specifier>[^'"]+)['"]`, 'gu'),
-    ),
-  ].some((match) => match.groups?.specifier === contract || match.groups?.specifier === `${contract}/client`);
+  const readSpecifiers = new Set([contract, `${contract}/client`]);
+  let takesOnlyTheMount = true;
+  let mounts = 0;
+  let references = 0;
+  const visitor = new Visitor({
+    CallExpression: (call) => {
+      const [argument, ...rest] = call.arguments;
+      if (
+        call.callee.type === 'MemberExpression' &&
+        !call.callee.computed &&
+        call.callee.property.type === 'Identifier' &&
+        call.callee.property.name === 'addHttpApi' &&
+        rest.length === 0 &&
+        argument?.type === 'Identifier' &&
+        argument.name === mountedValue
+      ) {
+        mounts += 1;
+      }
+    },
+    ExportAllDeclaration: (declaration) => {
+      takesOnlyTheMount &&= !readSpecifiers.has(declaration.source.value);
+    },
+    ExportNamedDeclaration: (declaration) => {
+      takesOnlyTheMount &&= declaration.source === null || !readSpecifiers.has(declaration.source.value);
+    },
+    Identifier: (identifier) => {
+      references += identifier.name === mountedValue ? 1 : 0;
+    },
+    ImportExpression: (expression) => {
+      takesOnlyTheMount &&= !(
+        expression.source.type === 'Literal' && readSpecifiers.has(String(expression.source.value))
+      );
+    },
+  });
+  const localTypeAliases = new Set<string>();
+  const exportedLocals = new Set<string>();
+  for (const statement of program.body) {
+    if (statement.type === 'ExportNamedDeclaration' && statement.source === null) {
+      for (const specifier of statement.specifiers) {
+        exportedLocals.add(specifier.local.type === 'Identifier' ? specifier.local.name : '');
+      }
+    }
+    if (statement.type === 'TSTypeAliasDeclaration') {
+      // A module-local type (e.g. the typed union of mounted groups) only describes the mount.
+      localTypeAliases.add(statement.id.name);
+    } else if (statement.type === 'ImportDeclaration' && readSpecifiers.has(statement.source.value)) {
+      for (const specifier of statement.specifiers) {
+        takesOnlyTheMount &&=
+          mountedValue !== undefined &&
+          statement.importKind !== 'type' &&
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === mountedValue &&
+          specifier.local.name === mountedValue;
+      }
+    } else {
+      visitor.visit({ ...program, body: [statement] });
+    }
+  }
+  return (
+    takesOnlyTheMount && references === mounts && [...localTypeAliases].every((alias) => !exportedLocals.has(alias))
+  );
 };
-
-/** The owner's `./api` entry imports a package read's API value only to mount it; it re-exports nothing of the read. */
-const reexportsPackageRead = (sharedApi: string, contribution: GovernedReadContribution, apiValue: string): boolean =>
-  namesPackageRead(sharedApi, contribution, 'export') ||
-  new RegExp(`\\bexport\\s*(?:type\\s*)?\\{[^}]*\\b${escapeRegExp(apiValue)}\\b`, 'u').test(maskComments(sharedApi));
 
 const hasPublishedContract = (
   sharedApi: string,
@@ -4518,7 +4582,9 @@ const hasPublishedContract = (
       apiValue,
       contributionImports(contribution).sharedApi,
     ),
-    sharedReexport: contribution.publication === undefined || !reexportsPackageRead(sharedApi, contribution, apiValue),
+    sharedReexport:
+      contribution.publication === undefined ||
+      takesOnlyPackageReadMount('shared/api.ts', sharedApi, contribution, apiValue),
     sharedRoot: hasGovernedSharedApiRoot(sharedApi),
   };
   const failed = Object.entries(publicationChecks)
@@ -5037,6 +5103,22 @@ export const hasGeneratedActionHttpRunnerBinding = (source: string, layer: strin
   );
 };
 
+const ACTION_CONTRACT_SUFFIX = '-action.ts';
+
+/** Every Action contract file of a module, `<owner>/shared/apis/<slug>-action.ts`, generated or published. */
+const ownerActionContracts = (
+  sources: ReadonlyMap<string, string>,
+  verticalPath: string,
+): readonly (readonly [string, string])[] => {
+  const contractPrefix = `${verticalPath}/shared/apis/`;
+  return [...sources.entries()].filter(
+    ([candidate]) =>
+      candidate.startsWith(contractPrefix) &&
+      candidate.endsWith(ACTION_CONTRACT_SUFFIX) &&
+      !candidate.slice(contractPrefix.length).includes('/'),
+  );
+};
+
 const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly deploymentAppId: string;
   readonly handlerRoot: string;
@@ -5048,13 +5130,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly sources: ReadonlyMap<string, string>;
   readonly verticalPath: string;
 }): boolean => {
-  const contractPrefix = `${input.verticalPath}/shared/apis/`;
-  const actionContracts = [...input.sources.entries()].filter(
-    ([candidate, source]) =>
-      candidate.startsWith(contractPrefix) &&
-      candidate.endsWith('-action.ts') &&
-      !candidate.slice(contractPrefix.length).includes('/') &&
-      source.startsWith(ACTION_HTTP_HEADER),
+  const actionContracts = ownerActionContracts(input.sources, input.verticalPath).filter(([, source]) =>
+    source.startsWith(ACTION_HTTP_HEADER),
   );
   const publication = ownerActionClientPublication(input.sources, input.verticalPath, input.deploymentAppId);
   return actionContracts.every(([contractPath, contract]) => {
@@ -5442,18 +5519,54 @@ interface DiscoveredModuleReads {
   readonly problems: readonly string[];
 }
 
-/** A module read published from a contract package: the package's contract leaf and what it claims. */
-export interface PublishedPackageRead {
-  readonly claimed: boolean;
+const ContractOwnerSchema = Schema.Struct({
+  appId: PublicContractOwnerAppIdSchema,
+  moduleApis: Schema.Array(Schema.String),
+  moduleId: PublicContractOwnerModuleIdSchema,
+  packageName: Schema.String,
+});
+type ContractOwner = typeof ContractOwnerSchema.Type;
+
+/** Only the name is required: a package read is found from its file, and what its manifest lacks is judged. */
+const PackageReadManifestSchema = Schema.Struct({
+  exports: Schema.optionalKey(Schema.Unknown),
+  name: Schema.String,
+  ontosContractOwner: Schema.optionalKey(Schema.Unknown),
+});
+
+interface PackageReadManifest {
+  readonly exports: Readonly<Record<string, string>>;
+  readonly name: string | undefined;
+  readonly owner: ContractOwner | undefined;
+}
+
+/** A header-carrying `packages/<package>/src/apis/<name>.ts` and what its package manifest says about it. */
+export interface PublishedPackageRead extends PackageReadManifest {
   readonly contractPath: string;
   readonly contractSource: string;
-  readonly exported: boolean;
-  readonly manifest: PublicContractPackageManifest;
   readonly name: string;
+  readonly packageName: string | undefined;
   readonly packagePath: string;
 }
 
-/** Every `packages/<package>/src/apis/<name>.ts` carrying the module-api header, found from the files first. */
+const packageReadManifest = (source: string | undefined): PackageReadManifest => {
+  const manifest = Option.getOrUndefined(
+    Schema.decodeUnknownOption(Schema.fromJsonString(PackageReadManifestSchema))(source ?? ''),
+  );
+  const exports = Option.getOrElse(
+    Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown))(manifest?.exports),
+    () => ({}),
+  );
+  return {
+    exports: Object.fromEntries(
+      Object.entries(exports).flatMap(([key, value]) => (Schema.is(Schema.String)(value) ? [[key, value]] : [])),
+    ),
+    name: manifest?.name,
+    owner: Option.getOrUndefined(Schema.decodeUnknownOption(ContractOwnerSchema)(manifest?.ontosContractOwner)),
+  };
+};
+
+/** Every `packages/<package>/src/apis/<name>.ts` carrying the module-api header, whatever its package manifest says. */
 export const publishedPackageReads = (sources: ReadonlyMap<string, string>): readonly PublishedPackageRead[] =>
   [...sources.entries()].flatMap(([contractPath, contractSource]): readonly PublishedPackageRead[] => {
     const leaf = /^(?<packagePath>packages\/[^/]+)\/src\/apis\/(?<name>[a-z][a-z0-9-]*)\.ts$/u.exec(
@@ -5468,30 +5581,74 @@ export const publishedPackageReads = (sources: ReadonlyMap<string, string>): rea
     ) {
       return [];
     }
-    const manifest = Option.getOrUndefined(
-      Schema.decodeUnknownOption(Schema.fromJsonString(PublicContractPackageManifestSchema))(
-        sources.get(`${packagePath}/package.json`) ?? '',
-      ),
-    );
-    return manifest === undefined
-      ? []
-      : [
-          {
-            claimed: manifest.ontosContractOwner.moduleApis.includes(name),
-            contractPath,
-            contractSource,
-            exported: manifest.exports[`./${name}`] === `./src/apis/${name}.ts`,
-            manifest,
-            name,
-            packagePath,
-          },
-        ];
+    const manifest = packageReadManifest(sources.get(`${packagePath}/package.json`));
+    return [{ ...manifest, contractPath, contractSource, name, packageName: manifest.name, packagePath }];
   });
 
-const namesOwner = (manifest: PublicContractPackageManifest, owner: ModuleReadOwner): boolean =>
-  manifest.ontosContractOwner.appId === owner.appId &&
-  manifest.ontosContractOwner.moduleId === owner.moduleId &&
-  manifest.ontosContractOwner.packageName === owner.packageName;
+export const isClaimedPackageRead = (read: PublishedPackageRead): boolean =>
+  read.owner?.moduleApis.includes(read.name) === true;
+
+export const isExportedPackageRead = (read: PublishedPackageRead): boolean =>
+  read.exports[`./${read.name}`] === `./src/apis/${read.name}.ts`;
+
+const namesOwner = (owner: ContractOwner | undefined, module: ModuleReadOwner): boolean =>
+  owner?.appId === module.appId && owner.moduleId === module.moduleId && owner.packageName === module.packageName;
+
+/** A package naming the module by any one part of its identity is judged as that module's, so a typo fails there. */
+const touchesOwner = (owner: ContractOwner | undefined, module: ModuleReadOwner): boolean =>
+  owner !== undefined &&
+  (owner.appId === module.appId || owner.moduleId === module.moduleId || owner.packageName === module.packageName);
+
+/** The identity the read seam judges a module by: its deployment app id, its manifest's module id, its package name. */
+const moduleReadOwner = (
+  sources: ReadonlyMap<string, string>,
+  ownerPath: string,
+  appId: string | undefined,
+): ModuleReadOwner | undefined => {
+  const ownerPackage = Option.getOrUndefined(
+    Schema.decodeUnknownOption(Schema.fromJsonString(OwnerPackageManifestSchema))(
+      sources.get(`${ownerPath}/package.json`) ?? '',
+    ),
+  );
+  const moduleId = governedOwnerModuleId(sources.get(`${ownerPath}/vertical.manifest.ts`));
+  return appId === undefined ||
+    ownerPackage === undefined ||
+    moduleId === undefined ||
+    !sources.has(`${ownerPath}/shared/api.ts`)
+    ? undefined
+    : { appId, moduleId, packageName: ownerPackage.name };
+};
+
+/** Whether a header-carrying package leaf names the module at `ownerPath`, so its read seam must be judged. */
+export const isNamedByPackageRead = (
+  sources: ReadonlyMap<string, string>,
+  ownerPath: string,
+  appId: string | undefined,
+): boolean => {
+  const module = moduleReadOwner(sources, ownerPath, appId);
+  return module !== undefined && publishedPackageReads(sources).some((read) => touchesOwner(read.owner, module));
+};
+
+/**
+ * Header-carrying package leaves no module owns: a package without a valid `ontosContractOwner`, or one naming no
+ * module of `owners` (topology path to deployment app id; modules with a `shared/api.ts`) by any part of its identity.
+ */
+export const unownedPackageReads = (
+  sources: ReadonlyMap<string, string>,
+  owners: ReadonlyMap<string, string>,
+): readonly string[] => {
+  const modules = [...owners].flatMap(([ownerPath, appId]) => moduleReadOwner(sources, ownerPath, appId) ?? []);
+  return publishedPackageReads(sources).flatMap(({ contractPath, owner }) => {
+    if (owner === undefined) {
+      return [`${contractPath}: a module-api contract in a package without a valid ontosContractOwner`];
+    }
+    return modules.some((module) => touchesOwner(owner, module))
+      ? []
+      : [
+          `${contractPath}: its package names ${owner.moduleId} (${owner.appId}, ${owner.packageName}) as owner, which is no module of the topology`,
+        ];
+  });
+};
 
 const ownerModuleReads = (
   sources: ReadonlyMap<string, string>,
@@ -5512,14 +5669,15 @@ const ownerModuleReads = (
 /** The package reads of one module, and why a package leaf or claim naming the module is not one. */
 const packageModuleReads = (sources: ReadonlyMap<string, string>, owner: ModuleReadOwner): DiscoveredModuleReads => {
   const problems: string[] = [];
-  const reads = publishedPackageReads(sources).filter(
-    (read) => read.manifest.ontosContractOwner.packageName === owner.packageName,
-  );
+  const reads = publishedPackageReads(sources).filter((read) => touchesOwner(read.owner, owner));
   const contributions = reads.flatMap((read): readonly GeneratedContribution[] => {
     const failures = [
-      [namesOwner(read.manifest, owner), `its package does not name ${owner.moduleId} as owner`],
-      [read.claimed, 'ontosContractOwner.moduleApis does not claim it'],
-      [read.exported, `it is not exported as ./${read.name}`],
+      [
+        namesOwner(read.owner, owner),
+        `its package does not name ${owner.moduleId} (${owner.appId}, ${owner.packageName}) as owner`,
+      ],
+      [isClaimedPackageRead(read), 'ontosContractOwner.moduleApis does not claim it'],
+      [isExportedPackageRead(read), `it is not exported as ./${read.name}`],
     ] as const;
     const failed = failures.filter(([valid]) => !valid).map(([, reason]) => reason);
     if (failed.length > 0) {
@@ -5527,8 +5685,8 @@ const packageModuleReads = (sources: ReadonlyMap<string, string>, owner: ModuleR
       return [];
     }
     const publication = {
-      exports: read.manifest.exports,
-      packageName: read.manifest.name,
+      exports: read.exports,
+      packageName: read.packageName ?? '',
       packagePath: read.packagePath,
     };
     return [
@@ -5539,12 +5697,25 @@ const packageModuleReads = (sources: ReadonlyMap<string, string>, owner: ModuleR
       ],
     ];
   });
-  for (const [manifestPath, manifest] of contractPackageManifests(sources)) {
+  const claimants = new Map<string, string[]>();
+  for (const [manifestPath, source] of sources) {
+    const manifest =
+      manifestPath.startsWith('packages/') && manifestPath.endsWith('/package.json')
+        ? packageReadManifest(source)
+        : undefined;
     const packagePath = path.posix.dirname(manifestPath);
-    for (const name of namesOwner(manifest, owner) ? manifest.ontosContractOwner.moduleApis : []) {
+    for (const name of touchesOwner(manifest?.owner, owner) ? (manifest?.owner?.moduleApis ?? []) : []) {
       if (!sources.has(`${packagePath}/src/apis/${name}.ts`)) {
         problems.push(`${manifestPath}: claims ${name} without a contract at src/apis/${name}.ts`);
       }
+      claimants.set(name, [...(claimants.get(name) ?? []), manifestPath]);
+    }
+  }
+  for (const [name, manifests] of claimants) {
+    if (manifests.length > 1) {
+      problems.push(
+        `${name}: one read of ${owner.moduleId} is claimed by more than one package (${manifests.join(', ')})`,
+      );
     }
   }
   return { contributions, problems };
@@ -5731,9 +5902,11 @@ const hasCompleteGeneratedContribution = (
   const { clientSource, contractImport, readImport, readSource, serverSource, ...canonical } =
     canonicalReviewedCompanionSources(verticalPath, contribution, context.sharedApi, loaded);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
-  const aggregate = ownerActionClientPublication(sources, verticalPath, context.deploymentAppId)?.source ?? '';
+  const aggregate = ownerActionClientPublication(sources, verticalPath, context.deploymentAppId);
   const checks = {
-    aggregate: contribution.publication === undefined || !namesPackageRead(aggregate, contribution, 'import|export'),
+    aggregate:
+      contribution.publication === undefined ||
+      takesOnlyPackageReadMount(aggregate?.file ?? 'client.ts', aggregate?.source ?? '', contribution),
     client: hasClientContract(clientSource, contribution, group, apiValue, context.deploymentAppId, contractImport),
     contract: hasCompleteContributionContract(
       canonical.contractSource,
@@ -5782,6 +5955,75 @@ const hasCompleteGeneratedContribution = (
   return failed.length === 0;
 };
 
+const slotImportBindings = (source: string, startMarker: string, endMarker: string): readonly string[] => {
+  const slot = generatedSlotRange(source, startMarker, endMarker);
+  return slot === undefined
+    ? []
+    : [...source.slice(slot.bodyStart, slot.bodyEnd).matchAll(/\bimport\s*\{(?<names>[^}]*)\}/gu)].flatMap((match) =>
+        (match.groups?.names ?? '')
+          .split(',')
+          .map(
+            (name) =>
+              name
+                .trim()
+                .split(/\s+as\s+/u)
+                .at(-1) ?? '',
+          )
+          .filter((name) => name !== ''),
+      );
+};
+
+/**
+ * The other direction of the read inventory: every API mounted in the owner's `./api` and every handler layer in
+ * `api/index.ts` (with their generated imports) is one of the module's discovered reads or Action HTTP contracts.
+ */
+const unresolvedOwnerMounts = (
+  sources: ReadonlyMap<string, string>,
+  inputs: CompleteGeneratedModuleApiSeamInputs,
+  contributions: readonly GeneratedContribution[],
+): readonly string[] => {
+  // Generated or published, the Action seams judge each Action contract file.
+  const actionSlugs = ownerActionContracts(sources, inputs.verticalPath).map(([candidate]) =>
+    path.posix.basename(candidate, ACTION_CONTRACT_SUFFIX),
+  );
+  const reads = contributions.flatMap((entry) => (entry[2] === undefined ? [] : [entry[2]]));
+  const apiValues = new Set([
+    ...reads.map((contribution) => contributionApiValue(contribution.kind, contribution.name)),
+    ...actionSlugs.map((slug) => `${toPascalCase(slug)}ActionApi`),
+  ]);
+  const layers = new Set([
+    ...reads.map((contribution) => `${toCamelCase(contribution.name)}ReadApiLive`),
+    ...actionSlugs.map((slug) => `${toCamelCase(slug)}ActionApiLive`),
+  ]);
+  const additions = generatedSlotRange(inputs.sharedApi, GOVERNED_API_SLOT_START, GOVERNED_API_SLOT_END);
+  const mounted = [
+    ...(additions === undefined ? '' : inputs.sharedApi.slice(additions.bodyStart, additions.bodyEnd)).matchAll(
+      /\.addHttpApi\(\s*(?<value>[A-Za-z_$][\w$]*)\s*\)/gu,
+    ),
+  ].map((match) => match.groups?.value ?? '');
+  const handlerLayers = (
+    generatedSlotEntries(inputs.handlerRoot, GOVERNED_HANDLER_LAYER_SLOT_START, GOVERNED_HANDLER_LAYER_SLOT_END) ?? []
+  ).map((entry) => /^(?<layer>[A-Za-z_$][\w$]*)/u.exec(entry)?.groups?.layer ?? entry);
+  const sharedApiFile = `${inputs.verticalPath}/shared/api.ts`;
+  const handlerFile = `${inputs.verticalPath}/api/index.ts`;
+  return [
+    ...[
+      ...mounted,
+      ...slotImportBindings(
+        inputs.sharedApi,
+        '// <generated-governed-http-api-imports>',
+        '// </generated-governed-http-api-imports>',
+      ),
+    ].flatMap((value) =>
+      apiValues.has(value) ? [] : [`${sharedApiFile}: ${value} is no read or Action of this module`],
+    ),
+    ...[
+      ...handlerLayers,
+      ...slotImportBindings(inputs.handlerRoot, GOVERNED_HANDLER_IMPORT_SLOT_START, GOVERNED_HANDLER_IMPORT_SLOT_END),
+    ].flatMap((layer) => (layers.has(layer) ? [] : [`${handlerFile}: ${layer} is no read or Action of this module`])),
+  ];
+};
+
 const hasCompleteGeneratedContributions = (
   sources: ReadonlyMap<string, string>,
   inputs: CompleteGeneratedModuleApiSeamInputs,
@@ -5799,6 +6041,11 @@ const hasCompleteGeneratedContributions = (
   }
   const { contributions } = discovered;
   if (contributions.length === 0) {
+    return false;
+  }
+  const unresolved = unresolvedOwnerMounts(sources, inputs, contributions);
+  if (unresolved.length > 0) {
+    diagnostics?.push(...unresolved);
     return false;
   }
   if (
