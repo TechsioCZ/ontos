@@ -6,6 +6,7 @@ import {
   CommitmentConfirmationVerificationRequestSchema,
 } from '../apis/commitment-confirmation-verification.ts';
 import type { CommitmentConfirmationVerificationRequest } from '../apis/commitment-confirmation-verification.ts';
+import { operationGateway } from './action-gateway.ts';
 
 export interface CommitmentConfirmationVerificationClientOptions {
   readonly baseUrl?: string | URL;
@@ -14,6 +15,11 @@ export interface CommitmentConfirmationVerificationClientOptions {
 
 type CommitmentConfirmationVerificationAuthorizedInvocation = readonly [
   credential: string,
+  requestCorrelation: string,
+  options?: CommitmentConfirmationVerificationClientOptions,
+];
+
+type CommitmentConfirmationVerificationOperationInvocation = readonly [
   requestCorrelation: string,
   options?: CommitmentConfirmationVerificationClientOptions,
 ];
@@ -46,4 +52,16 @@ export const executeCommitmentConfirmationVerificationWithAuthorization = (
         Match.orElse((invocation) => client.commitmentConfirmationVerification.execute({ payload: invocation })),
       ),
     ),
+  );
+
+export const executeCommitmentConfirmationVerification = (
+  payload: CommitmentConfirmationVerificationRequest,
+  ...[requestCorrelation, options = {}]: CommitmentConfirmationVerificationOperationInvocation
+) =>
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCommitmentConfirmationVerificationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );
