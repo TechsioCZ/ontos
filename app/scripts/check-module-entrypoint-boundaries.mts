@@ -916,13 +916,34 @@ const decodeOwnershipPackage = Schema.decodeUnknownEffect(Schema.fromJsonString(
 /**
  * A value-only contract package (its ontosContractOwner publishes no module API) belongs to that owner:
  * a foreign consumer reaches its values only as a proven public contract, as it would in the owner itself.
+ * Topology identities stay authoritative: such a claim counts only for a shared package under packages/
+ * and only for an owner the topology knows; any other claim is a violation in that manifest.
  */
-const valueContractOwners = (packages: ReadonlyMap<string, OwnershipPackage>) =>
-  [...packages.values()].flatMap(({ directory, metadata }) =>
-    metadata.ontosContractOwner?.moduleApis.length === 0
-      ? [[directory, metadata.ontosContractOwner.appId] as const]
-      : [],
-  );
+const resolveOwners = (topology: ReadonlyMap<string, string>, packages: ReadonlyMap<string, OwnershipPackage>) =>
+  Effect.gen(function* resolveOwnersEffect() {
+    const known = new Set(topology.values());
+    const claims: (readonly [string, string])[] = [];
+    for (const { directory, metadata } of packages.values()) {
+      const claim = metadata.ontosContractOwner;
+      if (claim === undefined || claim.moduleApis.length > 0) {
+        continue;
+      }
+      if (!/^packages\/[^/]+$/u.test(directory)) {
+        yield* fail(
+          `${directory}/package.json`,
+          `a value-only ontosContractOwner claims ${claim.appId}'s identity outside packages/; topology owns this deployment`,
+        );
+      }
+      if (!known.has(claim.appId)) {
+        yield* fail(
+          `${directory}/package.json`,
+          `a value-only ontosContractOwner names owner ${claim.appId}, which the topology does not know`,
+        );
+      }
+      claims.push([directory, claim.appId]);
+    }
+    return new Map([...claims, ...topology]);
+  });
 const OwnershipReferencesSchema = Schema.Struct({
   references: Schema.optionalKey(Schema.Array(Schema.Struct({ path: Schema.String }))),
 });
@@ -4895,7 +4916,7 @@ const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>
       graph: createModuleGraph(),
       immutableContractRuntimes: new Map(),
       inventoryEntries: [],
-      owners: new Map([...topologyOwners, ...valueContractOwners(ownershipPackages)]),
+      owners: yield* resolveOwners(topologyOwners, ownershipPackages),
       ownershipOrigins: new Map(),
       ownershipPackages,
       root,
