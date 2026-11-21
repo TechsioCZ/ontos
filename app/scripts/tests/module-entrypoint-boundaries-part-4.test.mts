@@ -975,7 +975,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualTaxClientFixture();
       const clientFile = 'verticals/tax/src/api/tax-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${original}\nexport const privateTaxClientCallable=()=>globalThis;\n`);
+      yield* write(root, clientFile, `${original}\nexport const privateTaxClientCallable=()=>'private';\n`);
       const consumer = 'apps/shell-super-app/src/tax-client-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/tax/api/client';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));

@@ -6,6 +6,8 @@ import { ConfigProvider, Effect, Schema } from 'effect';
 import { expect } from 'effect-rstest';
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
 import { hasGeneratedActionRegistrationBinding } from '../generated-governed-http-boundary.mts';
+import { PackageExportsSchema, resolvedSpecifier } from '../module-bindings.mts';
+import type { WorkspacePackage } from '../module-bindings.mts';
 import { assertPublishedCrossMicroVerticalContractUsage } from '../published-outbox-contracts.mts';
 
 export const SHELL_TSCONFIG_PATH = 'apps/shell-super-app/tsconfig.json';
@@ -77,6 +79,9 @@ const CUSTOMER_CONTEXT_REACH = [
   PARTY_VERTICAL_PATH,
 ] as const;
 
+/** Customer Context's purchase currency resolution names Pricing's published currencies, held by this manifest alone. */
+const PRICING_CONTRACTS_PACKAGE_JSON_PATH = 'packages/pricing-contracts/package.json';
+
 const CUSTOMER_CONTEXT_REACH_OWNERS = [
   { id: 'catalog', path: CATALOG_VERTICAL_PATH },
   { id: 'party-registry', path: PARTY_VERTICAL_PATH },
@@ -138,19 +143,78 @@ export const GOVERNED_SEARCH_HEADER =
 export const acceptsTypedGtinBinding = (source: string) =>
   hasGeneratedActionRegistrationBinding(source, 'confirmGtin', 'ConfirmGtin', 'commerce.catalog');
 
+/** The workspace's library packages a fixture may hold some files of, beside their manifests. */
+const LIBRARY_PACKAGES = ['@app/core-runtime', '@app/shared-contracts'] as const;
+const LibraryManifestSchema = Schema.Struct({ exports: Schema.Record(Schema.String, PackageExportsSchema) });
+const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../..');
+
+const fileExists = async (file: string) => {
+  try {
+    await readFile(file);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const directoryEntries = async (directory: string): Promise<readonly string[]> => {
+  try {
+    return await readdir(directory);
+  } catch {
+    return [];
+  }
+};
+
+const holdPublishedFile = async (root: string, file: string) => {
+  if (!(await fileExists(path.join(root, file))) && (await fileExists(path.join(WORKSPACE_ROOT, file)))) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await writeFile(path.join(root, file), await readFile(path.join(WORKSPACE_ROOT, file), 'utf-8'));
+  }
+};
+
+const holdPublishedLibrary = async (root: string, name: string) => {
+  const dir = `packages/${name.slice('@app/'.length)}`;
+  const manifestFile = 'package.json';
+  const entries = await directoryEntries(path.join(root, dir));
+  if (entries.some((entry) => entry !== manifestFile)) {
+    const manifest: unknown = JSON.parse(await readFile(path.join(WORKSPACE_ROOT, dir, manifestFile), 'utf-8'));
+    const { exports } = Schema.decodeUnknownSync(LibraryManifestSchema)(manifest);
+    const resolve = resolvedSpecifier(
+      () => true,
+      new Map<string, WorkspacePackage>([[name, { dir, exports, read: false }]]),
+    );
+    const published = Object.keys(exports).flatMap((key) => {
+      const target = resolve(dir, key === '.' ? name : `${name}${key.slice(1)}`);
+      return target === undefined ? [] : [target];
+    });
+    await Promise.all(published.map(async (target) => await holdPublishedFile(root, target)));
+  }
+};
+
+/**
+ * Every file the `exports` of a library package the fixture holds publishes, copied from the workspace where the fixture
+ * has none: a package whose files the sources hold names only files that exist, as it does in the workspace.
+ */
+const holdPublishedLibraryFiles = (root: string) =>
+  Effect.promise(async () => {
+    await Promise.all(LIBRARY_PACKAGES.map(async (name) => await holdPublishedLibrary(root, name)));
+  });
+
 export const checkModuleEntrypointBoundaries = (root: string) =>
-  checkModuleEntrypointBoundariesEffect(root).pipe(
-    Effect.provide(NodeServices.layer),
-    // Generated fixtures have no Git history. Keep their inventory identity
-    // explicit and independent of the host's Git integration.
-    Effect.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          ULTRAMODERN_SOURCE_REVISION: 'working-tree',
-        }),
+  holdPublishedLibraryFiles(root)
+    .pipe(Effect.andThen(checkModuleEntrypointBoundariesEffect(root)))
+    .pipe(
+      Effect.provide(NodeServices.layer),
+      // Generated fixtures have no Git history. Keep their inventory identity
+      // explicit and independent of the host's Git integration.
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            ULTRAMODERN_SOURCE_REVISION: 'working-tree',
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
 export const ARCHIVE_ORGANIZATION_DECLARATION = 'export const archiveOrganizationEngagementAction';
 
@@ -1362,6 +1426,7 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     SHARED_CLIENT_RUNTIME_SOURCE_PATH,
+    PRICING_CONTRACTS_PACKAGE_JSON_PATH,
   ]) {
     yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
@@ -1399,13 +1464,18 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         { id: 'privacy', path: PRIVACY_VERTICAL_PATH },
+        { id: PARTY_DEPLOYMENT_ID, path: PARTY_VERTICAL_PATH },
       ],
     }),
   );
-  const sources = yield* readPricingSourceTree(workspace, PRIVACY_VERTICAL_PATH);
-  for (const [file, source] of sources) {
-    yield* write(root, file, source);
+  // Its read contracts take Party Registry's and its value kernel's, so they are copied with it.
+  for (const folder of [PRIVACY_VERTICAL_PATH, PARTY_VERTICAL_PATH, PARTY_CONTRACTS_PACKAGE_PATH]) {
+    for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
+      yield* write(root, file, source);
+    }
   }
+  // The other modules they name, by their manifests alone.
+  yield* writeNamedModuleManifests(root, [INVENTORY_VERTICAL_PATH, PRIVACY_VERTICAL_PATH, PARTY_VERTICAL_PATH]);
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
@@ -1432,6 +1502,8 @@ export const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyC
         'dir',
       ),
   );
+  yield* linkWorkspacePackages(root, [PARTY_VERTICAL_PATH, PARTY_CONTRACTS_PACKAGE_PATH]);
+  yield* writeLinkedCoreSdk(root, workspace);
   return root;
 });
 
@@ -1521,6 +1593,13 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
     ...CUSTOMER_CONTEXT_REACH,
     ...CUSTOMER_CONTEXT_REACH_OWNERS.map(({ path: owner }) => owner),
   ]);
+  yield* write(
+    root,
+    PRICING_CONTRACTS_PACKAGE_JSON_PATH,
+    yield* Effect.promise(
+      async () => await readFile(path.join(workspace, PRICING_CONTRACTS_PACKAGE_JSON_PATH), 'utf-8'),
+    ),
+  );
   // Each copied package is linked as the workspace links it, so the check resolves what Customer Context takes.
   for (const [file, source] of yield* readPricingSourceTree(workspace, SHARED_CONTRACTS_WORKSPACE_PATH)) {
     yield* write(root, file, source);

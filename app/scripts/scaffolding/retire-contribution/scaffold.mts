@@ -4,6 +4,7 @@ import { Effect, FileSystem, Option, Schema, Predicate } from 'effect';
 import type { Node } from 'oxc-parser';
 
 import {
+  CODE_FILE,
   PackageExportsSchema,
   exportOrigins,
   lineOf,
@@ -445,8 +446,6 @@ const lineBefore = (before: string, after: string, line: number): number => {
   return line;
 };
 
-/** A JavaScript or TypeScript source of the owner module: what the post-condition of a retirement reads. */
-const CODE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
 /** Build output and dependencies: never sources of the module. */
 const SKIPPED_DIRECTORIES = new Set(['.modern-js', '.output', 'dist', 'dist-cloudflare', 'node_modules']);
 
@@ -491,35 +490,17 @@ const wholeStrings = (bindings: ModuleBindings): readonly (readonly [Node, strin
     return text === undefined || text === null ? [] : [[node, text]];
   });
 
-/** A JavaScript or TypeScript extension. */
-const SOURCE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
-
-/**
- * The names a specifier may give a file the plan deletes, as text it holds: each file's base name (and the directory of
- * an index), and each package specifier whose `exports` entry resolves to one, whole.
- */
-const deletedNames = (
-  deleted: ReadonlySet<string>,
-  graph: ModuleGraph,
-  packages: ReadonlyMap<string, RetirementPackage>,
-): readonly string[] => {
-  const files = [...deleted].flatMap((file) => {
-    const bare = file.replace(SOURCE_EXTENSION, '');
-    return nodePath.basename(bare) === 'index' ? [bare, nodePath.dirname(bare)] : [bare];
-  });
-  const published = [...packages].flatMap(([name, { dir, exports }]) =>
-    (exports === undefined || exports === null || Predicate.isString(exports) || Array.isArray(exports)
-      ? []
-      : Object.keys(exports)
-    ).flatMap((subpath) => {
-      const specifier = subpath === '.' ? name : `${name}${subpath.slice(1)}`;
-      // A package specifier resolves the same from anywhere.
-      const target = graph.target(dir, specifier);
-      return target !== undefined && deleted.has(target) ? [specifier] : [];
+/** The base names of the files the plan deletes (and the directory of an index), as text a source may hold. */
+const deletedNames = (deleted: ReadonlySet<string>): readonly string[] => [
+  ...new Set(
+    [...deleted].flatMap((file) => {
+      const bare = file.replace(CODE_FILE, '');
+      return nodePath.basename(bare) === 'index'
+        ? [nodePath.basename(bare), nodePath.basename(nodePath.dirname(bare))]
+        : [nodePath.basename(bare)];
     }),
-  );
-  return [...new Set([...files.map((bare) => nodePath.basename(bare)), ...published])];
-};
+  ),
+];
 
 /** Every string a source writes statically, decoded: its string literals and the text of its template literals. */
 const writtenStrings = (bindings: ModuleBindings): readonly string[] =>
@@ -642,9 +623,10 @@ const sourceProblems = (
       ? [`${at(node.start)} still names ${text}, which the retirement deletes: remove that use first`]
       : [],
   );
-  // A file names a retired file when its text does, or a string it writes does once decoded.
+  // A file names a retired file when a string it writes resolves to one, or its text holds a deleted file's base name.
   const naming =
     edited ||
+    named.length > 0 ||
     names.some((name) => after.includes(name)) ||
     writtenStrings(bindings).some((text) => names.some((name) => text.includes(name)));
   const unreadable = naming
@@ -663,16 +645,14 @@ const sourceProblems = (
  * or a template literal without interpolation), decoded, names a file the plan deletes, whatever the string stands in
  * (an import, a load under any name, `new URL(…)`, an argument of any function), a relative path naming it with any
  * JavaScript or TypeScript extension, without one, or as the directory of an index; and a source that names a deleted
- * file's base name holds no load no static rule reads (`unreadableLoads`). A string that names a deleted file names
- * its base name once decoded, and without an escape (a backslash) the decoded text is the raw text: so a source whose
- * raw text holds neither a deleted file's base name nor a backslash is the only one skipped unparsed. Each failure
- * names the file and its line as the file stands.
+ * file, or holds its base name, holds no load no static rule reads (`unreadableLoads`). Every source is parsed and
+ * every string it writes whole is resolved (a package specifier through the package's `exports`, patterns included):
+ * none is skipped by its raw text. Each failure names the file and its line as the file stands.
  */
 const retirementProblems = (
   sources: ReadonlyMap<string, string>,
   mutations: readonly Mutation[],
   graph: ModuleGraph,
-  packages: ReadonlyMap<string, RetirementPackage>,
 ): readonly string[] => {
   const deleted = new Set(mutations.flatMap((mutation) => (mutation.kind === 'delete' ? [mutation.path] : [])));
   const planned = new Map(
@@ -680,15 +660,11 @@ const retirementProblems = (
       mutation.kind !== 'delete' && CODE_FILE.test(mutation.path) ? [[mutation.path, mutation.content] as const] : [],
     ),
   );
-  const deletion: PlannedDeletion = { deleted, graph, names: deletedNames(deleted, graph, packages) };
+  const deletion: PlannedDeletion = { deleted, graph, names: deletedNames(deleted) };
   const files = new Set([...sources.keys(), ...planned.keys()].filter((file) => !deleted.has(file)));
   return [...files].flatMap((file) => {
     const before = sources.get(file);
-    const after = planned.get(file) ?? before ?? '';
-    const edited = planned.has(file);
-    return edited || after.includes('\\') || deletion.names.some((name) => after.includes(name))
-      ? sourceProblems({ after, before, file }, edited, deletion)
-      : [];
+    return sourceProblems({ after: planned.get(file) ?? before ?? '', before, file }, planned.has(file), deletion);
   });
 };
 
@@ -933,7 +909,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     ...deletes,
   ];
   // The post-condition judges the planned result as a whole; nothing is written when it fails.
-  const problems = retirementProblems(sources, mutations, graph, packages);
+  const problems = retirementProblems(sources, mutations, graph);
   if (problems.length > 0) {
     return yield* scaffoldError(`cannot retire ${name}:\n${problems.join('\n')}`);
   }

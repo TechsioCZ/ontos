@@ -791,6 +791,70 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
         'u',
       ),
     );
+    // An `exports` pattern is taken by its specificity, as Node and TypeScript take it, whatever order the keys stand in;
+    // a JavaScript owner file is source, read as a TypeScript one is.
+    const ownerPackage = `${owner}/package.json`;
+    const withExports = (entries: string): string =>
+      replaced(required(sources, ownerPackage), '"exports": {\n', `"exports": {\n${entries}\n`);
+    for (const [label, entries, file, specifier] of [
+      [
+        'the most specific of two matching export patterns',
+        '    "./public/*": "./shared/missing/*.ts",\n    "./public/reads/*": "./shared/reads/*.ts",',
+        `${owner}/shared/reads/forward.ts`,
+        '@app/payment-term-catalog/public/reads/forward',
+      ],
+      [
+        'a JavaScript owner file the package exports',
+        '    "./history": "./shared/history.js",',
+        `${owner}/shared/history.js`,
+        '@app/payment-term-catalog/history',
+      ],
+    ] as const) {
+      const passed = judged(sources, [
+        [ownerPackage, withExports(entries)],
+        [file, `export { CurrentPaymentTermsApi as HistoryApi } from '${contractSpecifier}';\n`],
+        [sharedApiFile, `${sharedApi}\nexport { HistoryApi } from '${specifier}';\n`],
+      ]);
+      expect(passed.valid, label).toBe(false);
+      expect(passed.diagnostics, label).toContain(`${sharedApiFile}: export HistoryApi passes on the package read`);
+    }
+    // A value the handler composition merges is the reference it is written as, under the wrappers and its members.
+    for (const layer of ['nodeCryptoLayer', '(nodeCryptoLayer)', 'FetchHttpClient.layer']) {
+      const composedLayer = judged(sources, [
+        [handlerFile, replaced(handler, layersStart, `    ${layer},\n${layersStart}`)],
+      ]);
+      expect(composedLayer.valid, layer).toBe(false);
+      expect(composedLayer.diagnostics, layer).toContain(unknown(handlerFile, layer));
+    }
+    // Every static specifier of an owner entry is resolved, whether or not a binding is taken from it, and a package
+    // whose files the sources hold names only files that exist; one held by its manifest alone names what it publishes.
+    const sharedContracts = 'packages/shared-contracts/package.json';
+    const startup = replaced(
+      required(sources, sharedContracts),
+      '"exports": {\n',
+      '"exports": {\n    "./startup": "./src/startup.ts",\n',
+    );
+    const reexportedStartup: readonly (readonly [string, string])[] = [
+      [sharedContracts, startup],
+      [sharedApiFile, `${sharedApi}\nexport { Startup } from '@app/shared-contracts/startup';\n`],
+    ];
+    for (const [label, changes, specifier] of [
+      [
+        'a side-effect import of a missing owner file',
+        [[sharedApiFile, `import './missing-setup.ts';\n${sharedApi}`]],
+        './missing-setup.ts',
+      ],
+      [
+        'a re-export of a missing file of a library package the sources hold',
+        [...reexportedStartup, ['packages/shared-contracts/src/held.ts', 'export const held = 1;\n']],
+        '@app/shared-contracts/startup',
+      ],
+    ] as const) {
+      const unresolved = judged(sources, changes);
+      expect(unresolved.valid, label).toBe(false);
+      expect(unresolved.diagnostics, label).toContain(`names ${specifier}, which is no file of the workspace`);
+    }
+    expect(judged(sources, reexportedStartup).valid).toBe(true);
     // The handler root is no owner entry: the net does not apply there.
     expect(judged(sources, [[handlerFile, `${handler}\nlet counter = 0;\nvoid counter;\n`]]).valid).toBe(true);
     // Every binding a mounted declaration of the owner uses is judged by its origin, whatever specifier, path or name

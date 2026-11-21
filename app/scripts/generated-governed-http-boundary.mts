@@ -34,6 +34,7 @@ import {
   tokenizeGovernedClient,
 } from './generated-module-api-boundary.mts';
 import {
+  CODE_FILE,
   PackageExportsSchema,
   accessedMember,
   bindingOrigins,
@@ -4869,19 +4870,9 @@ const readTakingProblems = (
     ) {
       return [];
     }
-    if (target === undefined) {
-      return [
-        `${entry.file}:${lineOf(entry.source, node.start)} loads ${specifier}, which is no file of the workspace; admitted: ${OWNER_ENTRY_READ_FORMS}`,
-      ];
-    }
-    return passesOnRead(graph, reads, target) ? [at(node, 'loads', target)] : [];
+    return target !== undefined && passesOnRead(graph, reads, target) ? [at(node, 'loads', target)] : [];
   });
-  // A load no static rule reads, anywhere in the entry, may take anything from a read.
-  const unreadable = unreadableLoads(bindings).map(
-    (node) =>
-      `${entry.file}:${lineOf(entry.source, node.start)} loads a module it does not read statically; admitted: ${OWNER_ENTRY_READ_FORMS}`,
-  );
-  return [...new Set([...imports, ...reexports, ...loads, ...unreadable])];
+  return [...new Set([...imports, ...reexports, ...loads])];
 };
 
 /** What one name an owner entry exports resolves to, judged against the module's package reads. */
@@ -4957,10 +4948,15 @@ const entryDefaultExports = (bindings: ModuleBindings): readonly Node[] =>
 const reexportedProblems = (
   graph: ModuleGraph,
   entry: OwnerEntry,
-  exported: readonly (readonly [string, ExportOrigin])[],
+  names: (target: string | undefined) => boolean,
 ): readonly string[] => {
   const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
-  const files = new Set(exported.flatMap(([, origin]) => origin.trail.slice(1)));
+  const exported = moduleExports(graph, entry.file);
+  const files = new Set(
+    [...exported.names.flatMap((name) => exportOrigins(graph, entry.file, name)), ...exported.opaque].flatMap(
+      (origin) => origin.trail.slice(1),
+    ),
+  );
   const problems: string[] = [];
   const pending = [entry.file, ...files];
   for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
@@ -4974,16 +4970,18 @@ const reexportedProblems = (
           `${entry.file}: re-exports through ${file}, which loads a module it does not read statically at ${line}${admitted}`,
         );
       }
-      for (const statement of bindings.program.body) {
-        const source =
-          (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration') &&
-          statement.source !== null
-            ? statement.source.value
-            : undefined;
-        const target = source === undefined ? undefined : graph.target(file, source);
-        if (source !== undefined && target === undefined) {
-          problems.push(`${entry.file}: ${file} re-exports ${source}, which is no file of the workspace${admitted}`);
-        } else if (target !== undefined && target !== entry.file && !files.has(target)) {
+      // Every static specifier is resolved, whether or not a binding is taken from it; re-exports are followed.
+      for (const { node, specifier } of moduleSpecifiers(bindings)) {
+        const target = graph.target(file, specifier);
+        if (target === undefined || !names(target)) {
+          problems.push(
+            `${entry.file}: ${file}:${lineOf(bindings.source, node.start)} names ${specifier}, which is no file of the workspace`,
+          );
+        } else if (
+          (node.type === 'ExportAllDeclaration' || node.type === 'ExportNamedDeclaration') &&
+          target !== entry.file &&
+          !files.has(target)
+        ) {
           files.add(target);
           pending.push(target);
         }
@@ -5035,10 +5033,7 @@ const ownerEntryReadProblems = (
 ): readonly string[] =>
   entries.flatMap((entry) => {
     const bindings = graph.parsed(entry.file);
-    if (bindings === 'unparsable') {
-      return [`${entry.file}: does not parse`];
-    }
-    if (bindings === undefined) {
+    if (bindings === undefined || bindings === 'unparsable') {
       return [];
     }
     const ownApi = entry.mounts ? governedApiBinding(entry.source) : undefined;
@@ -5078,7 +5073,6 @@ const ownerEntryReadProblems = (
       ...new Set([
         ...readTakingProblems(graph, entry, bindings, reads),
         ...ownExports,
-        ...reexportedProblems(graph, entry, exported),
         ...exported.flatMap((named) => exportedReadProblem(entry, ownerPath, reads, reaching, named) ?? []),
       ]),
     ];
@@ -6542,6 +6536,8 @@ interface WorkspacePackage extends ResolvedPackage {
 }
 
 interface Workspace {
+  /** The directory of each package whose files the sources hold beside its manifest, `<dir>/`. */
+  readonly heldDirectories: readonly string[];
   readonly packages: ReadonlyMap<string, WorkspacePackage>;
   /** The directory of each module and contract package, `<dir>/`: where the module graph reads. */
   readonly readDirectories: readonly string[];
@@ -6581,6 +6577,7 @@ const workspaceOf = (sources: ReadonlyMap<string, string>): Workspace => {
     }
   }
   const workspace: Workspace = {
+    heldDirectories: [...packages.values()].flatMap((found) => (held.has(found.dir) ? [`${found.dir}/`] : [])),
     packages,
     readDirectories: [...packages.values()].flatMap((found) => (found.read ? [`${found.dir}/`] : [])),
   };
@@ -6604,8 +6601,6 @@ const API_FILES = [
   PACKAGE_READ_PATTERN,
 ];
 const SERVER_FILE = /-(?:action|read)-server\.ts$/u;
-/** A TypeScript file: what the module graph parses; any other module (JSON, a stylesheet) is data. */
-const CODE_FILE = /\.(?:[cm]?ts|tsx)$/u;
 
 /** What an API value, group, endpoint, middleware or server layer is built with. */
 const HTTP_API_FAMILY = new Set(['HttpApi', 'HttpApiBuilder', 'HttpApiEndpoint', 'HttpApiGroup', 'HttpApiMiddleware']);
@@ -6997,11 +6992,14 @@ const composedProblems = (context: CompositionContext, entry: OwnerEntryComposit
       ? [unknown(binding.name)]
       : [],
   );
+  // A value composed under wrappers or taken as a member (`(layer)`, `Library.layer`) is the reference it is written as.
+  const references = [...bindings.references.map(({ identifier }) => identifier), ...bindings.local.keys()];
   const composed = entry.composed(bindings).map((node) => {
+    const identifier = references.find(
+      (candidate) => isWithin(candidate, node) && memberChain(bindings, candidate).outer === node,
+    );
     const question: CompositionQuestion =
-      node.type === 'Identifier'
-        ? { identifier: node, kind: 'reference', mounted: true, site }
-        : { kind: 'node', node, site };
+      identifier === undefined ? { kind: 'node', node, site } : { identifier, kind: 'reference', mounted: true, site };
     return [node, question] as const;
   });
   // One walk over the whole composition first; only a composition that fails is judged value by value.
@@ -7132,16 +7130,33 @@ const ownerEntryProblems = (
       ]),
     ),
   };
+  // A workspace target names a file: one that exists when the sources hold its package's files, not its manifest alone.
+  const namesFile = (target: string | undefined): boolean =>
+    target !== undefined &&
+    (sources.has(target) || !workspace.heldDirectories.some((directory) => target.startsWith(directory)));
   const entries: readonly OwnerEntry[] = [
     { file: sharedFile, mounts: true, source: inputs.sharedApi },
     ...(aggregate === undefined ? [] : [{ ...aggregate, mounts: false }]),
   ];
   return [
+    // Every owner entry, of a module with package reads or without: it parses, holds only the syntax the checks read,
+    // loads nothing no static rule reads, and every file its re-exports reach is judged (`reexportedProblems`).
     ...entries.flatMap((entry) => {
       const parsed = graph.parsed(entry.file);
-      return parsed === undefined || parsed === 'unparsable'
+      if (parsed === 'unparsable') {
+        return [`${entry.file}: does not parse`];
+      }
+      return parsed === undefined
         ? []
-        : entrySyntaxProblems(entry.file, parsed, entry.mounts);
+        : [
+            ...entrySyntaxProblems(entry.file, parsed, entry.mounts),
+            // A load no static rule reads, anywhere in the entry, may take anything from a read.
+            ...unreadableLoads(parsed).map(
+              (node) =>
+                `${entry.file}:${lineOf(entry.source, node.start)} loads a module it does not read statically; admitted: ${OWNER_ENTRY_READ_FORMS}`,
+            ),
+            ...reexportedProblems(graph, entry, namesFile),
+          ];
     }),
     ...composedProblems(context, { composed: mountedApis, file: sharedFile, source: inputs.sharedApi }),
     ...composedProblems(context, {

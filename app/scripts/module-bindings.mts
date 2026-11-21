@@ -638,6 +638,9 @@ const SUBSTITUTED_EXTENSIONS = new Map([
   ['.mjs', ['.mts', '.d.mts', '.mjs']],
 ]);
 
+/** A JavaScript or TypeScript file: source, which the rules parse and read; any other module (JSON, a stylesheet) is data. */
+export const CODE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
+
 /** What it appends to a path without one, and to the index of a directory. */
 const IMPLIED_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.js', '.jsx'];
 
@@ -674,6 +677,24 @@ const exportedPath = (entry: PackageExports | undefined): string | undefined => 
   return matched === undefined ? undefined : exportedPath(matched[1]);
 };
 
+interface PatternMatch {
+  readonly head: string;
+  readonly tail: string;
+}
+
+/** The head and tail around the one `*` of an `exports` key that matches `subpath`; undefined when it does not. */
+const patternMatch = (key: string, subpath: string): PatternMatch | undefined => {
+  const [head, tail, ...more] = key.split('*');
+  return head !== undefined &&
+    tail !== undefined &&
+    more.length === 0 &&
+    subpath.length >= head.length + tail.length &&
+    subpath.startsWith(head) &&
+    subpath.endsWith(tail)
+    ? { head, tail }
+    : undefined;
+};
+
 /** The entry an `exports` map publishes for a subpath (`.`, `./x`), exactly or through one `*` pattern. */
 const subpathEntry = (exports: PackageExports, subpath: string): PackageExports | undefined => {
   const entries =
@@ -686,20 +707,22 @@ const subpathEntry = (exports: PackageExports, subpath: string): PackageExports 
   if (exact !== undefined) {
     return exact[1];
   }
+  let best: (PatternMatch & { readonly entry: PackageExports; readonly key: string }) | undefined;
   for (const [key, entry] of entries) {
-    const [head, tail, ...more] = key.split('*');
-    const published = exportedPath(entry);
+    const match = patternMatch(key, subpath);
+    // The most specific pattern, as Node and TypeScript take it: the longest head before `*`, then the longest key.
     if (
-      head !== undefined &&
-      tail !== undefined &&
-      more.length === 0 &&
-      published !== undefined &&
-      subpath.length >= head.length + tail.length &&
-      subpath.startsWith(head) &&
-      subpath.endsWith(tail)
+      match !== undefined &&
+      (best === undefined ||
+        match.head.length > best.head.length ||
+        (match.head.length === best.head.length && key.length > best.key.length))
     ) {
-      return published.replaceAll('*', subpath.slice(head.length, subpath.length - tail.length));
+      best = { ...match, entry, key };
     }
+  }
+  const published = best === undefined ? undefined : exportedPath(best.entry);
+  if (best !== undefined && published !== undefined) {
+    return published.replaceAll('*', subpath.slice(best.head.length, subpath.length - best.tail.length));
   }
   return undefined;
 };
