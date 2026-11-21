@@ -1493,7 +1493,7 @@ for (const [variant, extra] of [
   );
 }
 
-it.live('keeps the load of a helper in a file with a with statement computed', () =>
+it.live('trusts no loader of a file with a with statement, so its first load is already computed', () =>
   Effect.gen(function* withStatement() {
     const file = 'verticals/alpha/src/with.js';
     expect(
@@ -1501,7 +1501,7 @@ it.live('keeps the load of a helper in a file with a with statement computed', (
         ...commonJsAlpha,
         [file]: `${ownBaseLoader}function load(p) {\n  with ({ ['p']: '../../beta/package.json' }) {\n    return here(p);\n  }\n}\nload('effect');\n`,
       }),
-    ).toEqual([computedLoad(file, [4])]);
+    ).toEqual([computedLoad(file, [1])]);
   }),
 );
 
@@ -1693,6 +1693,124 @@ it.live('parses a .cjs source as CommonJS, where a top-level return is valid', (
         [early]: "if (process.env.SKIP_BETA === '1') {\n  return;\n}\nmodule.exports = require('@app/beta');\n",
       }),
     ).toEqual(betaRuntimeEdge(`${early}:4`));
+  }),
+);
+
+const betaIndex = "__dirname + '/../../beta/index.cjs'";
+const loaderOfFilename = "const load = require('node:module').createRequire(__filename);\nload('./package.json');\n";
+/** In a `.cts` source the factory is imported, so the free `require` plays no part. */
+const importedLoaderOfFilename = "const load = createRequire(__filename);\nload('./package.json');\n";
+const loaderOfMetaUrl = `${createRequireImport}const load = createRequire(import.meta.url);\nload('./package.json');\n`;
+const rebasedCjs = 'review.cjs';
+const rebasedCts = 'review.cts';
+const rebasedMts = 'review.mts';
+const namespaceOfTypes = 'export namespace N { export type T = string; }\n';
+
+/**
+ * Ways a file gives its own location another value, so that a relative load lands in another package: the
+ * source that does it before the loader is made, the file, and the lines of the computed loads.
+ */
+const rebasedLoaders: readonly (readonly [form: string, file: string, source: string, lines: readonly number[]])[] = [
+  ['__filename is assigned', rebasedCjs, `__filename = ${betaIndex};\n${loaderOfFilename}`, [3]],
+  ['__filename is declared again', rebasedCjs, `var __filename = ${betaIndex};\n${loaderOfFilename}`, [3]],
+  [
+    '__filename is assigned in a typeless .ts',
+    'review.ts',
+    `${namespaceOfTypes}__filename = ${betaIndex};\n${loaderOfFilename}`,
+    [4],
+  ],
+  [
+    '__filename is assigned through an array pattern',
+    rebasedCjs,
+    `[__filename] = [${betaIndex}];\n${loaderOfFilename}`,
+    [3],
+  ],
+  [
+    '__filename is assigned through an object pattern',
+    rebasedCjs,
+    `({ to: __filename } = { to: ${betaIndex} });\n${loaderOfFilename}`,
+    [3],
+  ],
+  ['__filename is the variable of a loop', rebasedCjs, `for (__filename of [${betaIndex}]);\n${loaderOfFilename}`, [3]],
+  ['__filename is added to', rebasedCjs, `__filename += '/../../../beta/index.cjs';\n${loaderOfFilename}`, [3]],
+  [
+    'the wrapper arguments alias __filename',
+    rebasedCts,
+    `${createRequireImport}arguments[3] = ${betaIndex};\n${importedLoaderOfFilename}`,
+    [4],
+  ],
+  [
+    'an eval can assign __filename',
+    rebasedCts,
+    `${createRequireImport}eval("__filename = ${betaIndex}");\n${importedLoaderOfFilename}`,
+    [4],
+  ],
+  [
+    'import.meta.url is assigned',
+    rebasedMts,
+    `import.meta.url = 'file:///elsewhere/index.mjs';\n${loaderOfMetaUrl}`,
+    [4],
+  ],
+  [
+    'import.meta.url is assigned under a cast',
+    rebasedMts,
+    `(import.meta.url as string) = 'file:///elsewhere/index.mjs';\n${loaderOfMetaUrl}`,
+    [4],
+  ],
+  [
+    'import.meta.url is assigned through a pattern',
+    rebasedMts,
+    `[import.meta.url] = ['file:///elsewhere/index.mjs'];\n${loaderOfMetaUrl}`,
+    [4],
+  ],
+];
+
+for (const [form, name, source, lines] of rebasedLoaders) {
+  it.live(`takes a loader for one of another base when ${form}`, () =>
+    Effect.gen(function* rebasedLoader() {
+      const file = `verticals/alpha/src/${name}`;
+      expect(yield* freezeViolations({ [file]: source })).toEqual([computedLoad(file, lines)]);
+    }),
+  );
+}
+
+it.live('keeps a loader based on the file itself where its location is only read', () =>
+  Effect.gen(function* readLocation() {
+    const meta = 'verticals/alpha/src/read.mts';
+    const filename = 'verticals/alpha/src/read.cjs';
+    expect(
+      yield* freezeViolations({
+        [filename]:
+          "const dir = require('node:path').dirname(__filename);\nconst load = require('node:module').createRequire(__filename);\nmodule.exports = [dir, load('../../beta/package.json')];\n",
+        [meta]: `${createRequireImport}const here = import.meta.url;\nconst from = { dir: import.meta.dirname, from: import.meta.url };\nconst load = createRequire(import.meta.url);\nexport const beta = [here, from, load('../../beta/package.json')];\n`,
+      }),
+    ).toEqual([unlisted(moduleToModule, alphaToBetaEdge, 'runtime', `${filename}:3; ${meta}:5`, `${filename}:3`)]);
+  }),
+);
+
+/** Sloppy code that can give the free `require` or `module` another value without writing the name. */
+const reboundFreeNames: readonly (readonly [form: string, source: string, lines: readonly number[]])[] = [
+  ['the wrapper arguments alias require', "arguments[1] = globalThis.other;\nrequire('./package.json');\n", [2]],
+  ['a with statement can shadow require', "with (globalThis.scope) {\n  require('./package.json');\n}\n", [2]],
+  ['an eval can assign require', "eval('require = globalThis.other');\nrequire('./package.json');\n", [2]],
+  ['the wrapper arguments alias module', "arguments[2] = globalThis.other;\nmodule.require('./package.json');\n", [2]],
+];
+
+for (const [form, source, lines] of reboundFreeNames) {
+  it.live(`takes a load through a free name for a computed load when ${form}`, () =>
+    Effect.gen(function* reboundFreeName() {
+      expect(yield* freezeViolations({ [reviewCjs]: source })).toEqual([computedLoad(reviewCjs, lines)]);
+    }),
+  );
+}
+
+it.live('takes every member of module but exports and require for a computed load', () =>
+  Effect.gen(function* moduleMembers() {
+    expect(
+      yield* freezeViolations({
+        [reviewCjs]: `module.filename = ${betaIndex};\nmodule.exports = module.require('./package.json');\nmodule.parent.require('@app/beta');\n`,
+      }),
+    ).toEqual([computedLoad(reviewCjs, [1, 3])]);
   }),
 );
 

@@ -1236,9 +1236,10 @@ const referenceDirective = /^\/\s*<reference\s+(?<kind>path|types)\s*=\s*["'](?<
  * imported from `node:module` is opaque.
  */
 const namespacePromise = 'namespace-promise';
+const foreignLoader = 'foreign-loader';
 const CapabilitySchema = Schema.Literals([
   'factory',
-  'foreign-loader',
+  foreignLoader,
   'loader',
   'meta',
   'meta-resolve',
@@ -1269,6 +1270,8 @@ interface LoadAnalysis {
   readonly declarations: Map<string, Node[]>;
   readonly declaredIds: Set<Node>;
   readonly identifiers: Set<Node>;
+  /** Every `import.meta` of the file. */
+  readonly metas: Node[];
   /**
    * Whether the source is module source for certain, strict and without a module object; every other
    * source can run as CommonJS, where `module` is the module object and `__filename` the file itself.
@@ -1527,6 +1530,9 @@ const trackStructure = (analysis: LoadAnalysis, program: Program): void => {
     }
     if (node.type === 'WithStatement') {
       analysis.withStatements.push(node);
+    }
+    if (isImportMeta(node)) {
+      analysis.metas.push(node);
     }
     if (analysis.typeOnly.has(parent) || isTypeOnly(node)) {
       analysis.typeOnly.add(node);
@@ -1810,19 +1816,55 @@ const loaderUse = (analysis: LoadAnalysis, node: Node, parent: Node): boolean =>
 };
 
 /**
+ * Whether start is only read there: an argument of a call or of `new`, the value of a property of an object
+ * literal, or the initialiser of a variable. The check reads no other position, so that no way of writing
+ * a value passes for reading it.
+ */
+const isReadOnly = (analysis: LoadAnalysis, start: Node): boolean => {
+  const [node, parent] = usageOf(analysis, start);
+  if (parent?.type === 'CallExpression' || parent?.type === 'NewExpression') {
+    return parent.arguments.some((argument) => argument === node);
+  }
+  if (parent?.type === 'Property') {
+    return parent.value === node && analysis.parents.get(parent)?.type === 'ObjectExpression';
+  }
+  return parent?.type === 'VariableDeclarator' && parent.init === node;
+};
+
+/**
+ * Whether sloppy code of the file can give a name another value without writing the name: through a `with`
+ * statement, an `eval`, or, where the file can run as CommonJS, the `arguments` of the function Node wraps
+ * the file in, which alias `require`, `module` and `__filename`.
+ */
+const rebindsNames = (analysis: LoadAnalysis): boolean =>
+  analysis.names.has('eval') ||
+  (!analysis.moduleSource && (analysis.withStatements.length > 0 || analysis.names.has('arguments')));
+
+/** Whether `import.meta.url` is the file's own URL wherever it occurs: `import.meta` never leaves it, and its `url` is only read. */
+const keepsMetaUrl = (analysis: LoadAnalysis): boolean =>
+  analysis.metas.every((meta) => {
+    const [node, parent] = usageOf(analysis, meta);
+    const member = parent?.type === 'MemberExpression' && parent.object === node ? staticMemberName(parent) : undefined;
+    return member !== undefined && (member !== 'url' || (parent !== undefined && isReadOnly(analysis, parent)));
+  });
+
+/** Whether `__filename` is the file's own path wherever it occurs: Node's own, only read (so never declared either). */
+const keepsFilename = (analysis: LoadAnalysis): boolean =>
+  !analysis.moduleSource &&
+  !rebindsNames(analysis) &&
+  (analysis.names.get('__filename') ?? []).every((identifier) => isReadOnly(analysis, identifier));
+
+/**
  * The base a loader is created from is the file itself: `import.meta.url`, or `__filename` in a file that
- * can run as CommonJS and declares no `__filename`.
+ * can run as CommonJS, each only in a file that cannot have given it another value.
  */
 const isOwnBase = (analysis: LoadAnalysis, node: Node | undefined): boolean =>
-  isImportMetaUrl(node) ||
-  (!analysis.moduleSource &&
-    node?.type === 'Identifier' &&
-    node.name === '__filename' &&
-    !analysis.declarations.has('__filename'));
+  (isImportMetaUrl(node) && keepsMetaUrl(analysis)) ||
+  (node?.type === 'Identifier' && node.name === '__filename' && keepsFilename(analysis));
 
 /** What `createRequire` makes from base: a loader of the file itself, or one of a base the check does not read. */
 const loaderCreatedFrom = (analysis: LoadAnalysis, base: Node | undefined): Capability =>
-  isOwnBase(analysis, base) ? 'loader' : 'foreign-loader';
+  isOwnBase(analysis, base) ? 'loader' : foreignLoader;
 
 const isBuiltinLoad = (call: CallExpression): boolean =>
   call.arguments.length === 1 && moduleBuiltins.has(literalString(call.arguments[0]) ?? '');
@@ -1918,9 +1960,11 @@ const establishDeclarator = (analysis: LoadAnalysis, declarator: Node): boolean 
  * two meanings is ambiguous.
  */
 const establishCapabilityNames = (analysis: LoadAnalysis): void => {
+  const rebound = rebindsNames(analysis);
   for (const [name, capability] of freeCapabilities(analysis.moduleSource)) {
     const known = analysis.capabilities.get(name) ?? { declarations: new Set(), meanings: new Set() };
-    known.meanings.add(capability);
+    // Where sloppy code can rebind the free `require`, where it loads from is unknown.
+    known.meanings.add(rebound && capability === 'loader' ? foreignLoader : capability);
     analysis.capabilities.set(name, known);
   }
   const constants = [...analysis.constants];
@@ -1975,12 +2019,15 @@ const seedCapabilityUses = (analysis: LoadAnalysis): void => {
   }
 };
 
-/** Reading the member of from that is a capability passes it on; reading any other named member is harmless unless othersLoad. */
+/**
+ * Reading the member of from that is a capability passes it on; any other named member is harmless when
+ * harmless says so of its name, and a computed load otherwise.
+ */
 const memberUse = (
   analysis: LoadAnalysis,
   use: { readonly node: Node; readonly parent: Node },
   from: Capability,
-  othersLoad: boolean,
+  harmless: (name: string) => boolean,
 ): boolean => {
   const { node, parent } = use;
   const [member, capability] = memberCapabilities.get(from) ?? [];
@@ -1989,10 +2036,11 @@ const memberUse = (
   }
   const name = staticMemberName(parent);
   if (name === member) {
-    analysis.pending.push([parent, capability]);
+    // Where sloppy code can rebind `module`, where its `require` loads from is unknown.
+    analysis.pending.push([parent, from === 'module' && rebindsNames(analysis) ? foreignLoader : capability]);
     return true;
   }
-  return name !== undefined && !othersLoad;
+  return name !== undefined && harmless(name);
 };
 
 type CapabilityUse = (analysis: LoadAnalysis, node: Node, parent: Node) => boolean;
@@ -2007,12 +2055,13 @@ const recognisedUses = {
     return call !== undefined;
   },
   // A loader from another base resolves every target from where the check cannot tell: each load is computed.
-  'foreign-loader': () => false,
+  [foreignLoader]: () => false,
   loader: (analysis, node, parent) => loaderUse(analysis, node, parent),
-  meta: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'meta', false),
+  meta: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'meta', () => true),
   'meta-resolve': (analysis, node, parent) => literalLoad(analysis, calledWith(node, parent)),
-  module: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'module', false),
-  namespace: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'namespace', true),
+  // `module.filename`, `module.paths` and the like decide where `module.require` loads from; only `exports` cannot.
+  module: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'module', (name) => name === 'exports'),
+  namespace: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'namespace', () => false),
   'namespace-promise': (analysis, node, parent) => {
     const awaited = parent.type === 'AwaitExpression' && parent.argument === node;
     if (awaited) {
@@ -2182,6 +2231,7 @@ const loadsIn = (file: string, source: string, packageType: string | undefined):
     declarations: new Map(),
     declaredIds: new Set(),
     identifiers: new Set(),
+    metas: [],
     moduleSource: parsed.moduleSource,
     names: new Map(),
     parents: new Map(),
