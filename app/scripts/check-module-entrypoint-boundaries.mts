@@ -68,10 +68,10 @@ import {
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedActionClientPublication,
   ownerActionClientPublication,
-  resolvePublishedOwnerReadClient,
   governedApiBinding,
-  hasPublishedGeneratedContractShim,
+  hasPublishedGeneratedActionContractShim,
   hasGeneratedGovernedServerContract,
+  publishedPackageReads,
 } from './generated-governed-http-boundary.mts';
 import {
   toPascalCase,
@@ -510,6 +510,78 @@ const authorizationEquals = (left: InventoryAuthorization | undefined, right: In
 };
 
 const sourceOrEmpty = (sourceMap: ReadonlyMap<string, string>, file: string): string => sourceMap.get(file) ?? '';
+
+interface PackageReadImport {
+  readonly ownerPackageName: string;
+  readonly packageName: string;
+  readonly packagePath: string;
+}
+
+const packageReadImportsBySources = new WeakMap<ReadonlyMap<string, string>, ReadonlyMap<string, PackageReadImport>>();
+
+/** The subpaths `<package>/<name>` and `<package>/<name>/client` of every package read, with who provides it. */
+const packageReadImports = (sourceMap: ReadonlyMap<string, string>): ReadonlyMap<string, PackageReadImport> => {
+  const cached = packageReadImportsBySources.get(sourceMap);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const imports = new Map(
+    publishedPackageReads(sourceMap)
+      .filter((read) => read.claimed && read.exported)
+      .flatMap((read) => {
+        const provider = {
+          ownerPackageName: read.manifest.ontosContractOwner.packageName,
+          packageName: read.manifest.name,
+          packagePath: read.packagePath,
+        };
+        const contract = `${read.manifest.name}/${read.name}`;
+        return [
+          [contract, provider],
+          [`${contract}/client`, provider],
+        ] as const;
+      }),
+  );
+  packageReadImportsBySources.set(sourceMap, imports);
+  return imports;
+};
+
+const ConsumerPackageSchema = Schema.Struct({
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  name: Schema.optional(Schema.String),
+});
+
+const importingPackage = (sourceMap: ReadonlyMap<string, string>, file: string) => {
+  const directories = nodePath.posix
+    .dirname(file)
+    .split('/')
+    .map((_segment, index, segments) => segments.slice(0, segments.length - index).join('/'));
+  const manifest = directories.map((directory) => sourceMap.get(`${directory}/package.json`)).find(Boolean);
+  return Option.getOrUndefined(
+    Schema.decodeUnknownOption(Schema.fromJsonString(ConsumerPackageSchema))(manifest ?? ''),
+  );
+};
+
+/**
+ * Package reads a production file imports although its package does not declare the providing contract package in
+ * `dependencies`; the provider module and the package itself are exempt.
+ */
+export const undeclaredPackageReadImports = (
+  sourceMap: ReadonlyMap<string, string>,
+  file: string,
+  specifiers: readonly string[],
+): readonly string[] => {
+  const reads = packageReadImports(sourceMap);
+  const consumer = importingPackage(sourceMap, file);
+  return specifiers.filter((specifier) => {
+    const read = reads.get(specifier);
+    return (
+      read !== undefined &&
+      !file.startsWith(`${read.packagePath}/`) &&
+      consumer?.name !== read.ownerPackageName &&
+      consumer?.dependencies?.[read.packageName] === undefined
+    );
+  });
+};
 
 const isTopLevelActionToken = (structure: string, token: SourceToken): boolean =>
   structure.charAt(token.start).trim() !== '' &&
@@ -2861,36 +2933,17 @@ const hasNativeGovernedClientWrapper = (state: BoundaryCheckState, module: Sourc
 };
 
 const governedReadClientLocation = (
-  state: BoundaryCheckState,
   owner: string,
   target: string,
-  appId: string,
   slug: string,
-): { readonly apiFile: string; readonly contractImport: string; readonly gatewayFile: string } | undefined => {
-  const native = {
-    apiFile: `${owner}/shared/apis/${slug}.ts`,
-    contractImport: `../../shared/apis/${slug}.ts`,
-    gatewayFile: `${owner}/src/api/action-gateway.ts`,
-  };
-  if (target === `${owner}/src/api/${slug}-client.ts`) {
-    return native;
-  }
-  const moduleId = state.ownershipPackages.get(owner)?.metadata.modernjs?.ontosModule?.moduleId;
-  const published =
-    moduleId === undefined ? undefined : resolvePublishedOwnerReadClient(state.sourceMap, owner, appId, moduleId, slug);
-  if (
-    published?.client.sourcePath !== target ||
-    !hasCachedCompleteModuleApiSeam(state, `${owner}/shared/api.ts`, appId)
-  ) {
-    return undefined;
-  }
-  const relativeImport = nodePath.posix.relative(nodePath.posix.dirname(target), published.contract.sourcePath);
-  return {
-    apiFile: published.contract.sourcePath,
-    contractImport: relativeImport.startsWith('.') ? relativeImport : `./${relativeImport}`,
-    gatewayFile: `${published.client.packagePath}/src/api/action-gateway.ts`,
-  };
-};
+): { readonly apiFile: string; readonly contractImport: string; readonly gatewayFile: string } | undefined =>
+  target === `${owner}/src/api/${slug}-client.ts`
+    ? {
+        apiFile: `${owner}/shared/apis/${slug}.ts`,
+        contractImport: `../../shared/apis/${slug}.ts`,
+        gatewayFile: `${owner}/src/api/action-gateway.ts`,
+      }
+    : undefined;
 
 const hasGovernedClientOperation = (
   state: BoundaryCheckState,
@@ -2911,7 +2964,7 @@ const hasGovernedClientOperation = (
   if (name !== publicOperation && name !== authorizedOperation) {
     return false;
   }
-  const location = governedReadClientLocation(state, owner, target, appId, slug);
+  const location = governedReadClientLocation(owner, target, slug);
   if (location === undefined) {
     return false;
   }
@@ -3817,7 +3870,7 @@ const hasImmediateOwnerContract = (
   nativeApi: boolean,
 ): boolean =>
   dependencyDeclared &&
-  (hasPublishedGeneratedContractShim(state.sourceMap, target, state.sourceMap.get(target) ?? '') ||
+  (hasPublishedGeneratedActionContractShim(state.sourceMap, target, state.sourceMap.get(target) ?? '') ||
     (!clientRole && !nativeApi && isImmutablePublicContract(state, target)) ||
     isApprovedCompositionClient(state, consumer, specifier, target));
 
@@ -4358,7 +4411,7 @@ const requiresModuleApiScaffold = (sourceMap: ReadonlyMap<string, string>, file:
   !hasGeneratedGovernedContributionHeader(source) &&
   !isGeneratedActionHttpContract(sourceMap, file, source) &&
   !isGeneratedDomainProblemSchema(file, source) &&
-  !hasPublishedGeneratedContractShim(sourceMap, file, source);
+  !hasPublishedGeneratedActionContractShim(sourceMap, file, source);
 
 const validateVerticalApiSource = (state: BoundaryCheckState, file: string, source: string) =>
   Effect.gen(function* validateVerticalApiSourceEffect() {
@@ -4667,6 +4720,12 @@ const validateProductionSource = (state: BoundaryCheckState, file: string, sourc
     const importedModuleSpecifiers = readImportedModuleSpecifiers(source);
     if (SOURCE_EXTENSIONS.has(nodePath.extname(file))) {
       yield* validateResolvedOwnerImports(state, file, importedModuleSpecifiers);
+      for (const specifier of undeclaredPackageReadImports(state.sourceMap, file, importedModuleSpecifiers)) {
+        yield* fail(
+          file,
+          `${specifier} is a package read: declare its contract package in this package's dependencies`,
+        );
+      }
     }
     yield* validateVerticalSource(state, file, source, importedModuleSpecifiers);
     yield* validateGeneralSource(file, source, importedModuleSpecifiers);

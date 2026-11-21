@@ -9,7 +9,6 @@ import {
   hasValidGovernedHttpCompositionRoot,
   hasOwnerLocalReadServiceFactory,
   hasOwnerLocalReadServiceFactoryResult,
-  hasPublishedGeneratedContractShim,
   hasGeneratedGovernedServerContract,
 } from '../generated-governed-http-boundary.mts';
 import {
@@ -36,7 +35,7 @@ import {
   INVENTORY_DEPLOYMENT_ID,
   INVENTORY_PACKAGE_SPECIFIER,
   INVENTORY_MODULE_ID,
-  STOCK_LIST_PUBLISHED_SOURCE,
+  STOCK_LIST_CLIENT_CONTRACT_IMPORT,
   NATIVE_HTTP_SOURCE_IMPORT,
   FAKE_HTTP_SOURCE_IMPORT,
   CORE_RUNTIME_SOURCE_IMPORT,
@@ -811,17 +810,23 @@ export const factory = Effect.fn('factory')(function* services(transaction: Scop
 });
 
 it.live(
-  'resolves an exact published contract shim with its unchanged owner-native client and rejects provenance or executable escapes',
+  'checks a read published from its contract package with no owner file and rejects every owner forwarder or broken claim',
   () =>
-    Effect.gen(function* publishedContractWithOwnerClient() {
+    Effect.gen(function* publishedPackageRead() {
       const root = yield* makeFixture();
       yield* writeGovernedModuleApi(root);
-      const contractFile = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
-      const published = STOCK_LIST_PUBLISHED_SOURCE;
-      const packageFile = 'packages/inventory-public-contracts/package.json';
-      const contract = yield* Effect.promise(() => readFile(path.join(root, contractFile), 'utf-8'));
+      const owner = INVENTORY_VERTICAL_PATH;
+      const contractPackage = 'packages/inventory-public-contracts';
+      const specifier = '@app/inventory-public-contracts/stock-list';
+      const ownerContract = `${owner}/shared/apis/stock-list.ts`;
+      const ownerClient = `${owner}/src/api/stock-list-client.ts`;
+      const packageFile = `${contractPackage}/package.json`;
+      const readText = (file: string) => Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
       const metadata = {
-        exports: { './stock-list': './src/stock-list.ts' },
+        exports: {
+          './stock-list': './src/apis/stock-list.ts',
+          './stock-list/client': './src/api/stock-list-client.ts',
+        },
         name: '@app/inventory-public-contracts',
         ontosContractOwner: {
           appId: INVENTORY_DEPLOYMENT_ID,
@@ -830,29 +835,56 @@ it.live(
           packageName: INVENTORY_PACKAGE_SPECIFIER,
         },
       };
-      const shim = `${MODULE_API_HEADER}// An ordinary ownership comment does not carry executable capabilities.\nexport * from '@app/inventory-public-contracts/stock-list';\n`;
-      yield* write(root, published, contract);
+      const contract = yield* readText(ownerContract);
+      const client = yield* readText(ownerClient);
+      yield* write(root, `${contractPackage}/src/apis/stock-list.ts`, contract);
+      yield* write(
+        root,
+        `${contractPackage}/src/api/stock-list-client.ts`,
+        client.replaceAll(STOCK_LIST_CLIENT_CONTRACT_IMPORT, '../apis/stock-list.ts'),
+      );
+      yield* write(
+        root,
+        `${contractPackage}/src/api/action-gateway.ts`,
+        yield* readText(`${owner}/src/api/action-gateway.ts`),
+      );
       yield* write(root, packageFile, JSON.stringify(metadata));
-      yield* write(root, contractFile, shim);
+      yield* Effect.promise(() => Promise.all([ownerContract, ownerClient].map((file) => rm(path.join(root, file)))));
+      for (const [file, from, to] of [
+        [`${owner}/shared/api.ts`, './apis/stock-list.ts', specifier],
+        [`${owner}/vertical.manifest.ts`, './shared/apis/stock-list.ts', specifier],
+        [`${owner}/vertical.registration.ts`, './src/api/stock-list-client.ts', `${specifier}/client`],
+        [`${owner}/api/stock-list-read-server.ts`, STOCK_LIST_SERVER_CONTRACT_IMPORT, specifier],
+      ] as const) {
+        const source = yield* readText(file);
+        expect(source, file).toContain(from);
+        yield* write(root, file, source.replaceAll(from, to));
+      }
+      yield* checkModuleEntrypointBoundaries(root);
+      const shim = `${MODULE_API_HEADER}// An ordinary ownership comment does not carry executable capabilities.\nexport * from '${specifier}';\n`;
+      for (const [file, invalid] of [
+        [ownerContract, shim],
+        [ownerContract, `${shim}export const mutable = true;`],
+        [ownerContract, shim.replace('export *', "import { runtime } from './private.ts'; export *")],
+        [ownerContract, shim.replace(specifier, '@app/private-implementation/stock-list')],
+        [
+          ownerContract,
+          shim.replace(
+            '// An ordinary ownership comment does not carry executable capabilities.',
+            '// @ontos-public-contract @app/other/stock-list',
+          ),
+        ],
+        [ownerClient, `${MODULE_API_HEADER}export * from '${specifier}/client';\n`],
+      ] as const) {
+        yield* write(root, file, invalid);
+        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+        expect(Exit.isFailure(result), invalid).toBe(true);
+        yield* Effect.promise(() => rm(path.join(root, file)));
+      }
       yield* checkModuleEntrypointBoundaries(root);
       for (const invalid of [
-        `${shim}export const mutable = true;`,
-        shim.replace('export *', 'export let capability; export *'),
-        shim.replace('export *', "import { runtime } from './private.ts'; export *"),
-        shim.replace('@app/inventory-public-contracts/stock-list', '@app/private-implementation/stock-list'),
-        shim.replace(
-          '// An ordinary ownership comment does not carry executable capabilities.',
-          '// @ontos-public-contract @app/other/stock-list',
-        ),
-      ]) {
-        yield* write(root, contractFile, invalid);
-        const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-        expect(Exit.isFailure(result)).toBe(true);
-      }
-      yield* write(root, contractFile, shim);
-      for (const invalid of [
         { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleId: 'other.owner' } },
-        { ...metadata, exports: { './stock-list': '../outside.ts' } },
+        { ...metadata, exports: { ...metadata.exports, './stock-list': '../outside.ts' } },
         { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
       ]) {
         yield* write(root, packageFile, JSON.stringify(invalid));
@@ -947,14 +979,12 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     );
     const sources = new Map(trees.flat());
     const shared = PRICING_SHARED_API_PATH;
-    const shimFile = 'verticals/pricing/shared/apis/quotation-verification.ts';
+    const ownerContractFile = 'verticals/pricing/shared/apis/quotation-verification.ts';
     const manifestFile = 'verticals/pricing/vertical.manifest.ts';
     const registrationFile = 'verticals/pricing/vertical.registration.ts';
     const packageFile = 'packages/pricing-contracts/package.json';
     const targetFile = 'packages/pricing-contracts/src/apis/quotation-verification.ts';
-    const shim = sources.get(shimFile) ?? '';
-    expect(shim.startsWith(MODULE_API_HEADER)).toBe(false);
-    expect(hasPublishedGeneratedContractShim(sources, shimFile, shim)).toBe(true);
+    expect(sources.has(ownerContractFile)).toBe(false);
     const rootSource = sources.get(shared) ?? '';
     const handler = sources.get(PRICING_HANDLER_PATH) ?? '';
     const headerAnnotation = ".annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })";
@@ -1138,8 +1168,13 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
       expect(acceptsFactory(new Map([...sources, [file, invalid]])), invalid).toBe(false);
     }
     const invalidSources: readonly (readonly [string, string])[] = [
-      [shimFile, `${shim}\nexport const runtime = true;`],
-      [shimFile, shim.replace('@app/pricing-contracts/quotation-verification', '@app/pricing/src/private')],
+      // The forwarder the owner kept before the read was published from its package alone, and its escapes.
+      [ownerContractFile, "export * from '@app/pricing-contracts/quotation-verification';"],
+      [
+        ownerContractFile,
+        "export * from '@app/pricing-contracts/quotation-verification';\nexport const runtime = true;",
+      ],
+      [ownerContractFile, "export * from '@app/pricing/src/private';"],
       [
         manifestFile,
         (sources.get(manifestFile) ?? '').replace("'quotation-verification': QuotationVerificationApi,", ''),
@@ -1147,7 +1182,7 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
       [
         registrationFile,
         (sources.get(registrationFile) ?? '').replace(
-          "'quotation-verification': () => import('./src/api/quotation-verification-client.ts'),",
+          "'quotation-verification': () => import('@app/pricing-contracts/quotation-verification/client'),",
           '',
         ),
       ],
