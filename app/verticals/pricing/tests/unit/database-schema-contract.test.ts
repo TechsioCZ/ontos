@@ -592,15 +592,15 @@ describe('Pricing Price database contract', () => {
       .filter(({ privileges }) => privileges.every((privilege) => privilege === 'select'))
       .map(({ table }) => table);
 
-    expect([...routineGrantBlock.matchAll(/^\s*'pricing\.[^']+',?$/gmu)]).toHaveLength(92);
+    expect([...routineGrantBlock.matchAll(/^\s*'pricing\.[^']+',?$/gmu)]).toHaveLength(94);
     expect(routineGrantBlock).toContain('pricing.read_price_group_source_prices_v1(uuid,uuid,jsonb)');
-    expect(tableGrants).toHaveLength(62);
+    expect(tableGrants).toHaveLength(64);
     expect({
       delete: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'delete')).length,
       insert: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'insert')).length,
       select: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'select')).length,
       update: tableGrants.filter(({ privileges }) => privileges.some((privilege) => privilege === 'update')).length,
-    }).toEqual({ delete: 1, insert: 35, select: 62, update: 5 });
+    }).toEqual({ delete: 1, insert: 37, select: 64, update: 5 });
     expect(governedTables).toEqual([
       'contractual_discount_action_invocation_receipts',
       'contractual_discount_revisions',

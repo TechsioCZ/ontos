@@ -55,6 +55,8 @@ export const PRICING_TABLE_INVENTORY = [
   'currency_support_schedule_revisions',
   'currency_support_value_revisions',
   'external_price_source_authority_grants',
+  'external_price_source_policies',
+  'external_price_source_policy_ends',
   'fee_action_invocation_receipts',
   'fee_set_heads',
   'fee_set_revisions',
@@ -1170,6 +1172,107 @@ export const externalPriceSourceAuthorityGrants = pricingSchema.table.withRLS(
     ),
     ...appendOnlyTenantLegalEntityRlsPolicies(
       'pricing_external_price_authority_scope',
+      table.tenantId,
+      table.legalEntityId,
+    ),
+  ],
+);
+
+/**
+ * Standing Pricing-owned source policies: one verified source authority and mapping contract is the Price source
+ * for every Price key of one commercial scope, currency and unit basis whose Price Group selector the coverage
+ * names. Rows are immutable; an end is a separate append-only fact, and overlapping coverage is refused.
+ */
+export const externalPriceSourcePolicies = pricingSchema.table.withRLS(
+  'external_price_source_policies',
+  {
+    policyId: uuid('policy_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    sourceAuthorityRef: text('source_authority_ref').notNull(),
+    sourceAuthorityVersion: text('source_authority_version').notNull(),
+    mappingContractRef: text('mapping_contract_ref').notNull(),
+    mappingContractVersion: text('mapping_contract_version').notNull(),
+    channelId: text('channel_id').notNull(),
+    marketId: text('market_id').notNull(),
+    currencyCode: text('currency_code').notNull(),
+    unitId: uuid('unit_id').notNull(),
+    unitQuantity: numeric('unit_quantity', { precision: 38, scale: 9 }).notNull(),
+    priceGroupCoverage: text('price_group_coverage').notNull(),
+    priceGroupId: uuid('price_group_id'),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+    verificationRef: text('verification_ref').notNull(),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }).notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('pricing_external_price_policies_scope_id_uk').on(table.tenantId, table.legalEntityId, table.policyId),
+    index('pricing_external_price_policies_coverage_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.channelId,
+      table.marketId,
+      table.currencyCode,
+      table.unitId,
+      table.effectiveFrom,
+    ),
+    check(
+      'pricing_external_price_policies_period_ck',
+      sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`,
+    ),
+    check(
+      'pricing_external_price_policies_text_ck',
+      sql`${table.sourceAuthorityRef} = btrim(${table.sourceAuthorityRef}) and length(${table.sourceAuthorityRef}) between 1 and 300 and ${table.sourceAuthorityVersion} = btrim(${table.sourceAuthorityVersion}) and length(${table.sourceAuthorityVersion}) between 1 and 300 and ${table.mappingContractRef} = btrim(${table.mappingContractRef}) and length(${table.mappingContractRef}) between 1 and 300 and ${table.mappingContractVersion} = btrim(${table.mappingContractVersion}) and length(${table.mappingContractVersion}) between 1 and 300 and ${table.verificationRef} = btrim(${table.verificationRef}) and length(${table.verificationRef}) between 1 and 300`,
+    ),
+    check(
+      'pricing_external_price_policies_scope_ck',
+      sql`${table.channelId} in ('B2C', 'B2B') and ${table.marketId} = btrim(${table.marketId}) and length(${table.marketId}) between 1 and 300 and ${table.marketId} <> '*' and ${table.currencyCode} ~ '^[A-Z]{3}$' and ${table.unitQuantity} > 0`,
+    ),
+    check(
+      'pricing_external_price_policies_group_ck',
+      sql`(${table.priceGroupCoverage} = 'PRICE_GROUP' and ${table.priceGroupId} is not null) or (${table.priceGroupCoverage} in ('NO_GROUP', 'ANY_PRICE_GROUP') and ${table.priceGroupId} is null)`,
+    ),
+    ...appendOnlyTenantLegalEntityRlsPolicies(
+      'pricing_external_price_policies_scope',
+      table.tenantId,
+      table.legalEntityId,
+    ),
+  ],
+);
+
+/** The one end of a standing source policy: from `effectiveTo` the policy no longer authorizes any Price key. */
+export const externalPriceSourcePolicyEnds = pricingSchema.table.withRLS(
+  'external_price_source_policy_ends',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    policyId: uuid('policy_id').notNull(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }).notNull(),
+    verificationRef: text('verification_ref').notNull(),
+    endedAt: timestamp('ended_at', { withTimezone: true }).notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.policyId],
+      name: 'pricing_external_price_policy_ends_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.policyId],
+      foreignColumns: [
+        externalPriceSourcePolicies.tenantId,
+        externalPriceSourcePolicies.legalEntityId,
+        externalPriceSourcePolicies.policyId,
+      ],
+      name: 'pricing_external_price_policy_ends_policy_fk',
+    }),
+    check(
+      'pricing_external_price_policy_ends_text_ck',
+      sql`${table.verificationRef} = btrim(${table.verificationRef}) and length(${table.verificationRef}) between 1 and 300 and ${table.effectiveTo} >= ${table.endedAt}`,
+    ),
+    ...appendOnlyTenantLegalEntityRlsPolicies(
+      'pricing_external_price_policy_ends_scope',
       table.tenantId,
       table.legalEntityId,
     ),
@@ -3444,6 +3547,8 @@ export const PRICING_TABLES = [
   currencySupportScheduleRevisions,
   currencySupportValueRevisions,
   externalPriceSourceAuthorityGrants,
+  externalPriceSourcePolicies,
+  externalPriceSourcePolicyEnds,
   feeActionInvocationReceipts,
   feeSetHeads,
   feeSetRevisions,

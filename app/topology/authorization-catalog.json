@@ -12793,6 +12793,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.pricing.external-price-source-policy.manage",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "external-price-source-policy",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.manage-external-price-source-policy",
+            "moduleKey": "commerce.pricing",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.pricing.price-group-source-prices.read",
             "kind": "read",
             "modes": [
