@@ -1466,9 +1466,9 @@ for (const [variant, file, files] of [
   ['a .cjs source', 'verticals/alpha/src/b.cjs', {}],
   ['a .js source of a commonjs package', 'verticals/alpha/src/b.js', commonJsAlpha],
 ] as const) {
-  it.live(`takes every direct call of a helper's name in ${variant} as its call, outside its block too`, () =>
+  it.live(`admits no helper in ${variant}, so a block function's load stays computed`, () =>
     Effect.gen(function* blockFunction() {
-      expect(yield* freezeViolations({ ...files, [file]: blockHelper })).toEqual(betaRuntimeEdge(`${file}:7`));
+      expect(yield* freezeViolations({ ...files, [file]: blockHelper })).toEqual([computedLoad(file, [3])]);
     }),
   );
 }
@@ -1501,6 +1501,34 @@ it.live('keeps the load of a helper in a file with a with statement computed', (
     ).toEqual([computedLoad(file, [4])]);
   }),
 );
+
+/** Sloppy CommonJS helpers whose caller reaches the loader with a target no call of theirs passes. */
+const callerEscapes: readonly (readonly [form: string, source: string, line: number])[] = [
+  [
+    'hook.caller',
+    "function load(p) {\n  hook();\n  return require(p);\n}\nfunction hook() {\n  if (!hook.done) {\n    hook.done = 1;\n    hook.caller('@app/beta');\n  }\n}\nmodule.exports = load('effect');\n",
+    3,
+  ],
+  [
+    'arguments.callee.caller',
+    "function load(p) {\n  hook();\n  return require(p);\n}\nfunction hook() {\n  if (!arguments.callee.done) {\n    arguments.callee.done = 1;\n    arguments.callee.caller('@app/beta');\n  }\n}\nmodule.exports = load('effect');\n",
+    3,
+  ],
+  [
+    'a caller kept for later',
+    "let read;\nfunction remember() {\n  read = remember.caller;\n}\nfunction load(p) {\n  remember();\n  return require(p);\n}\nload('node:path');\nread('../../beta/package.json');\n",
+    7,
+  ],
+];
+
+for (const [form, source, line] of callerEscapes) {
+  it.live(`admits no helper in CommonJS, so a load reached through ${form} stays computed`, () =>
+    Effect.gen(function* callerEscape() {
+      const file = 'verticals/alpha/src/b.cjs';
+      expect(yield* freezeViolations({ [file]: source })).toEqual([computedLoad(file, [line])]);
+    }),
+  );
+}
 
 it.live('resolves the literals a same-file helper passes to its loader, and counts any other helper as computed', () =>
   Effect.gen(function* helperParameter() {

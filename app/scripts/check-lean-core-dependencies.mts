@@ -1761,7 +1761,7 @@ const forwardedParameter = (
 
 /** A `with` statement or an `eval` anywhere lets any name of the file reach anything. */
 const admitsHelpers = (analysis: LoadAnalysis): boolean =>
-  analysis.withStatements.length === 0 && !analysis.names.has('eval');
+  !analysis.commonJs && analysis.withStatements.length === 0 && !analysis.names.has('eval');
 
 /**
  * The targets of a load whose argument is a parameter of the function around it: the literal each call of
