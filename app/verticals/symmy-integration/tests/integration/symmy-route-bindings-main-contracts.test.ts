@@ -7,7 +7,7 @@ import { expect, it } from 'effect-rstest';
 import { deriveSymmyRouteBindings } from '../../src/ops/symmy-route-bindings.ts';
 import type { SymmyRouteContract } from '../../src/ops/symmy-route-bindings.ts';
 import { symmyRouteInventoryOf } from '../../src/ops/symmy-route-enrollment.ts';
-import type { SymmyEnrollmentRouteKey } from '../../src/ops/symmy-route-enrollment.ts';
+import type { SymmyEnrollmentRouteKey, SymmyRouteInventoryOperation } from '../../src/ops/symmy-route-enrollment.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const decodeContracts = Schema.decodeUnknownEffect(
@@ -47,10 +47,14 @@ const mainContracts = Effect.gen(function* mainContracts() {
 });
 
 /**
- * The binding plan of a company route of this kind that enrolls only the operations every enrollment of it enrolls:
- * any enrollment of the route reaches these calls and reads.
+ * The binding plan of a company route of this kind that enrolls the operations `enrolls` picks besides the ones every
+ * enrollment of it enrolls; with none picked, any enrollment of the route reaches these calls and reads.
  */
-const requiredOnlyPlan = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyRouteContract[]) => {
+const requiredOnlyPlan = (
+  routeKey: SymmyEnrollmentRouteKey,
+  contracts: readonly SymmyRouteContract[],
+  enrolls: (operation: SymmyRouteInventoryOperation) => boolean = () => false,
+) => {
   const found = symmyRouteInventoryOf(routeKey);
   if (!Option.isOption(found) || Option.isNone(found)) {
     throw new Error(`expected the ${routeKey} inventory`);
@@ -59,43 +63,47 @@ const requiredOnlyPlan = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly
   return deriveSymmyRouteBindings({
     companyScoped: true,
     contracts,
-    enrolled: inventory.operations.filter(({ required }) => required),
+    enrolled: inventory.operations.filter((operation) => operation.required || enrolls(operation)),
     inventory,
   });
 };
-/** The refusals of that route: any enrollment of it is refused for each of them. */
-const requiredOnly = (routeKey: SymmyEnrollmentRouteKey, contracts: readonly SymmyRouteContract[]) =>
-  requiredOnlyPlan(routeKey, contracts).refusals.map(({ code, detail }) => `${code}: ${detail}`);
-
-/** The Privacy intake check reached by both routes, whose two organization requirements Privacy registers no call for. */
-const intakeParty =
-  'call_not_declared: The installed privacy.core requires party.registry party.registry.api.organization-record-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-party) and registers no call to it under privacy.core.source-processing-check';
-const intakeProfile =
-  'call_not_declared: The installed privacy.core requires commerce.customer-context commerce.customer-context.api.customer-profile-organization-ico-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-profile) and registers no call to it under privacy.core.source-processing-check';
-const intakePartyRecovery =
-  'call_not_declared: The installed privacy.core requires party.registry party.registry.api.organization-record-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-party) and registers no recovery call to it under privacy.core.source-processing-check';
-const intakeProfileRecovery =
-  'call_not_declared: The installed privacy.core requires commerce.customer-context commerce.customer-context.api.customer-profile-organization-ico-facts@1 for privacy.core.api.source-processing-eligibility@1 (requirement privacy.core.requirement.customer-intake-organization-profile) and registers no recovery call to it under privacy.core.source-processing-check';
+/** The refusals of that route, live and on recovery: any such enrollment of it is refused for each of them. */
+const requiredOnly = (
+  routeKey: SymmyEnrollmentRouteKey,
+  contracts: readonly SymmyRouteContract[],
+  enrolls?: (operation: SymmyRouteInventoryOperation) => boolean,
+) => requiredOnlyPlan(routeKey, contracts, enrolls).refusals.map(({ code, detail }) => `${code}: ${detail}`);
+/** The customers route operations of these entrypoints. */
+const enrolling =
+  (...entrypointKeys: readonly string[]) =>
+  ({ entrypointKey }: SymmyRouteInventoryOperation) =>
+    entrypointKeys.includes(entrypointKey);
+/** A PERSON customer: the Party create and the Retail profile. */
+const personPlan = ['party.registry.create-party', 'commerce.customer-context.ensure-retail-customer-profile'];
+/** An ORGANIZATION customer: the Party create, the Counterparty onboarding and the purchasing profile. */
+const organizationPlan = [
+  'party.registry.create-party',
+  'party.registry.counterparty-customer-onboard',
+  'commerce.customer-context.create-counterparty-purchasing-profile',
+];
+const contact = 'party.registry.add-contact-point';
+const address = 'commerce.customer-context.add-saved-address';
+const companyIco = 'commerce.customer-context.change-organization-customer-profile-ico';
 
 it.effect(
-  "refuses the customers and membership routes on main's contracts by each requirement whose owner registers no call, and enrolls the customer groups route with its definition read",
+  "enrolls the customers route for a PERSON and an ORGANIZATION with contacts, addresses and the company ICO, and the membership route, on main's contracts, and the customer groups route with its definition read",
   () =>
-    Effect.gen(function* refusedOnMain() {
+    Effect.gen(function* enrolledOnMain() {
       const contracts = yield* mainContracts;
-      expect(requiredOnly('customersBatch', contracts)).toEqual([
-        intakeParty,
-        intakeProfile,
-        'call_not_declared: The installed party.registry requires privacy.core privacy.core.api.organization-business-applicability@1 for party.registry.api.party-source-effect-receipt@1 (requirement party.registry.requirement.api.party-source-effect-receipt-organization-business-privacy) and registers no recovery call to it under party.registry.source-read',
-        intakePartyRecovery,
-        intakeProfileRecovery,
-      ]);
-      expect(requiredOnly('customerGroupCustomersBatch', contracts)).toEqual([
-        intakeParty,
-        intakeProfile,
-        'call_not_declared: The installed privacy.core requires integration.symmy integration.symmy.api.symmy-source-organization-facts@1 for privacy.core.api.organization-business-applicability@1 (requirement privacy.core.requirement.organization-business-source-facts) and registers no recovery call to it under privacy.core.organization-business-check',
-        intakePartyRecovery,
-        intakeProfileRecovery,
-      ]);
+      expect(requiredOnly('customersBatch', contracts)).toEqual([]);
+      // Every owner a customer plan reaches registers each call its requirements name, live and on recovery.
+      expect(requiredOnly('customersBatch', contracts, enrolling(...personPlan))).toEqual([]);
+      expect(requiredOnly('customersBatch', contracts, enrolling(...personPlan, contact, address))).toEqual([]);
+      expect(requiredOnly('customersBatch', contracts, enrolling(...organizationPlan))).toEqual([]);
+      expect(
+        requiredOnly('customersBatch', contracts, enrolling(...organizationPlan, companyIco, contact, address)),
+      ).toEqual([]);
+      expect(requiredOnly('customerGroupCustomersBatch', contracts)).toEqual([]);
       // The Shell reads each group code's current definition with the integration principal before it admits.
       const groups = requiredOnlyPlan('customerGroupsBatch', contracts);
       expect(groups.refusals).toEqual([]);
