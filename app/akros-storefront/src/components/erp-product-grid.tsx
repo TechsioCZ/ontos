@@ -66,6 +66,14 @@ export function ErpProductGrid({ products }: { products: readonly ErpProduct[] }
               <ProductCard.Price data-sf-product-price className="mt-auto mb-0 text-center">
                 {summary.priceLabel}
               </ProductCard.Price>
+              {summary.yourPrice && (
+                <p
+                  className="m-0 text-center text-xs text-(--color-fg-secondary)"
+                  data-sf-erp-your-price=""
+                >
+                  {erpCopy.yourPrice}
+                </p>
+              )}
               <p className="sf-product-card__description m-0 text-center text-xs text-(--color-fg-secondary)">
                 {erpCopy.orderNote}
               </p>

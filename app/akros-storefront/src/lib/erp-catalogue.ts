@@ -1,8 +1,9 @@
 // Page model of the ERP-imported products: Catalog's product page, Inventory's on-hand page and Pricing's catalogue
-// page prices, read as they answer. Nothing is invented: a variant without a found Price is „Cena na dotaz“, a figure
-// that is not an exact ON_HAND total is „Dostupnost ověřujeme“, a variant without SKU has an empty SKU, and the image is
-// the shop's no-image placeholder. Imported Products stay DRAFT with WORK_IN_PROGRESS Variants, so every Variant that is
-// not RETIRED is shown.
+// page prices, read as they answer. A Price of the signed-in customer's own Price Group carries the quiet „Vaše cena“;
+// every other found Price is the no-group Price. Nothing is invented: a variant without a found Price is „Cena na
+// dotaz“, a figure that is not an exact ON_HAND total is „Dostupnost ověřujeme“, a variant without SKU has an empty
+// SKU, and the image is the shop's no-image placeholder. Imported Products stay DRAFT with WORK_IN_PROGRESS Variants, so
+// every Variant that is not RETIRED is shown.
 import { Predicate } from "effect";
 import { imagePlaceholder } from "@/ontos/media-path";
 
@@ -71,6 +72,8 @@ export type CatalogPagePrices =
         | {
             readonly _tag: "PRICE_FOUND";
             readonly catalogSelection: { readonly variantRef: OwnerRef };
+            /** `PRICE_GROUP` when the signed-in customer's own Price Group priced the variant. */
+            readonly priceGroupSelector: { readonly kind: string };
             readonly priceRevision: {
               readonly monetaryAmount: { readonly amount: string; readonly currencyCode: string };
             };
@@ -81,7 +84,13 @@ export type CatalogPagePrices =
   | { readonly _tag: "CURRENCY_SUPPORT_NOT_CURRENT" };
 
 export type ErpPrice =
-  | { readonly kind: "price"; readonly amount: string; readonly currencyCode: string }
+  | {
+      readonly kind: "price";
+      readonly amount: string;
+      readonly currencyCode: string;
+      /** The signed-in customer's own Price Group priced it (`erpCopy.yourPrice`). */
+      readonly yours: boolean;
+    }
   | { readonly kind: "on-request" };
 export type ErpStock =
   | { readonly kind: "in-stock"; readonly quantity: string }
@@ -115,6 +124,7 @@ export const erpCopy = {
   showAll: "Zobrazit vše",
   orderNote: "Objednání této položky připravujeme.",
   priceOnRequest: "Cena na dotaz",
+  yourPrice: "Vaše cena",
   excludingVat: "bez DPH",
   from: "od",
   inStock: (quantity: string, locale: string) =>
@@ -168,7 +178,12 @@ const pricesByVariant = (prices: CatalogPagePrices | undefined): Map<string, Erp
   for (const price of prices.prices) {
     if (Predicate.isTagged(price, "PRICE_FOUND") && "priceRevision" in price) {
       const { amount, currencyCode } = price.priceRevision.monetaryAmount;
-      found.set(keyOf(price.catalogSelection.variantRef), { kind: "price", amount, currencyCode });
+      found.set(keyOf(price.catalogSelection.variantRef), {
+        kind: "price",
+        amount,
+        currencyCode,
+        yours: price.priceGroupSelector.kind === "PRICE_GROUP",
+      });
     }
   }
   return found;
@@ -263,7 +278,14 @@ export const erpAvailabilityStatus = (stock: ErpStock): "available" | "unavailab
       ? "unavailable"
       : "unknown";
 
-/** One card: a single variant shows its own price and stock; several show the lowest found price „od“. */
+/** Whether a price is the signed-in customer's own (shown with the quiet `erpCopy.yourPrice`). */
+export const isYourPrice = (price: ErpPrice | undefined): boolean =>
+  price?.kind === "price" && price.yours;
+
+/**
+ * One card: a single variant shows its own price and stock; several show the lowest found price „od“. `yourPrice`
+ * says whether the shown price is the signed-in customer's own Price Group's.
+ */
 export function erpCardSummary(product: ErpProduct, locale: string) {
   const [only] = product.variants;
   if (product.variants.length === 1 && only !== undefined)
@@ -271,6 +293,7 @@ export function erpCardSummary(product: ErpProduct, locale: string) {
       priceLabel: erpPriceLabel(only.price, locale),
       stockLabel: erpStockLabel(only.stock, locale),
       stockTone: erpStockTone(only.stock),
+      yourPrice: isYourPrice(only.price),
     };
   const priced = product.variants.flatMap((variant) =>
     variant.price.kind === "price" ? [variant.price] : [],
@@ -288,5 +311,6 @@ export function erpCardSummary(product: ErpProduct, locale: string) {
         : `${erpCopy.from} ${erpPriceLabel(lowest, locale)}`,
     stockLabel: stock.kind === "in-stock" ? erpCopy.inStockShort : erpStockLabel(stock, locale),
     stockTone: erpStockTone(stock),
+    yourPrice: isYourPrice(lowest),
   };
 }
