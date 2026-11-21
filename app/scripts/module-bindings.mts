@@ -30,9 +30,13 @@ export interface ModuleReference {
 
 export interface ModuleBindings {
   readonly bindings: readonly ModuleBinding[];
+  /** Each reference an inner scope binds (a parameter, a local declaration), to the identifier that declares it. */
+  readonly local: ReadonlyMap<Node, Node>;
   readonly parents: ReadonlyMap<Node, Node>;
   readonly program: Program;
-  /** Every reference of the file that no inner scope binds, in source order. */
+  /** Every reference of the file that no inner scope binds, by its identifier. */
+  readonly referenceOf: ReadonlyMap<Node, ModuleReference>;
+  /** The same references, in source order. */
   readonly references: readonly ModuleReference[];
 }
 
@@ -72,7 +76,7 @@ const runtimeTypeScript = new Set([
 const functionScopes = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression']);
 
 /** The identifiers a binding pattern declares. */
-export const patternIdentifiers = (pattern: Node | null | undefined): readonly Node[] => {
+const patternIdentifiers = (pattern: Node | null | undefined): readonly Node[] => {
   if (pattern?.type === 'Identifier') {
     return [pattern];
   }
@@ -108,10 +112,8 @@ export const topLevelStatement = (bindings: ModuleBindings, node: Node): Node | 
   return current;
 };
 
-/** The nodes from node's parent up to the program, nearest first. */
-export const ancestorsOfNode = (bindings: ModuleBindings, node: Node): readonly Node[] => [
-  ...ancestors(bindings.parents, node),
-];
+/** The line of a source position, from 1. */
+export const lineOf = (source: string, index: number): number => source.slice(0, index).split('\n').length;
 
 /** Whether inner lies inside outer (or is outer). */
 export const isWithin = (inner: Node, outer: Node): boolean => inner.start >= outer.start && inner.end <= outer.end;
@@ -354,6 +356,12 @@ const lookupOf = (parents: ReadonlyMap<Node, Node>, identifier: Node): Lookup =>
   return 'value';
 };
 
+/** Whether a node stands in a type (an annotation, `typeof`, a type alias), where it composes no value. */
+export const isInType = (bindings: ModuleBindings, node: Node): boolean =>
+  [...ancestors(bindings.parents, node)].some(
+    (ancestor) => ancestor.type.startsWith('TS') && !runtimeTypeScript.has(ancestor.type),
+  );
+
 const isIn = (lookup: Lookup, namespaces: readonly BindingNamespace[]): boolean =>
   lookup === 'namespace' || namespaces.includes(lookup);
 
@@ -443,18 +451,26 @@ export const moduleBindings = (file: string, source: string): ModuleBindings | u
   const bindings = (scopes.get(program) ?? []).flatMap(
     (declaration) => moduleBinding(parents, program, declaration) ?? [],
   );
+  const local = new Map<Node, Node>();
   const references = nodes.flatMap((node): readonly ModuleReference[] => {
     if (node.type !== 'Identifier' || declared.has(node) || isNameOnly(parents, node)) {
       return [];
     }
     const lookup = lookupOf(parents, node);
-    const bindsHere = (scope: Node): boolean =>
-      (scopes.get(scope) ?? []).some(
-        ({ identifier, namespaces }) =>
-          identifier.type === 'Identifier' && identifier.name === node.name && isIn(lookup, namespaces),
-      );
-    if ([...ancestors(parents, node)].some((ancestor) => ancestor !== program && bindsHere(ancestor))) {
-      return [];
+    for (const ancestor of ancestors(parents, node)) {
+      const declaration =
+        ancestor === program
+          ? undefined
+          : scopes
+              .get(ancestor)
+              ?.find(
+                ({ identifier, namespaces }) =>
+                  identifier.type === 'Identifier' && identifier.name === node.name && isIn(lookup, namespaces),
+              );
+      if (declaration !== undefined) {
+        local.set(node, declaration.identifier);
+        return [];
+      }
     }
     return [
       {
@@ -464,5 +480,414 @@ export const moduleBindings = (file: string, source: string): ModuleBindings | u
       },
     ];
   });
-  return { bindings, parents, program, references };
+  return {
+    bindings,
+    local,
+    parents,
+    program,
+    referenceOf: new Map(references.map((reference) => [reference.identifier, reference])),
+    references,
+  };
 };
+
+/**
+ * How a module graph names and reads modules. `target` gives the module a specifier of `importer` names (a file
+ * path for a relative specifier, else the specifier itself); `parsed` gives its bindings, `unparsable` when its
+ * source does not parse, and undefined for a module the graph does not read (a package, a missing file, a file
+ * outside the files the graph reads).
+ */
+export interface ModuleGraph {
+  readonly parsed: (target: string) => ModuleBindings | 'unparsable' | undefined;
+  readonly target: (importer: string, specifier: string) => string;
+}
+
+/** A module graph over the sources `source` gives, each parsed once. */
+export const moduleGraph = (
+  target: (importer: string, specifier: string) => string,
+  source: (target: string) => string | undefined,
+): ModuleGraph => {
+  const cache = new Map<string, ModuleBindings | undefined>();
+  return {
+    parsed: (file) => {
+      const text = source(file);
+      if (text !== undefined && !cache.has(file)) {
+        cache.set(file, moduleBindings(file, text));
+      }
+      return text === undefined ? text : (cache.get(file) ?? 'unparsable');
+    },
+    target,
+  };
+};
+
+/** An export that ends on a declaration of a module the graph reads, one that is not only another name for a binding. */
+export interface DeclaredExport {
+  readonly bindings: ModuleBindings;
+  readonly file: string;
+  readonly kind: 'declared';
+  /** The declared identifier, or the expression of an `export default` or `export =`. */
+  readonly node: Node;
+  /** Every file the export passes through, the one asked about first, `file` last. */
+  readonly trail: readonly string[];
+}
+
+/** An export that ends on a module the graph does not read: `name` of it, or `*` for the whole module. */
+export interface ForeignExport {
+  readonly kind: 'foreign';
+  readonly name: string;
+  /** The specifier of the last link, as written. */
+  readonly specifier: string;
+  /** Whether the name is only taken to come through an `export *` of the module, since nothing read exports it. */
+  readonly star: boolean;
+  readonly target: string;
+  readonly trail: readonly string[];
+}
+
+/** A whole module the graph reads, as `export * as`, `import * as` or `import x = require(…)` pass it on. */
+export interface NamespaceExport {
+  readonly file: string;
+  readonly kind: 'namespace';
+  readonly trail: readonly string[];
+}
+
+/** A link that cannot be followed: a file that does not parse, or a name no scope of the file declares. */
+export interface UnresolvedExport {
+  readonly file: string;
+  readonly kind: 'unresolved';
+  readonly reason: string;
+  readonly trail: readonly string[];
+}
+
+export type ExportOrigin = DeclaredExport | ForeignExport | NamespaceExport | UnresolvedExport;
+
+interface ExportStep {
+  readonly bindings: ModuleBindings;
+  readonly file: string;
+  readonly trail: readonly string[];
+}
+
+/** A link still to follow: what a binding is, what a reference resolves to, or what a file exports as a name. */
+interface BindingLink {
+  readonly binding: ModuleBinding;
+  readonly kind: 'binding';
+  readonly step: ExportStep;
+}
+
+interface ReferenceLink {
+  readonly identifier: Node;
+  readonly kind: 'reference';
+  readonly step: ExportStep;
+}
+
+interface NameLink {
+  readonly file: string;
+  readonly kind: 'name';
+  readonly name: string;
+  /** The files passed through before `file`. */
+  readonly trail: readonly string[];
+}
+
+type ExportLink = BindingLink | NameLink | ReferenceLink;
+
+const specifierName = (node: Node): string => {
+  if (node.type === 'Identifier') {
+    return node.name;
+  }
+  return node.type === 'Literal' ? String(node.value) : '';
+};
+
+/** The identifiers a top-level declaration declares. */
+const declaredIdentifiers = (declaration: Node | null): readonly Node[] => {
+  if (declaration?.type === 'VariableDeclaration') {
+    return declaration.declarations.flatMap((declarator) => patternIdentifiers(declarator.id));
+  }
+  return declaration !== null && 'id' in declaration && declaration.id?.type === 'Identifier' ? [declaration.id] : [];
+};
+
+/** A whole module: a namespace of a module the graph reads, else a foreign export of `*`. */
+const wholeModule = (graph: ModuleGraph, step: ExportStep, specifier: string): ExportOrigin => {
+  const target = graph.target(step.file, specifier);
+  return graph.parsed(target) === undefined
+    ? { kind: 'foreign', name: '*', specifier, star: false, target, trail: step.trail }
+    : { file: target, kind: 'namespace', trail: [...step.trail, target] };
+};
+
+/** `name` of the module `specifier` names: followed in a module the graph reads, else foreign. */
+const namedIn = (graph: ModuleGraph, step: ExportStep, specifier: string, name: string): ExportLink | ExportOrigin => {
+  const target = graph.target(step.file, specifier);
+  return graph.parsed(target) === undefined
+    ? { kind: 'foreign', name, specifier, star: false, target, trail: step.trail }
+    : { file: target, kind: 'name', name, trail: step.trail };
+};
+
+/** The binding a declaration is only another name for: `const B = A`, `type B = A`, `import B = A`. */
+const aliasedName = (parent: Node | undefined, identifier: Node): Node | undefined => {
+  // An annotated `const B: T = A` says more than another name for A does.
+  if (parent?.type === 'VariableDeclarator') {
+    const annotated =
+      identifier.type === 'Identifier' && identifier.typeAnnotation !== null && identifier.typeAnnotation !== undefined;
+    return parent.id === identifier && !annotated && parent.init?.type === 'Identifier' ? parent.init : undefined;
+  }
+  if (parent?.type === 'TSTypeAliasDeclaration') {
+    const aliased = parent.typeAnnotation;
+    return aliased.type === 'TSTypeReference' &&
+      aliased.typeName.type === 'Identifier' &&
+      aliased.typeArguments === null
+      ? aliased.typeName
+      : undefined;
+  }
+  return parent?.type === 'TSImportEqualsDeclaration' && parent.moduleReference.type === 'Identifier'
+    ? parent.moduleReference
+    : undefined;
+};
+
+/** A binding, followed while it is only another name: an import, an alias, `import B = require('…')`. */
+const bindingLinks = (graph: ModuleGraph, { binding, step }: BindingLink): readonly (ExportLink | ExportOrigin)[] => {
+  const { imported } = binding;
+  if (imported !== undefined) {
+    return [
+      imported.name === '*'
+        ? wholeModule(graph, step, imported.source)
+        : namedIn(graph, step, imported.source, imported.name),
+    ];
+  }
+  const parent = step.bindings.parents.get(binding.identifier);
+  if (parent?.type === 'TSImportEqualsDeclaration' && parent.moduleReference.type === 'TSExternalModuleReference') {
+    return [wholeModule(graph, step, parent.moduleReference.expression.value)];
+  }
+  const aliased = aliasedName(parent, binding.identifier);
+  return [
+    aliased === undefined
+      ? { bindings: step.bindings, file: step.file, kind: 'declared', node: binding.identifier, trail: step.trail }
+      : { identifier: aliased, kind: 'reference', step },
+  ];
+};
+
+const referenceLinks = ({ identifier, step }: ReferenceLink): readonly (ExportLink | ExportOrigin)[] => {
+  const bindings = step.bindings.referenceOf.get(identifier)?.bindings ?? [];
+  return bindings.length === 0
+    ? [
+        {
+          file: step.file,
+          kind: 'unresolved',
+          reason: `${specifierName(identifier)} names no binding of the file`,
+          trail: step.trail,
+        },
+      ]
+    : bindings.map((binding) => ({ binding, kind: 'binding', step }));
+};
+
+/** What one statement exports as `name`. */
+const statementLinks = (
+  graph: ModuleGraph,
+  step: ExportStep,
+  statement: Node,
+  name: string,
+): readonly (ExportLink | ExportOrigin)[] => {
+  if (statement.type === 'ExportNamedDeclaration') {
+    const { source } = statement;
+    const passed = statement.specifiers.flatMap((specifier): readonly (ExportLink | ExportOrigin)[] => {
+      if (specifierName(specifier.exported) !== name) {
+        return [];
+      }
+      return source === null
+        ? [{ identifier: specifier.local, kind: 'reference', step }]
+        : [namedIn(graph, step, source.value, specifierName(specifier.local))];
+    });
+    const declared = declaredIdentifiers(statement.declaration).flatMap((identifier) =>
+      specifierName(identifier) === name
+        ? step.bindings.bindings.filter((binding) => binding.identifier === identifier)
+        : [],
+    );
+    return [...passed, ...declared.map((binding): ExportLink => ({ binding, kind: 'binding', step }))];
+  }
+  if (
+    (statement.type === 'ExportDefaultDeclaration' || statement.type === 'TSExportAssignment') &&
+    name === 'default'
+  ) {
+    const exported = statement.type === 'ExportDefaultDeclaration' ? statement.declaration : statement.expression;
+    if (exported.type === 'Identifier') {
+      return [{ identifier: exported, kind: 'reference', step }];
+    }
+    const declared = declaredIdentifiers(exported).flatMap((identifier) =>
+      step.bindings.bindings.filter((binding) => binding.identifier === identifier),
+    );
+    return declared.length === 0
+      ? [{ bindings: step.bindings, file: step.file, kind: 'declared', node: exported, trail: step.trail }]
+      : declared.map((binding): ExportLink => ({ binding, kind: 'binding', step }));
+  }
+  return statement.type === 'ExportAllDeclaration' &&
+    statement.exported !== null &&
+    specifierName(statement.exported) === name
+    ? [wholeModule(graph, step, statement.source.value)]
+    : [];
+};
+
+/** What a file exports as a name: its own exports of it, or else what each `export *` of a read module passes on. */
+const nameLinks = (graph: ModuleGraph, { file, name, trail }: NameLink): readonly (ExportLink | ExportOrigin)[] => {
+  const here = [...trail, file];
+  const parsed = graph.parsed(file);
+  if (parsed === undefined || parsed === 'unparsable') {
+    return [{ file, kind: 'unresolved', reason: parsed === undefined ? 'is not read' : 'does not parse', trail: here }];
+  }
+  const step: ExportStep = { bindings: parsed, file, trail: here };
+  const explicit = parsed.program.body.flatMap((statement) => statementLinks(graph, step, statement, name));
+  if (explicit.length > 0 || name === 'default') {
+    return explicit;
+  }
+  // An `export *` passes on every name but `default` that the file does not export itself; one of a module the
+  // graph does not read is taken to pass it on only when nothing read does (`star`).
+  return parsed.program.body.flatMap((statement): readonly (ExportLink | ExportOrigin)[] => {
+    if (statement.type !== 'ExportAllDeclaration' || statement.exported !== null) {
+      return [];
+    }
+    const specifier = statement.source.value;
+    const target = graph.target(file, specifier);
+    return [
+      graph.parsed(target) === undefined
+        ? { kind: 'foreign', name, specifier, star: true, target, trail: here }
+        : { file: target, kind: 'name', name, trail: here },
+    ];
+  });
+};
+
+const followedLinks = (
+  graph: ModuleGraph,
+  link: BindingLink | ReferenceLink,
+): readonly (ExportLink | ExportOrigin)[] =>
+  link.kind === 'binding' ? bindingLinks(graph, link) : referenceLinks(link);
+
+const linkKey = (link: ExportLink): string => {
+  if (link.kind === 'name') {
+    return `${link.file}#${link.name}`;
+  }
+  const node = link.kind === 'binding' ? link.binding.identifier : link.identifier;
+  return `${link.step.file}@${node.start}:${link.kind}`;
+};
+
+const followedOrigins = (graph: ModuleGraph, start: ExportLink): readonly ExportOrigin[] => {
+  const origins: ExportOrigin[] = [];
+  const pending: ExportLink[] = [start];
+  const visited = new Set<string>();
+  for (let link = pending.pop(); link !== undefined; link = pending.pop()) {
+    const key = linkKey(link);
+    if (!visited.has(key)) {
+      visited.add(key);
+      const next = link.kind === 'name' ? nameLinks(graph, link) : followedLinks(graph, link);
+      for (const item of next) {
+        if (item.kind === 'binding' || item.kind === 'name' || item.kind === 'reference') {
+          pending.push(item);
+        } else {
+          origins.push(item);
+        }
+      }
+    }
+  }
+  const declared = origins.filter((origin) => origin.kind !== 'foreign' || !origin.star);
+  return declared.length > 0 ? declared : origins;
+};
+
+/**
+ * Where what `file` exports as `name` comes from, followed through re-exports (`export … from`, `export *`,
+ * `export * as`), an imported binding exported again under any name, and a declaration that is only another name
+ * for one binding (`const B = A`, `type B = A`, `import B = A`, `import B = require('…')`), to a declaration of
+ * a read module, a module the graph does not read, a whole module, or a link it cannot follow. Empty when `file`
+ * exports no `name`; a name that is a value and a type gives an origin for each; a cycle adds nothing.
+ */
+export const exportOrigins = (graph: ModuleGraph, file: string, name: string): readonly ExportOrigin[] =>
+  followedOrigins(graph, { file, kind: 'name', name, trail: [] });
+
+/** What a reference of `file` resolves to, followed as `exportOrigins` follows an export. */
+export const referenceOrigins = (graph: ModuleGraph, file: string, identifier: Node): readonly ExportOrigin[] => {
+  const bindings = graph.parsed(file);
+  return bindings === undefined || bindings === 'unparsable'
+    ? [{ file, kind: 'unresolved', reason: 'is not read', trail: [file] }]
+    : followedOrigins(graph, { identifier, kind: 'reference', step: { bindings, file, trail: [file] } });
+};
+
+/** Every name a file exports, and every `export *` of a module the graph does not read, whose names it cannot list. */
+export interface ModuleExports {
+  readonly names: readonly string[];
+  readonly opaque: readonly ForeignExport[];
+}
+
+const statementExportNames = (statement: Node): readonly string[] => {
+  if (statement.type === 'ExportAllDeclaration') {
+    return statement.exported === null ? [] : [specifierName(statement.exported)];
+  }
+  if (statement.type === 'ExportNamedDeclaration') {
+    return [
+      ...statement.specifiers.map((specifier) => specifierName(specifier.exported)),
+      ...declaredIdentifiers(statement.declaration).map(specifierName),
+    ];
+  }
+  return statement.type === 'ExportDefaultDeclaration' || statement.type === 'TSExportAssignment' ? ['default'] : [];
+};
+
+export const moduleExports = (graph: ModuleGraph, file: string): ModuleExports => {
+  const names = new Set<string>();
+  const opaque: ForeignExport[] = [];
+  const pending: (readonly [string, readonly string[]])[] = [[file, []]];
+  const visited = new Set<string>();
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const [current, trail] = next;
+    const parsed = graph.parsed(current);
+    if (parsed !== undefined && parsed !== 'unparsable' && !visited.has(current)) {
+      visited.add(current);
+      const here = [...trail, current];
+      for (const statement of parsed.program.body) {
+        // Only the file asked about passes on its `default`; an `export *` never does.
+        for (const exported of statementExportNames(statement)) {
+          if (current === file || exported !== 'default') {
+            names.add(exported);
+          }
+        }
+        if (statement.type === 'ExportAllDeclaration' && statement.exported === null) {
+          const target = graph.target(current, statement.source.value);
+          if (graph.parsed(target) === undefined) {
+            opaque.push({
+              kind: 'foreign',
+              name: '*',
+              specifier: statement.source.value,
+              star: true,
+              target,
+              trail: here,
+            });
+          } else {
+            pending.push([target, here]);
+          }
+        }
+      }
+    }
+  }
+  return { names: [...names], opaque };
+};
+
+/** A module specifier as a source writes it: the string literal, and the node that writes it. */
+export interface ModuleSpecifier {
+  readonly literal: Node;
+  readonly node: Node;
+  readonly specifier: string;
+}
+
+/**
+ * Every module specifier of a source, of any kind: a static import, an `export … from`, an `import()` expression, an
+ * `import('…')` type, a `require('…')` and an `import x = require('…')`.
+ */
+export const moduleSpecifiers = (bindings: ModuleBindings): readonly ModuleSpecifier[] =>
+  [...bindings.parents.keys()].flatMap((node): readonly ModuleSpecifier[] => {
+    let written: Node | null | undefined;
+    if (
+      node.type === 'ImportDeclaration' ||
+      node.type === 'ExportAllDeclaration' ||
+      node.type === 'ExportNamedDeclaration' ||
+      node.type === 'ImportExpression' ||
+      node.type === 'TSImportType'
+    ) {
+      written = node.source;
+    } else if (node.type === 'TSExternalModuleReference') {
+      written = node.expression;
+    } else if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require') {
+      [written] = node.arguments;
+    }
+    return written?.type === 'Literal' ? [{ literal: written, node, specifier: String(written.value) }] : [];
+  });

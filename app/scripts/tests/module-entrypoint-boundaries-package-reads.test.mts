@@ -1,4 +1,4 @@
-import { mkdir, symlink } from 'node:fs/promises';
+import { mkdir, readFile, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Cause, Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -410,6 +410,17 @@ it.live('binds every owner file of a package read to its package and keeps the o
         sharedApiFile,
         `${sharedApi}\nexport const other = HttpApi.make('Other').addHttpApi(CurrentPaymentTermsApi);\n`,
       ],
+      // Reach is per declarator and per destructured name: the one that holds the read is the one that leaves.
+      [
+        './api exports the declarator that holds the read beside an unrelated one',
+        sharedApiFile,
+        `${sharedApi}\nconst mounted = CurrentPaymentTermsApi, currency = 'EUR';\nexport { mounted };\n`,
+      ],
+      [
+        './api exports the destructured name whose default is the read',
+        sharedApiFile,
+        `${sharedApi}\nconst { mounted = CurrentPaymentTermsApi, currency } = { currency: 'EUR' };\nexport { mounted };\n`,
+      ],
       [
         './api loads the read',
         sharedApiFile,
@@ -424,10 +435,20 @@ it.live('binds every owner file of a package read to its package and keeps the o
       expect(source, label).not.toBe(sources.get(file));
       expect(seam(sources, [[file, source]]), label).toBe(false);
     }
-    // Free: a local type that reaches no read, a parameter that only shares the read's name, and the aliases the
+    // Free: a local type that reaches no read, a parameter that only shares the read's name, a declarator or a
+    // destructured name beside the one holding the read, the type of the module's own API, and the aliases the
     // module's own HttpApi value is annotated with, which reach the read only in that annotation.
     for (const [label, source] of [
       ['an unrelated local type exported', `${sharedApi}\ntype Currency = string;\nexport type { Currency };\n`],
+      [
+        'an unrelated declarator beside the one holding the read',
+        `${sharedApi}\nconst mounted = CurrentPaymentTermsApi, currency = 'EUR';\nexport { currency };\n`,
+      ],
+      [
+        'an unrelated destructured name beside the one whose default is the read',
+        `${sharedApi}\nconst { mounted = CurrentPaymentTermsApi, currency } = { currency: 'EUR' };\nexport { currency };\n`,
+      ],
+      ['the type of the module own API', `${sharedApi}\nexport type PublicApi = typeof paymentTermCatalogApi;\n`],
       [
         'a parameter named like the read',
         `${sharedApi}\nexport const describeApi = (CurrentPaymentTermsApi: string): string => CurrentPaymentTermsApi;\n`,
@@ -451,6 +472,24 @@ it.live('binds every owner file of a package read to its package and keeps the o
     ] as const) {
       expect(seam(sources, [[sharedApiFile, source]]), label).toBe(true);
     }
+    // Only the mount inside the initializer of the module's own HttpApi value is exempt, however it breaks over
+    // lines; any other mount of the read is a use of it, and counts as a second contribution even unexported.
+    expect(
+      judged(sources, [
+        [
+          sharedApiFile,
+          `${sharedApi}\nexport const other = HttpApi.make('Other').addHttpApi(\n  CurrentPaymentTermsApi,\n);\n`,
+        ],
+      ]).diagnostics,
+    ).toContain(`${sharedApiFile}: export other reaches a package read of the module`);
+    expect(
+      seam(sources, [
+        [
+          sharedApiFile,
+          `${sharedApi}\nconst unused = () =>\n  HttpApi.make('Other').addHttpApi(\n    CurrentPaymentTermsApi,\n  );\n`,
+        ],
+      ]),
+    ).toBe(false);
   }),
 );
 
@@ -572,12 +611,21 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
         'an API of the owner mounting it',
         `export const LaunderedApi = HttpApi.make('Laundered').addHttpApi(${foreign});`,
       ],
+      [
+        'an expression that only asserts its type',
+        `export const LaunderedApi = ${foreign} satisfies HttpApi.Constraint;`,
+      ],
+      [
+        'a pipe through it',
+        `export const LaunderedApi = pipe(${foreign}, (api) => api.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' }));`,
+      ],
     ] as const) {
       const laundered = judged(sources, [
         [
           `${owner}/shared/laundered-api.ts`,
           [
             "import { HttpApi } from '@modern-js/bff-effect/effect-client';",
+            "import { pipe } from 'effect';",
             `import { ${foreign} } from '${foreignSpecifier}';`,
             '',
             declaration,
@@ -632,6 +680,19 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       expect(verdict.valid, label).toBe(false);
       expect(verdict.diagnostics, label).toContain(unknown(handlerFile, layer));
     }
+    // A mount the rule cannot resolve fails closed.
+    const unresolvable = judged(sources, [
+      [
+        sharedApiFile,
+        replaced(
+          `import { MissingApi } from './missing-api.ts';\n${sharedApi}`,
+          additionsStart,
+          `  .addHttpApi(MissingApi)\n${additionsStart}`,
+        ),
+      ],
+    ]);
+    expect(unresolvable.valid).toBe(false);
+    expect(unresolvable.diagnostics).toContain(unknown(sharedApiFile, 'MissingApi'));
     // An import alone, outside the slots, of another module's read or of a server of no read.
     for (const [label, file, source, binding] of [
       ['a foreign read', sharedApiFile, `import { ${foreign} } from '${foreignSpecifier}';\n${sharedApi}`, foreign],
@@ -646,7 +707,36 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       expect(verdict.valid, label).toBe(false);
       expect(verdict.diagnostics, label).toContain(unknown(file, binding));
     }
-    // The module's own API, declared in a file of the owner and mounted outside the slots, is the module's.
+    // The module's own API and layer: a layer through a plain alias in the runtime factory, and an API declared in a
+    // file of the owner, by name or as its default export, mounted outside the slots.
+    expect(
+      seam(sources, [
+        [
+          handlerFile,
+          replaced(
+            handler,
+            '  const apiHandlersLive = Layer.mergeAll(\n    paymentTermCatalogReadinessLayer,',
+            '  const readiness = paymentTermCatalogReadinessLayer;\n  const apiHandlersLive = Layer.mergeAll(\n    readiness,',
+          ),
+        ],
+      ]),
+    ).toBe(true);
+    expect(
+      seam(sources, [
+        [
+          `${owner}/shared/extra-api.ts`,
+          "import { HttpApi } from '@modern-js/bff-effect/effect-client';\n\nexport default HttpApi.make('Extra');\n",
+        ],
+        [
+          sharedApiFile,
+          replaced(
+            `import ExtraApi from './extra-api.ts';\n${sharedApi}`,
+            additionsStart,
+            `  .addHttpApi(ExtraApi)\n${additionsStart}`,
+          ),
+        ],
+      ]),
+    ).toBe(true);
     expect(
       seam(sources, [
         [
@@ -666,11 +756,13 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
   }),
 );
 
+const PRICE_GROUP_OWNER = 'verticals/price-group-catalog';
+
 /** A workspace the full entrypoint check runs on: Price Group Catalog, its contract package and a readiness-only module. */
 const makePackageReadWorkspace = Effect.fn(function* makePackageReadWorkspace() {
   const root = yield* makeFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
-  const priceGroups = 'verticals/price-group-catalog';
+  const priceGroups = PRICE_GROUP_OWNER;
   const priceGroupContracts = 'packages/price-group-catalog-contracts';
   yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
   yield* write(
@@ -804,6 +896,8 @@ it.live('fails a header-carrying package file outside the canonical read and cli
       ['a .tsx read', `${contractsSource}/apis/orphan-read.tsx`],
       ['a read in another directory', `${contractsSource}/reads/orphan-read.ts`],
       ['a client without its read', `${contractsSource}/api/orphan-read-client.ts`],
+      ['a file named like a build directory', `${contractsSource}/apis/distributionStatus.ts`],
+      ['a directory named like a build directory', `${contractsSource}/distribution/orphan-read.ts`],
     ] as const) {
       const root = yield* makePackageReadWorkspace();
       expect(yield* entrypointFailure(root), form).toBeUndefined();
@@ -812,6 +906,136 @@ it.live('fails a header-carrying package file outside the canonical read and cli
       expect(failure, form).toContain(file);
       expect(failure, form).toContain('a module-api file outside packages/<package>/src/apis/<read>.ts');
     }
+  }),
+);
+
+it.live('follows every name an owner entry passes on from an owner file to where it is declared', () =>
+  Effect.gen(function* packageReadReExportChains() {
+    const priceGroups = PRICE_GROUP_OWNER;
+    const sharedApi = `${priceGroups}/shared/api.ts`;
+    const aggregate = `${priceGroups}/src/api/price-group-catalog-client.ts`;
+    const read = '@app/price-group-catalog-contracts/price-group-definition';
+    const shellProbe = `${BOUNDARY_FIXTURE_SHELL_PATH}/src/price-group-probe.ts`;
+    const passesOnTheRead = 'passes on the package read';
+    /** The full check after appending a re-export to an owner entry and writing the files it passes on. */
+    const judgedChain = Effect.fn(function* judgedChain(
+      entry: string,
+      appended: string,
+      files: readonly (readonly [string, string])[],
+    ) {
+      const root = yield* makePackageReadWorkspace();
+      expect(yield* entrypointFailure(root)).toBeUndefined();
+      const source = yield* Effect.promise(() => readFile(path.join(root, entry), 'utf-8'));
+      yield* write(root, entry, `${source}${appended}`);
+      for (const [file, content] of files) {
+        yield* write(root, file, content);
+      }
+      return yield* entrypointFailure(root);
+    });
+    // The layout this pull request removes, under other file names: each passes the read on, so each fails.
+    for (const [form, entry, appended, files, exported, verdict] of [
+      [
+        'a star re-export of a star re-export of the read',
+        sharedApi,
+        "export * from './price-group-definition.ts';\n",
+        [
+          [`${priceGroups}/shared/price-group-definition.ts`, `export * from '${read}';\n`],
+          [
+            shellProbe,
+            "import { PriceGroupDefinitionRequestSchema } from '@app/price-group-catalog/api';\n\nexport const probe = PriceGroupDefinitionRequestSchema;\n",
+          ],
+        ],
+        'export *',
+        passesOnTheRead,
+      ],
+      [
+        'a named re-export of a renamed re-export of the read',
+        sharedApi,
+        "export { LegacyApi } from './price-group-definition.ts';\n",
+        [
+          [
+            `${priceGroups}/shared/price-group-definition.ts`,
+            `export { PriceGroupDefinitionApi as LegacyApi } from '${read}';\n`,
+          ],
+        ],
+        'export LegacyApi',
+        passesOnTheRead,
+      ],
+      [
+        'a star re-export in the client aggregate of an owner file forwarding the read client',
+        aggregate,
+        "export * from './price-group-definition.ts';\n",
+        [[`${priceGroups}/src/api/price-group-definition.ts`, `export * from '${read}/client';\n`]],
+        'export *',
+        passesOnTheRead,
+      ],
+      [
+        'a re-export of a typeof alias of the read',
+        sharedApi,
+        "export type { PublicApi } from './price-group-definition.ts';\n",
+        [
+          [
+            `${priceGroups}/shared/price-group-definition.ts`,
+            `import type { PriceGroupDefinitionApi } from '${read}';\n\nexport type PublicApi = typeof PriceGroupDefinitionApi;\n`,
+          ],
+        ],
+        'export PublicApi',
+        'is another name for a package read',
+      ],
+      [
+        'a type re-export in the client aggregate of a renamed type re-export of the read',
+        aggregate,
+        "export type { PublicRequest } from './request.ts';\n",
+        [
+          [
+            `${priceGroups}/src/api/request.ts`,
+            `export type { PriceGroupDefinitionRequest as PublicRequest } from '${read}';\n`,
+          ],
+        ],
+        'export PublicRequest',
+        passesOnTheRead,
+      ],
+      // A chain that ends anywhere but on a declaration of an owner file cannot be followed, and fails closed.
+      [
+        'a re-export of a library binding through an owner file',
+        sharedApi,
+        "export { Schema } from './price-group-definition.ts';\n",
+        [[`${priceGroups}/shared/price-group-definition.ts`, "export { Schema } from 'effect';\n"]],
+        'export Schema',
+        'which is no declaration of an owner file',
+      ],
+      [
+        'a re-export of a missing priceGroups file',
+        sharedApi,
+        "export { Missing } from './missing.ts';\n",
+        [],
+        'export Missing',
+        'which is no declaration of an owner file',
+      ],
+    ] as const) {
+      const failure = yield* judgedChain(entry, appended, files);
+      expect(failure, form).toContain(`${entry}: ${exported}`);
+      expect(failure, form).toContain(verdict);
+    }
+    // A declaration of an owner file that builds something new from the read's schema is the owner's own.
+    expect(
+      yield* judgedChain(
+        sharedApi,
+        "export { PriceGroupDefinitionEnvelopeSchema } from './price-group-envelope.ts';\n",
+        [
+          [
+            `${priceGroups}/shared/price-group-envelope.ts`,
+            [
+              "import { Schema } from 'effect';",
+              `import { PriceGroupDefinitionRequestSchema } from '${read}';`,
+              '',
+              'export const PriceGroupDefinitionEnvelopeSchema = Schema.Struct({ request: PriceGroupDefinitionRequestSchema });',
+              '',
+            ].join('\n'),
+          ],
+        ],
+      ),
+    ).toBeUndefined();
   }),
 );
 

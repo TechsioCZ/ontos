@@ -33,8 +33,19 @@ import {
   hasGeneratedOperationPrincipalContract,
   tokenizeGovernedClient,
 } from './generated-module-api-boundary.mts';
-import { isWithin, moduleBindings, patternIdentifiers, topLevelStatement } from './module-bindings.mts';
-import type { ModuleBinding, ModuleBindings } from './module-bindings.mts';
+import {
+  exportOrigins,
+  isInType,
+  isWithin,
+  lineOf,
+  moduleBindings,
+  moduleExports,
+  moduleGraph,
+  moduleSpecifiers,
+  referenceOrigins,
+  topLevelStatement,
+} from './module-bindings.mts';
+import type { DeclaredExport, ExportOrigin, ModuleBinding, ModuleBindings, ModuleGraph } from './module-bindings.mts';
 import {
   GOVERNED_HTTP_API_CLOSING_ANNOTATION,
   isCodePosition,
@@ -4426,10 +4437,34 @@ const hasPublishedRegistration = (registration: string, contribution: GovernedRe
   );
 };
 
+/** Whether a node is the one argument of an `.addHttpApi(…)` call: a mount. */
+const isMountArgument = (bindings: ModuleBindings, node: Node): boolean => {
+  const parent = bindings.parents.get(node);
+  return (
+    parent?.type === 'CallExpression' &&
+    parent.arguments.length === 1 &&
+    parent.arguments[0] === node &&
+    parent.callee.type === 'MemberExpression' &&
+    !parent.callee.computed &&
+    parent.callee.property.type === 'Identifier' &&
+    parent.callee.property.name === 'addHttpApi'
+  );
+};
+
+/** How many times `./api` mounts `apiValue`, by its syntax tree, whatever the line breaks. */
+const mountCount = (sharedApi: string, apiValue: string): number => {
+  const bindings = moduleBindings('shared/api.ts', sharedApi);
+  return bindings === undefined
+    ? 0
+    : [...bindings.parents.keys()].filter(
+        (node) => node.type === 'Identifier' && node.name === apiValue && isMountArgument(bindings, node),
+      ).length;
+};
+
 const publishesSharedApiContribution = (sharedApi: string, apiValue: string, contractImport: string): boolean => {
   const escapedApiValue = escapeRegExp(apiValue);
   return (
-    hasExactlyOne(maskComments(sharedApi), new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu')) &&
+    mountCount(sharedApi, apiValue) === 1 &&
     hasExactValueImport(sharedApi, apiValue, contractImport) &&
     slotHasExactlyOneCodeMatch(
       sharedApi,
@@ -4440,107 +4475,318 @@ const publishesSharedApiContribution = (sharedApi: string, apiValue: string, con
   );
 };
 
-/**
- * The admitted uses of a package read in the owner's `./api`, given the module's own HttpApi value (the one whose
- * initializer holds the generated additions): the argument of an `.addHttpApi(...)`, which the mount rule pins to
- * the one in that value's generated slot, and the type annotation of that value. Neither exports the read apart
- * from the module's own API.
- */
-const isAdmittedReadUse = (bindings: ModuleBindings, ownApi: string | undefined, identifier: Node): boolean => {
-  const declarator = bindings.bindings.find(
-    (binding) => binding.name === ownApi && binding.namespaces.includes('value'),
-  )?.identifier;
-  const annotation = declarator?.type === 'Identifier' ? declarator.typeAnnotation : undefined;
-  const parent = bindings.parents.get(identifier);
-  return (
-    (annotation?.type === 'TSTypeAnnotation' && isWithin(identifier, annotation)) ||
-    (parent?.type === 'CallExpression' &&
-      parent.arguments.length === 1 &&
-      parent.arguments[0] === identifier &&
-      parent.callee.type === 'MemberExpression' &&
-      !parent.callee.computed &&
-      parent.callee.property.type === 'Identifier' &&
-      parent.callee.property.name === 'addHttpApi')
-  );
-};
+/** The node types on the way from a declarator to a name its pattern declares. */
+const PATTERN_TYPES = new Set(['ArrayPattern', 'AssignmentPattern', 'ObjectPattern', 'Property', 'RestElement']);
 
 /**
- * What an owner entry takes from a package read. `./api` (`shared/api.ts`) imports from it only the read's API value
- * under its own name (`mountedValue`); the `./api/client` aggregate (`mountedValue` undefined) imports nothing of it.
- * Neither re-exports it, loads it with `import()`, nor exports a declaration that reaches it: one that refers,
- * directly or through module declarations that do, to a binding imported from the read or to an
- * `import('<read>')` type. References resolve by scope, whatever the names. The only uses that do not reach are
- * those of the module's own HttpApi value (`isAdmittedReadUse`).
+ * What one module binding's declaration is made of: for a name a variable declarator declares, the declarator's
+ * initializer and, on the way from the declarator to the name, its annotations, its default value and computed keys
+ * (never another declarator's, nor another name's default); for any other declaration, the whole declaration.
  */
-const takesOnlyPackageReadMount = (
-  file: string,
-  source: string,
-  contribution: GovernedReadContribution,
-  mountedValue?: string,
-): boolean => {
-  const bindings = moduleBindings(file, source);
-  if (bindings === undefined) {
-    return false;
+const declarationParts = (bindings: ModuleBindings, binding: ModuleBinding): readonly Node[] => {
+  if (binding.imported !== undefined) {
+    return [];
   }
-  const contract = contributionImports(contribution).sharedApi;
-  const readSpecifiers = new Set([contract, `${contract}/client`]);
-  const ownApi = mountedValue === undefined ? undefined : governedApiBinding(source);
-  const importsOnlyTheMount = bindings.program.body.every((statement) => {
-    if (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration') {
-      return statement.source === null || !readSpecifiers.has(statement.source.value);
+  const { identifier } = binding;
+  const annotation = identifier.type === 'Identifier' ? identifier.typeAnnotation : null;
+  const parts: Node[] = annotation === null || annotation === undefined ? [] : [annotation];
+  let child = identifier;
+  for (let node = bindings.parents.get(identifier); node !== undefined; node = bindings.parents.get(node)) {
+    if (node.type === 'VariableDeclarator') {
+      return node.init === null ? parts : [...parts, node.init];
     }
-    return (
-      statement.type !== 'ImportDeclaration' ||
-      !readSpecifiers.has(statement.source.value) ||
-      (statement.importKind !== 'type' &&
-        statement.specifiers.length > 0 &&
-        statement.specifiers.every(
-          (specifier) =>
-            specifier.type === 'ImportSpecifier' &&
-            specifier.importKind !== 'type' &&
-            specifier.imported.type === 'Identifier' &&
-            specifier.imported.name === mountedValue &&
-            specifier.local.name === mountedValue,
-        ))
+    if (!PATTERN_TYPES.has(node.type)) {
+      return [node];
+    }
+    if (node.type === 'AssignmentPattern' && node.left === child) {
+      parts.push(node.right);
+    }
+    if (node.type === 'Property' && node.computed) {
+      parts.push(node.key);
+    }
+    const patternAnnotation =
+      node.type === 'ObjectPattern' || node.type === 'ArrayPattern' ? node.typeAnnotation : null;
+    if (patternAnnotation !== null && patternAnnotation !== undefined) {
+      parts.push(patternAnnotation);
+    }
+    child = node;
+  }
+  return parts;
+};
+
+/** The module bindings whose declaration refers to a package read, directly or through module bindings that do. */
+const readReach = (
+  bindings: ModuleBindings,
+  readSpecifiers: ReadonlyMap<string, string>,
+  isAdmitted: (identifier: Node) => boolean,
+): ReadonlySet<ModuleBinding> => {
+  const parts = new Map(bindings.bindings.map((binding) => [binding, declarationParts(bindings, binding)]));
+  const byStatement = new Map<Node, ModuleBinding[]>();
+  for (const binding of bindings.bindings) {
+    byStatement.set(binding.statement, [...(byStatement.get(binding.statement) ?? []), binding]);
+  }
+  /** The bindings whose declaration holds node: per declarator and per destructured name, never per statement. */
+  const holders = (node: Node): readonly ModuleBinding[] => {
+    const statement = topLevelStatement(bindings, node);
+    return (statement === undefined ? [] : (byStatement.get(statement) ?? [])).filter((binding) =>
+      (parts.get(binding) ?? []).some((part) => isWithin(node, part)),
     );
-  });
-  const nodes = [...bindings.parents.keys()];
-  const loadsTheRead = nodes.some(
-    (node) =>
-      node.type === 'ImportExpression' &&
-      node.source.type === 'Literal' &&
-      readSpecifiers.has(String(node.source.value)),
+  };
+  const reaching = new Set(
+    bindings.bindings.filter(({ imported }) => imported !== undefined && readSpecifiers.has(imported.source)),
   );
-  const reaching = new Set<Node>([
-    ...bindings.bindings.flatMap((binding) =>
-      binding.imported !== undefined && readSpecifiers.has(binding.imported.source) ? [binding.statement] : [],
-    ),
-    ...nodes.flatMap((node) =>
-      node.type === 'TSImportType' && readSpecifiers.has(node.source.value)
-        ? [topLevelStatement(bindings, node) ?? node]
-        : [],
-    ),
-  ]);
-  const uses = bindings.references.filter((reference) => !isAdmittedReadUse(bindings, ownApi, reference.identifier));
+  for (const node of bindings.parents.keys()) {
+    if (node.type === 'TSImportType' && readSpecifiers.has(node.source.value)) {
+      for (const holder of holders(node)) {
+        reaching.add(holder);
+      }
+    }
+  }
+  const uses = bindings.references.flatMap((reference) =>
+    isAdmitted(reference.identifier) ? [] : [[reference, holders(reference.identifier)] as const],
+  );
   let grew = true;
   while (grew) {
     const before = reaching.size;
-    for (const reference of uses) {
-      const statement = topLevelStatement(bindings, reference.identifier);
-      if (statement !== undefined && reference.bindings.some((binding) => reaching.has(binding.statement))) {
-        reaching.add(statement);
+    for (const [reference, holding] of uses) {
+      if (reference.bindings.some((binding) => reaching.has(binding))) {
+        for (const holder of holding) {
+          reaching.add(holder);
+        }
       }
     }
     grew = reaching.size > before;
   }
-  const exportsTheRead = [...reaching].some(
-    (statement) =>
-      statement.type === 'ExportDefaultDeclaration' ||
-      statement.type === 'TSExportAssignment' ||
-      (statement.type === 'ExportNamedDeclaration' && statement.source === null),
-  );
-  return importsOnlyTheMount && !loadsTheRead && !exportsTheRead;
+  return reaching;
 };
+
+/** TypeScript and grouping wrappers that leave the expression or type they wrap what it is. */
+const unwrapped = (node: Node): Node => {
+  let inner = node;
+  while (
+    inner.type === 'ParenthesizedExpression' ||
+    inner.type === 'TSAsExpression' ||
+    inner.type === 'TSSatisfiesExpression' ||
+    inner.type === 'TSNonNullExpression' ||
+    inner.type === 'TSTypeAssertion' ||
+    inner.type === 'TSTypeQuery'
+  ) {
+    inner = inner.type === 'TSTypeQuery' ? inner.exprName : inner.expression;
+  }
+  return inner;
+};
+
+/**
+ * Whether a declaration a re-export chain ends on in another owner file is only another name for, or the `typeof` of,
+ * a binding of a package read: `const B = A as T`, `type B = typeof A`, `type B = import('<read>').A` and the like.
+ * A declaration that builds something new from a read's schema is the owner's own.
+ */
+const namesThePackageRead = (
+  graph: ModuleGraph,
+  origin: DeclaredExport,
+  readSpecifiers: ReadonlyMap<string, string>,
+): boolean => {
+  const parent = origin.bindings.parents.get(origin.node);
+  let named: Node | null = origin.node;
+  if (parent?.type === 'VariableDeclarator' && parent.id === origin.node) {
+    named = parent.init;
+  } else if (parent?.type === 'TSTypeAliasDeclaration') {
+    named = parent.typeAnnotation;
+  }
+  let inner = named === null ? undefined : unwrapped(named);
+  // `typeof A.B`, `A.B`: a member of the binding the leftmost name is.
+  while (inner?.type === 'TSQualifiedName' || inner?.type === 'MemberExpression') {
+    inner = inner.type === 'TSQualifiedName' ? inner.left : inner.object;
+  }
+  if (inner?.type === 'TSImportType') {
+    return readSpecifiers.has(inner.source.value);
+  }
+  return (
+    inner?.type === 'Identifier' &&
+    inner !== origin.node &&
+    referenceOrigins(graph, origin.file, inner).some(
+      (reached) => reached.kind === 'foreign' && readSpecifiers.has(reached.target),
+    )
+  );
+};
+
+/**
+ * Admitted list of the owner-entry rule, quoted in its diagnostics. An owner entry (`./api`, the `./api/client`
+ * aggregate) of a module with package reads admits only these forms. From a package read of the module, `./api`
+ * imports the read's API value alone, as a value, under its own name, and uses it only as the argument of an
+ * `.addHttpApi(…)` inside the initializer of the module's own HttpApi value or inside that value's type annotation;
+ * the aggregate imports nothing of it; neither re-exports it or loads it (`import()`, `require`, `import x =
+ * require`). Every name either exports is (1) a declaration of the entry that, per declarator and per destructured
+ * name, refers to no binding of a read and to no `import('<read>')` type, directly or through module bindings; or
+ * (2) what the entry itself takes from a package other than a read; or (3) a name passed on through `export … from`,
+ * `export *`, an imported binding exported again, or a declaration that is only another name for one binding
+ * (`const B = A`, `type B = A`, `import B = A`), that ends on a declaration in another file of the owner which is
+ * neither another name for nor the `typeof` of a binding of a read. A chain that ends on a package, on a missing file
+ * or one outside the owner, on a whole module, or on a link the rule cannot follow fails.
+ */
+const OWNER_ENTRY_READ_FORMS =
+  "./api imports a read's API value only to mount it in its own HttpApi value, and every export is a declaration of the entry that reaches no read, a binding of a package other than a read, or a re-export chain ending on a declaration of an owner file that is no other name or typeof of a read";
+
+interface OwnerEntry {
+  readonly file: string;
+  /** `./api`, which mounts the reads' API values; the `./api/client` aggregate takes nothing from them. */
+  readonly mounts: boolean;
+  readonly source: string;
+}
+
+/** The import, re-export and loading forms of an owner entry that take from a package read what it may not. */
+const readTakingProblems = (
+  entry: OwnerEntry,
+  bindings: ModuleBindings,
+  readSpecifiers: ReadonlyMap<string, string>,
+): readonly string[] => {
+  const at = (node: Node, what: string, specifier: string): string =>
+    `${entry.file}:${lineOf(entry.source, node.start)} ${what} the package read ${specifier}; admitted: ${OWNER_ENTRY_READ_FORMS}`;
+  const statements = bindings.program.body.flatMap((statement) => {
+    if (
+      (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration') &&
+      statement.source !== null &&
+      readSpecifiers.has(statement.source.value)
+    ) {
+      return [at(statement, 're-exports', statement.source.value)];
+    }
+    if (statement.type !== 'ImportDeclaration' || !readSpecifiers.has(statement.source.value)) {
+      return [];
+    }
+    const apiValue = readSpecifiers.get(statement.source.value);
+    const mountsOnly =
+      entry.mounts &&
+      statement.importKind !== 'type' &&
+      statement.specifiers.length > 0 &&
+      statement.specifiers.every(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === apiValue &&
+          specifier.local.name === apiValue,
+      );
+    return mountsOnly ? [] : [at(statement, 'imports more than the API value of', statement.source.value)];
+  });
+  // Loaded at run time or named as a type, a read is still taken from its package.
+  const loads = moduleSpecifiers(bindings).flatMap(({ node, specifier }) =>
+    node.type !== 'ImportDeclaration' &&
+    node.type !== 'ExportAllDeclaration' &&
+    node.type !== 'ExportNamedDeclaration' &&
+    node.type !== 'TSImportType' &&
+    readSpecifiers.has(specifier)
+      ? [at(node, 'loads', specifier)]
+      : [],
+  );
+  return [...statements, ...loads];
+};
+
+/** What one name an owner entry exports comes to, judged against the module's package reads. */
+const exportedReadProblem = (
+  graph: ModuleGraph,
+  entry: OwnerEntry,
+  ownerPath: string,
+  reaching: (origin: DeclaredExport) => boolean,
+  readSpecifiers: ReadonlyMap<string, string>,
+  [name, origin]: readonly [string, ExportOrigin],
+): string | undefined => {
+  const leaves = `${entry.file}: export ${name}`;
+  const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
+  const through = origin.trail.length > 1 ? ` through ${origin.trail.slice(1).join(', ')}` : '';
+  if (origin.kind === 'declared') {
+    if (origin.file === entry.file) {
+      return reaching(origin) ? `${leaves} reaches a package read of the module${admitted}` : undefined;
+    }
+    if (!origin.file.startsWith(`${ownerPath}/`)) {
+      return `${leaves} comes from ${origin.file}, which is no file of the owner${admitted}`;
+    }
+    return namesThePackageRead(graph, origin, readSpecifiers)
+      ? `${leaves} is another name for a package read of the module${through}${admitted}`
+      : undefined;
+  }
+  if (origin.kind === 'foreign') {
+    if (readSpecifiers.has(origin.target)) {
+      return `${leaves} passes on the package read ${origin.target}${through}${admitted}`;
+    }
+    // A name the entry itself takes from a package other than a read is the package's; anything an owner file
+    // passes on ends on a declaration of an owner file, or the rule cannot follow it.
+    return origin.trail.length > 1 || origin.specifier.startsWith('.')
+      ? `${leaves} ends on ${origin.target}, which is no declaration of an owner file${through}${admitted}`
+      : undefined;
+  }
+  if (origin.kind === 'namespace') {
+    return `${leaves} passes on the whole module ${origin.file}${admitted}`;
+  }
+  return `${leaves} cannot be followed: ${origin.file} ${origin.reason}${admitted}`;
+};
+
+/** Whether a declaration of the entry reaches a read: a binding `readReach` found, or an expression referring to one. */
+const declarationReaches = (
+  bindings: ModuleBindings,
+  reached: ReadonlySet<ModuleBinding>,
+  readSpecifiers: ReadonlyMap<string, string>,
+  origin: DeclaredExport,
+): boolean => {
+  const binding = bindings.bindings.find((candidate) => candidate.identifier === origin.node);
+  if (binding !== undefined) {
+    return reached.has(binding);
+  }
+  const referring = bindings.references.some(
+    (reference) =>
+      isWithin(reference.identifier, origin.node) && reference.bindings.some((bound) => reached.has(bound)),
+  );
+  return (
+    referring ||
+    [...bindings.parents.keys()].some(
+      (node) => node.type === 'TSImportType' && isWithin(node, origin.node) && readSpecifiers.has(node.source.value),
+    )
+  );
+};
+
+/**
+ * Owner entries export nothing that reaches a package read of the module (`OWNER_ENTRY_READ_FORMS`): what each takes
+ * from a read, and every name it exports, followed to where it is declared. Only the files on re-export chains from
+ * the entries are read, each parsed once.
+ */
+const ownerEntryReadProblems = (
+  graph: ModuleGraph,
+  ownerPath: string,
+  entries: readonly OwnerEntry[],
+  readSpecifiers: ReadonlyMap<string, string>,
+): readonly string[] =>
+  entries.flatMap((entry) => {
+    const bindings = graph.parsed(entry.file);
+    if (bindings === 'unparsable') {
+      return [`${entry.file}: does not parse`];
+    }
+    if (bindings === undefined) {
+      return [];
+    }
+    const ownApi = entry.mounts ? governedApiBinding(entry.source) : undefined;
+    const ownIdentifier = bindings.bindings.find(
+      (binding) => binding.name === ownApi && binding.namespaces.includes('value') && binding.imported === undefined,
+    )?.identifier;
+    const declarator = ownIdentifier === undefined ? undefined : bindings.parents.get(ownIdentifier);
+    const ownInit = declarator?.type === 'VariableDeclarator' ? declarator.init : null;
+    const annotation = ownIdentifier?.type === 'Identifier' ? ownIdentifier.typeAnnotation : null;
+    // The own HttpApi value refers to the reads only in its annotation and in the mounts of its initializer.
+    const isAdmitted = (identifier: Node): boolean =>
+      (annotation !== null && annotation !== undefined && isWithin(identifier, annotation)) ||
+      (ownInit !== null && isWithin(identifier, ownInit) && isMountArgument(bindings, identifier));
+    const reached = readReach(bindings, readSpecifiers, isAdmitted);
+    const reaching = (origin: DeclaredExport): boolean => declarationReaches(bindings, reached, readSpecifiers, origin);
+    const { names, opaque } = moduleExports(graph, entry.file);
+    const exported = [
+      ...names.flatMap((name) => exportOrigins(graph, entry.file, name).map((origin) => [name, origin] as const)),
+      ...opaque.map((origin) => ['*', origin] as const),
+    ];
+    return [
+      ...readTakingProblems(entry, bindings, readSpecifiers),
+      ...exported.flatMap(
+        (named) => exportedReadProblem(graph, entry, ownerPath, reaching, readSpecifiers, named) ?? [],
+      ),
+    ];
+  });
 
 const hasPublishedContract = (
   sharedApi: string,
@@ -4606,9 +4852,6 @@ const hasPublishedContract = (
       apiValue,
       contributionImports(contribution).sharedApi,
     ),
-    sharedReadUse:
-      contribution.publication === undefined ||
-      takesOnlyPackageReadMount('shared/api.ts', sharedApi, contribution, apiValue),
     sharedRoot: hasGovernedSharedApiRoot(sharedApi),
   };
   const failed = Object.entries(publicationChecks)
@@ -5948,11 +6191,7 @@ const hasCompleteGeneratedContribution = (
   const { clientSource, contractImport, readImport, readSource, serverSource, ...canonical } =
     canonicalReviewedCompanionSources(verticalPath, contribution, context.sharedApi, loaded);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
-  const aggregate = ownerActionClientPublication(sources, verticalPath, context.deploymentAppId);
   const checks = {
-    aggregate:
-      contribution.publication === undefined ||
-      takesOnlyPackageReadMount(aggregate?.file ?? 'client.ts', aggregate?.source ?? '', contribution),
     client: hasClientContract(clientSource, contribution, group, apiValue, context.deploymentAppId, contractImport),
     contract: hasCompleteContributionContract(
       canonical.contractSource,
@@ -6024,262 +6263,343 @@ const contractPackageNames = (sources: ReadonlyMap<string, string>): readonly st
     return manifest.owner === undefined || manifest.name === undefined ? [] : [manifest.name];
   });
 
-/** Whether a statement without a source exports `name`. */
-const isExportOf = (statement: Node, name: string): boolean => {
-  if (statement.type === 'ExportDefaultDeclaration') {
-    return name === 'default';
+/**
+ * The API values and server layers each module of the workspace publishes, by its package name: the API value of each
+ * generated contract (`shared/apis/<slug>.ts`, `<Slug>Api`), the layer of each generated read or Action server, and
+ * the module's own HttpApi value, which mounts its reads and Actions.
+ */
+const moduleApiNamesBySources = new WeakMap<ReadonlyMap<string, string>, ReadonlyMap<string, ReadonlySet<string>>>();
+
+const moduleApiNames = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, ReadonlySet<string>> => {
+  const known = moduleApiNamesBySources.get(sources);
+  if (known !== undefined) {
+    return known;
   }
-  if (statement.type !== 'ExportNamedDeclaration' || statement.source !== null) {
-    return false;
+  const names = new Map<string, Set<string>>();
+  moduleApiNamesBySources.set(sources, names);
+  for (const [file, source] of sources) {
+    const manifest = /^(?<owner>verticals\/[^/]+)\/package\.json$/u.exec(file);
+    const name = manifest === null ? undefined : packageReadManifest(source).name;
+    const owner = manifest?.groups?.owner;
+    if (name !== undefined && owner !== undefined) {
+      const published = new Set<string>();
+      for (const candidate of sources.keys()) {
+        const generated =
+          /^(?:shared\/apis\/(?<contract>[^/]+)\.ts|api\/(?<stem>[^/]+)-(?<kind>read|action)-server\.ts)$/u.exec(
+            candidate.startsWith(`${owner}/`) ? candidate.slice(owner.length + 1) : '',
+          )?.groups;
+        if (generated?.contract !== undefined) {
+          published.add(`${toPascalCase(generated.contract)}Api`);
+        }
+        if (generated?.stem !== undefined) {
+          published.add(`${toCamelCase(generated.stem)}${generated.kind === 'read' ? 'Read' : 'Action'}ApiLive`);
+        }
+      }
+      const ownApi = governedApiBinding(sources.get(`${owner}/shared/api.ts`) ?? '');
+      if (ownApi !== undefined) {
+        published.add(ownApi);
+      }
+      names.set(name, published);
+    }
   }
-  const declared = statement.declaration;
-  const declaredNames =
-    declared?.type === 'VariableDeclaration'
-      ? declared.declarations.flatMap((declarator) => patternIdentifiers(declarator.id))
-      : [declared !== null && 'id' in declared ? declared.id : null];
-  return (
-    declaredNames.some((identifier) => identifier?.type === 'Identifier' && identifier.name === name) ||
-    statement.specifiers.some(
-      (specifier) => specifier.exported.type === 'Identifier' && specifier.exported.name === name,
-    )
-  );
+  return names;
 };
 
-/** What one owner entry may compose: the bindings it imports from reads and Actions of the module, by their source. */
-interface OwnerEntryComposition {
-  /** Each admitted import, `<specifier>#<imported name>`. */
+const importKey = (target: string, name: string): string => `${target}#${name}`;
+
+/**
+ * Admitted list of the mount and handler-layer rule, quoted in its diagnostics. A value `./api` mounts with
+ * `.addHttpApi(…)` or the handler composition of `api/index.ts` merges, inside the generated slots or outside them,
+ * is admitted only as (1) the API value or server layer of a read or Action of this module, imported from its
+ * generated contract, package read or server; or (2) a value that resolves, through plain aliases (`const a = b` in
+ * any enclosing scope) and named or default imports from files of the owner outside its generated contracts and
+ * servers, to a declaration in such a file, or an expression written in the entry, in which nothing, at any depth and
+ * through the bindings it uses in that file and in other owner files, refers to the API value or server layer of a
+ * read or Action of any module other than this module's own (an import of a generated contract's API value or of a
+ * generated server, a contract package's read API value, or what a module's package publishes as one), and every
+ * value it mounts is admitted in turn. A mounted or composed value that resolves to a package, a generated file, a
+ * parameter, or a link the rule cannot follow fails; a read's schema used inside an own endpoint is no mount and stays
+ * allowed.
+ */
+const OWNER_MOUNT_FORMS =
+  "an import of this module's read or Action API value or server layer, or a value that resolves through plain aliases and owner-file imports to a declaration of an owner file using no other read's or Action's API value or server layer";
+
+/** What the owner entries may compose. */
+interface CompositionContext {
+  /** The API value and server layer of each read and Action of the module, `<module>#<name>`. */
   readonly admitted: ReadonlySet<string>;
-  readonly file: string;
+  readonly contractPackages: readonly string[];
   /** Files of the owner that hold generated contracts or servers, never the owner's own API or layer. */
   readonly generated: (target: string) => boolean;
-  readonly source: string;
-}
-
-/** One reconciliation of an owner entry: what it may compose, and the owner files read for it, each parsed once. */
-interface CompositionContext {
-  readonly cache: Map<string, ModuleBindings | undefined>;
-  readonly contractPackages: readonly string[];
-  readonly entry: OwnerEntryComposition;
+  readonly graph: ModuleGraph;
+  /** What each module's package publishes as a read's or Action's API value or server layer (`moduleApiNames`). */
+  readonly moduleApis: ReadonlyMap<string, ReadonlySet<string>>;
   readonly ownerPath: string;
-  readonly sources: ReadonlyMap<string, string>;
-  /** Whether each declaration of the owner a composition reaches is the owner's, by `<file>#<name>`. */
-  readonly verdicts: Map<string, boolean>;
 }
 
-const importKey = (source: string, name: string): string => `${source}#${name}`;
-
-const ownerFileBindings = (context: CompositionContext, file: string): ModuleBindings | undefined => {
-  if (!context.cache.has(file)) {
-    const source = context.sources.get(file);
-    context.cache.set(file, source === undefined ? undefined : moduleBindings(file, source));
-  }
-  return context.cache.get(file);
-};
-
-/** The identifier a composed expression starts from: `layer` in `layer.pipe(...)`, `HttpApi` in `HttpApi.make(...)`. */
-const compositionHead = (expression: Node): Node => {
-  let head = expression;
-  while (head.type === 'CallExpression' || head.type === 'MemberExpression') {
-    head = head.type === 'CallExpression' ? head.callee : head.object;
-  }
-  return head;
-};
-
-/** Every `.addHttpApi(...)` argument within node. */
-const mountsWithin = (bindings: ModuleBindings, within: Node): readonly Node[] =>
-  [...bindings.parents.keys()].flatMap((node) =>
-    node.type === 'CallExpression' &&
-    node.callee.type === 'MemberExpression' &&
-    !node.callee.computed &&
-    node.callee.property.type === 'Identifier' &&
-    node.callee.property.name === 'addHttpApi' &&
-    isWithin(node, within)
-      ? node.arguments
-      : [],
-  );
-
-/** Whether `target` is a file of the owner outside its generated contracts and servers. */
-const isOwnerFile = (context: CompositionContext, target: string): boolean =>
-  target.startsWith(`${context.ownerPath}/`) && !context.entry.generated(target);
-
-const exportedAs = (statement: Node, name: string) =>
-  statement.type === 'ExportNamedDeclaration'
-    ? statement.specifiers.find(
-        (specifier) => specifier.exported.type === 'Identifier' && specifier.exported.name === name,
-      )
-    : undefined;
-
-/** A binding as one file of the owner declares or imports it. */
-interface OwnerFileBinding {
-  readonly binding: ModuleBinding;
+/** Where a reference stands: the file and its bindings. */
+interface CompositionSite {
   readonly bindings: ModuleBindings;
   readonly file: string;
 }
 
-const specifierLocalName = (local: Node): string => {
-  if (local.type === 'Identifier') {
-    return local.name;
-  }
-  return local.type === 'Literal' ? String(local.value) : '';
-};
+/** The read API value a contract package specifier `<package>/<read>` or `<package>/<read>/client` publishes. */
+const readApiValueOf = (contractPackage: string, specifier: string): string =>
+  `${toPascalCase(specifier.slice(contractPackage.length + 1).replace(/\/client$/u, ''))}Api`;
 
-/** What an owner file declares or imports as its export `exported`. */
-const declaredExport = (file: string, bindings: ModuleBindings, exported: string): OwnerFileBinding | undefined => {
-  const declared = bindings.program.body.find((statement) => isExportOf(statement, exported));
-  const local = declared === undefined ? undefined : exportedAs(declared, exported)?.local;
-  const localName = local === undefined ? exported : specifierLocalName(local);
-  const binding =
-    declared === undefined
-      ? undefined
-      : bindings.bindings.find((candidate) => candidate.name === localName && candidate.namespaces.includes('value'));
-  return binding === undefined ? undefined : { binding, bindings, file };
-};
-
-/** Where an owner file passes its export `exported` on from: its explicit re-export, or else each `export *`. */
-const passedOnExport = (
-  context: CompositionContext,
-  file: string,
-  bindings: ModuleBindings,
-  exported: string,
-): readonly (readonly [string, string])[] => {
-  for (const statement of bindings.program.body) {
-    const passed = exportedAs(statement, exported);
-    if (passed !== undefined && statement.type === 'ExportNamedDeclaration' && statement.source !== null) {
-      const target = relativeImportTarget(context.sources, file, statement.source.value);
-      return target === undefined ? [] : [[target, specifierLocalName(passed.local)]];
-    }
-  }
-  return bindings.program.body.flatMap((statement) => {
-    const target =
-      statement.type === 'ExportAllDeclaration' && statement.exported === null
-        ? relativeImportTarget(context.sources, file, statement.source.value)
-        : undefined;
-    return target === undefined ? [] : [[target, exported] as const];
-  });
-};
+/** The module package a specifier names, `<package>` or `<package>/<subpath>`, when it names one. */
+const modulePackageOf = (context: CompositionContext, specifier: string): string | undefined =>
+  [...context.moduleApis.keys()].find((name) => specifier === name || specifier.startsWith(`${name}/`));
 
 /**
- * The binding an owner file exports as `name`, through the re-exports of the owner's files: where a file of the owner
- * declares or imports it. Undefined when no file of the owner outside its generated files exports it.
+ * Whether a binding a package exports may be used: never mounted or composed itself (it is no declaration of the
+ * owner); inside an own declaration, anything but the API value or server layer of a read or Action: a contract
+ * package's read API value, or what a module's package publishes as one (`moduleApiNames`).
  */
-const exportedBinding = (
+const isAdmittedPackageBinding = (
   context: CompositionContext,
-  importer: string,
   specifier: string,
   name: string,
-): OwnerFileBinding | undefined => {
-  const start = relativeImportTarget(context.sources, importer, specifier);
-  const pending: (readonly [string, string])[] = start === undefined ? [] : [[start, name]];
+  mounted: boolean,
+): boolean => {
+  const contractPackage = context.contractPackages.find((candidate) => specifier.startsWith(`${candidate}/`));
+  const modulePackage = modulePackageOf(context, specifier);
+  // A whole contract or module package, imported as a namespace, cannot be told apart from its API values.
+  if (mounted || (name === '*' && (contractPackage !== undefined || modulePackage !== undefined))) {
+    return false;
+  }
+  if (contractPackage !== undefined) {
+    return name !== readApiValueOf(contractPackage, specifier);
+  }
+  return modulePackage === undefined || context.moduleApis.get(modulePackage)?.has(name) !== true;
+};
+
+/** A question the composition judge answers: what a reference, a module binding or a node composes. */
+interface ReferenceQuestion {
+  readonly identifier: Node;
+  readonly kind: 'reference';
+  /** Whether the reference is mounted or composed itself, so it must resolve to a declaration of the owner. */
+  readonly mounted: boolean;
+  readonly site: CompositionSite;
+}
+
+interface BindingQuestion {
+  readonly binding: ModuleBinding;
+  readonly kind: 'binding';
+  readonly mounted: boolean;
+  readonly site: CompositionSite;
+}
+
+interface NodeQuestion {
+  readonly kind: 'node';
+  readonly node: Node;
+  readonly site: CompositionSite;
+}
+
+type CompositionQuestion = BindingQuestion | NodeQuestion | ReferenceQuestion;
+
+/** What a reference an inner scope binds composes: a plain alias, a declaration's initializer, a parameter. */
+const localStep = (
+  { identifier, mounted, site }: ReferenceQuestion,
+  declared: Node,
+): readonly CompositionQuestion[] | false => {
+  const declaration = site.bindings.parents.get(declared);
+  if (declaration?.type === 'VariableDeclarator' && declaration.init !== null) {
+    if (declaration.id === declared && declaration.init.type === 'Identifier') {
+      return [{ identifier: declaration.init, kind: 'reference', mounted, site }];
+    }
+    return declaration.id === declared || !mounted ? [{ kind: 'node', node: declaration.init, site }] : false;
+  }
+  // A parameter or catch binding holds what its caller passes, which is judged where it is passed; a local function
+  // or class is judged whole. Neither is a declaration a mount can resolve to.
+  const isParameter =
+    declaration === undefined ||
+    (declaration.type !== 'FunctionDeclaration' && declaration.type !== 'ClassDeclaration');
+  if (mounted) {
+    return false;
+  }
+  return isParameter || declaration === undefined || isWithin(identifier, declaration)
+    ? []
+    : [{ kind: 'node', node: declaration, site }];
+};
+
+/** What an import composes: a read's or Action's value of this module, or a declaration of an owner file, followed. */
+const importStep = (
+  context: CompositionContext,
+  { mounted, site }: BindingQuestion,
+  imported: { readonly name: string; readonly source: string },
+): readonly CompositionQuestion[] | false => {
+  const target = context.graph.target(site.file, imported.source);
+  if (context.admitted.has(importKey(target, imported.name))) {
+    return [];
+  }
+  if (!imported.source.startsWith('.')) {
+    return isAdmittedPackageBinding(context, imported.source, imported.name, mounted) && [];
+  }
+  if (!target.startsWith(`${context.ownerPath}/`) || imported.name === '*') {
+    return false;
+  }
+  if (context.generated(target)) {
+    // A generated contract's schemas may be used; its API value, and anything of a generated server, may not.
+    return (
+      !mounted &&
+      target.includes('/shared/apis/') &&
+      imported.name !== `${toPascalCase(path.posix.basename(target, '.ts'))}Api` &&
+      []
+    );
+  }
+  const origins = exportOrigins(context.graph, target, imported.name);
+  const steps = origins.map((origin): readonly CompositionQuestion[] | false => {
+    if (origin.kind === 'foreign') {
+      return (
+        !origin.specifier.startsWith('.') &&
+        isAdmittedPackageBinding(context, origin.target, origin.name, mounted) &&
+        []
+      );
+    }
+    if (
+      origin.kind !== 'declared' ||
+      !origin.file.startsWith(`${context.ownerPath}/`) ||
+      context.generated(origin.file)
+    ) {
+      return false;
+    }
+    const declaredSite: CompositionSite = { bindings: origin.bindings, file: origin.file };
+    const declared = origin.bindings.bindings.find((candidate) => candidate.identifier === origin.node);
+    return declared === undefined
+      ? [{ kind: 'node', node: origin.node, site: declaredSite }]
+      : [{ binding: declared, kind: 'binding', mounted, site: declaredSite }];
+  });
+  return origins.length > 0 && steps.every((step) => step !== false) ? steps.flat() : false;
+};
+
+/** One step of the composition judge: false when the question fails, else the questions it rests on. */
+const compositionStep = (
+  context: CompositionContext,
+  question: CompositionQuestion,
+): readonly CompositionQuestion[] | false => {
+  const { site } = question;
+  if (question.kind === 'node') {
+    const { node } = question;
+    const values = (identifier: Node): boolean => isWithin(identifier, node) && !isInType(site.bindings, identifier);
+    return [
+      ...site.bindings.references.flatMap(({ identifier }) => (values(identifier) ? [identifier] : [])),
+      ...[...site.bindings.local].flatMap(([identifier, declared]) =>
+        values(identifier) && !isWithin(declared, node) ? [identifier] : [],
+      ),
+    ].map((identifier): CompositionQuestion => ({
+      identifier,
+      kind: 'reference',
+      mounted: isMountArgument(site.bindings, identifier),
+      site,
+    }));
+  }
+  if (question.kind === 'reference') {
+    const declared = site.bindings.local.get(question.identifier);
+    if (declared !== undefined) {
+      return localStep(question, declared);
+    }
+    const bindings = site.bindings.referenceOf.get(question.identifier)?.bindings ?? [];
+    // A name no scope of the file declares is a global: never the owner's declaration, never a read's.
+    if (bindings.length === 0) {
+      return !question.mounted && [];
+    }
+    return bindings.map((binding): CompositionQuestion => ({
+      binding,
+      kind: 'binding',
+      mounted: question.mounted,
+      site,
+    }));
+  }
+  const { binding, mounted } = question;
+  if (binding.imported !== undefined) {
+    return importStep(context, question, binding.imported);
+  }
+  const declarator = site.bindings.parents.get(binding.identifier);
+  return declarator?.type === 'VariableDeclarator' &&
+    declarator.id === binding.identifier &&
+    declarator.init?.type === 'Identifier'
+    ? [{ identifier: declarator.init, kind: 'reference', mounted, site }]
+    : declarationParts(site.bindings, binding).map((node): CompositionQuestion => ({ kind: 'node', node, site }));
+};
+
+const questionKey = (question: CompositionQuestion): string => {
+  if (question.kind === 'node') {
+    return `${question.site.file}@${question.node.start}-${question.node.end}:${question.node.type}`;
+  }
+  const node = question.kind === 'binding' ? question.binding.identifier : question.identifier;
+  return `${question.site.file}@${node.start}:${question.kind}:${question.mounted ? 'mounted' : 'used'}`;
+};
+
+/** Whether every question holds, each judged once: what they compose is admitted (`OWNER_MOUNT_FORMS`). */
+const composesOnlyAdmitted = (context: CompositionContext, questions: readonly CompositionQuestion[]): boolean => {
+  const pending = [...questions];
   const visited = new Set<string>();
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    const [file, exported] = next;
-    const bindings = isOwnerFile(context, file) ? ownerFileBindings(context, file) : undefined;
-    if (bindings !== undefined && !visited.has(importKey(file, exported))) {
-      visited.add(importKey(file, exported));
-      const declared = declaredExport(file, bindings, exported);
-      if (declared !== undefined) {
-        return declared;
+  for (let question = pending.pop(); question !== undefined; question = pending.pop()) {
+    const key = questionKey(question);
+    if (!visited.has(key)) {
+      visited.add(key);
+      const next = compositionStep(context, question);
+      if (next === false) {
+        return false;
       }
-      pending.push(...passedOnExport(context, file, bindings, exported));
+      pending.push(...next);
     }
   }
-  return undefined;
+  return true;
 };
 
-/**
- * Whether a binding a composition reaches is the owner's: declared by the owner (in the entry or in another of its
- * files outside its generated contracts and servers) as a value whose head and every API it mounts are the owner's in
- * turn; a value built from a package that publishes no contract, such as `HttpApi.make(...)`, is built by the owner.
- * The binding an entry composes itself (`direct`) is never a package's.
- */
-const isOwnBinding = (
-  context: CompositionContext,
-  { binding, bindings, file }: OwnerFileBinding,
-  direct: boolean,
-): boolean => {
-  const { imported } = binding;
-  if (imported !== undefined && !imported.source.startsWith('.')) {
-    return !direct && !context.contractPackages.some((name) => imported.source.startsWith(`${name}/`));
-  }
-  if (imported !== undefined) {
-    const exported = exportedBinding(context, file, imported.source, imported.name);
-    return exported !== undefined && isOwnBinding(context, exported, false);
-  }
-  const key = importKey(file, binding.name);
-  const known = context.verdicts.get(key);
-  if (known !== undefined) {
-    return known;
-  }
-  // A declaration that composes itself adds nothing to its own verdict.
-  context.verdicts.set(key, true);
-  const declarator = bindings.parents.get(binding.identifier);
-  const init = declarator?.type === 'VariableDeclarator' ? declarator.init : null;
-  const own =
-    init === null ||
-    [compositionHead(init), ...mountsWithin(bindings, init)].every((node) => {
-      const [reached, ...others] = bindings.references.find(({ identifier }) => identifier === node)?.bindings ?? [];
-      return (
-        reached === undefined ||
-        (others.length === 0 && isOwnBinding(context, { binding: reached, bindings, file }, false))
-      );
-    });
-  context.verdicts.set(key, own);
-  return own;
-};
+/** What one owner entry may compose and where its composed values stand. */
+interface OwnerEntryComposition {
+  readonly composed: (bindings: ModuleBindings) => readonly Node[];
+  readonly file: string;
+  readonly source: string;
+}
 
-const composedProblems = (
-  sources: ReadonlyMap<string, string>,
-  ownerPath: string,
-  entry: OwnerEntryComposition,
-  composed: (bindings: ModuleBindings) => readonly Node[],
-  contractPackages: readonly string[],
-): readonly string[] => {
-  const context: CompositionContext = {
-    cache: new Map(),
-    contractPackages,
-    entry,
-    ownerPath,
-    sources,
-    verdicts: new Map(),
-  };
-  const bindings = moduleBindings(entry.file, entry.source);
-  if (bindings === undefined) {
+const composedProblems = (context: CompositionContext, entry: OwnerEntryComposition): readonly string[] => {
+  const bindings = context.graph.parsed(entry.file);
+  if (bindings === undefined || bindings === 'unparsable') {
     return [`${entry.file}: does not parse`];
   }
-  const unknown = (name: string): string => `${entry.file}: ${name} is no read, Action or own API of this module`;
-  // Imported from a contract package or from a generated file, present or not, a binding is a read or Action's.
+  const unknown = (name: string): string =>
+    `${entry.file}: ${name} is no read, Action or own API of this module; admitted: ${OWNER_MOUNT_FORMS}`;
+  const site: CompositionSite = { bindings, file: entry.file };
+  // Imported from a contract package or from a generated file, present or not, a binding is a read's or Action's.
   const takenImports = bindings.bindings.flatMap(({ imported, name }) => {
-    const generated =
-      imported !== undefined &&
-      imported.source.startsWith('.') &&
-      entry.generated(path.posix.normalize(path.posix.join(path.posix.dirname(entry.file), imported.source)));
+    const target = imported === undefined ? undefined : context.graph.target(entry.file, imported.source);
     return imported !== undefined &&
-      (generated || contractPackages.some((contractPackage) => imported.source.startsWith(`${contractPackage}/`))) &&
-      !entry.admitted.has(importKey(imported.source, imported.name))
+      target !== undefined &&
+      ((imported.source.startsWith('.') && context.generated(target)) ||
+        context.contractPackages.some((contractPackage) => imported.source.startsWith(`${contractPackage}/`))) &&
+      !context.admitted.has(importKey(target, imported.name))
       ? [unknown(name)]
       : [];
   });
+  const composed = entry.composed(bindings).map((node) => {
+    const question: CompositionQuestion =
+      node.type === 'Identifier'
+        ? { identifier: node, kind: 'reference', mounted: true, site }
+        : { kind: 'node', node, site };
+    return [node, question] as const;
+  });
+  // One walk over the whole composition first; only a composition that fails is judged value by value.
+  const failing = composesOnlyAdmitted(
+    context,
+    composed.map(([, question]) => question),
+  )
+    ? []
+    : composed.filter(([, question]) => !composesOnlyAdmitted(context, [question]));
   return [
     ...takenImports,
-    ...composed(bindings).flatMap((node) => {
-      const head = compositionHead(node);
-      const reference = bindings.references.find(({ identifier }) => identifier === head);
-      const [binding, ...others] = reference?.bindings ?? [];
-      const name = head.type === 'Identifier' ? head.name : entry.source.slice(node.start, node.end);
-      const admitted =
-        binding?.imported !== undefined &&
-        entry.admitted.has(importKey(binding.imported.source, binding.imported.name));
-      return binding !== undefined &&
-        others.length === 0 &&
-        (admitted || isOwnBinding(context, { binding, bindings, file: entry.file }, true))
-        ? []
-        : [unknown(name)];
-    }),
+    ...failing.map(([node]) =>
+      unknown(node.type === 'Identifier' ? node.name : entry.source.slice(node.start, node.end)),
+    ),
   ];
 };
 
 /** Every `.addHttpApi(...)` argument of the owner's `./api`, wherever it stands. */
-const mountedApis = (bindings: ModuleBindings): readonly Node[] => mountsWithin(bindings, bindings.program);
+const mountedApis = (bindings: ModuleBindings): readonly Node[] =>
+  [...bindings.parents.keys()].filter((node) => isMountArgument(bindings, node));
 
 /** Every argument of the handler composition of `api/index.ts`: the `mergeAll(...)` holding the handler-layer slot. */
 const composedLayers =
@@ -6308,54 +6628,87 @@ const composedLayers =
 
 /**
  * The other direction of the read inventory, over the whole of each owner entry, the generated slots and the rest
- * alike: what an owner entry imports from a contract package or from a generated file (`shared/apis/`, a read or
- * Action server) is a read or Action of the module, and so is every API `./api` mounts and every layer the handler
- * composition of `api/index.ts` merges, unless it is the module's own (`isOwnBinding`).
+ * alike: every API `./api` mounts and every layer the handler composition of `api/index.ts` merges is a read or
+ * Action of the module or the module's own (`OWNER_MOUNT_FORMS`), and no owner entry exports what reaches a package
+ * read of the module (`OWNER_ENTRY_READ_FORMS`). One module graph over the files of the owner serves both, so each
+ * file a rule follows is parsed once.
  */
-const unresolvedOwnerMounts = (
+const ownerEntryProblems = (
   sources: ReadonlyMap<string, string>,
   inputs: CompleteGeneratedModuleApiSeamInputs,
   contributions: readonly GeneratedContribution[],
+  deploymentAppId: string,
 ): readonly string[] => {
+  const { verticalPath } = inputs;
   // Generated or published, the Action seams judge each Action contract file.
-  const actionSlugs = ownerActionContracts(sources, inputs.verticalPath).map(([candidate]) =>
+  const actionSlugs = ownerActionContracts(sources, verticalPath).map(([candidate]) =>
     path.posix.basename(candidate, ACTION_CONTRACT_SUFFIX),
   );
   const reads = contributions.flatMap((entry) => (entry[2] === undefined ? [] : [entry[2]]));
-  const contractPackages = contractPackageNames(sources);
-  const sharedApi: OwnerEntryComposition = {
+  const sharedFile = `${verticalPath}/shared/api.ts`;
+  const handlerFile = `${verticalPath}/api/index.ts`;
+  const aggregate = ownerActionClientPublication(sources, verticalPath, deploymentAppId);
+  const entrySources = new Map([
+    [sharedFile, inputs.sharedApi],
+    [handlerFile, inputs.handlerRoot],
+    ...(aggregate === undefined ? [] : [[aggregate.file, aggregate.source] as const]),
+  ]);
+  const graph = moduleGraph(
+    (importer, specifier) =>
+      specifier.startsWith('.')
+        ? (relativeImportTarget(sources, importer, specifier) ??
+          path.posix.normalize(path.posix.join(path.posix.dirname(importer), specifier)))
+        : specifier,
+    (target) => entrySources.get(target) ?? (target.startsWith(`${verticalPath}/`) ? sources.get(target) : undefined),
+  );
+  const context: CompositionContext = {
     admitted: new Set([
-      ...reads.map((read) =>
-        importKey(contributionImports(read).sharedApi, contributionApiValue(read.kind, read.name)),
-      ),
-      ...actionSlugs.map((slug) =>
-        importKey(`./apis/${slug}${ACTION_CONTRACT_SUFFIX}`, `${toPascalCase(slug)}ActionApi`),
-      ),
+      ...reads.flatMap((read) => [
+        importKey(
+          graph.target(sharedFile, contributionImports(read).sharedApi),
+          contributionApiValue(read.kind, read.name),
+        ),
+        importKey(
+          graph.target(handlerFile, `./${contributionServerStem(read)}-server.ts`),
+          `${toCamelCase(read.name)}ReadApiLive`,
+        ),
+      ]),
+      ...actionSlugs.flatMap((slug) => [
+        importKey(
+          graph.target(sharedFile, `./apis/${slug}${ACTION_CONTRACT_SUFFIX}`),
+          `${toPascalCase(slug)}ActionApi`,
+        ),
+        importKey(graph.target(handlerFile, `./${slug}-action-server.ts`), `${toCamelCase(slug)}ActionApiLive`),
+      ]),
     ]),
-    file: `${inputs.verticalPath}/shared/api.ts`,
-    generated: (target) => target.startsWith(`${inputs.verticalPath}/shared/apis/`),
-    source: inputs.sharedApi,
+    contractPackages: contractPackageNames(sources),
+    generated: (target) =>
+      target.startsWith(`${verticalPath}/shared/apis/`) ||
+      (target.startsWith(`${verticalPath}/`) && /-(?:action|read)-server\.ts$/u.test(target)),
+    graph,
+    moduleApis: moduleApiNames(sources),
+    ownerPath: verticalPath,
   };
-  const handlerRoot: OwnerEntryComposition = {
-    admitted: new Set([
-      ...reads.map((read) =>
-        importKey(`./${contributionServerStem(read)}-server.ts`, `${toCamelCase(read.name)}ReadApiLive`),
-      ),
-      ...actionSlugs.map((slug) => importKey(`./${slug}-action-server.ts`, `${toCamelCase(slug)}ActionApiLive`)),
-    ]),
-    file: `${inputs.verticalPath}/api/index.ts`,
-    generated: (target) => /-(?:action|read)-server\.ts$/u.test(target),
-    source: inputs.handlerRoot,
-  };
+  const published = reads.filter((read) => read.publication !== undefined);
+  const readSpecifiers = new Map(
+    published.flatMap((read) => {
+      const contract = contributionImports(read).sharedApi;
+      const apiValue = contributionApiValue(read.kind, read.name);
+      return [[contract, apiValue] as const, [`${contract}/client`, apiValue] as const];
+    }),
+  );
+  const entries: readonly OwnerEntry[] = [
+    { file: sharedFile, mounts: true, source: inputs.sharedApi },
+    ...(aggregate === undefined ? [] : [{ ...aggregate, mounts: false }]),
+  ];
   return [
-    ...composedProblems(sources, inputs.verticalPath, sharedApi, mountedApis, contractPackages),
-    ...composedProblems(
-      sources,
-      inputs.verticalPath,
-      handlerRoot,
-      composedLayers(inputs.handlerRoot),
-      contractPackages,
-    ),
+    ...composedProblems(context, { composed: mountedApis, file: sharedFile, source: inputs.sharedApi }),
+    ...composedProblems(context, {
+      composed: composedLayers(inputs.handlerRoot),
+      file: handlerFile,
+      source: inputs.handlerRoot,
+    }),
+    ...(published.length === 0 ? [] : ownerEntryReadProblems(graph, verticalPath, entries, readSpecifiers)),
   ];
 };
 
@@ -6379,7 +6732,7 @@ const hasCompleteGeneratedContributions = (
   if (contributions.length === 0) {
     return false;
   }
-  const unresolved = unresolvedOwnerMounts(sources, inputs, contributions);
+  const unresolved = ownerEntryProblems(sources, inputs, contributions, deploymentAppId);
   if (unresolved.length > 0) {
     diagnostics?.push(...unresolved);
     return false;

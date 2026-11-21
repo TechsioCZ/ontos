@@ -409,6 +409,7 @@ const appRoot = path.resolve(import.meta.dirname, '../../..');
 const paymentVertical = 'verticals/payment-term-catalog';
 const paymentContracts = 'packages/payment-term-catalog-contracts';
 const paymentSlug = 'payment-term-catalog';
+const paymentHistoryRead = 'payment-term-history';
 
 const sourceTree = async (root: string, directory: string): Promise<readonly (readonly [string, string])[]> => {
   const entries = await readdir(path.join(root, directory), { withFileTypes: true });
@@ -520,7 +521,7 @@ it.live(
 it.live(
   'retires an owner read completely: the remaining module passes the read checks',
   Effect.fn(function* retireOwnerRead() {
-    const sources = yield* retireInCopy('payment-term-history');
+    const sources = yield* retireInCopy(paymentHistoryRead);
     const diagnostics: string[] = [];
     expect(
       hasCompleteGeneratedModuleApiSeam(sources, `${paymentVertical}/shared/api.ts`, paymentSlug, diagnostics),
@@ -565,13 +566,17 @@ it.live(
   }),
 );
 
-/** The names a module's references resolve to no declaration of: globals, or bindings a retirement left behind. */
-const unboundNames = (file: string, source: string): ReadonlySet<string> =>
-  new Set(
-    (moduleBindings(file, source)?.references ?? []).flatMap((reference) =>
-      reference.bindings.length === 0 ? [reference.name] : [],
-    ),
+/**
+ * The names a module's references resolve to no declaration of: globals, or bindings a retirement left behind. A
+ * source that does not parse has no answer, and fails the test that asks.
+ */
+const unboundNames = (file: string, source: string): ReadonlySet<string> => {
+  const bindings = moduleBindings(file, source);
+  expect(bindings, `${file} parses`).toBeDefined();
+  return new Set(
+    (bindings?.references ?? []).flatMap((reference) => (reference.bindings.length === 0 ? [reference.name] : [])),
   );
+};
 
 for (const [label, read, vertical, contracts, slug, api] of [
   [
@@ -604,6 +609,8 @@ for (const [label, read, vertical, contracts, slug, api] of [
       const unboundBefore = unboundNames(sharedApiFile, before);
       expect([...unboundNames(sharedApiFile, after)].filter((unbound) => !unboundBefore.has(unbound))).toEqual([]);
       expect(unboundBefore.has(api)).toBe(false);
+      // A union a retirement left broken does not parse, and fails rather than counting no unbound name.
+      expect(() => unboundNames(sharedApiFile, after.replace('GroupsOf<', 'GroupsOf<\n  | |'))).toThrow();
     }),
   );
 }
@@ -633,12 +640,42 @@ it.live(
 );
 
 it.live(
+  'refuses to retire a read whose file an owner entry still names by any kind of module specifier, with the line',
+  Effect.fn(function* refuseSurvivingSpecifier() {
+    const aggregate = `${paymentVertical}/src/api/payment-term-catalog-client.ts`;
+    const sharedApiFile = `${paymentVertical}/shared/api.ts`;
+    for (const [file, use, specifier] of [
+      [
+        aggregate,
+        "export type HistoricalRequest = import('../../shared/apis/payment-term-history.ts').PaymentTermHistoryRequest;\n",
+        '../../shared/apis/payment-term-history.ts',
+      ],
+      [
+        sharedApiFile,
+        "export const loadHistory = () => import('./apis/payment-term-history.ts');\n",
+        './apis/payment-term-history.ts',
+      ],
+    ] as const) {
+      const line = (yield* Effect.promise(() => readFile(path.join(appRoot, file), 'utf-8'))).split('\n').length;
+      yield* expectFailure(
+        retireInCopy(paymentHistoryRead, paymentVertical, paymentContracts, paymentSlug, [
+          [file, (source) => `${source}${use}`],
+        ]),
+        (cause) => {
+          expect(String(cause), file).toContain(`${file}:${line} still names ${specifier} of the retired read`);
+        },
+      );
+    }
+  }),
+);
+
+it.live(
   'keeps a re-export whose source is not retired, whatever names it shares with the retired read',
   Effect.fn(function* keepUnrelatedReexport() {
     const aggregate = `${paymentVertical}/src/api/payment-term-catalog-client.ts`;
     const unrelated =
       "export type { PaymentTermHistoryRequest as ArchivedHistoryRequest } from './archived-history.ts';";
-    const sources = yield* retireInCopy('payment-term-history', paymentVertical, paymentContracts, paymentSlug, [
+    const sources = yield* retireInCopy(paymentHistoryRead, paymentVertical, paymentContracts, paymentSlug, [
       [`${paymentVertical}/src/api/archived-history.ts`, () => 'export type PaymentTermHistoryRequest = string;\n'],
       [aggregate, (source) => `${source}${unrelated}\n`],
     ]);

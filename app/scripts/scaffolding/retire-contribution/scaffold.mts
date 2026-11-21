@@ -3,8 +3,15 @@ import nodePath from 'node:path';
 import { Effect, FileSystem, Schema, Predicate } from 'effect';
 import type { Node } from 'oxc-parser';
 
-import { moduleBindings, patternIdentifiers } from '../../module-bindings.mts';
-import type { ModuleBindings } from '../../module-bindings.mts';
+import {
+  exportOrigins,
+  lineOf,
+  moduleBindings,
+  moduleExports,
+  moduleGraph,
+  moduleSpecifiers,
+} from '../../module-bindings.mts';
+import type { ModuleBindings, ModuleGraph } from '../../module-bindings.mts';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { discoverPublicContractPackage } from '../governed-contribution/scaffold.mts';
@@ -231,10 +238,6 @@ interface RetiredRead {
   readonly files: ReadonlyMap<string, string>;
 }
 
-/** Where a re-exported binding comes from: a retired file, a file that stays, or no export of that name. */
-const ExportOriginSchema = Schema.Literals(['absent', 'kept', 'retired']);
-type ExportOrigin = typeof ExportOriginSchema.Type;
-
 /** What a specifier of `importer` names: a path when relative (the candidate that exists), else the specifier. */
 const importTarget = (importer: string, specifier: string, exists: (candidate: string) => boolean): string => {
   if (!specifier.startsWith('.')) {
@@ -253,94 +256,34 @@ const parsedBindings = (filePath: string, content: string): ModuleBindings => {
   return bindings;
 };
 
-const lineOf = (content: string, index: number): number => content.slice(0, index).split('\n').length;
-
 /** The owner files each owner entry passes on, keyed by path, as they are before the retirement. */
 type OwnerSources = ReadonlyMap<string, string>;
 
 const isKnown = (retired: RetiredRead, sources: OwnerSources) => (candidate: string) =>
   retired.files.has(candidate) || sources.has(candidate);
 
-const exportsDeclared = (declaration: Node, name: string): boolean => {
-  if (declaration.type === 'VariableDeclaration') {
-    return declaration.declarations.some((declarator) =>
-      patternIdentifiers(declarator.id).some(
-        (identifier) => identifier.type === 'Identifier' && identifier.name === name,
-      ),
-    );
-  }
-  return 'id' in declaration && declaration.id?.type === 'Identifier' && declaration.id.name === name;
-};
+/** The module graph of a retirement: the owner files an owner entry passes bindings on from, and the retired files. */
+const retirementGraph = (retired: RetiredRead, sources: OwnerSources): ModuleGraph =>
+  moduleGraph(
+    (importer, specifier) => importTarget(importer, specifier, isKnown(retired, sources)),
+    (target) => retired.files.get(target) ?? sources.get(target),
+  );
 
 /**
- * Where what `file` exports as `name` comes from, through the re-exports and imports it passes it on with: a retired
- * file, a file that stays (or one the retirement cannot read, such as another package), or nowhere in `file`.
+ * Whether what `file` exports as `name` comes from a retired file: followed, as the checks follow it
+ * (`exportOrigins`), through every file it passes to a declaration, a module the retirement does not read, or a whole
+ * module, and retired when any of those is a retired file.
  */
-const exportOrigin = (
-  file: string,
-  name: string,
-  retired: RetiredRead,
-  sources: OwnerSources,
-  seen: ReadonlySet<string> = new Set(),
-): ExportOrigin => {
-  const retiredSource = retired.files.get(file);
-  const source = retiredSource ?? sources.get(file);
-  const key = `${file}#${name}`;
-  if (source === undefined || seen.has(key)) {
-    return source === undefined ? 'kept' : 'absent';
-  }
-  const bindings = parsedBindings(file, source);
-  const exported = bindings.program.body.flatMap((statement): readonly ExportOrigin[] => {
-    if (statement.type === 'ExportAllDeclaration' || statement.type !== 'ExportNamedDeclaration') {
-      return [];
+const comesFromRetired = (graph: ModuleGraph, retired: RetiredRead, file: string, name: string): boolean =>
+  exportOrigins(graph, file, name).some((origin) => {
+    if (origin.kind === 'unresolved' && origin.reason === 'does not parse') {
+      return raiseScaffoldFailure(`cannot parse ${origin.file}`);
     }
-    const passed = statement.specifiers.find(
-      (specifier) => specifier.exported.type === 'Identifier' && specifier.exported.name === name,
+    return (
+      origin.trail.some((passed) => retired.files.has(passed)) ||
+      (origin.kind === 'foreign' && retired.files.has(origin.target))
     );
-    if (passed === undefined) {
-      return statement.declaration !== null && exportsDeclared(statement.declaration, name) ? ['kept'] : [];
-    }
-    const local = passed.local.type === 'Identifier' ? passed.local.name : passed.local.value;
-    if (statement.source !== null) {
-      const target = importTarget(file, statement.source.value, isKnown(retired, sources));
-      return [exportOrigin(target, local, retired, sources, new Set([...seen, key]))];
-    }
-    const imported = bindings.bindings.find((binding) => binding.name === local)?.imported;
-    return imported === undefined
-      ? ['kept']
-      : [
-          exportOrigin(
-            importTarget(file, imported.source, isKnown(retired, sources)),
-            imported.name,
-            retired,
-            sources,
-            new Set([...seen, key]),
-          ),
-        ];
   });
-  const [origin] = exported;
-  if (origin !== undefined) {
-    return retiredSource === undefined || origin === 'absent' ? origin : 'retired';
-  }
-  for (const statement of bindings.program.body) {
-    if (
-      statement.type === 'ExportAllDeclaration' &&
-      statement.exported?.type === 'Identifier' &&
-      statement.exported.name === name
-    ) {
-      const whole = importTarget(file, statement.source.value, isKnown(retired, sources));
-      return retired.files.has(whole) || retiredSource !== undefined ? 'retired' : 'kept';
-    }
-    if (statement.type === 'ExportAllDeclaration' && statement.exported === null) {
-      const target = importTarget(file, statement.source.value, isKnown(retired, sources));
-      const passedOn = exportOrigin(target, name, retired, sources, new Set([...seen, key]));
-      if (passedOn !== 'absent') {
-        return retiredSource === undefined ? passedOn : 'retired';
-      }
-    }
-  }
-  return 'absent';
-};
 
 interface SourceEdit {
   readonly end: number;
@@ -378,30 +321,20 @@ const unionMemberRemovals = (
   });
 };
 
-/** Where a statement of an owner entry takes its bindings from, judged against the retired read. */
+/** What a re-export of an owner entry passes on, judged against the retired read. */
 const sourceEdits = (
   filePath: string,
   content: string,
   retired: RetiredRead,
-  sources: OwnerSources,
+  graph: ModuleGraph,
   statement: Node,
-  inSlot: (node: Node) => boolean,
 ): readonly SourceEdit[] => {
-  const target = (specifier: string): string => importTarget(filePath, specifier, isKnown(retired, sources));
+  const target = (specifier: string): string => graph.target(filePath, specifier);
   const removal: SourceEdit = {
     end: content.charAt(statement.end) === '\n' ? statement.end + 1 : statement.end,
     start: statement.start,
     text: '',
   };
-  if (
-    statement.type === 'ImportDeclaration' &&
-    retired.files.has(target(statement.source.value)) &&
-    !inSlot(statement)
-  ) {
-    return raiseScaffoldFailure(
-      `${filePath}:${lineOf(content, statement.start)} still imports the retired read: remove that use first`,
-    );
-  }
   if (statement.type === 'ExportAllDeclaration') {
     return retired.files.has(target(statement.source.value)) ? [removal] : [];
   }
@@ -411,7 +344,7 @@ const sourceEdits = (
   const from = target(statement.source.value);
   const kept = statement.specifiers.filter((specifier) => {
     const local = specifier.local.type === 'Identifier' ? specifier.local.name : specifier.local.value;
-    return exportOrigin(from, local, retired, sources) !== 'retired';
+    return !comesFromRetired(graph, retired, from, local);
   });
   if (kept.length === statement.specifiers.length) {
     return [];
@@ -464,8 +397,8 @@ const retiredUseEdits = (
  * An owner entry without the retired read, by what its bindings and re-exports refer to, never by name. A re-export
  * comes out when what it passes on comes from a retired file, directly or through the owner files it resolves
  * through; a member of a type union that is exactly `typeof <a binding imported from a retired file>` comes out with
- * it. Any other use of such a binding, and any import of a retired file outside the generated slots, is refused with
- * the file and line, since code outside the slots still uses the read.
+ * it. Any other use of such a binding outside the generated slots is refused with the file and line, since code
+ * outside the slots still uses the read.
  */
 const withoutRetiredRead = (
   filePath: string,
@@ -481,10 +414,9 @@ const withoutRetiredRead = (
     return from === -1 || to === -1 ? [] : [[from, to] as const];
   });
   const inSlot = (node: Node): boolean => slots.some(([from, to]) => node.start > from && node.end < to);
+  const graph = retirementGraph(retired, sources);
   const edits = [
-    ...bindings.program.body.flatMap((statement) =>
-      sourceEdits(filePath, content, retired, sources, statement, inSlot),
-    ),
+    ...bindings.program.body.flatMap((statement) => sourceEdits(filePath, content, retired, graph, statement)),
     ...retiredUseEdits(filePath, content, retired, sources, bindings, inSlot),
   ];
   let next = content;
@@ -494,20 +426,13 @@ const withoutRetiredRead = (
   return next;
 };
 
-/** The specifier an owner file passes bindings on from: a re-export, or an import of a binding it exports. */
-const passedOnSpecifier = (statement: Node, exportedImports: ReadonlySet<Node>): string | undefined => {
-  if (statement.type === 'ExportAllDeclaration') {
-    return statement.source.value;
-  }
-  if (statement.type === 'ImportDeclaration') {
-    return exportedImports.has(statement) ? statement.source.value : undefined;
-  }
-  return statement.type === 'ExportNamedDeclaration' ? statement.source?.value : undefined;
-};
+/** The files a relative module target may be: itself when it has an extension, else `<path>.ts` or `<path>/index.ts`. */
+const targetCandidates = (target: string): readonly string[] =>
+  nodePath.extname(target) === '' ? [`${target}.ts`, nodePath.join(target, 'index.ts')] : [target];
 
 /**
- * The source of every owner file inside `directory` an owner entry passes bindings on from, transitively: what it
- * re-exports from, and what it imports a binding from that it exports.
+ * The source of every owner file inside `directory` an export of an owner entry is followed into (`exportOrigins`,
+ * the resolver the checks use), read until no export leads to an owner file not yet read.
  */
 const readOwnerSources = Effect.fn('readOwnerSources')(function* readOwnerSourcesEffect(
   filePath: string,
@@ -517,44 +442,73 @@ const readOwnerSources = Effect.fn('readOwnerSources')(function* readOwnerSource
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const sources = new Map<string, string>([[filePath, content]]);
-  const pending = [filePath];
-  for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
-    const bindings = yield* trySync(() => parsedBindings(file, sources.get(file) ?? ''), `cannot parse ${file}`);
-    const exportedImports = new Set(
-      bindings.references.flatMap((reference) =>
-        bindings.parents.get(reference.identifier)?.type === 'ExportSpecifier'
-          ? reference.bindings.map((binding) => binding.statement)
-          : [],
-      ),
+  const graph = retirementGraph(retired, sources);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    const { names, opaque } = moduleExports(graph, filePath);
+    const unread = [...opaque, ...names.flatMap((name) => exportOrigins(graph, filePath, name))].flatMap((origin) =>
+      origin.kind === 'foreign' && origin.specifier.startsWith('.') ? targetCandidates(origin.target) : [],
     );
-    for (const statement of bindings.program.body) {
-      const specifier = passedOnSpecifier(statement, exportedImports);
-      if (specifier?.startsWith('.') === true) {
-        const base = nodePath.resolve(nodePath.dirname(file), specifier);
-        // A specifier with an extension names its file; one without names `<path>.ts` or `<path>/index.ts`.
-        const candidates = nodePath.extname(base) === '' ? [`${base}.ts`, nodePath.join(base, 'index.ts')] : [base];
-        for (const candidate of candidates) {
-          const inside = candidate.startsWith(`${directory}${nodePath.sep}`);
-          if (inside && !sources.has(candidate) && !retired.files.has(candidate)) {
-            const exists = yield* fileSystem
-              .exists(candidate)
-              .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${candidate}`, cause)));
-            if (exists) {
-              sources.set(
-                candidate,
-                yield* fileSystem
-                  .readFileString(candidate)
-                  .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${candidate}`, cause))),
-              );
-              pending.push(candidate);
-            }
-          }
+    for (const candidate of new Set(unread)) {
+      if (candidate.startsWith(`${directory}${nodePath.sep}`) && !sources.has(candidate)) {
+        const exists = yield* fileSystem
+          .exists(candidate)
+          .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${candidate}`, cause)));
+        if (exists) {
+          sources.set(
+            candidate,
+            yield* fileSystem
+              .readFileString(candidate)
+              .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${candidate}`, cause))),
+          );
+          grew = true;
         }
       }
     }
   }
   return sources;
 });
+
+/**
+ * The line `before` holds line `line` of `after`, which the retirement made from it by removing and rewriting
+ * other lines: the same occurrence of the same text.
+ */
+const lineBefore = (before: string, after: string, line: number): number => {
+  const changed = after.split('\n');
+  const text = changed[line - 1];
+  const occurrence = changed.slice(0, line).filter((candidate) => candidate === text).length;
+  let seen = 0;
+  for (const [index, candidate] of before.split('\n').entries()) {
+    seen += candidate === text ? 1 : 0;
+    if (candidate === text && seen === occurrence) {
+      return index + 1;
+    }
+  }
+  return line;
+};
+
+/**
+ * After the removals, no module specifier of any kind in an owner entry (static import, `export … from`, `import()`,
+ * `import('…')` type, `require`, `import x = require`) names a retired file; one that does is refused with the file
+ * and its line as the file stands.
+ */
+const withoutRetiredSpecifiers = (
+  filePath: string,
+  before: string,
+  after: string,
+  retired: RetiredRead,
+  sources: OwnerSources,
+): string => {
+  for (const { literal, specifier } of moduleSpecifiers(parsedBindings(filePath, after))) {
+    if (retired.files.has(importTarget(filePath, specifier, isKnown(retired, sources)))) {
+      raiseScaffoldFailure(
+        `${filePath}:${lineBefore(before, after, lineOf(after, literal.start))} still names ${specifier} of the retired read: remove that use first`,
+      );
+    }
+  }
+  return after;
+};
 
 const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEffect(
   filePath: string,
@@ -569,7 +523,14 @@ const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEf
     .pipe(Effect.mapError((cause) => scaffoldError(`${label} is missing at ${filePath}`, cause)));
   const sources = yield* readOwnerSources(filePath, content, directory, retired);
   const next = yield* trySync(
-    () => removeSlotEntries(withoutRetiredRead(filePath, content, retired, sources, removals), removals),
+    () =>
+      withoutRetiredSpecifiers(
+        filePath,
+        content,
+        removeSlotEntries(withoutRetiredRead(filePath, content, retired, sources, removals), removals),
+        retired,
+        sources,
+      ),
     `failed to retire ${label}`,
   );
   return { content: next, kind: 'update' as const, path: filePath };
@@ -673,56 +634,68 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
   const readImport = `import { ${camel}Read } from './src/api/${name}.read.ts';`;
   const { nextManifest, nextRegistration } = yield* trySync(
     () => ({
-      nextManifest: removeSlotEntries(vertical.manifestContent, [
-        {
-          end: MODULE_MANIFEST_IMPORT_SLOT_END,
-          label: `module API import ${name}`,
-          matches: isSlotEntry(`import { ${value} } from '${contractImport}';`),
-          start: MODULE_MANIFEST_IMPORT_SLOT_START,
-        },
-        {
-          end: MODULE_MANIFEST_IMPORT_SLOT_END,
-          label: `module API read import ${name}`,
-          matches: isSlotEntry(readImport),
-          optional: true,
-          start: MODULE_MANIFEST_IMPORT_SLOT_START,
-        },
-        {
-          end: MODULE_MANIFEST_API_SLOT_END,
-          label: `module API descriptor ${name}`,
-          matches: isSlotEntry(`'${name}': ${value},`),
-          start: MODULE_MANIFEST_API_SLOT_START,
-        },
-        {
-          end: MODULE_MANIFEST_OPERATION_SLOT_END,
-          label: `module API operation contract ${name}`,
-          matches: (entry) => entry.includes(`apiKey: '${name}'`),
-          optional: true,
-          start: MODULE_MANIFEST_OPERATION_SLOT_START,
-        },
-      ]),
-      nextRegistration: removeSlotEntries(vertical.registrationContent, [
-        {
-          end: MODULE_REGISTRATION_IMPORT_SLOT_END,
-          label: `module API registration read import ${name}`,
-          matches: isSlotEntry(readImport),
-          optional: true,
-          start: MODULE_REGISTRATION_IMPORT_SLOT_START,
-        },
-        {
-          end: MODULE_REGISTRATION_READ_SLOT_END,
-          label: `module API registration read ${name}`,
-          matches: isSlotEntry(`${camel}Read,`),
-          optional: true,
-          start: MODULE_REGISTRATION_READ_SLOT_START,
-        },
-        {
-          end: MODULE_REGISTRATION_API_SLOT_END,
-          label: `module API registration ${name}`,
-          matches: isSlotEntry(`'${name}': () => import('${clientImport}'),`),
-          start: MODULE_REGISTRATION_API_SLOT_START,
-        },
-      ]),
+      nextManifest: withoutRetiredSpecifiers(
+        vertical.manifestPath,
+        vertical.manifestContent,
+        removeSlotEntries(vertical.manifestContent, [
+          {
+            end: MODULE_MANIFEST_IMPORT_SLOT_END,
+            label: `module API import ${name}`,
+            matches: isSlotEntry(`import { ${value} } from '${contractImport}';`),
+            start: MODULE_MANIFEST_IMPORT_SLOT_START,
+          },
+          {
+            end: MODULE_MANIFEST_IMPORT_SLOT_END,
+            label: `module API read import ${name}`,
+            matches: isSlotEntry(readImport),
+            optional: true,
+            start: MODULE_MANIFEST_IMPORT_SLOT_START,
+          },
+          {
+            end: MODULE_MANIFEST_API_SLOT_END,
+            label: `module API descriptor ${name}`,
+            matches: isSlotEntry(`'${name}': ${value},`),
+            start: MODULE_MANIFEST_API_SLOT_START,
+          },
+          {
+            end: MODULE_MANIFEST_OPERATION_SLOT_END,
+            label: `module API operation contract ${name}`,
+            matches: (entry) => entry.includes(`apiKey: '${name}'`),
+            optional: true,
+            start: MODULE_MANIFEST_OPERATION_SLOT_START,
+          },
+        ]),
+        retired,
+        new Map(),
+      ),
+      nextRegistration: withoutRetiredSpecifiers(
+        vertical.registrationPath,
+        vertical.registrationContent,
+        removeSlotEntries(vertical.registrationContent, [
+          {
+            end: MODULE_REGISTRATION_IMPORT_SLOT_END,
+            label: `module API registration read import ${name}`,
+            matches: isSlotEntry(readImport),
+            optional: true,
+            start: MODULE_REGISTRATION_IMPORT_SLOT_START,
+          },
+          {
+            end: MODULE_REGISTRATION_READ_SLOT_END,
+            label: `module API registration read ${name}`,
+            matches: isSlotEntry(`${camel}Read,`),
+            optional: true,
+            start: MODULE_REGISTRATION_READ_SLOT_START,
+          },
+          {
+            end: MODULE_REGISTRATION_API_SLOT_END,
+            label: `module API registration ${name}`,
+            matches: isSlotEntry(`'${name}': () => import('${clientImport}'),`),
+            start: MODULE_REGISTRATION_API_SLOT_START,
+          },
+        ]),
+        retired,
+        new Map(),
+      ),
     }),
     `failed to retire generated module API ${name}`,
   );
