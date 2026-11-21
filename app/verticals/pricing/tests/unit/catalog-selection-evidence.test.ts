@@ -76,6 +76,25 @@ const priceSourceEvidence = Schema.decodeSync(CatalogSelectionOwnerAssessmentRes
   status: 'VALID',
 });
 
+/** A selection that pins a configuration as well: the price source question does not answer it. */
+const configured = Schema.decodeSync(CatalogSelectionSchema)({
+  ...selection,
+  configuration: {
+    choices: [{ choiceKey: 'packaging', value: 'standard' }],
+    definition: {
+      resourceRef: {
+        moduleId: 'commerce.catalog',
+        resourceId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        resourceType: 'commerce.catalog.configuration-definition',
+        tenantId,
+      },
+      revision: 1,
+    },
+    productRef: selection.productRef,
+    variantRef: selection.variantRef,
+  },
+});
+
 const principalId = '44444444-4444-4444-8444-444444444444';
 const catalogOwner = ownerConnectionStub('Bearer catalog-owner-assertion', 'https://catalog.example.test');
 
@@ -166,6 +185,30 @@ describe('Pricing Catalog selection evidence integration', () => {
       expect(yield* port.assess(selection)).toEqual(priceSourceEvidence);
       expect(acquisitions[0]?.conditionalRead?.input).toEqual({ purpose: 'PRICE_SOURCE_ASSERTION', selection });
       expect(requests).toEqual([{ purpose: 'PRICE_SOURCE_ASSERTION', selection }]);
+    }),
+  );
+
+  it.effect('asks the PRICING question for a selection that pins a configuration', () =>
+    Effect.gen(function* assessConfiguredPriceSource() {
+      const requests: unknown[] = [];
+      const acquisitions: Parameters<OwnerGatewayConnectionAcquire>[0][] = [];
+      const port = yield* portFromEnvironment(
+        { compositionRevision, legalEntityId, requestCorrelation: 'define-price-correlation' },
+        (payload) =>
+          Effect.sync(() => {
+            requests.push(payload);
+            return { evidence: { kind: 'NOT_FOUND' as const, requested: configured }, missingRoles: [] };
+          }),
+        (input) => {
+          acquisitions.push(input);
+          return catalogOwner(input);
+        },
+        'PRICE_SOURCE_ASSERTION',
+      );
+
+      expect(yield* port.assess(configured)).toEqual({ kind: 'NOT_FOUND', requested: configured });
+      expect(acquisitions[0]?.conditionalRead?.input).toEqual({ purpose: 'PRICING', selection: configured });
+      expect(requests).toEqual([{ purpose: 'PRICING', selection: configured }]);
     }),
   );
 

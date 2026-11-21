@@ -247,7 +247,7 @@ const Pager = ({
       <span className="text-fg-secondary text-sm">
         {shown === 0
           ? t(`${key}.rangeEmpty`)
-          : t(`${key}.range`, { count, from: input.offset + 1, to: input.offset + shown })}
+          : t(`${key}.range`, { from: input.offset + 1, to: input.offset + shown, total: count })}
       </span>
       <div className="flex gap-100">
         <Button

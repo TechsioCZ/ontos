@@ -35,7 +35,7 @@
         "noName": "No name in this language",
         "showVariants": "Show variants",
         "hideVariants": "Hide variants",
-        "range": "{{from}}–{{to}} of {{count}}",
+        "range": "{{from}}–{{to}} of {{total}}",
         "rangeEmpty": "0 products",
         "previous": "Previous",
         "next": "Next",

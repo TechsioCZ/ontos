@@ -3,6 +3,7 @@
 // that is not an exact ON_HAND total is „Dostupnost ověřujeme“, a variant without SKU has an empty SKU, and the image is
 // the shop's no-image placeholder. Imported Products stay DRAFT with WORK_IN_PROGRESS Variants, so every Variant that is
 // not RETIRED is shown.
+import { Predicate } from "effect";
 import { imagePlaceholder } from "@/ontos/media-path";
 
 /** An owner resource reference (`{moduleId, resourceType, resourceId, tenantId}`). */
@@ -163,9 +164,9 @@ export const toErpStock = (item: CatalogVariantOnHand | undefined): ErpStock => 
 
 const pricesByVariant = (prices: CatalogPagePrices | undefined): Map<string, ErpPrice> => {
   const found = new Map<string, ErpPrice>();
-  if (prices?._tag !== "CATALOG_PAGE_PRICED") return found;
+  if (!Predicate.isTagged(prices, "CATALOG_PAGE_PRICED")) return found;
   for (const price of prices.prices) {
-    if (price._tag === "PRICE_FOUND" && "priceRevision" in price) {
+    if (Predicate.isTagged(price, "PRICE_FOUND") && "priceRevision" in price) {
       const { amount, currencyCode } = price.priceRevision.monetaryAmount;
       found.set(keyOf(price.catalogSelection.variantRef), { kind: "price", amount, currencyCode });
     }

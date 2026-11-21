@@ -3,6 +3,7 @@ import "server-only";
 // (`commerce.storefront-client`): Catalog's product page (Tenant-wide, so no company is sent), Inventory's on-hand
 // page and Pricing's catalogue page prices (both for this storefront's company). An import leaves its Products DRAFT
 // with WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
+import { Predicate } from "effect";
 import { cache } from "react";
 import {
   shownVariantRefs,
@@ -92,11 +93,12 @@ const readPrices = async (
         })) as CatalogPagePrices,
     ),
   );
-  if (answers.some((answer) => answer._tag !== "CATALOG_PAGE_PRICED")) return answers[0];
+  const refused = answers.find((answer) => !Predicate.isTagged(answer, "CATALOG_PAGE_PRICED"));
+  if (refused !== undefined) return refused;
   return {
     _tag: "CATALOG_PAGE_PRICED",
     prices: answers.flatMap((answer) =>
-      answer._tag === "CATALOG_PAGE_PRICED" ? answer.prices : [],
+      Predicate.isTagged(answer, "CATALOG_PAGE_PRICED") ? answer.prices : [],
     ),
   };
 };

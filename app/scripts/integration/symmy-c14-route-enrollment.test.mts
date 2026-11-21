@@ -182,6 +182,10 @@ it.live(
         for (const module of snapshot.composition.modules) {
           yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
         }
+        // The enrollment capability is Core's own (core.identity), and a role cell is usable only where its owning module
+        // is installed in the scope (access_grant#use needs access_capability#available). The composition installs only
+        // its verticals, so the Tenant installs Core's identity module, as the approvals owner runner does.
+        yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},'core.identity','active')`;
         const issuer = yield* seedPrincipal(admin, tenantId, 'human');
         yield* bindAuth(admin, issuer, 'user', shell.providerUserId);
         // The access scopes and Ready fences Core's Tenant bootstrap writes: every governed Action holds the Tenant's

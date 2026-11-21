@@ -1111,9 +1111,10 @@ it.live(
             ),
           ).toEqual(createdVariantA);
           expect((yield* observe()).variants).toHaveLength(before.variants.length + 2);
+          // The legacy text is not part of the source record's identity and replays; another Variant is a business fact.
           const changedBusiness = yield* create({
             ...payloadB,
-            name: 'Different business facts cannot be occurrence replay',
+            variantId: yield* nextId,
           }).pipe(Effect.result);
           expect(Result.isFailure(changedBusiness)).toBe(true);
           if (Result.isFailure(changedBusiness)) {
