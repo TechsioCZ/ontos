@@ -3,7 +3,7 @@
 // Pricing's catalogue page price read, both in the signed-in company.
 import { CatalogVariantOnHandPageRequestSchema } from '@app/inventory/api/catalog-variant-on-hand-page';
 import { executeCatalogVariantOnHandPage } from '@app/inventory/api/catalog-variant-on-hand-page-client';
-import { executeCatalogPagePrices } from '@app/pricing/api/client';
+import { executeCatalogPagePrices } from '@app/pricing/apis/catalog-page-prices-client';
 import { CatalogPagePricesRequestSchema } from '@app/pricing/apis/catalog-page-prices';
 import { definePageData } from '@app/shared-contracts/page-data';
 import { Effect, Option, Schema } from 'effect';
