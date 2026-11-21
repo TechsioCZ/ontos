@@ -31,7 +31,7 @@ const unsupportedGroups = (product: Product): readonly SymmyProductHintKind[] =>
     ],
     [
       'DescriptiveHint',
-      filled(product.localized) ||
+      (product.localized ?? []).some((text) => !hasText(text)) ||
         product.sku !== undefined ||
         product.gtin !== undefined ||
         variants.some(
@@ -109,6 +109,10 @@ const mapProduct = (product: Product): ProductRow => {
   }
   if (product.lifecycle !== undefined) {
     mapped.lifecycle = product.lifecycle;
+  }
+  const texts = (product.localized ?? []).filter(hasText);
+  if (texts.length > 0) {
+    mapped.localized = texts;
   }
   return mapped;
 };

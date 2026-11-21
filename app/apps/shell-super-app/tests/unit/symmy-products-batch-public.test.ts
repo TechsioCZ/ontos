@@ -113,7 +113,7 @@ describe('Symmy products batch public mapping', () => {
         { media: [{ order: 1, purpose: 'GALLERY', resourceKind: 'MEDIA', resourceRef: productRef }] },
         ['MediaHint'],
       ],
-      ['localized', { localized: [{ locale: 'cs', name: 'Zidle' }] }, ['DescriptiveHint']],
+      ['text-less localized', { localized: [{ locale: 'cs-CZ' }] }, ['DescriptiveHint']],
       ['sku', { sku: 'CHAIR' }, ['DescriptiveHint']],
       ['gtin', { gtin: { code: '8590000000011', effectiveAt: '2026-01-01T00:00:00Z' } }, ['DescriptiveHint']],
       ['productType', { productType: catalogRef('product-type', '3') }, ['ClassificationHint']],
@@ -142,6 +142,19 @@ describe('Symmy products batch public mapping', () => {
       expect(map([product(extra)])[0]?.unsupported, field).toEqual(kinds);
     }
     expect(map([product({ categories: [], localized: [], relationships: [], sizes: [] })])[0]?.unsupported).toEqual([]);
+  });
+
+  it('hands the product texts to the owner admission as a supported meaning, without a text that has no text', () => {
+    const [row] = map([
+      product({
+        localized: [{ description: 'Ocelové kladivo', locale: 'cs-CZ', name: 'Kladivo' }, { locale: 'en' }],
+      }),
+    ]);
+    expect(row?.localized).toEqual([{ description: 'Ocelové kladivo', locale: 'cs-CZ', name: 'Kladivo' }]);
+    expect(row?.unsupported).toEqual(['DescriptiveHint']);
+    const [plain] = map([product({ localized: [{ locale: 'cs-CZ', name: 'Kladivo' }] })]);
+    expect(plain?.unsupported).toEqual([]);
+    expect(map([product({ localized: [] })])[0]).not.toHaveProperty('localized');
   });
 
   it('reports the variant fields no intent writes, and drops a localized text that has no text', () => {
