@@ -1931,6 +1931,65 @@ for (const [name, imported, allowed] of [
   );
 }
 
+const VALUE_ONLY_CLAIM = { moduleApis: [], moduleId: 'commerce.catalog', packageName: '@app/catalog' } as const;
+
+it.live('rejects a vertical that claims another deployment identity as a value-only contract owner', () =>
+  Effect.gen(function* verticalClaimingForeignIdentity() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const manifest = 'verticals/inventory/package.json';
+    yield* write(
+      root,
+      manifest,
+      JSON.stringify({
+        name: INVENTORY_PACKAGE_SPECIFIER,
+        ontosContractOwner: { ...VALUE_ONLY_CLAIM, appId: 'catalog' },
+      }),
+    );
+    // With the claimed identity, Inventory would read Catalog's private source as its own.
+    yield* write(
+      root,
+      'verticals/catalog/src/handlers/private-contract.ts',
+      'export const privateRoutine = () => true;\n',
+    );
+    yield* write(
+      root,
+      'verticals/inventory/shared/catalog-private-consumer.ts',
+      "import { privateRoutine } from '../../catalog/src/handlers/private-contract.ts';\nexport const run = privateRoutine;\n",
+    );
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        `${manifest}: a value-only ontosContractOwner claims catalog's identity`,
+      );
+    }
+  }),
+);
+
+it.live('rejects a value-only contract package that names an owner the topology does not know', () =>
+  Effect.gen(function* packageClaimingUnknownOwner() {
+    const root = yield* makeActualCatalogSelectionFixture();
+    const manifest = 'packages/billing-value-contracts/package.json';
+    yield* write(
+      root,
+      manifest,
+      JSON.stringify({
+        exports: { './value': './src/value.ts' },
+        name: '@app/billing-value-contracts',
+        ontosContractOwner: { ...VALUE_ONLY_CLAIM, appId: 'billing' },
+      }),
+    );
+    yield* write(root, 'packages/billing-value-contracts/src/value.ts', "export const billingValue = 'value';\n");
+    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain(
+        `${manifest}: a value-only ontosContractOwner names owner billing, which the topology does not know`,
+      );
+    }
+  }),
+);
+
 for (const [owner, file, specifier, publicBinding] of [
   [
     'verticals/catalog',

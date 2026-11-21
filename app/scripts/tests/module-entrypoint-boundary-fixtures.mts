@@ -1384,6 +1384,19 @@ export const CATALOG_QUANTITY_CONTRACT = 'packages/catalog-selection-contracts/s
 export const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
   const root = yield* makePortalPublicRoleFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
+  // The copied Catalog selection kernel names Catalog as its owner, so the topology knows that deployment.
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: CUSTOMER_CONTEXT_DEPLOYMENT_ID, path: CUSTOMER_CONTEXT_VERTICAL_PATH },
+        { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+      ],
+    }),
+  );
   for (const folder of [
     CUSTOMER_CONTEXT_VERTICAL_PATH,
     'packages/customer-market-retirement-contracts',
