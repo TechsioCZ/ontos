@@ -18,8 +18,9 @@ import { ProductDetailLocalizedSchema, ProductDetailRequestSchema } from './prod
  * One page of the trusted Tenant's Products in the requested lifecycle states, ordered by their name in
  * `locale` (Products without one last) and then by Product id. `search` keeps the Products whose name in
  * `locale` contains the text, ignoring case; `categoryRef` keeps the Products directly assigned to that
- * Category. Paging and search are those of the source product page. A state other than ACTIVE is listed only
- * to a caller who may read the detail of any Product.
+ * Category. Paging and search are those of the source product page. On the demo line DRAFT and ACTIVE are listed
+ * to every admitted caller, since an ERP import creates DRAFT Products that cannot be activated from the import;
+ * RETIRED is listed only to a caller who may read the detail of any Product.
  */
 export const ProductPageRequestSchema = Schema.Struct({
   categoryRef: Schema.optionalKey(ProductCategoryRefSchema),

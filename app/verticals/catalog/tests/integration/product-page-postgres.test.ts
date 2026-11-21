@@ -511,8 +511,19 @@ it.live(
       expect(yield* tenantB.status({ categoryRef: category })).toBe(404);
       expect(ids(yield* tenantA.page({ search: 'alfa b' }))).toEqual([]);
 
-      // Staff who may not read any Product detail page ACTIVE Products only.
-      expect(yield* tenantB.status({ lifecycles: ['DRAFT'] })).toBe(403);
+      // Demo-line rule: staff who may not read any Product detail page DRAFT and ACTIVE, as the storefront does,
+      // because imported Products stay DRAFTs; only RETIRED is refused to them.
+      const importedB = yield* tenantB.create({ name: 'import b legacy' });
+      const unprivileged = yield* tenantB.page({ lifecycles: ['DRAFT', 'ACTIVE'] });
+      expect({ count: unprivileged.count, ids: ids(unprivileged) }).toEqual({
+        count: 2,
+        ids: [foreign.productId, importedB.productId],
+      });
+      expect(unprivileged.items[1]).toMatchObject({
+        lifecycle: 'DRAFT',
+        variants: [{ lifecycle: 'WORK_IN_PROGRESS', options: [] }],
+      });
+      expect(yield* tenantB.status({ lifecycles: ['RETIRED'] })).toBe(403);
       expect(yield* tenantB.status({ lifecycles: ['ACTIVE', 'RETIRED'] })).toBe(403);
 
       // Out-of-range paging, a repeated or missing state and an empty search are refused by the request schema.
