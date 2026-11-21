@@ -10,6 +10,8 @@ import {
   moduleExports,
   moduleGraph,
   moduleSpecifiers,
+  parseProblem,
+  unreadableSpecifiers,
 } from '../../module-bindings.mts';
 import type { ModuleBindings, ModuleGraph } from '../../module-bindings.mts';
 
@@ -291,21 +293,17 @@ interface SourceEdit {
   readonly text: string;
 }
 
-/** Remove the members of a union that are exactly `typeof <a retired binding>`, keeping the union's own pipes. */
-const unionMemberRemovals = (
-  filePath: string,
-  content: string,
-  union: Node,
-  removed: ReadonlySet<Node>,
-): SourceEdit[] => {
+/**
+ * Remove the members of a union that are exactly `typeof <a retired binding>`, keeping the union's own pipes; a union
+ * of nothing else goes whole, and what is left without it is judged by the plan's post-condition.
+ */
+const unionMemberRemovals = (union: Node, removed: ReadonlySet<Node>): SourceEdit[] => {
   if (union.type !== 'TSUnionType') {
     return [];
   }
   const members = union.types;
   if (members.every((member) => removed.has(member))) {
-    return raiseScaffoldFailure(
-      `${filePath}:${lineOf(content, union.start)} describes only the retired read: remove that use first`,
-    );
+    return [{ end: union.end, start: union.start, text: '' }];
   }
   const firstKept = members.findIndex((member) => !removed.has(member));
   return members.flatMap((member, index): SourceEdit[] => {
@@ -362,10 +360,9 @@ const sourceEdits = (
       ];
 };
 
-/** The members of type unions a binding of the retired read is the whole `typeof` of; any other use is refused. */
+/** The members of type unions a binding of the retired read is the whole `typeof` of. */
 const retiredUseEdits = (
   filePath: string,
-  content: string,
   retired: RetiredRead,
   sources: OwnerSources,
   bindings: ModuleBindings,
@@ -379,26 +376,25 @@ const retiredUseEdits = (
     );
     const query = bindings.parents.get(reference.identifier);
     const union = query === undefined ? undefined : bindings.parents.get(query);
-    if (!retiredBinding || inSlot(reference.identifier)) {
-      continue;
-    }
-    if (query?.type === 'TSTypeQuery' && query.typeArguments === null && union?.type === 'TSUnionType') {
+    if (
+      retiredBinding &&
+      !inSlot(reference.identifier) &&
+      query?.type === 'TSTypeQuery' &&
+      query.typeArguments === null &&
+      union?.type === 'TSUnionType'
+    ) {
       unions.set(union, new Set([...(unions.get(union) ?? []), query]));
-    } else {
-      raiseScaffoldFailure(
-        `${filePath}:${lineOf(content, reference.identifier.start)} still uses ${reference.name} of the retired read: remove that use first`,
-      );
     }
   }
-  return [...unions].flatMap(([union, removed]) => unionMemberRemovals(filePath, content, union, removed));
+  return [...unions].flatMap(([union, removed]) => unionMemberRemovals(union, removed));
 };
 
 /**
- * An owner entry without the retired read, by what its bindings and re-exports refer to, never by name. A re-export
- * comes out when what it passes on comes from a retired file, directly or through the owner files it resolves
- * through; a member of a type union that is exactly `typeof <a binding imported from a retired file>` comes out with
- * it. Any other use of such a binding outside the generated slots is refused with the file and line, since code
- * outside the slots still uses the read.
+ * An owner entry without what the retired read contributed, by what its bindings and re-exports refer to, never by
+ * name. A re-export comes out when what it passes on comes from a retired file, directly or through the owner files it
+ * resolves through; a member of a type union that is exactly `typeof <a binding imported from a retired file>` comes
+ * out with it. Whatever else still uses the read stays as it is, for the plan's post-condition to refuse
+ * (`retirementProblems`).
  */
 const withoutRetiredRead = (
   filePath: string,
@@ -417,7 +413,7 @@ const withoutRetiredRead = (
   const graph = retirementGraph(retired, sources);
   const edits = [
     ...bindings.program.body.flatMap((statement) => sourceEdits(filePath, content, retired, graph, statement)),
-    ...retiredUseEdits(filePath, content, retired, sources, bindings, inSlot),
+    ...retiredUseEdits(filePath, retired, sources, bindings, inSlot),
   ];
   let next = content;
   for (const edit of edits.toSorted((left, right) => right.start - left.start)) {
@@ -476,38 +472,136 @@ const readOwnerSources = Effect.fn('readOwnerSources')(function* readOwnerSource
  */
 const lineBefore = (before: string, after: string, line: number): number => {
   const changed = after.split('\n');
-  const text = changed[line - 1];
-  const occurrence = changed.slice(0, line).filter((candidate) => candidate === text).length;
-  let seen = 0;
-  for (const [index, candidate] of before.split('\n').entries()) {
-    seen += candidate === text ? 1 : 0;
-    if (candidate === text && seen === occurrence) {
-      return index + 1;
+  const original = before.split('\n');
+  // A line the retirement rewrote stands where the nearest unchanged line above it puts it.
+  for (let anchor = line; anchor >= 1; anchor -= 1) {
+    const text = changed[anchor - 1];
+    const occurrence = changed.slice(0, anchor).filter((candidate) => candidate === text).length;
+    const index = original.findIndex(
+      (candidate, at) =>
+        candidate === text && original.slice(0, at + 1).filter((seen) => seen === text).length === occurrence,
+    );
+    if (index !== -1) {
+      return index + 1 + line - anchor;
     }
   }
   return line;
 };
 
-/**
- * After the removals, no module specifier of any kind in an owner entry (static import, `export … from`, `import()`,
- * `import('…')` type, `require`, `import x = require`) names a retired file; one that does is refused with the file
- * and its line as the file stands.
- */
-const withoutRetiredSpecifiers = (
-  filePath: string,
-  before: string,
-  after: string,
-  retired: RetiredRead,
-  sources: OwnerSources,
-): string => {
-  for (const { literal, specifier } of moduleSpecifiers(parsedBindings(filePath, after))) {
-    if (retired.files.has(importTarget(filePath, specifier, isKnown(retired, sources)))) {
-      raiseScaffoldFailure(
-        `${filePath}:${lineBefore(before, after, lineOf(after, literal.start))} still names ${specifier} of the retired read: remove that use first`,
-      );
+/** A TypeScript source of the owner module: what the post-condition of a retirement reads. */
+const CODE_FILE = /\.(?:[cm]?ts|tsx)$/u;
+/** Build output and dependencies: never sources of the module. */
+const SKIPPED_DIRECTORIES = new Set(['.modern-js', '.output', 'dist', 'dist-cloudflare', 'node_modules']);
+
+/** Every TypeScript source under the directories, by path, outside build output and dependencies. */
+const moduleSources = Effect.fn('moduleSources')(function* moduleSourcesEffect(directories: readonly string[]) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const sources = new Map<string, string>();
+  const pending = [...directories];
+  for (let directory = pending.pop(); directory !== undefined; directory = pending.pop()) {
+    const listed = directory;
+    const entries = yield* fileSystem
+      .readDirectory(listed)
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to list ${listed}`, cause)));
+    for (const entry of entries) {
+      const candidate = nodePath.join(listed, entry);
+      const info = yield* fileSystem
+        .stat(candidate)
+        .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${candidate}`, cause)));
+      if (info.type === 'Directory' && !SKIPPED_DIRECTORIES.has(entry)) {
+        pending.push(candidate);
+      } else if (info.type === 'File' && CODE_FILE.test(entry)) {
+        sources.set(
+          candidate,
+          yield* fileSystem
+            .readFileString(candidate)
+            .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${candidate}`, cause))),
+        );
+      }
     }
   }
-  return after;
+  return sources;
+});
+
+/** The names a source refers to that no declaration of it binds. */
+const unboundNames = (bindings: ModuleBindings): ReadonlySet<string> =>
+  new Set(bindings.references.flatMap((reference) => (reference.bindings.length === 0 ? [reference.name] : [])));
+
+/** What one source of the owner module is before the plan and as the plan leaves it. */
+interface PlannedSource {
+  readonly after: string;
+  readonly before: string | undefined;
+  readonly file: string;
+}
+
+/** The post-condition's failures in one source; `retired` holds what the plan deletes, by path or package specifier. */
+const sourceProblems = (
+  { after, before, file }: PlannedSource,
+  edited: boolean,
+  retired: ReadonlySet<string>,
+  exists: (candidate: string) => boolean,
+): readonly string[] => {
+  const at = (start: number): string =>
+    `${file}:${before === undefined ? lineOf(after, start) : lineBefore(before, after, lineOf(after, start))}`;
+  const broken = parseProblem(file, after);
+  const bindings = broken === undefined ? moduleBindings(file, after) : undefined;
+  if (bindings === undefined) {
+    return [`${at(broken?.start ?? 0)} does not parse as the retirement leaves it: ${broken?.message ?? 'unknown'}`];
+  }
+  const boundBefore = before === undefined || !edited ? undefined : moduleBindings(file, before);
+  const unboundBefore = boundBefore === undefined ? undefined : unboundNames(boundBefore);
+  const unbound =
+    unboundBefore === undefined
+      ? []
+      : bindings.references.flatMap((reference) =>
+          reference.bindings.length === 0 && !unboundBefore.has(reference.name)
+            ? [
+                `${at(reference.identifier.start)} still uses ${reference.name}, which the retirement unbinds: remove that use first`,
+              ]
+            : [],
+        );
+  const named = moduleSpecifiers(bindings).flatMap(({ literal, specifier }) =>
+    retired.has(importTarget(file, specifier, exists))
+      ? [`${at(literal.start)} still names ${specifier}, which the retirement deletes: remove that use first`]
+      : [],
+  );
+  const unreadable = unreadableSpecifiers(bindings).map(
+    (node) =>
+      `${at(node.start)} loads a module it does not name statically, beside the name of a retired file: remove that use first`,
+  );
+  return [...unbound, ...named, ...unreadable];
+};
+
+/**
+ * The post-condition of a retirement plan, computed on the planned result before anything is written: (a) every file
+ * the plan edits still parses; (b) no file the plan edits leaves a name unbound that was bound before; (c) no module
+ * specifier of any kind (a string literal or a template literal without interpolation) in any source of the owner
+ * module resolves to a file the plan deletes, and a source that names a deleted file's base name loads no module it
+ * does not name statically. A specifier that resolves to a deleted file names its base name, so only the sources that
+ * hold one are parsed. Each failure names the file and its line as the file stands.
+ */
+const retirementProblems = (
+  sources: ReadonlyMap<string, string>,
+  mutations: readonly Mutation[],
+  retired: RetiredRead,
+): readonly string[] => {
+  const deleted = new Set(mutations.flatMap((mutation) => (mutation.kind === 'delete' ? [mutation.path] : [])));
+  const planned = new Map(
+    mutations.flatMap((mutation) =>
+      mutation.kind !== 'delete' && CODE_FILE.test(mutation.path) ? [[mutation.path, mutation.content] as const] : [],
+    ),
+  );
+  const names = [...deleted].map((file) => nodePath.basename(file).replace(/\.[^.]*$/u, ''));
+  const exists = (candidate: string): boolean => sources.has(candidate) || deleted.has(candidate);
+  const files = new Set([...sources.keys(), ...planned.keys()].filter((file) => !deleted.has(file)));
+  return [...files].flatMap((file) => {
+    const before = sources.get(file);
+    const after = planned.get(file) ?? before ?? '';
+    const edited = planned.has(file);
+    return edited || names.some((name) => after.includes(name))
+      ? sourceProblems({ after, before, file }, edited, new Set(retired.files.keys()), exists)
+      : [];
+  });
 };
 
 const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEffect(
@@ -523,14 +617,7 @@ const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEf
     .pipe(Effect.mapError((cause) => scaffoldError(`${label} is missing at ${filePath}`, cause)));
   const sources = yield* readOwnerSources(filePath, content, directory, retired);
   const next = yield* trySync(
-    () =>
-      withoutRetiredSpecifiers(
-        filePath,
-        content,
-        removeSlotEntries(withoutRetiredRead(filePath, content, retired, sources, removals), removals),
-        retired,
-        sources,
-      ),
+    () => removeSlotEntries(withoutRetiredRead(filePath, content, retired, sources, removals), removals),
     `failed to retire ${label}`,
   );
   return { content: next, kind: 'update' as const, path: filePath };
@@ -634,68 +721,56 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
   const readImport = `import { ${camel}Read } from './src/api/${name}.read.ts';`;
   const { nextManifest, nextRegistration } = yield* trySync(
     () => ({
-      nextManifest: withoutRetiredSpecifiers(
-        vertical.manifestPath,
-        vertical.manifestContent,
-        removeSlotEntries(vertical.manifestContent, [
-          {
-            end: MODULE_MANIFEST_IMPORT_SLOT_END,
-            label: `module API import ${name}`,
-            matches: isSlotEntry(`import { ${value} } from '${contractImport}';`),
-            start: MODULE_MANIFEST_IMPORT_SLOT_START,
-          },
-          {
-            end: MODULE_MANIFEST_IMPORT_SLOT_END,
-            label: `module API read import ${name}`,
-            matches: isSlotEntry(readImport),
-            optional: true,
-            start: MODULE_MANIFEST_IMPORT_SLOT_START,
-          },
-          {
-            end: MODULE_MANIFEST_API_SLOT_END,
-            label: `module API descriptor ${name}`,
-            matches: isSlotEntry(`'${name}': ${value},`),
-            start: MODULE_MANIFEST_API_SLOT_START,
-          },
-          {
-            end: MODULE_MANIFEST_OPERATION_SLOT_END,
-            label: `module API operation contract ${name}`,
-            matches: (entry) => entry.includes(`apiKey: '${name}'`),
-            optional: true,
-            start: MODULE_MANIFEST_OPERATION_SLOT_START,
-          },
-        ]),
-        retired,
-        new Map(),
-      ),
-      nextRegistration: withoutRetiredSpecifiers(
-        vertical.registrationPath,
-        vertical.registrationContent,
-        removeSlotEntries(vertical.registrationContent, [
-          {
-            end: MODULE_REGISTRATION_IMPORT_SLOT_END,
-            label: `module API registration read import ${name}`,
-            matches: isSlotEntry(readImport),
-            optional: true,
-            start: MODULE_REGISTRATION_IMPORT_SLOT_START,
-          },
-          {
-            end: MODULE_REGISTRATION_READ_SLOT_END,
-            label: `module API registration read ${name}`,
-            matches: isSlotEntry(`${camel}Read,`),
-            optional: true,
-            start: MODULE_REGISTRATION_READ_SLOT_START,
-          },
-          {
-            end: MODULE_REGISTRATION_API_SLOT_END,
-            label: `module API registration ${name}`,
-            matches: isSlotEntry(`'${name}': () => import('${clientImport}'),`),
-            start: MODULE_REGISTRATION_API_SLOT_START,
-          },
-        ]),
-        retired,
-        new Map(),
-      ),
+      nextManifest: removeSlotEntries(vertical.manifestContent, [
+        {
+          end: MODULE_MANIFEST_IMPORT_SLOT_END,
+          label: `module API import ${name}`,
+          matches: isSlotEntry(`import { ${value} } from '${contractImport}';`),
+          start: MODULE_MANIFEST_IMPORT_SLOT_START,
+        },
+        {
+          end: MODULE_MANIFEST_IMPORT_SLOT_END,
+          label: `module API read import ${name}`,
+          matches: isSlotEntry(readImport),
+          optional: true,
+          start: MODULE_MANIFEST_IMPORT_SLOT_START,
+        },
+        {
+          end: MODULE_MANIFEST_API_SLOT_END,
+          label: `module API descriptor ${name}`,
+          matches: isSlotEntry(`'${name}': ${value},`),
+          start: MODULE_MANIFEST_API_SLOT_START,
+        },
+        {
+          end: MODULE_MANIFEST_OPERATION_SLOT_END,
+          label: `module API operation contract ${name}`,
+          matches: (entry) => entry.includes(`apiKey: '${name}'`),
+          optional: true,
+          start: MODULE_MANIFEST_OPERATION_SLOT_START,
+        },
+      ]),
+      nextRegistration: removeSlotEntries(vertical.registrationContent, [
+        {
+          end: MODULE_REGISTRATION_IMPORT_SLOT_END,
+          label: `module API registration read import ${name}`,
+          matches: isSlotEntry(readImport),
+          optional: true,
+          start: MODULE_REGISTRATION_IMPORT_SLOT_START,
+        },
+        {
+          end: MODULE_REGISTRATION_READ_SLOT_END,
+          label: `module API registration read ${name}`,
+          matches: isSlotEntry(`${camel}Read,`),
+          optional: true,
+          start: MODULE_REGISTRATION_READ_SLOT_START,
+        },
+        {
+          end: MODULE_REGISTRATION_API_SLOT_END,
+          label: `module API registration ${name}`,
+          matches: isSlotEntry(`'${name}': () => import('${clientImport}'),`),
+          start: MODULE_REGISTRATION_API_SLOT_START,
+        },
+      ]),
     }),
     `failed to retire generated module API ${name}`,
   );
@@ -752,7 +827,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
   const deletes = yield* Effect.all(paths.map(deleteMutationEffect), {
     concurrency: 'unbounded',
   });
-  return [
+  const mutations: readonly Mutation[] = [
     {
       content: nextManifest,
       kind: 'update' as const,
@@ -769,6 +844,16 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     ...(publication === undefined ? [] : [yield* retirePackagePublication(publication, name)]),
     ...deletes,
   ];
+  // The post-condition judges the planned result as a whole; nothing is written when it fails.
+  const problems = retirementProblems(
+    yield* moduleSources([vertical.directory, ...(publication === undefined ? [] : [publication.directory])]),
+    mutations,
+    retired,
+  );
+  if (problems.length > 0) {
+    return yield* scaffoldError(`cannot retire ${name}:\n${problems.join('\n')}`);
+  }
+  return mutations;
 });
 
 const planPageRetirement = Effect.fn('planPageRetirement')(function* planPageRetirementEffect(
