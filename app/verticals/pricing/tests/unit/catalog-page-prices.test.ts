@@ -2,6 +2,10 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import type { AccessPrincipalKind, GateInput } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import {
+  preserveSystemPrincipalContextTrust,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ExactPriceLookupRequest } from '@app/pricing-contracts/domain/exact-price-lookup';
 import type { ExactPriceResolution } from '@app/pricing-contracts/domain/exact-price-resolution';
 import type {
@@ -796,6 +800,24 @@ const decide = (options: Parameters<typeof gateFor>[0], scope: ReturnType<typeof
     .decide({ carrier, legalEntityScope: 'required', now, scope })
     .pipe(Effect.map((decision) => ({ codes: decision.reasons.map(({ code }) => code), outcome: decision.outcome })));
 
+/** A call another module makes for the Storefront client, as the Shell seals its calling module beside the subject. */
+const delegatedCarrier: GateInput['carrier'] = {
+  ...carrier,
+  accessActor: catalogPagePricesRead.descriptor.accessActor,
+};
+const calledBy = (appId: string) => {
+  const verified = trustVerifiedGatewayPrincipalContext(callerScope('api_key'), 'c'.repeat(64), undefined, {
+    appId,
+    buildMarker: 'catalog-page-prices-caller-build',
+    principalId: '66666666-6666-4666-8666-666666666666',
+  });
+  return preserveSystemPrincipalContextTrust(verified, { ...verified, correlationId: 'catalog-page-prices-call' });
+};
+const decideCall = (keys: readonly string[], appId: string) =>
+  gateFor({ keys, kind: 'service' })
+    .decide({ carrier: delegatedCarrier, legalEntityScope: 'required', now, scope: calledBy(appId) })
+    .pipe(Effect.map((decision) => ({ codes: decision.reasons.map(({ code }) => code), outcome: decision.outcome })));
+
 describe('catalogue page Price admission', () => {
   it('declares the storefront workload beside the staff capability, in one required company', () => {
     const { descriptor } = catalogPagePricesRead;
@@ -807,8 +829,12 @@ describe('catalogue page Price admission', () => {
       risk: 'sensitive',
     });
     expect(descriptor.legalEntityScope).toBe('required');
-    // The signed-in variant: only Customer Context, acting for the customer it admitted.
-    expect(descriptor.accessActor).toMatchObject({ callers: ['commerce-customer-context'], subject: 'identity' });
+    // The signed-in variant: only Customer Context, for the Storefront client whose session its portal admitted.
+    expect(descriptor.accessActor).toMatchObject({
+      callers: ['commerce-customer-context'],
+      subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
+    });
   });
 
   it.effect('admits the storefront service principal bound to commerce.storefront-client in its own company', () =>
@@ -831,6 +857,20 @@ describe('catalogue page Price admission', () => {
         yield* decide({ keys: ['commerce.storefront-client'], kind: 'service' }, callerScope('api_key', otherCompany)),
       ).toEqual(refused);
     }),
+  );
+
+  it.effect(
+    'admits the Storefront client only as the subject of the Commerce portal call, never of another module',
+    () =>
+      Effect.gen(function* portalCall() {
+        expect(yield* decideCall(['commerce.storefront-client'], 'commerce-customer-context')).toMatchObject({
+          outcome: 'ALLOWED',
+        });
+        expect(yield* decideCall(['commerce.storefront-client'], 'catalog')).toMatchObject({ outcome: 'DENIED' });
+        expect(yield* decideCall(['demo.storefront-client'], 'commerce-customer-context')).toMatchObject({
+          outcome: 'DENIED',
+        });
+      }),
   );
 
   it.effect('admits a staff member holding the capability and refuses one without it', () =>

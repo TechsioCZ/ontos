@@ -8034,7 +8034,10 @@
             "callers": [
               "pricing"
             ],
-            "subject": "identity"
+            "subject": "identity",
+            "subjectWorkloads": [
+              "commerce.storefront-client"
+            ]
           }
         },
         {
@@ -13366,7 +13369,10 @@
             "callers": [
               "commerce-customer-context"
             ],
-            "subject": "identity"
+            "subject": "identity",
+            "subjectWorkloads": [
+              "commerce.storefront-client"
+            ]
           }
         },
         {
@@ -23113,7 +23119,10 @@
               "commerce-customer-context",
               "pricing"
             ],
-            "subject": "identity"
+            "subject": "identity",
+            "subjectWorkloads": [
+              "commerce.storefront-client"
+            ]
           }
         },
         {

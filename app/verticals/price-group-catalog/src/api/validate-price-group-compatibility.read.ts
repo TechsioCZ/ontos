@@ -147,8 +147,10 @@ export const validatePriceGroupCompatibilityRead = defineRead(
   {
     accessActor: {
       callers: ['commerce-customer-context', 'pricing'],
-      reason: 'Customer Context and Pricing validate price group compatibility for a verified purchasing subject.',
+      reason:
+        "Customer Context and Pricing validate price group compatibility for a verified purchasing subject, and for the Storefront client whose signed-in customer's catalogue page they price.",
       subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
     },
     accessDeclaration: {
       key: 'pricing.price-group-catalog.price-group.read.compatibility',

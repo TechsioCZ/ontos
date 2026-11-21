@@ -412,6 +412,8 @@ describe('Validate Price Group Compatibility governed Read', () => {
       callers: ['commerce-customer-context', 'pricing'],
       reason: expect.any(String),
       subject: 'identity',
+      // The signed-in customer's catalogue page is priced for the Storefront client that relayed the session.
+      subjectWorkloads: ['commerce.storefront-client'],
     });
     expect(Object.keys(descriptor)).not.toContain('permissionTarget');
     expect(getReadPermissionTargetResolver(validatePriceGroupCompatibilityRead)).toBeUndefined();

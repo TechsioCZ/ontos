@@ -6,7 +6,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { PriceGroupAssignmentResolutionRequestSchema } from '@app/pricing-contracts/domain/price-group-interpretation';
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { DateTime, Effect, Match, Schema } from 'effect';
@@ -31,6 +31,8 @@ import { makePriceGroupInterpretationService } from '../services/price-group-int
 import { quantityTierPersistenceForScope } from '../services/quantity-tier-persistence.service.ts';
 
 const MODULE_KEY = 'commerce.pricing' as const;
+/** The one module whose portal admits a signed-in customer and may name that customer here. */
+const CUSTOMER_PORTAL_APP_ID = 'commerce-customer-context' as const;
 
 const catalogPagePricesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -106,8 +108,9 @@ const sameAssignmentRequest = Schema.toEquivalence(PriceGroupAssignmentResolutio
 const sameCompatibilityRequest = Schema.toEquivalence(ValidatePriceGroupCompatibilityRequestSchema);
 
 /**
- * The signed-in customer's variants. Pricing acts for the person the call acts for, so Commerce's own rule decides
- * whether that person may read the profile's assignment; a registered workload is no customer and is refused.
+ * The signed-in customer's variants. Only Customer Context names a customer: its portal admitted the session's customer
+ * and calls for the Storefront client that relayed it, and Pricing asks Commerce for that profile's assignment for the
+ * same subject. A direct call that names a customer (the Storefront client itself, a staff member) is refused.
  */
 const prepareCustomerVariants = Effect.fn('CatalogPagePricesRead.prepareCustomer')(function* prepareCustomer(
   input: CatalogPagePricesRequest,
@@ -115,10 +118,11 @@ const prepareCustomerVariants = Effect.fn('CatalogPagePricesRead.prepareCustomer
   trusted: ExactPriceResolutionTrustedContext,
   context: ReadPrepareContext,
 ) {
-  if (readVerifiedGatewayWorkload(context.scope) !== undefined) {
+  if (readVerifiedGatewayActor(context.scope)?.appId !== CUSTOMER_PORTAL_APP_ID) {
     return yield* new ReadPermissionDenied({
       code: 'read_permission_denied',
-      reason: "A customer's own catalogue page Prices are read only for the person the call acts for",
+      reason:
+        "A customer's own catalogue page Prices are read only through the Commerce portal that admitted the customer",
     });
   }
   const { compositionRevision } = context;
@@ -196,10 +200,11 @@ const loadCatalogPagePrices = Effect.fn('CatalogPagePricesRead.load')(function* 
 export const catalogPagePricesRead = defineRead(
   {
     accessActor: {
-      callers: ['commerce-customer-context'],
+      callers: [CUSTOMER_PORTAL_APP_ID],
       reason:
-        "Customer Context prices the catalogue page for the signed-in customer it admitted, with that customer's own Price Group",
+        "Customer Context prices the catalogue page for the signed-in customer its portal admitted, with that customer's own Price Group, for the Storefront client that relayed the session",
       subject: 'identity',
+      subjectWorkloads: ['commerce.storefront-client'],
     },
     accessDeclaration: {
       key: 'commerce.pricing.price.read-catalog-page',
