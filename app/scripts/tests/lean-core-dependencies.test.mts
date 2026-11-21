@@ -1341,14 +1341,17 @@ it.live('fails a head baseline that counts more computed loads than its file mak
   }),
 );
 
-it.live('takes neither a require member of another object nor a local binding named require for a loader', () =>
-  Effect.gen(function* unrelatedRequire() {
-    expect(
-      yield* freezeViolations({
-        'verticals/alpha/src/store.ts': `${betaTarget}const store = { require: (name: string) => name };\nexport const beta = store.require('@app/beta');\nexport const local = (require: (name: string) => string) => require(target);\n`,
-      }),
-    ).toEqual([]);
-  }),
+it.live(
+  'takes no require member of another object for a loader, and counts a local binding named require as computed',
+  () =>
+    Effect.gen(function* unrelatedRequire() {
+      const store = 'verticals/alpha/src/store.ts';
+      expect(
+        yield* freezeViolations({
+          [store]: `${betaTarget}const store = { require: (name: string) => name };\nexport const beta = store.require('@app/beta');\nexport const local = (require: (name: string) => string) => require(target);\n`,
+        }),
+      ).toEqual([computedLoad(store, [4, 4])]);
+    }),
 );
 
 it.live('counts every load of a loader based anywhere but its own file as computed, bare or relative', () =>
@@ -1529,6 +1532,28 @@ for (const [form, source, line] of callerEscapes) {
     }),
   );
 }
+
+it.live('takes every occurrence of a capability name as the capability, and counts each other declaration of it', () =>
+  Effect.gen(function* capabilityByName() {
+    const review = 'verticals/alpha/src/review.cjs';
+    expect(
+      yield* freezeViolations({
+        [review]: "function get(v = require('../../beta/package.json')) {\n  var require;\n  return v;\n}\nget();\n",
+      }),
+    ).toEqual([...betaRuntimeEdge(`${review}:1`), computedLoad(review, [2])]);
+  }),
+);
+
+it.live('takes module for a capability only in CommonJS, and the text module.require for a loader everywhere', () =>
+  Effect.gen(function* moduleName() {
+    const named = 'verticals/alpha/src/module-name.ts';
+    expect(
+      yield* freezeViolations({
+        [named]: "for (const module of [1]) {\n  void module;\n}\nexport const beta = module.require('@app/beta');\n",
+      }),
+    ).toEqual(betaRuntimeEdge(`${named}:4`));
+  }),
+);
 
 it.live('resolves the literals a same-file helper passes to its loader, and counts any other helper as computed', () =>
   Effect.gen(function* helperParameter() {

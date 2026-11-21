@@ -1235,6 +1235,7 @@ const referenceDirective = /^\/\s*<reference\s+(?<kind>path|types)\s*=\s*["'](?<
  * `import.meta.resolve`, and `import('node:module')` is the promise of the namespace. Anything else
  * imported from `node:module` is opaque.
  */
+const namespacePromise = 'namespace-promise';
 const CapabilitySchema = Schema.Literals([
   'factory',
   'foreign-loader',
@@ -1243,57 +1244,48 @@ const CapabilitySchema = Schema.Literals([
   'meta-resolve',
   'module',
   'namespace',
-  'namespace-promise',
+  namespacePromise,
   'opaque',
 ]);
 type Capability = typeof CapabilitySchema.Type;
 
-/** A name a scope declares: the capability an import gives it, and the references that resolve to it. */
-interface Binding {
-  readonly capability: Capability | undefined;
-  readonly references: Node[];
+/** A name that is a capability wherever it occurs, and the one declaration that made it one, if any. */
+interface CapabilityName {
+  readonly capability: Capability;
+  readonly declaration: Node | null;
 }
 
-/** One source's walk: its scopes, its references, and the loads found so far. */
+/** One source's walk: its names, its declarations, and the loads found so far. */
 interface LoadAnalysis {
+  /** Each name that is a capability throughout the file, whatever scope an occurrence is in. */
+  readonly capabilities: Map<string, CapabilityName>;
   /** Whether the source parsed as CommonJS, where `__filename` names the file itself. */
   readonly commonJs: boolean;
   readonly computedLoads: number[];
-  readonly declared: Map<Node, Binding>;
+  /** The declarators of the runtime `const` declarations the file does not export. */
+  readonly constants: Set<Node>;
+  /** Every runtime declaration of each name: variables, functions, classes, parameters, catch bindings, imports. */
+  readonly declarations: Map<string, Node[]>;
+  readonly declaredIds: Set<Node>;
   readonly identifiers: Set<Node>;
   /** Every identifier of the file by name, in any scope and any position, types included. */
   readonly names: Map<string, Node[]>;
   readonly parents: Map<Node, Node>;
   readonly pending: (readonly [Node, Capability])[];
   readonly references: ModuleReference[];
-  readonly scopes: Map<Node, Map<string, Binding>>;
   /** The nodes inside a type or an ambient declaration. */
   readonly typeOnly: Set<Node>;
   /** The `with` statements of the file, which make any name resolve anywhere. */
   readonly withStatements: Node[];
 }
 
-const freeCapabilities = new Map<string, Capability>([
-  ['module', 'module'],
-  ['require', 'loader'],
-]);
-const functionScopes = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'Program',
-  'StaticBlock',
-  'TSModuleBlock',
-]);
-const blockScopes = new Set([
-  ...functionScopes,
-  'BlockStatement',
-  'CatchClause',
-  'ForInStatement',
-  'ForOfStatement',
-  'ForStatement',
-  'SwitchStatement',
-]);
+const moduleObject = ['module', 'module'] as const;
+/**
+ * The names that are capabilities in a file that does not establish them otherwise: `require` in every
+ * file, and `module`, the module object, in CommonJS, the one goal whose runtime defines it.
+ */
+const freeCapabilities = (commonJs: boolean): ReadonlyMap<string, Capability> =>
+  new Map<string, Capability>(commonJs ? [moduleObject, ['require', 'loader']] : [['require', 'loader']]);
 /** The TypeScript nodes that hold runtime code; every other TypeScript node is a type and loads nothing. */
 const runtimeTypeScript = new Set([
   'TSAsExpression',
@@ -1358,30 +1350,18 @@ const patternIdentifiers = (pattern: Node | null | undefined): readonly Node[] =
   return pattern?.type === 'TSParameterProperty' ? patternIdentifiers(pattern.parameter) : [];
 };
 
-/** The scope that holds a declaration made at node: its nearest ancestor of one of kinds. */
-const nearestScope = (analysis: LoadAnalysis, node: Node, kinds: ReadonlySet<string>): Node | undefined => {
-  for (let scope = analysis.parents.get(node); scope !== undefined; scope = analysis.parents.get(scope)) {
-    if (kinds.has(scope.type)) {
-      return scope;
-    }
+const declare = (analysis: LoadAnalysis, identifier: Node | null | undefined): void => {
+  if (identifier?.type === 'Identifier') {
+    analysis.declaredIds.add(identifier);
+    analysis.declarations.set(identifier.name, [...(analysis.declarations.get(identifier.name) ?? []), identifier]);
   }
-  return undefined;
 };
 
-const bind = (
-  analysis: LoadAnalysis,
-  scope: Node | undefined,
-  identifier: Node | null | undefined,
-  capability?: Capability,
-): void => {
-  if (scope === undefined || identifier?.type !== 'Identifier') {
-    return;
+/** Makes a name the capability its first import from node:module gives it. */
+const importCapabilityName = (analysis: LoadAnalysis, identifier: Node, capability: Capability): void => {
+  if (identifier.type === 'Identifier' && !analysis.capabilities.has(identifier.name)) {
+    analysis.capabilities.set(identifier.name, { capability, declaration: identifier });
   }
-  const names = analysis.scopes.get(scope) ?? new Map<string, Binding>();
-  const binding = names.get(identifier.name) ?? { capability, references: [] };
-  names.set(identifier.name, binding);
-  analysis.scopes.set(scope, names);
-  analysis.declared.set(identifier, binding);
 };
 
 const propertyName = (key: Node): string | undefined => (key.type === 'Identifier' ? key.name : literalString(key));
@@ -1394,35 +1374,43 @@ const importedCapability = (specifier: ImportDeclarationSpecifier): Capability =
   return propertyName(specifier.imported) === 'createRequire' ? 'factory' : 'opaque';
 };
 
-const declareImports = (analysis: LoadAnalysis, program: Program, node: ImportDeclaration): void => {
+const declareImports = (analysis: LoadAnalysis, node: ImportDeclaration): void => {
   const builtin = node.importKind !== 'type' && moduleBuiltins.has(node.source.value);
   for (const specifier of node.specifiers) {
     if (specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type') {
-      bind(analysis, program, specifier.local, builtin ? importedCapability(specifier) : undefined);
+      declare(analysis, specifier.local);
+      if (builtin) {
+        importCapabilityName(analysis, specifier.local, importedCapability(specifier));
+      }
     }
   }
 };
 
 const declareImportEquals = (analysis: LoadAnalysis, node: TSImportEqualsDeclaration): void => {
   const target = node.moduleReference.type === 'TSExternalModuleReference' ? node.moduleReference.expression.value : '';
-  const namespace = node.importKind === 'value' && moduleBuiltins.has(target);
-  bind(analysis, nearestScope(analysis, node, blockScopes), node.id, namespace ? 'namespace' : undefined);
+  declare(analysis, node.id);
+  if (node.importKind === 'value' && moduleBuiltins.has(target)) {
+    importCapabilityName(analysis, node.id, 'namespace');
+  }
 };
 
 const declareFunction = (analysis: LoadAnalysis, node: ArrowFunctionExpression | FunctionNode): void => {
   for (const identifier of node.params.flatMap((parameter) => patternIdentifiers(parameter))) {
-    bind(analysis, node, identifier);
+    declare(analysis, identifier);
   }
   if (node.type !== 'ArrowFunctionExpression') {
-    // A declaration names the function in its enclosing scope; an expression names it only inside itself.
-    bind(analysis, node.type === 'FunctionDeclaration' ? nearestScope(analysis, node, blockScopes) : node, node.id);
+    declare(analysis, node.id);
   }
 };
 
 const declareVariables = (analysis: LoadAnalysis, node: VariableDeclaration): void => {
-  const scope = nearestScope(analysis, node, node.kind === 'var' ? functionScopes : blockScopes);
   for (const identifier of node.declarations.flatMap((declarator) => patternIdentifiers(declarator.id))) {
-    bind(analysis, scope, identifier);
+    declare(analysis, identifier);
+  }
+  if (node.kind === 'const' && analysis.parents.get(node)?.type !== 'ExportNamedDeclaration') {
+    for (const declarator of node.declarations) {
+      analysis.constants.add(declarator);
+    }
   }
 };
 
@@ -1439,13 +1427,16 @@ const reExportCapability = (analysis: LoadAnalysis, node: ExportAllDeclaration |
   }
 };
 
+const importedNamespace = (node: ImportExpression): Capability | undefined =>
+  moduleBuiltins.has(literalString(node.source) ?? '') ? namespacePromise : undefined;
+
 /** A non-literal `import()` is a computed load; a literal one of node:module is the promise of the namespace. */
 const importCapability = (analysis: LoadAnalysis, node: ImportExpression): void => {
-  const target = literalString(node.source);
-  if (target === undefined) {
+  const promise = importedNamespace(node);
+  if (literalString(node.source) === undefined) {
     analysis.computedLoads.push(node.start);
-  } else if (moduleBuiltins.has(target)) {
-    analysis.pending.push([node, 'namespace-promise']);
+  } else if (promise !== undefined) {
+    analysis.pending.push([node, promise]);
   }
 };
 
@@ -1523,7 +1514,7 @@ const trackStructure = (analysis: LoadAnalysis, program: Program): void => {
  * The second walk: every form that names a specifier, at any depth (an ambient module and a type too), and,
  * in runtime code only, each declaration and each site that may carry a capability.
  */
-const sourceSites = (analysis: LoadAnalysis, program: Program): VisitorObject => {
+const sourceSites = (analysis: LoadAnalysis): VisitorObject => {
   const runtime = (node: Node): boolean => !analysis.typeOnly.has(node);
   return {
     ArrowFunctionExpression: (node) => {
@@ -1533,17 +1524,17 @@ const sourceSites = (analysis: LoadAnalysis, program: Program): VisitorObject =>
     },
     CatchClause: (node) => {
       for (const identifier of runtime(node) ? patternIdentifiers(node.param) : []) {
-        bind(analysis, node, identifier);
+        declare(analysis, identifier);
       }
     },
     ClassDeclaration: (node) => {
       if (runtime(node)) {
-        bind(analysis, nearestScope(analysis, node, blockScopes), node.id);
+        declare(analysis, node.id);
       }
     },
     ClassExpression: (node) => {
       if (runtime(node)) {
-        bind(analysis, node, node.id);
+        declare(analysis, node.id);
       }
     },
     ExportAllDeclaration: (node) => {
@@ -1576,7 +1567,7 @@ const sourceSites = (analysis: LoadAnalysis, program: Program): VisitorObject =>
     ImportDeclaration: (node) => {
       recordReference(analysis, node.start, node.source.value);
       if (runtime(node)) {
-        declareImports(analysis, program, node);
+        declareImports(analysis, node);
       }
     },
     ImportExpression: (node) => {
@@ -1606,36 +1597,6 @@ const sourceSites = (analysis: LoadAnalysis, program: Program): VisitorObject =>
       }
     },
   };
-};
-
-const lookup = (analysis: LoadAnalysis, node: Node, name: string): Binding | undefined => {
-  for (let scope = analysis.parents.get(node); scope !== undefined; scope = analysis.parents.get(scope)) {
-    const binding = analysis.scopes.get(scope)?.get(name);
-    if (binding !== undefined) {
-      return binding;
-    }
-  }
-  return undefined;
-};
-
-/** Each reference to a capability starts a settlement; every other reference joins its binding. */
-const resolveReferences = (analysis: LoadAnalysis): void => {
-  for (const identifier of analysis.identifiers) {
-    const parent = analysis.parents.get(identifier);
-    const grandparent = parent === undefined ? undefined : analysis.parents.get(parent);
-    if (identifier.type !== 'Identifier' || analysis.declared.has(identifier)) {
-      continue;
-    }
-    if (!isNameOnly(identifier, parent, grandparent)) {
-      const binding = lookup(analysis, identifier, identifier.name);
-      const capability = binding === undefined ? freeCapabilities.get(identifier.name) : binding.capability;
-      if (capability === undefined) {
-        binding?.references.push(identifier);
-      } else {
-        analysis.pending.push([identifier, capability]);
-      }
-    }
-  }
 };
 
 /** The outermost expression that still holds start's value, and the node that uses it. */
@@ -1813,18 +1774,175 @@ const isOwnBase = (analysis: LoadAnalysis, node: Node | undefined): boolean =>
   (analysis.commonJs &&
     node?.type === 'Identifier' &&
     node.name === '__filename' &&
-    lookup(analysis, node, node.name) === undefined);
+    !analysis.declarations.has('__filename'));
 
-/** Reading `member` passes capability on; reading any other named member is harmless unless othersLoad. */
+/** What `createRequire` makes from base: a loader of the file itself, or one of a base the check does not read. */
+const loaderCreatedFrom = (analysis: LoadAnalysis, base: Node | undefined): Capability =>
+  isOwnBase(analysis, base) ? 'loader' : 'foreign-loader';
+
+const isBuiltinLoad = (call: CallExpression): boolean =>
+  call.arguments.length === 1 && moduleBuiltins.has(literalString(call.arguments[0]) ?? '');
+
+/** The one member of a capability that is itself a capability. */
+const memberCapabilities = new Map<Capability, readonly [string, Capability]>([
+  ['meta', ['resolve', 'meta-resolve']],
+  ['module', ['require', 'loader']],
+  ['namespace', ['createRequire', 'factory']],
+]);
+
+const unwrapValue = (node: Node | null | undefined): Node | null | undefined => {
+  if (
+    node?.type === 'ChainExpression' ||
+    node?.type === 'ParenthesizedExpression' ||
+    node?.type === 'TSAsExpression' ||
+    node?.type === 'TSInstantiationExpression' ||
+    node?.type === 'TSNonNullExpression' ||
+    node?.type === 'TSSatisfiesExpression' ||
+    node?.type === 'TSTypeAssertion'
+  ) {
+    return unwrapValue(node.expression);
+  }
+  return node;
+};
+
+/** The capability an expression evaluates to, read from its form and the file's capability names alone. */
+const valueCapability = (analysis: LoadAnalysis, expression: Node | null | undefined): Capability | undefined => {
+  const value = unwrapValue(expression);
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (value.type === 'Identifier') {
+    return analysis.capabilities.get(value.name)?.capability;
+  }
+  if (value.type === 'ImportExpression') {
+    return importedNamespace(value);
+  }
+  if (value.type === 'AwaitExpression') {
+    return valueCapability(analysis, value.argument) === namespacePromise ? 'namespace' : undefined;
+  }
+  if (value.type === 'MemberExpression') {
+    const transition = memberCapabilities.get(valueCapability(analysis, value.object) ?? 'opaque');
+    return transition !== undefined && transition[0] === staticMemberName(value) ? transition[1] : undefined;
+  }
+  if (value.type === 'CallExpression') {
+    const callee = valueCapability(analysis, value.callee);
+    if (callee === 'factory') {
+      return loaderCreatedFrom(analysis, value.arguments[0]);
+    }
+    return callee === 'loader' && isBuiltinLoad(value) ? 'namespace' : undefined;
+  }
+  return isImportMeta(value) ? 'meta' : undefined;
+};
+
+/** Makes identifier's name the capability, unless another declaration made it one first. */
+const establish = (analysis: LoadAnalysis, identifier: Node, capability: Capability | undefined): boolean => {
+  const known = identifier.type === 'Identifier' ? analysis.capabilities.get(identifier.name) : undefined;
+  const madeBy = known?.declaration ?? null;
+  if (
+    identifier.type !== 'Identifier' ||
+    capability === undefined ||
+    (madeBy !== null && madeBy !== identifier) ||
+    (madeBy === identifier && known?.capability === capability)
+  ) {
+    return false;
+  }
+  analysis.capabilities.set(identifier.name, { capability, declaration: identifier });
+  return true;
+};
+
+const establishDeclarator = (analysis: LoadAnalysis, declarator: Node): boolean => {
+  if (declarator.type !== 'VariableDeclarator') {
+    return false;
+  }
+  const capability = valueCapability(analysis, declarator.init);
+  if (declarator.id.type === 'Identifier') {
+    return establish(analysis, declarator.id, capability);
+  }
+  if (capability !== 'namespace' || declarator.id.type !== 'ObjectPattern') {
+    return false;
+  }
+  return declarator.id.properties
+    .map(
+      (property) =>
+        property.type === 'Property' &&
+        !property.computed &&
+        propertyName(property.key) === 'createRequire' &&
+        establish(analysis, property.value, 'factory'),
+    )
+    .includes(true);
+};
+
+/**
+ * The capability names of the file: its imports of node:module, the free `require` and `module`, and each
+ * const it does not export whose initialiser is a capability, until no initialiser changes its name.
+ */
+const establishCapabilityNames = (analysis: LoadAnalysis): void => {
+  for (const [name, capability] of freeCapabilities(analysis.commonJs)) {
+    if (!analysis.capabilities.has(name)) {
+      analysis.capabilities.set(name, { capability, declaration: null });
+    }
+  }
+  const constants = [...analysis.constants];
+  for (let round = 0; round <= constants.length; round += 1) {
+    if (!constants.map((declarator) => establishDeclarator(analysis, declarator)).includes(true)) {
+      return;
+    }
+  }
+};
+
+/**
+ * Outside CommonJS no runtime defines `module`, so the name is no capability there, but the text
+ * `module.require` still is one, whatever `module` names.
+ */
+const moduleRequireObject = (identifier: Node, parent: Node | undefined): Capability | undefined =>
+  identifier.type === 'Identifier' &&
+  identifier.name === moduleObject[0] &&
+  parent?.type === 'MemberExpression' &&
+  parent.object === identifier &&
+  staticMemberName(parent) === 'require'
+    ? moduleObject[1]
+    : undefined;
+
+/**
+ * Every occurrence of a capability name that is no declaration starts a settlement, whatever scope it is
+ * in; every declaration of such a name but the one that made it a capability is a computed load, since
+ * what the name means there the check does not read.
+ */
+const seedCapabilityUses = (analysis: LoadAnalysis): void => {
+  for (const identifier of analysis.identifiers) {
+    const parent = analysis.parents.get(identifier);
+    const grandparent = parent === undefined ? undefined : analysis.parents.get(parent);
+    const capability =
+      identifier.type === 'Identifier'
+        ? (analysis.capabilities.get(identifier.name)?.capability ?? moduleRequireObject(identifier, parent))
+        : undefined;
+    if (
+      capability !== undefined &&
+      !analysis.declaredIds.has(identifier) &&
+      !isNameOnly(identifier, parent, grandparent)
+    ) {
+      analysis.pending.push([identifier, capability]);
+    }
+  }
+  for (const [name, { declaration }] of analysis.capabilities) {
+    for (const identifier of analysis.declarations.get(name) ?? []) {
+      if (identifier !== declaration) {
+        analysis.computedLoads.push(identifier.start);
+      }
+    }
+  }
+};
+
+/** Reading the member of from that is a capability passes it on; reading any other named member is harmless unless othersLoad. */
 const memberUse = (
   analysis: LoadAnalysis,
   use: { readonly node: Node; readonly parent: Node },
-  member: string,
-  capability: Capability,
+  from: Capability,
   othersLoad: boolean,
 ): boolean => {
   const { node, parent } = use;
-  if (parent.type !== 'MemberExpression' || parent.object !== node) {
+  const [member, capability] = memberCapabilities.get(from) ?? [];
+  if (parent.type !== 'MemberExpression' || parent.object !== node || capability === undefined) {
     return false;
   }
   const name = staticMemberName(parent);
@@ -1842,17 +1960,17 @@ const recognisedUses = {
   factory: (analysis, node, parent) => {
     const call = calledWith(node, parent);
     if (call !== undefined) {
-      analysis.pending.push([call, isOwnBase(analysis, call.arguments[0]) ? 'loader' : 'foreign-loader']);
+      analysis.pending.push([call, loaderCreatedFrom(analysis, call.arguments[0])]);
     }
     return call !== undefined;
   },
   // A loader from another base resolves every target from where the check cannot tell: each load is computed.
   'foreign-loader': () => false,
   loader: (analysis, node, parent) => loaderUse(analysis, node, parent),
-  meta: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'resolve', 'meta-resolve', false),
+  meta: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'meta', false),
   'meta-resolve': (analysis, node, parent) => literalLoad(analysis, calledWith(node, parent)),
-  module: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'require', 'loader', false),
-  namespace: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'createRequire', 'factory', true),
+  module: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'module', false),
+  namespace: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'namespace', true),
   'namespace-promise': (analysis, node, parent) => {
     const awaited = parent.type === 'AwaitExpression' && parent.argument === node;
     if (awaited) {
@@ -1863,44 +1981,27 @@ const recognisedUses = {
   opaque: () => false,
 } satisfies Readonly<Record<Capability, CapabilityUse>>;
 
-const forward = (analysis: LoadAnalysis, identifier: Node, capability: Capability): void => {
-  for (const reference of analysis.declared.get(identifier)?.references ?? []) {
-    analysis.pending.push([reference, capability]);
-  }
-};
-
 /**
- * A `const` that is not exported passes the capability it is initialised with to its references; a const
- * destructuring of the namespace passes the factory to createRequire under any local name, and every other
- * member it takes is a computed load.
+ * A const the file does not export, whose name its initialiser made the capability, is a recognised use; so
+ * is a const destructuring of the namespace, where each member but createRequire under the name it made a
+ * factory is a computed load.
  */
 const bindsCapability = (analysis: LoadAnalysis, node: Node, parent: Node, capability: Capability): boolean => {
-  const declaration = analysis.parents.get(parent);
-  if (
-    parent.type !== 'VariableDeclarator' ||
-    parent.init !== node ||
-    declaration?.type !== 'VariableDeclaration' ||
-    declaration.kind !== 'const' ||
-    analysis.parents.get(declaration)?.type === 'ExportNamedDeclaration'
-  ) {
+  if (parent.type !== 'VariableDeclarator' || parent.init !== node || !analysis.constants.has(parent)) {
     return false;
   }
   if (parent.id.type === 'Identifier') {
-    forward(analysis, parent.id, capability);
-    return true;
+    return analysis.capabilities.get(parent.id.name)?.declaration === parent.id;
   }
   if (capability !== 'namespace' || parent.id.type !== 'ObjectPattern') {
     return false;
   }
   for (const property of parent.id.properties) {
     if (
-      property.type === 'Property' &&
-      !property.computed &&
-      propertyName(property.key) === 'createRequire' &&
-      property.value.type === 'Identifier'
+      property.type !== 'Property' ||
+      property.value.type !== 'Identifier' ||
+      analysis.capabilities.get(property.value.name)?.declaration !== property.value
     ) {
-      forward(analysis, property.value, 'factory');
-    } else {
       analysis.computedLoads.push(property.start);
     }
   }
@@ -2000,21 +2101,24 @@ const loadsIn = (file: string, source: string, packageType: string | undefined):
   }
   const { result } = parsed;
   const analysis: LoadAnalysis = {
+    capabilities: new Map(),
     commonJs: parsed.sourceType === 'commonjs',
     computedLoads: [],
-    declared: new Map(),
+    constants: new Set(),
+    declarations: new Map(),
+    declaredIds: new Set(),
     identifiers: new Set(),
     names: new Map(),
     parents: new Map(),
     pending: [],
     references: [],
-    scopes: new Map(),
     typeOnly: new Set(),
     withStatements: [],
   };
   trackStructure(analysis, result.program);
-  new Visitor(sourceSites(analysis, result.program)).visit(result.program);
-  resolveReferences(analysis);
+  new Visitor(sourceSites(analysis)).visit(result.program);
+  establishCapabilityNames(analysis);
+  seedCapabilityUses(analysis);
   for (let next = analysis.pending.pop(); next !== undefined; next = analysis.pending.pop()) {
     settleCapability(analysis, ...next);
   }
