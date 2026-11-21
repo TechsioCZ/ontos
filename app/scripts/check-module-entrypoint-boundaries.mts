@@ -899,12 +899,30 @@ const OwnershipPackageSchema = Schema.Struct({
     }),
   ),
   name: Schema.optionalKey(Schema.String),
+  ontosContractOwner: Schema.optionalKey(
+    Schema.Struct({
+      appId: PublicContractOwnerAppIdSchema,
+      moduleApis: Schema.Array(Schema.String),
+      moduleId: PublicContractOwnerModuleIdSchema,
+    }),
+  ),
 });
 interface OwnershipPackage {
   readonly directory: string;
   readonly metadata: typeof OwnershipPackageSchema.Type;
 }
 const decodeOwnershipPackage = Schema.decodeUnknownEffect(Schema.fromJsonString(OwnershipPackageSchema));
+
+/**
+ * A value-only contract package (its ontosContractOwner publishes no module API) belongs to that owner:
+ * a foreign consumer reaches its values only as a proven public contract, as it would in the owner itself.
+ */
+const valueContractOwners = (packages: ReadonlyMap<string, OwnershipPackage>) =>
+  [...packages.values()].flatMap(({ directory, metadata }) =>
+    metadata.ontosContractOwner?.moduleApis.length === 0
+      ? [[directory, metadata.ontosContractOwner.appId] as const]
+      : [],
+  );
 const OwnershipReferencesSchema = Schema.Struct({
   references: Schema.optionalKey(Schema.Array(Schema.Struct({ path: Schema.String }))),
 });
@@ -991,6 +1009,12 @@ const hasCachedCompleteModuleApiSeam = (
 
 const deploymentOwner = (state: BoundaryCheckState, file: string): string | undefined =>
   [...state.owners.keys()].find((owner) => file.startsWith(`${owner}/`));
+
+/** The deployment identity owning a file; a value-only contract package carries its owner's identity. */
+const ownerIdentity = (state: BoundaryCheckState, file: string): string | undefined => {
+  const owner = deploymentOwner(state, file);
+  return owner === undefined ? undefined : state.owners.get(owner);
+};
 
 // This adapter only locates literal declaration edges in the inventory. Value binding
 // provenance, including modern:source and real workspace symlinks, stays with the native graph.
@@ -3777,6 +3801,10 @@ const hasEligibleSelectedOwnerContract = (
   (!clientRole || selection.clientModules !== undefined) &&
   hasSelectedOwnerContract(selection, importedSpecifier);
 
+/** A deployment's module id, or the owner module id a value-only contract package declares. */
+const ownerModuleId = (pkg: OwnershipPackage | undefined): string | undefined =>
+  pkg?.metadata.modernjs?.ontosModule?.moduleId ?? pkg?.metadata.ontosContractOwner?.moduleId;
+
 const isApprovedOwnerContract = (
   state: BoundaryCheckState,
   consumer: string,
@@ -3785,7 +3813,7 @@ const isApprovedOwnerContract = (
 ): boolean => {
   const owner = deploymentOwner(state, target);
   const pkg = owner === undefined ? undefined : state.ownershipPackages.get(owner);
-  const moduleId = pkg?.metadata.modernjs?.ontosModule?.moduleId;
+  const moduleId = ownerModuleId(pkg);
   if (owner === undefined || pkg === undefined || moduleId === undefined || pkg.metadata.name === undefined) {
     return false;
   }
@@ -3848,7 +3876,7 @@ const foreignPrivateOrigin = (
   visited: Set<string>,
 ): string | undefined => {
   const owner = deploymentOwner(state, target);
-  if (owner === undefined || owner === deploymentOwner(state, consumer)) {
+  if (owner === undefined || state.owners.get(owner) === ownerIdentity(state, consumer)) {
     return undefined;
   }
   if (isApprovedOwnerContract(state, consumer, target)) {
@@ -3891,17 +3919,17 @@ const validateResolvedOwnerImports = (
   importedModuleSpecifiers: readonly string[],
 ) =>
   Effect.gen(function* validateResolvedOwnerImportsEffect() {
-    const consumerOwner = deploymentOwner(state, file);
+    const consumerIdentity = ownerIdentity(state, file);
     const specifiers = importedModuleSpecifiers.filter((specifier) => {
       const direct = ownershipDeclarationTarget(state, file, specifier);
       const owner = direct === undefined ? undefined : deploymentOwner(state, direct);
-      if (owner !== undefined && owner !== consumerOwner) {
+      if (owner !== undefined && state.owners.get(owner) !== consumerIdentity) {
         return true;
       }
       return [...state.ownershipPackages.values()].some(
         ({ directory, metadata }) =>
           state.owners.has(directory) &&
-          directory !== consumerOwner &&
+          state.owners.get(directory) !== consumerIdentity &&
           metadata.name !== undefined &&
           (specifier === metadata.name || specifier.startsWith(`${metadata.name}/`)),
       );
@@ -4836,7 +4864,7 @@ const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>
     const path = yield* Path.Path;
     // The native module graph resolves real paths, so ownership must use the same workspace root.
     const root = yield* fileSystem.realPath(workspaceRoot);
-    const owners = yield* readTopologyOwners(root);
+    const topologyOwners = yield* readTopologyOwners(root);
     const files = [
       ...(yield* walk(path.join(root, 'apps'))),
       ...(yield* walk(path.join(root, 'verticals'))),
@@ -4867,7 +4895,7 @@ const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>
       graph: createModuleGraph(),
       immutableContractRuntimes: new Map(),
       inventoryEntries: [],
-      owners,
+      owners: new Map([...topologyOwners, ...valueContractOwners(ownershipPackages)]),
       ownershipOrigins: new Map(),
       ownershipPackages,
       root,
