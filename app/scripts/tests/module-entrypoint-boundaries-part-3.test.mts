@@ -920,6 +920,29 @@ it.live('checks actual Party typed client foreign API contamination', () =>
   }),
 );
 
+it.live('exempts from the barrel-file lint only the Pricing Action forwarders that still exist', () =>
+  Effect.gen(function* actionForwarderLintExemption() {
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    const configModule: unknown = yield* Effect.promise(() => import(path.join(workspace, 'oxlint.config.ts')));
+    const forwarders = Schema.decodeUnknownSync(
+      Schema.Struct({
+        default: Schema.Struct({
+          overrides: Schema.Array(Schema.Struct({ files: Schema.Array(Schema.String) })),
+        }),
+      }),
+    )(configModule).default.overrides.filter(({ files }) =>
+      files.includes('verticals/pricing/shared/apis/manage-quotation-action.ts'),
+    );
+    expect(forwarders).toHaveLength(1);
+    const sources = new Map(yield* readPricingSourceTree(workspace, 'verticals/pricing'));
+    for (const file of forwarders[0]?.files ?? []) {
+      expect(sources.get(file) ?? '', file).toMatch(
+        /^export \* from '@app\/pricing-contracts\/[a-z-]+(?:\/api)?';\n$/u,
+      );
+    }
+  }),
+);
+
 const shellManifest = (dependencies: readonly string[]) =>
   JSON.stringify({
     dependencies: Object.fromEntries(dependencies.map((name) => [name, WORKSPACE_DEPENDENCY_VERSION])),
