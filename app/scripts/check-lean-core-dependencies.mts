@@ -1661,28 +1661,6 @@ const resolveCall = (analysis: LoadAnalysis, node: Node, parent: Node): CallExpr
   return user === undefined ? undefined : calledWith(member, user);
 };
 
-const writtenParents = new Set([
-  'ArrayPattern',
-  'AssignmentExpression',
-  'ForInStatement',
-  'ForOfStatement',
-  'RestElement',
-]);
-
-/** A reference that assigns its binding: the target of an assignment, an update or a destructuring. */
-const isWritten = (analysis: LoadAnalysis, reference: Node): boolean => {
-  const parent = analysis.parents.get(reference);
-  if (parent === undefined || parent.type === 'UpdateExpression' || writtenParents.has(parent.type)) {
-    return parent !== undefined && !('right' in parent && parent.right === reference);
-  }
-  if (parent.type === 'AssignmentPattern') {
-    return parent.left === reference;
-  }
-  return (
-    parent.type === 'Property' && parent.value === reference && analysis.parents.get(parent)?.type === 'ObjectPattern'
-  );
-};
-
 /** The binding that names a function: a declaration, or a const initialised with it; none when it is exported. */
 const functionBinding = (analysis: LoadAnalysis, callee: Node): Binding | undefined => {
   const parent = analysis.parents.get(callee);
@@ -1720,19 +1698,53 @@ const helperCallTarget = (analysis: LoadAnalysis, reference: Node, index: number
   return target === undefined || moduleBuiltins.has(target) ? undefined : { index: call.start, specifier: target };
 };
 
+/** Names that reach a function's parameters without naming them. */
+const parameterAliases = new Set(['arguments', 'eval']);
+
+const isInside = (analysis: LoadAnalysis, node: Node, ancestor: Node): boolean => {
+  for (let parent = analysis.parents.get(node); parent !== undefined; parent = analysis.parents.get(parent)) {
+    if (parent === ancestor) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * The one helper form whose call literals are a load's targets: every parameter a plain name (no `this`,
+ * destructuring, rest or default value), the loaded parameter named nowhere in the function but where it
+ * is declared and as the loader's single argument, and neither `arguments` nor `eval` in the function.
+ */
+const isLiteralForwardingHelper = (analysis: LoadAnalysis, callee: Node, argument: Node): boolean => {
+  if (
+    (callee.type !== 'ArrowFunctionExpression' &&
+      callee.type !== 'FunctionDeclaration' &&
+      callee.type !== 'FunctionExpression') ||
+    argument.type !== 'Identifier' ||
+    !callee.params.every((parameter) => parameter.type === 'Identifier' && parameter.name !== 'this')
+  ) {
+    return false;
+  }
+  const declaration = callee.params.find(
+    (parameter) => parameter.type === 'Identifier' && parameter.name === argument.name,
+  );
+  return [...analysis.identifiers].every(
+    (identifier) =>
+      identifier.type !== 'Identifier' ||
+      !isInside(analysis, identifier, callee) ||
+      (!parameterAliases.has(identifier.name) &&
+        (identifier.name !== argument.name || identifier === argument || identifier === declaration)),
+  );
+};
+
 /**
  * The targets of a load whose argument is a parameter of a function of this file: the literal each call
- * passes, when the parameter is never assigned and the function is only ever called directly with a
+ * passes, when the function has the helper shape and is only ever called directly, without a spread, with a
  * literal in that position. None for any other use, which keeps the load computed.
  */
 const parameterTargets = (analysis: LoadAnalysis, argument: Node): readonly ModuleReference[] | undefined => {
-  const binding = analysis.resolved.get(argument);
-  const { parameter } = binding ?? {};
-  if (
-    binding === undefined ||
-    parameter === undefined ||
-    binding.references.some((reference) => isWritten(analysis, reference))
-  ) {
+  const parameter = analysis.resolved.get(argument)?.parameter;
+  if (parameter === undefined || !isLiteralForwardingHelper(analysis, parameter.callee, argument)) {
     return undefined;
   }
   const calls = functionBinding(analysis, parameter.callee)?.references.map((reference) =>
