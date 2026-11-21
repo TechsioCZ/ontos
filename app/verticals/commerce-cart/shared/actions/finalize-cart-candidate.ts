@@ -2,7 +2,7 @@
 import { PurchaseApprovalRequestRefSchema } from '@app/commerce-customer-context/resources/purchase-approval-request';
 import { Schema } from 'effect';
 import { CartRefSchema } from '../resources/cart.ts';
-import { CartRevisionNumberSchema } from '../domain/cart-draft.ts';
+import { CartRevisionNumberSchema } from '@app/commerce-cart-contracts/domain/cart-draft';
 
 export const FinalizeCartCandidatePayloadSchema = Schema.Struct({
   cartRef: CartRefSchema,

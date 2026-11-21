@@ -9,7 +9,7 @@ import {
   FinalizeCartCandidateResultSchema,
 } from '../../shared/actions/finalize-cart-candidate.ts';
 import type { FinalizeCartCandidatePayload } from '../../shared/actions/finalize-cart-candidate.ts';
-import { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
+import { CartDraftRejected } from '@app/commerce-cart-contracts/domain/cart-draft';
 import { finalCartCandidateService } from '../services/final-cart-candidate.service.ts';
 import { cartDraftAuthorityPolicy, cartTargetOwnerFacts } from '../policies/cart-draft-authority.policy.ts';
 

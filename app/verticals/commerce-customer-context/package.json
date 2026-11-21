@@ -281,10 +281,10 @@
     "@app/commerce-cart-contracts": "workspace:*",
     "@app/commerce-cart-finalization-contracts": "workspace:*",
     "@app/storefront-registry-contracts": "workspace:*",
-    "@app/commerce-cart": "workspace:*",
     "@app/catalog-selection-contracts": "workspace:*"
   },
   "devDependencies": {
+    "@app/commerce-cart": "workspace:*",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",

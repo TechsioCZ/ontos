@@ -10,8 +10,12 @@ import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import type { CreateCartDraftPayload } from '../../shared/actions/create-cart-draft.ts';
 import type { ReviseCartDraftPayload } from '../../shared/actions/revise-cart-draft.ts';
 import type { CloseCartDraftPayload } from '../../shared/actions/close-cart-draft.ts';
-import { CartDraftRejected, CartDraftSchema, CartIdentitySchema } from '../../shared/domain/cart-draft.ts';
-import type { CartDraft, CartDraftEntryInstruction, CartHeldSelection } from '../../shared/domain/cart-draft.ts';
+import { CartDraftRejected, CartDraftSchema, CartIdentitySchema } from '@app/commerce-cart-contracts/domain/cart-draft';
+import type {
+  CartDraft,
+  CartDraftEntryInstruction,
+  CartHeldSelection,
+} from '@app/commerce-cart-contracts/domain/cart-draft';
 import {
   carts,
   cartRevisions,

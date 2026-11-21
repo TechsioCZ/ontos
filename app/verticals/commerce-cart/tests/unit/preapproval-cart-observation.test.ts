@@ -1,7 +1,7 @@
 import { Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { preapprovalCartBuyerIsSubject } from '../../src/services/preapproval-cart-observation.service.ts';
-import { PreapprovalCartObservationRequestSchema } from '../../shared/apis/preapproval-cart-observation.ts';
+import { PreapprovalCartObservationRequestSchema } from '@app/commerce-cart-contracts/preapproval-cart-observation';
 
 const buyer = '11111111-1111-4111-8111-111111111111';
 const cartTenant = '22222222-2222-4222-8222-222222222222';

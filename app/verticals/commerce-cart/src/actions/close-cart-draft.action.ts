@@ -6,7 +6,7 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { CloseCartDraftPayloadSchema, CloseCartDraftResultSchema } from '../../shared/actions/close-cart-draft.ts';
 import type { CloseCartDraftPayload } from '../../shared/actions/close-cart-draft.ts';
-import { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
+import { CartDraftRejected } from '@app/commerce-cart-contracts/domain/cart-draft';
 import { cartPopulationService } from '../services/cart-population.service.ts';
 import { cartDraftAuthorityPolicy, cartTargetOwnerFacts } from '../policies/cart-draft-authority.policy.ts';
 
