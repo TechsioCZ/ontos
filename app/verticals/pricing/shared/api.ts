@@ -63,42 +63,6 @@ export const pricingFoundationApi = HttpApi.make('PricingApiFoundation').add(
   ),
 );
 
-export {
-  CurrentSupportedCurrenciesApi,
-  CurrentSupportedCurrenciesAuthenticationProblemSchema,
-  CurrentSupportedCurrenciesInternalProblemSchema,
-  CurrentSupportedCurrenciesInvalidProblemSchema,
-  CurrentSupportedCurrenciesInvalidSchema,
-  CurrentSupportedCurrenciesNotFoundProblemSchema,
-  CurrentSupportedCurrenciesPolicyConflictProblemSchema,
-  CurrentSupportedCurrenciesPolicyProblemSchema,
-  CurrentSupportedCurrenciesRequestSchema,
-  CurrentSupportedCurrenciesResponseSchema,
-  CurrentSupportedCurrenciesStaleSchema,
-  CurrentSupportedCurrenciesSuccessSchema,
-  CurrentSupportedCurrenciesUnavailableProblemSchema,
-  CurrentSupportedCurrenciesUnavailableSchema,
-  CurrentSupportedCurrenciesUnverifiableSchema,
-  PricingCartIdSchema,
-  PricingChannelIdSchema,
-  PricingContextRevisionSchema,
-  PricingCurrencyCodeSchema,
-  PricingCurrencyCodeSetSchema,
-  PricingCurrencySubjectSchema,
-  PricingInstantSchema,
-  PricingMarketIdSchema,
-  PricingRevisionSchema,
-  PricingSellingLegalEntityIdSchema,
-  PricingStorefrontIdSchema,
-  PricingTenantIdSchema,
-} from '@app/pricing-contracts/current-supported-currencies';
-export type {
-  CurrentSupportedCurrenciesRequest,
-  CurrentSupportedCurrenciesResponse,
-  CurrentSupportedCurrenciesSuccess,
-  PricingCurrencySubject,
-} from '@app/pricing-contracts/current-supported-currencies';
-
 export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(pricingFoundationApi)
   .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })

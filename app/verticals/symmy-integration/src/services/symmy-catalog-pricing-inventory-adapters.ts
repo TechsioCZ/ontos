@@ -56,10 +56,10 @@ import {
 } from '@app/price-group-catalog/api/client';
 import {
   executeDefinePriceWithAuthorization,
-  executePriceDefinitionWithAuthorization,
   executeRevisePriceWithAuthorization,
   executePriceSourceResultLookupWithAuthorization,
 } from '@app/pricing/api/client';
+import { executePriceDefinitionWithAuthorization } from '@app/pricing-contracts/price-definition/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Layer, Match, Option, Schema, Stream } from 'effect';

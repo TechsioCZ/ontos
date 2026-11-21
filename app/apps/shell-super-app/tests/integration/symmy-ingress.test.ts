@@ -20,7 +20,7 @@ import { FetchHttpClient } from 'effect/http';
 import {
   PriceGroupDefinitionRequestSchema,
   PriceGroupDefinitionResponseSchema,
-} from '@app/price-group-catalog/api/client';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 import { PriceGroupSourceAssociationsRequestSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import {
   SymmyRouteContextRequestSchema,

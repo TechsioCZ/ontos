@@ -26,11 +26,6 @@ export * from './revise-price-action-client.ts';
 export * from './set-supported-currencies-action-client.ts';
 // </generated-action-http-client-exports>
 export {
-  executeCurrentSupportedCurrencies,
-  executeCurrentSupportedCurrenciesWithAuthorization,
-} from '@app/pricing-contracts/current-supported-currencies/client';
-export type { CurrentSupportedCurrenciesClientOptions } from '@app/pricing-contracts/current-supported-currencies/client';
-export {
   executeCommercialFeeDefinition,
   executeCommercialFeeDefinitionWithAuthorization,
 } from './commercial-fee-definition-client.ts';
@@ -48,13 +43,6 @@ export type {
   CommercialFeeDefinitionRequest,
   CommercialFeeDefinitionResponse,
 } from '../../shared/apis/commercial-fee-definition.ts';
-export {
-  executePriceDefinition,
-  executePriceDefinitionWithAuthorization,
-} from '@app/pricing-contracts/price-definition/client';
-export type { PriceDefinitionClientOptions } from '@app/pricing-contracts/price-definition/client';
-export { PriceDefinitionRequestSchema, PriceDefinitionResponseSchema } from '@app/pricing-contracts/price-definition';
-export type { PriceDefinitionRequest, PriceDefinitionResponse } from '@app/pricing-contracts/price-definition';
 export {
   executeCommercialFeeSchedule,
   executeCommercialFeeScheduleWithAuthorization,
@@ -78,11 +66,6 @@ export {
   executeCurrencySupportResultLookupWithAuthorization,
 } from './currency-support-result-lookup-client.ts';
 export type { CurrencySupportResultLookupClientOptions } from './currency-support-result-lookup-client.ts';
-export {
-  executeCurrentPricingDecision,
-  executeCurrentPricingDecisionWithAuthorization,
-} from '@app/pricing-contracts/current-pricing-decision/client';
-export type { CurrentPricingDecisionClientOptions } from '@app/pricing-contracts/current-pricing-decision/client';
 export { executePriceResultLookup, executePriceResultLookupWithAuthorization } from './price-result-lookup-client.ts';
 export type { PriceResultLookupClientOptions } from './price-result-lookup-client.ts';
 export { executePriceSchedule, executePriceScheduleWithAuthorization } from './price-schedule-client.ts';
@@ -102,8 +85,6 @@ export {
   executeZeroFloorAuthorizationResultLookupWithAuthorization,
 } from './zero-floor-authorization-result-lookup-client.ts';
 export type { ZeroFloorAuthorizationResultLookupClientOptions } from './zero-floor-authorization-result-lookup-client.ts';
-export { CurrentSupportedCurrenciesRequestSchema, CurrentSupportedCurrenciesResponseSchema } from '../../shared/api.ts';
-export type { CurrentSupportedCurrenciesRequest, CurrentSupportedCurrenciesResponse } from '../../shared/api.ts';
 
 type PricingApiGroups = typeof pricingApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 export type PricingClient = HttpApiClient.Client<Extract<PricingApiGroups, HttpApiGroup.Constraint>>;

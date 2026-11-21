@@ -26,10 +26,8 @@ import { SourceProfileExportRequestSchema } from '@app/party-registry/apis/sourc
 import { executeSourceProfileExportWithAuthorization } from '@app/party-registry/apis/source-profile-export/client';
 import { OrganizationBusinessNameExportRequestSchema } from '@app/party-registry/apis/organization-business-name-export';
 import { executeOrganizationBusinessNameExportWithAuthorization } from '@app/party-registry/apis/organization-business-name-export/client';
-import {
-  executePriceGroupDefinitionWithAuthorization,
-  executePriceGroupSourceAssociationsWithAuthorization,
-} from '@app/price-group-catalog/api/client';
+import { executePriceGroupSourceAssociationsWithAuthorization } from '@app/price-group-catalog/api/client';
+import { executePriceGroupDefinitionWithAuthorization } from '@app/price-group-catalog-contracts/price-group-definition/client';
 import type { PriceGroupSourceAssociationSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { PriceGroupSourceAssociationsRequestSchema } from '@app/price-group-catalog/apis/price-group-source-associations';
 import { PriceSourceSystemSchema } from '@app/pricing-contracts/domain/price-source-provenance';

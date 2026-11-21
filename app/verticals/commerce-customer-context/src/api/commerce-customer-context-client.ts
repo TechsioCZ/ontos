@@ -91,23 +91,12 @@ export * from './commerce-quantity-resolution-client.ts';
 export * from './effective-customer-group-membership-set-v1-client.ts';
 export * from './market-bootstrap-policy-current-client.ts';
 export * from './market-bootstrap-resolution-client.ts';
-export * from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
-export * from '@app/customer-market-retirement-contracts/market-affected-use-assessment/client';
 export * from './payment-terms-resolution-client.ts';
 export * from './purchase-currency-resolution-client.ts';
 export * from './retail-purchasing-subject-current-v1-client.ts';
 export * from './verify-effective-customer-group-membership-set-v1-client.ts';
 export * from './verify-retail-purchasing-subject-current-v1-client.ts';
-export * from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment/client';
 export * from './privacy-measure-execution-client.ts';
-export {
-  PaymentTermAffectedUseAssessmentRequestSchema,
-  PaymentTermAffectedUseAssessmentResponseSchema,
-} from '../../shared/api.ts';
-export type {
-  PaymentTermAffectedUseAssessmentRequest,
-  PaymentTermAffectedUseAssessmentResponse,
-} from '../../shared/api.ts';
 
 type CommerceCustomerContextApiGroups =
   typeof commerceCustomerContextApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
