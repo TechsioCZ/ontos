@@ -875,6 +875,82 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       expect(chained.valid, label).toBe(false);
       expect(chained.diagnostics, label).toContain(expected);
     }
+    // Whatever statement carries a name an owner entry exports into a file of a library package the sources hold, that
+    // file is read like any other on the chain: an import exported again, a plain alias of one, `export … from` (the
+    // control), in `./api` and in the client aggregate, and a workspace SDK passing on the read's client.
+    const startupFile = 'packages/shared-contracts/src/startup.ts';
+    const withLibraries = new Map([
+      ...sources,
+      ...(yield* loadSources(['packages/shared-contracts', 'packages/core-runtime'])),
+    ]);
+    const passingOn: readonly (readonly [string, string])[] = [
+      [sharedContracts, startup],
+      [startupFile, `export { CurrentPaymentTermsApi as Startup } from '${contractSpecifier}';\n`],
+    ];
+    const sdk: readonly (readonly [string, string])[] = [
+      [
+        'packages/payment-sdk/package.json',
+        JSON.stringify({ exports: { '.': './src/index.ts' }, name: '@app/payment-sdk' }),
+      ],
+      [
+        'packages/payment-sdk/src/index.ts',
+        `export { executeCurrentPaymentTerms } from '${contractSpecifier}/client';\n`,
+      ],
+    ];
+    const startupImport = "import { Startup } from '@app/shared-contracts/startup';\n";
+    const startupAlias = "import { Startup as S } from '@app/shared-contracts/startup';\nexport const Startup = S;\n";
+    for (const [label, file, appended, exportedName, changes] of [
+      ['an import exported again', sharedApiFile, `${startupImport}export { Startup };\n`, 'Startup', passingOn],
+      ['a plain alias of an import', sharedApiFile, startupAlias, 'Startup', passingOn],
+      [
+        'export … from',
+        sharedApiFile,
+        "export { Startup } from '@app/shared-contracts/startup';\n",
+        'Startup',
+        passingOn,
+      ],
+      [
+        'an import the aggregate exports again',
+        aggregateFile,
+        `${startupImport}export { Startup };\n`,
+        'Startup',
+        passingOn,
+      ],
+      ['a plain alias of an import in the aggregate', aggregateFile, startupAlias, 'Startup', passingOn],
+      [
+        'export … from in the aggregate',
+        aggregateFile,
+        "export { Startup } from '@app/shared-contracts/startup';\n",
+        'Startup',
+        passingOn,
+      ],
+      [
+        'a workspace SDK passing on the client',
+        aggregateFile,
+        "import { executeCurrentPaymentTerms } from '@app/payment-sdk';\nexport { executeCurrentPaymentTerms };\n",
+        'executeCurrentPaymentTerms',
+        sdk,
+      ],
+    ] as const) {
+      const passed = judged(withLibraries, [...changes, [file, `${required(sources, file)}\n${appended}`]]);
+      expect(passed.valid, label).toBe(false);
+      expect(passed.diagnostics, label).toContain(`${file}: export ${exportedName} passes on the package read`);
+    }
+    // A library file no exported name is followed into stays unread: an entry that only uses what it imports passes.
+    const used = judged(withLibraries, [
+      ...passingOn,
+      [sharedApiFile, `${sharedApi}\n${startupImport}const started = Startup;\n`],
+    ]);
+    expect(used.valid, used.diagnostics).toBe(true);
+    // The chain is worked out to a fixed point: a name an `export *` of a library file passes on is followed in turn.
+    const relayed = judged(withLibraries, [
+      [sharedContracts, startup],
+      [startupFile, "export { Typo as Startup } from './relay.ts';\n"],
+      ['packages/shared-contracts/src/relay.ts', 'export const Value = 1;\n'],
+      [sharedApiFile, `${sharedApi}\nexport * from '@app/shared-contracts/startup';\n`],
+    ]);
+    expect(relayed.valid).toBe(false);
+    expect(relayed.diagnostics).toContain(`${sharedApiFile}: export Startup cannot be followed`);
     // The handler root is no owner entry: the net does not apply there.
     expect(judged(sources, [[handlerFile, `${handler}\nlet counter = 0;\nvoid counter;\n`]]).valid).toBe(true);
     // Every binding a mounted declaration of the owner uses is judged by its origin, whatever specifier, path or name
