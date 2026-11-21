@@ -1794,6 +1794,21 @@ const reboundFreeNames: readonly (readonly [form: string, source: string, lines:
   ['a with statement can shadow require', "with (globalThis.scope) {\n  require('./package.json');\n}\n", [2]],
   ['an eval can assign require', "eval('require = globalThis.other');\nrequire('./package.json');\n", [2]],
   ['the wrapper arguments alias module', "arguments[2] = globalThis.other;\nmodule.require('./package.json');\n", [2]],
+  [
+    'the wrapper arguments alias module, and its require is passed on under another name',
+    "arguments[2] = globalThis.other;\nconst load = module.require;\nmodule.exports = load('./package.json').name;\n",
+    [3],
+  ],
+  [
+    'an eval can assign module, and its require is passed on under another name',
+    "eval('module = globalThis.other');\nconst load = module.require;\nmodule.exports = load('./package.json').name;\n",
+    [3],
+  ],
+  [
+    'a with statement can rebind module, and its require is passed on under another name',
+    "with (globalThis.scope) {\n  rebind();\n}\nconst load = module.require;\nmodule.exports = load('./package.json').name;\n",
+    [5],
+  ],
 ];
 
 for (const [form, source, lines] of reboundFreeNames) {
@@ -1803,6 +1818,29 @@ for (const [form, source, lines] of reboundFreeNames) {
     }),
   );
 }
+
+it.live('trusts no member of import.meta or module that is called as a method, which gets the object as this', () =>
+  Effect.gen(function* methodReceivers() {
+    const meta = 'verticals/alpha/src/review.mjs';
+    expect(
+      yield* freezeViolations({
+        [meta]: `${createRequireImport}import.meta.rebase = function () {\n  this.url = new URL('../../beta/index.mjs', this.url).href;\n};\nimport.meta.rebase();\nconst load = createRequire(import.meta.url);\nload('./package.json');\n`,
+        [reviewCjs]: `module.exports = function () {\n  this.filename = ${betaIndex};\n};\nmodule.exports\`\`;\nmodule.require('./package.json');\n`,
+      }),
+    ).toEqual([computedLoad(reviewCjs, [4]), computedLoad(meta, [5, 7])]);
+  }),
+);
+
+it.live("takes import.meta.resolve for Node's own only while it is called or read", () =>
+  Effect.gen(function* replacedResolve() {
+    const meta = 'verticals/alpha/src/review.mjs';
+    expect(
+      yield* freezeViolations({
+        [meta]: `${createRequireImport}import.meta.resolve = function () {\n  this.url = new URL('../../beta/index.mjs', this.url).href;\n};\nimport.meta.resolve('node:path');\nconst load = createRequire(import.meta.url);\nload('./package.json');\n`,
+      }),
+    ).toEqual([computedLoad(meta, [2, 7])]);
+  }),
+);
 
 it.live('takes every member of module but exports and require for a computed load', () =>
   Effect.gen(function* moduleMembers() {

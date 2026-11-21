@@ -1831,6 +1831,15 @@ const isReadOnly = (analysis: LoadAnalysis, start: Node): boolean => {
   return parent?.type === 'VariableDeclarator' && parent.init === node;
 };
 
+/** Whether member is called as a method, which hands its object to the callee as `this`. */
+const isCalledAsMethod = (analysis: LoadAnalysis, member: Node): boolean => {
+  const [node, parent] = usageOf(analysis, member);
+  return (
+    (parent?.type === 'CallExpression' && parent.callee === node) ||
+    (parent?.type === 'TaggedTemplateExpression' && parent.tag === node)
+  );
+};
+
 /**
  * Whether sloppy code of the file can give a name another value without writing the name: through a `with`
  * statement, an `eval`, or, where the file can run as CommonJS, the `arguments` of the function Node wraps
@@ -1840,12 +1849,25 @@ const rebindsNames = (analysis: LoadAnalysis): boolean =>
   analysis.names.has('eval') ||
   (!analysis.moduleSource && (analysis.withStatements.length > 0 || analysis.names.has('arguments')));
 
-/** Whether `import.meta.url` is the file's own URL wherever it occurs: `import.meta` never leaves it, and its `url` is only read. */
+/**
+ * Whether `import.meta.url` is the file's own URL wherever it occurs: `import.meta` never leaves the file,
+ * neither as a value nor as the `this` of a method the file put on it, and its `url` is only read.
+ * `import.meta.resolve` is Node's own while it is only called or read.
+ */
 const keepsMetaUrl = (analysis: LoadAnalysis): boolean =>
   analysis.metas.every((meta) => {
     const [node, parent] = usageOf(analysis, meta);
     const member = parent?.type === 'MemberExpression' && parent.object === node ? staticMemberName(parent) : undefined;
-    return member !== undefined && (member !== 'url' || (parent !== undefined && isReadOnly(analysis, parent)));
+    if (parent === undefined || member === undefined) {
+      return false;
+    }
+    if (member === 'url') {
+      return isReadOnly(analysis, parent);
+    }
+    if (member === 'resolve') {
+      return isCalledAsMethod(analysis, parent) || isReadOnly(analysis, parent);
+    }
+    return !isCalledAsMethod(analysis, parent);
   });
 
 /** Whether `__filename` is the file's own path wherever it occurs: Node's own, only read (so never declared either). */
@@ -1875,6 +1897,17 @@ const memberCapabilities = new Map<Capability, readonly [string, Capability]>([
   ['module', ['require', 'loader']],
   ['namespace', ['createRequire', 'factory']],
 ]);
+
+/**
+ * The member of from that is a capability in this file, read where it is used and where it is passed on
+ * under another name alike: where sloppy code can rebind `module`, where its `require` loads from is unknown.
+ */
+const memberCapability = (analysis: LoadAnalysis, from: Capability): readonly [string, Capability] | undefined => {
+  const transition = memberCapabilities.get(from);
+  return transition !== undefined && from === 'module' && rebindsNames(analysis)
+    ? [transition[0], foreignLoader]
+    : transition;
+};
 
 const unwrapValue = (node: Node | null | undefined): Node | null | undefined => {
   if (
@@ -1911,7 +1944,7 @@ const valueCapabilities = (analysis: LoadAnalysis, expression: Node | null | und
     const member = staticMemberName(value);
     return new Set(
       [...valueCapabilities(analysis, value.object)].flatMap((capability) => {
-        const transition = memberCapabilities.get(capability);
+        const transition = memberCapability(analysis, capability);
         return transition !== undefined && transition[0] === member ? [transition[1]] : [];
       }),
     );
@@ -2021,7 +2054,8 @@ const seedCapabilityUses = (analysis: LoadAnalysis): void => {
 
 /**
  * Reading the member of from that is a capability passes it on; any other named member is harmless when
- * harmless says so of its name, and a computed load otherwise.
+ * harmless says so of its name and it is not called as a method, which would hand the capability to the
+ * callee as `this`; it is a computed load otherwise.
  */
 const memberUse = (
   analysis: LoadAnalysis,
@@ -2030,17 +2064,16 @@ const memberUse = (
   harmless: (name: string) => boolean,
 ): boolean => {
   const { node, parent } = use;
-  const [member, capability] = memberCapabilities.get(from) ?? [];
+  const [member, capability] = memberCapability(analysis, from) ?? [];
   if (parent.type !== 'MemberExpression' || parent.object !== node || capability === undefined) {
     return false;
   }
   const name = staticMemberName(parent);
   if (name === member) {
-    // Where sloppy code can rebind `module`, where its `require` loads from is unknown.
-    analysis.pending.push([parent, from === 'module' && rebindsNames(analysis) ? foreignLoader : capability]);
+    analysis.pending.push([parent, capability]);
     return true;
   }
-  return name !== undefined && harmless(name);
+  return name !== undefined && harmless(name) && !isCalledAsMethod(analysis, parent);
 };
 
 type CapabilityUse = (analysis: LoadAnalysis, node: Node, parent: Node) => boolean;
