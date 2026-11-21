@@ -34,6 +34,20 @@ export type PricingCatalogSelectionPurpose = Extract<
   'PRICE_SOURCE_ASSERTION' | 'PRICING'
 >;
 
+/**
+ * PRICE_SOURCE_ASSERTION answers only an exact Product and its Variant; a selection that also pins a configuration,
+ * package or set is asked the PRICING question, the one main's define-price asks of every selection.
+ */
+const purposeFor = (
+  purpose: PricingCatalogSelectionPurpose,
+  selection: CatalogSelection,
+): PricingCatalogSelectionPurpose =>
+  selection.configuration === undefined &&
+  selection.packageOption === undefined &&
+  selection.setComposition === undefined
+    ? purpose
+    : 'PRICING';
+
 export interface CatalogSelectionAssessmentPort {
   readonly assess: (
     selection: CatalogSelection,
@@ -94,13 +108,14 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
   readonly execute: SelectionEvidenceExecutor;
 }): CatalogSelectionAssessmentPort =>
   CatalogSelectionAssessmentService.of({
-    assess: (selection) =>
-      dependencies
+    assess: (selection) => {
+      const purpose = purposeFor(dependencies.context.purpose, selection);
+      return dependencies
         .acquire({
           audience: 'catalog',
           compositionRevision: dependencies.context.compositionRevision,
           conditionalRead: {
-            input: { purpose: dependencies.context.purpose, selection },
+            input: { purpose, selection },
             kind: 'CATALOG_SELECTION',
             operationRequirementKey: dependencies.context.operationRequirementKey,
           },
@@ -110,15 +125,10 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
         })
         .pipe(
           Effect.flatMap(({ baseUrl, credential }) =>
-            dependencies.execute(
-              { purpose: dependencies.context.purpose, selection },
-              credential,
-              dependencies.context.requestCorrelation,
-              {
-                baseUrl,
-                compositionRevision: dependencies.context.compositionRevision,
-              },
-            ),
+            dependencies.execute({ purpose, selection }, credential, dependencies.context.requestCorrelation, {
+              baseUrl,
+              compositionRevision: dependencies.context.compositionRevision,
+            }),
           ),
           Effect.mapError((cause) =>
             Schema.is(PricingCatalogSelectionUnavailable)(cause)
@@ -126,7 +136,7 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
               : unavailable('Catalog selection assessment is unavailable', cause),
           ),
           Effect.flatMap((response) => {
-            if (!assessmentMatchesRequest(response.evidence, selection, dependencies.context.purpose)) {
+            if (!assessmentMatchesRequest(response.evidence, selection, purpose)) {
               return Effect.fail(unavailable('Catalog returned an assessment for a different selection or purpose'));
             }
             if (
@@ -138,7 +148,8 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
             }
             return Effect.succeed(response.evidence);
           }),
-        ),
+        );
+    },
   });
 
 export const catalogSelectionAssessmentPortFromEnvironment = Effect.fn('catalogSelectionAssessmentPortFromEnvironment')(
