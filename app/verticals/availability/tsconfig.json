@@ -29,9 +29,6 @@
       "path": "../../packages/core-runtime"
     },
     {
-      "path": "../catalog"
-    },
-    {
       "path": "../commerce-customer-context"
     },
     {

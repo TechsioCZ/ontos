@@ -13,7 +13,6 @@
   },
   "include": ["src", "tests"],
   "references": [
-    { "path": "../../verticals/catalog" },
     { "path": "../core-runtime" },
     { "path": "../shared-contracts" },
     { "path": "../catalog-selection-contracts" },
