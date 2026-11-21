@@ -3,7 +3,8 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { CatalogSourceCorrelationSchema } from '../domain/catalog-source-correlation.ts';
-import { ProductSchema, ProductUuidSchema } from '../domain/product.ts';
+import { ProductDescriptionSchema, ProductNameSchema, ProductSchema, ProductUuidSchema } from '../domain/product.ts';
+import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
 
 const entityKind = Schema.Literals(['PRODUCT', 'VARIANT']);
 const qualifier = {
@@ -15,6 +16,19 @@ export const CatalogSourceProductsRequestSchema = Schema.Union([
   Schema.Struct({
     ...qualifier,
     entityKind,
+    /** A lookup that names a locale also answers the record's current localized text in it. */
+    locale: Schema.optionalKey(
+      CatalogLocaleSchema.check(
+        Schema.isMaxLength(64),
+        Schema.makeFilter((value) => {
+          try {
+            return Intl.getCanonicalLocales(value)[0] === value ? undefined : 'Expected a canonical locale';
+          } catch {
+            return 'Expected a canonical locale';
+          }
+        }),
+      ),
+    ),
     operation: Schema.Literal('LOOKUP'),
     recordId: CatalogSourceCorrelationSchema.fields.recordId,
   }),
@@ -26,10 +40,20 @@ export const CatalogSourceProductsRequestSchema = Schema.Union([
   }),
 ]);
 export type CatalogSourceProductsRequest = typeof CatalogSourceProductsRequestSchema.Type;
+/**
+ * The current localized text of the record (the Product's, or its Variant's) in the locale the lookup named, with
+ * the revision a change of it expects. Without a name and a description the record has no text in that locale.
+ */
+const CatalogSourceLocalizedTextSchema = Schema.Struct({
+  description: Schema.optionalKey(ProductDescriptionSchema),
+  name: Schema.optionalKey(ProductNameSchema),
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
 export const CatalogSourceProductsResponseSchema = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       entityKind,
+      localized: Schema.optionalKey(CatalogSourceLocalizedTextSchema),
       originalActionInvocationId: ProductUuidSchema,
       product: ProductSchema,
       source: CatalogSourceCorrelationSchema,

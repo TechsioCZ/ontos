@@ -152,6 +152,10 @@ export const setProductLocalizedFactsAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-localized-facts.access.v1',
     },
+    accessWorkload: {
+      reason: 'Write an explicitly authorized localized Product source fact for the registered C14 integration',
+      workloads: ['commerce.catalog.symmy-product-localized-facts'],
+    },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',

@@ -80,6 +80,10 @@ export const setProductLocalizedFactsRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Recover the exact original localized Product source fact for the registered C14 integration',
+      workloads: ['commerce.catalog.symmy-product-localized-facts-recovery'],
+    },
     entrypoint: setProductLocalizedFactsRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

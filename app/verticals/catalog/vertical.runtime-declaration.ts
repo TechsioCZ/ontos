@@ -232,7 +232,9 @@ import { catalogSourceProductPageRead } from './src/api/catalog-source-product-p
 import { CatalogSourceProductsApi } from './shared/apis/catalog-source-products.ts';
 import { catalogSourceProductsRead } from './src/api/catalog-source-products.read.ts';
 import { SetVariantLocalizedFactsActionApi } from './shared/apis/set-variant-localized-facts-action.ts';
+import { SetProductLocalizedFactsActionApi } from './shared/apis/set-product-localized-facts-action.ts';
 import { setVariantLocalizedFactsRecoveryRead } from './src/api/set-variant-localized-facts-recovery.read.ts';
+import { setProductLocalizedFactsRecoveryRead } from './src/api/set-product-localized-facts-recovery.read.ts';
 import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
 import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
 import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
@@ -483,6 +485,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'set-composition-history': SetCompositionHistoryApi,
       'set-product-attribute-values-recovery': SetProductAttributeValuesRecoveryApi,
       'set-product-brand-recovery': SetProductBrandRecoveryApi,
+      'set-product-localized-facts-action': SetProductLocalizedFactsActionApi,
       'set-product-localized-facts-recovery': SetProductLocalizedFactsRecoveryApi,
       'set-product-manufacturer-recovery': SetProductManufacturerRecoveryApi,
       'set-product-type-recovery': SetProductTypeRecoveryApi,
@@ -545,6 +548,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: setVariantLocalizedFactsAction,
       },
       {
+        apiKey: 'set-product-localized-facts-action',
+        operationKey: 'setProductLocalizedFactsAction.execute',
+        registration: setProductLocalizedFactsAction,
+      },
+      {
         apiKey: 'create-variant-action',
         operationKey: 'createVariantAction.execute',
         registration: createVariantAction,
@@ -568,6 +576,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         apiKey: 'set-variant-localized-facts-recovery',
         operationKey: 'setVariantLocalizedFactsRecovery.execute',
         registration: setVariantLocalizedFactsRecoveryRead,
+      },
+      {
+        apiKey: 'set-product-localized-facts-recovery',
+        operationKey: 'setProductLocalizedFactsRecovery.execute',
+        registration: setProductLocalizedFactsRecoveryRead,
       },
       {
         apiKey: 'create-variant-recovery',
@@ -699,6 +712,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     correctProductRecoveryRead,
     updateProductRecoveryRead,
     setVariantLocalizedFactsRecoveryRead,
+    setProductLocalizedFactsRecoveryRead,
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,
