@@ -8,7 +8,7 @@ import {
   PackageDefinitionSelectionRevisionSchema,
   SetCompositionSelectionRevisionSchema,
 } from '@app/catalog-selection-contracts/catalog-selection';
-import { VariantExactFormSchema } from '@app/catalog-selection-contracts/variant-exact-form';
+import { CatalogIdentityScopeSchema } from '@app/catalog-selection-contracts/identity-scope';
 import { PackageDefinitionRefSchema } from '../resources/package-definition.ts';
 
 const positiveDecimal = Schema.String.check(
@@ -39,7 +39,7 @@ export const PackageDefinitionContentInputSchema = Schema.Struct({
     Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed()).pipe(Schema.brand('CatalogPackageConfigurationKey')),
   ),
   effectiveAt: CatalogRevisionInstantSchema,
-  form: VariantExactFormSchema,
+  form: CatalogIdentityScopeSchema,
   lower: Schema.optionalKey(
     Schema.Struct({ count: positiveWhole, revision: PackageDefinitionSelectionRevisionSchema }),
   ),

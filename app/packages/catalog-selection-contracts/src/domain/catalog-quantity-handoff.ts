@@ -4,7 +4,7 @@ import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contra
 import { CatalogResourceRefSchema } from './catalog-resource-reference.ts';
 import { CatalogSelectionValidEvidenceSchema } from './catalog-selection-evidence.ts';
 import { CatalogSelectionRevisionSchema, CatalogSelectionSchema } from './catalog-selection.ts';
-import { VariantExactFormSchema } from './variant-exact-form.ts';
+import { CatalogIdentityScopeSchema } from './identity-scope.ts';
 
 const quantityText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const CatalogQuantityTargetIdSchema = Schema.String.check(Schema.isUUID(), Schema.isTrimmed()).pipe(
@@ -45,7 +45,7 @@ const packageResolutionSchema = Schema.Struct({
 const packageContentRevisionSchema = Schema.Struct({
   amount: quantityText,
   configurationKey: Schema.optionalKey(CatalogQuantityConfigurationKeySchema),
-  form: VariantExactFormSchema,
+  form: CatalogIdentityScopeSchema,
   lower: Schema.optionalKey(Schema.Struct({ count: quantityText, revision: CatalogSelectionRevisionSchema })),
   reference: CatalogSelectionRevisionSchema,
   setComposition: Schema.optionalKey(CatalogSelectionRevisionSchema),

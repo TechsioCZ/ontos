@@ -10,7 +10,7 @@ import {
   EngagementProfilePersistenceUnavailable,
 } from '../../shared/domain/engagement-profile.ts';
 import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
-import type { PartyRef } from '../../shared/party-registry-references.ts';
+import type { PartyRef } from '../../shared/resources/party.ts';
 import type { OrganizationEngagementProfileRecord, PersonEngagementProfileRecord } from '../db/engagement-schema.ts';
 import { organizationEngagementProfiles, personEngagementProfiles } from '../db/engagement-schema.ts';
 import type { ContactsTransaction } from '../db/engagement-types.ts';

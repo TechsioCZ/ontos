@@ -1,12 +1,12 @@
 import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
-import type { VariantExactForm } from '@app/catalog-selection-contracts/variant-exact-form';
+import type { CatalogIdentityScope } from '@app/catalog-selection-contracts/identity-scope';
 
 /** Option is a selectable role on the same Package Definition Resource, never another register. */
 export interface PackageOptionRole {
   readonly currentContent: CatalogSelectionRevision;
   readonly definitionRef: CatalogResourceRef;
-  readonly form: VariantExactForm;
+  readonly form: CatalogIdentityScope;
   readonly independentlyRequested: boolean;
   readonly lifecycle: 'ACTIVE' | 'RETIRED';
   readonly substitutionWithLooseQuantitySatisfiesRequest: boolean;
