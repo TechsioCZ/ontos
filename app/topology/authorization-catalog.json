@@ -8,6 +8,8 @@
     "commerce.catalog.symmy-product-read",
     "commerce.catalog.symmy-variant-localized-facts",
     "commerce.catalog.symmy-variant-localized-facts-recovery",
+    "commerce.catalog.symmy-variant-sku",
+    "commerce.catalog.symmy-variant-sku-recovery",
     "commerce.customer-context.organization-ico-facts.read",
     "commerce.customer-context.source-read",
     "commerce.customer-context.source-write",

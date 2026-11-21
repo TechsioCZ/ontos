@@ -58,6 +58,7 @@ import {
   productFactsOperation,
   updateProductOperation,
   variantFactsOperation,
+  variantSkuOperation,
 } from '../persistence/symmy-product-plan.ts';
 import { stockOperation } from '../persistence/symmy-stock-plan.ts';
 import { SymmyRouteEnrollmentRefused } from './symmy-route-enrollment-refused.ts';
@@ -437,6 +438,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
         executor(productFactsOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
         executor(createVariantOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(variantFactsOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
+        executor(variantSkuOperation, { entityKind: 'VARIANT' }),
         executor(priceOperation, { entityKind: 'PRICE' }),
         shellRead(priceGroupModule, priceGroupAssociations.entrypointKey, 'forbidden'),
       ],

@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug assign-sku
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { AssignSkuPayloadSchema, AssignSkuResultSchema } from '../../shared/actions/assign-sku.ts';
 import type { AssignSkuPayload } from '../../shared/actions/assign-sku.ts';
@@ -37,12 +37,22 @@ const handleAssignSku = Effect.fn('AssignSkuAction.handle')(function* handleAssi
   payload: AssignSkuPayload,
   context: ActionHandlerContext<Readonly<Record<string, never>>, AssignSkuServices>,
 ) {
-  const outcome = yield* context.services.assign({
-    ...payload,
+  const { sourceCorrelation, ...assignment } = payload;
+  const input = {
+    ...assignment,
     actionInvocationId: context.actionInvocationId,
     principalId: context.scope.principalId,
-  });
-  return yield* completeSkuChange(outcome, payload, context);
+  };
+  if (sourceCorrelation === undefined) {
+    return yield* completeSkuChange(yield* context.services.assign(input), payload, context);
+  }
+  const outcome = yield* context.services.assignFromSource(input, sourceCorrelation);
+  const { revision } = yield* completeSkuChange(outcome, payload, context);
+  const changed = Match.value(outcome).pipe(
+    Match.tag('unchanged', () => false),
+    Match.orElse(() => true),
+  );
+  return { changed, revision };
 });
 
 export const assignSkuAction = defineAction(
@@ -58,6 +68,10 @@ export const assignSkuAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.assign-sku.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Assign the SKU the registered C14 integration sends for a Variant it created',
+      workloads: ['commerce.catalog.symmy-variant-sku'],
     },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,

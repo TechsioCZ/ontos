@@ -40,10 +40,16 @@ export const productFactsOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
+export const variantSkuOperation = {
+  entrypointKey: 'commerce.catalog.assign-sku',
+  moduleId: catalogModule,
+  schemaVersion: '1',
+} as const;
 
 const productCreateKey = 'product-create';
 const productUpdateKey = 'product-update';
 const variantCreateKey = 'variant-create';
+const variantSkuKey = 'variant-sku';
 const priceDefineKey = 'price-define';
 const MAX_RECORD_LENGTH = 300;
 
@@ -72,6 +78,7 @@ const catalogSource = (rows: SymmyProductRows, template: SymmyFixtureExecutionPl
   const updates = rows.some((row) => row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
   const texts = variants.some(({ localized }) => localized.length > 0);
   const productTexts = rows.some(({ localized }) => (localized ?? []).length > 0);
+  const skus = variants.some(({ sku }) => sku !== undefined);
   const further = rows.some(({ variants: rowVariants }) => rowVariants.length > 1);
   const product = enrolledItem(template, 'PRODUCT', createProductOperation);
   const required = [
@@ -79,6 +86,7 @@ const catalogSource = (rows: SymmyProductRows, template: SymmyFixtureExecutionPl
     ...(productTexts ? [enrolledItem(template, 'PRODUCT', productFactsOperation)] : []),
     ...(further ? [enrolledItem(template, 'VARIANT', createVariantOperation)] : []),
     ...(texts ? [enrolledItem(template, 'VARIANT', variantFactsOperation)] : []),
+    ...(skus ? [enrolledItem(template, 'VARIANT', variantSkuOperation)] : []),
   ];
   return Option.isSome(product) &&
     required.every((item) => Option.isSome(item) && sameSource(item.value.source, product.value.source))
@@ -330,7 +338,10 @@ const buildPriceItem = Effect.fn('SymmyProductPlan.price')(function* buildPriceI
   };
 });
 
-/** The variant item: its own create when it is not the initial variant, and one text effect per localized text. */
+/**
+ * The variant item: its own create when it is not the initial variant, one text effect per localized text and the
+ * assignment of its SKU when the source names one.
+ */
 const buildVariantItem = (
   facts: Pick<ProductFacts<never>, 'enrollment' | 'index' | 'idempotencyKey'> & {
     readonly evidenceRefs: readonly [string, ...string[]];
@@ -398,13 +409,34 @@ const buildVariantItem = (
     },
     operation: variantFactsOperation,
   }));
+  // The ERP item number becomes the Variant's SKU: Catalog assigns a first code, keeps one it already holds and
+  // replaces a different one.
+  const sku =
+    variant.row.sku === undefined
+      ? []
+      : [
+          {
+            dependsOn: created ? [parent, variantCreateKey] : [parent],
+            effectKey: variantSkuKey,
+            intent: {
+              _tag: 'CatalogProductDependentEffect',
+              parent,
+              request: {
+                _tag: 'AssignVariantSku',
+                payload: { code: variant.row.sku, evidenceRefs, reason: SYMMY_PRODUCT_REASON },
+              },
+              ...present('variantParent', created ? own[0] : undefined),
+            },
+            operation: variantSkuOperation,
+          },
+        ];
   return {
     created: own,
     item:
-      create.length + texts.length === 0
+      create.length + texts.length + sku.length === 0
         ? Option.none()
         : Option.some({
-            effects: [...create, ...texts],
+            effects: [...create, ...texts, ...sku],
             itemKey: `product-${index}-variant-${position}`,
             source: {
               entityKind: 'VARIANT',

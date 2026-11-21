@@ -42,6 +42,7 @@ const updateProduct = operation('commerce.catalog', 'commerce.catalog.update-pro
 const createVariant = operation('commerce.catalog', 'commerce.catalog.create-variant', '2');
 const variantFacts = operation('commerce.catalog', 'commerce.catalog.set-variant-localized-facts', '1');
 const productFacts = operation('commerce.catalog', 'commerce.catalog.set-product-localized-facts', '1');
+const variantSku = operation('commerce.catalog', 'commerce.catalog.assign-sku', '1');
 const priceDefine = operation('commerce.pricing', 'commerce.pricing.define-price', '2');
 const priceDefaults = {
   commercialScope: { channelId: 'B2B', marketId: 'cz-market' },
@@ -55,7 +56,7 @@ const templateInput = (defaults?: typeof priceDefaults) => {
   return {
     items: [
       enroll('PRODUCT', 'enrolled-product', createProduct, updateProduct, productFacts),
-      enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts),
+      enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts, variantSku),
       enroll('PRICE', 'enrolled-price', priceDefine),
     ],
     priceSource: defaults === undefined ? priceSource : { ...priceSource, defaults },
@@ -146,6 +147,13 @@ const textRequestOf = (effect: Effect_) =>
     Match.value(dependentOf(effect)?.request).pipe(
       Match.when({ _tag: 'SetProductLocalizedFacts' }, ({ payload }) => payload),
       Match.when({ _tag: 'SetVariantLocalizedFacts' }, ({ payload }) => payload),
+      Match.option,
+    ),
+  );
+const skuRequestOf = (effect: Effect_) =>
+  Option.getOrUndefined(
+    Match.value(dependentOf(effect)?.request).pipe(
+      Match.when({ _tag: 'AssignVariantSku' }, ({ payload }) => payload),
       Match.option,
     ),
   );
@@ -390,6 +398,7 @@ describe('Symmy product plan from the public rows', () => {
         rowsOf(product({}, [variant(), variant()])),
         rowsOf(product({}, [variant({ localized: [{ locale: 'en', name: 'Chair' }] })])),
         rowsOf(product({ localized: [{ locale: 'cs-CZ', name: 'Židle' }] })),
+        rowsOf(product({}, [variant({ sku: 'CHAIR-RED' })])),
         rowsOf(product({}, [variant({ prices: [price()] })])),
       ]) {
         expect(Option.isNone(yield* build(rows, { template: narrow }))).toBe(true);
@@ -488,6 +497,46 @@ describe('Symmy product plan from the public rows', () => {
     }),
   );
 
+  it.effect('plans the SKU of each variant as its Catalog SKU assignment, the same on every re-send', () =>
+    Effect.gen(function* variantSkus() {
+      const rows = rowsOf(
+        product({ identifier: { type: 'erpId', value: 'AKROS-10001' } }, [
+          variant({ identifier: { type: 'variantId', value: 'AKROS-10001-V1' }, sku: 'DIN933-M8x40-ZN' }),
+          variant({ identifier: { type: 'variantId', value: 'AKROS-10001-V2' }, sku: 'DIN933-M8x40-A2' }),
+        ]),
+      );
+      const plan = Option.getOrThrow(yield* build(rows));
+      // A SKU alone makes the initial variant an item of its own: its source record is the Variant's.
+      expect(itemKeys(plan)).toEqual(['product-0', 'product-0-variant-0', 'product-0-variant-1']);
+      expect(itemOf(plan, 'product-0-variant-0').source).toMatchObject({
+        entityKind: 'VARIANT',
+        sourceRecordId: 'variant:variantId:AKROS-10001-V1',
+      });
+      const parent = { effectKey: 'product-create', itemKey: 'product-0' };
+      const initial = effectOf(plan, 'product-0-variant-0', 'variant-sku');
+      expect(initial.operation).toEqual(variantSku);
+      expect(initial.dependsOn).toEqual([parent]);
+      expect(initial.originalTarget).toBeUndefined();
+      expect(dependentOf(initial)?.variantParent).toBeUndefined();
+      // The request names the code and its evidence only: the Variant and its source record are resolved later.
+      expect(skuRequestOf(initial)).toEqual({
+        code: 'DIN933-M8x40-ZN',
+        evidenceRefs: skuRequestOf(effectOf(plan, 'product-0-variant-1', 'variant-sku'))?.evidenceRefs,
+        reason: 'Symmy product import',
+      });
+      // A further variant's SKU waits for its own create and names it.
+      const further = effectOf(plan, 'product-0-variant-1', 'variant-sku');
+      expect(further.dependsOn).toEqual([parent, 'variant-create']);
+      expect(dependentOf(further)?.variantParent).toEqual({
+        effectKey: 'variant-create',
+        itemKey: 'product-0-variant-1',
+      });
+      expect(itemOf(plan, 'product-0').unsupportedBranches).toBeUndefined();
+      const resent = Option.getOrThrow(yield* build(rows, { idempotencyKey: 'product-key-2' }));
+      expect(effectOf(resent, 'product-0-variant-0', 'variant-sku').intent).toEqual(initial.intent);
+    }),
+  );
+
   it.effect('plans a variant text without a revision, so a later change is written at the current one', () =>
     Effect.gen(function* variantTexts() {
       const plan = Option.getOrThrow(
@@ -515,6 +564,12 @@ describe('Symmy product plan size', () => {
       }),
     ).toEqual({ effects: 1 + 1 + 1 + 2 + 3, items: 1 + 2 + 3 });
     expect(symmyProductPlanSize({ localized: texts(2), variants: [{}] })).toEqual({ effects: 1 + 2, items: 1 });
+    // A SKU is one effect of its variant's item, and makes the initial variant an item when nothing else does.
+    expect(symmyProductPlanSize({ variants: [{ sku: 'A' }] })).toEqual({ effects: 2, items: 2 });
+    expect(symmyProductPlanSize({ variants: [{ localized: texts(1), prices: [{}], sku: 'A' }] })).toEqual({
+      effects: 1 + 1 + 1 + 1,
+      items: 1 + 1 + 1,
+    });
   });
 
   it('accepts a product of 32 effects and rejects one of 33', () => {

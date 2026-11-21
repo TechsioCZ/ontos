@@ -28,6 +28,8 @@ import { assignCatalogMediaAction } from './src/actions/assign-catalog-media.act
 import { AssignCatalogMediaRecoveryApi } from './shared/apis/assign-catalog-media-recovery.ts';
 import { assignSkuAction } from './src/actions/assign-sku.action.ts';
 import { AssignSkuRecoveryApi } from './shared/apis/assign-sku-recovery.ts';
+import { AssignSkuActionApi } from './shared/apis/assign-sku-action.ts';
+import { assignSkuRecoveryRead } from './src/api/assign-sku-recovery.read.ts';
 import { AssortmentProductClassificationV1Api } from './shared/apis/assortment-product-classification-v1.ts';
 import { AssortmentSelectionAssessmentV1Api } from './shared/apis/assortment-selection-assessment-v1.ts';
 import { AssortmentSetCompositionV1Api } from './shared/apis/assortment-set-composition-v1.ts';
@@ -374,6 +376,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'add-product-category-assignment-recovery': AddProductCategoryAssignmentRecoveryApi,
       'assert-size-equivalence-recovery': AssertSizeEquivalenceRecoveryApi,
       'assign-catalog-media-recovery': AssignCatalogMediaRecoveryApi,
+      'assign-sku-action': AssignSkuActionApi,
       'assign-sku-recovery': AssignSkuRecoveryApi,
       'assortment-product-classification-v1': AssortmentProductClassificationV1Api,
       'assortment-selection-assessment-v1': AssortmentSelectionAssessmentV1Api,
@@ -545,6 +548,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: updateProductAction,
       },
       {
+        apiKey: 'assign-sku-action',
+        operationKey: 'assignSkuAction.execute',
+        registration: assignSkuAction,
+      },
+      {
         apiKey: 'set-variant-localized-facts-action',
         operationKey: 'setVariantLocalizedFactsAction.execute',
         registration: setVariantLocalizedFactsAction,
@@ -573,6 +581,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         apiKey: 'update-product-recovery',
         operationKey: 'updateProductRecovery.execute',
         registration: updateProductRecoveryRead,
+      },
+      {
+        apiKey: 'assign-sku-recovery',
+        operationKey: 'assignSkuRecovery.execute',
+        registration: assignSkuRecoveryRead,
       },
       {
         apiKey: 'set-variant-localized-facts-recovery',
@@ -761,6 +774,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     updateProductRecoveryRead,
     setVariantLocalizedFactsRecoveryRead,
     setProductLocalizedFactsRecoveryRead,
+    assignSkuRecoveryRead,
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,

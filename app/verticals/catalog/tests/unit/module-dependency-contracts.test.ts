@@ -3,6 +3,8 @@ import { describe, expect, it } from 'effect-rstest';
 import { catalogManifest } from '../../vertical.manifest.ts';
 import { catalogRegistration } from '../../vertical.registration.ts';
 import { removeProductManufacturerAction } from '../../src/actions/remove-product-manufacturer.action.ts';
+import { assignSkuAction } from '../../src/actions/assign-sku.action.ts';
+import { assignSkuRecoveryRead } from '../../src/api/assign-sku-recovery.read.ts';
 import { setProductLocalizedFactsAction } from '../../src/actions/set-product-localized-facts.action.ts';
 import { setVariantLocalizedFactsAction } from '../../src/actions/set-variant-localized-facts.action.ts';
 import { assortmentProductClassificationV1Read } from '../../src/api/assortment-product-classification-v1.read.ts';
@@ -51,6 +53,8 @@ describe('Catalog owner-authored dependency contracts', () => {
         'setProductLocalizedFactsRecovery.execute',
         setProductLocalizedFactsRecoveryRead,
       ],
+      ['assign-sku-action', 'assignSkuAction.execute', assignSkuAction],
+      ['assign-sku-recovery', 'assignSkuRecovery.execute', assignSkuRecoveryRead],
       [
         'assortment-product-classification-v1',
         'assortmentProductClassificationV1.execute',
@@ -109,7 +113,7 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(23);
+    expect(safe.operationContracts).toHaveLength(25);
     for (const contract of safe.operationContracts) {
       expect(contract.entrypoint.moduleKey).toBe('commerce.catalog');
       expect(['1', '2']).toContain(contract.schemaVersion);

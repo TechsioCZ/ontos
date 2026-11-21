@@ -44,6 +44,7 @@ const ownerOperationProviders = [
       { entrypointKey: 'commerce.catalog.bind-initial-variant-source', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.set-variant-localized-facts', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.set-product-localized-facts', schemaVersion: '1' },
+      { entrypointKey: 'commerce.catalog.assign-sku', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.catalog-source-products', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.create-product-recovery', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.create-variant-recovery', schemaVersion: '1' },
@@ -52,6 +53,7 @@ const ownerOperationProviders = [
       { entrypointKey: 'commerce.catalog.api.bind-initial-variant-source-recovery', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.set-variant-localized-facts-recovery', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.set-product-localized-facts-recovery', schemaVersion: '1' },
+      { entrypointKey: 'commerce.catalog.api.assign-sku-recovery', schemaVersion: '1' },
     ],
   },
   {

@@ -35,7 +35,7 @@ export const completeSkuChange = Effect.fn('SkuAction.completeChange')(function*
   context: ActionHandlerContext<Readonly<Record<string, never>>, SkuServices>,
 ) {
   const result = yield* Match.value(outcome).pipe(
-    Match.tag('applied', ({ revision }) => Effect.succeed({ revision })),
+    Match.tag('applied', 'unchanged', ({ revision }) => Effect.succeed({ revision })),
     Match.tag('conflict', () =>
       Effect.fail(
         new SkuActionConflict({ code: 'sku_action_conflict', reason: 'SKU conflicts with retained assignment' }),

@@ -19,6 +19,7 @@ import {
   productFactsOperation,
   updateProductOperation,
   variantFactsOperation,
+  variantSkuOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
 import { stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
@@ -350,6 +351,7 @@ describe('Symmy route inventories', () => {
       ['productsBatch', productFactsOperation, 'PRODUCT'],
       ['productsBatch', createVariantOperation, 'VARIANT'],
       ['productsBatch', variantFactsOperation, 'VARIANT'],
+      ['productsBatch', variantSkuOperation, 'VARIANT'],
       ['productsBatch', priceOperation, 'PRICE'],
       ['priceListsBatchUpsert', groupOperation, 'PRICE_GROUP'],
       ['priceListsBatchUpsert', priceOperation, 'PRICE'],

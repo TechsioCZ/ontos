@@ -31,6 +31,7 @@ import { correctProductRecoveryRead } from '../../src/api/correct-product-recove
 import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
 import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-localized-facts-recovery.read.ts';
 import { setProductLocalizedFactsRecoveryRead } from '../../src/api/set-product-localized-facts-recovery.read.ts';
+import { assignSkuRecoveryRead } from '../../src/api/assign-sku-recovery.read.ts';
 import { createVariantRecoveryRead } from '../../src/api/create-variant-recovery.read.ts';
 import { createProductRecoveryRead } from '../../src/api/create-product-recovery.read.ts';
 import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
@@ -72,6 +73,7 @@ describe('Catalog backend declaration and full publication', () => {
       updateProductRecoveryRead,
       setVariantLocalizedFactsRecoveryRead,
       setProductLocalizedFactsRecoveryRead,
+      assignSkuRecoveryRead,
       createVariantRecoveryRead,
       createProductRecoveryRead,
       bindInitialVariantSourceRecoveryRead,

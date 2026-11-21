@@ -1,6 +1,7 @@
 import type { OntosRegisteredWorkloadCallInput } from '@app/core-runtime';
 
 const commerceCustomerContext = 'commerce-customer-context';
+const commerceCatalogAssignSku = 'commerce.catalog.assign-sku';
 const commerceCatalogCreateProduct = 'commerce.catalog.create-product';
 const commerceCatalogCreateVariant = 'commerce.catalog.create-variant';
 const commerceCatalogSetProductLocalizedFacts = 'commerce.catalog.set-product-localized-facts';
@@ -462,6 +463,16 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: 'commerce.catalog.symmy-product-localized-facts',
   },
+  {
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.sku.assign',
+    entrypointKey: commerceCatalogAssignSku,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: 'commerce.catalog.symmy-variant-sku',
+  },
   // origin/main 5608aae1d: symmy-c14-product-owner-conformance.test.mts — INTERNAL_C14 actual Shell and durable worker create one Catalog Product with two Variants and recover the original committed effect
   {
     audience: 'catalog',
@@ -532,6 +543,17 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     schemaVersion: '1',
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: 'commerce.catalog.symmy-product-localized-facts-recovery',
+  },
+  {
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.assign-sku-recovery.read',
+    entrypointKey: 'commerce.catalog.api.assign-sku-recovery',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    recoveryOf: { actionKey: commerceCatalogAssignSku, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: 'commerce.catalog.symmy-variant-sku-recovery',
   },
   // origin/main 5608aae1d: symmy-c14-product-owner-conformance.test.mts — INTERNAL_C14 actual Shell and durable worker create one Catalog Product with two Variants and recover the original committed effect; symmy-c14-pricing-routes-runtime.mts — INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority
   {

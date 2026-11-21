@@ -44,6 +44,7 @@ works end to end today.
 | `localized` (product)  | `[{"locale": "cs", "name", "description"}]`: the shop's texts of the product.            |
 | `variants`             | Exactly one: `{"identifier": {"type": "variantId", "value": "<ERP variant id>"}, …}`.    |
 | `variants[].localized` | `[{"locale": "cs", "name", "description"}]`: texts of the variant.                       |
+| `variants[].sku`       | The ERP item number, 1 to 240 characters: the variant's SKU in OntOS (see below).        |
 | `variants[].prices`    | `[{"amount": "125.50", "currencyCode": "CZK"}]`: amount before VAT, as a decimal string. |
 
 - Locale: send `cs`, the Akros market's locale. Other locales are stored, but the Akros shop reads `cs`. A localized
@@ -56,8 +57,25 @@ works end to end today.
   show drafts.
 
 **Limit: 16 plan items per request.** A product is one item, its variant is one more when it carries `localized`
-texts, and each price is one more. One ERP item with variant texts and one price is 3 items, so send at most 5 such
-products per request. Eight of them (24 items) were refused with 400 and went through as two requests of four.
+texts or a `sku`, and each price is one more. One ERP item with variant texts (or a SKU, or both) and one price is 3
+items, so send at most 5 such products per request. Eight of them (24 items) were refused with 400 and went through as
+two requests of four. A variant's SKU is one more owner effect of the variant's item, never an item of its own.
+
+**Variant SKU (`variants[].sku`).** _Built after the stage run above; not yet run on the stage._ The ERP item number
+becomes the variant's SKU in OntOS: the code the Akros shop shows as "Kód varianty" and the staff product list as
+"SKU". The imported product stays a draft. SKUs are unique in the tenant, compared without surrounding spaces and
+without letter case (`din933-m8` and `DIN933-M8` are the same code); the spelling you send is the one shown.
+
+| You send                                                     | Effect `status`      |
+| ------------------------------------------------------------ | -------------------- |
+| A first SKU for the variant                                  | `accepted_change`    |
+| The SKU the variant already holds                            | `accepted_no_change` |
+| Another SKU: it replaces the current one                     | `accepted_change`    |
+| A SKU another variant holds, or one this variant held before | `conflict`           |
+| The same SKU in another letter case                          | `conflict`           |
+
+A replaced SKU stays reserved for the variant's history: it can never be given to another variant, nor back to this
+one. A SKU refused with `conflict` writes nothing; the rest of the item still runs.
 
 Example (Akros stage): a new product with texts and a price (`example-price-0001.json`):
 
@@ -118,6 +136,29 @@ Re-send the whole product with the same identifiers and a new `idempotency-key`.
   on the stage that re-send answered `conflict` for the create.
 - **Price:** send the new amount. A different amount revises the price (`accepted_change`); the same amount answers
   `accepted_no_change`.
+- **SKU:** send the new number in `variants[].sku`; it replaces the variant's SKU as the table above says.
+
+Example (not yet run on the stage): the existing product `AKROS-10001` gets the SKU `DIN933-M8x40-ZN` on its
+variant `AKROS-10001-V1`. Send the product's own name and texts as before; only `sku` is new:
+
+```json
+{
+  "products": [
+    {
+      "identifier": { "type": "erpId", "value": "AKROS-10001" },
+      "name": "<the name AKROS-10001 was created with>",
+      "variants": [
+        {
+          "identifier": { "type": "variantId", "value": "AKROS-10001-V1" },
+          "sku": "DIN933-M8x40-ZN"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The job answers the create `duplicate` and the variant's SKU `accepted_change` (`accepted_no_change` when sent again).
 
 Example (Akros stage): the price of `AKROS-DEMO-0001-V1` changed from 125.50 to 139.00
 (`example-price-change-0001.json`). Job result, trimmed:
@@ -142,8 +183,8 @@ Example (Akros stage): the price of `AKROS-DEMO-0001-V1` changed from 125.50 to 
 
 ### Not supported yet
 
-`lifecycle`, `sku`, `gtin`, `categories`, `attributes`, `media`, `brand`, `productType`, `manufacturer`,
-`relationships`, `sizes` and more than one variant per product. They are refused or reported `unsupported`; leave them
+`lifecycle`, the product-level `sku` (send it on the variant), `gtin`, `categories`, `attributes`, `media`, `brand`,
+`productType`, `manufacturer`, `relationships`, `sizes` and more than one variant per product. They are refused or reported `unsupported`; leave them
 out. Never send `lifecycle`.
 
 ## 3. Job result: `GET /jobs/{jobId}`

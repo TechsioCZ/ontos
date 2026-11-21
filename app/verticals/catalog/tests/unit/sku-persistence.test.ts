@@ -8,7 +8,9 @@ import {
   SkuPersistenceUnavailable,
   skuPersistenceForScope,
   validSkuChangeInput,
+  variantSkuLifecycleRefusal,
 } from '../../src/persistence/sku-persistence.ts';
+import type { SkuChangeOutcome } from '../../src/persistence/sku-persistence.ts';
 
 const base = {
   actionInvocationId: '00000000-0000-4000-8000-000000000001',
@@ -76,6 +78,88 @@ describe('SKU persistence input guard', () => {
     expect(validSkuChangeInput({ ...base, expectedRevision: -1 }, 'tenant-a')).toBe(false);
     expect(validSkuChangeInput({ ...base, actionInvocationId: 'not-a-uuid' }, 'tenant-a')).toBe(false);
   });
+});
+
+const variantSource = {
+  issuerId: 'akros-erp',
+  mappingRevision: 'akros-symmy-products-v1',
+  recordId: 'variant:variantId:AKROS-10001-V1',
+  recordNamespace: 'akros',
+  routeScope: 'route-1',
+};
+
+/** A source record lookup that answers one row, and fails any further query a refusal must never reach. */
+const persistenceWithSourceRecord = (record: { readonly actingPrincipalId: string; readonly variantId: string }) => {
+  let selects = 0;
+  const query = {
+    for: () => query,
+    from: () => query,
+    limit: () => (selects === 1 ? Effect.succeed([record]) : Effect.fail(new Error('no further read expected'))),
+    where: () => query,
+  };
+  const transaction = {
+    select: () => {
+      selects += 1;
+      return query;
+    },
+  };
+  return skuPersistenceForScope(
+    // @ts-expect-error This focused mock implements the source record select only.
+    transaction,
+    { tenantId: 'tenant-a' },
+  );
+};
+
+const isInvalid = (outcome: SkuChangeOutcome) =>
+  Match.value(outcome).pipe(
+    Match.tag('invalid', () => true),
+    Match.orElse(() => false),
+  );
+
+describe('SKU lifecycle admission by caller', () => {
+  it('admits a draft Variant of a draft Product only from its source route, and never a Retired one', () => {
+    expect(variantSkuLifecycleRefusal('CURRENT', 'ACTIVE', 'ACTIVE')).toBeUndefined();
+    expect(variantSkuLifecycleRefusal('CURRENT', 'DRAFT', 'WORK_IN_PROGRESS')).toBe('PRODUCT_NOT_ACTIVE');
+    expect(variantSkuLifecycleRefusal('CURRENT', 'ACTIVE', 'WORK_IN_PROGRESS')).toBe('VARIANT_NOT_ACTIVE');
+    expect(variantSkuLifecycleRefusal('SOURCE_ROUTE', 'DRAFT', 'WORK_IN_PROGRESS')).toBeUndefined();
+    expect(variantSkuLifecycleRefusal('SOURCE_ROUTE', 'ACTIVE', 'WORK_IN_PROGRESS')).toBeUndefined();
+    expect(variantSkuLifecycleRefusal('SOURCE_ROUTE', 'ACTIVE', 'ACTIVE')).toBeUndefined();
+    expect(variantSkuLifecycleRefusal('SOURCE_ROUTE', 'RETIRED', 'WORK_IN_PROGRESS')).toBe('PRODUCT_NOT_ACTIVE');
+    expect(variantSkuLifecycleRefusal('SOURCE_ROUTE', 'DRAFT', 'RETIRED')).toBe('VARIANT_NOT_ACTIVE');
+  });
+
+  it.effect('refuses a source SKU unless Catalog binds its source record to this Variant for this principal', () =>
+    Effect.gen(function* sourceBinding() {
+      // No source record at all.
+      expect(isInvalid(yield* persistenceWithEmptyAuthoritativeLookup().assignFromSource(base, variantSource))).toBe(
+        true,
+      );
+      // The record names another Variant, or was written by another principal.
+      const otherVariant = persistenceWithSourceRecord({
+        actingPrincipalId: base.principalId,
+        variantId: '00000000-0000-4000-8000-000000000009',
+      });
+      expect(isInvalid(yield* otherVariant.assignFromSource(base, variantSource))).toBe(true);
+      const otherPrincipal = persistenceWithSourceRecord({
+        actingPrincipalId: '00000000-0000-4000-8000-000000000009',
+        variantId: base.target.variantId,
+      });
+      expect(isInvalid(yield* otherPrincipal.assignFromSource(base, variantSource))).toBe(true);
+      // A source SKU always names a Variant.
+      const option = yield* persistenceWithEmptyAuthoritativeLookup().assignFromSource(
+        {
+          ...base,
+          target: {
+            kind: 'PACKAGE_OPTION',
+            packageDefinitionId: '00000000-0000-4000-8000-000000000004',
+            tenantId: 'tenant-a',
+          },
+        },
+        variantSource,
+      );
+      expect(isInvalid(option)).toBe(true);
+    }),
+  );
 });
 
 describe('SKU authoritative target absence', () => {

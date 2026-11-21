@@ -1,5 +1,6 @@
 import { computeActionRequestHash, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import {
+  assignSkuRequestIdentity,
   bindInitialVariantSourceRequestIdentity,
   correctProductRequestIdentity,
   createProductRequestIdentity,
@@ -23,6 +24,8 @@ import {
   prepareDefinePriceOriginalRequestIdentity,
   prepareRevisePriceOriginalRequestIdentity,
 } from '@app/pricing/source-request-identity';
+import { executeAssignSkuWithAuthorization } from '@app/catalog/api/assign-sku-action-client';
+import { executeAssignSkuRecoveryWithAuthorization } from '@app/catalog/api/assign-sku-recovery-client';
 import { executeBindInitialVariantSourceWithAuthorization } from '@app/catalog/api/bind-initial-variant-source-action-client';
 import { executeBindInitialVariantSourceRecoveryWithAuthorization } from '@app/catalog/api/bind-initial-variant-source-recovery-client';
 import { executeCatalogSourceProductsWithAuthorization } from '@app/catalog/api/catalog-source-products-client';
@@ -285,6 +288,39 @@ export const materializeSymmyCatalogPricingInventorySourceOccurrence = (
     Match.orElse((intent) => intent),
   );
 
+/** The source record of this effect's occurrence, as Catalog qualifies it. */
+const occurrenceSourceOf = (input: SymmyEffectAdapterInput) => {
+  const { record } = input.effect.ref.occurrence;
+  return {
+    issuerId: record.issuerId,
+    mappingRevision: input.effect.ref.mappingVersion,
+    recordId: record.sourceRecordId,
+    recordNamespace: record.sourceNamespace,
+    routeScope: record.route.integrationRouteId,
+  };
+};
+const isOccurrenceSource = (
+  input: SymmyEffectAdapterInput,
+  source: {
+    readonly issuerId: string;
+    readonly mappingRevision: string;
+    readonly recordId: string;
+    readonly recordNamespace: string;
+    readonly routeScope: string;
+    readonly sourceOccurrenceId?: string;
+  },
+) => {
+  const occurrence = occurrenceSourceOf(input);
+  return (
+    source.sourceOccurrenceId === undefined &&
+    source.issuerId === occurrence.issuerId &&
+    source.mappingRevision === occurrence.mappingRevision &&
+    source.recordId === occurrence.recordId &&
+    source.recordNamespace === occurrence.recordNamespace &&
+    source.routeScope === occurrence.routeScope
+  );
+};
+
 const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* checked(input: SymmyEffectAdapterInput) {
   const decodedIntent = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema, {
     onExcessProperty: 'error',
@@ -296,6 +332,17 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
     ref.tenantId === tenantId && target !== undefined && sameRef(target, ref);
   const valid = Match.value(decodedIntent).pipe(
     Match.tags({
+      CatalogAssignVariantSku: ({ payload }) =>
+        entityKind === 'VARIANT' &&
+        payload.target.kind === 'VARIANT' &&
+        expectedTarget({
+          moduleId: 'commerce.catalog',
+          resourceId: payload.target.variantId,
+          resourceType: 'commerce.catalog.variant',
+          tenantId: payload.target.tenantId,
+        }) &&
+        payload.sourceCorrelation !== undefined &&
+        isOccurrenceSource(input, payload.sourceCorrelation),
       CatalogBindInitialVariantSource: ({ payload }) =>
         target !== undefined && qualifiedSource(input, payload.productSource),
       CatalogCorrectProduct: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
@@ -402,6 +449,16 @@ const symmyCatalogPricingInventoryContracts: readonly AdapterContract[] = [
     recoveryEntrypointKey: 'commerce.catalog.api.set-product-localized-facts-recovery',
     schemaVersion: '1',
     tag: 'CatalogSetProductLocalizedFacts',
+  },
+  {
+    audience: catalogAudience,
+    declarationKey: 'commerce.catalog.sku.assign',
+    entrypointKey: 'commerce.catalog.assign-sku',
+    moduleId: catalogModuleId,
+    recoveryDeclarationKey: 'commerce.catalog.assign-sku-recovery.read',
+    recoveryEntrypointKey: 'commerce.catalog.api.assign-sku-recovery',
+    schemaVersion: '1',
+    tag: 'CatalogAssignVariantSku',
   },
   {
     audience: catalogAudience,
@@ -782,6 +839,24 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
           )
         : Effect.fail(symmyJobWorkerInvalid()),
     ),
+    Match.tag('AssignVariantSku', ({ payload }) =>
+      target === undefined
+        ? requireCreatedVariant(input, intent, product).pipe(
+            Effect.map((variantRef) => ({
+              intent: {
+                _tag: 'CatalogAssignVariantSku',
+                payload: {
+                  ...payload,
+                  expectedRevision: 0,
+                  sourceCorrelation: occurrenceSourceOf(input),
+                  target: { kind: 'VARIANT', tenantId: variantRef.tenantId, variantId: variantRef.resourceId },
+                },
+              },
+              target: variantRef,
+            })),
+          )
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
     Match.tag('DefinePrice', ({ payload }) =>
       target !== undefined &&
       sameRef(target, payload.priceRef) &&
@@ -992,6 +1067,8 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
     };
     const selectedSource = Match.value(requestIntent).pipe(
       Match.tags({
+        // Catalog itself proves that the source record names this Variant for this principal.
+        CatalogAssignVariantSku: () => Option.none(),
         CatalogBindInitialVariantSource: ({ payload }) => Option.some(payload.productSource),
         CatalogCorrectProduct: () => Option.some(occurrenceSource),
         CatalogCreateProduct: () => Option.none(),
@@ -1114,6 +1191,17 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
   )({ invocationId }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAssignVariantSku: Effect.fn('SymmyOwnerAdapters.recoverAssignVariantSku')(
+        function* recoverAssignVariantSku() {
+          const result = yield* executeAssignSkuRecoveryWithAuthorization(
+            catalogRequest,
+            credential,
+            requestCorrelation,
+            options,
+          ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+          return safeOutcome(input, result.changed === false ? 'accepted_no_change' : 'accepted_change');
+        },
+      ),
       CatalogBindInitialVariantSource: Effect.fn('SymmyOwnerAdapters.CatalogBindInitialVariantSource')(
         function* CatalogBindInitialVariantSource() {
           const result = yield* executeBindInitialVariantSourceRecoveryWithAuthorization(
@@ -1300,6 +1388,7 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
   const group = Schema.decodeUnknownEffect(PriceGroupResultLookupRequestSchema)({ actionInvocationId: invocationId });
   const result = yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAssignVariantSku: () => catalog,
       CatalogBindInitialVariantSource: () => catalog,
       CatalogCorrectProduct: () => catalog,
       CatalogCreateProduct: () => catalog,
@@ -1402,6 +1491,15 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
   const { credential, options, requestCorrelation } = wire;
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAssignVariantSku: Effect.fn('SymmyOwnerAdapters.assignVariantSku')(function* assignVariantSku({
+        payload,
+      }) {
+        const result = yield* executeAssignSkuWithAuthorization(payload, credential, requestCorrelation, options);
+        if (!('revision' in result)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        return safeOutcome(input, result.changed === false ? 'accepted_no_change' : 'accepted_change');
+      }),
       CatalogBindInitialVariantSource: Effect.fn('SymmyOwnerAdapters.CatalogBindInitialVariantSource')(
         function* CatalogBindInitialVariantSource(intent) {
           const result = yield* executeBindInitialVariantSourceWithAuthorization(
@@ -1616,6 +1714,10 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
     : Effect.succeed(operationLegalEntityId);
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAssignVariantSku: ({ payload }) =>
+        assignSkuRequestIdentity(payload).pipe(
+          Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
+        ),
       CatalogBindInitialVariantSource: ({ payload }) =>
         bindInitialVariantSourceRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
@@ -2038,6 +2140,7 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
 
 const isPriceRevise = Schema.is(Schema.TaggedStruct('PriceRevise', {}));
 const isProductUpdate = Schema.is(Schema.TaggedStruct('CatalogUpdateProduct', {}));
+const isVariantSku = Schema.is(Schema.TaggedStruct('CatalogAssignVariantSku', {}));
 /** Catalog refuses a lifecycle change of a Product that is not ready for it; the change is never retried. */
 const isNotCatalogReady = Schema.is(
   Schema.Struct({ code: Schema.Literal('product_not_catalog_ready'), status: Schema.Literal(422) }),
@@ -2078,6 +2181,10 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   }
   if (isNotCatalogReady(error) && isProductUpdate(intent)) {
     return safeOutcome(input, 'unresolved');
+  }
+  // Catalog refuses a code for a Variant it cannot take one (Retired, or not this route's) or does not hold.
+  if (Schema.is(problemStatus)(error) && (error.status === 404 || error.status === 422) && isVariantSku(intent)) {
+    return safeOutcome(input, 'invalid');
   }
   return yield* symmyJobWorkerUnavailable(error);
 });
