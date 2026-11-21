@@ -169,8 +169,6 @@ export const CatalogRevisionLookupResultSchema = Schema.Union([
 ]);
 export type CatalogRevisionLookupResult = typeof CatalogRevisionLookupResultSchema.Type;
 
-export const CatalogHistoricalLookupResultSchema = CatalogRevisionLookupResultSchema;
-
 /** A lookup result is safe to compose only when it preserves the requested exact reference. */
 export const catalogRevisionLookupPreservesReference = (
   request: CatalogRevisionLookupRequest,
