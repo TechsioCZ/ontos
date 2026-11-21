@@ -282,8 +282,8 @@ jobs:
       integrationBuild: ${{ steps.selection.outputs.integrationBuild || steps.changes.outputs.integrationBuild }}
       integrationOwners: ${{ steps.selection.outputs.integrationOwners || steps.changes.outputs.integrationOwners }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
-      # The commit this run's plan compared with, empty when it had none; Lean Core Dependencies holds its
-      # baseline to it.
+      # The commit Lean Core Dependencies holds its baseline to: the plan's exact comparison base, else the
+      # first parent on schedule, dispatch and a push behind the merge queue; empty when there is none.
       base: ${{ steps.changes.outputs.base }}
     steps:
       - name: Harden Runner
@@ -738,31 +738,21 @@ jobs:
             working-directory: app
             run: mise exec -- pnpm database-access:check
 
-          # The baseline may only shrink against the commit the planner compared this run with. Schedule and
-          # dispatch runs have none and compare with the first parent. The row fetches that one commit over the
-          # checkout's credential-free remote (the repository is public), keeping the shared depth-1 checkout;
-          # a run without a base, or a fetch that fails, fails the row.
+          # The baseline may only shrink against the base the planner names for this run. The row fetches that
+          # one commit over the checkout's credential-free remote (the repository is public), keeping the shared
+          # depth-1 checkout; a run without a base, or a fetch that fails, fails the row.
           - name: Lean Core Dependencies
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
             env:
               COMPARISON_BASE: ${{ needs.ci-plan.outputs.base }}
             run: |
-              case "$GITHUB_EVENT_NAME" in
-                schedule | workflow_dispatch)
-                  git fetch --quiet --no-tags --depth=2 origin "$GITHUB_SHA"
-                  base="$(git rev-parse --verify 'HEAD^1^{commit}')"
-                  ;;
-                *)
-                  if [[ ! "$COMPARISON_BASE" =~ ^[0-9a-f]{40}$ ]]; then
-                    echo "::error title=No comparison base::The planner published no comparison base for this $GITHUB_EVENT_NAME run, so the Lean Core baseline cannot be held to it."
-                    exit 1
-                  fi
-                  git fetch --quiet --no-tags --depth=1 origin "$COMPARISON_BASE"
-                  base="$COMPARISON_BASE"
-                  ;;
-              esac
-              mise exec -- pnpm lean-core:check --base "$base"
+              if [[ ! "$COMPARISON_BASE" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error title=No comparison base::The planner named no comparison base for this $GITHUB_EVENT_NAME run, so the Lean Core baseline cannot be held to it."
+                exit 1
+              fi
+              git fetch --quiet --no-tags --depth=1 origin "$COMPARISON_BASE"
+              mise exec -- pnpm lean-core:check --base "$COMPARISON_BASE"
 
           - name: Workspace Contract
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
