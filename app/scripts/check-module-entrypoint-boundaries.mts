@@ -149,7 +149,8 @@ const isGeneratedInfrastructureReadinessApi = (file: string, source: string): bo
   );
 };
 
-const SKIPPED_DIRECTORIES = new Set(['.output', 'node_modules']);
+/** Build output and installed packages, by exact directory name; never applied to file names. */
+const SKIPPED_DIRECTORIES = new Set(['.output', 'dist', 'dist-cloudflare', 'node_modules']);
 
 const walk = (directory: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* walkEffect() {
@@ -161,12 +162,12 @@ const walk = (directory: string): Effect.Effect<readonly string[], PlatformError
     const entries = yield* fileSystem.readDirectory(directory);
     const discovered: (readonly string[])[] = [];
     for (const entry of entries) {
-      if (SKIPPED_DIRECTORIES.has(entry) || entry.startsWith('dist')) {
-        discovered.push([]);
-      } else {
-        const entryPath = path.join(directory, entry);
-        const info = yield* fileSystem.stat(entryPath);
-        discovered.push(info.type === 'Directory' ? yield* walk(entryPath) : [entryPath]);
+      const entryPath = path.join(directory, entry);
+      const info = yield* fileSystem.stat(entryPath);
+      if (info.type !== 'Directory') {
+        discovered.push([entryPath]);
+      } else if (!SKIPPED_DIRECTORIES.has(entry)) {
+        discovered.push(yield* walk(entryPath));
       }
     }
     return sortStrings(discovered.flat());

@@ -72,7 +72,23 @@ const loadCustomerContractSources = (): Promise<Map<string, string>> => {
 const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
   const manifestApiStart = '// <generated-module-manifest-apis>';
   const manifestApiEnd = '// </generated-module-manifest-apis>';
-  const focused = new Map([...sources].filter(([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`)));
+  // Only the owner's read contracts leave; its Action contracts stay, since the code beyond the slots still uses them.
+  const focused = new Map(
+    [...sources].filter(
+      ([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`) || file.endsWith('-action.ts'),
+    ),
+  );
+  // `./api` passes on no contract that is gone.
+  focused.set(
+    customerSharedApiFile,
+    (focused.get(customerSharedApiFile) ?? '')
+      .split('\n')
+      .filter((line) => {
+        const passed = /^export \* from '\.\/(?<contract>apis\/[^']+)';$/u.exec(line)?.groups?.['contract'];
+        return passed === undefined || focused.has(`${customerVerticalPath}/shared/${passed}`);
+      })
+      .join('\n'),
+  );
   for (const [file, start, end] of [
     [`${customerVerticalPath}/vertical.manifest.ts`, manifestApiStart, manifestApiEnd],
     [
@@ -116,7 +132,8 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
         .join('\n'),
     );
   }
-  // The owner's mounts and handler layers keep only the focused read, as its declarations do.
+  // The owner's mounts and handler layers keep only the focused read of its reads, as its declarations do, and every
+  // Action, whose contracts stay.
   for (const [file, start, end] of [
     [customerSharedApiFile, '// <generated-governed-http-api-imports>', '// </generated-governed-http-api-imports>'],
     [
@@ -137,7 +154,7 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
   ] as const) {
     let source = focused.get(file) ?? '';
     for (const entry of readGeneratedSlotEntries(source, start, end)) {
-      if (!/PaymentTermAffectedUseAssessment|paymentTermAffectedUseAssessment/u.test(entry)) {
+      if (!/PaymentTermAffectedUseAssessment|paymentTermAffectedUseAssessment|ActionApi/u.test(entry)) {
         source = removeGeneratedSlotEntry(source, start, end, (candidate) => candidate === entry, 'unfocused entry');
       }
     }
