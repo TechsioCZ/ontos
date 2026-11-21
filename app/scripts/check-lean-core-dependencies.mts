@@ -1225,9 +1225,6 @@ const isImportMeta = (node: Node | null | undefined): boolean =>
 const isImportMetaUrl = (node: Node | null | undefined): boolean =>
   node?.type === 'MemberExpression' && isImportMeta(node.object) && staticMemberName(node) === 'url';
 
-/** A specifier a loader resolves the same way from any base: neither a path, a URL nor a package import. */
-const isBareSpecifier = (specifier: string): boolean => !/^(?:[./#]|file:)/u.test(specifier);
-
 const referenceDirective = /^\/\s*<reference\s+(?<kind>path|types)\s*=\s*["'](?<target>[^"']+)["']/u;
 
 /**
@@ -1254,17 +1251,23 @@ type Capability = typeof CapabilitySchema.Type;
 /** A name a scope declares: the capability an import gives it, and the references that resolve to it. */
 interface Binding {
   readonly capability: Capability | undefined;
+  /** For a parameter declared as a plain name: its function and its position. */
+  readonly parameter: { readonly callee: Node; readonly index: number } | undefined;
   readonly references: Node[];
 }
 
 /** One source's walk: its scopes, its references, and the loads found so far. */
 interface LoadAnalysis {
+  /** Whether the source parsed as CommonJS, where `__filename` names the file itself. */
+  readonly commonJs: boolean;
   readonly computedLoads: number[];
   readonly declared: Map<Node, Binding>;
   readonly identifiers: Set<Node>;
   readonly parents: Map<Node, Node>;
   readonly pending: (readonly [Node, Capability])[];
   readonly references: ModuleReference[];
+  /** The binding each reference resolves to, when the file declares it. */
+  readonly resolved: Map<Node, Binding>;
   readonly scopes: Map<Node, Map<string, Binding>>;
   /** The nodes inside a type or an ambient declaration. */
   readonly typeOnly: Set<Node>;
@@ -1370,12 +1373,13 @@ const bind = (
   scope: Node | undefined,
   identifier: Node | null | undefined,
   capability?: Capability,
+  parameter?: Binding['parameter'],
 ): void => {
   if (scope === undefined || identifier?.type !== 'Identifier') {
     return;
   }
   const names = analysis.scopes.get(scope) ?? new Map<string, Binding>();
-  const binding = names.get(identifier.name) ?? { capability, references: [] };
+  const binding = names.get(identifier.name) ?? { capability, parameter, references: [] };
   names.set(identifier.name, binding);
   analysis.scopes.set(scope, names);
   analysis.declared.set(identifier, binding);
@@ -1407,8 +1411,10 @@ const declareImportEquals = (analysis: LoadAnalysis, node: TSImportEqualsDeclara
 };
 
 const declareFunction = (analysis: LoadAnalysis, node: ArrowFunctionExpression | FunctionNode): void => {
-  for (const identifier of node.params.flatMap((parameter) => patternIdentifiers(parameter))) {
-    bind(analysis, node, identifier);
+  for (const [index, parameter] of node.params.entries()) {
+    for (const identifier of patternIdentifiers(parameter)) {
+      bind(analysis, node, identifier, undefined, identifier === parameter ? { callee: node, index } : undefined);
+    }
   }
   if (node.type !== 'ArrowFunctionExpression') {
     // A declaration names the function in its enclosing scope; an expression names it only inside itself.
@@ -1620,6 +1626,9 @@ const resolveReferences = (analysis: LoadAnalysis): void => {
     if (!isNameOnly(identifier, parent, grandparent)) {
       const binding = lookup(analysis, identifier, identifier.name);
       const capability = binding === undefined ? freeCapabilities.get(identifier.name) : binding.capability;
+      if (binding !== undefined) {
+        analysis.resolved.set(identifier, binding);
+      }
       if (capability === undefined) {
         binding?.references.push(identifier);
       } else {
@@ -1652,24 +1661,120 @@ const resolveCall = (analysis: LoadAnalysis, node: Node, parent: Node): CallExpr
   return user === undefined ? undefined : calledWith(member, user);
 };
 
-/** Records a call's literal target; false when it has none, or one a foreign loader cannot attribute. */
-const literalLoad = (analysis: LoadAnalysis, call: CallExpression | undefined, attributable: boolean): boolean => {
-  const target = literalString(call?.arguments[0]);
-  if (call === undefined || target === undefined || !(attributable || isBareSpecifier(target))) {
-    return false;
+const writtenParents = new Set([
+  'ArrayPattern',
+  'AssignmentExpression',
+  'ForInStatement',
+  'ForOfStatement',
+  'RestElement',
+]);
+
+/** A reference that assigns its binding: the target of an assignment, an update or a destructuring. */
+const isWritten = (analysis: LoadAnalysis, reference: Node): boolean => {
+  const parent = analysis.parents.get(reference);
+  if (parent === undefined || parent.type === 'UpdateExpression' || writtenParents.has(parent.type)) {
+    return parent !== undefined && !('right' in parent && parent.right === reference);
   }
-  analysis.references.push({ index: call.start, specifier: target });
-  return true;
+  if (parent.type === 'AssignmentPattern') {
+    return parent.left === reference;
+  }
+  return (
+    parent.type === 'Property' && parent.value === reference && analysis.parents.get(parent)?.type === 'ObjectPattern'
+  );
 };
 
-const loaderUse = (analysis: LoadAnalysis, node: Node, parent: Node, attributable: boolean): boolean => {
+/** The binding that names a function: a declaration, or a const initialised with it; none when it is exported. */
+const functionBinding = (analysis: LoadAnalysis, callee: Node): Binding | undefined => {
+  const parent = analysis.parents.get(callee);
+  if (callee.type === 'FunctionDeclaration') {
+    const exported = parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration';
+    return exported || callee.id === null ? undefined : analysis.declared.get(callee.id);
+  }
+  const declaration = parent === undefined ? undefined : analysis.parents.get(parent);
+  const named = callee.type === 'FunctionExpression' && callee.id !== null;
+  if (
+    named ||
+    parent?.type !== 'VariableDeclarator' ||
+    parent.init !== callee ||
+    parent.id.type !== 'Identifier' ||
+    declaration?.type !== 'VariableDeclaration' ||
+    declaration.kind !== 'const' ||
+    analysis.parents.get(declaration)?.type === 'ExportNamedDeclaration'
+  ) {
+    return undefined;
+  }
+  return analysis.declared.get(parent.id);
+};
+
+/** The literal target of one call of a helper whose parameter at index a loader loads. */
+const helperCallTarget = (analysis: LoadAnalysis, reference: Node, index: number): ModuleReference | undefined => {
+  const call = analysis.parents.get(reference);
+  if (
+    call?.type !== 'CallExpression' ||
+    call.callee !== reference ||
+    call.arguments.some((argument) => argument.type === 'SpreadElement')
+  ) {
+    return undefined;
+  }
+  const target = literalString(call.arguments[index]);
+  return target === undefined || moduleBuiltins.has(target) ? undefined : { index: call.start, specifier: target };
+};
+
+/**
+ * The targets of a load whose argument is a parameter of a function of this file: the literal each call
+ * passes, when the parameter is never assigned and the function is only ever called directly with a
+ * literal in that position. None for any other use, which keeps the load computed.
+ */
+const parameterTargets = (analysis: LoadAnalysis, argument: Node): readonly ModuleReference[] | undefined => {
+  const binding = analysis.resolved.get(argument);
+  const { parameter } = binding ?? {};
+  if (
+    binding === undefined ||
+    parameter === undefined ||
+    binding.references.some((reference) => isWritten(analysis, reference))
+  ) {
+    return undefined;
+  }
+  const calls = functionBinding(analysis, parameter.callee)?.references.map((reference) =>
+    helperCallTarget(analysis, reference, parameter.index),
+  );
+  return calls?.every((target) => target !== undefined) === true
+    ? calls.filter((target) => target !== undefined)
+    : undefined;
+};
+
+/**
+ * Records the targets of a load through a loader based on the file itself: its one literal argument, or the
+ * literals a helper's parameter receives. False for any other argument list, a computed load.
+ */
+const literalLoad = (analysis: LoadAnalysis, call: CallExpression | undefined): boolean => {
+  const [argument] = call?.arguments ?? [];
+  if (call?.arguments.length !== 1 || argument === undefined) {
+    return false;
+  }
+  const literal = literalString(argument);
+  const targets =
+    literal === undefined ? parameterTargets(analysis, argument) : [{ index: call.start, specifier: literal }];
+  analysis.references.push(...(targets ?? []));
+  return targets !== undefined;
+};
+
+const loaderUse = (analysis: LoadAnalysis, node: Node, parent: Node): boolean => {
   const call = calledWith(node, parent);
-  if (call !== undefined && moduleBuiltins.has(literalString(call.arguments[0]) ?? '')) {
+  if (call?.arguments.length === 1 && moduleBuiltins.has(literalString(call.arguments[0]) ?? '')) {
     analysis.pending.push([call, 'namespace']);
     return true;
   }
-  return literalLoad(analysis, call ?? resolveCall(analysis, node, parent), attributable);
+  return literalLoad(analysis, call ?? resolveCall(analysis, node, parent));
 };
+
+/** The base a loader is created from is the file itself: `import.meta.url`, or `__filename` in CommonJS. */
+const isOwnBase = (analysis: LoadAnalysis, node: Node | undefined): boolean =>
+  isImportMetaUrl(node) ||
+  (analysis.commonJs &&
+    node?.type === 'Identifier' &&
+    node.name === '__filename' &&
+    lookup(analysis, node, node.name) === undefined);
 
 /** Reading `member` passes capability on; reading any other named member is harmless unless othersLoad. */
 const memberUse = (
@@ -1698,14 +1803,15 @@ const recognisedUses = {
   factory: (analysis, node, parent) => {
     const call = calledWith(node, parent);
     if (call !== undefined) {
-      analysis.pending.push([call, isImportMetaUrl(call.arguments[0]) ? 'loader' : 'foreign-loader']);
+      analysis.pending.push([call, isOwnBase(analysis, call.arguments[0]) ? 'loader' : 'foreign-loader']);
     }
     return call !== undefined;
   },
-  'foreign-loader': (analysis, node, parent) => loaderUse(analysis, node, parent, false),
-  loader: (analysis, node, parent) => loaderUse(analysis, node, parent, true),
+  // A loader from another base resolves every target from where the check cannot tell: each load is computed.
+  'foreign-loader': () => false,
+  loader: (analysis, node, parent) => loaderUse(analysis, node, parent),
   meta: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'resolve', 'meta-resolve', false),
-  'meta-resolve': (analysis, node, parent) => literalLoad(analysis, calledWith(node, parent), true),
+  'meta-resolve': (analysis, node, parent) => literalLoad(analysis, calledWith(node, parent)),
   module: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'require', 'loader', false),
   namespace: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'createRequire', 'factory', true),
   'namespace-promise': (analysis, node, parent) => {
@@ -1806,12 +1912,14 @@ const loadsIn = (file: string, source: string): Option.Option<SourceLoads> => {
   }
   const { result } = parsed;
   const analysis: LoadAnalysis = {
+    commonJs: parsed.sourceType === 'commonjs',
     computedLoads: [],
     declared: new Map(),
     identifiers: new Set(),
     parents: new Map(),
     pending: [],
     references: [],
+    resolved: new Map(),
     scopes: new Map(),
     typeOnly: new Set(),
   };
