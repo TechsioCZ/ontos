@@ -248,6 +248,7 @@ describe('Pricing Price Management Actions issue #797 acceptance', () => {
       'commerce.pricing.compensate-currency-support-recovery',
       'commerce.pricing.define-commercial-fee',
       'commerce.pricing.define-price',
+      'commerce.pricing.grant-external-price-source-authority',
       'commerce.pricing.manage-commitment-confirmation',
       'commerce.pricing.manage-contractual-discount',
       'commerce.pricing.manage-product-commercial-fees-bulk',
