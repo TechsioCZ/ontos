@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { ProductConfigurationDefinitionReferenceSchema } from './configuration-definition.ts';
 
 /**
@@ -99,8 +99,8 @@ export const SkuReferenceSchema = Schema.Struct({
 export type SkuReference = typeof SkuReferenceSchema.Type;
 
 /** An owner-qualified immutable revision; a bare number or implicit "latest" is not a reference. */
-export { CatalogRevisionReferenceSchema } from './catalog-revision-reference.ts';
-export type { CatalogRevisionReference } from './catalog-revision-reference.ts';
+export { CatalogRevisionReferenceSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
+export type { CatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
 
 export const PackageContentRevisionReferenceSchema = Schema.Struct({
   packageDefinitionRef: PackageDefinitionReferenceSchema,

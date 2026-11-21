@@ -23,7 +23,7 @@ import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equ
 import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-compatibility.read.ts';
 import { quantityPreparationRead } from '../../src/api/quantity-preparation.read.ts';
 import { catalogPersistenceForScope } from '../../src/persistence/catalog-persistence.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { catalogRegistration } from '../../vertical.registration.ts';
 
 type NativeReadTestContext = Effect.Success<ReturnType<typeof makeNativeReadTestContext>>;

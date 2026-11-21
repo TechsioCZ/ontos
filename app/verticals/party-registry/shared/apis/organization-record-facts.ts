@@ -16,7 +16,7 @@ import { CounterpartyCustomerOnboardPayloadSchema } from '../actions/counterpart
 import { SymmySourceOrganizationWitnessSchema } from '@app/shared-contracts/symmy/organization-source-witness';
 import { fingerprintPartySourceEffect } from '../domain/source-fingerprint.ts';
 import { PartyRefSchema } from '../resources/party.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.ts';
 

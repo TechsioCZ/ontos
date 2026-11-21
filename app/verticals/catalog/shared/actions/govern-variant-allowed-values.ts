@@ -1,10 +1,10 @@
 import { Schema } from 'effect';
 
 import { AttributeValueSchema } from '../domain/attribute-values.ts';
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductEvidenceReferenceSchema, ProductReasonSchema } from '../domain/product.ts';
 import { AttributeDefinitionRefSchema } from '../resources/attribute-definition.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 /**
  * An explicit, Product-and-axis-scoped replacement of the permissible Variant values.

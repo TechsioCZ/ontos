@@ -2,8 +2,8 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { ProductRefSchema } from '../resources/product.ts';
-import { CatalogRevisionResourceIdSchema } from '../domain/catalog-revision-reference.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { CatalogRevisionResourceIdSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 export const ProductSizeCurrentRequestSchema = Schema.Struct({ productRef: ProductRefSchema });
 export type ProductSizeCurrentRequest = typeof ProductSizeCurrentRequestSchema.Type;

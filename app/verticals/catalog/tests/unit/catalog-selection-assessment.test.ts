@@ -6,9 +6,9 @@ import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-s
 import {
   CatalogSelectionBasisSchema,
   CatalogSelectionMembershipSchema,
-  CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const ref = (resourceType: string, resourceId: string) => ({

@@ -7,7 +7,7 @@ import {
   CounterpartyRoleTypeSchema,
 } from '../domain/counterparty-contract.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 
 export const CounterpartyRoleEndPayloadSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

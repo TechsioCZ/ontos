@@ -3,9 +3,15 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { CatalogQuantityBasisSchema, CatalogQuantityHandoffReadySchema } from '../domain/catalog-quantity-handoff.ts';
-import { CatalogSelectionSchema } from '../domain/catalog-selection-evidence.ts';
-import { CatalogResourceRefSchema, CatalogRevisionInstantSchema } from '../domain/catalog-revision-reference.ts';
+import {
+  CatalogQuantityBasisSchema,
+  CatalogQuantityHandoffReadySchema,
+} from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import {
+  CatalogResourceRefSchema,
+  CatalogRevisionInstantSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());

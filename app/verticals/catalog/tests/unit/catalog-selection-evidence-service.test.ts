@@ -7,9 +7,9 @@ import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-s
 import {
   CatalogSelectionBasisSchema,
   CatalogSelectionMembershipSchema,
-  CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import { CatalogSelectionInjectedOwnerEvidenceSchema } from '../../shared/domain/catalog-selection-owner-contract.ts';
 import {
   assembleCatalogSelectionEvidence,

@@ -3,10 +3,10 @@ import { describe, expect, it } from 'effect-rstest';
 
 import {
   ProductUnitMeaningSchema,
-  ProductUnitRefSchema,
   ProductUnitRuleRevisionSchema,
   ProductUnitTargetDivisibilitySchema,
 } from '../../shared/resources/product-unit.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const unitId = '22222222-2222-4222-8222-222222222222';

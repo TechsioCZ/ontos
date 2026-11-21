@@ -1,6 +1,6 @@
 import { executeSelectionEvidenceWithAuthorization } from '@app/catalog/api/client';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionOwnerAssessmentResult } from '@app/catalog/domain/catalog-selection-owner-contract';
 import type { OperationalScope } from '@app/core-runtime';
 import { Context, Crypto, Effect, Redacted, Schema } from 'effect';

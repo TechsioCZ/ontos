@@ -1,7 +1,7 @@
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const CounterpartyUuidSchema = Schema.String.check(Schema.isUUID());

@@ -12,8 +12,8 @@ import {
   CosmeticProductCorrectionSchema,
   ProductChangeClassificationSchema,
 } from '../domain/product-change-classification.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 export const CorrectProductPayloadSchema = Schema.Struct({
   classification: ProductChangeClassificationSchema,

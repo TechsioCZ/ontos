@@ -1,7 +1,7 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { QuantityTierIdentityKeySchema } from '@app/pricing-contracts/domain/quantity-tier';
 import type { ExpectedQuantityTierCurrent, QuantityTierIdentityKey } from '@app/pricing-contracts/domain/quantity-tier';
 import { sql } from 'drizzle-orm';

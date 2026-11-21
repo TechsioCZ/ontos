@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
-import type { ProductRef } from '../resources/product.ts';
-import type { VariantRef } from '../resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import type { AttributeDefinition, AttributeValue, UnitConversion } from './attribute-values.ts';
 import { AttributeDefinitionSchema, validateAttributeValues } from './attribute-values.ts';
 import type { ProductTypeCurrentBasis, ProductTypeCurrentRulesRevision } from './product-type-rules.ts';

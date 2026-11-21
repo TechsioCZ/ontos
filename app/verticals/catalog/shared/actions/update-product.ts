@@ -6,8 +6,8 @@ import {
   ProductSchema,
   ProductRevisionSchema,
 } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 export const UpdateProductPayloadSchema = Schema.Struct({
   activateVariantRef: Schema.optionalKey(VariantRefSchema),

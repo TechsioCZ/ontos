@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { PackageDefinitionSelectionRevisionSchema } from '../domain/catalog-selection-evidence.ts';
+import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { PackageDefinitionRefSchema } from '../resources/package-definition.ts';
 
 export const PackageOptionTransitionPayloadSchema = Schema.Struct({

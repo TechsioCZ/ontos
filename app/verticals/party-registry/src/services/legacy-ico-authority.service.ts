@@ -24,7 +24,7 @@ import type { LegacyIcoOrganizationFact } from './legacy-ico-privacy.service.ts'
 import { OrganizationIcoFieldContractVersion } from '../../shared/apis/organization-ico-facts.ts';
 import { readOrganizationIcoFacts } from './organization-ico-facts.service.ts';
 import { checkLegacyIcoPrivacy, PartyLegacyIcoPrivacy } from './legacy-ico-privacy.service.ts';
-import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { CounterpartyMigrationCorrelationResponse } from '../../shared/apis/counterparty-migration-correlation.ts';
 import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 import {

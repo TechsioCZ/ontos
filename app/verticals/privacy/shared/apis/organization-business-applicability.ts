@@ -9,7 +9,7 @@ import {
   OrganizationBusinessSourceReferenceSchema,
 } from '@app/party-registry/apis/organization-record-facts';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import {
   CustomerProfileOrganizationIcoFactsCurrentSchema,
   CustomerProfileOrganizationIcoFactsHistoricalIdentitySchema,

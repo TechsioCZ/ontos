@@ -1,5 +1,5 @@
-import { ProductRefSchema } from '@app/catalog/resources/product';
-import { VariantRefSchema } from '@app/catalog/resources/variant';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
 

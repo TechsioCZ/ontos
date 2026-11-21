@@ -3,7 +3,7 @@ import { tenantRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { check, foreignKey, integer, jsonb, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 
 import type {
   CatalogToStockBinding,

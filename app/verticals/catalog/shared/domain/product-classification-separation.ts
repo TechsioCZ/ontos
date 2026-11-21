@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 
 import type { ProductCategoryRef } from '../resources/product-category.ts';
 import { ProductCategoryRefSchema } from '../resources/product-category.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import type { ProductTypeRef } from '../resources/product-type.ts';
 import { ProductTypeRefSchema } from '../resources/product-type.ts';
 import type { ProductTypeAttributeRule, ProductTypeCurrentRulesRevision } from './product-type-rules.ts';

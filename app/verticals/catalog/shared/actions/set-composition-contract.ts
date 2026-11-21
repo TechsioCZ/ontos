@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { CatalogRevisionInstantSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { SetCompositionRevisionSchema } from '../domain/set-composition.ts';
 
 export const SetCompositionMutationPayloadSchema = Schema.Struct({

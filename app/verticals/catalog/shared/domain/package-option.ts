@@ -1,6 +1,6 @@
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
-import type { CatalogSelectionRevision } from './catalog-selection-evidence.ts';
-import type { VariantExactForm } from './variant-exact-form.ts';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+import type { VariantExactForm } from '@app/catalog-selection-contracts/variant-exact-form';
 
 /** Option is a selectable role on the same Package Definition Resource, never another register. */
 export interface PackageOptionRole {

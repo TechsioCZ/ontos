@@ -7,7 +7,7 @@ import {
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '@app/catalog/api/pricing-purpose-equivalence';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
 import { PricingLineSchema } from '@app/pricing-contracts/pricing-decision';
 import {

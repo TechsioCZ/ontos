@@ -1,4 +1,4 @@
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { Schema } from 'effect';
 
 import { PricingCurrencyCodeSchema, PricingInstantSchema } from '../apis/current-supported-currencies.ts';

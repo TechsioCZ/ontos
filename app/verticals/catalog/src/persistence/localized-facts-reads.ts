@@ -2,9 +2,9 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
 
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { ProductHistoryResponse } from '../../shared/apis/product-history.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import {
   productLocalizedFactRevisions,
   productLocalizedFacts,

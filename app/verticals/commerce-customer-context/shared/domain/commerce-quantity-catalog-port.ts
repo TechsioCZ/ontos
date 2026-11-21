@@ -1,5 +1,5 @@
 /* oxlint-disable effect-native/no-unbranded-identifier-schema -- Catalog owns these opaque evidence references; this consumer preserves them without assigning local business meaning; tracked in: #333. */
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { Effect, Schema } from 'effect';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { CommerceQuantityBasisSchema, ExactPositiveCommerceQuantitySchema } from './customer-commerce-policy.ts';

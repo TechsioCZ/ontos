@@ -1,5 +1,5 @@
 import { ReadHandlerNotFound } from '@app/core-runtime';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 

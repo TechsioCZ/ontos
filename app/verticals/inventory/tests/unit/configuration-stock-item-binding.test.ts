@@ -1,7 +1,7 @@
 import {
   CatalogSelectionSchema,
   ProductConfigurationSelectionSchema,
-} from '@app/catalog/domain/catalog-selection-evidence';
+} from '@app/catalog-selection-contracts/catalog-selection';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

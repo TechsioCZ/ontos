@@ -14,7 +14,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { StockItem } from '../../shared/domain/stock-item.ts';
 
 import { inventorySchema } from '../database/inventory-schema.ts';

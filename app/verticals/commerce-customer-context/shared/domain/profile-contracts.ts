@@ -1,4 +1,4 @@
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 

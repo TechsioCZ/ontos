@@ -12,7 +12,7 @@ import {
   cartOpenSelectionPopulationForScope,
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { setProductAttributeValuesAction } from '../../src/actions/set-product-attribute-values.action.ts';
 import { catalogOpenSelectionImpactForScope } from '../../src/persistence/catalog-open-selection-impact.ts';

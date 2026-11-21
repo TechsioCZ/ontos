@@ -8,8 +8,8 @@ import type {
   CatalogSelectionEvidenceReader,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import { readCartOpenSelectionPopulation } from '../../shared/domain/catalog-open-selection-population.ts';
-import type { CatalogSelection, CatalogSelectionRevision } from '../../shared/domain/catalog-selection-evidence.ts';
-import { CatalogSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
   ProductConfiguration,
   ProductConfigurationDefinitionRevision,

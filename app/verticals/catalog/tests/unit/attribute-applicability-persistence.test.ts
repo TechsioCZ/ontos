@@ -22,10 +22,8 @@ import {
 import { AttributeApplicabilityImpactConfirmationSchema } from '../../shared/actions/govern-product-attribute-applicability.ts';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
 import { CartOpenSelectionReferenceSchema } from '../../shared/domain/catalog-open-selection-population.ts';
-import {
-  CatalogSelectionEvidenceSchema,
-  CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { CatalogPersistenceUnavailable } from '../../src/persistence/errors.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';

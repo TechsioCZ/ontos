@@ -3,7 +3,7 @@
 // @ontos-action-slug define-price
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import { PricingCurrencyCodeSchema } from '@app/pricing-contracts/current-supported-currencies';
 import type {
   PriceSourceAssertionAssessment,

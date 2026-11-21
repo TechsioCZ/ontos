@@ -8,8 +8,8 @@ import {
   ProductVariantSchema,
 } from '../domain/product.ts';
 import { VariantCreationClassificationSchema } from '../domain/product-change-classification.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 /** Creation records a real form, never a cartesian combination inferred from allowed values. */
 export const CreateVariantPayloadSchema = Schema.Struct({
