@@ -5,9 +5,6 @@ import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 
-export { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
-export type { ProductUnitRef } from '@app/catalog-selection-contracts/resources/product-unit';
-
 /** Identity is allocated once within a Tenant; changing a rule never creates a new Unit. */
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 const TenantIdSchema = checkedUuid.pipe(Schema.brand('CatalogTenantId'), Schema.decodeTo(checkedUuid));

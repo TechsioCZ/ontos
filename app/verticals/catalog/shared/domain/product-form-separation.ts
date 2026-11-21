@@ -98,10 +98,6 @@ export const SkuReferenceSchema = Schema.Struct({
 });
 export type SkuReference = typeof SkuReferenceSchema.Type;
 
-/** An owner-qualified immutable revision; a bare number or implicit "latest" is not a reference. */
-export { CatalogRevisionReferenceSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
-export type { CatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
-
 export const PackageContentRevisionReferenceSchema = Schema.Struct({
   packageDefinitionRef: PackageDefinitionReferenceSchema,
   revision,

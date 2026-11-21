@@ -1,15 +1,7 @@
 import { Option } from 'effect';
+import type { VariantExactForm } from '@app/catalog-selection-contracts/variant-exact-form';
 
-import { CatalogIdentityScopeSchema } from '@app/catalog-selection-contracts/identity-scope';
 import type { Product, ProductVariant } from './product.ts';
-
-/**
- * An exact predefined form identifies both its Product and one explicit Variant.
- * This private contract carries identity only: it does not certify Current validity,
- * axis completeness, assortment, price, availability, or permission.
- */
-export const VariantExactFormSchema = CatalogIdentityScopeSchema;
-export type VariantExactForm = typeof VariantExactFormSchema.Type;
 
 const sameCatalogRef = (
   left: ProductVariant['productRef'] | ProductVariant['variantRef'],
