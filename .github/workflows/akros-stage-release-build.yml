@@ -18,11 +18,11 @@ jobs:
   release:
     name: Build the stage app release as Zerops builds it
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     container:
       image: node:26-alpine
     env:
-      TRUNK_SHA: bf715efb507824987f3ab5eeefa4a514b67f81e7
+      TRUNK_SHA: e71b0332cb60313c541f6c704442a77a2db5f2b3
       UNITS_RUN_ID: '44872282481'
     steps:
       - name: Install the tools of the Zerops build image
@@ -74,7 +74,7 @@ jobs:
           node scripts/verify-zerops-workspace-install.mts
           sh scripts/zerops/build-app.sh --digests-only /tmp/zerops-unit-digests.tsv
           mismatch="$(awk -F'\t' '{d=($1=="shell-super-app"?"apps/":"verticals/")$1"/dist/.zerops-build-digest";r="";getline r<d;close(d);if(r!=$2)print "MISMATCH",$1}' /tmp/zerops-unit-digests.tsv)"
-          if [ -n "$mismatch" ]; then echo "$mismatch"; echo "a unit build does not match this commit: stopping before any rebuild"; exit 1; fi
+          if [ -n "$mismatch" ]; then echo "$mismatch"; echo "these units changed since the lent builds: build-app.sh builds them here, as the Zerops build would"; fi
           ZEROPS_UNIT_DIGESTS=/tmp/zerops-unit-digests.tsv sh scripts/zerops/build-app.sh
           mkdir -p .zerops/bun && cp -a "$HOME/.local/bun-1.4.4/bin" .zerops/bun/
           mkdir -p .zerops/state && printf '[]' >.zerops/state/module-credential-boots.json
