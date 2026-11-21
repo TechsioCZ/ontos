@@ -656,17 +656,19 @@ structured fact merely because it is newer or more prominent.
 or another fact owner. A missing requested locale is explicit; Storefront presentation fallback does
 not create the absent translation.
 
-**Catalog Document Reference** — Catalog-owned applicability relation from Product/Variant to a
-Documents Center Resource. Live use follows that same Resource's Current version without a separate
-Catalog approval for each compatible version; replacing the Resource is an explicit relation change.
-Applicability and access still govern. Evidence required for an Accepted result pins the actual
-version/bytes, not the later live reference. Catalog owns no duplicate document store.
+**Catalog Document Reference** — Catalog-owned relation that identifies which document applies to a
+Product or Variant. At Launch the referenced Resource is a Core Media Asset. Live use follows the
+same Resource's owner-issued Current, subject to applicability and Permission. A compatible revision
+requires no new Catalog approval. Using a different Resource requires an explicit change to the
+Catalog relation. Evidence for an Accepted result pins the exact revision and content used. The file
+stays with its owner.
 
 **Catalog Media Assignment** — Catalog-owned relation recording media Resource, Product/Variant
 applicability, purpose and explicit order. Variant media takes precedence; absent Variant media uses
 the Product media set. Main medium means the first item, including after removal, regardless of
 purpose. A fallback depicting another realization is illustrative, not proof of the selected Color
-or dimensions. Presentation must preserve this distinction; access and bytes remain document-owned.
+or dimensions. Presentation must preserve this distinction. For a Core Media Asset, Core Media
+governs access to the file and owns its bytes.
 
 **Catalog Permission** — Atomic OntOS Permission for a declared Catalog Action or governed read in
 an explicit Resource/Tenant scope. Purchasing access, job title, identity relations, client identity
