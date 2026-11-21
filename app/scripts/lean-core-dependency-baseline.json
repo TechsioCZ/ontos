@@ -1,197 +1,333 @@
-[
-  {
-    "from": "verticals/assortment",
-    "to": "verticals/catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/assortment",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/assortment",
-    "to": "verticals/commerce-market-catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/availability",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/availability",
-    "to": "verticals/inventory",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/catalog",
-    "to": "verticals/party-registry",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-cart",
-    "to": "verticals/catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-cart",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-customer-context",
-    "to": "apps/shell-super-app",
-    "class": "test"
-  },
-  {
-    "from": "verticals/commerce-customer-context",
-    "to": "verticals/catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-customer-context",
-    "to": "verticals/commerce-cart",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-customer-context",
-    "to": "verticals/commerce-market-catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-customer-context",
-    "to": "verticals/party-registry",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-customer-context",
-    "to": "verticals/price-group-catalog",
-    "class": "test"
-  },
-  {
-    "from": "verticals/commerce-customer-context",
-    "to": "verticals/privacy",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-market-catalog",
-    "to": "apps/shell-super-app",
-    "class": "test"
-  },
-  {
-    "from": "verticals/commerce-market-catalog",
-    "to": "verticals/commerce-customer-context",
-    "class": "test"
-  },
-  {
-    "from": "verticals/commerce-market-catalog",
-    "to": "verticals/storefront-registry",
-    "class": "test"
-  },
-  {
-    "from": "verticals/commerce-order",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/commerce-order",
-    "to": "verticals/tax",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/inventory",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/party-registry",
-    "to": "verticals/privacy",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/payment",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/pricing",
-    "to": "verticals/catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/pricing",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/pricing",
-    "to": "verticals/commerce-market-catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/privacy",
-    "to": "apps/shell-super-app",
-    "class": "test"
-  },
-  {
-    "from": "verticals/privacy",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/privacy",
-    "to": "verticals/party-registry",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/privacy",
-    "to": "verticals/symmy-integration",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/assortment",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/commerce-customer-context",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/inventory",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/party-registry",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/price-group-catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/pricing",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/privacy",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/symmy-integration",
-    "to": "verticals/tax",
-    "class": "runtime"
-  }
-]
+{
+  "edges": [
+    {
+      "from": "verticals/assortment",
+      "to": "verticals/catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/assortment",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/assortment",
+      "to": "verticals/commerce-market-catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/availability",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/availability",
+      "to": "verticals/inventory",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/catalog",
+      "to": "verticals/party-registry",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-cart",
+      "to": "verticals/catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-cart",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-customer-context",
+      "to": "apps/shell-super-app",
+      "class": "test"
+    },
+    {
+      "from": "verticals/commerce-customer-context",
+      "to": "verticals/catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-customer-context",
+      "to": "verticals/commerce-cart",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-customer-context",
+      "to": "verticals/commerce-market-catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-customer-context",
+      "to": "verticals/party-registry",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-customer-context",
+      "to": "verticals/price-group-catalog",
+      "class": "test"
+    },
+    {
+      "from": "verticals/commerce-customer-context",
+      "to": "verticals/privacy",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-market-catalog",
+      "to": "apps/shell-super-app",
+      "class": "test"
+    },
+    {
+      "from": "verticals/commerce-market-catalog",
+      "to": "verticals/commerce-customer-context",
+      "class": "test"
+    },
+    {
+      "from": "verticals/commerce-market-catalog",
+      "to": "verticals/storefront-registry",
+      "class": "test"
+    },
+    {
+      "from": "verticals/commerce-order",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/commerce-order",
+      "to": "verticals/tax",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/inventory",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/party-registry",
+      "to": "verticals/privacy",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/payment",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/pricing",
+      "to": "verticals/catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/pricing",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/pricing",
+      "to": "verticals/commerce-market-catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/privacy",
+      "to": "apps/shell-super-app",
+      "class": "test"
+    },
+    {
+      "from": "verticals/privacy",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/privacy",
+      "to": "verticals/party-registry",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/privacy",
+      "to": "verticals/symmy-integration",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/assortment",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/commerce-customer-context",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/inventory",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/party-registry",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/price-group-catalog",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/pricing",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/privacy",
+      "class": "runtime"
+    },
+    {
+      "from": "verticals/symmy-integration",
+      "to": "verticals/tax",
+      "class": "runtime"
+    }
+  ],
+  "computedLoads": [
+    {
+      "file": "verticals/assortment/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/assortment/module-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/availability/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/catalog/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/catalog/module-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-cart/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-customer-context/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-customer-context/tests/support/price-group-temporal-protocol.ts",
+      "count": 2
+    },
+    {
+      "file": "verticals/commerce-customer-context/tests/unit/profile-actions-contract.test.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-customer-context/tests/unit/verifier-routine-order.test.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-market-catalog/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-market-catalog/module-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-market-catalog/tests/fixtures/market-revision-native.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/commerce-order/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/inventory/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/inventory/module-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/party-registry/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/party-registry/module-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/party-registry/rstest.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/party-registry/tests/support/party-reconciliation.rstest.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/payment-term-catalog/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/payment/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/price-group-catalog/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/pricing/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/privacy/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/privacy/module-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/privacy/tests/integration/privacy-retained-purpose-self-service-http-postgres.test.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/projects/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/projects/module-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/promotion/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/storefront-registry/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/symmy-integration/backend-federation.config.ts",
+      "count": 1
+    },
+    {
+      "file": "verticals/tax/backend-federation.config.ts",
+      "count": 1
+    }
+  ]
+}

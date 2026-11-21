@@ -20,8 +20,23 @@ import { systemError } from 'effect/PlatformError';
 import type { PlatformError } from 'effect/PlatformError';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
-import { parseSync, Visitor } from 'oxc-parser';
-import type { Argument, Expression, ImportExpression, MemberExpression } from 'oxc-parser';
+import { parseSync, Visitor, visitorKeys } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  CallExpression,
+  ExportAllDeclaration,
+  ExportNamedDeclaration,
+  Function as FunctionNode,
+  ImportDeclaration,
+  ImportDeclarationSpecifier,
+  ImportExpression,
+  MemberExpression,
+  Node,
+  Program,
+  TSImportEqualsDeclaration,
+  VariableDeclaration,
+  VisitorObject,
+} from 'oxc-parser';
 
 /**
  * Lean-Core gate: `packages/core-runtime` must never depend on Commerce,
@@ -29,7 +44,8 @@ import type { Argument, Expression, ImportExpression, MemberExpression } from 'o
  * apps/verticals must never take a mandatory runtime import of Commerce's
  * private implementation, only its published `shared/` contracts or a
  * documented composition seam. Package edges from a module (verticals/*) or a package (packages/*) to a
- * module or an app (apps/*) are frozen to the committed baseline, which may only shrink.
+ * module or an app (apps/*) are frozen to the committed baseline, which may only shrink; so is each count of
+ * computed loads, the loads in a module or a package whose target the check cannot read.
  */
 
 export interface LeanCoreDependencyViolation {
@@ -41,6 +57,8 @@ export interface LeanCoreDependencyViolation {
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
 const graphSourceExtensions = new Set([...sourceExtensions, '.js', '.mjs', '.cjs']);
 const ignoredDirectories = new Set(['dist', 'dist-cloudflare', 'node_modules', 'repos', '.output', '.codex']);
+/** The specifiers of Node's module loader, `node:module`. */
+const moduleBuiltins = new Set(['module', 'node:module']);
 const isTestSource = (relative: string): boolean => /(?:^|\/)(?:tests?|__tests__)\//u.test(relative);
 
 const collectFiles = (
@@ -223,7 +241,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
       }
       const [target] = node.arguments;
       const nativeModule = target?.type === 'Literal' ? target.value : undefined;
-      if (nativeModule === undefined || nativeModule === 'module' || nativeModule === 'node:module') {
+      if (nativeModule === undefined || (Predicate.isString(nativeModule) && moduleBuiltins.has(nativeModule))) {
         unsupportedRuntimeImport = true;
       }
     },
@@ -244,9 +262,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
       }
     },
   }).visit(parsed.program);
-  unsupportedRuntimeImport ||= occurrences.some(
-    ({ specifier }) => specifier === 'module' || specifier === 'node:module',
-  );
+  unsupportedRuntimeImport ||= occurrences.some(({ specifier }) => moduleBuiltins.has(specifier));
   return {
     occurrences: EffectArray.sort(
       [...occurrences, ...dynamicOccurrences],
@@ -1045,11 +1061,23 @@ const ModuleEdgeBaselineEntrySchema = Schema.Struct({
   to: Schema.String,
 });
 type ModuleEdgeBaselineEntry = typeof ModuleEdgeBaselineEntrySchema.Type;
-const ModuleEdgeBaselineFromJson = Schema.fromJsonString(Schema.Array(ModuleEdgeBaselineEntrySchema));
+/** A source of a module or a package and how many loads in it name a target the check cannot read. */
+const ComputedLoadBaselineEntrySchema = Schema.Struct({
+  count: Schema.Number,
+  file: Schema.String,
+});
+type ComputedLoadBaselineEntry = typeof ComputedLoadBaselineEntrySchema.Type;
+const ModuleEdgeBaselineSchema = Schema.Struct({
+  computedLoads: Schema.Array(ComputedLoadBaselineEntrySchema),
+  edges: Schema.Array(ModuleEdgeBaselineEntrySchema),
+});
+type ModuleEdgeBaseline = typeof ModuleEdgeBaselineSchema.Type;
+const ModuleEdgeBaselineFromJson = Schema.fromJsonString(ModuleEdgeBaselineSchema);
 const BaselineEntryOrder = Order.combine(
   Order.mapInput(Order.String, (entry: ModuleEdgeBaselineEntry) => entry.from),
   Order.mapInput(Order.String, (entry: ModuleEdgeBaselineEntry) => entry.to),
 );
+const ComputedLoadEntryOrder = Order.mapInput(Order.String, (entry: ComputedLoadBaselineEntry) => entry.file);
 
 /** A target of a package `imports` entry: a path or package, null, or nested conditions and fallbacks. */
 type PackageImportsTarget =
@@ -1103,6 +1131,8 @@ interface PackageEdge {
 }
 
 interface PackageGraph {
+  /** Each source of a module or a package with computed loads, and the line of each. */
+  readonly computedLoads: ReadonlyMap<string, readonly number[]>;
   readonly edges: ReadonlyMap<string, PackageEdge>;
   readonly packages: ReadonlyMap<string, WorkspacePackageKind>;
   readonly unparsable: readonly string[];
@@ -1173,7 +1203,13 @@ interface ModuleReference {
   readonly specifier: string;
 }
 
-const literalString = (node: Argument | Expression | undefined): string | undefined => {
+/** What a source loads: each specifier it names with a literal, and each load whose target the check cannot read. */
+interface SourceLoads {
+  readonly computedLoads: readonly number[];
+  readonly references: readonly ModuleReference[];
+}
+
+const literalString = (node: Node | null | undefined): string | undefined => {
   if (node?.type === 'Literal' && Predicate.isString(node.value)) {
     return node.value;
   }
@@ -1183,86 +1219,610 @@ const literalString = (node: Argument | Expression | undefined): string | undefi
   return undefined;
 };
 
-const isCreateRequireCall = (node: Expression): boolean =>
-  node.type === 'CallExpression' &&
-  (node.callee.type === 'Identifier'
-    ? node.callee.name === 'createRequire'
-    : node.callee.type === 'MemberExpression' && staticMemberName(node.callee) === 'createRequire');
+const isImportMeta = (node: Node | null | undefined): boolean =>
+  node?.type === 'MetaProperty' && node.meta.name === 'import' && node.property.name === 'meta';
 
-const isImportMeta = (node: Expression): boolean =>
-  node.type === 'MetaProperty' && node.meta.name === 'import' && node.property.name === 'meta';
+const isImportMetaUrl = (node: Node | null | undefined): boolean =>
+  node?.type === 'MemberExpression' && isImportMeta(node.object) && staticMemberName(node) === 'url';
+
+/** A specifier a loader resolves the same way from any base: neither a path, a URL nor a package import. */
+const isBareSpecifier = (specifier: string): boolean => !/^(?:[./#]|file:)/u.test(specifier);
 
 const referenceDirective = /^\/\s*<reference\s+(?<kind>path|types)\s*=\s*["'](?<target>[^"']+)["']/u;
 
 /**
- * Every specifier the file names with a literal: static imports and re-exports at any depth, `import()`,
- * TypeScript import types and `import x = require()`, `require()` and `require.resolve()` (also through
- * `module.require`, `createRequire(...)` and a binding of its result), `import.meta.resolve()`, and
- * triple-slash reference directives. None when the file does not parse, so its edges are unknown.
+ * A value that can load a module. A loader (the free `require`, `module.require`, what `createRequire`
+ * returns) loads its argument; a foreign loader was created from a base other than `import.meta.url`, so
+ * the check cannot tell where a relative path it loads lands. A factory (`createRequire`) makes loaders.
+ * The namespace of `node:module` holds the factory, `module` holds `module.require`, `import.meta` holds
+ * `import.meta.resolve`, and `import('node:module')` is the promise of the namespace. Anything else
+ * imported from `node:module` is opaque.
  */
-const moduleReferencesIn = (file: string, source: string): Option.Option<readonly ModuleReference[]> => {
+const CapabilitySchema = Schema.Literals([
+  'factory',
+  'foreign-loader',
+  'loader',
+  'meta',
+  'meta-resolve',
+  'module',
+  'namespace',
+  'namespace-promise',
+  'opaque',
+]);
+type Capability = typeof CapabilitySchema.Type;
+
+/** A name a scope declares: the capability an import gives it, and the references that resolve to it. */
+interface Binding {
+  readonly capability: Capability | undefined;
+  readonly references: Node[];
+}
+
+/** One source's walk: its scopes, its references, and the loads found so far. */
+interface LoadAnalysis {
+  readonly computedLoads: number[];
+  readonly declared: Map<Node, Binding>;
+  readonly identifiers: Set<Node>;
+  readonly parents: Map<Node, Node>;
+  readonly pending: (readonly [Node, Capability])[];
+  readonly references: ModuleReference[];
+  readonly scopes: Map<Node, Map<string, Binding>>;
+  /** The nodes inside a type or an ambient declaration. */
+  readonly typeOnly: Set<Node>;
+}
+
+const freeCapabilities = new Map<string, Capability>([
+  ['module', 'module'],
+  ['require', 'loader'],
+]);
+const functionScopes = new Set([
+  'ArrowFunctionExpression',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'Program',
+  'StaticBlock',
+  'TSModuleBlock',
+]);
+const blockScopes = new Set([
+  ...functionScopes,
+  'BlockStatement',
+  'CatchClause',
+  'ForInStatement',
+  'ForOfStatement',
+  'ForStatement',
+  'SwitchStatement',
+]);
+/** The TypeScript nodes that hold runtime code; every other TypeScript node is a type and loads nothing. */
+const runtimeTypeScript = new Set([
+  'TSAsExpression',
+  'TSEnumBody',
+  'TSEnumDeclaration',
+  'TSEnumMember',
+  'TSExportAssignment',
+  'TSExternalModuleReference',
+  'TSImportEqualsDeclaration',
+  'TSInstantiationExpression',
+  'TSModuleBlock',
+  'TSModuleDeclaration',
+  'TSNonNullExpression',
+  'TSParameterProperty',
+  'TSSatisfiesExpression',
+  'TSTypeAssertion',
+]);
+/** Wrappers whose value is the value of their expression. */
+const transparentExpressions = new Set([
+  'ChainExpression',
+  'ParenthesizedExpression',
+  'TSAsExpression',
+  'TSInstantiationExpression',
+  'TSNonNullExpression',
+  'TSSatisfiesExpression',
+  'TSTypeAssertion',
+]);
+
+/** A type, or an ambient declaration: it names no runtime value. */
+const isTypeOnly = (node: Node): boolean => {
+  if (node.type.startsWith('TS') && !runtimeTypeScript.has(node.type)) {
+    return true;
+  }
+  return (
+    (node.type === 'ClassDeclaration' ||
+      node.type === 'TSEnumDeclaration' ||
+      node.type === 'TSModuleDeclaration' ||
+      node.type === 'VariableDeclaration') &&
+    node.declare === true
+  );
+};
+
+/** The identifiers a binding pattern declares. */
+const patternIdentifiers = (pattern: Node | null | undefined): readonly Node[] => {
+  if (pattern?.type === 'Identifier') {
+    return [pattern];
+  }
+  if (pattern?.type === 'ArrayPattern') {
+    return pattern.elements.flatMap((element) => patternIdentifiers(element));
+  }
+  if (pattern?.type === 'ObjectPattern') {
+    return pattern.properties.flatMap((property) =>
+      patternIdentifiers(property.type === 'RestElement' ? property.argument : property.value),
+    );
+  }
+  if (pattern?.type === 'AssignmentPattern') {
+    return patternIdentifiers(pattern.left);
+  }
+  if (pattern?.type === 'RestElement') {
+    return patternIdentifiers(pattern.argument);
+  }
+  return pattern?.type === 'TSParameterProperty' ? patternIdentifiers(pattern.parameter) : [];
+};
+
+/** The scope that holds a declaration made at node: its nearest ancestor of one of kinds. */
+const nearestScope = (analysis: LoadAnalysis, node: Node, kinds: ReadonlySet<string>): Node | undefined => {
+  for (let scope = analysis.parents.get(node); scope !== undefined; scope = analysis.parents.get(scope)) {
+    if (kinds.has(scope.type)) {
+      return scope;
+    }
+  }
+  return undefined;
+};
+
+const bind = (
+  analysis: LoadAnalysis,
+  scope: Node | undefined,
+  identifier: Node | null | undefined,
+  capability?: Capability,
+): void => {
+  if (scope === undefined || identifier?.type !== 'Identifier') {
+    return;
+  }
+  const names = analysis.scopes.get(scope) ?? new Map<string, Binding>();
+  const binding = names.get(identifier.name) ?? { capability, references: [] };
+  names.set(identifier.name, binding);
+  analysis.scopes.set(scope, names);
+  analysis.declared.set(identifier, binding);
+};
+
+const propertyName = (key: Node): string | undefined => (key.type === 'Identifier' ? key.name : literalString(key));
+
+/** What an import of `node:module` binds: createRequire under any local name is the factory. */
+const importedCapability = (specifier: ImportDeclarationSpecifier): Capability => {
+  if (specifier.type !== 'ImportSpecifier') {
+    return 'namespace';
+  }
+  return propertyName(specifier.imported) === 'createRequire' ? 'factory' : 'opaque';
+};
+
+const declareImports = (analysis: LoadAnalysis, program: Program, node: ImportDeclaration): void => {
+  const builtin = node.importKind !== 'type' && moduleBuiltins.has(node.source.value);
+  for (const specifier of node.specifiers) {
+    if (specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type') {
+      bind(analysis, program, specifier.local, builtin ? importedCapability(specifier) : undefined);
+    }
+  }
+};
+
+const declareImportEquals = (analysis: LoadAnalysis, node: TSImportEqualsDeclaration): void => {
+  const target = node.moduleReference.type === 'TSExternalModuleReference' ? node.moduleReference.expression.value : '';
+  const namespace = node.importKind === 'value' && moduleBuiltins.has(target);
+  bind(analysis, nearestScope(analysis, node, blockScopes), node.id, namespace ? 'namespace' : undefined);
+};
+
+const declareFunction = (analysis: LoadAnalysis, node: ArrowFunctionExpression | FunctionNode): void => {
+  for (const identifier of node.params.flatMap((parameter) => patternIdentifiers(parameter))) {
+    bind(analysis, node, identifier);
+  }
+  if (node.type !== 'ArrowFunctionExpression') {
+    // A declaration names the function in its enclosing scope; an expression names it only inside itself.
+    bind(analysis, node.type === 'FunctionDeclaration' ? nearestScope(analysis, node, blockScopes) : node, node.id);
+  }
+};
+
+const declareVariables = (analysis: LoadAnalysis, node: VariableDeclaration): void => {
+  const scope = nearestScope(analysis, node, node.kind === 'var' ? functionScopes : blockScopes);
+  for (const identifier of node.declarations.flatMap((declarator) => patternIdentifiers(declarator.id))) {
+    bind(analysis, scope, identifier);
+  }
+};
+
+const recordReference = (analysis: LoadAnalysis, index: number, specifier: string | null | undefined): void => {
+  if (Predicate.isString(specifier)) {
+    analysis.references.push({ index, specifier });
+  }
+};
+
+/** A re-export of node:module hands its loaders to files that import them under any name: a computed load. */
+const reExportCapability = (analysis: LoadAnalysis, node: ExportAllDeclaration | ExportNamedDeclaration): void => {
+  if (node.exportKind !== 'type' && moduleBuiltins.has(node.source?.value ?? '')) {
+    analysis.computedLoads.push(node.start);
+  }
+};
+
+/** A non-literal `import()` is a computed load; a literal one of node:module is the promise of the namespace. */
+const importCapability = (analysis: LoadAnalysis, node: ImportExpression): void => {
+  const target = literalString(node.source);
+  if (target === undefined) {
+    analysis.computedLoads.push(node.start);
+  } else if (moduleBuiltins.has(target)) {
+    analysis.pending.push([node, 'namespace-promise']);
+  }
+};
+
+const nameOnlyParents = new Set([
+  'BreakStatement',
+  'ContinueStatement',
+  'ExportAllDeclaration',
+  'ImportAttribute',
+  'ImportDefaultSpecifier',
+  'ImportNamespaceSpecifier',
+  'ImportSpecifier',
+  'LabeledStatement',
+  'MetaProperty',
+]);
+
+/** An identifier that names a property, a label or an import or export name, never a value in scope. */
+const isNameOnly = (node: Node, parent: Node | undefined, grandparent: Node | undefined): boolean => {
+  if (parent === undefined || nameOnlyParents.has(parent.type)) {
+    return parent !== undefined;
+  }
+  if (parent.type === 'MemberExpression') {
+    return parent.property === node && !parent.computed;
+  }
+  if (parent.type === 'ExportSpecifier') {
+    return parent.local !== node || (grandparent?.type === 'ExportNamedDeclaration' && grandparent.source !== null);
+  }
+  if (parent.type === 'TSEnumMember' || parent.type === 'TSModuleDeclaration') {
+    return parent.id === node;
+  }
+  return (
+    (parent.type === 'AccessorProperty' ||
+      parent.type === 'MethodDefinition' ||
+      parent.type === 'Property' ||
+      parent.type === 'PropertyDefinition') &&
+    parent.key === node &&
+    !parent.computed
+  );
+};
+
+/** Records each node's parent, and which nodes are types or ambient declarations. */
+const trackStructure = (analysis: LoadAnalysis, program: Program): void => {
+  const stack: Node[] = [program];
+  const enter = (node: Node): void => {
+    const parent = stack.at(-1);
+    if (node === program || parent === undefined) {
+      return;
+    }
+    analysis.parents.set(node, parent);
+    if (analysis.typeOnly.has(parent) || isTypeOnly(node)) {
+      analysis.typeOnly.add(node);
+    }
+    stack.push(node);
+  };
+  const exit = (node: Node): void => {
+    if (node !== program) {
+      stack.pop();
+    }
+  };
+  const tracker: VisitorObject = Object.fromEntries(
+    Object.keys(visitorKeys).flatMap((type): readonly (readonly [string, (node: Node) => void])[] => [
+      [type, enter],
+      [`${type}:exit`, exit],
+    ]),
+  );
+  new Visitor(tracker).visit(program);
+};
+
+/**
+ * The second walk: every form that names a specifier, at any depth (an ambient module and a type too), and,
+ * in runtime code only, each declaration and each site that may carry a capability.
+ */
+const sourceSites = (analysis: LoadAnalysis, program: Program): VisitorObject => {
+  const runtime = (node: Node): boolean => !analysis.typeOnly.has(node);
+  return {
+    ArrowFunctionExpression: (node) => {
+      if (runtime(node)) {
+        declareFunction(analysis, node);
+      }
+    },
+    CatchClause: (node) => {
+      for (const identifier of runtime(node) ? patternIdentifiers(node.param) : []) {
+        bind(analysis, node, identifier);
+      }
+    },
+    ClassDeclaration: (node) => {
+      if (runtime(node)) {
+        bind(analysis, nearestScope(analysis, node, blockScopes), node.id);
+      }
+    },
+    ClassExpression: (node) => {
+      if (runtime(node)) {
+        bind(analysis, node, node.id);
+      }
+    },
+    ExportAllDeclaration: (node) => {
+      recordReference(analysis, node.start, node.source.value);
+      if (runtime(node)) {
+        reExportCapability(analysis, node);
+      }
+    },
+    ExportNamedDeclaration: (node) => {
+      recordReference(analysis, node.start, node.source?.value);
+      if (runtime(node)) {
+        reExportCapability(analysis, node);
+      }
+    },
+    FunctionDeclaration: (node) => {
+      if (runtime(node)) {
+        declareFunction(analysis, node);
+      }
+    },
+    FunctionExpression: (node) => {
+      if (runtime(node)) {
+        declareFunction(analysis, node);
+      }
+    },
+    Identifier: (node) => {
+      if (runtime(node)) {
+        analysis.identifiers.add(node);
+      }
+    },
+    ImportDeclaration: (node) => {
+      recordReference(analysis, node.start, node.source.value);
+      if (runtime(node)) {
+        declareImports(analysis, program, node);
+      }
+    },
+    ImportExpression: (node) => {
+      recordReference(analysis, node.start, literalString(node.source));
+      importCapability(analysis, node);
+    },
+    MetaProperty: (node) => {
+      if (isImportMeta(node)) {
+        analysis.pending.push([node, 'meta']);
+      }
+    },
+    TSImportEqualsDeclaration: (node) => {
+      const { moduleReference } = node;
+      recordReference(
+        analysis,
+        node.start,
+        moduleReference.type === 'TSExternalModuleReference' ? moduleReference.expression.value : undefined,
+      );
+      if (runtime(node)) {
+        declareImportEquals(analysis, node);
+      }
+    },
+    TSImportType: (node) => recordReference(analysis, node.start, node.source.value),
+    VariableDeclaration: (node) => {
+      if (runtime(node)) {
+        declareVariables(analysis, node);
+      }
+    },
+  };
+};
+
+const lookup = (analysis: LoadAnalysis, node: Node, name: string): Binding | undefined => {
+  for (let scope = analysis.parents.get(node); scope !== undefined; scope = analysis.parents.get(scope)) {
+    const binding = analysis.scopes.get(scope)?.get(name);
+    if (binding !== undefined) {
+      return binding;
+    }
+  }
+  return undefined;
+};
+
+/** Each reference to a capability starts a settlement; every other reference joins its binding. */
+const resolveReferences = (analysis: LoadAnalysis): void => {
+  for (const identifier of analysis.identifiers) {
+    const parent = analysis.parents.get(identifier);
+    const grandparent = parent === undefined ? undefined : analysis.parents.get(parent);
+    if (identifier.type !== 'Identifier' || analysis.declared.has(identifier)) {
+      continue;
+    }
+    if (!isNameOnly(identifier, parent, grandparent)) {
+      const binding = lookup(analysis, identifier, identifier.name);
+      const capability = binding === undefined ? freeCapabilities.get(identifier.name) : binding.capability;
+      if (capability === undefined) {
+        binding?.references.push(identifier);
+      } else {
+        analysis.pending.push([identifier, capability]);
+      }
+    }
+  }
+};
+
+/** The outermost expression that still holds start's value, and the node that uses it. */
+const usageOf = (analysis: LoadAnalysis, start: Node): readonly [Node, Node | undefined] => {
+  let node = start;
+  let parent = analysis.parents.get(node);
+  while (parent !== undefined && transparentExpressions.has(parent.type)) {
+    node = parent;
+    parent = analysis.parents.get(parent);
+  }
+  return [node, parent];
+};
+
+const calledWith = (node: Node, parent: Node): CallExpression | undefined =>
+  parent.type === 'CallExpression' && parent.callee === node ? parent : undefined;
+
+/** The call of `node.resolve`, when parent reads that member and calls it. */
+const resolveCall = (analysis: LoadAnalysis, node: Node, parent: Node): CallExpression | undefined => {
+  if (parent.type !== 'MemberExpression' || parent.object !== node || staticMemberName(parent) !== 'resolve') {
+    return undefined;
+  }
+  const [member, user] = usageOf(analysis, parent);
+  return user === undefined ? undefined : calledWith(member, user);
+};
+
+/** Records a call's literal target; false when it has none, or one a foreign loader cannot attribute. */
+const literalLoad = (analysis: LoadAnalysis, call: CallExpression | undefined, attributable: boolean): boolean => {
+  const target = literalString(call?.arguments[0]);
+  if (call === undefined || target === undefined || !(attributable || isBareSpecifier(target))) {
+    return false;
+  }
+  analysis.references.push({ index: call.start, specifier: target });
+  return true;
+};
+
+const loaderUse = (analysis: LoadAnalysis, node: Node, parent: Node, attributable: boolean): boolean => {
+  const call = calledWith(node, parent);
+  if (call !== undefined && moduleBuiltins.has(literalString(call.arguments[0]) ?? '')) {
+    analysis.pending.push([call, 'namespace']);
+    return true;
+  }
+  return literalLoad(analysis, call ?? resolveCall(analysis, node, parent), attributable);
+};
+
+/** Reading `member` passes capability on; reading any other named member is harmless unless othersLoad. */
+const memberUse = (
+  analysis: LoadAnalysis,
+  use: { readonly node: Node; readonly parent: Node },
+  member: string,
+  capability: Capability,
+  othersLoad: boolean,
+): boolean => {
+  const { node, parent } = use;
+  if (parent.type !== 'MemberExpression' || parent.object !== node) {
+    return false;
+  }
+  const name = staticMemberName(parent);
+  if (name === member) {
+    analysis.pending.push([parent, capability]);
+    return true;
+  }
+  return name !== undefined && !othersLoad;
+};
+
+type CapabilityUse = (analysis: LoadAnalysis, node: Node, parent: Node) => boolean;
+
+/** The recognised uses of each capability; any other use is a computed load. */
+const recognisedUses = {
+  factory: (analysis, node, parent) => {
+    const call = calledWith(node, parent);
+    if (call !== undefined) {
+      analysis.pending.push([call, isImportMetaUrl(call.arguments[0]) ? 'loader' : 'foreign-loader']);
+    }
+    return call !== undefined;
+  },
+  'foreign-loader': (analysis, node, parent) => loaderUse(analysis, node, parent, false),
+  loader: (analysis, node, parent) => loaderUse(analysis, node, parent, true),
+  meta: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'resolve', 'meta-resolve', false),
+  'meta-resolve': (analysis, node, parent) => literalLoad(analysis, calledWith(node, parent), true),
+  module: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'require', 'loader', false),
+  namespace: (analysis, node, parent) => memberUse(analysis, { node, parent }, 'createRequire', 'factory', true),
+  'namespace-promise': (analysis, node, parent) => {
+    const awaited = parent.type === 'AwaitExpression' && parent.argument === node;
+    if (awaited) {
+      analysis.pending.push([parent, 'namespace']);
+    }
+    return awaited;
+  },
+  opaque: () => false,
+} satisfies Readonly<Record<Capability, CapabilityUse>>;
+
+const forward = (analysis: LoadAnalysis, identifier: Node, capability: Capability): void => {
+  for (const reference of analysis.declared.get(identifier)?.references ?? []) {
+    analysis.pending.push([reference, capability]);
+  }
+};
+
+/**
+ * A `const` that is not exported passes the capability it is initialised with to its references; a const
+ * destructuring of the namespace passes the factory to createRequire under any local name, and every other
+ * member it takes is a computed load.
+ */
+const bindsCapability = (analysis: LoadAnalysis, node: Node, parent: Node, capability: Capability): boolean => {
+  const declaration = analysis.parents.get(parent);
+  if (
+    parent.type !== 'VariableDeclarator' ||
+    parent.init !== node ||
+    declaration?.type !== 'VariableDeclaration' ||
+    declaration.kind !== 'const' ||
+    analysis.parents.get(declaration)?.type === 'ExportNamedDeclaration'
+  ) {
+    return false;
+  }
+  if (parent.id.type === 'Identifier') {
+    forward(analysis, parent.id, capability);
+    return true;
+  }
+  if (capability !== 'namespace' || parent.id.type !== 'ObjectPattern') {
+    return false;
+  }
+  for (const property of parent.id.properties) {
+    if (
+      property.type === 'Property' &&
+      !property.computed &&
+      propertyName(property.key) === 'createRequire' &&
+      property.value.type === 'Identifier'
+    ) {
+      forward(analysis, property.value, 'factory');
+    } else {
+      analysis.computedLoads.push(property.start);
+    }
+  }
+  return true;
+};
+
+const settleCapability = (analysis: LoadAnalysis, start: Node, capability: Capability): void => {
+  const [node, parent] = usageOf(analysis, start);
+  const recognised =
+    parent !== undefined &&
+    (recognisedUses[capability](analysis, node, parent) || bindsCapability(analysis, node, parent, capability));
+  if (!recognised) {
+    analysis.computedLoads.push(start.start);
+  }
+};
+
+const byIndex = Order.mapInput(Order.Number, (reference: ModuleReference) => reference.index);
+
+/**
+ * What the file loads. Specifiers: static imports and re-exports at any depth, literal `import()`, TypeScript
+ * import types and `import x = require()`, triple-slash reference directives, and each recognised use of a
+ * loader capability with a literal target. A capability enters a file only as the free `require`,
+ * `module.require`, `import.meta.resolve`, an import of `node:module` or `module` (or `require` or
+ * `import()` of it) and a non-literal `import()`; every other use of one is a computed load, whose target the
+ * check cannot read. None when the file does not parse, so its loads are unknown.
+ */
+const loadsIn = (file: string, source: string): Option.Option<SourceLoads> => {
   const parsed = parseSync(file, source, {
     astType: 'ts',
     lang: moduleLanguage(file),
-    sourceType: file.endsWith('.cjs') ? 'script' : 'module',
+    sourceType: file.endsWith('.cjs') ? 'commonjs' : 'module',
   });
   if (parsed.errors.length > 0) {
     return Option.none();
   }
-  const references: ModuleReference[] = [];
-  const record = (index: number, specifier: string | null | undefined): void => {
-    if (Predicate.isString(specifier)) {
-      references.push({ index, specifier });
-    }
+  const analysis: LoadAnalysis = {
+    computedLoads: [],
+    declared: new Map(),
+    identifiers: new Set(),
+    parents: new Map(),
+    pending: [],
+    references: [],
+    scopes: new Map(),
+    typeOnly: new Set(),
   };
-  const loaders = new Set(['require']);
-  new Visitor({
-    VariableDeclarator: (node) => {
-      if (node.id.type === 'Identifier' && node.init !== null && isCreateRequireCall(node.init)) {
-        loaders.add(node.id.name);
-      }
-    },
-  }).visit(parsed.program);
-  const isLoader = (node: Expression): boolean =>
-    (node.type === 'Identifier' && loaders.has(node.name)) ||
-    (node.type === 'MemberExpression' && staticMemberName(node) === 'require') ||
-    isCreateRequireCall(node);
-  new Visitor({
-    CallExpression: (node) => {
-      const { callee } = node;
-      const resolves =
-        callee.type === 'MemberExpression' &&
-        staticMemberName(callee) === 'resolve' &&
-        (isLoader(callee.object) || isImportMeta(callee.object));
-      if (resolves || isLoader(callee)) {
-        record(node.start, literalString(node.arguments[0]));
-      }
-    },
-    ExportAllDeclaration: (node) => record(node.start, node.source.value),
-    ExportNamedDeclaration: (node) => record(node.start, node.source?.value),
-    ImportDeclaration: (node) => record(node.start, node.source.value),
-    ImportExpression: (node) => record(node.start, literalString(node.source)),
-    TSImportEqualsDeclaration: (node) =>
-      record(
-        node.start,
-        node.moduleReference.type === 'TSExternalModuleReference' ? node.moduleReference.expression.value : undefined,
-      ),
-    TSImportType: (node) => record(node.start, node.source.value),
-  }).visit(parsed.program);
+  trackStructure(analysis, parsed.program);
+  new Visitor(sourceSites(analysis, parsed.program)).visit(parsed.program);
+  resolveReferences(analysis);
+  for (let next = analysis.pending.pop(); next !== undefined; next = analysis.pending.pop()) {
+    settleCapability(analysis, ...next);
+  }
   for (const comment of parsed.comments) {
     const directive = comment.type === 'Line' ? referenceDirective.exec(comment.value)?.groups : undefined;
     const target = directive?.target;
     if (target !== undefined) {
       // A path directive is relative to its file even without a leading dot.
-      record(comment.start, directive?.kind === 'path' && !target.startsWith('.') ? `./${target}` : target);
+      recordReference(
+        analysis,
+        comment.start,
+        directive?.kind === 'path' && !target.startsWith('.') ? `./${target}` : target,
+      );
     }
   }
-  return Option.some(
-    EffectArray.sort(
-      references,
-      Order.mapInput(Order.Number, (reference: ModuleReference) => reference.index),
-    ),
-  );
+  return Option.some({
+    computedLoads: EffectArray.sort(analysis.computedLoads, Order.Number),
+    references: EffectArray.sort(analysis.references, byIndex),
+  });
 };
 
 /** Every path or package an `imports` target can select, under any condition. */
@@ -1470,14 +2030,22 @@ const derivePackageGraph = (
       { concurrency: 4 },
     ).pipe(Effect.map((perPackage) => perPackage.flat()));
     const unparsable: string[] = [];
+    const computedLoads = new Map<string, readonly number[]>();
     for (const [workspacePackage, relative, source] of sources) {
-      const references = moduleReferencesIn(relative, source);
-      if (Option.isNone(references)) {
+      const loads = loadsIn(relative, source);
+      if (Option.isNone(loads)) {
         unparsable.push(relative);
         continue;
       }
+      // An app may take any edge, so only what a module or a package loads can hide a frozen one.
+      if (loads.value.computedLoads.length > 0 && workspacePackage.kind !== 'app') {
+        computedLoads.set(
+          relative,
+          loads.value.computedLoads.map((index) => sourceLine(source, index)),
+        );
+      }
       const siteClass: EdgeClass = isTestSource(relative) ? 'test' : 'runtime';
-      for (const { index, specifier } of references.value) {
+      for (const { index, specifier } of loads.value.references) {
         const line = sourceLine(source, index);
         for (const target of referenceTargets(workspacePackage, relative, specifier)) {
           recordSite(workspacePackage.directory, target, { class: siteClass, file: relative, line });
@@ -1486,6 +2054,7 @@ const derivePackageGraph = (
     }
 
     return {
+      computedLoads,
       edges: new Map(
         [...sitesByEdge].map(([key, { from, sites, to }]): readonly [string, PackageEdge] => [
           key,
@@ -1540,19 +2109,37 @@ const frozenEdgeRule = (graph: PackageGraph, edge: PackageEdge): string => {
 /** Wider classes admit more: a runtime edge also carries everything a test edge does. */
 const classAdmits = (wider: EdgeClass, narrower: EdgeClass): boolean => wider === 'runtime' || narrower === 'test';
 
-const readModuleEdgeBaseline = (
+const readBaselineText = (
   root: string,
-): Effect.Effect<Option.Option<readonly ModuleEdgeBaselineEntry[]>, PlatformError, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* readModuleEdgeBaselineProgram() {
+): Effect.Effect<Option.Option<string>, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* readBaselineTextProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const file = path.join(root, moduleEdgeBaselineRelative);
-    if (!(yield* fileSystem.exists(file))) {
-      return Option.none();
-    }
-    const raw = yield* fileSystem.readFileString(file, 'utf-8');
-    return Option.some(yield* Schema.decodeUnknownEffect(ModuleEdgeBaselineFromJson)(raw).pipe(Effect.orDie));
+    return (yield* fileSystem.exists(file))
+      ? Option.some(yield* fileSystem.readFileString(file, 'utf-8'))
+      : Option.none();
   });
+
+/** The baseline of the tree under judgment: none when absent, and a defect when it does not decode. */
+const readModuleEdgeBaseline = (
+  root: string,
+): Effect.Effect<Option.Option<ModuleEdgeBaseline>, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.flatMap(readBaselineText(root), (text) =>
+    Option.isNone(text)
+      ? Effect.succeedNone
+      : Schema.decodeUnknownEffect(ModuleEdgeBaselineFromJson)(text.value).pipe(Effect.orDie, Effect.map(Option.some)),
+  );
+
+/** The baseline of a comparison base, when it has one this check reads; any other base is derived instead. */
+const readComparisonBaseline = (
+  tree: string,
+): Effect.Effect<Option.Option<ModuleEdgeBaseline>, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.flatMap(readBaselineText(tree), (text) =>
+    Option.isNone(text)
+      ? Effect.succeedNone
+      : Schema.decodeUnknownEffect(ModuleEdgeBaselineFromJson)(text.value).pipe(Effect.option),
+  );
 
 const baselineViolation = (reason: string): LeanCoreDependencyViolation => ({
   file: moduleEdgeBaselineRelative,
@@ -1560,11 +2147,18 @@ const baselineViolation = (reason: string): LeanCoreDependencyViolation => ({
   reason,
 });
 
-const sameBaseline = (left: readonly ModuleEdgeBaselineEntry[], right: readonly ModuleEdgeBaselineEntry[]): boolean =>
-  left.length === right.length &&
-  left.every(
+const sameBaseline = (left: ModuleEdgeBaseline, right: ModuleEdgeBaseline): boolean =>
+  left.edges.length === right.edges.length &&
+  left.edges.every(
     (entry, index) =>
-      entry.from === right[index]?.from && entry.to === right[index]?.to && entry.class === right[index]?.class,
+      entry.from === right.edges[index]?.from &&
+      entry.to === right.edges[index]?.to &&
+      entry.class === right.edges[index]?.class,
+  ) &&
+  left.computedLoads.length === right.computedLoads.length &&
+  left.computedLoads.every(
+    (entry, index) =>
+      entry.file === right.computedLoads[index]?.file && entry.count === right.computedLoads[index]?.count,
   );
 
 /** Runs a command whose output is not needed; its stderr reaches the console. */
@@ -1588,14 +2182,34 @@ const unreadableBase = (base: string, reason: string): ShrinkOnlyResult => ({
   ],
 });
 
+/** Rule 5 for computed loads: no entry counts more loads than its file makes at the comparison base. */
+const grownComputedLoads = (
+  commit: string,
+  baseGraph: PackageGraph,
+  entries: readonly ComputedLoadBaselineEntry[],
+): readonly LeanCoreDependencyViolation[] =>
+  entries.flatMap((entry) => {
+    const baseCount = baseGraph.computedLoads.get(entry.file)?.length ?? 0;
+    if (entry.count <= baseCount) {
+      return [];
+    }
+    return [
+      baselineViolation(
+        baseCount === 0
+          ? `Computed-load entry ${entry.file} (${entry.count}) names a file without computed loads at the comparison base ${commit}: the baseline only shrinks, so no computed load enters it`
+          : `Computed-load entry ${entry.file} counts ${entry.count}, but the comparison base ${commit} has ${baseCount}: the baseline only shrinks, so no count grows`,
+      ),
+    ];
+  });
+
 /** Rule 5 against the comparison tree that root's commit `commit` extracted into `tree`. */
 const checkShrinkOnlyAgainst = (
   commit: string,
   tree: string,
-  baseline: readonly ModuleEdgeBaselineEntry[],
+  baseline: ModuleEdgeBaseline,
 ): Effect.Effect<ShrinkOnlyResult, PlatformError, CheckServices> =>
   Effect.gen(function* checkShrinkOnlyAgainstProgram() {
-    const baseBaseline = yield* readModuleEdgeBaseline(tree);
+    const baseBaseline = yield* readComparisonBaseline(tree);
     if (Option.isSome(baseBaseline) && sameBaseline(baseline, baseBaseline.value)) {
       return {
         summary: `Shrink-only rule: the baseline is the one at the comparison base ${commit}.`,
@@ -1604,7 +2218,7 @@ const checkShrinkOnlyAgainst = (
     }
     // The extracted archive holds exactly the base commit's tree, so every file in it is read.
     const baseGraph = yield* derivePackageGraph(tree, filesOnDisk);
-    const violations = baseline.flatMap((entry): readonly LeanCoreDependencyViolation[] => {
+    const edgeViolations = baseline.edges.flatMap((entry): readonly LeanCoreDependencyViolation[] => {
       const edge = baseGraph.edges.get(edgeKey(entry.from, entry.to));
       if (edge === undefined) {
         return [
@@ -1621,9 +2235,12 @@ const checkShrinkOnlyAgainst = (
             ),
           ];
     });
-    const baseState = Option.isSome(baseBaseline) ? 'a different baseline' : 'no baseline';
+    const violations = [...edgeViolations, ...grownComputedLoads(commit, baseGraph, baseline.computedLoads)];
+    const baseState = Option.isSome(baseBaseline) ? 'a different baseline' : 'no baseline it reads';
     const outcome =
-      violations.length === 0 ? 'holds every baseline entry with the same or a wider class' : 'lacks what follows';
+      violations.length === 0
+        ? 'holds every edge entry with the same or a wider class and at least every computed-load count'
+        : 'lacks what follows';
     return {
       summary: `Shrink-only rule: the comparison base ${commit} has ${baseState}, so its tree was derived and ${outcome}.`,
       violations,
@@ -1637,7 +2254,7 @@ const checkShrinkOnlyAgainst = (
 const checkShrinkOnly = (
   root: string,
   base: string,
-  baseline: readonly ModuleEdgeBaselineEntry[],
+  baseline: ModuleEdgeBaseline,
 ): Effect.Effect<ShrinkOnlyResult, never, CheckServices> =>
   Effect.scoped(
     Effect.gen(function* checkShrinkOnlyProgram() {
@@ -1718,11 +2335,62 @@ const runtimeCycleGroups = (graph: PackageGraph): readonly (readonly string[])[]
 };
 
 export interface ModuleEdgeFreezeReport {
+  readonly computedLoadCounts: { readonly files: number; readonly loads: number };
   readonly cycleGroups: readonly (readonly string[])[];
   readonly frozenEdgeCounts: Readonly<Record<EdgeClass, number>>;
   readonly shrinkOnly: string;
   readonly violations: readonly LeanCoreDependencyViolation[];
 }
+
+const computedLoadGuidance =
+  'a load whose target the check cannot read can add a package edge nobody sees, so write a static import or a literal import() instead';
+
+const describeLines = (file: string, lines: readonly number[]): string =>
+  `${file}:${lines.join(',')} (${lines.length} computed load${lines.length === 1 ? '' : 's'})`;
+
+/** Rules 1 to 4 for computed loads: the sorted section lists each file of the tree with its exact count. */
+const computedLoadViolations = (
+  graph: PackageGraph,
+  entries: readonly ComputedLoadBaselineEntry[],
+): readonly LeanCoreDependencyViolation[] => {
+  const violations: LeanCoreDependencyViolation[] = [];
+  const unordered = entries.findIndex((entry, index) => {
+    const previous = entries[index - 1];
+    return previous !== undefined && ComputedLoadEntryOrder(previous, entry) !== -1;
+  });
+  if (unordered !== -1) {
+    violations.push(
+      baselineViolation(
+        `Computed-load entry ${unordered + 1} is out of order or repeats a file: entries are sorted by file, one per file`,
+      ),
+    );
+  }
+  const listed = new Map(entries.map((entry) => [entry.file, entry.count] as const));
+  for (const [file, lines] of graph.computedLoads) {
+    const count = listed.get(file);
+    if (count === undefined || count < lines.length) {
+      const listedAs = count === undefined ? 'does not list it' : `counts ${count}`;
+      violations.push({
+        file,
+        line: lines[0] ?? 1,
+        reason: `A module or package source makes a computed load unless ${moduleEdgeBaselineRelative} counts it: ${describeLines(file, lines)}, and the baseline ${listedAs}; ${computedLoadGuidance}`,
+      });
+    }
+  }
+  for (const entry of entries) {
+    const count = graph.computedLoads.get(entry.file)?.length ?? 0;
+    if (count < entry.count) {
+      violations.push(
+        baselineViolation(
+          count === 0
+            ? `Computed-load entry ${entry.file} (${entry.count}) names a file without computed loads: remove it`
+            : `Computed-load entry ${entry.file} counts ${entry.count}, but the tree has ${count}: change its count to ${count}`,
+        ),
+      );
+    }
+  }
+  return violations;
+};
 
 /** Rules 1 to 4 against the tree at root, and rule 5 when the run's comparison base is given. */
 export const checkModuleEdgeFreeze = (
@@ -1731,20 +2399,21 @@ export const checkModuleEdgeFreeze = (
 ): Effect.Effect<ModuleEdgeFreezeReport, PlatformError, CheckServices> =>
   Effect.gen(function* checkModuleEdgeFreezeProgram() {
     const graph = yield* derivePackageGraph(root, options.files);
-    const baseline = Option.getOrElse(
-      yield* readModuleEdgeBaseline(root),
-      (): readonly ModuleEdgeBaselineEntry[] => [],
-    );
+    const baseline = Option.getOrElse(yield* readModuleEdgeBaseline(root), (): ModuleEdgeBaseline => ({
+      computedLoads: [],
+      edges: [],
+    }));
+    const { edges } = baseline;
     const frozen = frozenEdges(graph);
-    const listed = new Map(baseline.map((entry) => [edgeKey(entry.from, entry.to), entry] as const));
+    const listed = new Map(edges.map((entry) => [edgeKey(entry.from, entry.to), entry] as const));
     const violations: LeanCoreDependencyViolation[] = graph.unparsable.map((file) => ({
       file,
       line: 1,
       reason: 'Workspace source does not parse, so the package edges it makes are unknown',
     }));
 
-    const unordered = baseline.findIndex((entry, index) => {
-      const previous = baseline[index - 1];
+    const unordered = edges.findIndex((entry, index) => {
+      const previous = edges[index - 1];
       return previous !== undefined && BaselineEntryOrder(previous, entry) !== -1;
     });
     if (unordered !== -1) {
@@ -1769,7 +2438,7 @@ export const checkModuleEdgeFreeze = (
       });
     }
 
-    for (const entry of baseline) {
+    for (const entry of edges) {
       const edge = graph.edges.get(edgeKey(entry.from, entry.to));
       if (edge === undefined || !isFrozenEdge(graph, edge)) {
         violations.push(
@@ -1795,7 +2464,13 @@ export const checkModuleEdgeFreeze = (
           }
         : yield* checkShrinkOnly(root, options.base, baseline);
 
+    violations.push(...computedLoadViolations(graph, baseline.computedLoads));
+
     return {
+      computedLoadCounts: {
+        files: graph.computedLoads.size,
+        loads: [...graph.computedLoads.values()].reduce((total, lines) => total + lines.length, 0),
+      },
       cycleGroups: runtimeCycleGroups(graph),
       frozenEdgeCounts: {
         runtime: frozen.filter((edge) => edge.class === 'runtime').length,
@@ -1816,6 +2491,9 @@ const printModuleEdgeFreeze = (report: ModuleEdgeFreezeReport) =>
     const { runtime, test } = report.frozenEdgeCounts;
     yield* Console.log(
       `Frozen package edges into modules and apps: ${runtime + test} (${runtime} runtime, ${test} test), listed in ${moduleEdgeBaselineRelative}.`,
+    );
+    yield* Console.log(
+      `Frozen computed loads in modules and packages: ${report.computedLoadCounts.loads} in ${report.computedLoadCounts.files} files, counted in ${moduleEdgeBaselineRelative}.`,
     );
     yield* Console.log(`Runtime cycle groups: ${report.cycleGroups.length}`);
     yield* Effect.all(

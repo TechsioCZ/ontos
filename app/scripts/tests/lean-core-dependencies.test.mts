@@ -777,8 +777,10 @@ const freezeWorkspace = {
 
 type FreezeFiles = Readonly<Record<string, string>>;
 
-const freezeBaseline = (entries: readonly { readonly class: string; readonly from: string; readonly to: string }[]) =>
-  ({ [moduleEdgeBaselineRelative]: JSON.stringify(entries) }) as const;
+const freezeBaseline = (
+  edges: readonly { readonly class: string; readonly from: string; readonly to: string }[],
+  computedLoads: readonly { readonly count: number; readonly file: string }[] = [],
+) => ({ [moduleEdgeBaselineRelative]: JSON.stringify({ computedLoads, edges }) }) as const;
 
 const alphaToBeta = { class: 'runtime', from: alphaModule, to: betaModule } as const;
 const alphaToShell = { class: 'runtime', from: alphaModule, to: 'apps/shell' } as const;
@@ -1010,7 +1012,7 @@ it.live('admits a first baseline against a base without one only when the base t
     const report = yield* freezeReport(admitted.root, admitted.baseCommit);
     expect(report.violations).toEqual([]);
     expect(report.shrinkOnly).toBe(
-      `Shrink-only rule: the comparison base ${admitted.baseCommit} has no baseline, so its tree was derived and holds every baseline entry with the same or a wider class.`,
+      `Shrink-only rule: the comparison base ${admitted.baseCommit} has no baseline it reads, so its tree was derived and holds every edge entry with the same or a wider class and at least every computed-load count.`,
     );
     const refused = yield* comparisonRepository(betaImport, {
       ...shellImport,
@@ -1024,6 +1026,7 @@ it.live('admits a first baseline against a base without one only when the base t
 
 const betaRuntimeEdge = (made: string) => [unlisted(moduleToModule, alphaToBetaEdge, 'runtime', made)];
 const createRequireImport = "import { createRequire } from 'node:module';\n";
+const renamedCreateRequireImport = "import { createRequire as make } from 'node:module';\n";
 
 /** Each form a source can name a package with, the module file that uses it, and the line that names it. */
 const referenceForms: readonly (readonly [form: string, file: string, source: string, line: number])[] = [
@@ -1049,6 +1052,30 @@ const referenceForms: readonly (readonly [form: string, file: string, source: st
     'src/beta-load.ts',
     `${createRequireImport}const load = createRequire(import.meta.url);\nexport const beta = load('@app/beta');\n`,
     3,
+  ],
+  [
+    'a call of createRequire imported under another name',
+    'src/beta-make.ts',
+    `${renamedCreateRequireImport}export const beta = make(import.meta.url)('@app/beta');\n`,
+    2,
+  ],
+  [
+    'a binding of createRequire imported under another name',
+    'src/beta-make-load.ts',
+    `${renamedCreateRequireImport}const load = make(import.meta.url);\nexport const beta = load('@app/beta');\n`,
+    3,
+  ],
+  [
+    'createRequire of a node:module namespace',
+    'src/beta-namespace.ts',
+    "import * as nodeModule from 'node:module';\nexport const beta = nodeModule.createRequire(import.meta.url)('@app/beta');\n",
+    2,
+  ],
+  [
+    'createRequire required from node:module under another name',
+    'src/beta-required-make.cjs',
+    "const { createRequire: make } = require('node:module');\nmodule.exports = make(__filename)('@app/beta');\n",
+    2,
   ],
   ['import.meta.resolve', 'src/beta-meta-resolve.ts', "export const beta = import.meta.resolve('@app/beta');\n", 1],
   ['a reference types directive', 'src/beta-types.d.ts', '/// <reference types="@app/beta" />\n', 1],
@@ -1152,6 +1179,195 @@ it.live('resolves a package imports entry to every target it maps a # specifier 
           "import { beta } from '#beta';\nimport { peer } from '#peer/index';\nimport { own } from '#own';\n",
       }),
     ).toEqual([unlisted(moduleToModule, alphaToBetaEdge, 'runtime', `${subpathFile}:1,2`, `${subpathFile}:1`)]);
+  }),
+);
+
+/** The violation of a module or package source whose computed loads the baseline does not count in full. */
+const computedLoad = (file: string, lines: readonly number[], listedAs = 'does not list it') =>
+  `${file}:${lines[0]}: A module or package source makes a computed load unless ${moduleEdgeBaselineRelative} counts it: ${file}:${lines.join(',')} (${lines.length} computed load${lines.length === 1 ? '' : 's'}), and the baseline ${listedAs}; a load whose target the check cannot read can add a package edge nobody sees, so write a static import or a literal import() instead`;
+const betaTarget = "const target = '@app/beta';\n";
+
+/** Each use of a loader capability whose target the check cannot read, the file, and the line of the use. */
+const computedLoadForms: readonly (readonly [form: string, file: string, source: string, line: number])[] = [
+  ['a non-literal import()', 'src/import-target.ts', `${betaTarget}export const beta = await import(target);\n`, 2],
+  ['require of a variable', 'src/require-target.ts', `${betaTarget}export const beta = require(target);\n`, 2],
+  [
+    'module.require of a variable',
+    'src/module-require-target.cjs',
+    `${betaTarget}module.exports = module.require(target);\n`,
+    2,
+  ],
+  [
+    'import.meta.resolve of a variable',
+    'src/meta-resolve-target.ts',
+    `${betaTarget}export const beta = import.meta.resolve(target);\n`,
+    2,
+  ],
+  [
+    'a loader assigned to a binding later',
+    'src/assigned-loader.ts',
+    `${createRequireImport}let load;\nload = createRequire(import.meta.url);\nexport const beta = load('@app/beta');\n`,
+    3,
+  ],
+  [
+    'a member destructured from a loader',
+    'src/destructured-loader.ts',
+    `${createRequireImport}const { resolve } = createRequire(import.meta.url);\nexport const beta = resolve('@app/beta');\n`,
+    2,
+  ],
+  [
+    'a loader called through a sequence',
+    'src/sequence-loader.ts',
+    "export const beta = (0, require)('@app/beta');\n",
+    1,
+  ],
+  ['a loader stored in an object', 'src/stored-loader.ts', 'export const loaders = { load: require };\n', 1],
+  [
+    'a renamed loader in a shape the check does not resolve',
+    'src/renamed-loader.ts',
+    `${renamedCreateRequireImport}const load = make(import.meta.url);\nexport const beta = [load][0]?.('@app/beta');\n`,
+    3,
+  ],
+  [
+    'a loader its file exports',
+    'src/exported-loader.ts',
+    `${createRequireImport}export const load = createRequire(import.meta.url);\n`,
+    2,
+  ],
+  [
+    'a loader installed as a global',
+    'src/global-loader.ts',
+    `${createRequireImport}Object.assign(globalThis, { require: createRequire(import.meta.url) });\n`,
+    2,
+  ],
+  [
+    'another member of node:module',
+    'src/register-hooks.ts',
+    "import { register } from 'node:module';\nregister('./hooks.mjs', import.meta.url);\n",
+    2,
+  ],
+  ['a re-export of node:module', 'src/re-export.ts', "export { createRequire } from 'node:module';\n", 1],
+];
+
+for (const [form, relative, source, line] of computedLoadForms) {
+  it.live(`freezes ${form} as a computed load`, () =>
+    Effect.gen(function* computedLoadForm() {
+      const file = `${alphaModule}/${relative}`;
+      expect(yield* freezeViolations({ [file]: source })).toEqual([computedLoad(file, [line])]);
+      expect(yield* freezeViolations({ [file]: source, ...freezeBaseline([], [{ count: 1, file }]) })).toEqual([]);
+    }),
+  );
+}
+
+const loaderFile = 'verticals/alpha/src/loader.ts';
+const againFile = 'verticals/alpha/src/again.ts';
+const twoLoads = {
+  [loaderFile]: `${betaTarget}export const first = await import(target);\nexport const second = await import(target);\n`,
+} as const;
+const oneLoad = { [loaderFile]: `${betaTarget}export const first = await import(target);\n` } as const;
+
+it.live('holds the tree to the exact computed-load counts of a sorted baseline section', () =>
+  Effect.gen(function* computedLoadCounts() {
+    expect(yield* freezeViolations({ ...twoLoads, ...freezeBaseline([], [{ count: 2, file: loaderFile }]) })).toEqual(
+      [],
+    );
+    expect(yield* freezeViolations({ ...twoLoads, ...freezeBaseline([], [{ count: 1, file: loaderFile }]) })).toEqual([
+      computedLoad(loaderFile, [2, 3], 'counts 1'),
+    ]);
+    expect(yield* freezeViolations({ ...twoLoads, ...freezeBaseline([], [{ count: 3, file: loaderFile }]) })).toEqual([
+      baselineFile(`Computed-load entry ${loaderFile} counts 3, but the tree has 2: change its count to 2`),
+    ]);
+    expect(yield* freezeViolations(freezeBaseline([], [{ count: 1, file: loaderFile }]))).toEqual([
+      baselineFile(`Computed-load entry ${loaderFile} (1) names a file without computed loads: remove it`),
+    ]);
+    const both = { ...twoLoads, [againFile]: 'export const again = await import(String(1));\n' };
+    expect(
+      yield* freezeViolations({
+        ...both,
+        ...freezeBaseline(
+          [],
+          [
+            { count: 2, file: loaderFile },
+            { count: 1, file: againFile },
+          ],
+        ),
+      }),
+    ).toEqual([
+      baselineFile('Computed-load entry 2 is out of order or repeats a file: entries are sorted by file, one per file'),
+    ]);
+  }),
+);
+
+it.live('counts the computed loads of modules and packages, and none of an app, which may take any edge', () =>
+  Effect.gen(function* computedLoadOwners() {
+    const packageLoad = 'packages/contracts/src/load.ts';
+    expect(
+      yield* freezeViolations({
+        'apps/shell/src/load.ts': "const target = '@app/alpha';\nexport const alpha = await import(target);\n",
+        [packageLoad]: "const target = '@app/alpha';\nexport const alpha = await import(target);\n",
+      }),
+    ).toEqual([computedLoad(packageLoad, [2])]);
+  }),
+);
+
+it.live('fails a head baseline that counts more computed loads than its file makes at the comparison base', () =>
+  Effect.gen(function* computedLoadsAgainstBase() {
+    const entered = yield* comparisonRepository(freezeBaseline([]), {
+      ...twoLoads,
+      ...freezeBaseline([], [{ count: 2, file: loaderFile }]),
+    });
+    expect(yield* reportedViolations(entered.root)).toEqual([]);
+    expect(yield* reportedViolations(entered.root, entered.baseCommit)).toEqual([
+      baselineFile(
+        `Computed-load entry ${loaderFile} (2) names a file without computed loads at the comparison base ${entered.baseCommit}: the baseline only shrinks, so no computed load enters it`,
+      ),
+    ]);
+    const grown = yield* comparisonRepository(
+      { ...oneLoad, ...freezeBaseline([], [{ count: 1, file: loaderFile }]) },
+      { ...twoLoads, ...freezeBaseline([], [{ count: 2, file: loaderFile }]) },
+    );
+    expect(yield* reportedViolations(grown.root, grown.baseCommit)).toEqual([
+      baselineFile(
+        `Computed-load entry ${loaderFile} counts 2, but the comparison base ${grown.baseCommit} has 1: the baseline only shrinks, so no count grows`,
+      ),
+    ]);
+    const shrunk = yield* comparisonRepository(
+      { ...twoLoads, ...freezeBaseline([], [{ count: 2, file: loaderFile }]) },
+      { ...oneLoad, ...freezeBaseline([], [{ count: 1, file: loaderFile }]) },
+    );
+    expect(yield* reportedViolations(shrunk.root, shrunk.baseCommit)).toEqual([]);
+  }),
+);
+
+it.live('takes neither a require member of another object nor a local binding named require for a loader', () =>
+  Effect.gen(function* unrelatedRequire() {
+    expect(
+      yield* freezeViolations({
+        'verticals/alpha/src/store.ts': `${betaTarget}const store = { require: (name: string) => name };\nexport const beta = store.require('@app/beta');\nexport const local = (require: (name: string) => string) => require(target);\n`,
+      }),
+    ).toEqual([]);
+  }),
+);
+
+it.live('attributes a bare literal of a loader from another base by name, and counts a relative one as computed', () =>
+  Effect.gen(function* foreignBase() {
+    const foreign = 'verticals/alpha/src/foreign.ts';
+    expect(
+      yield* freezeViolations({
+        [foreign]: `${createRequireImport}const load = createRequire(new URL('../../beta/package.json', import.meta.url));\nexport const beta = load('@app/beta');\nexport const own = load('./src/index.ts');\n`,
+      }),
+    ).toEqual([...betaRuntimeEdge(`${foreign}:3`), computedLoad(foreign, [4])]);
+  }),
+);
+
+it.live('parses a .cjs source as CommonJS, where a top-level return is valid', () =>
+  Effect.gen(function* commonJsReturn() {
+    const early = 'verticals/alpha/src/early.cjs';
+    expect(
+      yield* freezeViolations({
+        [early]: "if (process.env.SKIP_BETA === '1') {\n  return;\n}\nmodule.exports = require('@app/beta');\n",
+      }),
+    ).toEqual(betaRuntimeEdge(`${early}:4`));
   }),
 );
 
