@@ -12,7 +12,7 @@ import {
   PriceDefinitionPolicyConflictProblemSchema,
   PriceDefinitionPolicyProblemSchema,
   PriceDefinitionUnavailableProblemSchema,
-} from '../shared/apis/price-definition.ts';
+} from '@app/pricing-contracts/price-definition';
 import { priceDefinitionRead } from '../src/api/price-definition.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

@@ -9,8 +9,8 @@ import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import {
   FinalCartCandidateMaterialSchema,
   FinalCartCandidateSchema,
-} from '@app/commerce-cart-finalization-contracts/final-candidate';
-import type { FinalCartCandidateRequest } from '@app/commerce-cart-finalization-contracts/final-candidate';
+} from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
+import type { FinalCartCandidateRequest } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Option, Schema } from 'effect';

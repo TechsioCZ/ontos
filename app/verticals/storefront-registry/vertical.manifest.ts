@@ -4,11 +4,11 @@
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
-import { CurrentStorefrontApplicationApi } from './shared/apis/current-storefront-application.ts';
+import { CurrentStorefrontApplicationApi } from '@app/storefront-registry-contracts/current-storefront-application';
 import { registerStorefrontApplicationAction } from './src/actions/register-storefront-application.action.ts';
 import { reviseStorefrontApplicationAction } from './src/actions/revise-storefront-application.action.ts';
 import { storefrontApplicationResourceDescriptor } from './shared/resources/storefront-application.ts';
-import { VerifyCurrentStorefrontApplicationV1Api } from './shared/apis/verify-current-storefront-application-v1.ts';
+import { VerifyCurrentStorefrontApplicationV1Api } from '@app/storefront-registry-contracts/verify-current-storefront-application-v1';
 import { currentStorefrontApplicationRead } from './src/api/current-storefront-application.read.ts';
 // </generated-module-manifest-imports>
 

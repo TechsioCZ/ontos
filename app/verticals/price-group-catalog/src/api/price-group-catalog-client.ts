@@ -25,29 +25,29 @@ export * from './retire-price-group-action-client.ts';
 export {
   executePriceGroupDefinition,
   executePriceGroupDefinitionWithAuthorization,
-} from './price-group-definition-client.ts';
-export type { PriceGroupDefinitionClientOptions } from './price-group-definition-client.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition/client';
+export type { PriceGroupDefinitionClientOptions } from '@app/price-group-catalog-contracts/price-group-definition/client';
 export {
   executeValidatePriceGroupCompatibility,
   executeValidatePriceGroupCompatibilityWithAuthorization,
-} from './validate-price-group-compatibility-client.ts';
-export type { ValidatePriceGroupCompatibilityClientOptions } from './validate-price-group-compatibility-client.ts';
+} from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
+export type { ValidatePriceGroupCompatibilityClientOptions } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
 export {
   PriceGroupDefinitionRequestSchema,
   PriceGroupDefinitionResponseSchema,
-} from '../../shared/apis/price-group-definition.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 export {
   ValidatePriceGroupCompatibilityRequestSchema,
   ValidatePriceGroupCompatibilityResponseSchema,
-} from '../../shared/apis/validate-price-group-compatibility.ts';
+} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 export type {
   PriceGroupDefinitionRequest,
   PriceGroupDefinitionResponse,
-} from '../../shared/apis/price-group-definition.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 export type {
   ValidatePriceGroupCompatibilityRequest,
   ValidatePriceGroupCompatibilityResponse,
-} from '../../shared/apis/validate-price-group-compatibility.ts';
+} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 
 type PriceGroupCatalogApiGroups =
   typeof priceGroupCatalogApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;

@@ -5,8 +5,8 @@ import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 import {
   CurrentPaymentTermsRequestSchema,
   CurrentPaymentTermsResponseSchema,
-} from '../../shared/apis/current-payment-terms.ts';
-import type { CurrentPaymentTermsRequest } from '../../shared/apis/current-payment-terms.ts';
+} from '@app/payment-term-catalog-contracts/current-payment-terms';
+import type { CurrentPaymentTermsRequest } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import type { PaymentTermReferenceResolution } from '../../shared/domain/payment-term-reference.ts';
 import type { PaymentTermRef } from '../../shared/resources/payment-term.ts';
 import type {

@@ -12,7 +12,7 @@ import {
   VerifyCurrentStorefrontApplicationV1PolicyConflictProblemSchema,
   VerifyCurrentStorefrontApplicationV1PolicyProblemSchema,
   VerifyCurrentStorefrontApplicationV1UnavailableProblemSchema,
-} from '../shared/apis/verify-current-storefront-application-v1.ts';
+} from '@app/storefront-registry-contracts/verify-current-storefront-application-v1';
 import { verifyCurrentStorefrontApplicationV1Read } from '../src/api/verify-current-storefront-application-v1.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

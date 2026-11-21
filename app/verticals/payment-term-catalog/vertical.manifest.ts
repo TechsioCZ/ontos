@@ -8,7 +8,7 @@ import { acceptPaymentTermSourceStatementAction } from './src/actions/accept-pay
 import { configurePaymentTermSourceAuthorityAction } from './src/actions/configure-payment-term-source-authority.action.ts';
 import { correctPaymentTermAction } from './src/actions/correct-payment-term.action.ts';
 import { createPaymentTermAction } from './src/actions/create-payment-term.action.ts';
-import { CurrentPaymentTermsApi } from './shared/apis/current-payment-terms.ts';
+import { CurrentPaymentTermsApi } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import { paymentTermCatalogRootResourceDescriptor } from './shared/resources/payment-term-catalog-root.ts';
 import { PaymentTermHistoryApi } from './shared/apis/payment-term-history.ts';
 import { paymentTermResourceDescriptor } from './shared/resources/payment-term.ts';

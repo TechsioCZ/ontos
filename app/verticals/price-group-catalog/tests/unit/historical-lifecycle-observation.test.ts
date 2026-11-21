@@ -2,7 +2,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
-import { PriceGroupDefinitionResponseSchema } from '../../shared/apis/price-group-definition.ts';
+import { PriceGroupDefinitionResponseSchema } from '@app/price-group-catalog-contracts/price-group-definition';
 import { PriceGroupDefinitionRevisionSchema, PriceGroupIdentitySchema } from '../../shared/domain/price-group.ts';
 import { readPriceGroupDefinition } from '../../src/api/price-group-definition.read.ts';
 import type { PriceGroupCatalogPersistence } from '../../src/persistence/price-group-catalog-persistence.ts';

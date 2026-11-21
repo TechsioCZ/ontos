@@ -11,8 +11,8 @@ import { DateTime, Effect, Schema } from 'effect';
 import {
   ValidatePriceGroupCompatibilityRequestSchema,
   ValidatePriceGroupCompatibilityResponseSchema,
-} from '../../shared/apis/validate-price-group-compatibility.ts';
-import type { ValidatePriceGroupCompatibilityRequest } from '../../shared/apis/validate-price-group-compatibility.ts';
+} from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
+import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import {
   PriceGroupCurrentnessFailure,
   PriceGroupExpectedCurrentConflict,

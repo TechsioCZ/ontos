@@ -5,7 +5,7 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Schema } from 'effect';
 import type { PriceGroupDefinitionDomainError } from '../src/api/price-group-definition.read.ts';
 import { priceGroupCatalogApi } from '../shared/api.ts';
-import type { PriceGroupDefinitionDomainUnavailableProblem } from '../shared/apis/price-group-definition.ts';
+import type { PriceGroupDefinitionDomainUnavailableProblem } from '@app/price-group-catalog-contracts/price-group-definition';
 import {
   PriceGroupDefinitionAuthenticationProblemSchema,
   PriceGroupDefinitionDomainUnavailableProblemSchema,
@@ -16,7 +16,7 @@ import {
   PriceGroupDefinitionPolicyConflictProblemSchema,
   PriceGroupDefinitionPolicyProblemSchema,
   PriceGroupDefinitionUnavailableProblemSchema,
-} from '../shared/apis/price-group-definition.ts';
+} from '@app/price-group-catalog-contracts/price-group-definition';
 import { PriceGroupCurrentnessFailure } from '../shared/domain/price-group-errors.ts';
 import { priceGroupDefinitionRead } from '../src/api/price-group-definition.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
