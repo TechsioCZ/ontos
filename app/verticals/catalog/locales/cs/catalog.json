@@ -35,7 +35,7 @@
         "noName": "Bez názvu v tomto jazyce",
         "showVariants": "Zobrazit varianty",
         "hideVariants": "Skrýt varianty",
-        "range": "{{from}}–{{to}} z {{count}}",
+        "range": "{{from}}–{{to}} z {{total}}",
         "rangeEmpty": "0 produktů",
         "previous": "Předchozí",
         "next": "Další",

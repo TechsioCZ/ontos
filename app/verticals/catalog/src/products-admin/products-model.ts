@@ -207,12 +207,10 @@ export const pricesRequestOf = (offer: ErpOffer, item: PageProduct) => ({
   marketId: offer.marketId,
 });
 
-const numberLocale = (language: string) => (language === 'en' ? 'en-GB' : 'cs-CZ');
-
-/** A decimal Price amount as money in the page language: `1234.5`, `CZK` → `1 234,50 Kč`. */
+/** A decimal Price amount as money in the page language (a BCP 47 tag): `1234.5`, `CZK` → `1 234,50 Kč`. */
 export const formatPrice = (amount: string, currencyCode: string, language: string): string =>
-  new Intl.NumberFormat(numberLocale(language), { currency: currencyCode, style: 'currency' }).format(Number(amount));
+  new Intl.NumberFormat(language, { currency: currencyCode, style: 'currency' }).format(Number(amount));
 
 /** A stock figure in the page language: `1234.5` → `1 234,5`. */
 export const formatQuantity = (quantity: string, language: string): string =>
-  new Intl.NumberFormat(numberLocale(language), { maximumFractionDigits: 3 }).format(Number(quantity));
+  new Intl.NumberFormat(language, { maximumFractionDigits: 3 }).format(Number(quantity));
