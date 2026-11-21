@@ -6,6 +6,7 @@ import {
   priceGroupTemporalSocketEnvironment,
   PriceGroupTemporalResponseSchema,
   PriceGroupTemporalBootstrapSchema,
+  encodePriceGroupTemporalBootstrap,
   PriceGroupOwnedDatabaseCertificateSchema,
   guardPriceGroupOwnedDatabase,
   guardPriceGroupPreparedArtifact,
@@ -416,7 +417,7 @@ const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startR
         ),
       ),
     );
-  yield* send(yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(bootstrap));
+  yield* send(yield* encodePriceGroupTemporalBootstrap(channel.socketPath, bootstrap));
   const schemasReady = yield* receive;
   yield* requireCondition(schemasReady.type === 'SCHEMAS_READY', 'owner-schemas-ready');
   const partyRuntimeBootstrap = yield* prepareDedicatedIdentities(bootstrap);

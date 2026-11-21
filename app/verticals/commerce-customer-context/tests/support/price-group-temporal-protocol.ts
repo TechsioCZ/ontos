@@ -24,6 +24,7 @@ import {
   PrivateFixtureCompositionReferenceSchema,
   makeApplicationCompositionSnapshotFixture,
   makeOwnerApplicationCompositionFixture,
+  writePrivateFixtureComposition,
 } from '@app/core-runtime/testing/module-contract';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
@@ -127,6 +128,14 @@ export const PriceGroupTemporalWireBootstrapSchema = Schema.Struct({
   ...PriceGroupTemporalBootstrapSchema.fields,
   composition: PrivateFixtureCompositionReferenceSchema,
 }).annotate(strict);
+export const encodePriceGroupTemporalBootstrap = Effect.fn('TemporalNative.encodeBootstrap')(function*  encodePriceGroupTemporalBootstrap(
+  socketPath: string,
+  bootstrap: typeof PriceGroupTemporalBootstrapSchema.Type,
+) {
+  const composition = yield* writePrivateFixtureComposition(socketPath, bootstrap.composition);
+  return yield* Schema.encodeEffect(PriceGroupTemporalWireBootstrapSchema)({ ...bootstrap, composition });
+});
+
 export const PriceGroupTemporalResponseSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal('SCHEMAS_READY'),

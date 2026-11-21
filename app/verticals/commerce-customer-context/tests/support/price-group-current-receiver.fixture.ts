@@ -129,6 +129,7 @@ import {
   PriceGroupOwnedDatabaseCertificateSchema,
   PriceGroupTemporalResponseSchema,
   PriceGroupTemporalWireBootstrapSchema,
+  encodePriceGroupTemporalBootstrap,
   guardPriceGroupOwnedDatabase,
   guardPriceGroupPreparedArtifact,
   guardPriceGroupTemporalSocketPath,
@@ -147,10 +148,7 @@ import {
   requireCondition,
 } from './price-group-temporal-protocol.ts';
 import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
-import {
-  readPrivateFixtureComposition,
-  writePrivateFixtureComposition,
-} from '@app/core-runtime/testing/module-contract';
+import { readPrivateFixtureComposition } from '@app/core-runtime/testing/module-contract';
 
 const RequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PriceGroupTemporalRequestId'),
@@ -852,10 +850,7 @@ const startCatalog = Effect.fn('PriceGroupTemporal.startCatalog')(function* star
   const send = (command: Schema.Json) =>
     Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(command).pipe(Effect.flatMap(channel.send));
   const { legalEntityId: _selectedLegalEntity, ...tenantActor } = bootstrap.actor;
-  const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalWireBootstrapSchema)({
-    ...bootstrap,
-    composition: yield* writePrivateFixtureComposition(channel.socketPath, bootstrap.composition),
-  });
+  const encodedBootstrap = yield* encodePriceGroupTemporalBootstrap(channel.socketPath, bootstrap);
   const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
     actor: tenantActor,
     composition: encodedBootstrap.composition,

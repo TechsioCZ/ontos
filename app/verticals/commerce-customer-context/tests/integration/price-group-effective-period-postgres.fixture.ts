@@ -12,7 +12,7 @@ import {
   priceGroupTemporalSocketEnvironment,
   PriceGroupOwnedDatabaseCertificateSchema,
   PriceGroupTemporalBootstrapSchema,
-  PriceGroupTemporalWireBootstrapSchema,
+  encodePriceGroupTemporalBootstrap,
   PriceGroupTemporalResponseSchema,
   guardPriceGroupOwnedDatabase,
   priceGroupTemporalClosedEnvironment,
@@ -571,8 +571,7 @@ const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startR
         ),
       ),
     );
-  const composition = yield* writePrivateFixtureComposition(channel.socketPath, bootstrap.composition);
-  yield* send(yield* Schema.encodeEffect(PriceGroupTemporalWireBootstrapSchema)({ ...bootstrap, composition }));
+  yield* send(yield* encodePriceGroupTemporalBootstrap(channel.socketPath, bootstrap));
   yield* diagnosticStage('P_BOOTSTRAP_SENT');
   const schemasReady = yield* receive;
   yield* requireCondition(schemasReady.type === 'SCHEMAS_READY', 'owner-schemas-ready');
