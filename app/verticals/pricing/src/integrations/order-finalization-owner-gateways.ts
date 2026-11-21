@@ -3,8 +3,8 @@ import { readVerifiedGatewayActor } from '@app/core-runtime';
 import {
   FinalCartCandidateRefSchema,
   FinalCartCandidateRequestSchema,
-} from '@app/commerce-cart-finalization-contracts/final-candidate';
-import { executeFinalCartCandidateWithAuthorization } from '@app/commerce-cart-finalization-contracts/final-candidate/client';
+} from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
+import { executeFinalCartCandidateWithAuthorization } from '@app/commerce-cart-finalization-contracts/final-cart-candidate/client';
 import { executePreparedOrderPricingBindingWithAuthorization } from '@app/commerce-order-contracts/prepared-order-pricing-binding/client';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingCommitmentConfirmationBindingSchema } from '@app/pricing-contracts/domain/commitment-confirmation';

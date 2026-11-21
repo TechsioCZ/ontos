@@ -19,7 +19,7 @@ export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
 export {
   executeCurrentStorefrontApplication,
   executeCurrentStorefrontApplicationWithAuthorization,
-} from './current-storefront-application-client.ts';
+} from '@app/storefront-registry-contracts/current-storefront-application/client';
 
 type StorefrontRegistryApiGroups =
   typeof storefrontRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;

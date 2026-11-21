@@ -12,7 +12,7 @@ import {
   PreparedOrderPricingBindingPolicyConflictProblemSchema,
   PreparedOrderPricingBindingPolicyProblemSchema,
   PreparedOrderPricingBindingUnavailableProblemSchema,
-} from '../shared/apis/prepared-order-pricing-binding.ts';
+} from '@app/commerce-order-contracts/prepared-order-pricing-binding';
 import { preparedOrderPricingBindingRead } from '../src/api/prepared-order-pricing-binding.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

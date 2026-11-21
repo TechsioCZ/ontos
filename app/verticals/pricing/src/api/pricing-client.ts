@@ -28,8 +28,8 @@ export * from './set-supported-currencies-action-client.ts';
 export {
   executeCurrentSupportedCurrencies,
   executeCurrentSupportedCurrenciesWithAuthorization,
-} from './current-supported-currencies-client.ts';
-export type { CurrentSupportedCurrenciesClientOptions } from './current-supported-currencies-client.ts';
+} from '@app/pricing-contracts/current-supported-currencies/client';
+export type { CurrentSupportedCurrenciesClientOptions } from '@app/pricing-contracts/current-supported-currencies/client';
 export {
   executeCommercialFeeDefinition,
   executeCommercialFeeDefinitionWithAuthorization,
@@ -48,10 +48,13 @@ export type {
   CommercialFeeDefinitionRequest,
   CommercialFeeDefinitionResponse,
 } from '../../shared/apis/commercial-fee-definition.ts';
-export { executePriceDefinition, executePriceDefinitionWithAuthorization } from './price-definition-client.ts';
-export type { PriceDefinitionClientOptions } from './price-definition-client.ts';
-export { PriceDefinitionRequestSchema, PriceDefinitionResponseSchema } from '../../shared/apis/price-definition.ts';
-export type { PriceDefinitionRequest, PriceDefinitionResponse } from '../../shared/apis/price-definition.ts';
+export {
+  executePriceDefinition,
+  executePriceDefinitionWithAuthorization,
+} from '@app/pricing-contracts/price-definition/client';
+export type { PriceDefinitionClientOptions } from '@app/pricing-contracts/price-definition/client';
+export { PriceDefinitionRequestSchema, PriceDefinitionResponseSchema } from '@app/pricing-contracts/price-definition';
+export type { PriceDefinitionRequest, PriceDefinitionResponse } from '@app/pricing-contracts/price-definition';
 export {
   executeCommercialFeeSchedule,
   executeCommercialFeeScheduleWithAuthorization,
@@ -78,8 +81,8 @@ export type { CurrencySupportResultLookupClientOptions } from './currency-suppor
 export {
   executeCurrentPricingDecision,
   executeCurrentPricingDecisionWithAuthorization,
-} from './current-pricing-decision-client.ts';
-export type { CurrentPricingDecisionClientOptions } from './current-pricing-decision-client.ts';
+} from '@app/pricing-contracts/current-pricing-decision/client';
+export type { CurrentPricingDecisionClientOptions } from '@app/pricing-contracts/current-pricing-decision/client';
 export { executePriceResultLookup, executePriceResultLookupWithAuthorization } from './price-result-lookup-client.ts';
 export type { PriceResultLookupClientOptions } from './price-result-lookup-client.ts';
 export { executePriceSchedule, executePriceScheduleWithAuthorization } from './price-schedule-client.ts';

@@ -6,12 +6,12 @@ import { Clock, DateTime, Effect, Option } from 'effect';
 import {
   MarketSubjectRestrictionsCurrentRequestSchema,
   MarketSubjectRestrictionsCurrentResponseSchema,
-} from '../../shared/apis/market-subject-restrictions-current.ts';
+} from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import type {
   MarketRestrictionSubject,
   MarketSubjectRestrictionsCurrentRequest,
   MarketSubjectRestrictionsCurrentResponse,
-} from '../../shared/apis/market-subject-restrictions-current.ts';
+} from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import type { CommerceCustomerProfileState } from '../../shared/domain/profile-contracts.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
 import { restrictionSubjectOwnerFacts } from './read-owner-facts.ts';

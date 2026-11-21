@@ -12,7 +12,7 @@ import {
   CurrentStorefrontApplicationPolicyConflictProblemSchema,
   CurrentStorefrontApplicationPolicyProblemSchema,
   CurrentStorefrontApplicationUnavailableProblemSchema,
-} from '../shared/apis/current-storefront-application.ts';
+} from '@app/storefront-registry-contracts/current-storefront-application';
 import { currentStorefrontApplicationRead } from '../src/api/current-storefront-application.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

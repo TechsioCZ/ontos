@@ -15,7 +15,7 @@ import { readFailure } from './order-commitment-read-support.ts';
 import {
   PreparedOrderApprovalBindingRequestSchema,
   PreparedOrderApprovalBindingResponseSchema,
-} from '../../shared/apis/prepared-order-approval-binding.ts';
+} from '@app/commerce-order-contracts/prepared-order-approval-binding';
 
 const moduleKey = 'commerce.order' as const;
 

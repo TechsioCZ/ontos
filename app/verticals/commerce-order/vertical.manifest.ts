@@ -16,22 +16,22 @@ import { acceptanceBundleResourceDescriptor } from './shared/resources/acceptanc
 import { cancelOrderCommitmentAction } from './src/actions/cancel-order-commitment.action.ts';
 import { commitmentAttemptResourceDescriptor } from './shared/resources/commitment-attempt.ts';
 import { commitOrderAction } from './src/actions/commit-order.action.ts';
-import { CommittedOrderApprovalEvidenceApi } from './shared/apis/committed-order-approval-evidence.ts';
+import { CommittedOrderApprovalEvidenceApi } from '@app/commerce-order-contracts/committed-order-approval-evidence';
 import { completeOrderApprovalConsumptionAction } from './src/actions/complete-order-approval-consumption.action.ts';
 import { completeOrderPreparationAction } from './src/actions/complete-order-preparation.action.ts';
 import { finalizationIntentResourceDescriptor } from './shared/resources/finalization-intent.ts';
 import { OrderCommitmentStateApi } from './shared/apis/order-commitment-state.ts';
 import { OrderFinalizationWorkApi } from './shared/apis/order-finalization-work.ts';
 import { orderResourceDescriptor } from './shared/resources/order.ts';
-import { PreparedOrderApprovalBindingApi } from './shared/apis/prepared-order-approval-binding.ts';
-import { PreparedOrderPricingBindingApi } from './shared/apis/prepared-order-pricing-binding.ts';
+import { PreparedOrderApprovalBindingApi } from '@app/commerce-order-contracts/prepared-order-approval-binding';
+import { PreparedOrderPricingBindingApi } from '@app/commerce-order-contracts/prepared-order-pricing-binding';
 import { prepareOrderCommitmentAction } from './src/actions/prepare-order-commitment.action.ts';
 import { proofRequestResourceDescriptor } from './shared/resources/proof-request.ts';
 import { reconcileOrderApprovalAction } from './src/actions/reconcile-order-approval.action.ts';
 import { recordOrderProofSetAction } from './src/actions/record-order-proof-set.action.ts';
 import { recordPrecommitFailureAction } from './src/actions/record-precommit-failure.action.ts';
 import { revalidateOrderCommitmentAction } from './src/actions/revalidate-order-commitment.action.ts';
-import { VerifyOrderCommitmentBindingApi } from './shared/apis/verify-order-commitment-binding.ts';
+import { VerifyOrderCommitmentBindingApi } from '@app/commerce-order-contracts/verify-order-commitment-binding';
 // </generated-module-manifest-imports>
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;

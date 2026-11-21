@@ -12,7 +12,7 @@ import {
   VerifyOrderCommitmentBindingPolicyConflictProblemSchema,
   VerifyOrderCommitmentBindingPolicyProblemSchema,
   VerifyOrderCommitmentBindingUnavailableProblemSchema,
-} from '../shared/apis/verify-order-commitment-binding.ts';
+} from '@app/commerce-order-contracts/verify-order-commitment-binding';
 import { verifyOrderCommitmentBindingRead } from '../src/api/verify-order-commitment-binding.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

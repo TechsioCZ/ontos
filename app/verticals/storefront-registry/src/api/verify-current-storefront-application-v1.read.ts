@@ -8,7 +8,7 @@ import type {
 import {
   VerifyCurrentStorefrontApplicationV1RequestSchema,
   VerifyCurrentStorefrontApplicationV1ResponseSchema,
-} from '../../shared/apis/verify-current-storefront-application-v1.ts';
+} from '@app/storefront-registry-contracts/verify-current-storefront-application-v1';
 import { Effect } from 'effect';
 import type { CurrentStorefrontApplicationPersistence } from '../persistence/current-storefront-application-persistence.ts';
 import { currentStorefrontApplicationPersistenceForScope } from '../persistence/current-storefront-application-persistence.ts';

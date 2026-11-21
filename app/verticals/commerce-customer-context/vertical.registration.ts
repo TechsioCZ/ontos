@@ -271,18 +271,21 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'guest-attribution-status': () => import('./src/api/guest-attribution-status-client.ts'),
       'guest-payment-terms-resolution': () => import('./src/api/guest-payment-terms-resolution-client.ts'),
       'invoice-recipient-resolution': () => import('./src/api/invoice-recipient-resolution-client.ts'),
-      'market-affected-use-assessment': () => import('./src/api/market-affected-use-assessment-client.ts'),
+      'market-affected-use-assessment': () =>
+        import('@app/customer-market-retirement-contracts/market-affected-use-assessment/client'),
       'market-bootstrap-policy-current': () => import('./src/api/market-bootstrap-policy-current-client.ts'),
       'market-bootstrap-resolution': () => import('./src/api/market-bootstrap-resolution-client.ts'),
       'market-retirement-reservation-recovery': () =>
-        import('./src/api/market-retirement-reservation-recovery-client.ts'),
-      'market-subject-restrictions-current': () => import('./src/api/market-subject-restrictions-current-client.ts'),
+        import('@app/customer-market-retirement-contracts/market-retirement-reservation-recovery/client'),
+      'market-subject-restrictions-current': () =>
+        import('@app/customer-market-retirement-contracts/market-subject-restrictions-current/client'),
       'order-commitment-approval-evidence': () => import('./src/api/order-commitment-approval-evidence-client.ts'),
       'order-service-approval-evidence': () => import('./src/api/order-service-approval-evidence-client.ts'),
       'organization-customer-profile-ico': () => import('./src/api/organization-customer-profile-ico-client.ts'),
       'organization-customer-profile-ico-migration': () =>
         import('./src/api/organization-customer-profile-ico-migration-client.ts'),
-      'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
+      'payment-term-affected-use-assessment': () =>
+        import('@app/customer-payment-term-contracts/payment-term-affected-use-assessment/client'),
       'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
       'pricing-purchase-context-verification': () =>

@@ -10,10 +10,10 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 // <generated-governed-http-api-imports>
 import { CloseCartDraftActionApi } from './apis/close-cart-draft-action.ts';
 import { CreateCartDraftActionApi } from './apis/create-cart-draft-action.ts';
-import { FinalCartCandidateApi } from './apis/final-cart-candidate.ts';
+import { FinalCartCandidateApi } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { FinalizeCartCandidateActionApi } from './apis/finalize-cart-candidate-action.ts';
 import { InitializePopulationAuthorityActionApi } from './apis/initialize-population-authority-action.ts';
-import { OpenSelectionPopulationApi } from './apis/open-selection-population.ts';
+import { OpenSelectionPopulationApi } from '@app/commerce-cart-contracts/open-selection-population';
 import { PreapprovalCartObservationApi } from './apis/preapproval-cart-observation.ts';
 import { ReviseCartDraftActionApi } from './apis/revise-cart-draft-action.ts';
 // </generated-governed-http-api-imports>

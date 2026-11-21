@@ -12,7 +12,7 @@ import { AcceptPaymentTermSourceStatementActionApi } from './apis/accept-payment
 import { ConfigurePaymentTermSourceAuthorityActionApi } from './apis/configure-payment-term-source-authority-action.ts';
 import { CorrectPaymentTermActionApi } from './apis/correct-payment-term-action.ts';
 import { CreatePaymentTermActionApi } from './apis/create-payment-term-action.ts';
-import { CurrentPaymentTermsApi } from './apis/current-payment-terms.ts';
+import { CurrentPaymentTermsApi } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import { PaymentTermHistoryApi } from './apis/payment-term-history.ts';
 import { PaymentTermSourceRecordHistoryApi } from './apis/payment-term-source-record-history.ts';
 import { PaymentTermSourceStatementApi } from './apis/payment-term-source-statement.ts';
@@ -43,7 +43,7 @@ export const paymentTermCatalogFoundationApi = HttpApi.make('PaymentTermCatalogA
   ),
 );
 
-export * from './apis/current-payment-terms.ts';
+export * from '@app/payment-term-catalog-contracts/current-payment-terms';
 export * from './apis/payment-term-history.ts';
 
 export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')

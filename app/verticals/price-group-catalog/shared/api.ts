@@ -11,11 +11,11 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@
 import { CreatePriceGroupActionApi } from './apis/create-price-group-action.ts';
 import { CreatePriceGroupDefinitionRevisionActionApi } from './apis/create-price-group-definition-revision-action.ts';
 import { PriceGroupCatalogHeadApi } from './apis/price-group-catalog-head.ts';
-import { PriceGroupDefinitionApi } from './apis/price-group-definition.ts';
+import { PriceGroupDefinitionApi } from '@app/price-group-catalog-contracts/price-group-definition';
 import { PriceGroupResultLookupApi } from './apis/price-group-result-lookup.ts';
 import { PriceGroupSourceAssociationsApi } from './apis/price-group-source-associations.ts';
 import { RetirePriceGroupActionApi } from './apis/retire-price-group-action.ts';
-import { ValidatePriceGroupCompatibilityApi } from './apis/validate-price-group-compatibility.ts';
+import { ValidatePriceGroupCompatibilityApi } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 // </generated-governed-http-api-imports>
 
 export const priceGroupCatalogMarkerSchema = Schema.Struct({

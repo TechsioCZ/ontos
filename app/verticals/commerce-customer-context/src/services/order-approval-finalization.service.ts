@@ -3,9 +3,9 @@ import {
   loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { executeFinalCartCandidateWithAuthorization } from '@app/commerce-cart-finalization-contracts/final-candidate/client';
-import { FinalCartCandidateSchema } from '@app/commerce-cart-finalization-contracts/final-candidate';
-import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-candidate';
+import { executeFinalCartCandidateWithAuthorization } from '@app/commerce-cart-finalization-contracts/final-cart-candidate/client';
+import { FinalCartCandidateSchema } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
+import type { FinalCartCandidate } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import {
   PreparedOrderApprovalBindingRequestSchema,
   PreparedOrderApprovalBindingResponseSchema,

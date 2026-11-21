@@ -10,4 +10,4 @@ export const FinalizeCartCandidatePayloadSchema = Schema.Struct({
   requestRef: PurchaseApprovalRequestRefSchema,
 });
 export type FinalizeCartCandidatePayload = typeof FinalizeCartCandidatePayloadSchema.Type;
-export { FinalCartCandidateSchema as FinalizeCartCandidateResultSchema } from '@app/commerce-cart-finalization-contracts/final-candidate';
+export { FinalCartCandidateSchema as FinalizeCartCandidateResultSchema } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';

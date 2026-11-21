@@ -18,7 +18,7 @@ import { Effect, Schema } from 'effect';
 import {
   PreparedOrderPricingBindingRequestSchema,
   PreparedOrderPricingBindingResponseSchema,
-} from '../../shared/apis/prepared-order-pricing-binding.ts';
+} from '@app/commerce-order-contracts/prepared-order-pricing-binding';
 
 const moduleKey = 'commerce.order' as const;
 

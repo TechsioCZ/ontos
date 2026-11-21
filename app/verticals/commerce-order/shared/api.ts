@@ -10,19 +10,19 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 // <generated-governed-http-api-imports>
 import { CancelOrderCommitmentActionApi } from './apis/cancel-order-commitment-action.ts';
 import { CommitOrderActionApi } from './apis/commit-order-action.ts';
-import { CommittedOrderApprovalEvidenceApi } from './apis/committed-order-approval-evidence.ts';
+import { CommittedOrderApprovalEvidenceApi } from '@app/commerce-order-contracts/committed-order-approval-evidence';
 import { CompleteOrderApprovalConsumptionActionApi } from './apis/complete-order-approval-consumption-action.ts';
 import { CompleteOrderPreparationActionApi } from './apis/complete-order-preparation-action.ts';
 import { OrderCommitmentStateApi } from './apis/order-commitment-state.ts';
 import { OrderFinalizationWorkApi } from './apis/order-finalization-work.ts';
-import { PreparedOrderApprovalBindingApi } from './apis/prepared-order-approval-binding.ts';
-import { PreparedOrderPricingBindingApi } from './apis/prepared-order-pricing-binding.ts';
+import { PreparedOrderApprovalBindingApi } from '@app/commerce-order-contracts/prepared-order-approval-binding';
+import { PreparedOrderPricingBindingApi } from '@app/commerce-order-contracts/prepared-order-pricing-binding';
 import { PrepareOrderCommitmentActionApi } from './apis/prepare-order-commitment-action.ts';
 import { ReconcileOrderApprovalActionApi } from './apis/reconcile-order-approval-action.ts';
 import { RecordOrderProofSetActionApi } from './apis/record-order-proof-set-action.ts';
 import { RecordPrecommitFailureActionApi } from './apis/record-precommit-failure-action.ts';
 import { RevalidateOrderCommitmentActionApi } from './apis/revalidate-order-commitment-action.ts';
-import { VerifyOrderCommitmentBindingApi } from './apis/verify-order-commitment-binding.ts';
+import { VerifyOrderCommitmentBindingApi } from '@app/commerce-order-contracts/verify-order-commitment-binding';
 // </generated-governed-http-api-imports>
 
 export const commerceOrderMarkerSchema = Schema.Struct({

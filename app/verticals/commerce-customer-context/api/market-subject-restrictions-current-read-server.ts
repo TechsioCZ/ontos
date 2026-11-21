@@ -12,7 +12,7 @@ import {
   MarketSubjectRestrictionsCurrentPolicyConflictProblemSchema,
   MarketSubjectRestrictionsCurrentPolicyProblemSchema,
   MarketSubjectRestrictionsCurrentUnavailableProblemSchema,
-} from '../shared/apis/market-subject-restrictions-current.ts';
+} from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import { marketSubjectRestrictionsCurrentRead } from '../src/api/market-subject-restrictions-current.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 

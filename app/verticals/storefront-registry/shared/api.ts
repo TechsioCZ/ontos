@@ -7,8 +7,8 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { identity } from 'effect';
 // <generated-governed-http-api-imports>
-import { CurrentStorefrontApplicationApi } from './apis/current-storefront-application.ts';
-import { VerifyCurrentStorefrontApplicationV1Api } from './apis/verify-current-storefront-application-v1.ts';
+import { CurrentStorefrontApplicationApi } from '@app/storefront-registry-contracts/current-storefront-application';
+import { VerifyCurrentStorefrontApplicationV1Api } from '@app/storefront-registry-contracts/verify-current-storefront-application-v1';
 // </generated-governed-http-api-imports>
 
 export const storefrontRegistryMarkerSchema = Schema.Struct({

@@ -7,13 +7,13 @@ import {
   ReadHandlerNotFound,
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
-import type { FinalCartCandidateRequest } from '../../shared/apis/final-cart-candidate.ts';
+import type { FinalCartCandidateRequest } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { Effect, Match } from 'effect';
 import { finalCartCandidateService } from '../services/final-cart-candidate.service.ts';
 import {
   FinalCartCandidateRequestSchema,
   FinalCartCandidateResponseSchema,
-} from '../../shared/apis/final-cart-candidate.ts';
+} from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 
 const MODULE_KEY = 'commerce.cart' as const;
 

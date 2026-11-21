@@ -15,11 +15,11 @@ import { cartResourceDescriptor } from './shared/resources/cart.ts';
 import { closeCartDraftAction } from './src/actions/close-cart-draft.action.ts';
 import { commerceCartReadOpenSelectionPopulationPermission } from './shared/permissions/commerce-cart-read-open-selection-population.ts';
 import { createCartDraftAction } from './src/actions/create-cart-draft.action.ts';
-import { FinalCartCandidateApi } from './shared/apis/final-cart-candidate.ts';
+import { FinalCartCandidateApi } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { finalCartCandidateResourceDescriptor } from './shared/resources/final-cart-candidate.ts';
 import { finalizeCartCandidateAction } from './src/actions/finalize-cart-candidate.action.ts';
 import { initializePopulationAuthorityAction } from './src/actions/initialize-population-authority.action.ts';
-import { OpenSelectionPopulationApi } from './shared/apis/open-selection-population.ts';
+import { OpenSelectionPopulationApi } from '@app/commerce-cart-contracts/open-selection-population';
 import { PreapprovalCartObservationApi } from './shared/apis/preapproval-cart-observation.ts';
 import { reviseCartDraftAction } from './src/actions/revise-cart-draft.action.ts';
 // </generated-module-manifest-imports>
