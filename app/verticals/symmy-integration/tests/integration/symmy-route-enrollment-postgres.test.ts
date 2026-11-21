@@ -148,7 +148,7 @@ const attribution = {
 };
 const operator: SymmyRouteEnrollmentRun = { attribution, mode: 'apply' };
 const enroll: SymmyRouteChange = { kind: 'enroll' };
-const replaceAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'replace' });
+const replaceAt = (expectedChangeToken: number) => ({ expectedChangeToken, kind: 'replace' }) as const;
 const deactivateAt = (expectedChangeToken: number): SymmyRouteChange => ({ expectedChangeToken, kind: 'deactivate' });
 /** The change token a receipt reports, which a receipt of a stored route always carries. */
 const tokenOf = (receipt: { readonly changeToken?: number }) =>
@@ -757,7 +757,7 @@ it.effect(
 );
 
 it.effect(
-  'enrolls, verifies and deactivates a Tenant-wide stock route with its Inventory backend and positions, run by the one worker',
+  'enrolls, extends, verifies and deactivates a Tenant-wide stock route with its Inventory backend and positions, run by the one worker',
   () =>
     Effect.gen(function* enrollStock() {
       const { admin, bind, integrationId, systemId, tenantId } = yield* makeFixture();
@@ -771,66 +771,76 @@ it.effect(
         yield* bind(principalId, workloadKey);
       }
       const routeId = crypto.randomUUID();
-      // The route names no company: Inventory imports for the whole Customer Configuration.
-      const stock = Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({
-        configuration: {
-          inventoryBackendId: 'AKROS_ERP',
-          items: [
-            {
-              effects: [
-                {
-                  effectKey: 'inventory-absolute-on-hand',
-                  operation: {
-                    entrypointKey: 'commerce.inventory.import-source-assertion',
-                    moduleId: inventoryModule,
-                    schemaVersion: '1',
-                  },
-                },
-              ],
-              itemKey: 'stock',
-              source: {
-                entityKind: 'STOCK',
-                issuerId: 'AKROS_SYMMY',
-                sourceNamespace: 'AKROS',
-                sourceRecordId: 'stock',
-              },
-            },
-          ],
-          stockScope: [
-            {
-              customerConfigurationId: 'AKROS',
-              issuerBackendId: 'AKROS_ERP',
-              itemKey: 'SKU-1',
-              locationKey: 'WH-MAIN',
-              namespace: 'AKROS_STOCK',
-              positionRef: {
-                moduleId: inventoryModule,
-                resourceId: crypto.randomUUID(),
-                resourceType: 'commerce.inventory.stock-position',
-                tenantId,
-              },
-              scope: 'AKROS_COMPANY',
-            },
-          ],
+      const position = {
+        customerConfigurationId: 'AKROS',
+        issuerBackendId: 'AKROS_ERP',
+        itemKey: 'SKU-1',
+        locationKey: 'WH-MAIN',
+        namespace: 'AKROS_STOCK',
+        positionRef: {
+          moduleId: inventoryModule,
+          resourceId: crypto.randomUUID(),
+          resourceType: 'commerce.inventory.stock-position',
+          tenantId,
         },
-        lifecyclePolicy: { policyId: 'akros-symmy-stock', revision: 'r1' },
-        mappingVersion: 'map-v1',
-        principalId: integrationId,
-        routeId,
-        routeKey: 'inventoryStockBatch',
-        routeRevision: 'route-v1',
-        tenantId,
-      });
+        scope: 'AKROS_COMPANY',
+      };
+      const added = {
+        ...position,
+        itemKey: 'SKU-2',
+        positionRef: { ...position.positionRef, resourceId: crypto.randomUUID() },
+      };
+      // The route names no company: Inventory imports for the whole Customer Configuration.
+      const stockAt = (routeRevision: string, stockScope: readonly (typeof position)[]) =>
+        Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({
+          configuration: {
+            inventoryBackendId: 'AKROS_ERP',
+            items: [
+              {
+                effects: [
+                  {
+                    effectKey: 'inventory-absolute-on-hand',
+                    operation: {
+                      entrypointKey: 'commerce.inventory.import-source-assertion',
+                      moduleId: inventoryModule,
+                      schemaVersion: '1',
+                    },
+                  },
+                ],
+                itemKey: 'stock',
+                source: {
+                  entityKind: 'STOCK',
+                  issuerId: 'AKROS_SYMMY',
+                  sourceNamespace: 'AKROS',
+                  sourceRecordId: 'stock',
+                },
+              },
+            ],
+            stockScope,
+          },
+          lifecyclePolicy: { policyId: 'akros-symmy-stock', revision: 'r1' },
+          mappingVersion: 'map-v1',
+          principalId: integrationId,
+          routeId,
+          routeKey: 'inventoryStockBatch',
+          routeRevision,
+          tenantId,
+        });
+      const stock = stockAt('route-v1', [position]);
       const found = symmyRouteInventoryOf('inventoryStockBatch');
       const inventory = yield* Option.isSome(found)
         ? Effect.succeed(found.value)
         : Effect.die('inventoryStockBatch has an inventory');
-      const change = (run: SymmyRouteEnrollmentRun) =>
+      const change = (
+        run: SymmyRouteEnrollmentRun,
+        request = stock,
+        write?: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>,
+      ) =>
         enrollSymmyRoute({
-          change: { kind: 'enroll' },
+          change: write ?? { kind: 'enroll' },
           inventory,
           plan: { bindings: stockBindings, moduleKeys: [inventoryModule, 'integration.symmy'] },
-          request: stock,
+          request,
           run,
         }).pipe(Effect.provideService(PgClient.PgClient, admin));
       const gate =
@@ -865,21 +875,52 @@ it.effect(
       expect(yield* gate).toBe(true);
       expect(yield* change({ mode: 'verify' })).toMatchObject({ changeToken: enrolledAt, outcome: 'verified' });
 
+      // A completed stock batch of route-v1 awaits its retention.
+      const admissionId = crypto.randomUUID();
+      yield* admin`insert into symmy_integration.sync_admissions(admission_id,tenant_id,principal_id,route_id,route_key,route_revision,mapping_version,legal_entity_id,idempotency_digest,intent_digest,execution_plan)
+        values(${admissionId},${tenantId},${integrationId},${routeId},'inventoryStockBatch','route-v1','map-v1',null,${digest('e')},${digest('f')},'{"items":[]}'::jsonb)`;
+      // A replacement that changes a position the batch could have used is refused on it, and writes nothing.
+      const moved = stockAt('route-v2', [{ ...position, locationKey: 'WH-2' }, added]);
+      const refusedMove = yield* refusals(change(operator, moved, replaceAt(enrolledAt)));
+      expect(refusedMove.map(({ code }) => code)).toEqual(['outstanding_work']);
+      expect(refusedMove[0]?.detail).toContain(admissionId);
+      expect(
+        (yield* refusals(change(operator, stockAt('route-v2', [added]), replaceAt(enrolledAt)))).map(
+          ({ code }) => code,
+        ),
+      ).toEqual(['outstanding_work']);
+      // One that only adds a position keeps the batch as it was admitted, still awaiting its retention.
+      const extended = stockAt('route-v2', [position, added]);
+      expect((yield* change({ mode: 'dry-run' }, extended, replaceAt(enrolledAt))).outcome).toBe('would_replace');
+      const replaced = yield* change(operator, extended, replaceAt(enrolledAt));
+      expect(replaced.outcome).toBe('replaced');
+      const replacedAt = tokenOf(replaced);
+      expect(replacedAt).not.toBe(enrolledAt);
+      expect(yield* change({ mode: 'verify' }, extended)).toMatchObject({
+        changeToken: replacedAt,
+        outcome: 'verified',
+      });
+      expect(
+        yield* admin`select route_revision, retention_receipt is null as unerased from symmy_integration.sync_admissions
+          where tenant_id=${tenantId} and admission_id=${admissionId}`,
+      ).toEqual([{ route_revision: 'route-v1', unerased: true }]);
+
       const stopped = yield* deactivateSymmyRoute({
-        change: { expectedChangeToken: enrolledAt, kind: 'deactivate' },
+        change: { expectedChangeToken: replacedAt, kind: 'deactivate' },
         reference: stock,
         run: { attribution, mode: 'apply' },
       }).pipe(Effect.provideService(PgClient.PgClient, admin));
+      // A deactivation still names the batch it strands.
       expect(stopped).toMatchObject({
         outcome: 'deactivated',
         strandedWork: {
-          admissions: [],
+          admissions: [admissionId],
           jobs: [],
           listedAll: true,
           resolvedBy: 'integration.symmy.execute-symmy-retention',
         },
       });
-      expect(tokenOf(stopped)).not.toBe(enrolledAt);
+      expect(tokenOf(stopped)).not.toBe(replacedAt);
       expect(yield* gate).toBe(false);
       // A stopped route no longer verifies, as it differs from the request in being inactive.
       expect((yield* refusals(change({ mode: 'verify' }))).map(({ code }) => code)).toEqual(['route_drift']);
@@ -888,6 +929,7 @@ it.effect(
           where tenant_id=${tenantId} and route_id=${routeId} order by recorded_at, change_token`,
       ).toEqual([
         { change: 'enroll', legal_entity_id: null, route_key: 'inventoryStockBatch' },
+        { change: 'replace', legal_entity_id: null, route_key: 'inventoryStockBatch' },
         { change: 'deactivate', legal_entity_id: null, route_key: 'inventoryStockBatch' },
       ]);
     }).pipe(Effect.scoped, Effect.provide(services)),

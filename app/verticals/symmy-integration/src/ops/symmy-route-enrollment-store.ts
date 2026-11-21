@@ -21,7 +21,9 @@
  * enrollment). The row lock quiesces admissions for the length of the transaction: an admission locks the same row
  * with `lock_symmy_enrollment_snapshot`, waits for this transaction, and then no longer matches the snapshot it read. A
  * route with outstanding work is never replaced, because the rotated epoch would close the fence of every job it
- * admitted; the refusal lists that work and how it is resolved. A deactivation reads only the reference of the route
+ * admitted; the refusal lists that work and how it is resolved. A replacement of the stock route that only adds
+ * positions keeps the synchronous admissions of the stored revision as they were admitted
+ * (`SymmyRouteEnrollmentWrite`), so it refuses only on the route's jobs. A deactivation reads only the reference of the route
  * it stops and stops it whatever it enrolls or has admitted: it records what the locked route row holds, and its
  * receipt lists the work it strands and the Action that resolves it.
  */
@@ -296,11 +298,13 @@ const readRelatedRoutes = (transaction: Transaction, request: SymmyRouteEnrollme
 
 /**
  * The jobs and synchronous admissions of the route that a replacement refuses on and a deactivation strands. Both are
- * read whatever the route's kind, so a route of a kind the command cannot enroll still names what it admitted.
+ * read whatever the route's kind, so a route of a kind the command cannot enroll still names what it admitted; the
+ * admissions a replacement keeps are not read.
  */
 const outstandingWork = Effect.fn('SymmyRouteEnrollment.outstandingWork')(function* outstandingWork(
   transaction: Transaction,
   route: TenantRoute,
+  admissionsOfRoute: 'kept' | 'outstanding' = 'outstanding',
 ) {
   const jobsRead = transaction
     .selectDistinct({ jobId: symmyImportJobs.jobId, state: symmyJobEffects.state })
@@ -330,19 +334,22 @@ const outstandingWork = Effect.fn('SymmyRouteEnrollment.outstandingWork')(functi
     .orderBy(symmyImportJobs.jobId, symmyJobEffects.state)
     .limit(OUTSTANDING_LIMIT + 1)
     .pipe(Effect.mapError(unavailable('The outstanding jobs of the route could not be read')));
-  const admissionsRead = transaction
-    .select({ admissionId: symmySyncAdmissions.admissionId })
-    .from(symmySyncAdmissions)
-    .where(
-      and(
-        eq(symmySyncAdmissions.tenantId, route.tenantId),
-        eq(symmySyncAdmissions.routeId, route.routeId),
-        isNull(symmySyncAdmissions.retentionReceipt),
-      ),
-    )
-    .orderBy(symmySyncAdmissions.admissionId)
-    .limit(OUTSTANDING_LIMIT + 1)
-    .pipe(Effect.mapError(unavailable('The outstanding admissions of the route could not be read')));
+  const admissionsRead =
+    admissionsOfRoute === 'kept'
+      ? Effect.succeed<readonly { readonly admissionId: string }[]>([])
+      : transaction
+          .select({ admissionId: symmySyncAdmissions.admissionId })
+          .from(symmySyncAdmissions)
+          .where(
+            and(
+              eq(symmySyncAdmissions.tenantId, route.tenantId),
+              eq(symmySyncAdmissions.routeId, route.routeId),
+              isNull(symmySyncAdmissions.retentionReceipt),
+            ),
+          )
+          .orderBy(symmySyncAdmissions.admissionId)
+          .limit(OUTSTANDING_LIMIT + 1)
+          .pipe(Effect.mapError(unavailable('The outstanding admissions of the route could not be read')));
   // Both reads use the one connection of the transaction, so they run one after the other.
   const [jobs, admissions] = yield* Effect.all([jobsRead, admissionsRead], { concurrency: 1 });
   return yield* decodeOutstandingWork({
@@ -559,7 +566,7 @@ export const enrollSymmyRoute = Effect.fn('SymmyRouteEnrollment.enroll')(functio
           return yield* receipt('unchanged', checked, storedToken);
         }
         if (decision.kind === 'replace') {
-          yield* refused(symmyOutstandingRefusals(yield* outstandingWork(transaction, request)));
+          yield* refused(symmyOutstandingRefusals(yield* outstandingWork(transaction, request, decision.admissions)));
         }
         if (run.mode === 'dry-run') {
           return yield* receipt(plannedOutcome[decision.kind], checked, storedToken);

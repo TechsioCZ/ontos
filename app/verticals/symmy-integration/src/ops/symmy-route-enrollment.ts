@@ -15,7 +15,8 @@
  * - the routes of one source share the logical source identity their readers and writers compare;
  * - the lifecycle policy is one the retention configuration names for exactly this route;
  * - an exact replay changes nothing, any other difference is refused unless the operator asks to replace the route at
- *   the change token it read, and a replacement is refused while the route has outstanding work;
+ *   the change token it read, and a replacement is refused while the route has outstanding work; a replacement of the
+ *   stock route that only adds positions keeps the synchronous admissions of the stored revision as they were admitted;
  * - a route that revises prices has the price list read route of its own company, which the Shell reads a REVISE
  *   through, with its price reads.
  *
@@ -37,6 +38,7 @@ import {
 } from '../../shared/domain/symmy-job-notification.ts';
 import type { SymmyJobRetentionPolicy } from '../../shared/domain/symmy-job-retention.ts';
 import { SymmyDecodedSourceSelectorSchema } from '../../shared/domain/symmy-source-selector.ts';
+import { SymmyStockScopeEntrySchema, symmyStockScopeKey } from '../../shared/domain/symmy-stock-batch.ts';
 import { SyncAdmissionIdSchema } from '../../shared/resources/sync-admission.ts';
 import type { symmyJobRoutes } from '../db/schema.ts';
 import {
@@ -845,11 +847,50 @@ export interface SymmyRouteVersion {
   readonly routeRevision: string;
 }
 
-/** The decided enrollment or replacement, with the stored route it changes. */
+/**
+ * The decided enrollment or replacement, with the stored route it changes. A replacement names whether the
+ * synchronous admissions of the stored route stay outstanding work it refuses on, or are kept as they were admitted.
+ */
 export type SymmyRouteEnrollmentWrite =
   | { readonly kind: 'insert' }
-  | { readonly changed: readonly SymmyRouteField[]; readonly kind: 'replace'; readonly previous: SymmyRouteVersion }
+  | {
+      readonly admissions: 'kept' | 'outstanding';
+      readonly changed: readonly SymmyRouteField[];
+      readonly kind: 'replace';
+      readonly previous: SymmyRouteVersion;
+    }
   | { readonly kind: 'unchanged' };
+
+const sameStockPosition = Schema.toEquivalence(SymmyStockScopeEntrySchema);
+
+/**
+ * Whether a replacement keeps every synchronous admission of the stored route as it was admitted: it names a new
+ * revision and adds stock positions, and changes nothing else, every stored position included. A synchronous
+ * admission never reads its route again for what it asserted: it pinned its plan, positions included, when it was
+ * admitted, its receipt is read through the route id, principal and company, and its retention through the route id
+ * and lifecycle policy, all of which such a replacement keeps; a row for an added position is a new admission. Any
+ * other change could reinterpret what an earlier admission asserted, so its admissions stay outstanding work.
+ */
+const keepsAdmissions = (
+  request: SymmyRouteEnrollmentRequest,
+  stored: RouteRow,
+  changed: readonly SymmyRouteField[],
+): boolean => {
+  const storedPlan = decodeStoredConfiguration(stored.fixturePlan);
+  if (Option.isNone(storedPlan) || !changed.every((field) => field === 'configuration' || field === 'routeRevision')) {
+    return false;
+  }
+  const { stockScope: storedScope, ...storedRest } = storedPlan.value;
+  const { stockScope: requestedScope, ...requestedRest } = request.configuration;
+  if (storedScope === undefined || requestedScope === undefined || !sameConfiguration(storedRest, requestedRest)) {
+    return false;
+  }
+  const requested = new Map(requestedScope.map((entry) => [symmyStockScopeKey(entry), entry]));
+  return storedScope.every((entry) => {
+    const kept = requested.get(symmyStockScopeKey(entry));
+    return kept !== undefined && sameStockPosition(kept, entry);
+  });
+};
 
 const refused = (code: SymmyRouteEnrollmentRefusalCode, detail: string) =>
   new SymmyRouteEnrollmentRefused({ refusals: [refusal(code, detail)] });
@@ -866,7 +907,7 @@ const reboundSelector = (current: RouteRow) =>
  * route kind and code) or its route id, decided under the enrollment lock. A replacement is decided only at the token
  * the operator names; a request the stored route already satisfies writes nothing, so the replay of an applied change
  * is unchanged at any token. A replacement is decided here only as allowed: the store refuses it while work is
- * outstanding.
+ * outstanding, the synchronous admissions it keeps excepted.
  */
 export const decideSymmyRouteWrite = (
   request: SymmyRouteEnrollmentRequest,
@@ -902,6 +943,7 @@ export const decideSymmyRouteWrite = (
     return refused('revision_not_advanced', 'A replacement names a new route revision');
   }
   return {
+    admissions: keepsAdmissions(request, current, changed) ? 'kept' : 'outstanding',
     changed,
     kind: 'replace',
     previous: { changeToken: current.changeToken, routeRevision: current.routeRevision },

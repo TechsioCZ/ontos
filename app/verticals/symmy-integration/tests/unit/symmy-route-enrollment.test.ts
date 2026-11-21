@@ -876,6 +876,7 @@ describe('Symmy route write decisions', () => {
     const stored = storedRow(enrollment, { changeToken: 4, routeRevision: 'route-v0' });
     expect(refusalCodes(decided(enrollment, { byRouteId: stored, bySelector: stored }))).toEqual(['route_drift']);
     expect(decided(enrollment, { byRouteId: stored, bySelector: stored }, replaceAt(4))).toEqual({
+      admissions: 'outstanding',
       changed: ['routeRevision'],
       kind: 'replace',
       previous: { changeToken: 4, routeRevision: 'route-v0' },
@@ -886,6 +887,67 @@ describe('Symmy route write decisions', () => {
     ).toEqual(['revision_not_advanced']);
     const inactive = storedRow(enrollment, { active: false });
     expect(refusalCodes(decided(enrollment, { byRouteId: inactive, bySelector: inactive }))).toEqual(['route_drift']);
+  });
+
+  it('keeps the synchronous admissions of a stock route whose replacement only adds positions, and no others', () => {
+    // One enrolled route: its items are built once, so every revision below differs only where it says.
+    const base = fields('inventoryStockBatch');
+    const v2 = (
+      changes: Partial<EncodedRequest>,
+      configuration: Partial<EncodedConfiguration>,
+      routeRevision = 'route-v2',
+    ) => decode({ ...base, ...changes, configuration: { ...base.configuration, ...configuration }, routeRevision });
+    const v1 = v2({}, { stockScope: [stockPosition('SKU-1')] }, 'route-v1');
+    const stored = storedRow(v1, { changeToken: 7 });
+    const admissionsOf = (replacement: SymmyRouteEnrollmentRequest) => {
+      const decision = decided(replacement, { byRouteId: stored, bySelector: stored }, replaceAt(7));
+      return 'admissions' in decision ? decision.admissions : decision;
+    };
+    // Every stored position kept as it was, one added: the admissions of route-v1 stay as they were admitted.
+    expect(admissionsOf(v2({}, { stockScope: [stockPosition('SKU-2'), stockPosition('SKU-1')] }))).toBe('kept');
+    // A stored position removed or changed, or anything else changed, could reinterpret an earlier admission.
+    expect(admissionsOf(v2({}, { stockScope: [stockPosition('SKU-2')] }))).toBe('outstanding');
+    expect(
+      admissionsOf(v2({}, { stockScope: [stockPosition('SKU-1', { locationKey: 'WH-2' }), stockPosition('SKU-2')] })),
+    ).toBe('outstanding');
+    expect(
+      admissionsOf(v2({}, { stockScope: [stockPosition('SKU-1', { scope: 'OTHER' }), stockPosition('SKU-2')] })),
+    ).toBe('outstanding');
+    expect(
+      admissionsOf(
+        v2({}, { items: [item('STOCK', [importStock], 'OTHER_ISSUER')], stockScope: [stockPosition('SKU-1')] }),
+      ),
+    ).toBe('outstanding');
+    expect(admissionsOf(v2({ mappingVersion: 'map-v2' }, { stockScope: [stockPosition('SKU-1')] }))).toBe(
+      'outstanding',
+    );
+    expect(
+      admissionsOf(
+        v2({ lifecyclePolicy: { policyId: 'other-policy', revision: 'r1' } }, { stockScope: [stockPosition('SKU-1')] }),
+      ),
+    ).toBe('outstanding');
+    // A stopped route, and every route without stock positions, keeps nothing.
+    const stopped = storedRow(v1, { active: false, changeToken: 7 });
+    const restarted = decided(
+      v2({}, { stockScope: [stockPosition('SKU-1'), stockPosition('SKU-2')] }),
+      { byRouteId: stopped, bySelector: stopped },
+      replaceAt(7),
+    );
+    expect(restarted).toMatchObject({ admissions: 'outstanding', kind: 'replace' });
+    const groups = request('customerGroupsBatch');
+    const storedGroups = storedRow(groups, { routeRevision: 'route-v0' });
+    expect(decided(groups, { byRouteId: storedGroups, bySelector: storedGroups }, replaceAt(1))).toMatchObject({
+      admissions: 'outstanding',
+      kind: 'replace',
+    });
+    // Kept admissions are not outstanding work, but a job of the route still is.
+    const outstanding = Schema.decodeUnknownSync(SymmyOutstandingWorkSchema);
+    expect(symmyOutstandingRefusals(outstanding({ admissions: [], jobs: [], listedAll: true }))).toEqual([]);
+    expect(
+      symmyOutstandingRefusals(
+        outstanding({ admissions: [], jobs: [{ jobId: routeId, state: 'planned' }], listedAll: true }),
+      ).map(({ code }) => code),
+    ).toEqual(['outstanding_work']);
   });
 
   it('refuses a replacement prepared before the route was stopped, at the revision it still carries', () => {
