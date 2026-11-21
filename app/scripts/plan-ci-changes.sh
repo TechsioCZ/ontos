@@ -84,18 +84,23 @@ elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_req
   fi
 fi
 
-# Without an exact comparison, schedule and dispatch runs and a push on a branch with a merge queue hold
-# baselines to the first parent: every commit pushed behind the queue already passed it against the queue's
-# base, so a multi-commit entry whose event.before lies outside the checkout is no reason to fail. ci-plan
-# checks exactly these runs out two commits deep, so the parent is present. A push on a branch without a merge
-# queue and without a green ancestor names no base: what is unproven there can be any number of commits, so
-# the check that needs a base fails. This names a commit only; mode, reason and the changed paths stay those
-# of the comparison above.
-if [[ -z "$comparison_base" ]] &&
-  [[ "${GITHUB_EVENT_NAME:-}" == schedule || "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ||
-    ("${GITHUB_EVENT_NAME:-}" == push && "${QUEUE_PROOF:-}" != skipped) ]]; then
-  comparison_base="$(git rev-parse --verify --quiet 'HEAD^1^{commit}')" || comparison_base=''
-fi
+# A push holds baselines to the commit its comparison stands on, whether or not the exact comparison above
+# could run: event.before on a branch with a merge queue, which a multi-commit push or a ruleset bypass leaves
+# outside this two-commit checkout (the Lean Core row fetches the base by SHA, so it need not be here), and on
+# a branch without one the newest green push the lookup above found, or none. A new branch (an all-zero
+# before) names no base, and the check that needs one fails. Schedule and dispatch runs have no comparison and
+# hold baselines to the first parent, which their two-commit checkout holds. This names a commit only; mode,
+# reason and the changed paths stay those of the comparison above.
+case "${GITHUB_EVENT_NAME:-}" in
+  push)
+    if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ && ! "$BASE_SHA" =~ ^0+$ ]]; then
+      comparison_base="$BASE_SHA"
+    fi
+    ;;
+  schedule | workflow_dispatch)
+    comparison_base="$(git rev-parse --verify --quiet 'HEAD^1^{commit}')" || comparison_base=''
+    ;;
+esac
 
 # A formatter, linter or hook configuration reformats or re-lints files nobody touched: the one real
 # failure a changed-file lint would miss. Such a run, the nightly run and any run without the exact
