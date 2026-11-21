@@ -10,6 +10,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parseSync } from 'oxc-parser';
 
 import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
+import { moduleBindings } from '../../module-bindings.mts';
 import { runScaffoldEffect } from '../cli.mts';
 import { insertSortedSlot, readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 import type { JsonValue } from '../shared.mts';
@@ -423,12 +424,16 @@ const sourceTree = async (root: string, directory: string): Promise<readonly (re
   return nested.flat();
 };
 
+/** A file of the copy and what it becomes before the retirement (from `''` when the module has no such file). */
+type CopyEdit = readonly [file: string, edit: (source: string) => string];
+
 /** Retire one read of an actual module in a copy, and return the module and its contract package as they remain. */
 const retireInCopy = Effect.fn(function* retireInCopy(
   name: string,
   vertical: string = paymentVertical,
   contracts: string = paymentContracts,
   slug: string = paymentSlug,
+  edits: readonly CopyEdit[] = [],
 ) {
   const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-retire-read-')));
   return yield* Effect.gen(function* retireAndRead() {
@@ -439,6 +444,11 @@ const retireInCopy = Effect.fn(function* retireInCopy(
           recursive: true,
         }),
       );
+    }
+    for (const [file, edit] of edits) {
+      const target = path.join(root, file);
+      const source = yield* Effect.promise(() => readFile(target, 'utf-8').catch(() => ''));
+      yield* Effect.promise(() => writeFile(target, edit(source)));
     }
     yield* runScaffoldEffect(RETIRE_CONTRIBUTION_COMMAND, [VERTICAL_FLAG, slug, '--kind', 'api', '--name', name], {
       workspaceRoot: root,
@@ -552,5 +562,89 @@ it.live(
     ).toBe(true);
     expect(sources.get(`${vertical}/vertical.registration.ts`) ?? '').not.toContain(read);
     expectNoReferenceToDeletedFiles(sources, vertical, `${vertical}/shared/commerce-order-client.ts`);
+  }),
+);
+
+/** The names a module's references resolve to no declaration of: globals, or bindings a retirement left behind. */
+const unboundNames = (file: string, source: string): ReadonlySet<string> =>
+  new Set(
+    (moduleBindings(file, source)?.references ?? []).flatMap((reference) =>
+      reference.bindings.length === 0 ? [reference.name] : [],
+    ),
+  );
+
+for (const [label, read, vertical, contracts, slug, api] of [
+  [
+    'a package read of Commerce Customer Context',
+    'market-retirement-reservation-recovery',
+    'verticals/commerce-customer-context',
+    'packages/customer-market-retirement-contracts',
+    'commerce-customer-context',
+    'MarketRetirementReservationRecoveryApi',
+  ],
+  [
+    'an owner read of Inventory',
+    'inventory-effect-outcome',
+    'verticals/inventory',
+    'packages/shared-contracts',
+    'inventory',
+    'InventoryEffectOutcomeApi',
+  ],
+] as const) {
+  it.live(
+    `retires ${label} and its member of the typed union of mounted groups, leaving no unbound reference`,
+    Effect.fn(function* retireTypedUnionMember() {
+      const sharedApiFile = `${vertical}/shared/api.ts`;
+      const before = yield* Effect.promise(() => readFile(path.join(appRoot, sharedApiFile), 'utf-8'));
+      expect(before).toContain(`  | typeof ${api}\n`);
+      const sources = yield* retireInCopy(read, vertical, contracts, slug);
+      const after = sources.get(sharedApiFile) ?? '';
+      expect(after).not.toContain(api);
+      expect(after).toContain('GroupsOf<');
+      const unboundBefore = unboundNames(sharedApiFile, before);
+      expect([...unboundNames(sharedApiFile, after)].filter((unbound) => !unboundBefore.has(unbound))).toEqual([]);
+      expect(unboundBefore.has(api)).toBe(false);
+    }),
+  );
+}
+
+it.live(
+  'refuses to retire a read another declaration of an owner entry still uses, naming the file and the line',
+  Effect.fn(function* refuseSurvivingUse() {
+    const vertical = 'verticals/commerce-customer-context';
+    const sharedApiFile = `${vertical}/shared/api.ts`;
+    const use = 'export const retainedApi = MarketRetirementReservationRecoveryApi;\n';
+    const line = (yield* Effect.promise(() => readFile(path.join(appRoot, sharedApiFile), 'utf-8'))).split('\n').length;
+    yield* expectFailure(
+      retireInCopy(
+        'market-retirement-reservation-recovery',
+        vertical,
+        'packages/customer-market-retirement-contracts',
+        'commerce-customer-context',
+        [[sharedApiFile, (source) => `${source}${use}`]],
+      ),
+      (cause) => {
+        expect(String(cause)).toContain(
+          `${sharedApiFile}:${line} still uses MarketRetirementReservationRecoveryApi of the retired read`,
+        );
+      },
+    );
+  }),
+);
+
+it.live(
+  'keeps a re-export whose source is not retired, whatever names it shares with the retired read',
+  Effect.fn(function* keepUnrelatedReexport() {
+    const aggregate = `${paymentVertical}/src/api/payment-term-catalog-client.ts`;
+    const unrelated =
+      "export type { PaymentTermHistoryRequest as ArchivedHistoryRequest } from './archived-history.ts';";
+    const sources = yield* retireInCopy('payment-term-history', paymentVertical, paymentContracts, paymentSlug, [
+      [`${paymentVertical}/src/api/archived-history.ts`, () => 'export type PaymentTermHistoryRequest = string;\n'],
+      [aggregate, (source) => `${source}${unrelated}\n`],
+    ]);
+    const retired = sources.get(aggregate) ?? '';
+    expect(retired).toContain(unrelated);
+    expect(retired).not.toContain("from './payment-term-history-client.ts'");
+    expect(retired).not.toContain('PaymentTermHistoryRequestSchema');
   }),
 );

@@ -1,7 +1,10 @@
 import nodePath from 'node:path';
 
 import { Effect, FileSystem, Schema, Predicate } from 'effect';
-import { parseSync } from 'oxc-parser';
+import type { Node } from 'oxc-parser';
+
+import { moduleBindings, patternIdentifiers } from '../../module-bindings.mts';
+import type { ModuleBindings } from '../../module-bindings.mts';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { discoverPublicContractPackage } from '../governed-contribution/scaffold.mts';
@@ -223,90 +226,267 @@ const isSlotEntry =
   (entry: string): boolean =>
     normalizeGeneratedSlotEntry(entry) === normalizeGeneratedSlotEntry(expected);
 
-/** What a retired read leaves behind: its deleted files (paths, or package specifiers) and the names they exported. */
+/** What a retired read leaves behind: each deleted file, by its path or its package specifier, with its source. */
 interface RetiredRead {
-  readonly files: ReadonlySet<string>;
-  readonly names: ReadonlySet<string>;
+  readonly files: ReadonlyMap<string, string>;
 }
 
-const parsedModule = (filePath: string, content: string) => {
-  const parsed = parseSync(filePath, content, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  if (parsed.errors.length > 0) {
-    raiseScaffoldFailure(`cannot parse ${filePath}`);
+/** Where a re-exported binding comes from: a retired file, a file that stays, or no export of that name. */
+const ExportOriginSchema = Schema.Literals(['absent', 'kept', 'retired']);
+type ExportOrigin = typeof ExportOriginSchema.Type;
+
+/** What a specifier of `importer` names: a path when relative (the candidate that exists), else the specifier. */
+const importTarget = (importer: string, specifier: string, exists: (candidate: string) => boolean): string => {
+  if (!specifier.startsWith('.')) {
+    return specifier;
   }
-  return parsed.program;
+  const target = nodePath.resolve(nodePath.dirname(importer), specifier);
+  const candidates = nodePath.extname(target) === '' ? [`${target}.ts`, nodePath.join(target, 'index.ts')] : [target];
+  return candidates.find(exists) ?? target;
 };
 
-const exportedNames = (filePath: string, content: string): readonly string[] =>
-  parsedModule(filePath, content).body.flatMap((statement) => {
-    if (statement.type !== 'ExportNamedDeclaration') {
-      return [];
-    }
-    const { declaration } = statement;
-    if (declaration?.type === 'VariableDeclaration') {
-      return declaration.declarations.flatMap((declarator) =>
-        declarator.id.type === 'Identifier' ? [declarator.id.name] : [],
-      );
-    }
-    const declared = declaration !== null && declaration !== undefined && 'id' in declaration ? declaration.id : null;
-    return [
-      ...(declared?.type === 'Identifier' ? [declared.name] : []),
-      ...statement.specifiers.flatMap((specifier) =>
-        specifier.exported.type === 'Identifier' ? [specifier.exported.name] : [],
-      ),
-    ];
-  });
+const parsedBindings = (filePath: string, content: string): ModuleBindings => {
+  const bindings = moduleBindings(filePath, content);
+  if (bindings === undefined) {
+    return raiseScaffoldFailure(`cannot parse ${filePath}`);
+  }
+  return bindings;
+};
 
-const specifierName = (node: { readonly name?: string; readonly type: string; readonly value?: unknown }): string =>
-  node.type === 'Identifier' ? (node.name ?? '') : String(node.value);
+const lineOf = (content: string, index: number): number => content.slice(0, index).split('\n').length;
+
+/** The owner files each owner entry passes on, keyed by path, as they are before the retirement. */
+type OwnerSources = ReadonlyMap<string, string>;
+
+const isKnown = (retired: RetiredRead, sources: OwnerSources) => (candidate: string) =>
+  retired.files.has(candidate) || sources.has(candidate);
+
+const exportsDeclared = (declaration: Node, name: string): boolean => {
+  if (declaration.type === 'VariableDeclaration') {
+    return declaration.declarations.some((declarator) =>
+      patternIdentifiers(declarator.id).some(
+        (identifier) => identifier.type === 'Identifier' && identifier.name === name,
+      ),
+    );
+  }
+  return 'id' in declaration && declaration.id?.type === 'Identifier' && declaration.id.name === name;
+};
 
 /**
- * An owner entry without the retired read: re-exports of its deleted files and re-exported names only those files
- * declared are removed; an import of either is refused, since code outside the generated slots still uses it.
+ * Where what `file` exports as `name` comes from, through the re-exports and imports it passes it on with: a retired
+ * file, a file that stays (or one the retirement cannot read, such as another package), or nowhere in `file`.
  */
-const withoutRetiredRead = (filePath: string, content: string, retired: RetiredRead): string => {
-  const edits: { readonly end: number; readonly start: number; readonly text: string }[] = [];
-  const removal = (start: number, end: number) => ({
-    end: content.charAt(end) === '\n' ? end + 1 : end,
-    start,
-    text: '',
+const exportOrigin = (
+  file: string,
+  name: string,
+  retired: RetiredRead,
+  sources: OwnerSources,
+  seen: ReadonlySet<string> = new Set(),
+): ExportOrigin => {
+  const retiredSource = retired.files.get(file);
+  const source = retiredSource ?? sources.get(file);
+  const key = `${file}#${name}`;
+  if (source === undefined || seen.has(key)) {
+    return source === undefined ? 'kept' : 'absent';
+  }
+  const bindings = parsedBindings(file, source);
+  const exported = bindings.program.body.flatMap((statement): readonly ExportOrigin[] => {
+    if (statement.type === 'ExportAllDeclaration' || statement.type !== 'ExportNamedDeclaration') {
+      return [];
+    }
+    const passed = statement.specifiers.find(
+      (specifier) => specifier.exported.type === 'Identifier' && specifier.exported.name === name,
+    );
+    if (passed === undefined) {
+      return statement.declaration !== null && exportsDeclared(statement.declaration, name) ? ['kept'] : [];
+    }
+    const local = passed.local.type === 'Identifier' ? passed.local.name : passed.local.value;
+    if (statement.source !== null) {
+      const target = importTarget(file, statement.source.value, isKnown(retired, sources));
+      return [exportOrigin(target, local, retired, sources, new Set([...seen, key]))];
+    }
+    const imported = bindings.bindings.find((binding) => binding.name === local)?.imported;
+    return imported === undefined
+      ? ['kept']
+      : [
+          exportOrigin(
+            importTarget(file, imported.source, isKnown(retired, sources)),
+            imported.name,
+            retired,
+            sources,
+            new Set([...seen, key]),
+          ),
+        ];
   });
-  for (const statement of parsedModule(filePath, content).body) {
-    const source =
-      statement.type === 'ImportDeclaration' ||
-      statement.type === 'ExportAllDeclaration' ||
-      (statement.type === 'ExportNamedDeclaration' && statement.source !== null)
-        ? statement.source?.value
-        : undefined;
-    if (source !== undefined) {
-      const target = source.startsWith('.') ? nodePath.resolve(nodePath.dirname(filePath), source) : source;
-      const fromRetiredFile = retired.files.has(target);
-      if (statement.type === 'ImportDeclaration') {
-        if (
-          fromRetiredFile ||
-          statement.specifiers.some(
-            (specifier) => specifier.type === 'ImportSpecifier' && retired.names.has(specifierName(specifier.imported)),
-          )
-        ) {
-          raiseScaffoldFailure(`${filePath} still imports the retired read: remove that use first`);
-        }
-      } else if (fromRetiredFile) {
-        edits.push(removal(statement.start, statement.end));
-      } else if (statement.type === 'ExportNamedDeclaration') {
-        const kept = statement.specifiers.filter((specifier) => !retired.names.has(specifierName(specifier.local)));
-        if (kept.length === 0) {
-          edits.push(removal(statement.start, statement.end));
-        } else if (kept.length < statement.specifiers.length) {
-          const names = kept.map((specifier) => content.slice(specifier.start, specifier.end)).join(', ');
-          edits.push({
-            end: statement.end,
-            start: statement.start,
-            text: `export ${statement.exportKind === 'type' ? 'type ' : ''}{ ${names} } from '${source}';`,
-          });
-        }
+  const [origin] = exported;
+  if (origin !== undefined) {
+    return retiredSource === undefined || origin === 'absent' ? origin : 'retired';
+  }
+  for (const statement of bindings.program.body) {
+    if (
+      statement.type === 'ExportAllDeclaration' &&
+      statement.exported?.type === 'Identifier' &&
+      statement.exported.name === name
+    ) {
+      const whole = importTarget(file, statement.source.value, isKnown(retired, sources));
+      return retired.files.has(whole) || retiredSource !== undefined ? 'retired' : 'kept';
+    }
+    if (statement.type === 'ExportAllDeclaration' && statement.exported === null) {
+      const target = importTarget(file, statement.source.value, isKnown(retired, sources));
+      const passedOn = exportOrigin(target, name, retired, sources, new Set([...seen, key]));
+      if (passedOn !== 'absent') {
+        return retiredSource === undefined ? passedOn : 'retired';
       }
     }
   }
+  return 'absent';
+};
+
+interface SourceEdit {
+  readonly end: number;
+  readonly start: number;
+  readonly text: string;
+}
+
+/** Remove the members of a union that are exactly `typeof <a retired binding>`, keeping the union's own pipes. */
+const unionMemberRemovals = (
+  filePath: string,
+  content: string,
+  union: Node,
+  removed: ReadonlySet<Node>,
+): SourceEdit[] => {
+  if (union.type !== 'TSUnionType') {
+    return [];
+  }
+  const members = union.types;
+  if (members.every((member) => removed.has(member))) {
+    return raiseScaffoldFailure(
+      `${filePath}:${lineOf(content, union.start)} describes only the retired read: remove that use first`,
+    );
+  }
+  const firstKept = members.findIndex((member) => !removed.has(member));
+  return members.flatMap((member, index): SourceEdit[] => {
+    if (!removed.has(member)) {
+      return [];
+    }
+    const next = members[firstKept];
+    const previous = members[index - 1];
+    if (index < firstKept && next !== undefined) {
+      return index === 0 ? [{ end: next.start, start: member.start, text: '' }] : [];
+    }
+    return previous === undefined ? [] : [{ end: member.end, start: previous.end, text: '' }];
+  });
+};
+
+/** Where a statement of an owner entry takes its bindings from, judged against the retired read. */
+const sourceEdits = (
+  filePath: string,
+  content: string,
+  retired: RetiredRead,
+  sources: OwnerSources,
+  statement: Node,
+  inSlot: (node: Node) => boolean,
+): readonly SourceEdit[] => {
+  const target = (specifier: string): string => importTarget(filePath, specifier, isKnown(retired, sources));
+  const removal: SourceEdit = {
+    end: content.charAt(statement.end) === '\n' ? statement.end + 1 : statement.end,
+    start: statement.start,
+    text: '',
+  };
+  if (
+    statement.type === 'ImportDeclaration' &&
+    retired.files.has(target(statement.source.value)) &&
+    !inSlot(statement)
+  ) {
+    return raiseScaffoldFailure(
+      `${filePath}:${lineOf(content, statement.start)} still imports the retired read: remove that use first`,
+    );
+  }
+  if (statement.type === 'ExportAllDeclaration') {
+    return retired.files.has(target(statement.source.value)) ? [removal] : [];
+  }
+  if (statement.type !== 'ExportNamedDeclaration' || statement.source === null) {
+    return [];
+  }
+  const from = target(statement.source.value);
+  const kept = statement.specifiers.filter((specifier) => {
+    const local = specifier.local.type === 'Identifier' ? specifier.local.name : specifier.local.value;
+    return exportOrigin(from, local, retired, sources) !== 'retired';
+  });
+  if (kept.length === statement.specifiers.length) {
+    return [];
+  }
+  const names = kept.map((specifier) => content.slice(specifier.start, specifier.end)).join(', ');
+  const kind = statement.exportKind === 'type' ? 'type ' : '';
+  return kept.length === 0
+    ? [removal]
+    : [
+        {
+          end: statement.end,
+          start: statement.start,
+          text: `export ${kind}{ ${names} } from '${statement.source.value}';`,
+        },
+      ];
+};
+
+/** The members of type unions a binding of the retired read is the whole `typeof` of; any other use is refused. */
+const retiredUseEdits = (
+  filePath: string,
+  content: string,
+  retired: RetiredRead,
+  sources: OwnerSources,
+  bindings: ModuleBindings,
+  inSlot: (node: Node) => boolean,
+): readonly SourceEdit[] => {
+  const unions = new Map<Node, Set<Node>>();
+  for (const reference of bindings.references) {
+    const retiredBinding = reference.bindings.some(
+      ({ imported }) =>
+        imported !== undefined && retired.files.has(importTarget(filePath, imported.source, isKnown(retired, sources))),
+    );
+    const query = bindings.parents.get(reference.identifier);
+    const union = query === undefined ? undefined : bindings.parents.get(query);
+    if (!retiredBinding || inSlot(reference.identifier)) {
+      continue;
+    }
+    if (query?.type === 'TSTypeQuery' && query.typeArguments === null && union?.type === 'TSUnionType') {
+      unions.set(union, new Set([...(unions.get(union) ?? []), query]));
+    } else {
+      raiseScaffoldFailure(
+        `${filePath}:${lineOf(content, reference.identifier.start)} still uses ${reference.name} of the retired read: remove that use first`,
+      );
+    }
+  }
+  return [...unions].flatMap(([union, removed]) => unionMemberRemovals(filePath, content, union, removed));
+};
+
+/**
+ * An owner entry without the retired read, by what its bindings and re-exports refer to, never by name. A re-export
+ * comes out when what it passes on comes from a retired file, directly or through the owner files it resolves
+ * through; a member of a type union that is exactly `typeof <a binding imported from a retired file>` comes out with
+ * it. Any other use of such a binding, and any import of a retired file outside the generated slots, is refused with
+ * the file and line, since code outside the slots still uses the read.
+ */
+const withoutRetiredRead = (
+  filePath: string,
+  content: string,
+  retired: RetiredRead,
+  sources: OwnerSources,
+  removals: readonly SlotRemoval[],
+): string => {
+  const bindings = parsedBindings(filePath, content);
+  const slots = removals.flatMap(({ end, start }) => {
+    const from = content.indexOf(start);
+    const to = content.indexOf(end);
+    return from === -1 || to === -1 ? [] : [[from, to] as const];
+  });
+  const inSlot = (node: Node): boolean => slots.some(([from, to]) => node.start > from && node.end < to);
+  const edits = [
+    ...bindings.program.body.flatMap((statement) =>
+      sourceEdits(filePath, content, retired, sources, statement, inSlot),
+    ),
+    ...retiredUseEdits(filePath, content, retired, sources, bindings, inSlot),
+  ];
   let next = content;
   for (const edit of edits.toSorted((left, right) => right.start - left.start)) {
     next = `${next.slice(0, edit.start)}${edit.text}${next.slice(edit.end)}`;
@@ -314,18 +494,82 @@ const withoutRetiredRead = (filePath: string, content: string, retired: RetiredR
   return next;
 };
 
+/** The specifier an owner file passes bindings on from: a re-export, or an import of a binding it exports. */
+const passedOnSpecifier = (statement: Node, exportedImports: ReadonlySet<Node>): string | undefined => {
+  if (statement.type === 'ExportAllDeclaration') {
+    return statement.source.value;
+  }
+  if (statement.type === 'ImportDeclaration') {
+    return exportedImports.has(statement) ? statement.source.value : undefined;
+  }
+  return statement.type === 'ExportNamedDeclaration' ? statement.source?.value : undefined;
+};
+
+/**
+ * The source of every owner file inside `directory` an owner entry passes bindings on from, transitively: what it
+ * re-exports from, and what it imports a binding from that it exports.
+ */
+const readOwnerSources = Effect.fn('readOwnerSources')(function* readOwnerSourcesEffect(
+  filePath: string,
+  content: string,
+  directory: string,
+  retired: RetiredRead,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const sources = new Map<string, string>([[filePath, content]]);
+  const pending = [filePath];
+  for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+    const bindings = yield* trySync(() => parsedBindings(file, sources.get(file) ?? ''), `cannot parse ${file}`);
+    const exportedImports = new Set(
+      bindings.references.flatMap((reference) =>
+        bindings.parents.get(reference.identifier)?.type === 'ExportSpecifier'
+          ? reference.bindings.map((binding) => binding.statement)
+          : [],
+      ),
+    );
+    for (const statement of bindings.program.body) {
+      const specifier = passedOnSpecifier(statement, exportedImports);
+      if (specifier?.startsWith('.') === true) {
+        const base = nodePath.resolve(nodePath.dirname(file), specifier);
+        // A specifier with an extension names its file; one without names `<path>.ts` or `<path>/index.ts`.
+        const candidates = nodePath.extname(base) === '' ? [`${base}.ts`, nodePath.join(base, 'index.ts')] : [base];
+        for (const candidate of candidates) {
+          const inside = candidate.startsWith(`${directory}${nodePath.sep}`);
+          if (inside && !sources.has(candidate) && !retired.files.has(candidate)) {
+            const exists = yield* fileSystem
+              .exists(candidate)
+              .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${candidate}`, cause)));
+            if (exists) {
+              sources.set(
+                candidate,
+                yield* fileSystem
+                  .readFileString(candidate)
+                  .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${candidate}`, cause))),
+              );
+              pending.push(candidate);
+            }
+          }
+        }
+      }
+    }
+  }
+  return sources;
+});
+
 const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEffect(
   filePath: string,
   label: string,
   removals: readonly SlotRemoval[],
   retired: RetiredRead,
+  directory: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const content = yield* fileSystem
     .readFileString(filePath)
     .pipe(Effect.mapError((cause) => scaffoldError(`${label} is missing at ${filePath}`, cause)));
+  const sources = yield* readOwnerSources(filePath, content, directory, retired);
   const next = yield* trySync(
-    () => withoutRetiredRead(filePath, removeSlotEntries(content, removals), retired),
+    () => removeSlotEntries(withoutRetiredRead(filePath, content, retired, sources, removals), removals),
     `failed to retire ${label}`,
   );
   return { content: next, kind: 'update' as const, path: filePath };
@@ -414,19 +658,17 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     paths.map((filePath, index) => readGeneratedArtifact(filePath, `module API ${name}`, checks[index] ?? [])),
     { concurrency: 'unbounded' },
   );
-  const [contractPath, , clientPath] = paths;
   const [contractSource = '', , clientSource = ''] = artifacts;
   const retired: RetiredRead = {
-    files: new Set([
-      ...paths,
-      ...(publication === undefined ? [] : [publication.contractSpecifier, publication.clientSpecifier]),
+    files: new Map([
+      ...paths.map((filePath, index) => [filePath, artifacts[index] ?? ''] as const),
+      ...(publication === undefined
+        ? []
+        : [
+            [publication.contractSpecifier, contractSource] as const,
+            [publication.clientSpecifier, clientSource] as const,
+          ]),
     ]),
-    names: new Set(
-      yield* trySync(
-        () => [...exportedNames(contractPath, contractSource), ...exportedNames(clientPath, clientSource)],
-        `failed to read the exports of module API ${name}`,
-      ),
-    ),
   };
   const readImport = `import { ${camel}Read } from './src/api/${name}.read.ts';`;
   const { nextManifest, nextRegistration } = yield* trySync(
@@ -502,6 +744,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
       },
     ],
     retired,
+    vertical.directory,
   );
   const handlerRoot = yield* updateOwnerFile(
     yield* trySync(() => resolveContainedPath(vertical.directory, 'api', 'index.ts'), 'failed to resolve handler root'),
@@ -521,6 +764,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
       },
     ],
     retired,
+    vertical.directory,
   );
   const aggregatePath = yield* trySync(
     () => ownerClientAggregatePath(vertical),
@@ -530,7 +774,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
   const aggregate = (yield* (yield* FileSystem.FileSystem)
     .exists(aggregatePath)
     .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${aggregatePath}`, cause))))
-    ? [yield* updateOwnerFile(aggregatePath, `client aggregate of ${name}`, [], retired)]
+    ? [yield* updateOwnerFile(aggregatePath, `client aggregate of ${name}`, [], retired, vertical.directory)]
     : [];
   const deletes = yield* Effect.all(paths.map(deleteMutationEffect), {
     concurrency: 'unbounded',
