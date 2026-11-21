@@ -23,6 +23,7 @@ Read this guide, then only the rows that govern the task.
 | Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                              |
 | Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                  |
 | ARES provider lookup and Party application            | [ARES reference](docs/integrations/ares.md) and [Party Registry](docs/architecture/PARTY_REGISTRY.md)               |
+| Symmy ERP sender contract for Akros (`/api/symmy/v1`) | [Symmy Akros quickstart](docs/integrations/symmy-akros-quickstart.md)                                               |
 
 Read a specification only when the task or GitHub issue names it. A specification with `status: done`, `status: complete`, or `status: superseded` is historical implementation evidence, not current guidance. Do not browse `specs/` for background.
 
