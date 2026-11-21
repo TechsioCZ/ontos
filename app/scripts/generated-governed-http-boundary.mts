@@ -69,10 +69,18 @@ const GovernedReadKindSchema = Schema.Literals([MODULE_API_KIND, REPORT_KIND, SE
 type GovernedReadKind = typeof GovernedReadKindSchema.Type;
 const isGovernedReadKind = Schema.is(GovernedReadKindSchema);
 
+/** The contract package a module read is published from instead of its owner. */
+interface PackageReadPublication {
+  readonly exports: Readonly<Record<string, string>>;
+  readonly packageName: string;
+  readonly packagePath: string;
+}
+
 interface GovernedReadContribution {
   readonly contractStem: string;
   readonly kind: GovernedReadKind;
   readonly name: string;
+  readonly publication?: PackageReadPublication;
 }
 
 const escapeRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
@@ -2066,6 +2074,35 @@ const contributionProfiles = {
 const contributionServerStem = (contribution: GovernedReadContribution): string =>
   contribution.kind === MODULE_API_KIND ? `${contribution.name}-read` : contribution.contractStem;
 
+/** How each owner file names a read's contract and client: in the owner, or in the one package publishing it. */
+interface ContributionImports {
+  readonly client: string;
+  readonly manifest: string;
+  readonly registration: string;
+  readonly server: string;
+  readonly sharedApi: string;
+}
+
+const contributionImports = ({ contractStem, name, publication }: GovernedReadContribution): ContributionImports => {
+  if (publication !== undefined) {
+    const contract = `${publication.packageName}/${name}`;
+    return {
+      client: `../apis/${name}.ts`,
+      manifest: contract,
+      registration: `${contract}/client`,
+      server: contract,
+      sharedApi: contract,
+    };
+  }
+  return {
+    client: `../../shared/apis/${contractStem}.ts`,
+    manifest: `./shared/apis/${contractStem}.ts`,
+    registration: `./src/api/${contractStem}-client.ts`,
+    server: `../shared/apis/${contractStem}.ts`,
+    sharedApi: `./apis/${contractStem}.ts`,
+  };
+};
+
 const contributionRole = (kind: GovernedReadKind): string => contributionProfiles[kind].role;
 const contributionGroup = (kind: GovernedReadKind, name: string): string =>
   `${toCamelCase(name)}${contributionProfiles[kind].typeSuffix}`;
@@ -3328,9 +3365,8 @@ const publicContractSpecifierParts = (specifier: string): PublicContractSpecifie
       };
 };
 
-const publicContractPackageManifests = (
+const contractPackageManifests = (
   sources: ReadonlyMap<string, string>,
-  packageName: string,
 ): readonly (readonly [string, PublicContractPackageManifest])[] =>
   [...sources.entries()].flatMap(([candidate, source]) => {
     if (!candidate.startsWith('packages/') || !candidate.endsWith('/package.json')) {
@@ -3339,8 +3375,14 @@ const publicContractPackageManifests = (
     const decoded = Option.getOrUndefined(
       Schema.decodeUnknownOption(Schema.fromJsonString(PublicContractPackageManifestSchema))(source),
     );
-    return decoded?.name === packageName ? [[candidate, decoded] as const] : [];
+    return decoded === undefined ? [] : [[candidate, decoded] as const];
   });
+
+const publicContractPackageManifests = (
+  sources: ReadonlyMap<string, string>,
+  packageName: string,
+): readonly (readonly [string, PublicContractPackageManifest])[] =>
+  contractPackageManifests(sources).filter(([, manifest]) => manifest.name === packageName);
 
 const ModulePackageManifestSchema = Schema.Struct({
   exports: Schema.Record(Schema.String, Schema.String),
@@ -3874,7 +3916,7 @@ const hasClientContract = (
   endpointGroup: string,
   apiValue: string,
   deploymentAppId: string,
-  ownerContractImport = `../../shared/apis/${contribution.contractStem}.ts`,
+  ownerContractImport: string,
 ): boolean => {
   const type = toPascalCase(contribution.name);
   const operation = contribution.kind === MODULE_API_KIND ? `execute${type}` : `load${type}Client`;
@@ -4302,7 +4344,7 @@ const hasManifestContract = (manifest: string, contribution: GovernedReadContrib
           entry === `${contribution.contractStem}: ${apiValue}`,
       ).length === 1;
     return (
-      hasExactValueImport(manifest, apiValue, `./shared/apis/${contribution.contractStem}.ts`) &&
+      hasExactValueImport(manifest, apiValue, contributionImports(contribution).manifest) &&
       [apiEntries, allOwnerManifestEntries].every(manifestEntriesMatch)
     );
   }
@@ -4340,7 +4382,7 @@ const hasManifestContract = (manifest: string, contribution: GovernedReadContrib
 
 const hasPublishedRegistration = (registration: string, contribution: GovernedReadContribution): boolean => {
   const escapedName = escapeRegExp(contribution.name);
-  const escapedContractStem = escapeRegExp(contribution.contractStem);
+  const escapedClient = escapeRegExp(contributionImports(contribution).registration);
   const { registrationCategory, registrationSection } = contributionProfiles[contribution.kind];
   const registrationEntries = generatedSlotEntries(
     registration,
@@ -4353,11 +4395,11 @@ const hasPublishedRegistration = (registration: string, contribution: GovernedRe
     ['// <generated-module-registration-search>', '// </generated-module-registration-search>'],
   ]);
   const registrationPattern = new RegExp(
-    `^(?:'${escapedName}'|${escapedName})\\s*:\\s*\\(\\s*\\)\\s*=>\\s*import\\(\\s*'./src/api/${escapedContractStem}-client\\.ts'\\s*\\)$`,
+    `^(?:'${escapedName}'|${escapedName})\\s*:\\s*\\(\\s*\\)\\s*=>\\s*import\\(\\s*'${escapedClient}'\\s*\\)$`,
     'u',
   );
   const canonicalRegistrationPattern =
-    /^(?:'(?<quoted>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)'|(?<bare>[a-z][a-z0-9]*(?:-[a-z0-9]+)*))\s*:\s*\(\s*\)\s*=>\s*import\(\s*'\.\/src\/api\/(?<file>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-client\.ts'\s*\)$/u;
+    /^(?:'(?<quoted>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)'|(?<bare>[a-z][a-z0-9]*(?:-[a-z0-9]+)*))\s*:\s*\(\s*\)\s*=>\s*import\(\s*'(?:\.\/src\/api\/(?<file>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-client\.ts|@app\/[a-z][a-z0-9-]*\/(?<published>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/client)'\s*\)$/u;
   return (
     registrationEntries?.filter((entry) => registrationPattern.test(entry)).length === 1 &&
     allRegistrationEntries?.every((entry) => {
@@ -4366,8 +4408,7 @@ const hasPublishedRegistration = (registration: string, contribution: GovernedRe
       const file = match?.groups?.file;
       return (
         name !== undefined &&
-        file !== undefined &&
-        (file === name || file === `${name}-report` || file === `${name}-search`)
+        (match?.groups?.published === name || file === name || file === `${name}-report` || file === `${name}-search`)
       );
     }) === true &&
     allRegistrationEntries?.filter((entry) => objectEntryKey(entry) === contribution.name).length === 1 &&
@@ -4380,11 +4421,11 @@ const hasPublishedRegistration = (registration: string, contribution: GovernedRe
   );
 };
 
-const publishesSharedApiContribution = (sharedApi: string, apiValue: string, contractStem: string): boolean => {
+const publishesSharedApiContribution = (sharedApi: string, apiValue: string, contractImport: string): boolean => {
   const escapedApiValue = escapeRegExp(apiValue);
   return (
     hasExactlyOne(maskComments(sharedApi), new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu')) &&
-    hasExactValueImport(sharedApi, apiValue, `./apis/${contractStem}.ts`) &&
+    hasExactValueImport(sharedApi, apiValue, contractImport) &&
     slotHasExactlyOneCodeMatch(
       sharedApi,
       GOVERNED_API_SLOT_START,
@@ -4393,6 +4434,25 @@ const publishesSharedApiContribution = (sharedApi: string, apiValue: string, con
     )
   );
 };
+
+/** The contract and client subpaths of a package read named by `statement` (`import`/`export` … `from`) in `source`. */
+const namesPackageRead = (
+  source: string,
+  contribution: GovernedReadContribution,
+  statement: 'export' | 'import|export',
+): boolean => {
+  const contract = contributionImports(contribution).sharedApi;
+  return [
+    ...maskComments(source).matchAll(
+      new RegExp(`\\b(?:${statement})\\b[^;]*?\\bfrom\\s*['"](?<specifier>[^'"]+)['"]`, 'gu'),
+    ),
+  ].some((match) => match.groups?.specifier === contract || match.groups?.specifier === `${contract}/client`);
+};
+
+/** The owner's `./api` entry imports a package read's API value only to mount it; it re-exports nothing of the read. */
+const reexportsPackageRead = (sharedApi: string, contribution: GovernedReadContribution, apiValue: string): boolean =>
+  namesPackageRead(sharedApi, contribution, 'export') ||
+  new RegExp(`\\bexport\\s*(?:type\\s*)?\\{[^}]*\\b${escapeRegExp(apiValue)}\\b`, 'u').test(maskComments(sharedApi));
 
 const hasPublishedContract = (
   sharedApi: string,
@@ -4453,7 +4513,12 @@ const hasPublishedContract = (
         expectedApi,
       ),
     registration: hasPublishedRegistration(registration, contribution),
-    sharedContribution: publishesSharedApiContribution(sharedApi, apiValue, contribution.contractStem),
+    sharedContribution: publishesSharedApiContribution(
+      sharedApi,
+      apiValue,
+      contributionImports(contribution).sharedApi,
+    ),
+    sharedReexport: contribution.publication === undefined || !reexportsPackageRead(sharedApi, contribution, apiValue),
     sharedRoot: hasGovernedSharedApiRoot(sharedApi),
   };
   const failed = Object.entries(publicationChecks)
@@ -5047,7 +5112,7 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         `operationGateway\\.invoke\\(\\s*\\(credential,\\s*\\{\\s*apiBaseUrl,\\s*compositionRevision\\s*\\}\\)\\s*=>\\s*execute${escapeRegExp(type)}WithAuthorization\\(\\s*payload,\\s*credential,\\s*requestCorrelation,\\s*\\{\\s*\\.\\.\\.options,\\s*baseUrl:\\s*apiBaseUrl,\\s*compositionRevision,?\\s*\\}\\s*,?\\s*\\)`,
         'u',
       ).test(client),
-      publishesSharedApiContribution(input.sharedApi, escapedApiValue, escapeRegExp(stem)),
+      publishesSharedApiContribution(input.sharedApi, escapedApiValue, `./apis/${escapeRegExp(stem)}.ts`),
       slotHasExactlyOneCodeMatch(
         input.handlerRoot,
         '// <generated-governed-http-handler-imports>',
@@ -5091,94 +5156,26 @@ interface ResolvedPublicContract {
   readonly specifier: string;
 }
 
-type ExpectedPublicContractOwner = {
+interface ExpectedPublicContractOwner {
+  readonly actionSlug: string;
   readonly appId: string;
   readonly moduleId: string;
   readonly packageName: string;
-} & ({ readonly moduleApi: string } | { readonly actionSlug: string });
+}
 
 interface PublicContractSourceLocation {
   readonly packageDirectory: string;
   readonly sourcePath: string;
 }
 
-const publicContractSpecifier = (source: string): string | undefined => {
-  const annotated = /^\/\/ @ontos-public-contract (?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)$/mu.exec(
-    source,
+const publicContractSpecifier = (source: string): string | undefined =>
+  /^\s*export\s+\*\s+from\s+(?<quote>['"])(?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)\k<quote>;\s*$/u.exec(
+    maskComments(source),
   )?.groups?.specifier;
-  return (
-    annotated ??
-    /^\s*export\s+\*\s+from\s+(?<quote>['"])(?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)\k<quote>;\s*$/u.exec(
-      maskComments(source),
-    )?.groups?.specifier
-  );
-};
 
-const namedPublicContractMembersEnd = (
-  tokens: ReturnType<typeof tokenizeGovernedClient>,
-  start: number,
-  typeOnly: boolean,
-): number | undefined => {
-  let cursor = start;
-  let names = 0;
-  while (tokens[cursor]?.kind !== SyntaxKind.CloseBraceToken) {
-    if (!typeOnly && tokens[cursor]?.kind === SyntaxKind.TypeKeyword) {
-      cursor += 1;
-    }
-    if (tokens[cursor]?.kind !== SyntaxKind.Identifier) {
-      return undefined;
-    }
-    cursor += 1;
-    names += 1;
-    if (tokens[cursor]?.kind === SyntaxKind.CommaToken) {
-      cursor += 1;
-    } else if (tokens[cursor]?.kind !== SyntaxKind.CloseBraceToken) {
-      return undefined;
-    }
-  }
-  return names === 0 ? undefined : cursor;
-};
-
-/** Every token must belong to a static named reexport from the one approved public target. */
-const hasClosedNamedPublicContractExports = (
-  tokens: ReturnType<typeof tokenizeGovernedClient>,
-  specifier: string,
-): boolean => {
-  let cursor = 0;
-  while (cursor < tokens.length) {
-    if (tokens[cursor]?.kind !== SyntaxKind.ExportKeyword) {
-      return false;
-    }
-    cursor += 1;
-    const typeOnly = tokens[cursor]?.kind === SyntaxKind.TypeKeyword;
-    if (typeOnly) {
-      cursor += 1;
-    }
-    if (tokens[cursor]?.kind !== SyntaxKind.OpenBraceToken) {
-      return false;
-    }
-    const close = namedPublicContractMembersEnd(tokens, cursor + 1, typeOnly);
-    if (close === undefined || !hasExactSourceTokens(tokens.slice(close + 1, close + 4), `from '${specifier}';`)) {
-      return false;
-    }
-    cursor = close + 4;
-  }
-  return tokens.length > 0;
-};
-
-const isClosedPublicContractExport = (source: string, specifier: string): boolean => {
-  if (publicContractSpecifier(source) !== specifier) {
-    return false;
-  }
-  const tokens = tokenizeGovernedClient(source);
-  return (
-    hasExactSourceTokens(tokens, `export * from '${specifier}';`) ||
-    hasClosedNamedPublicContractExports(tokens, specifier)
-  );
-};
-
-const isExactPublicContractShim = (source: string, header: string, specifier: string): boolean =>
-  hasGeneratedSourceHeader(source, header) && isClosedPublicContractExport(source, specifier);
+const isClosedPublicContractExport = (source: string, specifier: string): boolean =>
+  publicContractSpecifier(source) === specifier &&
+  hasExactSourceTokens(tokenizeGovernedClient(source), `export * from '${specifier}';`);
 
 const hasExpectedPublicContractOwner = (
   manifest: PublicContractPackageManifest,
@@ -5186,13 +5183,9 @@ const hasExpectedPublicContractOwner = (
 ): boolean =>
   manifest.ontosContractOwner.appId === expected.appId &&
   manifest.ontosContractOwner.moduleId === expected.moduleId &&
-  manifest.ontosContractOwner.packageName === expected.packageName &&
-  (!('moduleApi' in expected) || manifest.ontosContractOwner.moduleApis.includes(expected.moduleApi));
+  manifest.ontosContractOwner.packageName === expected.packageName;
 
-const hasGeneratedActionContractTarget = (
-  source: string,
-  expected: ExpectedPublicContractOwner & { readonly actionSlug: string },
-): boolean => {
+const hasGeneratedActionContractTarget = (source: string, expected: ExpectedPublicContractOwner): boolean => {
   const type = toPascalCase(expected.actionSlug);
   return (
     hasGeneratedSourceHeader(
@@ -5233,23 +5226,10 @@ const resolvePublicContract = (
     return undefined;
   }
   const source = sources.get(location.sourcePath);
-  if (source === undefined || ('actionSlug' in expected && !hasGeneratedActionContractTarget(source, expected))) {
+  if (source === undefined || !hasGeneratedActionContractTarget(source, expected)) {
     return undefined;
   }
   return { packagePath: location.packageDirectory, source, sourcePath: location.sourcePath, specifier };
-};
-
-interface ContributionSourceCandidates {
-  readonly ownerClientSource: string | undefined;
-  readonly readImport: string;
-  readonly readSource: string | undefined;
-  readonly serverSource: string | undefined;
-}
-
-type DefinedContributionSourceCandidates = ContributionSourceCandidates & {
-  readonly ownerClientSource: string;
-  readonly readSource: string;
-  readonly serverSource: string;
 };
 
 interface LoadedContributionSources {
@@ -5260,168 +5240,6 @@ interface LoadedContributionSources {
   readonly readSource: string;
   readonly serverSource: string;
 }
-
-interface PublicContributionSourceInput {
-  readonly candidates: DefinedContributionSourceCandidates;
-  readonly clientSpecifier: string | undefined;
-  readonly contractSpecifier: string | undefined;
-  readonly contribution: GovernedReadContribution;
-  readonly deploymentAppId: string;
-  readonly header: string;
-  readonly moduleId: string;
-  readonly ownerContractSource: string;
-  readonly ownerPackageName: string;
-  readonly sources: ReadonlyMap<string, string>;
-}
-
-type ValidPublicContributionSourceInput = PublicContributionSourceInput & {
-  readonly clientSpecifier: string;
-  readonly contractSpecifier: string;
-};
-
-interface ResolvedPublicContributionSources {
-  readonly client: ResolvedPublicContract;
-  readonly contract: ResolvedPublicContract;
-}
-
-const contributionSourceCandidates = (
-  sources: ReadonlyMap<string, string>,
-  verticalPath: string,
-  contribution: GovernedReadContribution,
-): ContributionSourceCandidates => {
-  const readDirectory = contributionReadDirectory(contribution.kind);
-  const { readSuffix } = contributionProfiles[contribution.kind];
-  const readPath = `src/${readDirectory}/${contribution.name}${readSuffix}.ts`;
-  return {
-    ownerClientSource: sources.get(`${verticalPath}/src/api/${contribution.contractStem}-client.ts`),
-    readImport: `../${readPath}`,
-    readSource: sources.get(`${verticalPath}/${readPath}`),
-    serverSource: sources.get(`${verticalPath}/api/${contributionServerStem(contribution)}-server.ts`),
-  };
-};
-
-const hasDefinedContributionSources = (
-  candidates: ContributionSourceCandidates,
-  // oxlint-disable-next-line effect-native/no-refinement-outside-schema -- This narrows correlated in-memory Map lookups; introducing a runtime document schema would change the generated-boundary check rather than validate external data.
-): candidates is DefinedContributionSourceCandidates =>
-  candidates.readSource !== undefined &&
-  candidates.ownerClientSource !== undefined &&
-  candidates.serverSource !== undefined;
-
-const hasGeneratedContributionHeaders = (candidates: DefinedContributionSourceCandidates, header: string): boolean =>
-  [candidates.readSource, candidates.ownerClientSource, candidates.serverSource].every((source) =>
-    hasGeneratedSourceHeader(source, header),
-  );
-
-const ownerLocalContributionSources = (
-  candidates: DefinedContributionSourceCandidates,
-  contribution: GovernedReadContribution,
-  ownerContractSource: string,
-): LoadedContributionSources => ({
-  clientSource: candidates.ownerClientSource,
-  contractImport: `../../shared/apis/${contribution.contractStem}.ts`,
-  contractSource: ownerContractSource,
-  readImport: candidates.readImport,
-  readSource: candidates.readSource,
-  serverSource: candidates.serverSource,
-});
-
-const hasValidPublicContributionSourcePaths = (
-  input: PublicContributionSourceInput,
-  // oxlint-disable-next-line effect-native/no-refinement-outside-schema -- This predicate validates cross-file generated source relationships, which are contextual filesystem invariants rather than properties of a standalone data schema.
-): input is ValidPublicContributionSourceInput =>
-  input.contribution.kind === MODULE_API_KIND &&
-  input.contractSpecifier !== undefined &&
-  input.clientSpecifier === `${input.contractSpecifier}/client` &&
-  isExactPublicContractShim(input.ownerContractSource, input.header, input.contractSpecifier) &&
-  isExactPublicContractShim(input.candidates.ownerClientSource, input.header, input.clientSpecifier);
-
-const resolvePublicContributionSources = (
-  input: ValidPublicContributionSourceInput,
-  expectedOwner: ExpectedPublicContractOwner,
-): ResolvedPublicContributionSources | undefined => {
-  const contract = resolvePublicContract(input.sources, input.contractSpecifier, expectedOwner);
-  const client = resolvePublicContract(input.sources, input.clientSpecifier, expectedOwner);
-  return contract !== undefined &&
-    client !== undefined &&
-    contract.packagePath === client.packagePath &&
-    contract.source.startsWith(input.header) &&
-    client.source.startsWith(input.header) &&
-    hasActionBoundaryGateway(
-      input.sources.get(`${contract.packagePath}/src/api/action-gateway.ts`),
-      input.deploymentAppId,
-    )
-    ? { client, contract }
-    : undefined;
-};
-
-/** Resolve only a complete same-owner public package pair through its canonical owner client/schema shims. */
-export const resolvePublishedOwnerReadClient = (
-  sources: ReadonlyMap<string, string>,
-  ownerPath: string,
-  appId: string,
-  moduleId: string,
-  name: string,
-): ResolvedPublicContributionSources | undefined => {
-  const contribution: GovernedReadContribution = { contractStem: name, kind: MODULE_API_KIND, name };
-  const candidates = contributionSourceCandidates(sources, ownerPath, contribution);
-  const ownerContractSource = sources.get(`${ownerPath}/shared/apis/${name}.ts`);
-  const owner = Option.getOrUndefined(
-    Schema.decodeUnknownOption(Schema.fromJsonString(OwnerPackageManifestSchema))(
-      sources.get(`${ownerPath}/package.json`) ?? '',
-    ),
-  );
-  if (!hasDefinedContributionSources(candidates) || ownerContractSource === undefined || owner === undefined) {
-    return undefined;
-  }
-  const input = {
-    candidates,
-    clientSpecifier: publicContractSpecifier(candidates.ownerClientSource),
-    contractSpecifier: publicContractSpecifier(ownerContractSource),
-    contribution,
-    deploymentAppId: appId,
-    header: MODULE_API_HEADER,
-    moduleId,
-    ownerContractSource,
-    ownerPackageName: owner.name,
-    sources,
-  };
-  return hasValidPublicContributionSourcePaths(input)
-    ? resolvePublicContributionSources(input, {
-        appId,
-        moduleApi: name,
-        moduleId,
-        packageName: owner.name,
-      })
-    : undefined;
-};
-
-const publicContributionSources = (input: PublicContributionSourceInput): LoadedContributionSources | undefined => {
-  if (!hasValidPublicContributionSourcePaths(input)) {
-    return undefined;
-  }
-  const expectedOwner = {
-    appId: input.deploymentAppId,
-    moduleApi: input.contribution.name,
-    moduleId: input.moduleId,
-    packageName: input.ownerPackageName,
-  };
-  const resolved = resolvePublicContributionSources(input, expectedOwner);
-  if (resolved === undefined) {
-    return undefined;
-  }
-  const { candidates } = input;
-  const { client, contract } = resolved;
-  const relativeContractImport = path.posix.relative(path.posix.dirname(client.sourcePath), contract.sourcePath);
-  return {
-    clientSource: client.source,
-    contractImport: relativeContractImport.startsWith('.') ? relativeContractImport : `./${relativeContractImport}`,
-    contractSource: contract.source,
-    readImport: candidates.readImport,
-    readSource: candidates.readSource,
-    serverSource: candidates.serverSource,
-  };
-};
 
 type OwnerPackageManifest = typeof OwnerPackageManifestSchema.Type;
 
@@ -5454,7 +5272,6 @@ interface GeneratedContributionValidationContext {
   readonly handlerRoot: string;
   readonly manifest: string;
   readonly moduleId: string;
-  readonly ownerPackageName: string;
   readonly registration: string;
   readonly sharedApi: string;
 }
@@ -5581,7 +5398,8 @@ const hasCompleteContributionRead = (
       generatedModuleApiEntrypointReference(readSource, `${toCamelCase(contribution.name)}Read`)?.name,
     ));
 
-export const hasPublishedGeneratedContractShim = (
+/** An owner `shared/apis/<slug>-action.ts` that only re-exports the generated Action HTTP contract of a package claiming the owner. */
+export const hasPublishedGeneratedActionContractShim = (
   sources: ReadonlyMap<string, string>,
   file: string,
   source: string,
@@ -5590,7 +5408,7 @@ export const hasPublishedGeneratedContractShim = (
   if (
     specifier === undefined ||
     !isClosedPublicContractExport(source, specifier) ||
-    !/^(?:apps|verticals)\/[^/]+\/shared\/apis\/[a-z][a-z0-9-]*\.ts$/u.test(file)
+    !/^(?:apps|verticals)\/[^/]+\/shared\/apis\/[a-z][a-z0-9-]*-action\.ts$/u.test(file)
   ) {
     return false;
   }
@@ -5603,118 +5421,204 @@ export const hasPublishedGeneratedContractShim = (
   if (appId === undefined) {
     return false;
   }
-  const name = path.posix.basename(file, '.ts');
-  const owner = { appId, moduleId: inputs.moduleId, packageName: inputs.ownerPackage.name };
-  if (name.endsWith('-action')) {
-    return (
-      resolvePublicContract(sources, specifier, { ...owner, actionSlug: name.slice(0, -'-action'.length) }) !==
-      undefined
-    );
-  }
-  const contract = resolvePublicContract(sources, specifier, { ...owner, moduleApi: name });
   return (
-    contract !== undefined &&
-    hasGeneratedSourceHeader(contract.source, MODULE_API_HEADER) &&
-    hasHttpContractImports(contract.source) &&
-    hasGeneratedModuleApiContract(contract.source, `${toPascalCase(name)}Api`, toCamelCase(name), name)
+    resolvePublicContract(sources, specifier, {
+      actionSlug: path.posix.basename(file, '-action.ts'),
+      appId,
+      moduleId: inputs.moduleId,
+      packageName: inputs.ownerPackage.name,
+    }) !== undefined
   );
 };
 
-const publishedModuleReadContribution = (
-  sources: ReadonlyMap<string, string>,
-  candidate: string,
-  source: string,
-): GovernedReadContribution | undefined => {
-  const name = path.posix.basename(candidate, '.ts');
-  return !name.endsWith('-action') && hasPublishedGeneratedContractShim(sources, candidate, source)
-    ? { contractStem: name, kind: MODULE_API_KIND, name }
-    : undefined;
-};
+interface ModuleReadOwner {
+  readonly appId: string;
+  readonly moduleId: string;
+  readonly packageName: string;
+}
 
-const generatedReadContributions = (
+interface DiscoveredModuleReads {
+  readonly contributions: readonly GeneratedContribution[];
+  readonly problems: readonly string[];
+}
+
+/** A module read published from a contract package: the package's contract leaf and what it claims. */
+export interface PublishedPackageRead {
+  readonly claimed: boolean;
+  readonly contractPath: string;
+  readonly contractSource: string;
+  readonly exported: boolean;
+  readonly manifest: PublicContractPackageManifest;
+  readonly name: string;
+  readonly packagePath: string;
+}
+
+/** Every `packages/<package>/src/apis/<name>.ts` carrying the module-api header, found from the files first. */
+export const publishedPackageReads = (sources: ReadonlyMap<string, string>): readonly PublishedPackageRead[] =>
+  [...sources.entries()].flatMap(([contractPath, contractSource]): readonly PublishedPackageRead[] => {
+    const leaf = /^(?<packagePath>packages\/[^/]+)\/src\/apis\/(?<name>[a-z][a-z0-9-]*)\.ts$/u.exec(
+      contractPath,
+    )?.groups;
+    const packagePath = leaf?.packagePath;
+    const name = leaf?.name;
+    if (
+      packagePath === undefined ||
+      name === undefined ||
+      !hasGeneratedSourceHeader(contractSource, MODULE_API_HEADER)
+    ) {
+      return [];
+    }
+    const manifest = Option.getOrUndefined(
+      Schema.decodeUnknownOption(Schema.fromJsonString(PublicContractPackageManifestSchema))(
+        sources.get(`${packagePath}/package.json`) ?? '',
+      ),
+    );
+    return manifest === undefined
+      ? []
+      : [
+          {
+            claimed: manifest.ontosContractOwner.moduleApis.includes(name),
+            contractPath,
+            contractSource,
+            exported: manifest.exports[`./${name}`] === `./src/apis/${name}.ts`,
+            manifest,
+            name,
+            packagePath,
+          },
+        ];
+  });
+
+const namesOwner = (manifest: PublicContractPackageManifest, owner: ModuleReadOwner): boolean =>
+  manifest.ontosContractOwner.appId === owner.appId &&
+  manifest.ontosContractOwner.moduleId === owner.moduleId &&
+  manifest.ontosContractOwner.packageName === owner.packageName;
+
+const ownerModuleReads = (
   sources: ReadonlyMap<string, string>,
   verticalPath: string,
 ): readonly GeneratedContribution[] => {
   const contractPrefix = `${verticalPath}/shared/apis/`;
-  return [...sources.entries()].flatMap(([candidate, source]): readonly GeneratedContribution[] => {
-    if (
-      !candidate.startsWith(contractPrefix) ||
-      !candidate.endsWith('.ts') ||
-      candidate.slice(contractPrefix.length).includes('/')
-    ) {
+  return [...sources.entries()].flatMap(([candidate, source]): readonly GeneratedContribution[] =>
+    candidate.startsWith(contractPrefix) &&
+    candidate.endsWith('.ts') &&
+    !candidate.slice(contractPrefix.length).includes('/') &&
+    (hasGeneratedSourceHeader(source, MODULE_API_HEADER) ||
+      hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER))
+      ? [[candidate, source, governedReadContribution(path.posix.basename(candidate, '.ts'), source)]]
+      : [],
+  );
+};
+
+/** The package reads of one module, and why a package leaf or claim naming the module is not one. */
+const packageModuleReads = (sources: ReadonlyMap<string, string>, owner: ModuleReadOwner): DiscoveredModuleReads => {
+  const problems: string[] = [];
+  const reads = publishedPackageReads(sources).filter(
+    (read) => read.manifest.ontosContractOwner.packageName === owner.packageName,
+  );
+  const contributions = reads.flatMap((read): readonly GeneratedContribution[] => {
+    const failures = [
+      [namesOwner(read.manifest, owner), `its package does not name ${owner.moduleId} as owner`],
+      [read.claimed, 'ontosContractOwner.moduleApis does not claim it'],
+      [read.exported, `it is not exported as ./${read.name}`],
+    ] as const;
+    const failed = failures.filter(([valid]) => !valid).map(([, reason]) => reason);
+    if (failed.length > 0) {
+      problems.push(`${read.contractPath}: not a package read (${failed.join('; ')})`);
       return [];
     }
-    const published = publishedModuleReadContribution(sources, candidate, source);
-    const generated =
-      hasGeneratedSourceHeader(source, MODULE_API_HEADER) ||
-      hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER);
-    return generated || published !== undefined
-      ? [[candidate, source, governedReadContribution(path.posix.basename(candidate, '.ts'), source) ?? published]]
-      : [];
+    const publication = {
+      exports: read.manifest.exports,
+      packageName: read.manifest.name,
+      packagePath: read.packagePath,
+    };
+    return [
+      [
+        read.contractPath,
+        read.contractSource,
+        { contractStem: read.name, kind: MODULE_API_KIND, name: read.name, publication },
+      ],
+    ];
   });
+  for (const [manifestPath, manifest] of contractPackageManifests(sources)) {
+    const packagePath = path.posix.dirname(manifestPath);
+    for (const name of namesOwner(manifest, owner) ? manifest.ontosContractOwner.moduleApis : []) {
+      if (!sources.has(`${packagePath}/src/apis/${name}.ts`)) {
+        problems.push(`${manifestPath}: claims ${name} without a contract at src/apis/${name}.ts`);
+      }
+    }
+  }
+  return { contributions, problems };
 };
+
+/**
+ * Owner reads from `<owner>/shared/apis`, package reads from every package naming the owner. A read has one place: a
+ * package read with an owner file fails here, and a name found twice fails the inventory reconciliation.
+ */
+const generatedReadContributions = (
+  sources: ReadonlyMap<string, string>,
+  verticalPath: string,
+  owner: ModuleReadOwner,
+): DiscoveredModuleReads => {
+  const owned = ownerModuleReads(sources, verticalPath);
+  const published = packageModuleReads(sources, owner);
+  const problems = [...published.problems];
+  for (const name of published.contributions.flatMap((entry) => (entry[2] === undefined ? [] : [entry[2].name]))) {
+    for (const ownerFile of [`${verticalPath}/shared/apis/${name}.ts`, `${verticalPath}/src/api/${name}-client.ts`]) {
+      if (sources.has(ownerFile)) {
+        problems.push(`${ownerFile}: the package read ${name} has no file in its owner`);
+      }
+    }
+  }
+  return { contributions: [...owned, ...published.contributions], problems };
+};
+
+/** The client of a package read: `./<name>/client` of the same package, beside its generated operation gateway. */
+const packageReadClientSource = (
+  sources: ReadonlyMap<string, string>,
+  publication: PackageReadPublication,
+  name: string,
+  deploymentAppId: string,
+): string | undefined =>
+  publication.exports[`./${name}/client`] === `./src/api/${name}-client.ts` &&
+  hasActionBoundaryGateway(sources.get(`${publication.packagePath}/src/api/action-gateway.ts`), deploymentAppId)
+    ? sources.get(`${publication.packagePath}/src/api/${name}-client.ts`)
+    : undefined;
 
 const loadContributionSources = (
   sources: ReadonlyMap<string, string>,
   verticalPath: string,
   contribution: GovernedReadContribution,
-  ownerContractSource: string,
+  contractSource: string,
   deploymentAppId: string,
-  moduleId: string,
-  ownerPackageName: string,
 ): LoadedContributionSources | undefined => {
-  const candidates = contributionSourceCandidates(sources, verticalPath, contribution);
+  const readDirectory = contributionReadDirectory(contribution.kind);
+  const { readSuffix } = contributionProfiles[contribution.kind];
+  const readPath = `src/${readDirectory}/${contribution.name}${readSuffix}.ts`;
+  const readSource = sources.get(`${verticalPath}/${readPath}`);
+  const serverSource = sources.get(`${verticalPath}/api/${contributionServerStem(contribution)}-server.ts`);
+  const clientSource =
+    contribution.publication === undefined
+      ? sources.get(`${verticalPath}/src/api/${contribution.contractStem}-client.ts`)
+      : packageReadClientSource(sources, contribution.publication, contribution.name, deploymentAppId);
   const header = generatedHeader(contribution.kind);
-  const published = publishedModuleReadContribution(
-    sources,
-    `${verticalPath}/shared/apis/${contribution.contractStem}.ts`,
-    ownerContractSource,
-  );
   if (
-    !hasDefinedContributionSources(candidates) ||
-    !hasGeneratedContributionHeaders(candidates, header) ||
-    !(
-      hasGeneratedSourceHeader(ownerContractSource, header) ||
-      (published?.kind === contribution.kind && published.name === contribution.name)
+    readSource === undefined ||
+    serverSource === undefined ||
+    clientSource === undefined ||
+    ![contractSource, readSource, clientSource, serverSource].every((source) =>
+      hasGeneratedSourceHeader(source, header),
     )
   ) {
     return undefined;
   }
-  const contractSpecifier = publicContractSpecifier(ownerContractSource);
-  const clientSpecifier = publicContractSpecifier(candidates.ownerClientSource);
-  if (
-    contractSpecifier !== undefined &&
-    clientSpecifier === undefined &&
-    isClosedPublicContractExport(ownerContractSource, contractSpecifier)
-  ) {
-    const contract = resolvePublicContract(sources, contractSpecifier, {
-      appId: deploymentAppId,
-      moduleApi: contribution.name,
-      moduleId,
-      packageName: ownerPackageName,
-    });
-    if (contract === undefined || !hasGeneratedSourceHeader(contract.source, header)) {
-      return undefined;
-    }
-    return {
-      ...ownerLocalContributionSources(candidates, contribution, ownerContractSource),
-      contractSource: contract.source,
-    };
-  }
-  return contractSpecifier === undefined && clientSpecifier === undefined
-    ? ownerLocalContributionSources(candidates, contribution, ownerContractSource)
-    : publicContributionSources({
-        candidates,
-        clientSpecifier,
-        contractSpecifier,
-        contribution,
-        deploymentAppId,
-        header,
-        moduleId,
-        ownerContractSource,
-        ownerPackageName,
-        sources,
-      });
+  return {
+    clientSource,
+    contractImport: contributionImports(contribution).client,
+    contractSource,
+    readImport: `../${readPath}`,
+    readSource,
+    serverSource,
+  };
 };
 
 /**
@@ -5812,33 +5716,27 @@ const hasCompleteGeneratedContribution = (
   context: GeneratedContributionValidationContext,
   entry: GeneratedContribution,
 ): boolean => {
-  const [, ownerContractSource, contribution] = entry;
+  const [, contractSource, contribution] = entry;
   if (contribution === undefined) {
     return false;
   }
   const camel = toCamelCase(contribution.name);
   const group = contributionGroup(contribution.kind, contribution.name);
   const apiValue = contributionApiValue(contribution.kind, contribution.name);
-  const loaded = loadContributionSources(
-    sources,
-    verticalPath,
-    contribution,
-    ownerContractSource,
-    context.deploymentAppId,
-    context.moduleId,
-    context.ownerPackageName,
-  );
+  const loaded = loadContributionSources(sources, verticalPath, contribution, contractSource, context.deploymentAppId);
   if (loaded === undefined) {
     context.diagnostics?.push(`${contribution.name}: missing source or provenance marker`);
     return false;
   }
-  const { clientSource, contractImport, contractSource, readImport, readSource, serverSource } =
+  const { clientSource, contractImport, readImport, readSource, serverSource, ...canonical } =
     canonicalReviewedCompanionSources(verticalPath, contribution, context.sharedApi, loaded);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
+  const aggregate = ownerActionClientPublication(sources, verticalPath, context.deploymentAppId)?.source ?? '';
   const checks = {
+    aggregate: contribution.publication === undefined || !namesPackageRead(aggregate, contribution, 'import|export'),
     client: hasClientContract(clientSource, contribution, group, apiValue, context.deploymentAppId, contractImport),
     contract: hasCompleteContributionContract(
-      contractSource,
+      canonical.contractSource,
       contribution,
       apiValue,
       group,
@@ -5870,7 +5768,7 @@ const hasCompleteGeneratedContribution = (
       escapeRegExp(group),
       readImport,
       schemaStem,
-      `../shared/apis/${contribution.contractStem}.ts`,
+      contributionImports(contribution).server,
       governedApiBinding(context.sharedApi) ?? '',
       context.deploymentAppId,
     ),
@@ -5890,7 +5788,16 @@ const hasCompleteGeneratedContributions = (
   deploymentAppId: string,
   diagnostics: string[] | undefined,
 ): boolean => {
-  const contributions = generatedReadContributions(sources, inputs.verticalPath);
+  const discovered = generatedReadContributions(sources, inputs.verticalPath, {
+    appId: deploymentAppId,
+    moduleId: inputs.moduleId,
+    packageName: inputs.ownerPackage.name,
+  });
+  if (discovered.problems.length > 0) {
+    diagnostics?.push(...discovered.problems);
+    return false;
+  }
+  const { contributions } = discovered;
   if (contributions.length === 0) {
     return false;
   }
@@ -5918,7 +5825,6 @@ const hasCompleteGeneratedContributions = (
     handlerRoot: inputs.handlerRoot,
     manifest: inputs.manifest,
     moduleId: inputs.moduleId,
-    ownerPackageName: inputs.ownerPackage.name,
     registration: inputs.registration,
     sharedApi: inputs.sharedApi,
   };
