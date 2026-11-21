@@ -1351,14 +1351,53 @@ it.live('takes neither a require member of another object nor a local binding na
   }),
 );
 
-it.live('attributes a bare literal of a loader from another base by name, and counts a relative one as computed', () =>
+it.live('counts every load of a loader based anywhere but its own file as computed, bare or relative', () =>
   Effect.gen(function* foreignBase() {
-    const foreign = 'verticals/alpha/src/foreign.ts';
+    const load = 'verticals/alpha/src/load.mts';
     expect(
       yield* freezeViolations({
-        [foreign]: `${createRequireImport}const load = createRequire(new URL('../../beta/package.json', import.meta.url));\nexport const beta = load('@app/beta');\nexport const own = load('./src/index.ts');\n`,
+        [alphaManifest]: freezeManifest(alphaName, { dependencies: { peer: 'npm:some-third-party@1.0.0' } }),
+        [load]:
+          "import { createRequire } from 'node:module';\nconst load = createRequire(new URL('../../../package.json', import.meta.url));\nexport const beta = load('peer');\nexport const own = load('./src/index.ts');\n",
+        'package.json': JSON.stringify({ devDependencies: { peer: betaWorkspaceAlias }, name: 'workspace-root' }),
       }),
-    ).toEqual([...betaRuntimeEdge(`${foreign}:3`), computedLoad(foreign, [4])]);
+    ).toEqual([computedLoad(load, [3, 4])]);
+  }),
+);
+
+it.live('counts a recognised load with any argument beyond its one literal as computed', () =>
+  Effect.gen(function* extraArguments() {
+    const searchPaths = 'verticals/alpha/src/search-paths.cjs';
+    const parentUrl = 'verticals/alpha/src/parent-url.ts';
+    expect(
+      yield* freezeViolations({
+        [parentUrl]: "export const beta = import.meta.resolve('./index.ts', 'file:///elsewhere/');\n",
+        [searchPaths]: "module.exports = require.resolve('./package.json', { paths: [__dirname + '/../../beta'] });\n",
+      }),
+    ).toEqual([computedLoad(parentUrl, [1]), computedLoad(searchPaths, [1])]);
+  }),
+);
+
+it.live('resolves the literals a same-file helper passes to its loader, and counts any other helper as computed', () =>
+  Effect.gen(function* helperParameter() {
+    const config = 'verticals/alpha/backend-federation.config.ts';
+    const exported = 'verticals/alpha/src/exported-helper.ts';
+    const reassigned = 'verticals/alpha/src/reassigned-helper.ts';
+    const variable = 'verticals/alpha/src/variable-helper.ts';
+    const loader = `${createRequireImport}const require = createRequire(import.meta.url);\n`;
+    expect(
+      yield* freezeViolations({
+        [config]: `${loader}const packageVersion = (specifier: string): string => require(specifier).version;\nexport const effectVersion = packageVersion('effect/package.json');\nexport const betaVersion = packageVersion('../beta/package.json');\n`,
+        [exported]: `${loader}export const packageVersion = (specifier: string): string => require(specifier).version;\n`,
+        [reassigned]: `${loader}const load = (specifier: string) => {\n  specifier += '';\n  return require(specifier);\n};\nexport const effect = load('effect');\n`,
+        [variable]: `${loader}const load = (specifier: string) => require(specifier);\nconst name = '../beta/package.json';\nexport const values = [load('effect'), load(name)];\n`,
+      }),
+    ).toEqual([
+      ...betaRuntimeEdge(`${config}:5`),
+      computedLoad(exported, [3]),
+      computedLoad(reassigned, [5]),
+      computedLoad(variable, [3]),
+    ]);
   }),
 );
 
