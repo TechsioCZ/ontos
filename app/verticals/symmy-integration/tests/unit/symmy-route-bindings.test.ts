@@ -427,6 +427,10 @@ describe('Symmy route bindings', () => {
     expect(definePrices([symmy, callingAs([person, { kind: 'registered' }]), market]).refusals).toEqual([
       { code: 'call_not_declared', detail: `${required} and registers no call to it under ${sourceWrite}` },
     ]);
+    // A requirement only a worker delivery calls relays nobody, so it keeps its registered call.
+    expect(definePrices([symmy, callingAs([{ kind: 'workload' }]), market]).refusals).toEqual([
+      { code: 'call_not_declared', detail: `${required} and registers no call to it under ${sourceWrite}` },
+    ]);
 
     // A nested owner's requirement too, as on main: Privacy requires Party's organization record facts for the check
     // Commerce customer context makes for a membership write, and registers no call to them.
