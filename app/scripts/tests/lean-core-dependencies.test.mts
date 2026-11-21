@@ -1155,6 +1155,32 @@ it.live('resolves a package imports entry to every target it maps a # specifier 
   }),
 );
 
+it.live('resolves a bare specifier through the root package.json when its own package does not declare it', () =>
+  Effect.gen(function* rootDeclaration() {
+    expect(
+      yield* freezeViolations({
+        [alphaUsesBeta]: "import { beta } from 'peer';\n",
+        'package.json': JSON.stringify({ devDependencies: { peer: 'workspace:@app/beta@*' }, name: 'workspace-root' }),
+      }),
+    ).toEqual(betaRuntimeEdge(`${alphaUsesBeta}:1`));
+  }),
+);
+
+it.live('selects the imports entry Node selects: the exact key, else the pattern with the longest prefix', () =>
+  Effect.gen(function* subpathPrecedence() {
+    const subpaths = 'verticals/alpha/src/subpaths.ts';
+    expect(
+      yield* freezeViolations({
+        [alphaManifest]: JSON.stringify({
+          imports: { '#*': '@app/beta', '#own': './src/own.ts', '#peer/*': './src/peer/*.ts' },
+          name: alphaName,
+        }),
+        [subpaths]: "import { own } from '#own';\nimport { peer } from '#peer/x';\nimport { beta } from '#beta';\n",
+      }),
+    ).toEqual(betaRuntimeEdge(`${subpaths}:3`));
+  }),
+);
+
 /** A Git repository at root whose one commit holds the freeze workspace with files; root is its top. */
 const trackedRepository = (files: FreezeFiles) =>
   Effect.gen(function* trackedRepositoryProgram() {
