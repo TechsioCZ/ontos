@@ -22,8 +22,8 @@ jobs:
     container:
       image: node:26-alpine
     env:
-      TRUNK_SHA: 84d269dad3e163688b56c0d544861055b12402b2
-      UNITS_RUN_ID: '44907049665'
+      TRUNK_SHA: 76e0c22c53acc97af4d144d05a836f49d5bc85d0
+      UNITS_RUN_ID: '44912166909'
     steps:
       - name: Install the tools of the Zerops build image
         run: apk add --no-cache bash git curl tar unzip zstd jq findutils coreutils
