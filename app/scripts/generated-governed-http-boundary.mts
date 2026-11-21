@@ -34,7 +34,10 @@ import {
   tokenizeGovernedClient,
 } from './generated-module-api-boundary.mts';
 import {
+  PackageExportsSchema,
+  accessedMember,
   bindingOrigins,
+  calleeMember,
   exportOrigins,
   importTypeOrigins,
   isInType,
@@ -49,12 +52,20 @@ import {
   rebinding,
   readableLoads,
   referenceOrigins,
+  resolvedSpecifier,
   takenMembers,
   topLevelStatement,
   unreadableLoadLine,
   unreadableLoads,
 } from './module-bindings.mts';
-import type { DeclaredExport, ExportOrigin, ModuleBinding, ModuleBindings, ModuleGraph } from './module-bindings.mts';
+import type {
+  DeclaredExport,
+  ExportOrigin,
+  ModuleBinding,
+  ModuleBindings,
+  ModuleGraph,
+  WorkspacePackage as ResolvedPackage,
+} from './module-bindings.mts';
 import {
   GOVERNED_HTTP_API_CLOSING_ANNOTATION,
   isCodePosition,
@@ -4446,17 +4457,17 @@ const hasPublishedRegistration = (registration: string, contribution: GovernedRe
   );
 };
 
-/** Whether a node is the one argument of an `.addHttpApi(…)` call: a mount. */
+/**
+ * Whether a node is the one argument of an `.addHttpApi(…)` call, the member found under the wrappers by name or by a
+ * literal (`calleeMember`): a mount.
+ */
 const isMountArgument = (bindings: ModuleBindings, node: Node): boolean => {
   const parent = bindings.parents.get(node);
   return (
     parent?.type === 'CallExpression' &&
     parent.arguments.length === 1 &&
     parent.arguments[0] === node &&
-    parent.callee.type === 'MemberExpression' &&
-    !parent.callee.computed &&
-    parent.callee.property.type === 'Identifier' &&
-    parent.callee.property.name === 'addHttpApi'
+    calleeMember(bindings, parent)?.name === 'addHttpApi'
   );
 };
 
@@ -4573,9 +4584,12 @@ const isExportedDeclaration = (declared: ExportedDeclarations, origin: DeclaredE
 };
 
 /** Whether a module binding of `file` imports exactly a name `declared` names: settled at its first link. */
-const importsExported = (declared: ExportedDeclarations, file: string, binding: ModuleBinding): boolean =>
-  binding.imported !== undefined &&
-  isExportedImport(declared, declared.graph.target(file, binding.imported.source), binding.imported.name);
+const importsExported = (declared: ExportedDeclarations, file: string, binding: ModuleBinding): boolean => {
+  const target = binding.imported === undefined ? undefined : declared.graph.target(file, binding.imported.source);
+  return (
+    target !== undefined && binding.imported !== undefined && isExportedImport(declared, target, binding.imported.name)
+  );
+};
 
 /** The package reads of the module: each read's contract and client file, and each read's API value. */
 interface ModuleReadFiles {
@@ -4682,6 +4696,113 @@ const readReach = (
 const OWNER_ENTRY_READ_FORMS =
   "./api imports a read's API value only to mount it in its own HttpApi value, and every export resolves to a declaration of the entry that reaches no read, a declaration of another owner file that is no read's, or something the entry takes from outside the owner that is no read's";
 
+/**
+ * The kinds of syntax an owner entry may hold (`entrySyntaxKind`): the ones the 38 entries on the tree at 1f3972b779
+ * hold, measured over every module's `shared/api.ts` and `./api/client` aggregate. Anything else (a class member, a
+ * static block, `let` or `var`, an assignment, a load, a meta-property, a member no literal names) the read check and
+ * the mount judge are not shown to read.
+ */
+const ENTRY_SYNTAX = new Set([
+  'ArrayExpression',
+  'ArrowFunctionExpression',
+  'AssignmentPattern',
+  'BinaryExpression',
+  'BlockStatement',
+  'CallExpression',
+  'ClassBody',
+  'ClassDeclaration',
+  'ConditionalExpression',
+  'ExportAllDeclaration',
+  'ExportNamedDeclaration',
+  'ExportSpecifier',
+  'ExpressionStatement',
+  'FunctionExpression',
+  'Identifier',
+  'IfStatement',
+  'ImportDeclaration',
+  // Rule (a): an API of an owner file mounted as its default export (`import ExtraApi from './extra-api.ts'`).
+  'ImportDefaultSpecifier',
+  'ImportSpecifier',
+  'Literal',
+  'LogicalExpression',
+  'MemberExpression',
+  'ObjectExpression',
+  'ObjectPattern',
+  'ParenthesizedExpression',
+  'Program',
+  'Property',
+  'RestElement',
+  'ReturnStatement',
+  'SpreadElement',
+  'TSArrayType',
+  'TSAsExpression',
+  'TSConditionalType',
+  'TSIndexedAccessType',
+  'TSInferType',
+  'TSInterfaceBody',
+  'TSInterfaceDeclaration',
+  'TSInterfaceHeritage',
+  'TSIntersectionType',
+  'TSLiteralType',
+  'TSNeverKeyword',
+  'TSNumberKeyword',
+  'TSPropertySignature',
+  'TSQualifiedName',
+  'TSSatisfiesExpression',
+  'TSStringKeyword',
+  'TSTypeAliasDeclaration',
+  'TSTypeAnnotation',
+  'TSTypeLiteral',
+  'TSTypeOperator',
+  'TSTypeParameter',
+  'TSTypeParameterDeclaration',
+  'TSTypeParameterInstantiation',
+  'TSTypeQuery',
+  'TSTypeReference',
+  'TSUnionType',
+  'VariableDeclaration const',
+  'VariableDeclarator',
+  'YieldExpression',
+]);
+
+/** The kind of syntax a node is: its type, a variable declaration with its kind, a member access no literal names. */
+const entrySyntaxKind = (node: Node): string => {
+  if (node.type === 'VariableDeclaration') {
+    return `VariableDeclaration ${node.kind}`;
+  }
+  return node.type === 'MemberExpression' && accessedMember(node) === undefined
+    ? 'MemberExpression computed'
+    : node.type;
+};
+
+/**
+ * What an owner entry holds that the check does not read: syntax `ENTRY_SYNTAX` does not list, anywhere in the file,
+ * and in `./api`, `addHttpApi` named other than as the member a mount calls (`isMountArgument`).
+ */
+const entrySyntaxProblems = (file: string, bindings: ModuleBindings, mounts: boolean): readonly string[] => {
+  const nodes = [bindings.program, ...bindings.parents.keys()];
+  const mountMembers = new Set(
+    nodes.flatMap((node) =>
+      node.type === 'CallExpression' && node.arguments.length === 1 && node.arguments[0]?.type !== 'SpreadElement'
+        ? (calleeMember(bindings, node)?.property ?? [])
+        : [],
+    ),
+  );
+  return nodes.flatMap((node) => {
+    const at = `${file}:${lineOf(bindings.source, node.start)}`;
+    const kind = entrySyntaxKind(node);
+    if (!ENTRY_SYNTAX.has(kind)) {
+      return [`${at} the owner entry uses syntax the read check does not read: ${kind}`];
+    }
+    const named =
+      (node.type === 'Identifier' && node.name === 'addHttpApi') ||
+      (node.type === 'Literal' && node.value === 'addHttpApi');
+    return mounts && named && !mountMembers.has(node)
+      ? [`${at} the owner entry names addHttpApi other than as the member a mount of one API calls`]
+      : [];
+  });
+};
+
 interface OwnerEntry {
   readonly file: string;
   /** `./api`, which mounts the reads' API values; the `./api/client` aggregate takes nothing from them. */
@@ -4740,13 +4861,20 @@ const readTakingProblems = (
   // Loaded at run time, a module that passes on a read still takes it from its package.
   const loads = moduleSpecifiers(bindings).flatMap(({ node, specifier }) => {
     const target = graph.target(entry.file, specifier);
-    return node.type !== 'ImportDeclaration' &&
-      node.type !== 'ExportAllDeclaration' &&
-      node.type !== 'ExportNamedDeclaration' &&
-      node.type !== 'TSImportType' &&
-      passesOnRead(graph, reads, target)
-      ? [at(node, 'loads', target)]
-      : [];
+    if (
+      node.type === 'ImportDeclaration' ||
+      node.type === 'ExportAllDeclaration' ||
+      node.type === 'ExportNamedDeclaration' ||
+      node.type === 'TSImportType'
+    ) {
+      return [];
+    }
+    if (target === undefined) {
+      return [
+        `${entry.file}:${lineOf(entry.source, node.start)} loads ${specifier}, which is no file of the workspace; admitted: ${OWNER_ENTRY_READ_FORMS}`,
+      ];
+    }
+    return passesOnRead(graph, reads, target) ? [at(node, 'loads', target)] : [];
   });
   // A load no static rule reads, anywhere in the entry, may take anything from a read.
   const unreadable = unreadableLoads(bindings).map(
@@ -4758,7 +4886,6 @@ const readTakingProblems = (
 
 /** What one name an owner entry exports resolves to, judged against the module's package reads. */
 const exportedReadProblem = (
-  graph: ModuleGraph,
   entry: OwnerEntry,
   ownerPath: string,
   reads: ModuleReadFiles,
@@ -4768,17 +4895,6 @@ const exportedReadProblem = (
   const leaves = `${entry.file}: export ${name}`;
   const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
   const through = origin.trail.length > 1 ? ` through ${origin.trail.slice(1).join(', ')}` : '';
-  // A file on the chain that holds a load no static rule reads may pass on anything.
-  const unreadable = origin.trail.slice(1).flatMap((file) => {
-    const bindings = graph.parsed(file);
-    const line = bindings === undefined || bindings === 'unparsable' ? undefined : unreadableLoadLine(bindings);
-    return line === undefined
-      ? []
-      : [`${leaves} passes through ${file}, which loads a module it does not read statically at ${line}${admitted}`];
-  });
-  if (unreadable[0] !== undefined) {
-    return unreadable[0];
-  }
   const read = readFileOf(reads, origin);
   if (read !== undefined) {
     return `${leaves} passes on the package read ${read}${through}${admitted}`;
@@ -4802,7 +4918,7 @@ const exportedReadProblem = (
   return `${leaves} cannot be followed: ${origin.file} ${origin.reason}${through}${admitted}`;
 };
 
-/** The module bindings of an entry it exports itself, by the name each leaves under: `export const`, `export { a as b }`. */
+/** The module bindings of an entry it exports itself under a name: `export const`, `export { a as b }`. */
 const entryExportedBindings = (bindings: ModuleBindings): readonly (readonly [string, ModuleBinding])[] =>
   bindings.program.body.flatMap((statement): readonly (readonly [string, ModuleBinding])[] => {
     if (statement.type === 'ExportNamedDeclaration' && statement.source === null) {
@@ -4820,12 +4936,62 @@ const entryExportedBindings = (bindings: ModuleBindings): readonly (readonly [st
         ),
       ];
     }
-    return statement.type === 'ExportDefaultDeclaration' && statement.declaration.type === 'Identifier'
-      ? (bindings.referenceOf.get(statement.declaration)?.bindings ?? []).map(
-          (binding) => ['default', binding] as const,
-        )
-      : [];
+    return [];
   });
+
+/** What an entry exports as its `default`, as written: the expression or declaration of `export default` and `export =`. */
+const entryDefaultExports = (bindings: ModuleBindings): readonly Node[] =>
+  bindings.program.body.flatMap((statement) => {
+    if (statement.type === 'ExportDefaultDeclaration') {
+      return [statement.declaration];
+    }
+    return statement.type === 'TSExportAssignment' ? [statement.expression] : [];
+  });
+
+/**
+ * Every file an owner entry passes bindings on from, each judged once whatever names or trails reach it: each file an
+ * `export … from` or `export *` of the entry names, each file one of those names in turn, and every file an export of
+ * the entry passes through. A file of them that does not parse, names no file of the workspace, or holds a load no
+ * static rule reads (`unreadableLoads`) may pass on anything.
+ */
+const reexportedProblems = (
+  graph: ModuleGraph,
+  entry: OwnerEntry,
+  exported: readonly (readonly [string, ExportOrigin])[],
+): readonly string[] => {
+  const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
+  const files = new Set(exported.flatMap(([, origin]) => origin.trail.slice(1)));
+  const problems: string[] = [];
+  const pending = [entry.file, ...files];
+  for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
+    const bindings = graph.parsed(file);
+    if (bindings === 'unparsable') {
+      problems.push(`${entry.file}: re-exports through ${file}, which does not parse${admitted}`);
+    } else if (bindings !== undefined) {
+      const line = file === entry.file ? undefined : unreadableLoadLine(bindings);
+      if (line !== undefined) {
+        problems.push(
+          `${entry.file}: re-exports through ${file}, which loads a module it does not read statically at ${line}${admitted}`,
+        );
+      }
+      for (const statement of bindings.program.body) {
+        const source =
+          (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration') &&
+          statement.source !== null
+            ? statement.source.value
+            : undefined;
+        const target = source === undefined ? undefined : graph.target(file, source);
+        if (source !== undefined && target === undefined) {
+          problems.push(`${entry.file}: ${file} re-exports ${source}, which is no file of the workspace${admitted}`);
+        } else if (target !== undefined && target !== entry.file && !files.has(target)) {
+          files.add(target);
+          pending.push(target);
+        }
+      }
+    }
+  }
+  return problems;
+};
 
 /** Whether a declaration of the entry reaches a read: a binding `readReach` found, or an expression referring to one. */
 const declarationReaches = (
@@ -4895,16 +5061,25 @@ const ownerEntryReadProblems = (
     ];
     // What the entry exports of its own is judged where it stands too, wherever it is another name for: an annotation
     // that reaches a read leaves with the value it annotates.
-    const ownExports = entryExportedBindings(bindings).flatMap(([name, binding]) =>
-      reached.has(binding)
-        ? [`${entry.file}: export ${name} reaches a package read of the module; admitted: ${OWNER_ENTRY_READ_FORMS}`]
-        : [],
-    );
+    const ownExports = [
+      ...entryExportedBindings(bindings).flatMap(([name, binding]) =>
+        reached.has(binding)
+          ? [`${entry.file}: export ${name} reaches a package read of the module; admitted: ${OWNER_ENTRY_READ_FORMS}`]
+          : [],
+      ),
+      // What `export default` and `export =` write is judged whole, as a named export's declaration is.
+      ...entryDefaultExports(bindings).flatMap((node) =>
+        reaching({ bindings, file: entry.file, kind: 'declared', node, trail: [entry.file] })
+          ? [`${entry.file}: export default reaches a package read of the module; admitted: ${OWNER_ENTRY_READ_FORMS}`]
+          : [],
+      ),
+    ];
     return [
       ...new Set([
         ...readTakingProblems(graph, entry, bindings, reads),
         ...ownExports,
-        ...exported.flatMap((named) => exportedReadProblem(graph, entry, ownerPath, reads, reaching, named) ?? []),
+        ...reexportedProblems(graph, entry, exported),
+        ...exported.flatMap((named) => exportedReadProblem(entry, ownerPath, reads, reaching, named) ?? []),
       ]),
     ];
   });
@@ -6361,26 +6536,9 @@ const hasCompleteGeneratedContribution = (
   return failed.length === 0;
 };
 
-/** The owner file a relative specifier of `importer` names, when it exists. */
-const relativeImportTarget = (
-  sources: ReadonlyMap<string, string>,
-  importer: string,
-  specifier: string,
-): string | undefined => {
-  if (!specifier.startsWith('.')) {
-    return undefined;
-  }
-  const target = path.posix.normalize(path.posix.join(path.posix.dirname(importer), specifier));
-  return [target, `${target}.ts`, `${target}/index.ts`].find((candidate) => sources.has(candidate));
-};
-
 /** A workspace package: where it lies, what its `exports` map publishes, and the module that owns it, if any. */
-interface WorkspacePackage {
-  readonly dir: string;
-  readonly exports: Readonly<Record<string, string>>;
+interface WorkspacePackage extends ResolvedPackage {
   readonly owner: ContractOwner | undefined;
-  /** A module (`verticals/<module>`) or a contract package (one declaring an `ontosContractOwner`): read by the graph. */
-  readonly read: boolean;
 }
 
 interface Workspace {
@@ -6391,22 +6549,34 @@ interface Workspace {
 
 const workspaces = new WeakMap<ReadonlyMap<string, string>, Workspace>();
 
-/** The workspace packages of the sources, by package name. */
+const ManifestExportsSchema = Schema.Struct({ exports: Schema.optionalKey(PackageExportsSchema) });
+
+/** The workspace packages of the sources, by package name: every app, module and package manifest. */
 const workspaceOf = (sources: ReadonlyMap<string, string>): Workspace => {
   const known = workspaces.get(sources);
   if (known !== undefined) {
     return known;
   }
   const packages = new Map<string, WorkspacePackage>();
+  // The packages whose files the sources hold, beside their manifests.
+  const held = new Set(
+    [...sources.keys()].flatMap((file) => {
+      const dir = /^(?<dir>(?:apps|verticals|packages)\/[^/]+)\/(?!package\.json$)/u.exec(file)?.groups?.dir;
+      return dir === undefined ? [] : [dir];
+    }),
+  );
   for (const [file, source] of sources) {
-    const root = /^(?<root>verticals|packages)\/[^/]+\/package\.json$/u.exec(file)?.groups?.root;
+    const root = /^(?<root>apps|verticals|packages)\/[^/]+\/package\.json$/u.exec(file)?.groups?.root;
     const manifest = root === undefined ? undefined : packageReadManifest(source);
     if (manifest?.name !== undefined) {
       packages.set(manifest.name, {
         dir: path.posix.dirname(file),
-        exports: manifest.exports,
+        exports: Option.getOrUndefined(Schema.decodeUnknownOption(Schema.fromJsonString(ManifestExportsSchema))(source))
+          ?.exports,
         owner: manifest.owner,
-        read: root === 'verticals' || manifest.owner !== undefined,
+        // A module (`verticals/<module>`) or a contract package (one declaring an `ontosContractOwner`) whose files
+        // the sources hold; one held by its manifest alone is named through its `exports`, as a library package is.
+        read: (root === 'verticals' || manifest.owner !== undefined) && held.has(path.posix.dirname(file)),
       });
     }
   }
@@ -6418,37 +6588,9 @@ const workspaceOf = (sources: ReadonlyMap<string, string>): Workspace => {
   return workspace;
 };
 
-/** The workspace package a specifier names, `<package>` or `<package>/<subpath>`, with its name. */
-const workspacePackageOf = (workspace: Workspace, specifier: string): readonly [string, WorkspacePackage] | undefined =>
-  [...workspace.packages].find(([name]) => specifier === name || specifier.startsWith(`${name}/`));
-
-/**
- * The file a specifier of `importer` names: a relative path, or a subpath of a workspace package through its `exports`
- * map; anything else (a library, a subpath no `exports` entry publishes) stays the specifier.
- */
-const workspaceTarget =
-  (sources: ReadonlyMap<string, string>, workspace: Workspace) =>
-  (importer: string, specifier: string): string => {
-    if (specifier.startsWith('.')) {
-      return (
-        relativeImportTarget(sources, importer, specifier) ??
-        path.posix.normalize(path.posix.join(path.posix.dirname(importer), specifier))
-      );
-    }
-    const named = workspacePackageOf(workspace, specifier);
-    const published =
-      named === undefined
-        ? undefined
-        : named[1].exports[specifier === named[0] ? '.' : `.${specifier.slice(named[0].length)}`];
-    return named === undefined || published === undefined
-      ? specifier
-      : path.posix.normalize(path.posix.join(named[1].dir, published));
-  };
-
-/** Whether a target the graph does not read lies in a module or contract package: a link that cannot be followed. */
+/** Whether a file the graph does not read lies in a module or contract package: a link that cannot be followed. */
 const isUnreadWorkspaceTarget = (workspace: Workspace, target: string): boolean =>
-  workspace.readDirectories.some((directory) => target.startsWith(directory)) ||
-  workspacePackageOf(workspace, target)?.[1].read === true;
+  workspace.readDirectories.some((directory) => target.startsWith(directory));
 
 /**
  * The files that hold reads' and Actions' API values and server layers, of any module: a module's generated contracts
@@ -6895,11 +7037,7 @@ const composedLayers =
     let composition: Node | undefined;
     for (const node of bindings.parents.keys()) {
       if (
-        node.type === 'CallExpression' &&
-        node.callee.type === 'MemberExpression' &&
-        !node.callee.computed &&
-        node.callee.property.type === 'Identifier' &&
-        node.callee.property.name === 'mergeAll' &&
+        calleeMember(bindings, node)?.name === 'mergeAll' &&
         slot !== undefined &&
         node.start < slot.markerStart &&
         node.end > slot.markerEnd &&
@@ -6940,27 +7078,29 @@ const ownerEntryProblems = (
   ]);
   const workspace = workspaceOf(sources);
   const graph = moduleGraph(
-    workspaceTarget(sources, workspace),
+    resolvedSpecifier((file) => sources.has(file), workspace.packages),
     (target) =>
       entrySources.get(target) ??
       (CODE_FILE.test(target) && workspace.readDirectories.some((directory) => target.startsWith(directory))
         ? sources.get(target)
         : undefined),
   );
-  /** Where `importer` takes `name` from when it imports it from `specifier`. */
-  const exportedAt = (importer: string, specifier: string, name: string) =>
-    [graph.target(importer, specifier), name] as const;
+  /** Where `importer` takes `name` from when it imports it from `specifier`; nothing for a specifier naming no file. */
+  const exportedAt = (importer: string, specifier: string, name: string): readonly (readonly [string, string])[] => {
+    const target = graph.target(importer, specifier);
+    return target === undefined ? [] : [[target, name]];
+  };
   const readApiValue = (read: GovernedReadContribution) =>
     exportedAt(sharedFile, contributionImports(read).sharedApi, contributionApiValue(read.kind, read.name));
   const module = moduleReadOwner(sources, verticalPath, deploymentAppId);
   const admitted = exportedDeclarations(graph, [
     ...reads.flatMap((read) => [
-      readApiValue(read),
-      exportedAt(handlerFile, `./${contributionServerStem(read)}-server.ts`, `${toCamelCase(read.name)}ReadApiLive`),
+      ...readApiValue(read),
+      ...exportedAt(handlerFile, `./${contributionServerStem(read)}-server.ts`, `${toCamelCase(read.name)}ReadApiLive`),
     ]),
     ...actionSlugs.flatMap((slug) => [
-      exportedAt(sharedFile, `./apis/${slug}${ACTION_CONTRACT_SUFFIX}`, `${toPascalCase(slug)}ActionApi`),
-      exportedAt(handlerFile, `./${slug}-action-server.ts`, `${toCamelCase(slug)}ActionApiLive`),
+      ...exportedAt(sharedFile, `./apis/${slug}${ACTION_CONTRACT_SUFFIX}`, `${toPascalCase(slug)}ActionApi`),
+      ...exportedAt(handlerFile, `./${slug}-action-server.ts`, `${toCamelCase(slug)}ActionApiLive`),
     ]),
   ]);
   const context: CompositionContext = {
@@ -6983,7 +7123,7 @@ const ownerEntryProblems = (
   const readFiles: ModuleReadFiles = {
     apiValues: exportedDeclarations(
       graph,
-      published.map(([read]) => readApiValue(read)),
+      published.flatMap(([read]) => readApiValue(read)),
     ),
     files: new Set(
       published.flatMap(([read, { packagePath }]) => [
@@ -6997,6 +7137,12 @@ const ownerEntryProblems = (
     ...(aggregate === undefined ? [] : [{ ...aggregate, mounts: false }]),
   ];
   return [
+    ...entries.flatMap((entry) => {
+      const parsed = graph.parsed(entry.file);
+      return parsed === undefined || parsed === 'unparsable'
+        ? []
+        : entrySyntaxProblems(entry.file, parsed, entry.mounts);
+    }),
     ...composedProblems(context, { composed: mountedApis, file: sharedFile, source: inputs.sharedApi }),
     ...composedProblems(context, {
       composed: composedLayers(inputs.handlerRoot),

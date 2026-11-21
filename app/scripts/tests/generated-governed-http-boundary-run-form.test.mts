@@ -4,7 +4,11 @@ import { Effect } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { hasCompleteGeneratedModuleApiSeam, readSdkFormViolations } from '../generated-governed-http-boundary.mts';
-import { PRICING_SHARED_API_PATH, readPricingSourceTree } from './module-entrypoint-boundary-fixtures.mts';
+import {
+  PRICING_SHARED_API_PATH,
+  readPricingSourceTree,
+  readWorkspaceManifests,
+} from './module-entrypoint-boundary-fixtures.mts';
 
 /* A synthetic owner: one read of `demo.module`, one provider contract package of `provider.module`. */
 
@@ -343,7 +347,8 @@ describe('the read SDK form inside the generated module API seam', () => {
         readPricingSourceTree(root, folder),
       ),
     );
-    return new Map(trees.flat());
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    return new Map([...manifests, ...trees.flat()]);
   });
 
   const withRunForm = (

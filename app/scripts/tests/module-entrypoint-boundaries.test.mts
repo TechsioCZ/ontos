@@ -86,6 +86,7 @@ import {
   assertPublishedPartyUsage,
   partyManifestSource,
   readPricingSourceTree,
+  readWorkspaceManifests,
   PROTECTED_READ_AUTHORIZATION,
   NON_PROTECTED_READ_AUTHORIZATION,
   carrierBlock,
@@ -973,7 +974,8 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     const trees = yield* Effect.all(
       ['verticals/pricing', 'packages/pricing-contracts'].map((folder) => readPricingSourceTree(root, folder)),
     );
-    const sources = new Map(trees.flat());
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    const sources = new Map([...manifests, ...trees.flat()]);
     const shared = PRICING_SHARED_API_PATH;
     const ownerContractFile = 'verticals/pricing/shared/apis/quotation-verification.ts';
     const manifestFile = 'verticals/pricing/vertical.manifest.ts';
@@ -1532,7 +1534,7 @@ for (const [name, source, allowed] of [
       const root = yield* makeActualMarketClientFixture();
       const file = 'verticals/commerce-market-catalog/src/api/commerce-market-catalog-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
-      yield* write(root, file, `${original}\nexport const privateMarketClientCallable = () => globalThis;\n`);
+      yield* write(root, file, `${original}\nexport const privateMarketClientCallable = () => 'private';\n`);
       const consumer = 'apps/shell-super-app/src/market-client-consumer.ts';
       yield* write(root, consumer, source);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));

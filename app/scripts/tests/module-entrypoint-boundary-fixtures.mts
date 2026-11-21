@@ -72,10 +72,14 @@ const CUSTOMER_CONTEXT_REACH = [
   'packages/price-group-catalog-contracts',
   'verticals/payment-term-catalog',
   'verticals/price-group-catalog',
+  // Customer Context's contracts take Party Registry's contracts and resources, which the seam follows.
+  'packages/party-registry-contracts',
+  PARTY_VERTICAL_PATH,
 ] as const;
 
 const CUSTOMER_CONTEXT_REACH_OWNERS = [
   { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+  { id: 'party-registry', path: PARTY_VERTICAL_PATH },
   { id: 'payment-term-catalog', path: 'verticals/payment-term-catalog' },
   { id: 'price-group-catalog', path: 'verticals/price-group-catalog' },
 ] as const;
@@ -420,11 +424,70 @@ export const assertRejectedSources = Effect.fn(function* rejectGovernedSources(
   }
 });
 
+/**
+ * The manifest of every package of the workspace under `folders`: a module (`verticals`), a contract or a library
+ * package. Held without its files, a package is named, never read: an `@app/…` specifier of a copied module resolves
+ * through its `exports`, so a tree copied from a few folders still names the workspace's packages.
+ */
+export const readWorkspaceManifests = (root: string, folders: readonly string[]) =>
+  Effect.promise(async () => {
+    const listed = await Promise.all(
+      folders.map(async (folder) => {
+        const entries = await readdir(path.join(root, folder), { withFileTypes: true });
+        return entries.filter((entry) => entry.isDirectory()).map((entry) => `${folder}/${entry.name}/package.json`);
+      }),
+    );
+    const manifests = await Promise.all(
+      listed
+        .flat()
+        .map(async (file) => [file, await readFile(path.join(root, file), 'utf-8').catch(() => '')] as const),
+    );
+    return manifests.filter(([, source]) => source !== '');
+  });
+
+/**
+ * The manifest of every module of the workspace but `copied`: an `@app/…` specifier of a copied module names them,
+ * and resolves through their `exports`.
+ */
+const writeNamedModuleManifests = Effect.fn(function* writeNamedModuleManifests(
+  root: string,
+  copied: readonly string[],
+) {
+  const held = new Set(copied.map((folder) => `${folder}/package.json`));
+  for (const [file, source] of yield* readWorkspaceManifests(path.resolve(import.meta.dirname, '../..'), [
+    'verticals',
+  ])) {
+    if (!held.has(file)) {
+      yield* write(root, file, source);
+    }
+  }
+});
+
+/** Each copied package linked as the workspace links it, under its folder's name, unless the fixture linked it already. */
+const linkWorkspacePackages = Effect.fn(function* linkWorkspacePackages(root: string, folders: readonly string[]) {
+  const links = path.join(root, APP_PACKAGE_LINK_DIRECTORY);
+  yield* Effect.promise(async () => await mkdir(links, { recursive: true }));
+  const linked = new Set(yield* Effect.promise(async () => await readdir(links)));
+  for (const folder of folders) {
+    if (!linked.has(path.basename(folder))) {
+      yield* Effect.promise(
+        async () => await symlink(path.join(root, folder), path.join(links, path.basename(folder)), 'dir'),
+      );
+    }
+  }
+});
+
 export const makeFixture = Effect.fn(function* mergedScenario1(includeParty = false) {
   const root = yield* Effect.acquireRelease(
     Effect.promise(async () => await mkdtemp(path.join(os.tmpdir(), 'ontos-module-entrypoints-'))),
     (directory) => Effect.promise(async () => await rm(directory, { force: true, recursive: true })),
   );
+  // The workspace's library packages, which every module's `@app/…` specifiers resolve through; a contract package
+  // names an owner module the fixture's topology may not know.
+  const packages = yield* readWorkspaceManifests(path.resolve(import.meta.dirname, '../..'), ['packages']);
+  for (const [file, source] of packages.filter(([, manifest]) => !manifest.includes('"ontosContractOwner"'))) {
+    yield* write(root, file, source);
+  }
   yield* write(
     root,
     BOUNDARY_FIXTURE_TOPOLOGY,
@@ -1205,6 +1268,8 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
       yield* write(root, file, source);
     }
   }
+  // The other modules Party Registry names (Privacy's client aggregate), by their manifests alone.
+  yield* writeNamedModuleManifests(root, [INVENTORY_VERTICAL_PATH, PARTY_VERTICAL_PATH]);
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
@@ -1285,6 +1350,14 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       yield* write(root, file, source);
     }
   }
+  // The other modules the copied ones name (Party Registry names Privacy's client aggregate), by their manifests alone.
+  yield* writeNamedModuleManifests(root, [
+    INVENTORY_VERTICAL_PATH,
+    owner,
+    CUSTOMER_CONTEXT_VERTICAL_PATH,
+    ...CUSTOMER_CONTEXT_REACH,
+    ...CUSTOMER_CONTEXT_REACH_OWNERS.map(({ path: reached }) => reached),
+  ]);
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
@@ -1309,6 +1382,7 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       async () => await symlink(path.join(root, directory), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
     );
   }
+  yield* linkWorkspacePackages(root, [CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]);
   yield* writeLinkedCoreSdk(root, workspace);
   return root;
 });
@@ -1433,10 +1507,24 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
       yield* write(root, file, source);
     }
   }
-  // Public contracts export operation references built by the Core SDK's `moduleOperation`, and
-  // market-bootstrap-resolution calls the Market Catalog's published module-api contracts.
-  for (const file of [CORE_SDK_SOURCE_PATH, 'verticals/commerce-market-catalog/package.json']) {
-    yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
+  // Public contracts export operation references built by the Core SDK's `moduleOperation`.
+  yield* write(
+    root,
+    CORE_SDK_SOURCE_PATH,
+    yield* Effect.promise(async () => await readFile(path.join(workspace, CORE_SDK_SOURCE_PATH), 'utf-8')),
+  );
+  // The other modules Customer Context names (market-bootstrap-resolution calls the Market Catalog's published
+  // module-api contracts, its contracts take Party Registry's resources), by their manifests alone. A module the
+  // topology names is the check's to judge whole, so only the others are held by their manifests.
+  yield* writeNamedModuleManifests(root, [
+    CUSTOMER_CONTEXT_VERTICAL_PATH,
+    ...CUSTOMER_CONTEXT_REACH,
+    ...CUSTOMER_CONTEXT_REACH_OWNERS.map(({ path: owner }) => owner),
+  ]);
+  // Each copied package is linked as the workspace links it, so the check resolves what Customer Context takes.
+  for (const [file, source] of yield* readPricingSourceTree(workspace, SHARED_CONTRACTS_WORKSPACE_PATH)) {
+    yield* write(root, file, source);
   }
+  yield* linkWorkspacePackages(root, [CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]);
   return root;
 });

@@ -91,6 +91,7 @@ import {
   assertPublishedPartyUsage,
   partyOutboxSource,
   readPricingSourceTree,
+  readWorkspaceManifests,
   makePortalPublicRoleFixture,
   makeActualCatalogSelectionFixture,
   makeActualPartyClientFixture,
@@ -1488,7 +1489,8 @@ it.live('binds actual governed Action HTTP runners across formatting and an auth
 it.live('accepts the reviewed Privacy notice-presentation GET companion only as its exact pinned text', () =>
   Effect.gen(function* actualPrivacyNoticePresentationCompanion() {
     const root = path.resolve(import.meta.dirname, '../..');
-    const sources = new Map(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH));
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    const sources = new Map([...manifests, ...(yield* readPricingSourceTree(root, PRIVACY_VERTICAL_PATH))]);
     const shared = 'verticals/privacy/shared/api.ts';
     const contractFile = 'verticals/privacy/shared/apis/notice-presentation.ts';
     const serverFile = 'verticals/privacy/api/notice-presentation-read-server.ts';
@@ -1889,7 +1891,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualPartyClientFixture();
       const apiFile = `${PARTY_VERTICAL_PATH}/shared/api.ts`;
       const source = yield* Effect.promise(() => readFile(path.join(root, apiFile), 'utf-8'));
-      yield* write(root, apiFile, `${source}\nexport const privatePartyApiCallable = () => globalThis;\n`);
+      yield* write(root, apiFile, `${source}\nexport const privatePartyApiCallable = () => 'private';\n`);
       const consumer = 'apps/shell-super-app/src/party-api-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/party-registry/api';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));

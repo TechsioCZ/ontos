@@ -79,6 +79,7 @@ import {
   assertPublishedPartyUsage,
   partyOutboxSource,
   readPricingSourceTree,
+  readWorkspaceManifests,
   RESOLVED_OWNER_CONSUMER,
   RENAMED_CONTRACTS_PACKAGE,
   makeResolvedOwnerFixture,
@@ -522,7 +523,8 @@ it.live('publishes the CCC recovery read from its package and rejects every owne
         ),
       ),
     ]);
-    const sources = new Map([...trees.flat(), ...metadata]);
+    const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+    const sources = new Map([...manifests, ...trees.flat(), ...metadata]);
     const shared = `${owner}/shared/api.ts`;
     const contractFile = `${owner}/shared/apis/market-retirement-reservation-recovery.ts`;
     const clientFile = `${owner}/src/api/market-retirement-reservation-recovery-client.ts`;
