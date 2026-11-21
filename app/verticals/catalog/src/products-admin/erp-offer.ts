@@ -63,8 +63,11 @@ export const rememberErpOffer = (offer: ErpOffer): void => {
   globalThis.localStorage.setItem(offerStorageKey, encodeErpOffer(offer));
 };
 
-/** The locale the product texts are paged in: the URL's `locale`, else Czech. */
+/**
+ * The locale the product texts are paged in: the URL's `locale`, else `cs`. Catalog answers a text only in the exact
+ * locale it was stored under, and the texts an ERP import sends carry the market's locale (`cs`), not a region tag.
+ */
 export const catalogLocaleFromSearch = (search: string): string => {
   const locale = new URLSearchParams(search).get('locale')?.trim();
-  return locale === undefined || locale === '' ? 'cs-CZ' : locale;
+  return locale === undefined || locale === '' ? 'cs' : locale;
 };
