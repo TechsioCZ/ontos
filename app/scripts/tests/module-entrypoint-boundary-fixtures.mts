@@ -59,6 +59,27 @@ export const CATALOG_VERTICAL_PATH = 'verticals/catalog';
 
 export const CATALOG_SELECTION_CONTRACT_SUBPATH = 'catalog-selection-evidence';
 
+/**
+ * What a fixture copying Customer Context needs beside it: the contract packages the module reaches, and the owner
+ * modules those packages name (their package reads are judged against modules the topology knows).
+ */
+const CUSTOMER_CONTEXT_REACH = [
+  'packages/customer-market-retirement-contracts',
+  'packages/customer-payment-term-contracts',
+  'packages/payment-term-catalog-contracts',
+  'packages/catalog-selection-contracts',
+  // customer-price-group-resolution calls the Catalog's operation reference from this package.
+  'packages/price-group-catalog-contracts',
+  'verticals/payment-term-catalog',
+  'verticals/price-group-catalog',
+] as const;
+
+const CUSTOMER_CONTEXT_REACH_OWNERS = [
+  { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+  { id: 'payment-term-catalog', path: 'verticals/payment-term-catalog' },
+  { id: 'price-group-catalog', path: 'verticals/price-group-catalog' },
+] as const;
+
 export const PRICING_SHARED_API_PATH = 'verticals/pricing/shared/api.ts';
 
 export const PRICING_HANDLER_PATH = 'verticals/pricing/api/index.ts';
@@ -1247,11 +1268,14 @@ export const makeActualMarketClientFixture = Effect.fn(function* actualMarketCli
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         { id: MARKET_DEPLOYMENT_ID, path: owner },
+        { id: CUSTOMER_CONTEXT_DEPLOYMENT_ID, path: CUSTOMER_CONTEXT_VERTICAL_PATH },
+        ...CUSTOMER_CONTEXT_REACH_OWNERS,
       ],
     }),
   );
-  // verify-market-eligibility-v1 calls Customer Context's operation reference from its contract package.
-  for (const folder of [owner, 'packages/customer-market-retirement-contracts']) {
+  // verify-market-eligibility-v1 calls Customer Context's operation reference from its contract package, whose package
+  // reads name Customer Context: the module and the contract packages and owners it reaches are copied with it.
+  for (const folder of [owner, CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]) {
     for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
       yield* write(root, file, source);
     }
@@ -1384,7 +1408,8 @@ export const CATALOG_QUANTITY_CONTRACT = 'packages/catalog-selection-contracts/s
 export const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
   const root = yield* makePortalPublicRoleFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
-  // The copied Catalog selection kernel names Catalog as its owner, so the topology knows that deployment.
+  // The copied Catalog selection kernel names Catalog as its owner, so the topology knows that deployment. The copied
+  // Payment Term and Price Group contract packages publish package reads, so their owner modules are copied too.
   yield* write(
     root,
     BOUNDARY_FIXTURE_TOPOLOGY,
@@ -1393,19 +1418,11 @@ export const makeActualCustomerContextAggregateFixture = Effect.fn(function* act
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         { id: CUSTOMER_CONTEXT_DEPLOYMENT_ID, path: CUSTOMER_CONTEXT_VERTICAL_PATH },
-        { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+        ...CUSTOMER_CONTEXT_REACH_OWNERS,
       ],
     }),
   );
-  for (const folder of [
-    CUSTOMER_CONTEXT_VERTICAL_PATH,
-    'packages/customer-market-retirement-contracts',
-    'packages/customer-payment-term-contracts',
-    'packages/payment-term-catalog-contracts',
-    'packages/catalog-selection-contracts',
-    // customer-price-group-resolution calls the Catalog's operation reference from this package.
-    'packages/price-group-catalog-contracts',
-  ]) {
+  for (const folder of [CUSTOMER_CONTEXT_VERTICAL_PATH, ...CUSTOMER_CONTEXT_REACH]) {
     const sources = yield* readPricingSourceTree(workspace, folder);
     for (const [file, source] of sources) {
       yield* write(root, file, source);
