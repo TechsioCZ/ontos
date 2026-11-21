@@ -768,6 +768,10 @@ it.live(
   }),
 );
 
+/** A package manifest with one more entry in its `exports`. */
+const exported = (entry: string) => (source: string) =>
+  source.replace('"exports": {\n', () => `"exports": {\n    ${entry},\n`);
+
 /** The line count of a file of the module as it is checked in: the line an appended use stands on. */
 const lineCount = async (file: string): Promise<number> => {
   const source = await readFile(path.join(appRoot, file), 'utf-8');
@@ -785,6 +789,8 @@ it.live(
     const cjsLoader = `${paymentVertical}/src/api/loader.cjs`;
     const helper = `${paymentVertical}/src/api/history-helper.ts`;
     const packageLoader = `${paymentContracts}/src/loader.ts`;
+    const readLoader = `${paymentVertical}/src/read-loader.ts`;
+    const ownerManifest = `${paymentVertical}/package.json`;
     const deletedClient = './payment-term-history-client.ts';
     const escapedForwarder = `${paymentVertical}/src/api/history-escaped.ts`;
     for (const [label, edits, refusal] of [
@@ -874,17 +880,27 @@ it.live(
       [
         "a contract package re-exports the retired contract through the owner package's exports",
         [
-          [
-            `${paymentVertical}/package.json`,
-            (source: string) =>
-              source.replace(
-                '"exports": {\n',
-                () => '"exports": {\n    "./apis/payment-term-history": "./shared/apis/payment-term-history.ts",\n',
-              ),
-          ],
+          [ownerManifest, exported('"./apis/payment-term-history": "./shared/apis/payment-term-history.ts"')],
           [packageLoader, () => "export * from '@app/payment-term-catalog/apis/payment-term-history';\n"],
         ],
         `${packageLoader}:1 still names @app/payment-term-catalog/apis/payment-term-history, which the retirement deletes`,
+      ],
+      // A pattern export publishes the retired contract under a name that is not its base name.
+      [
+        "a contract package re-exports the retired contract through a pattern of the owner package's exports",
+        [
+          [ownerManifest, exported('"./apis/*": "./shared/apis/payment-term-*.ts"')],
+          [packageLoader, () => "export * from '@app/payment-term-catalog/apis/history';\n"],
+        ],
+        `${packageLoader}:1 still names @app/payment-term-catalog/apis/history, which the retirement deletes`,
+      ],
+      [
+        "an owner source loads the retired contract through a pattern of the owner package's exports",
+        [
+          [ownerManifest, exported('"./apis/*": "./shared/apis/payment-term-*.ts"')],
+          [readLoader, () => "export const loadHistory = () => import('@app/payment-term-catalog/apis/history');\n"],
+        ],
+        `${readLoader}:1 still names @app/payment-term-catalog/apis/history, which the retirement deletes`,
       ],
       [
         'an owner file star-exports the retired client under an escaped specifier',

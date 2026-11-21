@@ -92,17 +92,28 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
       ([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`) || file.endsWith('-action.ts'),
     ),
   );
-  // `./api` passes on no contract that is gone.
-  focused.set(
-    customerSharedApiFile,
-    (focused.get(customerSharedApiFile) ?? '')
-      .split('\n')
-      .filter((line) => {
-        const passed = /^export \* from '\.\/(?<contract>apis\/[^']+)';$/u.exec(line)?.groups?.['contract'];
-        return passed === undefined || focused.has(`${customerVerticalPath}/shared/${passed}`);
-      })
-      .join('\n'),
-  );
+  // The client files of the reads that leave go with them.
+  for (const [file, source] of focused) {
+    const contracts = [...source.matchAll(/'\.\.\/\.\.\/shared\/(?<contract>apis\/[^']+)'/gu)].map(
+      (match) => `${customerVerticalPath}/shared/${match.groups?.['contract']}`,
+    );
+    if (file.startsWith(`${customerVerticalPath}/src/api/`) && contracts.some((contract) => !focused.has(contract))) {
+      focused.delete(file);
+    }
+  }
+  // `./api` and the client aggregate pass on nothing that is gone.
+  for (const file of [customerSharedApiFile, `${customerVerticalPath}/src/api/commerce-customer-context-client.ts`]) {
+    focused.set(
+      file,
+      (focused.get(file) ?? '')
+        .split('\n')
+        .filter((line) => {
+          const passed = /^export \* from '(?<target>\.\/[^']+)';$/u.exec(line)?.groups?.['target'];
+          return passed === undefined || focused.has(path.posix.join(path.posix.dirname(file), passed));
+        })
+        .join('\n'),
+    );
+  }
   for (const [file, start, end] of [
     [`${customerVerticalPath}/vertical.manifest.ts`, manifestApiStart, manifestApiEnd],
     [
@@ -332,12 +343,15 @@ it.effect(
       clientPath: path.join(appRoot, customerCanonicalClientFile),
       serverPath: path.join(appRoot, customerVerticalPath, 'api/payment-term-affected-use-assessment-read-server.ts'),
     });
+    const diagnostics: string[] = [];
     expect(
       hasCompleteGeneratedModuleApiSeam(
         focusOnCustomerAffectedUseSeam(after),
         customerSharedApiFile,
         'commerce-customer-context',
+        diagnostics,
       ),
+      diagnostics.join('\n'),
     ).toBe(true);
   }),
 );

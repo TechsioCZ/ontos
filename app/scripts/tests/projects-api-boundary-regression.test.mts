@@ -96,3 +96,30 @@ it.live('proves the actual shared runtime declaration and rejects counterfeit ow
     expect(hasCompleteGeneratedModuleApiSeam(missing, shared)).toBe(false);
   }),
 );
+
+it.live('judges the whole client aggregate of a module that publishes no package read', () =>
+  Effect.gen(function* projectsAggregate() {
+    const sources = readSources(owner, new Map(yield* readWorkspaceManifests(root, ['packages', 'verticals'])));
+    const aggregate = `${owner}/src/api/projects-client.ts`;
+    const shared = `${owner}/shared/api.ts`;
+    const source = sources.get(aggregate) ?? '';
+    expect(source).not.toBe('');
+    for (const [appended, expected] of [
+      ['export const load = (path: string) => require(path);\n', 'loads a module it does not read statically'],
+      ["export * from './missing.ts';\n", 'names ./missing.ts, which is no file of the workspace'],
+      ['export const = ;\n', `${aggregate}: does not parse`],
+    ] as const) {
+      const diagnostics: string[] = [];
+      expect(
+        hasCompleteGeneratedModuleApiSeam(
+          new Map([...sources, [aggregate, `${source}${appended}`]]),
+          shared,
+          'projects',
+          diagnostics,
+        ),
+        appended,
+      ).toBe(false);
+      expect(diagnostics.join('\n'), appended).toContain(expected);
+    }
+  }),
+);

@@ -1407,7 +1407,7 @@ for (const [name, source, allowed] of [
       const root = yield* makeActualPartyClientFixture();
       const clientFile = `${PARTY_VERTICAL_PATH}/src/api/party-registry-client.ts`;
       const aggregate = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${aggregate}\nexport const privatePartyClientCallable = () => globalThis;\n`);
+      yield* write(root, clientFile, `${aggregate}\nexport const privatePartyClientCallable = () => 'private';\n`);
       const consumer = 'apps/shell-super-app/src/party-client-consumer.ts';
       yield* write(root, consumer, source);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));

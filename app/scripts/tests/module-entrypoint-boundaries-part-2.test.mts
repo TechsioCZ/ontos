@@ -1914,7 +1914,7 @@ for (const [name, imported, allowed] of [
       const root = yield* makeActualPrivacyClientFixture();
       const clientFile = 'verticals/privacy/src/api/privacy-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
-      yield* write(root, clientFile, `${original}\nexport const privatePrivacyClientCallable=()=>globalThis;\n`);
+      yield* write(root, clientFile, `${original}\nexport const privatePrivacyClientCallable=()=>'private';\n`);
       const consumer = 'apps/shell-super-app/src/privacy-client-consumer.ts';
       yield* write(root, consumer, `import { ${imported} } from '@app/privacy/api/client';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
