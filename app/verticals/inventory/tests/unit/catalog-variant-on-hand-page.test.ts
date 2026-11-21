@@ -10,7 +10,7 @@ import type { AccessPrincipalKind, AccessWorkloadBindings } from '@app/core-runt
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { makeScriptedBoundAccessGate } from '@app/core-runtime/testing/access-gate';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -283,13 +283,15 @@ describe('Catalog Variant on-hand page', () => {
 
   it('bounds the page and names each Variant once', () => {
     const decode = Schema.decodeUnknownResult(CatalogVariantOnHandPageRequestSchema);
-    expect(decode({ customerConfigurationId, variantRefs: [] })._tag).toBe('Failure');
-    expect(decode({ customerConfigurationId, variantRefs: [variantRef(1), variantRef(1)] })._tag).toBe('Failure');
+    expect(Result.isFailure(decode({ customerConfigurationId, variantRefs: [] }))).toBe(true);
+    expect(Result.isFailure(decode({ customerConfigurationId, variantRefs: [variantRef(1), variantRef(1)] }))).toBe(
+      true,
+    );
     const page = Array.from({ length: 101 }, (_, index) =>
       ref('commerce.catalog', 'commerce.catalog.variant', `70000000-0000-4000-8000-${String(index).padStart(12, '0')}`),
     );
-    expect(decode({ customerConfigurationId, variantRefs: page })._tag).toBe('Failure');
-    expect(decode({ customerConfigurationId, variantRefs: page.slice(0, 100) })._tag).toBe('Success');
+    expect(Result.isFailure(decode({ customerConfigurationId, variantRefs: page }))).toBe(true);
+    expect(Result.isSuccess(decode({ customerConfigurationId, variantRefs: page.slice(0, 100) }))).toBe(true);
   });
 
   it.effect('sums the accepted ERP figures of two Locations and keeps each one with its source and receipt times', () =>
