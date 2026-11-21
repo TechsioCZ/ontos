@@ -8,8 +8,8 @@ import type { Node, Program, VisitorObject } from 'oxc-parser';
  * namespace, so a reference resolves to the declaration TypeScript binds it to, never to whatever shares its name.
  */
 
-export const BindingNamespaceSchema = Schema.Literals(['type', 'value']);
-export type BindingNamespace = typeof BindingNamespaceSchema.Type;
+const BindingNamespaceSchema = Schema.Literals(['type', 'value']);
+type BindingNamespace = typeof BindingNamespaceSchema.Type;
 
 export interface ModuleBinding {
   readonly identifier: Node;
@@ -399,6 +399,19 @@ const moduleBinding = (
 };
 
 /** Parse source and resolve each of its references; undefined when it does not parse. */
+/** Where and why a source does not parse; undefined for one that does. */
+export const parseProblem = (
+  file: string,
+  source: string,
+): { readonly message: string; readonly start: number } | undefined => {
+  const [error] = parseSync(file, source, {
+    astType: 'ts',
+    lang: file.endsWith('x') ? 'tsx' : 'ts',
+    sourceType: 'module',
+  }).errors;
+  return error === undefined ? undefined : { message: error.message, start: error.labels[0]?.start ?? 0 };
+};
+
 export const moduleBindings = (file: string, source: string): ModuleBindings | undefined => {
   const parsed = parseSync(file, source, {
     astType: 'ts',
@@ -492,9 +505,9 @@ export const moduleBindings = (file: string, source: string): ModuleBindings | u
 
 /**
  * How a module graph names and reads modules. `target` gives the module a specifier of `importer` names (a file
- * path for a relative specifier, else the specifier itself); `parsed` gives its bindings, `unparsable` when its
- * source does not parse, and undefined for a module the graph does not read (a package, a missing file, a file
- * outside the files the graph reads).
+ * path for a relative specifier or for a workspace package it resolves, else the specifier itself); `parsed` gives
+ * its bindings, `unparsable` when its source does not parse, and undefined for a module the graph does not read (a
+ * library, a missing file, a file outside the files the graph reads).
  */
 export interface ModuleGraph {
   readonly parsed: (target: string) => ModuleBindings | 'unparsable' | undefined;
@@ -519,19 +532,19 @@ export const moduleGraph = (
   };
 };
 
-/** An export that ends on a declaration of a module the graph reads, one that is not only another name for a binding. */
+/** An origin that is a declaration of a module the graph reads, one that is not only another name for a binding. */
 export interface DeclaredExport {
   readonly bindings: ModuleBindings;
   readonly file: string;
   readonly kind: 'declared';
   /** The declared identifier, or the expression of an `export default` or `export =`. */
   readonly node: Node;
-  /** Every file the export passes through, the one asked about first, `file` last. */
+  /** Every file the binding passes through, the one asked about first, `file` last. */
   readonly trail: readonly string[];
 }
 
-/** An export that ends on a module the graph does not read: `name` of it, or `*` for the whole module. */
-export interface ForeignExport {
+/** An origin in a module the graph does not read: `name` of it, or `*` for the whole module; or a global (`GLOBAL`). */
+interface ForeignExport {
   readonly kind: 'foreign';
   readonly name: string;
   /** The specifier of the last link, as written. */
@@ -542,15 +555,15 @@ export interface ForeignExport {
   readonly trail: readonly string[];
 }
 
-/** A whole module the graph reads, as `export * as`, `import * as` or `import x = require(…)` pass it on. */
-export interface NamespaceExport {
+/** A whole module the graph reads, used as a whole rather than by a member. */
+interface NamespaceExport {
   readonly file: string;
   readonly kind: 'namespace';
   readonly trail: readonly string[];
 }
 
-/** A link that cannot be followed: a file that does not parse, or a name no scope of the file declares. */
-export interface UnresolvedExport {
+/** A link that cannot be followed: a file that does not parse or exports no such name, a name no scope declares. */
+interface UnresolvedExport {
   readonly file: string;
   readonly kind: 'unresolved';
   readonly reason: string;
@@ -565,28 +578,47 @@ interface ExportStep {
   readonly trail: readonly string[];
 }
 
+/**
+ * What every link still owes: the members to take from what it resolves to (`Read.X` resolves `Read`, then takes
+ * `X`), and the declaration that wrote the member access, which is where a member of a declared value ends.
+ */
+interface Pending {
+  readonly holder?: DeclaredExport;
+  readonly member: readonly string[];
+}
+
 /** A link still to follow: what a binding is, what a reference resolves to, or what a file exports as a name. */
-interface BindingLink {
+interface BindingLink extends Pending {
   readonly binding: ModuleBinding;
   readonly kind: 'binding';
   readonly step: ExportStep;
 }
 
-interface ReferenceLink {
+interface ReferenceLink extends Pending {
   readonly identifier: Node;
   readonly kind: 'reference';
   readonly step: ExportStep;
 }
 
-interface NameLink {
+interface NameLink extends Pending {
   readonly file: string;
   readonly kind: 'name';
   readonly name: string;
+  /** Whether an `export *` leads here, so a file without the name is no failure of its own. */
+  readonly star: boolean;
   /** The files passed through before `file`. */
   readonly trail: readonly string[];
 }
 
 type ExportLink = BindingLink | NameLink | ReferenceLink;
+
+/** What an expansion yields: an origin, or a link to follow, with the members it owes of its own (`own`). */
+type Expansion = ExportOrigin | ExportLink;
+
+const NO_MEMBER: Pending = { member: [] };
+
+/** The target of a global: what no module declares. */
+const GLOBAL = 'globalThis';
 
 const specifierName = (node: Node): string => {
   if (node.type === 'Identifier') {
@@ -612,36 +644,162 @@ const wholeModule = (graph: ModuleGraph, step: ExportStep, specifier: string): E
 };
 
 /** `name` of the module `specifier` names: followed in a module the graph reads, else foreign. */
-const namedIn = (graph: ModuleGraph, step: ExportStep, specifier: string, name: string): ExportLink | ExportOrigin => {
+const namedIn = (graph: ModuleGraph, step: ExportStep, specifier: string, name: string): Expansion => {
   const target = graph.target(step.file, specifier);
   return graph.parsed(target) === undefined
     ? { kind: 'foreign', name, specifier, star: false, target, trail: step.trail }
-    : { file: target, kind: 'name', name, trail: step.trail };
+    : { ...NO_MEMBER, file: target, kind: 'name', name, star: false, trail: step.trail };
 };
 
-/** The binding a declaration is only another name for: `const B = A`, `type B = A`, `import B = A`. */
-const aliasedName = (parent: Node | undefined, identifier: Node): Node | undefined => {
-  // An annotated `const B: T = A` says more than another name for A does.
+/** Parentheses, `as`, `satisfies`, `!`, `<T>x` and `typeof`: what they wrap is still the same binding. */
+const unwrappedName = (node: Node): Node => {
+  let inner = node;
+  for (;;) {
+    if (
+      inner.type === 'ParenthesizedExpression' ||
+      inner.type === 'TSAsExpression' ||
+      inner.type === 'TSSatisfiesExpression' ||
+      inner.type === 'TSNonNullExpression' ||
+      inner.type === 'TSTypeAssertion'
+    ) {
+      inner = inner.expression;
+    } else if (inner.type === 'TSTypeQuery' && inner.typeArguments === null) {
+      inner = inner.exprName;
+    } else if (inner.type === 'TSTypeReference' && inner.typeArguments === null) {
+      inner = inner.typeName;
+    } else {
+      return inner;
+    }
+  }
+};
+
+/** `A`, `A.B`, `A.B.C` (as an expression or a qualified type name): the leftmost name and the members after it. */
+const memberPath = (node: Node): readonly [Node, readonly string[]] | undefined => {
+  if (node.type === 'Identifier') {
+    return [node, []];
+  }
+  let object: Node;
+  let property: Node;
+  if (node.type === 'TSQualifiedName') {
+    ({ left: object, right: property } = node);
+  } else if (node.type === 'MemberExpression' && !node.computed) {
+    ({ object, property } = node);
+  } else {
+    return undefined;
+  }
+  const inner = memberPath(unwrappedName(object));
+  return inner === undefined || property.type !== 'Identifier' ? undefined : [inner[0], [...inner[1], property.name]];
+};
+
+/** An expansion with the members the link it came from still owes, after its own; an origin takes them. */
+const owedBy = (item: Expansion, owed: Pending): Expansion => {
+  if (item.kind === 'binding' || item.kind === 'name' || item.kind === 'reference') {
+    return { ...item, holder: item.holder ?? owed.holder, member: [...item.member, ...owed.member] };
+  }
+  const [first, ...rest] = owed.member;
+  if (first === undefined) {
+    return item;
+  }
+  if (item.kind === 'namespace') {
+    return {
+      file: item.file,
+      holder: owed.holder,
+      kind: 'name',
+      member: rest,
+      name: first,
+      star: false,
+      trail: item.trail.slice(0, -1),
+    };
+  }
+  if (item.kind === 'foreign') {
+    return { ...item, name: [...(item.name === '*' ? [] : [item.name]), ...owed.member].join('.') };
+  }
+  // A member of a declared value is no other name for anything: the declaration that takes it is where it ends.
+  return item.kind === 'declared' && owed.holder !== undefined ? owed.holder : item;
+};
+
+interface Written {
+  /** The members a destructuring takes of what is written: `A` of `const { A: B } = Read`. */
+  readonly taken: readonly string[];
+  readonly written: Node;
+}
+
+/** What the declaration of `identifier` writes for it: an initializer, a type, an import reference. */
+const writtenFor = (bindings: ModuleBindings, identifier: Node): Written | undefined => {
+  const taken: string[] = [];
+  let node = identifier;
+  let parent = bindings.parents.get(node);
+  while (parent?.type === 'Property' && !parent.computed && parent.value === node && parent.key.type === 'Identifier') {
+    const pattern = bindings.parents.get(parent);
+    if (pattern?.type !== 'ObjectPattern') {
+      return undefined;
+    }
+    taken.unshift(parent.key.name);
+    node = pattern;
+    parent = bindings.parents.get(pattern);
+  }
   if (parent?.type === 'VariableDeclarator') {
-    const annotated =
-      identifier.type === 'Identifier' && identifier.typeAnnotation !== null && identifier.typeAnnotation !== undefined;
-    return parent.id === identifier && !annotated && parent.init?.type === 'Identifier' ? parent.init : undefined;
+    return parent.id === node && parent.init !== null ? { taken, written: parent.init } : undefined;
   }
   if (parent?.type === 'TSTypeAliasDeclaration') {
-    const aliased = parent.typeAnnotation;
-    return aliased.type === 'TSTypeReference' &&
-      aliased.typeName.type === 'Identifier' &&
-      aliased.typeArguments === null
-      ? aliased.typeName
-      : undefined;
+    return parent.typeParameters === null ? { taken, written: parent.typeAnnotation } : undefined;
   }
-  return parent?.type === 'TSImportEqualsDeclaration' && parent.moduleReference.type === 'Identifier'
-    ? parent.moduleReference
-    : undefined;
+  return parent?.type === 'TSImportEqualsDeclaration' ? { taken, written: parent.moduleReference } : undefined;
 };
 
-/** A binding, followed while it is only another name: an import, an alias, `import B = require('…')`. */
-const bindingLinks = (graph: ModuleGraph, { binding, step }: BindingLink): readonly (ExportLink | ExportOrigin)[] => {
+/** `import('…')` and `import('…').A.B` as a type, its type arguments aside: the whole module, or a name of it with the members after it. */
+const importTypeLinks = (
+  graph: ModuleGraph,
+  step: ExportStep,
+  node: Node & { readonly type: 'TSImportType' },
+  owed: Pending,
+): readonly Expansion[] | undefined => {
+  if (node.qualifier === null) {
+    return [owedBy(wholeModule(graph, step, node.source.value), owed)];
+  }
+  const qualified = memberPath(node.qualifier);
+  return qualified === undefined
+    ? undefined
+    : [
+        owedBy(namedIn(graph, step, node.source.value, specifierName(qualified[0])), {
+          holder: owed.holder,
+          member: [...qualified[1], ...owed.member],
+        }),
+      ];
+};
+
+/**
+ * What a declaration is only another name for, when it is one (`OWNER_ENTRY_READ_FORMS` states the boundary): `const B =
+ * A`, `const B = Read.A`, `const { A: B } = Read`, `type B = A`, `type B = typeof Read.A`, `type B = import('…').A`,
+ * `import B = Read.A`, `import B = require('…')`, each with or without parentheses, `as`, `satisfies`, `!`, `<T>` and a
+ * type annotation. Anything else, a call, an object, array or struct it builds, an operator, type arguments, is a
+ * declaration of its own.
+ */
+const aliasLinks = (
+  graph: ModuleGraph,
+  step: ExportStep,
+  binding: ModuleBinding,
+  declared: DeclaredExport,
+): readonly Expansion[] | undefined => {
+  const found = writtenFor(step.bindings, binding.identifier);
+  const taken = found?.taken ?? [];
+  const inner = found === undefined ? undefined : unwrappedName(found.written);
+  if (inner?.type === 'TSExternalModuleReference') {
+    return [owedBy(wholeModule(graph, step, inner.expression.value), { holder: declared, member: taken })];
+  }
+  if (inner?.type === 'TSImportType') {
+    return inner.typeArguments === null
+      ? importTypeLinks(graph, step, inner, { holder: declared, member: taken })
+      : undefined;
+  }
+  const path = inner === undefined ? undefined : memberPath(inner);
+  return path === undefined
+    ? undefined
+    : [{ holder: declared, identifier: path[0], kind: 'reference', member: [...path[1], ...taken], step }];
+};
+
+/** A binding, followed while it is only another name: an import, an alias. */
+const bindingLinks = (graph: ModuleGraph, { binding, step }: BindingLink): readonly Expansion[] => {
   const { imported } = binding;
   if (imported !== undefined) {
     return [
@@ -650,47 +808,44 @@ const bindingLinks = (graph: ModuleGraph, { binding, step }: BindingLink): reado
         : namedIn(graph, step, imported.source, imported.name),
     ];
   }
-  const parent = step.bindings.parents.get(binding.identifier);
-  if (parent?.type === 'TSImportEqualsDeclaration' && parent.moduleReference.type === 'TSExternalModuleReference') {
-    return [wholeModule(graph, step, parent.moduleReference.expression.value)];
-  }
-  const aliased = aliasedName(parent, binding.identifier);
-  return [
-    aliased === undefined
-      ? { bindings: step.bindings, file: step.file, kind: 'declared', node: binding.identifier, trail: step.trail }
-      : { identifier: aliased, kind: 'reference', step },
-  ];
+  const declared: DeclaredExport = {
+    bindings: step.bindings,
+    file: step.file,
+    kind: 'declared',
+    node: binding.identifier,
+    trail: step.trail,
+  };
+  return aliasLinks(graph, step, binding, declared) ?? [declared];
 };
 
-const referenceLinks = ({ identifier, step }: ReferenceLink): readonly (ExportLink | ExportOrigin)[] => {
-  const bindings = step.bindings.referenceOf.get(identifier)?.bindings ?? [];
-  return bindings.length === 0
-    ? [
-        {
-          file: step.file,
-          kind: 'unresolved',
-          reason: `${specifierName(identifier)} names no binding of the file`,
-          trail: step.trail,
-        },
-      ]
-    : bindings.map((binding) => ({ binding, kind: 'binding', step }));
+/** A reference: the module bindings it names, a global (`String`, `globalThis`) no scope of the file declares. */
+const referenceLinks = ({ identifier, step }: ReferenceLink): readonly Expansion[] => {
+  const reference = step.bindings.referenceOf.get(identifier);
+  if (reference === undefined) {
+    return [
+      {
+        file: step.file,
+        kind: 'unresolved',
+        reason: `${specifierName(identifier)} is no reference to a module binding`,
+        trail: step.trail,
+      },
+    ];
+  }
+  return reference.bindings.length === 0
+    ? [{ kind: 'foreign', name: reference.name, specifier: '', star: false, target: GLOBAL, trail: step.trail }]
+    : reference.bindings.map((binding) => ({ ...NO_MEMBER, binding, kind: 'binding', step }));
 };
 
 /** What one statement exports as `name`. */
-const statementLinks = (
-  graph: ModuleGraph,
-  step: ExportStep,
-  statement: Node,
-  name: string,
-): readonly (ExportLink | ExportOrigin)[] => {
+const statementLinks = (graph: ModuleGraph, step: ExportStep, statement: Node, name: string): readonly Expansion[] => {
   if (statement.type === 'ExportNamedDeclaration') {
     const { source } = statement;
-    const passed = statement.specifiers.flatMap((specifier): readonly (ExportLink | ExportOrigin)[] => {
+    const passed = statement.specifiers.flatMap((specifier): readonly Expansion[] => {
       if (specifierName(specifier.exported) !== name) {
         return [];
       }
       return source === null
-        ? [{ identifier: specifier.local, kind: 'reference', step }]
+        ? [{ ...NO_MEMBER, identifier: specifier.local, kind: 'reference', step }]
         : [namedIn(graph, step, source.value, specifierName(specifier.local))];
     });
     const declared = declaredIdentifiers(statement.declaration).flatMap((identifier) =>
@@ -698,22 +853,23 @@ const statementLinks = (
         ? step.bindings.bindings.filter((binding) => binding.identifier === identifier)
         : [],
     );
-    return [...passed, ...declared.map((binding): ExportLink => ({ binding, kind: 'binding', step }))];
+    return [...passed, ...declared.map((binding): Expansion => ({ ...NO_MEMBER, binding, kind: 'binding', step }))];
   }
   if (
     (statement.type === 'ExportDefaultDeclaration' || statement.type === 'TSExportAssignment') &&
     name === 'default'
   ) {
     const exported = statement.type === 'ExportDefaultDeclaration' ? statement.declaration : statement.expression;
-    if (exported.type === 'Identifier') {
-      return [{ identifier: exported, kind: 'reference', step }];
-    }
     const declared = declaredIdentifiers(exported).flatMap((identifier) =>
       step.bindings.bindings.filter((binding) => binding.identifier === identifier),
     );
-    return declared.length === 0
+    if (declared.length > 0) {
+      return declared.map((binding): Expansion => ({ ...NO_MEMBER, binding, kind: 'binding', step }));
+    }
+    const path = memberPath(unwrappedName(exported));
+    return path === undefined
       ? [{ bindings: step.bindings, file: step.file, kind: 'declared', node: exported, trail: step.trail }]
-      : declared.map((binding): ExportLink => ({ binding, kind: 'binding', step }));
+      : [{ identifier: path[0], kind: 'reference', member: path[1], step }];
   }
   return statement.type === 'ExportAllDeclaration' &&
     statement.exported !== null &&
@@ -722,8 +878,8 @@ const statementLinks = (
     : [];
 };
 
-/** What a file exports as a name: its own exports of it, or else what each `export *` of a read module passes on. */
-const nameLinks = (graph: ModuleGraph, { file, name, trail }: NameLink): readonly (ExportLink | ExportOrigin)[] => {
+/** What a file exports as a name: its own exports of it, or else what each `export *` of it passes on. */
+const nameLinks = (graph: ModuleGraph, { file, name, star, trail }: NameLink): readonly Expansion[] => {
   const here = [...trail, file];
   const parsed = graph.parsed(file);
   if (parsed === undefined || parsed === 'unparsable') {
@@ -731,81 +887,147 @@ const nameLinks = (graph: ModuleGraph, { file, name, trail }: NameLink): readonl
   }
   const step: ExportStep = { bindings: parsed, file, trail: here };
   const explicit = parsed.program.body.flatMap((statement) => statementLinks(graph, step, statement, name));
-  if (explicit.length > 0 || name === 'default') {
-    return explicit;
-  }
   // An `export *` passes on every name but `default` that the file does not export itself; one of a module the
   // graph does not read is taken to pass it on only when nothing read does (`star`).
-  return parsed.program.body.flatMap((statement): readonly (ExportLink | ExportOrigin)[] => {
-    if (statement.type !== 'ExportAllDeclaration' || statement.exported !== null) {
-      return [];
-    }
-    const specifier = statement.source.value;
-    const target = graph.target(file, specifier);
-    return [
-      graph.parsed(target) === undefined
-        ? { kind: 'foreign', name, specifier, star: true, target, trail: here }
-        : { file: target, kind: 'name', name, trail: here },
-    ];
-  });
+  const starred =
+    explicit.length > 0 || name === 'default'
+      ? []
+      : parsed.program.body.flatMap((statement): readonly Expansion[] => {
+          if (statement.type !== 'ExportAllDeclaration' || statement.exported !== null) {
+            return [];
+          }
+          const specifier = statement.source.value;
+          const target = graph.target(file, specifier);
+          return [
+            graph.parsed(target) === undefined
+              ? { kind: 'foreign', name, specifier, star: true, target, trail: here }
+              : { ...NO_MEMBER, file: target, kind: 'name', name, star: true, trail: here },
+          ];
+        });
+  const found = [...explicit, ...starred];
+  return found.length > 0 || star ? found : [{ file, kind: 'unresolved', reason: `exports no ${name}`, trail: here }];
 };
-
-const followedLinks = (
-  graph: ModuleGraph,
-  link: BindingLink | ReferenceLink,
-): readonly (ExportLink | ExportOrigin)[] =>
-  link.kind === 'binding' ? bindingLinks(graph, link) : referenceLinks(link);
 
 const linkKey = (link: ExportLink): string => {
+  const member = link.member.join('.');
   if (link.kind === 'name') {
-    return `${link.file}#${link.name}`;
+    return `${link.file}#${link.name}.${member}`;
   }
   const node = link.kind === 'binding' ? link.binding.identifier : link.identifier;
-  return `${link.step.file}@${node.start}:${link.kind}`;
+  return `${link.step.file}@${node.start}:${link.kind}.${member}`;
 };
 
-const followedOrigins = (graph: ModuleGraph, start: ExportLink): readonly ExportOrigin[] => {
+const expansion = (graph: ModuleGraph, link: ExportLink): readonly Expansion[] => {
+  if (link.kind === 'name') {
+    return nameLinks(graph, link);
+  }
+  return link.kind === 'binding' ? bindingLinks(graph, link) : referenceLinks(link);
+};
+
+const followedOrigins = (graph: ModuleGraph, start: readonly Expansion[], asked: string): readonly ExportOrigin[] => {
   const origins: ExportOrigin[] = [];
-  const pending: ExportLink[] = [start];
+  const pending: ExportLink[] = [];
+  const add = (item: Expansion): void => {
+    if (item.kind === 'binding' || item.kind === 'name' || item.kind === 'reference') {
+      pending.push(item);
+    } else {
+      origins.push(item);
+    }
+  };
+  for (const item of start) {
+    add(item);
+  }
   const visited = new Set<string>();
   for (let link = pending.pop(); link !== undefined; link = pending.pop()) {
     const key = linkKey(link);
     if (!visited.has(key)) {
       visited.add(key);
-      const next = link.kind === 'name' ? nameLinks(graph, link) : followedLinks(graph, link);
-      for (const item of next) {
-        if (item.kind === 'binding' || item.kind === 'name' || item.kind === 'reference') {
-          pending.push(item);
-        } else {
-          origins.push(item);
-        }
+      for (const item of expansion(graph, link)) {
+        add(owedBy(item, link));
       }
     }
   }
   const declared = origins.filter((origin) => origin.kind !== 'foreign' || !origin.star);
-  return declared.length > 0 ? declared : origins;
+  if (declared.length > 0) {
+    return declared;
+  }
+  return origins.length > 0 ? origins : [{ file: asked, kind: 'unresolved', reason: 'has no origin', trail: [asked] }];
 };
 
 /**
  * Where what `file` exports as `name` comes from, followed through re-exports (`export … from`, `export *`,
- * `export * as`), an imported binding exported again under any name, and a declaration that is only another name
- * for one binding (`const B = A`, `type B = A`, `import B = A`, `import B = require('…')`), to a declaration of
- * a read module, a module the graph does not read, a whole module, or a link it cannot follow. Empty when `file`
- * exports no `name`; a name that is a value and a type gives an origin for each; a cycle adds nothing.
+ * `export * as`), an imported binding exported again under any name, a member of a whole module (`Read.X`,
+ * `typeof Read.X`, `import B = Read.X`, `const { X: B } = Read`, `import('…').X`), and a declaration that is only
+ * another name for one binding (`aliasLinks`), to a declaration of a read module, a module the graph does not read, a
+ * whole module, or a link it cannot follow, which is unresolved. A name that is a value and a type gives an origin for
+ * each; a cycle adds nothing.
  */
-export const exportOrigins = (graph: ModuleGraph, file: string, name: string): readonly ExportOrigin[] =>
-  followedOrigins(graph, { file, kind: 'name', name, trail: [] });
+export const exportOrigins = (
+  graph: ModuleGraph,
+  file: string,
+  name: string,
+  member: readonly string[] = [],
+): readonly ExportOrigin[] =>
+  followedOrigins(graph, [{ file, kind: 'name', member, name, star: false, trail: [] }], file);
 
-/** What a reference of `file` resolves to, followed as `exportOrigins` follows an export. */
-export const referenceOrigins = (graph: ModuleGraph, file: string, identifier: Node): readonly ExportOrigin[] => {
+/** What a module binding of `file` is, followed as `exportOrigins` does. */
+export const bindingOrigins = (
+  graph: ModuleGraph,
+  file: string,
+  bindings: ModuleBindings,
+  binding: ModuleBinding,
+): readonly ExportOrigin[] =>
+  followedOrigins(graph, [{ ...NO_MEMBER, binding, kind: 'binding', step: { bindings, file, trail: [file] } }], file);
+
+/** What an `import('…')` type of `file` names, its type arguments aside, followed as `exportOrigins` does. */
+export const importTypeOrigins = (graph: ModuleGraph, file: string, node: Node): readonly ExportOrigin[] => {
+  const bindings = graph.parsed(file);
+  const links =
+    node.type === 'TSImportType' && bindings !== undefined && bindings !== 'unparsable'
+      ? importTypeLinks(graph, { bindings, file, trail: [file] }, node, NO_MEMBER)
+      : undefined;
+  return followedOrigins(graph, links ?? [], file);
+};
+
+/** What a reference of `file` resolves to, with the members taken of it (`Read.X`), followed as `exportOrigins` does. */
+export const referenceOrigins = (
+  graph: ModuleGraph,
+  file: string,
+  identifier: Node,
+  member: readonly string[] = [],
+): readonly ExportOrigin[] => {
   const bindings = graph.parsed(file);
   return bindings === undefined || bindings === 'unparsable'
     ? [{ file, kind: 'unresolved', reason: 'is not read', trail: [file] }]
-    : followedOrigins(graph, { identifier, kind: 'reference', step: { bindings, file, trail: [file] } });
+    : followedOrigins(
+        graph,
+        [{ identifier, kind: 'reference', member, step: { bindings, file, trail: [file] } }],
+        file,
+      );
+};
+
+/** The members a reference takes where it stands: `X` of `Read.X` or of the type name `Read.X`. */
+export const takenMembers = (bindings: ModuleBindings, identifier: Node): readonly string[] => {
+  const members: string[] = [];
+  let child = identifier;
+  for (let parent = bindings.parents.get(child); parent !== undefined; parent = bindings.parents.get(child)) {
+    let property: Node | undefined;
+    if (parent.type === 'MemberExpression' && !parent.computed && parent.object === child) {
+      ({ property } = parent);
+    } else if (parent.type === 'TSQualifiedName' && parent.left === child) {
+      property = parent.right;
+    }
+    if (property?.type !== 'Identifier') {
+      return members;
+    }
+    members.push(property.name);
+    child = parent;
+  }
+  return members;
 };
 
 /** Every name a file exports, and every `export *` of a module the graph does not read, whose names it cannot list. */
-export interface ModuleExports {
+interface ModuleExports {
   readonly names: readonly string[];
   readonly opaque: readonly ForeignExport[];
 }
@@ -863,31 +1085,62 @@ export const moduleExports = (graph: ModuleGraph, file: string): ModuleExports =
 };
 
 /** A module specifier as a source writes it: the string literal, and the node that writes it. */
-export interface ModuleSpecifier {
+interface ModuleSpecifier {
   readonly literal: Node;
   readonly node: Node;
   readonly specifier: string;
 }
 
+/** What a node writes as a module specifier, when it takes one: null or undefined when it names none. */
+const writtenSpecifier = (node: Node): Node | null | undefined => {
+  if (
+    node.type === 'ImportDeclaration' ||
+    node.type === 'ExportAllDeclaration' ||
+    node.type === 'ExportNamedDeclaration' ||
+    node.type === 'ImportExpression' ||
+    node.type === 'TSImportType'
+  ) {
+    return node.source;
+  }
+  if (node.type === 'TSExternalModuleReference') {
+    return node.expression;
+  }
+  return node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require'
+    ? (node.arguments[0] ?? null)
+    : undefined;
+};
+
+/** The text of a specifier written statically: a string literal, or a template literal without interpolation. */
+const staticSpecifier = (written: Node): string | undefined => {
+  if (written.type === 'Literal') {
+    return String(written.value);
+  }
+  return written.type === 'TemplateLiteral' && written.expressions.length === 0
+    ? (written.quasis[0]?.value.cooked ?? undefined)
+    : undefined;
+};
+
 /**
- * Every module specifier of a source, of any kind: a static import, an `export … from`, an `import()` expression, an
- * `import('…')` type, a `require('…')` and an `import x = require('…')`.
+ * Every module specifier of a source, of any kind, written as a string literal or a template literal without
+ * interpolation: a static import, an `export … from`, an `import()` expression, an `import('…')` type, a
+ * `require('…')` and an `import x = require('…')`.
  */
 export const moduleSpecifiers = (bindings: ModuleBindings): readonly ModuleSpecifier[] =>
   [...bindings.parents.keys()].flatMap((node): readonly ModuleSpecifier[] => {
-    let written: Node | null | undefined;
-    if (
-      node.type === 'ImportDeclaration' ||
-      node.type === 'ExportAllDeclaration' ||
-      node.type === 'ExportNamedDeclaration' ||
-      node.type === 'ImportExpression' ||
-      node.type === 'TSImportType'
-    ) {
-      written = node.source;
-    } else if (node.type === 'TSExternalModuleReference') {
-      written = node.expression;
-    } else if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require') {
-      [written] = node.arguments;
-    }
-    return written?.type === 'Literal' ? [{ literal: written, node, specifier: String(written.value) }] : [];
+    const written = writtenSpecifier(node);
+    const specifier = written === null || written === undefined ? undefined : staticSpecifier(written);
+    return written === null || written === undefined || specifier === undefined
+      ? []
+      : [{ literal: written, node, specifier }];
+  });
+
+/** Every `import()` and `require()` of a source whose module is computed at run time, so cannot be read statically. */
+export const unreadableSpecifiers = (bindings: ModuleBindings): readonly Node[] =>
+  [...bindings.parents.keys()].filter((node) => {
+    const written = writtenSpecifier(node);
+    return (
+      (node.type === 'ImportExpression' || node.type === 'CallExpression') &&
+      written !== undefined &&
+      (written === null || staticSpecifier(written) === undefined)
+    );
   });
