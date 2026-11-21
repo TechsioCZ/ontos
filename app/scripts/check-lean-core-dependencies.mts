@@ -14,7 +14,9 @@ import {
   Path,
   Predicate,
   Schema,
+  Stream,
 } from 'effect';
+import { systemError } from 'effect/PlatformError';
 import type { PlatformError } from 'effect/PlatformError';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
@@ -41,33 +43,92 @@ const graphSourceExtensions = new Set([...sourceExtensions, '.js', '.mjs', '.cjs
 const ignoredDirectories = new Set(['dist', 'dist-cloudflare', 'node_modules', 'repos', '.output', '.codex']);
 const isTestSource = (relative: string): boolean => /(?:^|\/)(?:tests?|__tests__)\//u.test(relative);
 
-const collect = (
-  root: string,
-  extensions: ReadonlySet<string> = sourceExtensions,
+const collectFiles = (
+  directory: string,
 ): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* collectSourceFiles() {
+  Effect.gen(function* collectFilesProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const entries = yield* fileSystem.readDirectory(root);
+    const entries = yield* fileSystem.readDirectory(directory);
     const discovered = yield* Effect.all(
       entries.map((entry) => {
-        if (ignoredDirectories.has(entry)) {
-          return Effect.succeed<readonly string[]>([]);
-        }
-        const candidate = path.join(root, entry);
-        return fileSystem.stat(candidate).pipe(
-          Effect.flatMap((info) => {
-            if (info.type === 'Directory') {
-              return collect(candidate, extensions);
-            }
-            return Effect.succeed(extensions.has(path.extname(entry)) ? [candidate] : []);
-          }),
-        );
+        const candidate = path.join(directory, entry);
+        return fileSystem
+          .stat(candidate)
+          .pipe(
+            Effect.flatMap((info) =>
+              info.type === 'Directory' ? collectFiles(candidate) : Effect.succeed<readonly string[]>([candidate]),
+            ),
+          );
       }),
       { concurrency: 32 },
     );
-    return EffectArray.sort(discovered.flat(), Order.String);
+    return discovered.flat();
   });
+
+/** The platform services a check reads the tree and Git with. */
+type CheckServices = ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path;
+
+/** Lists the files a check reads under root: paths relative to root, with POSIX separators. */
+export type SourceFileListing = (root: string) => Effect.Effect<readonly string[], PlatformError, CheckServices>;
+
+/** Every file on disk under root: a fixture tree, or a commit's tree extracted from Git. */
+export const filesOnDisk: SourceFileListing = (root) =>
+  Effect.gen(function* filesOnDiskProgram() {
+    const path = yield* Path.Path;
+    const files = yield* collectFiles(root);
+    return files.map((file) => path.relative(root, file).split(path.sep).join('/'));
+  });
+
+/**
+ * The files Git tracks under root, staged ones included: exactly the commit under judgment. Files another
+ * step creates and removes beside the check (module contract generation bundles each vertical in a
+ * temporary directory inside it) are not part of that commit, so they are never listed or read.
+ */
+export const trackedFiles: SourceFileListing = (root) =>
+  Effect.scoped(
+    Effect.gen(function* trackedFilesProgram() {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const handle = yield* spawner.spawn(
+        ChildProcess.make('git', ['ls-files', '-z'], { cwd: root, stderr: 'inherit', stdin: 'ignore' }),
+      );
+      const [listed, exitCode] = yield* Effect.all(
+        [Stream.mkString(handle.stdout.pipe(Stream.decodeText())), handle.exitCode],
+        { concurrency: 2 },
+      );
+      if (exitCode !== 0) {
+        return yield* Effect.fail(
+          systemError({
+            _tag: 'Unknown',
+            description: `git ls-files exited with ${exitCode}, so the files of the commit under judgment are unknown`,
+            method: 'ls-files',
+            module: 'git',
+            pathOrDescriptor: root,
+          }),
+        );
+      }
+      return listed.split('\0').filter((file) => file.length > 0);
+    }),
+  );
+
+/** The listed files under `directory` (relative to root) with one of `extensions`, outside build output. */
+const listedSources = (
+  listed: readonly string[],
+  directory: string,
+  extensions: ReadonlySet<string>,
+): readonly string[] =>
+  EffectArray.sort(
+    listed.filter(
+      (file) =>
+        (directory === '' || file.startsWith(`${directory}/`)) &&
+        extensions.has(posixPath.extname(file)) &&
+        !file
+          .split('/')
+          .slice(0, -1)
+          .some((segment) => ignoredDirectories.has(segment)),
+    ),
+    Order.String,
+  );
 
 const sourceLine = (source: string, index: number): number => source.slice(0, index).split('\n').length;
 
@@ -890,7 +951,8 @@ const ViolationOrder = Order.combine(
 
 export const checkLeanCoreDependencies = (
   root: string,
-): Effect.Effect<readonly LeanCoreDependencyViolation[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+  listing: SourceFileListing,
+): Effect.Effect<readonly LeanCoreDependencyViolation[], PlatformError, CheckServices> =>
   Effect.gen(function* checkLeanCoreDependenciesProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -905,12 +967,13 @@ export const checkLeanCoreDependencies = (
       violations.push(violation);
     };
 
-    const [files, commerceExports, nonCommerceOwnerRoots, coreBoundary] = yield* Effect.all([
-      collect(root),
+    const [listed, commerceExports, nonCommerceOwnerRoots, coreBoundary] = yield* Effect.all([
+      listing(root),
       readCommerceExportsMap(fileSystem, root, path),
       discoverNonCommerceOwnerRoots(fileSystem, root, path),
       checkCorePackageJson(fileSystem, root, path, record),
     ]);
+    const files = listedSources(listed, '', sourceExtensions).map((file) => path.join(root, file));
     const sourcePairs = yield* Effect.all(
       files.map((file) =>
         fileSystem.readFileString(file, 'utf-8').pipe(Effect.map((source) => [file, source] as const)),
@@ -919,9 +982,9 @@ export const checkLeanCoreDependencies = (
     );
 
     // Source policy retains its original TS inventory. Native JS/CJS is indexed only to prove graph edges.
-    const coreRoot = path.join(root, coreSourceRoot);
-    const coreRootExists = yield* fileSystem.exists(coreRoot);
-    const coreGraphFiles = coreRootExists ? yield* collect(coreRoot, graphSourceExtensions) : [];
+    const coreGraphFiles = listedSources(listed, coreSourceRoot, graphSourceExtensions).map((file) =>
+      path.join(root, file),
+    );
     const sourceFiles = new Set(files);
     const additionalGraphSources = yield* Effect.all(
       coreGraphFiles
@@ -1059,55 +1122,31 @@ const specifierPackageName = (specifier: string): string =>
     .slice(0, specifier.startsWith('@') ? 2 : 1)
     .join('/');
 
-const workspacePackageAt = (
-  fileSystem: FileSystem.FileSystem,
-  path: Path.Path,
-  root: string,
-  [parent, kind]: (typeof workspacePackageParents)[number],
-  entry: string,
-): Effect.Effect<Option.Option<WorkspacePackage>, PlatformError> =>
-  Effect.gen(function* workspacePackageAtProgram() {
-    const manifestPath = path.join(root, parent, entry, 'package.json');
-    if (!(yield* fileSystem.exists(manifestPath))) {
-      return Option.none();
-    }
-    const raw = yield* fileSystem.readFileString(manifestPath, 'utf-8');
-    const manifest = yield* Schema.decodeUnknownEffect(PackageEdgeManifestFromJson)(raw).pipe(Effect.orDie);
-    return Option.some({ directory: `${parent}/${entry}`, kind, manifest });
-  });
+const workspacePackageManifest = /^(?<parent>apps|packages|verticals)\/(?<entry>[^/]+)\/package\.json$/u;
 
-const workspacePackagesUnderParent = (
-  fileSystem: FileSystem.FileSystem,
-  path: Path.Path,
+/** The workspace packages among the listed files: each package.json one level under apps/, packages/, verticals/. */
+const listedWorkspacePackages = (
   root: string,
-  parent: (typeof workspacePackageParents)[number],
-): Effect.Effect<readonly WorkspacePackage[], PlatformError> =>
-  Effect.gen(function* workspacePackagesUnderParentProgram() {
-    const parentPath = path.join(root, parent[0]);
-    if (!(yield* fileSystem.exists(parentPath))) {
-      return [];
-    }
-    const entries = yield* fileSystem.readDirectory(parentPath);
-    const packages = yield* Effect.all(
-      entries.map((entry) => workspacePackageAt(fileSystem, path, root, parent, entry)),
+  listed: readonly string[],
+): Effect.Effect<readonly WorkspacePackage[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* listedWorkspacePackagesProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const manifests = EffectArray.sort(listed, Order.String).flatMap((file) => {
+      const groups = workspacePackageManifest.exec(file)?.groups;
+      const kind = workspacePackageParents.find(([parent]) => parent === groups?.parent)?.[1];
+      return groups === undefined || kind === undefined
+        ? []
+        : [{ directory: `${groups.parent}/${groups.entry}`, file, kind }];
+    });
+    return yield* Effect.all(
+      manifests.map(({ directory, file, kind }) =>
+        fileSystem.readFileString(path.join(root, file), 'utf-8').pipe(
+          Effect.flatMap((raw) => Schema.decodeUnknownEffect(PackageEdgeManifestFromJson)(raw).pipe(Effect.orDie)),
+          Effect.map((manifest): WorkspacePackage => ({ directory, kind, manifest })),
+        ),
+      ),
       { concurrency: 32 },
-    );
-    return EffectArray.getSomes(packages);
-  });
-
-const discoverWorkspacePackages = (
-  fileSystem: FileSystem.FileSystem,
-  path: Path.Path,
-  root: string,
-): Effect.Effect<readonly WorkspacePackage[], PlatformError> =>
-  Effect.gen(function* discoverWorkspacePackagesProgram() {
-    const discovered = yield* Effect.all(
-      workspacePackageParents.map((parent) => workspacePackagesUnderParent(fileSystem, path, root, parent)),
-      { concurrency: workspacePackageParents.length },
-    );
-    return EffectArray.sort(
-      discovered.flat(),
-      Order.mapInput(Order.String, (workspacePackage: WorkspacePackage) => workspacePackage.directory),
     );
   });
 
@@ -1324,9 +1363,10 @@ const workspaceResolver = (root: string, path: Path.Path, packages: readonly Wor
   return { declaredTarget, referenceTargets };
 };
 
-/** Each source of a workspace package with its path relative to root. */
+/** Each listed source of a workspace package with its path relative to root. */
 const packageSources = (
   root: string,
+  listed: readonly string[],
   workspacePackage: WorkspacePackage,
 ): Effect.Effect<
   readonly (readonly [WorkspacePackage, string, string])[],
@@ -1336,29 +1376,25 @@ const packageSources = (
   Effect.gen(function* packageSourcesProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const files = yield* collect(path.join(root, workspacePackage.directory), moduleSourceExtensions);
     return yield* Effect.all(
-      files.map((file) =>
+      listedSources(listed, workspacePackage.directory, moduleSourceExtensions).map((file) =>
         fileSystem
-          .readFileString(file, 'utf-8')
-          .pipe(
-            Effect.map(
-              (source) => [workspacePackage, path.relative(root, file).split(path.sep).join('/'), source] as const,
-            ),
-          ),
+          .readFileString(path.join(root, file), 'utf-8')
+          .pipe(Effect.map((source) => [workspacePackage, file, source] as const)),
       ),
       { concurrency: 32 },
     );
   });
 
-/** The package edge graph of the tree at root, read from manifests and import specifiers only. */
+/** The package edge graph of the listed files of the tree at root, read from manifests and import specifiers only. */
 const derivePackageGraph = (
   root: string,
-): Effect.Effect<PackageGraph, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  listing: SourceFileListing,
+): Effect.Effect<PackageGraph, PlatformError, CheckServices> =>
   Effect.gen(function* derivePackageGraphProgram() {
-    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const packages = yield* discoverWorkspacePackages(fileSystem, path, root);
+    const listed = yield* listing(root);
+    const packages = yield* listedWorkspacePackages(root, listed);
     const { declaredTarget, referenceTargets } = workspaceResolver(root, path, packages);
     const sitesByEdge = new Map<string, { readonly from: string; readonly sites: EdgeSite[]; readonly to: string }>();
     const recordSite = (from: string, to: string | undefined, site: EdgeSite): void => {
@@ -1385,7 +1421,7 @@ const derivePackageGraph = (
     }
 
     const sources = yield* Effect.all(
-      packages.map((workspacePackage) => packageSources(root, workspacePackage)),
+      packages.map((workspacePackage) => packageSources(root, listed, workspacePackage)),
       { concurrency: 4 },
     ).pipe(Effect.map((perPackage) => perPackage.flat()));
     const unparsable: string[] = [];
@@ -1512,7 +1548,7 @@ const checkShrinkOnlyAgainst = (
   commit: string,
   tree: string,
   baseline: readonly ModuleEdgeBaselineEntry[],
-): Effect.Effect<ShrinkOnlyResult, PlatformError, FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<ShrinkOnlyResult, PlatformError, CheckServices> =>
   Effect.gen(function* checkShrinkOnlyAgainstProgram() {
     const baseBaseline = yield* readModuleEdgeBaseline(tree);
     if (Option.isSome(baseBaseline) && sameBaseline(baseline, baseBaseline.value)) {
@@ -1521,7 +1557,8 @@ const checkShrinkOnlyAgainst = (
         violations: [],
       };
     }
-    const baseGraph = yield* derivePackageGraph(tree);
+    // The extracted archive holds exactly the base commit's tree, so every file in it is read.
+    const baseGraph = yield* derivePackageGraph(tree, filesOnDisk);
     const violations = baseline.flatMap((entry): readonly LeanCoreDependencyViolation[] => {
       const edge = baseGraph.edges.get(edgeKey(entry.from, entry.to));
       if (edge === undefined) {
@@ -1556,11 +1593,7 @@ const checkShrinkOnly = (
   root: string,
   base: string,
   baseline: readonly ModuleEdgeBaselineEntry[],
-): Effect.Effect<
-  ShrinkOnlyResult,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
-> =>
+): Effect.Effect<ShrinkOnlyResult, never, CheckServices> =>
   Effect.scoped(
     Effect.gen(function* checkShrinkOnlyProgram() {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1649,14 +1682,10 @@ export interface ModuleEdgeFreezeReport {
 /** Rules 1 to 4 against the tree at root, and rule 5 when the run's comparison base is given. */
 export const checkModuleEdgeFreeze = (
   root: string,
-  options: { readonly base?: string | undefined } = {},
-): Effect.Effect<
-  ModuleEdgeFreezeReport,
-  PlatformError,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
-> =>
+  options: { readonly base?: string | undefined; readonly files: SourceFileListing },
+): Effect.Effect<ModuleEdgeFreezeReport, PlatformError, CheckServices> =>
   Effect.gen(function* checkModuleEdgeFreezeProgram() {
-    const graph = yield* derivePackageGraph(root);
+    const graph = yield* derivePackageGraph(root, options.files);
     const baseline = Option.getOrElse(
       yield* readModuleEdgeBaseline(root),
       (): readonly ModuleEdgeBaselineEntry[] => [],
@@ -1755,8 +1784,9 @@ const main = (base: Option.Option<string>) =>
   Effect.gen(function* leanCoreDependencyMain() {
     const path = yield* Path.Path;
     const root = path.resolve(process.cwd());
-    const leanCoreViolations = yield* checkLeanCoreDependencies(root);
-    const freeze = yield* checkModuleEdgeFreeze(root, { base: Option.getOrUndefined(base) });
+    // The check judges the commit: the files Git tracks, never what a step beside it writes meanwhile.
+    const leanCoreViolations = yield* checkLeanCoreDependencies(root, trackedFiles);
+    const freeze = yield* checkModuleEdgeFreeze(root, { base: Option.getOrUndefined(base), files: trackedFiles });
     yield* printModuleEdgeFreeze(freeze);
     const violations = [...leanCoreViolations, ...freeze.violations];
     if (violations.length > 0) {
