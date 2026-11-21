@@ -89,6 +89,8 @@ import {
   ShellNativeTenantSetupGatewayCommandSchema,
   ShellNativeSafeFailureSchema,
   ShellNativeSystemWorkloadEnrollmentCommandSchema,
+  ShellNativeRefusalProblemSchema,
+  ShellNativeRefusalSchema,
 } from '../fixtures/api-key-gateway-native.ts';
 import type {
   ShellNativeGatewayDiagnosticSchema,
@@ -101,13 +103,31 @@ import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
 
 class ShellNativeChildUnavailable extends Schema.TaggedError<ShellNativeChildUnavailable>()(
   'ShellNativeChildUnavailable',
-  { cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())), reason: Schema.String },
+  {
+    cause: Schema.optionalKey(Schema.Redacted(Schema.Defect())),
+    reason: Schema.String,
+    refusal: Schema.optionalKey(ShellNativeRefusalSchema),
+  },
 ) {}
 const unavailable = (cause?: unknown) =>
   new ShellNativeChildUnavailable({
     cause: Redacted.make(cause),
     reason: 'The owned Shell child is unavailable',
   });
+/** The Shell refused a request: the failure carries its status and public problem fields back to the parent. */
+const refusedBy = (response: Response) =>
+  Effect.tryPromise(async () => await response.json()).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ShellNativeRefusalProblemSchema)),
+    Effect.orElseSucceed((): typeof ShellNativeRefusalProblemSchema.Type => ({})),
+    Effect.flatMap((problem) =>
+      Effect.fail(
+        new ShellNativeChildUnavailable({
+          reason: 'The Shell refused the request',
+          refusal: { problem, status: response.status },
+        }),
+      ),
+    ),
+  );
 const bounded = Effect.timeoutOrElse({ duration: Duration.seconds(20), orElse: () => Effect.fail(unavailable()) });
 const startupStage = (stage: typeof ShellNativeStartupStageSchema.Type) =>
   Schema.encodeEffect(Schema.fromJsonString(ShellNativeStartupEventSchema))({ stage }).pipe(
@@ -513,7 +533,7 @@ const serve = Effect.scoped(
               }),
           }).pipe(bounded);
           if (!response.ok) {
-            return yield* unavailable();
+            return yield* refusedBy(response);
           }
           const switched = yield* Effect.tryPromise({
             catch: unavailable,
@@ -576,7 +596,7 @@ const serve = Effect.scoped(
             ),
         }).pipe(bounded);
         if (!response.ok) {
-          return yield* unavailable(`The system workload enrollment answered ${String(response.status)}`);
+          return yield* refusedBy(response);
         }
         const enrollment = yield* Effect.tryPromise({
           catch: unavailable,
@@ -796,7 +816,14 @@ const serve = Effect.scoped(
           Effect.catch((error) =>
             Schema.decodeUnknownEffect(ShellNativeSafeFailureSchema)(error._tag).pipe(
               Effect.orElseSucceed(() => 'unclassified' as const),
-              Effect.flatMap((failure) => sendPrivate(writer, { _tag: 'unavailable', failure })),
+              Effect.flatMap((failure) =>
+                sendPrivate(
+                  writer,
+                  Schema.is(ShellNativeChildUnavailable)(error) && error.refusal !== undefined
+                    ? { _tag: 'unavailable', failure, refusal: error.refusal }
+                    : { _tag: 'unavailable', failure },
+                ),
+              ),
             ),
           ),
         ),

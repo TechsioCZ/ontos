@@ -372,9 +372,27 @@ export const ShellNativeSafeFailureSchema = Schema.Union([
   ]),
   ...ShellNativeGatewayProblemSchema.members.map((problem) => problem.fields._tag),
 ]);
+const shellNativeRefusalText = Schema.String.check(Schema.isMaxLength(500));
+/** The public Problem Details fields of a Shell refusal; a problem body holds no credential. */
+export const ShellNativeRefusalProblemSchema = Schema.Struct({
+  _tag: Schema.optionalKey(shellNativeRefusalText),
+  code: Schema.optionalKey(shellNativeRefusalText),
+  detail: Schema.optionalKey(shellNativeRefusalText),
+});
+/** How the Shell refused one request the child made: its HTTP status and its public problem. */
+export const ShellNativeRefusalSchema = Schema.Struct({
+  problem: ShellNativeRefusalProblemSchema,
+  status: Schema.Int.check(Schema.isGreaterThanOrEqualTo(100), Schema.isLessThanOrEqualTo(599)),
+});
 export const ShellNativeUnavailableResponseSchema = Schema.TaggedStruct('unavailable', {
   failure: Schema.optionalKey(ShellNativeSafeFailureSchema),
+  refusal: Schema.optionalKey(ShellNativeRefusalSchema),
 });
+/** The Shell's refusal, named in the test failure: one CI run then says which answer it was. */
+const refused = (command: string, refusal: typeof ShellNativeRefusalSchema.Type) =>
+  new ApiKeyGatewayNativeFixtureError({
+    reason: `The Shell refused the ${command} command with ${String(refusal.status)} ${JSON.stringify(refusal.problem)}`,
+  });
 export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeIssuedResponseSchema,
   ShellNativeProvisionedResponseSchema,
@@ -943,8 +961,9 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         yield* Effect.logWarning('Shell native private command refused', {
           command: command._tag,
           failure: response.failure ?? 'unclassified',
+          refusal: response.refusal ?? 'none',
         });
-        return yield* unavailable();
+        return yield* response.refusal === undefined ? unavailable() : refused(command._tag, response.refusal);
       }
       return response;
     });
