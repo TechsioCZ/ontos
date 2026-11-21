@@ -409,6 +409,24 @@ describe('Symmy route bindings', () => {
     expect(definePrices([symmy, pricing([marketRead]), elsewhere]).refusals.map(({ detail }) => detail)).toEqual([
       `${required}, and its registered call reaches commerce.other-market`,
     ]);
+    // A requirement the owner makes only by relaying the requester it serves needs no registered call, and one that
+    // also names a registered caller still does.
+    const callingAs = (callers: Requirement['callers']) =>
+      contract(
+        'pricing',
+        'commerce.pricing',
+        {
+          actions: receivingAction('commerce.pricing.define-price'),
+          operationContracts: receivingRead('commerce.pricing.api.price-source-result-lookup'),
+        },
+        [],
+        [{ ...marketRequirement, callers }],
+      );
+    const person = { kind: 'person', legalEntityScope: 'subject' };
+    expect(definePrices([symmy, callingAs([person]), market]).refusals).toEqual([]);
+    expect(definePrices([symmy, callingAs([person, { kind: 'registered' }]), market]).refusals).toEqual([
+      { code: 'call_not_declared', detail: `${required} and registers no call to it under ${sourceWrite}` },
+    ]);
 
     // A nested owner's requirement too, as on main: Privacy requires Party's organization record facts for the check
     // Commerce customer context makes for a membership write, and registers no call to them.
