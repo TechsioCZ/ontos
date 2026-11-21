@@ -13255,6 +13255,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.pricing.price.read-catalog-page",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "prices",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.catalog-page-prices",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.pricing.price.read-definition",
             "kind": "read",
             "modes": [

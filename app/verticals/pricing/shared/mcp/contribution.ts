@@ -86,6 +86,12 @@ export const pricingMcpContribution = defineOntosMcpContribution({
     en: 'Pricing',
   },
   reads: {
+    'catalog-page-prices': {
+      title: {
+        cs: 'Ceny katalogové stránky',
+        en: 'Catalogue page prices',
+      },
+    },
     'commercial-fee-definition': {
       title: {
         cs: 'Definice obchodního poplatku',
