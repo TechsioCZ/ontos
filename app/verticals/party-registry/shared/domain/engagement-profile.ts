@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
 import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
-import { PartyRefSchema } from '../party-registry-references.ts';
+import { PartyRefSchema } from '../resources/party.ts';
 import { OrganizationEngagementProfileRefSchema } from '../resources/organization-engagement-profile.ts';
 import { PersonEngagementProfileRefSchema } from '../resources/person-engagement-profile.ts';
 import { CanonicalUtcTimestampJsonSchema } from './canonical-utc-timestamp.ts';

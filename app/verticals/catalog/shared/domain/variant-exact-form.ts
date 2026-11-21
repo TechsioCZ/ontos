@@ -1,5 +1,5 @@
 import { Option } from 'effect';
-import type { VariantExactForm } from '@app/catalog-selection-contracts/variant-exact-form';
+import type { CatalogIdentityScope } from '@app/catalog-selection-contracts/identity-scope';
 
 import type { Product, ProductVariant } from './product.ts';
 
@@ -20,7 +20,7 @@ const sameCatalogRef = (
 export const resolveVariantExactForm = (
   product: Pick<Product, 'productRef' | 'variants'>,
   variantRef: ProductVariant['variantRef'],
-): Option.Option<VariantExactForm> => {
+): Option.Option<CatalogIdentityScope> => {
   const match = product.variants.find(
     (variant) =>
       sameCatalogRef(variant.productRef, product.productRef) &&
@@ -34,14 +34,14 @@ export const resolveVariantExactForm = (
 };
 
 export type ProductOnlyVariantResolution =
-  | { readonly exactForm: VariantExactForm; readonly status: 'RESOLVED' }
+  | { readonly exactForm: CatalogIdentityScope; readonly status: 'RESOLVED' }
   | { readonly status: 'AMBIGUOUS' | 'NO_ELIGIBLE_VARIANT' };
 
 /** Resolve identity only; this is not proof that a Catalog Selection is Current or VALID. */
 export const resolveProductOnlyVariant = (
   product: Pick<Product, 'productRef' | 'variants'>,
 ): ProductOnlyVariantResolution => {
-  let exactForm: VariantExactForm | undefined;
+  let exactForm: CatalogIdentityScope | undefined;
   for (const variant of product.variants) {
     if (
       variant.lifecycle !== 'ACTIVE' ||
