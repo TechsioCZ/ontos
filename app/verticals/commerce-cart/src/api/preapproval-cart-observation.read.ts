@@ -5,7 +5,7 @@ import { preapprovalCartObservationService } from '../services/preapproval-cart-
 import {
   PreapprovalCartObservationRequestSchema,
   PreapprovalCartObservationResponseSchema,
-} from '../../shared/apis/preapproval-cart-observation.ts';
+} from '@app/commerce-cart-contracts/preapproval-cart-observation';
 
 const MODULE_KEY = 'commerce.cart' as const;
 

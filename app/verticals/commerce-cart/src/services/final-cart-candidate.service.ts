@@ -15,8 +15,8 @@ import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/curr
 import { and, eq } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import type { FinalizeCartCandidatePayload } from '../../shared/actions/finalize-cart-candidate.ts';
-import { CartDraftRejected, CartDraftSchema } from '../../shared/domain/cart-draft.ts';
-import type { CartDraft } from '../../shared/domain/cart-draft.ts';
+import { CartDraftRejected, CartDraftSchema } from '@app/commerce-cart-contracts/domain/cart-draft';
+import type { CartDraft } from '@app/commerce-cart-contracts/domain/cart-draft';
 import { carts, cartRevisions, finalCartCandidates } from '../database/schema.ts';
 import { cartAuthorityForScope, cartPopulationService } from './cart-population.service.ts';
 import { finalCartCandidateOwnersService } from './final-cart-candidate-owners.service.ts';

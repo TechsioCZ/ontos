@@ -20,7 +20,7 @@ import { finalCartCandidateResourceDescriptor } from './shared/resources/final-c
 import { finalizeCartCandidateAction } from './src/actions/finalize-cart-candidate.action.ts';
 import { initializePopulationAuthorityAction } from './src/actions/initialize-population-authority.action.ts';
 import { OpenSelectionPopulationApi } from '@app/commerce-cart-contracts/open-selection-population';
-import { PreapprovalCartObservationApi } from './shared/apis/preapproval-cart-observation.ts';
+import { PreapprovalCartObservationApi } from '@app/commerce-cart-contracts/preapproval-cart-observation';
 import { reviseCartDraftAction } from './src/actions/revise-cart-draft.action.ts';
 // </generated-module-manifest-imports>
 

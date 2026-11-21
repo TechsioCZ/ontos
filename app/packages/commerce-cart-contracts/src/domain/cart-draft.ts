@@ -2,13 +2,13 @@ import { CatalogSelectionSchema, ProductUnitRefSchema } from '@app/catalog-selec
 import { Schema } from 'effect';
 import {
   CartActionInvocationIdSchema,
+  CartRefSchema,
   CartLegalEntityIdSchema,
   CartPrincipalIdSchema,
   CartRevisionIdSchema,
   CartSelectionIdSchema,
   CartTenantIdSchema,
-} from '@app/commerce-cart-contracts/resources/cart';
-import { CartRefSchema } from '../resources/cart.ts';
+} from '../resources/cart.ts';
 
 export const CartIdentitySchema = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 export const CartRevisionNumberSchema = Schema.Int.check(Schema.isBetween({ maximum: 2_147_483_647, minimum: 1 }));

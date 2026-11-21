@@ -9,7 +9,7 @@ import {
   InitializePopulationAuthorityResultSchema,
 } from '../../shared/actions/initialize-population-authority.ts';
 import type { InitializePopulationAuthorityPayload } from '../../shared/actions/initialize-population-authority.ts';
-import { CartDraftRejected } from '../../shared/domain/cart-draft.ts';
+import { CartDraftRejected } from '@app/commerce-cart-contracts/domain/cart-draft';
 import { cartPopulationService } from '../services/cart-population.service.ts';
 import { cartDraftAuthorityPolicy } from '../policies/cart-draft-authority.policy.ts';
 

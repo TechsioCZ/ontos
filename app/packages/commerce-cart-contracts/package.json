@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./domain/cart-draft": "./src/domain/cart-draft.ts",
     "./open-selection-population": "./src/apis/open-selection-population.ts",
     "./open-selection-population/client": "./src/api/open-selection-population-client.ts",
+    "./preapproval-cart-observation": "./src/apis/preapproval-cart-observation.ts",
+    "./preapproval-cart-observation/client": "./src/api/preapproval-cart-observation-client.ts",
     "./resources/cart": "./src/resources/cart.ts",
     "./resources/final-cart-candidate": "./src/resources/final-cart-candidate.ts"
   },
@@ -19,7 +22,8 @@
     "moduleId": "commerce.cart",
     "packageName": "@app/commerce-cart",
     "moduleApis": [
-      "open-selection-population"
+      "open-selection-population",
+      "preapproval-cart-observation"
     ]
   }
 }

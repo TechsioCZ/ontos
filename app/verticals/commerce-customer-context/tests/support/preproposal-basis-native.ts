@@ -46,7 +46,7 @@ import {
   executeInitializePopulationAuthorityWithAuthorization,
   executeReviseCartDraftWithAuthorization,
 } from '@app/commerce-cart/api/client';
-import { executePreapprovalCartObservationWithAuthorization } from '@app/commerce-cart/api/preapproval-cart-observation/client';
+import { executePreapprovalCartObservationWithAuthorization } from '@app/commerce-cart-contracts/preapproval-cart-observation/client';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
