@@ -119,7 +119,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.action_receipt_principal_constraint_count === 2,
     row.acknowledgement_issuer_column_count === 1,
     row.acknowledgement_principal_binding_count === 1,
-    row.append_only_policy_count === 58,
+    row.append_only_policy_count === 62,
     row.canonical_support_exclusion_count === 1,
     row.canonical_support_legal_entity_column_count === 0,
     row.canonical_support_policy_count === 20,
@@ -153,7 +153,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.gateway_scope_column_count === 0,
     row.journal_count === 1,
     row.legacy_runtime_privilege_count === 0,
-    row.policy_count === 266,
+    row.policy_count === 274,
     row.price_exclusion_count === 1,
     row.price_function_count === 5,
     row.price_function_public_execute_count === 0,
@@ -170,7 +170,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.quantity_tier_routine_count === 5,
     row.quantity_tier_routine_public_execute_count === 0,
     row.quantity_tier_table_count === 9,
-    row.routine_count === 135,
+    row.routine_count === 137,
     row.runtime_compatibility_membership_count === 0,
     row.runtime_support_helper_count === 2,
     row.routine_public_execute_count === 0,
@@ -380,6 +380,7 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                  'price_schedule_entries', 'price_schedule_revisions',
                  'price_source_assertion_deliveries', 'price_source_assertions', 'prices',
                  'external_price_source_authority_grants',
+                 'external_price_source_policies', 'external_price_source_policy_ends',
                  'price_candidate_set_roots', 'price_candidate_set_revisions'
                  , 'quantity_tier_revisions', 'quantity_tier_schedule_acknowledgements',
                  'quantity_tier_schedule_entries', 'quantity_tier_schedule_revisions', 'quantity_tiers',
@@ -412,6 +413,10 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                       then 'pricing_currency_support_proof_tenant_update'
                     when relation.relname = 'external_price_source_authority_grants'
                       then 'pricing_external_price_authority_scope_update'
+                    when relation.relname = 'external_price_source_policies'
+                      then 'pricing_external_price_policies_scope_update'
+                    when relation.relname = 'external_price_source_policy_ends'
+                      then 'pricing_external_price_policy_ends_scope_update'
                     when relation.relname = 'currency_support_recovery_compensation_receipts'
                       then 'pricing_currency_support_recovery_compensation_tenant_update'
                     else 'pricing_' || relation.relname || '_scope_update'
@@ -429,6 +434,10 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                       then 'pricing_currency_support_proof_tenant_delete'
                     when relation.relname = 'external_price_source_authority_grants'
                       then 'pricing_external_price_authority_scope_delete'
+                    when relation.relname = 'external_price_source_policies'
+                      then 'pricing_external_price_policies_scope_delete'
+                    when relation.relname = 'external_price_source_policy_ends'
+                      then 'pricing_external_price_policy_ends_scope_delete'
                     when relation.relname = 'currency_support_recovery_compensation_receipts'
                       then 'pricing_currency_support_recovery_compensation_tenant_delete'
                     else 'pricing_' || relation.relname || '_scope_delete'

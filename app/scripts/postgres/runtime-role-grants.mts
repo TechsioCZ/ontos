@@ -163,6 +163,14 @@ export const PRICING_RUNTIME_TABLE_GRANTS = [
     privileges: ['select', 'insert'],
     table: 'external_price_source_authority_grants',
   },
+  {
+    privileges: ['select', 'insert'],
+    table: 'external_price_source_policies',
+  },
+  {
+    privileges: ['select', 'insert'],
+    table: 'external_price_source_policy_ends',
+  },
   { privileges: ['select'], table: 'fee_set_heads' },
   { privileges: ['select'], table: 'fee_set_revisions' },
   { privileges: ['select'], table: 'fee_set_roots' },
@@ -359,6 +367,8 @@ export const PRICING_RUNTIME_ROUTINE_SIGNATURES = [
   'pricing.revise_quantity_tier_v2(uuid,uuid,jsonb)',
   'pricing.set_tenant_currency_support_v2(uuid,jsonb)',
   'pricing.store_external_price_source_authority_grant_v1(uuid,uuid,jsonb)',
+  'pricing.store_external_price_source_policy_v1(uuid,uuid,jsonb)',
+  'pricing.end_external_price_source_policy_v1(uuid,uuid,jsonb)',
   'pricing.lookup_tenant_currency_support_result_v1(uuid,jsonb)',
   'pricing.verify_tenant_currency_support_generation_v1(uuid,jsonb)',
   'pricing.persist_pricing_commitment_confirmation_v1(uuid,uuid,jsonb)',

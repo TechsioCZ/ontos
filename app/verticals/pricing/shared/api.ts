@@ -21,6 +21,7 @@ import { DefinePriceActionApi } from './apis/define-price-action.ts';
 import { ExactPriceResolutionApi } from './apis/exact-price-resolution.ts';
 import { ManageCommitmentConfirmationActionApi } from './apis/manage-commitment-confirmation-action.ts';
 import { ManageContractualDiscountActionApi } from './apis/manage-contractual-discount-action.ts';
+import { ManageExternalPriceSourcePolicyActionApi } from './apis/manage-external-price-source-policy-action.ts';
 import { ManageProductCommercialFeesBulkActionApi } from './apis/manage-product-commercial-fees-bulk-action.ts';
 import { ManageProductPricesBulkActionApi } from './apis/manage-product-prices-bulk-action.ts';
 import { ManageQuantityTierActionApi } from './apis/manage-quantity-tier-action.ts';
@@ -116,6 +117,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(ExactPriceResolutionApi)
   .addHttpApi(ManageCommitmentConfirmationActionApi)
   .addHttpApi(ManageContractualDiscountActionApi)
+  .addHttpApi(ManageExternalPriceSourcePolicyActionApi)
   .addHttpApi(ManageProductCommercialFeesBulkActionApi)
   .addHttpApi(ManageProductPricesBulkActionApi)
   .addHttpApi(ManageQuantityTierActionApi)

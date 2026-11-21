@@ -124,6 +124,8 @@ it('provisions the exact least-privilege Pricing runtime table surface', () => {
       { privileges: ['select', 'insert'], table: 'fee_action_invocation_receipts' },
       { privileges: ['select', 'insert'], table: 'fee_revisions' },
       { privileges: ['select', 'insert'], table: 'external_price_source_authority_grants' },
+      { privileges: ['select', 'insert'], table: 'external_price_source_policies' },
+      { privileges: ['select', 'insert'], table: 'external_price_source_policy_ends' },
       { privileges: ['select', 'insert'], table: 'fee_schedule_acknowledgements' },
       { privileges: ['select', 'insert'], table: 'fee_schedule_entries' },
       { privileges: ['select', 'insert', 'update'], table: 'fee_schedule_heads' },
@@ -148,7 +150,7 @@ it('provisions the exact least-privilege Pricing runtime table surface', () => {
       { privileges: ['select', 'insert'], table: 'quantity_tiers' },
     ]),
   );
-  expect(PRICING_RUNTIME_TABLE_GRANTS).toHaveLength(62);
+  expect(PRICING_RUNTIME_TABLE_GRANTS).toHaveLength(64);
   expect(new Set(PRICING_RUNTIME_TABLE_GRANTS.map(({ table }) => table)).size).toBe(
     PRICING_RUNTIME_TABLE_GRANTS.length,
   );
@@ -213,9 +215,11 @@ it('exposes only the governed Pricing routine signatures to the runtime role', (
       'pricing.set_supported_currencies(uuid,uuid,jsonb)',
       'pricing.set_tenant_currency_support_v1(uuid,jsonb)',
       'pricing.store_external_price_source_authority_grant_v1(uuid,uuid,jsonb)',
+      'pricing.store_external_price_source_policy_v1(uuid,uuid,jsonb)',
+      'pricing.end_external_price_source_policy_v1(uuid,uuid,jsonb)',
     ]),
   );
-  expect(PRICING_RUNTIME_ROUTINE_SIGNATURES).toHaveLength(92);
+  expect(PRICING_RUNTIME_ROUTINE_SIGNATURES).toHaveLength(94);
   const signatures = PRICING_RUNTIME_ROUTINE_SIGNATURES.map(normalizedRoutine);
   expect(new Set(signatures).size).toBe(signatures.length);
   for (const signature of migrationRoutineGrants) {
