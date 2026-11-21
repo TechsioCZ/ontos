@@ -168,7 +168,11 @@ it.live('a standing source policy accepts never-seen variants, denies keys outsi
       // One base-Price policy and one policy for every Price Group the source creates, set once.
       const basePolicy = yield* establish(runtime, policyTerms(world), 'akros-erp-base-prices');
       expect(basePolicy).toMatchObject({ intent: 'ESTABLISH', outcome: 'STORED' });
-      expect(yield* establish(runtime, policyTerms(world), 'akros-erp-base-prices')).toEqual(basePolicy);
+      // The same terms again store nothing and answer with the policy already there.
+      expect(yield* establish(runtime, policyTerms(world), 'akros-erp-base-prices')).toEqual({
+        ...basePolicy,
+        outcome: 'REUSED',
+      });
       const groupPolicy = yield* establish(
         runtime,
         policyTerms(world, { mapping: priceListMapping, priceGroupCoverage: { kind: 'ANY_PRICE_GROUP' } }),
