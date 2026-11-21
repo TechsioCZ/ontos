@@ -63,6 +63,7 @@ import {
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { catalogPagePricesReadApiLive } from './catalog-page-prices-read-server.ts';
 import { commercialFeeDefinitionReadApiLive } from './commercial-fee-definition-read-server.ts';
 import { commercialFeeResultLookupReadApiLive } from './commercial-fee-result-lookup-read-server.ts';
 import { commercialFeeScheduleReadApiLive } from './commercial-fee-schedule-read-server.ts';
@@ -238,6 +239,7 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
     GovernedReadLayer.provide(governedActionRuntimeLive),
   ),
   // <generated-governed-http-handler-layers>
+  catalogPagePricesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   commercialFeeScheduleReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

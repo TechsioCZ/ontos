@@ -54,6 +54,7 @@ import {
 
 // <generated-governed-http-handler-imports>
 import { catalogToStockBindingResolutionReadApiLive } from './catalog-to-stock-binding-resolution-read-server.ts';
+import { catalogVariantOnHandPageReadApiLive } from './catalog-variant-on-hand-page-read-server.ts';
 import { changeStockSharingEligibilityActionApiLive } from './change-stock-sharing-eligibility-action-server.ts';
 import { commitmentProtectionVerificationReadApiLive } from './commitment-protection-verification-read-server.ts';
 import { compensateInventoryPreCommitActionApiLive } from './compensate-inventory-pre-commit-action-server.ts';
@@ -244,6 +245,7 @@ export const makeInventoryApiRuntime = (
     ),
     // <generated-governed-http-handler-layers>
     catalogToStockBindingResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    catalogVariantOnHandPageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     changeStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     commitmentProtectionVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     compensateInventoryPreCommitActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

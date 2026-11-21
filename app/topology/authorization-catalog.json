@@ -3929,6 +3929,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.catalog.product-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "product",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.catalog.api.product-page",
+            "moduleKey": "commerce.catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.catalog.product-relationship-current.read",
             "kind": "read",
             "modes": [
@@ -10693,6 +10719,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.inventory.catalog-variant-on-hand-page.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "stock",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.catalog-variant-on-hand-page",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.inventory.commitment-protection.establish",
             "kind": "action",
             "modes": [
@@ -13226,6 +13278,32 @@
             "entrypointKey": "commerce.pricing.manage-product-prices-bulk",
             "moduleKey": "commerce.pricing",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.pricing.price.read-catalog-page",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "prices",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.pricing.api.catalog-page-prices",
+            "moduleKey": "commerce.pricing",
+            "role": "api",
             "scope": "tenant"
           }
         },

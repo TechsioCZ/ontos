@@ -147,6 +147,9 @@ export {
 } from './price-source-result-lookup-client.ts';
 export type { PriceSourceResultLookupClientOptions } from './price-source-result-lookup-client.ts';
 
+export { executeCatalogPagePrices, executeCatalogPagePricesWithAuthorization } from './catalog-page-prices-client.ts';
+export type { CatalogPagePricesClientOptions } from './catalog-page-prices-client.ts';
+
 export {
   executePriceGroupSourcePrices,
   executePriceGroupSourcePricesWithAuthorization,

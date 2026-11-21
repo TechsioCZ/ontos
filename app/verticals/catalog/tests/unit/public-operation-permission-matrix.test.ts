@@ -139,6 +139,7 @@ import { setCompositionCurrentRead } from '../../src/api/set-composition-current
 import { setCompositionHistoryRead } from '../../src/api/set-composition-history.read.ts';
 
 import { catalogSourceProductPageRead } from '../../src/api/catalog-source-product-page.read.ts';
+import { productPageRead } from '../../src/api/product-page.read.ts';
 import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
 
 import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
@@ -147,6 +148,7 @@ const reads = [
   bindInitialVariantSourceRecoveryRead,
   catalogSourceProductPageRead,
   catalogSourceProductsRead,
+  productPageRead,
   activateLocalOverrideRecoveryRead,
   activatePackageDefinitionRecoveryRead,
   activatePackageOptionRecoveryRead,

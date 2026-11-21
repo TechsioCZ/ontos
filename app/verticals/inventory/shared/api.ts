@@ -10,6 +10,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 
 // <generated-governed-http-api-imports>
 import { CatalogToStockBindingResolutionApi } from './apis/catalog-to-stock-binding-resolution.ts';
+import { CatalogVariantOnHandPageApi } from './apis/catalog-variant-on-hand-page.ts';
 import { ChangeStockSharingEligibilityActionApi } from './apis/change-stock-sharing-eligibility-action.ts';
 import { CommitmentProtectionVerificationApi } from './apis/commitment-protection-verification.ts';
 import { CompensateInventoryPreCommitActionApi } from './apis/compensate-inventory-pre-commit-action.ts';
@@ -71,6 +72,7 @@ type GroupsOf<Api> = Api extends HttpApi.HttpApi<string, infer Groups> ? Groups 
 type InventoryApiGroups = GroupsOf<
   | typeof inventoryFoundationApi
   | typeof CatalogToStockBindingResolutionApi
+  | typeof CatalogVariantOnHandPageApi
   | typeof ChangeStockSharingEligibilityActionApi
   | typeof CommitmentProtectionVerificationApi
   | typeof CompensateInventoryPreCommitActionApi
@@ -115,6 +117,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(OwnerActionApprovalApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(CatalogToStockBindingResolutionApi)
+  .addHttpApi(CatalogVariantOnHandPageApi)
   .addHttpApi(ChangeStockSharingEligibilityActionApi)
   .addHttpApi(CommitmentProtectionVerificationApi)
   .addHttpApi(CompensateInventoryPreCommitActionApi)

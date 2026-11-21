@@ -687,6 +687,12 @@ export const catalogMcpContribution = defineOntosMcpContribution({
         en: 'Product history',
       },
     },
+    'product-page': {
+      title: {
+        cs: 'Stránka produktů katalogu',
+        en: 'Catalog product page',
+      },
+    },
     'product-relationship-current': {
       title: {
         cs: 'Aktuální vztahy mezi produkty',

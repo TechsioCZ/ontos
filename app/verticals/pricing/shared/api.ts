@@ -9,6 +9,7 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
+import { CatalogPagePricesApi } from './apis/catalog-page-prices.ts';
 import { CommercialFeeDefinitionApi } from './apis/commercial-fee-definition.ts';
 import { CommercialFeeResultLookupApi } from './apis/commercial-fee-result-lookup.ts';
 import { CommercialFeeScheduleApi } from './apis/commercial-fee-schedule.ts';
@@ -106,6 +107,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(OwnerActionApprovalApi)
   .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })
   // <generated-governed-http-api-additions>
+  .addHttpApi(CatalogPagePricesApi)
   .addHttpApi(CommercialFeeDefinitionApi)
   .addHttpApi(CommercialFeeResultLookupApi)
   .addHttpApi(CommercialFeeScheduleApi)
