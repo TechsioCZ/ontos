@@ -4,7 +4,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Crypto, Effect, Option, Schema } from 'effect';
 
 import type { ProductTypeAttributeRule } from '../../shared/domain/product-type-rules.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductTypeRulesRevisionSchema } from '../../shared/domain/product-type-rules.ts';
 import type { CreateProductTypeResult } from '../actions/create-product-type.action.ts';
 import { ProductTypeRefSchema } from '../../shared/resources/product-type.ts';

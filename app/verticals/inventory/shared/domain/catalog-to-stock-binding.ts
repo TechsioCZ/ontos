@@ -1,5 +1,5 @@
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import type { Effect as EffectType } from 'effect';
 import { DateTime, Effect, Option, Schema } from 'effect';
 

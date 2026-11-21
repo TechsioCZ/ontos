@@ -1,11 +1,11 @@
 import { Schema } from 'effect';
 
 import { ControlledAttributeValueSchema } from './attribute-vocabulary.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
-  CatalogResourceRefSchema,
   CatalogRevisionReferenceSchema,
   sameCatalogRevisionReference,
-} from './catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-revision-reference';
 
 /** An assignment retains the identity and exact revision that justified the choice. */
 export const ControlledValueAssignmentSchema = Schema.Struct({

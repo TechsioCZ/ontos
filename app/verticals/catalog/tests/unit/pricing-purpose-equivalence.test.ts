@@ -5,10 +5,10 @@ import { describe, expect, it } from 'effect-rstest';
 import type {
   CatalogQuantityHandoff,
   CatalogQuantityHandoffReady,
-} from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogQuantityHandoffReadySchema } from '../../shared/domain/catalog-quantity-handoff.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
   PricingPurposeEquivalenceRequest,
   PricingPurposeEquivalenceResponse,
@@ -16,7 +16,7 @@ import type {
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '../../shared/apis/pricing-purpose-equivalence.ts';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import { resolvePricingPurposeEquivalence } from '../../src/api/pricing-purpose-equivalence.read.ts';
 import type { CatalogQuantityHandoffRequest } from '../../src/persistence/catalog-quantity-handoff.ts';
 import { CatalogPersistenceUnavailable } from '../../src/persistence/errors.ts';

@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import {
   CatalogUnitConversionEvidenceSchema,
   catalogUnitConversionProves,
-} from '../../shared/domain/catalog-unit-conversion-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-unit-conversion-evidence';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const ref = (resourceType: string, resourceId: string) => ({

@@ -5,7 +5,7 @@ import { Effect, Option, Schema } from 'effect';
 import { ProductCategoryHistoryResponseSchema } from '../../shared/apis/product-category-history.ts';
 import type { ProductCategoryHistoryResponse } from '../../shared/apis/product-category-history.ts';
 import type { ProductCategoryRef } from '../../shared/resources/product-category.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import { productCategoryEvents } from '../database/schema.ts';
 import { CategoryPersistenceUnavailable } from './category-persistence.ts';
 

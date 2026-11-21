@@ -1,0 +1,26 @@
+{
+  "name": "@app/party-registry-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Party Registry-owned schema-only Counterparty ResourceRef value kernel.",
+  "type": "module",
+  "exports": {
+    "./resources/counterparty": "./src/resources/counterparty.ts",
+    "./resources/resource-ref-identifiers": "./src/resources/resource-ref-identifiers.ts"
+  },
+  "scripts": {
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "4.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43"
+  },
+  "ontosContractOwner": {
+    "appId": "party-registry",
+    "moduleApis": [],
+    "moduleId": "party.registry",
+    "packageName": "@app/party-registry"
+  }
+}

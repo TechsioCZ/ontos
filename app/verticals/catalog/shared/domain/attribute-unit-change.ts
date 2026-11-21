@@ -7,7 +7,7 @@ import {
   validateAttributeValues,
 } from './attribute-values.ts';
 import type { AttributeDefinition, AttributeValue, UnitConversion } from './attribute-values.ts';
-import type { CatalogResourceRefInput } from './catalog-revision-reference.ts';
+import type { CatalogResourceRefInput } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 export interface AttributeValueProvenance {
   readonly evidence: string;

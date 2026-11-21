@@ -51,11 +51,13 @@
   "dependencies": {
     "@app/assortment": "workspace:*",
     "@app/catalog": "workspace:*",
+    "@app/catalog-selection-contracts": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/inventory": "workspace:*",
     "@app/party-registry": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/price-group-catalog": "workspace:*",
     "@app/pricing": "workspace:*",
     "@app/privacy": "workspace:*",

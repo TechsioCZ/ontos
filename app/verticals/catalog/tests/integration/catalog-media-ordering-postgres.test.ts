@@ -71,7 +71,7 @@ import {
   ReorderCatalogMediaActionNotFoundProblemSchema,
   ReorderCatalogMediaActionUnavailableProblemSchema,
 } from '../../shared/apis/reorder-catalog-media-action.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { catalogRegistration } from '../../vertical.registration.ts';
 import {
   MediaOwnedDatabaseCertificateSchema,

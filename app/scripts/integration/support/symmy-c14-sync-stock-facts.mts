@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import type { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { C14InventorySourceImportSetupSchema } from '@app/inventory/testing/c14-source-import-native';
 import { SymmyRouteExecutionConfigurationSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Effect, Schema } from 'effect';

@@ -7,8 +7,8 @@ import type { RetireProductUnitPayload } from '../../shared/actions/retire-produ
 import type { ReviseProductUnitPayload } from '../../shared/actions/revise-product-unit.ts';
 import type { SetProductUnitTargetDivisibilityPayload } from '../../shared/actions/set-product-unit-target-divisibility.ts';
 import { ProductUnitRuleInputSchema } from '../../shared/actions/product-unit-contract.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import {
-  ProductUnitRefSchema,
   ProductUnitRuleRevisionSchema,
   ProductUnitTargetDivisibilitySchema,
 } from '../../shared/resources/product-unit.ts';

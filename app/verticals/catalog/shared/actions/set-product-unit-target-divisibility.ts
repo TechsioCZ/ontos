@@ -4,11 +4,11 @@ import {
   CatalogRevisionNumberSchema,
   CatalogRevisionResourceIdSchema,
   CatalogRevisionTenantIdSchema,
-} from '../domain/catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { PackageDefinitionRefSchema } from '../resources/package-definition.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { ProductUnitRefSchema } from '../resources/product-unit.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import {
   ProductUnitEvidenceRefsSchema,
   ProductUnitMutationResultSchema,

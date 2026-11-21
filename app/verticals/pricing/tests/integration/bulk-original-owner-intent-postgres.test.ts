@@ -133,9 +133,9 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
   staffAuthenticationNamespaceRegistryLayer,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { executeProductVariantSnapshotWithAuthorization } from '@app/catalog/api/client';
 import { externalPriceSourceAuthorityForScope } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import {

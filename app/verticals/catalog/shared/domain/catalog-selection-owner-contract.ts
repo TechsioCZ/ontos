@@ -4,9 +4,10 @@ import {
   CatalogRevisionInstantSchema,
   CatalogRevisionNumberSchema,
   CatalogRevisionTenantIdSchema,
-} from './catalog-revision-reference.ts';
-import { CatalogSelectionAssessmentResultSchema, CatalogSelectionSchema } from './catalog-selection-evidence.ts';
-import type { CatalogSelection } from './catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionAssessmentResultSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionPurpose } from './catalog-selection-purpose.ts';
 
 const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());

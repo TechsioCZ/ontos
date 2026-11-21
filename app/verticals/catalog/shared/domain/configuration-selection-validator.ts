@@ -1,6 +1,9 @@
-import type { CatalogResourceRef, CatalogRevisionInstant } from './catalog-revision-reference.ts';
-import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
-import type { CatalogSelectionRevision } from './catalog-selection-evidence.ts';
+import type {
+  CatalogResourceRef,
+  CatalogRevisionInstant,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import { evaluateCompatibilityRules, evaluateMeasuredConstraint } from './configuration-constraints.ts';
 import type {
   CompatibilityRule,
@@ -20,8 +23,8 @@ import type {
   ProductConfigurationCurrentActivation,
   ProductConfigurationDefinitionRevision,
 } from './product-configuration.ts';
-import type { ProductRef } from '../resources/product.ts';
-import type { VariantRef } from '../resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 
 /** Caller-supplied, owner-qualified facts. This pure evaluator does not discover Current state. */
 export interface ConfigurationValidationBasis {

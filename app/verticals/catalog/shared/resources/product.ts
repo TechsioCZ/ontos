@@ -3,9 +3,6 @@
 // @ontos-resource-slug product
 import type { OntosResourceType } from '@app/core-runtime';
 
-export { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
-export type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
-
 export const productResourceDescriptor = {
   capabilities: {
     graphVisible: false,

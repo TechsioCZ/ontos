@@ -2,8 +2,8 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   packageContentRevisions,
   packageDefinitions,

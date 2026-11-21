@@ -18,6 +18,8 @@ export const PRIVATE_COLOCATED_CALLABLE_CASE = 'private co-located callable';
 
 export const PARTY_VERTICAL_PATH = 'verticals/party-registry';
 
+export const PARTY_CONTRACTS_PACKAGE_PATH = 'packages/party-registry-contracts';
+
 export const MARKET_DEPLOYMENT_ID = 'commerce-market-catalog';
 
 export const PARTY_RESOURCE_SOURCE_PATH = './shared/resources/party.ts';
@@ -1063,7 +1065,8 @@ export const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleF
   return root;
 });
 
-export const CATALOG_SELECTION_CONTRACT = 'verticals/catalog/shared/domain/catalog-selection-evidence.ts';
+export const CATALOG_SELECTION_CONTRACT =
+  'packages/catalog-selection-contracts/src/domain/catalog-selection-evidence.ts';
 
 export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatalogSelectionFixture(
   extraSource?: string,
@@ -1084,18 +1087,24 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
   yield* write(
     root,
     SHELL_PACKAGE_JSON_PATH,
-    JSON.stringify({ dependencies: { '@app/catalog': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
+    JSON.stringify({
+      dependencies: {
+        '@app/catalog': WORKSPACE_DEPENDENCY_VERSION,
+        '@app/catalog-selection-contracts': WORKSPACE_DEPENDENCY_VERSION,
+      },
+      name: SHELL_PACKAGE_SPECIFIER,
+    }),
   );
   const workspace = path.resolve(import.meta.dirname, '../..');
   const manifest = yield* Effect.promise(
     async () => await readFile(path.join(workspace, 'verticals/catalog/vertical.manifest.ts'), 'utf-8'),
   );
   yield* write(root, 'verticals/catalog/vertical.manifest.ts', `${manifest.split('\n').slice(0, 3).join('\n')}\n`);
+  // The value kernel is copied whole below; its Quantity handoff imports @app/shared-contracts.
   const pending = [
-    CATALOG_SELECTION_CONTRACT,
-    ...(extraSource === undefined
-      ? []
-      : [extraSource, SHARED_CONTRACTS_PACKAGE_JSON_PATH, 'packages/shared-contracts/src/index.ts']),
+    ...(extraSource === undefined ? [] : [extraSource]),
+    SHARED_CONTRACTS_PACKAGE_JSON_PATH,
+    'packages/shared-contracts/src/index.ts',
     'verticals/catalog/package.json',
     'packages/catalog-selection-contracts/package.json',
   ];
@@ -1122,9 +1131,7 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
   for (const [name, target] of [
     ['catalog', CATALOG_VERTICAL_PATH],
     ['catalog-selection-contracts', 'packages/catalog-selection-contracts'],
-    ...(extraSource === undefined
-      ? []
-      : ([[SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH]] as const)),
+    [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
   ] as const) {
     yield* Effect.promise(
       async () => await symlink(path.join(root, target), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
@@ -1166,9 +1173,11 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
       ],
     }),
   );
-  const sources = yield* readPricingSourceTree(workspace, PARTY_VERTICAL_PATH);
-  for (const [file, source] of sources) {
-    yield* write(root, file, source);
+  // Party Registry's resources import their identifiers from its value kernel.
+  for (const folder of [PARTY_VERTICAL_PATH, PARTY_CONTRACTS_PACKAGE_PATH]) {
+    for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
+      yield* write(root, file, source);
+    }
   }
   for (const file of [
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
@@ -1194,6 +1203,14 @@ export const makeActualPartyClientFixture = Effect.fn(function* actualPartyClien
   yield* Effect.promise(
     async () =>
       await symlink(
+        path.join(root, PARTY_CONTRACTS_PACKAGE_PATH),
+        path.join(root, 'node_modules/@app/party-registry-contracts'),
+        'dir',
+      ),
+  );
+  yield* Effect.promise(
+    async () =>
+      await symlink(
         path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
         path.join(root, SHARED_CONTRACTS_LINK_PATH),
         'dir',
@@ -1210,21 +1227,10 @@ export const makeActualQuantityClientFixture = Effect.fn(function* actualQuantit
   for (const [file, source] of sources) {
     yield* write(root, file, source);
   }
-  for (const file of [
-    SHARED_CONTRACTS_PACKAGE_JSON_PATH,
-    SHARED_PROBLEM_DETAILS_SOURCE_PATH,
-    SHARED_CLIENT_RUNTIME_SOURCE_PATH,
-  ]) {
+  // The Catalog selection fixture already links @app/shared-contracts; the generated client needs these leaves.
+  for (const file of [SHARED_PROBLEM_DETAILS_SOURCE_PATH, SHARED_CLIENT_RUNTIME_SOURCE_PATH]) {
     yield* write(root, file, yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8')));
   }
-  yield* Effect.promise(
-    async () =>
-      await symlink(
-        path.join(root, SHARED_CONTRACTS_WORKSPACE_PATH),
-        path.join(root, SHARED_CONTRACTS_LINK_PATH),
-        'dir',
-      ),
-  );
   return root;
 });
 
@@ -1373,11 +1379,24 @@ export const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFix
   return root;
 });
 
-export const CATALOG_QUANTITY_CONTRACT = 'verticals/catalog/shared/domain/catalog-quantity-handoff.ts';
+export const CATALOG_QUANTITY_CONTRACT = 'packages/catalog-selection-contracts/src/domain/catalog-quantity-handoff.ts';
 
 export const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
   const root = yield* makePortalPublicRoleFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
+  // The copied Catalog selection kernel names Catalog as its owner, so the topology knows that deployment.
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: CUSTOMER_CONTEXT_DEPLOYMENT_ID, path: CUSTOMER_CONTEXT_VERTICAL_PATH },
+        { id: 'catalog', path: CATALOG_VERTICAL_PATH },
+      ],
+    }),
+  );
   for (const folder of [
     CUSTOMER_CONTEXT_VERTICAL_PATH,
     'packages/customer-market-retirement-contracts',

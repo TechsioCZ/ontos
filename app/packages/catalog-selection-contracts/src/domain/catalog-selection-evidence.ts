@@ -1,29 +1,18 @@
 import { Match, Schema } from 'effect';
 
-import {
-  CatalogSelectionRevisionSchema,
-  CatalogSelectionSchema,
-  SetCompositionSelectionRevisionSchema,
-  VariantSelectionRevisionSchema,
-} from '@app/catalog-selection-contracts/catalog-selection';
-import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductRefSchema } from '../resources/product.ts';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionInstantSchema,
   CatalogRevisionNumberSchema,
-} from './catalog-revision-reference.ts';
-
-export {
+} from './catalog-resource-reference.ts';
+import {
   CatalogSelectionRevisionSchema,
   CatalogSelectionSchema,
-  PackageDefinitionSelectionRevisionSchema,
-  ProductConfigurationSelectionSchema,
-  ProductSelectionRevisionSchema,
   SetCompositionSelectionRevisionSchema,
   VariantSelectionRevisionSchema,
-} from '@app/catalog-selection-contracts/catalog-selection';
-export type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+} from './catalog-selection.ts';
+import type { CatalogSelectionRevision } from './catalog-selection.ts';
 
 const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 const membershipAttestationIdSchema = nonEmptyText.pipe(Schema.brand('CatalogMembershipAttestationId'));

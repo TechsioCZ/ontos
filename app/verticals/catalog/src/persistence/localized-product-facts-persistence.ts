@@ -4,8 +4,8 @@ import { DateTime, Effect, Equal, Schema } from 'effect';
 
 /* oxlint-disable perfectionist/sort-objects, anti-slop/no-conditional-empty-object-spread -- Typed Drizzle insert order follows relational keys; optional result fields are omitted to preserve absence. expires: 2027-03-31. */
 
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import {
   productLocalizedFactRevisions,
   productLocalizedFacts,

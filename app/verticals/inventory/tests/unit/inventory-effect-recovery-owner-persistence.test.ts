@@ -1,5 +1,5 @@
 /* oxlint-disable sonarjs/no-nested-functions -- Focused in-memory owner ports keep the cross-store recovery invariants explicit; expires: 2027-03-31. */
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { Effect, Option, Ref, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

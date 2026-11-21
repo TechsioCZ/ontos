@@ -3,8 +3,8 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { DateTime, Effect, Schema } from 'effect';
 
 import type { CatalogDocumentResourceRef } from '../../shared/domain/catalog-media-assignment.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import {
   catalogMediaAssignmentRevisions,
   catalogMediaAssignments,

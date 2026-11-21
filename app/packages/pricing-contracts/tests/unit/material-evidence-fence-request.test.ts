@@ -1,4 +1,4 @@
-import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

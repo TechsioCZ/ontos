@@ -1,7 +1,10 @@
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from '@app/party-registry-contracts/resources/resource-ref-identifiers';
 
 export const timelineResource = <const Slug extends string, const Label extends string>(slug: Slug, label: Label) => {
   const resourceType = `party.registry.${slug}` as const;

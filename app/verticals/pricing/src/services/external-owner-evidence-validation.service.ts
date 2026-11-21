@@ -1,8 +1,6 @@
-import type { CatalogSelectionAssessmentResult } from '@app/catalog/domain/catalog-selection-evidence';
-import {
-  CatalogSelectionAssessmentResultSchema,
-  CatalogSelectionSchema,
-} from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelectionAssessmentResult } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionAssessmentResultSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
   PricingCurrentMarketEvidenceResponse,
   PricingMarketSourceReceipt,

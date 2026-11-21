@@ -282,6 +282,10 @@ jobs:
       integrationBuild: ${{ steps.selection.outputs.integrationBuild || steps.changes.outputs.integrationBuild }}
       integrationOwners: ${{ steps.selection.outputs.integrationOwners || steps.changes.outputs.integrationOwners }}
       integrationTopology: ${{ steps.selection.outputs.integrationTopology || steps.changes.outputs.integrationTopology }}
+      # The commit Lean Core Dependencies holds its baseline to: the plan's exact comparison base, else a push's
+      # event.before (behind the merge queue) or newest green push, and the first parent on schedule and
+      # dispatch; empty when there is none.
+      base: ${{ steps.changes.outputs.base }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -735,10 +739,21 @@ jobs:
             working-directory: app
             run: mise exec -- pnpm database-access:check
 
+          # The baseline may only shrink against the base the planner names for this run. The row fetches that
+          # one commit over the checkout's credential-free remote (the repository is public), keeping the shared
+          # depth-1 checkout; a run without a base, or a fetch that fails, fails the row.
           - name: Lean Core Dependencies
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}
             working-directory: app
-            run: mise exec -- pnpm lean-core:check
+            env:
+              COMPARISON_BASE: ${{ needs.ci-plan.outputs.base }}
+            run: |
+              if [[ ! "$COMPARISON_BASE" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error title=No comparison base::The planner named no comparison base for this $GITHUB_EVENT_NAME run, so the Lean Core baseline cannot be held to it."
+                exit 1
+              fi
+              git fetch --quiet --no-tags --depth=1 origin "$COMPARISON_BASE"
+              mise exec -- pnpm lean-core:check --base "$COMPARISON_BASE"
 
           - name: Workspace Contract
             if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.row == 'contracts' }}

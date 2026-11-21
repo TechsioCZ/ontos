@@ -1,6 +1,6 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { executeProductVariantSnapshotWithAuthorization } from '@app/catalog/api/client';
-import { CatalogSelectionValidEvidenceSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import { priceCatalogTargetsEqual } from '@app/pricing-contracts/domain/catalog-price-target';
 import type { PricingCommercialFeeProductTargetSnapshot } from '@app/pricing-contracts/domain/commercial-fee';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';

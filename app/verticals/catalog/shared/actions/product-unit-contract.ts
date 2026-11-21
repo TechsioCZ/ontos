@@ -1,10 +1,7 @@
 import { Schema } from 'effect';
 
-import {
-  ProductUnitRefSchema,
-  ProductUnitRuleRevisionSchema,
-  ProductUnitTargetDivisibilitySchema,
-} from '../resources/product-unit.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import { ProductUnitRuleRevisionSchema, ProductUnitTargetDivisibilitySchema } from '../resources/product-unit.ts';
 
 export const ProductUnitReasonSchema = Schema.String.check(
   Schema.isMinLength(1),

@@ -1,14 +1,14 @@
 import { Schema } from 'effect';
 
-import type { CatalogSelectionBasisSchema } from './catalog-selection-evidence.ts';
-import { CatalogSelectionSchema } from './catalog-selection-evidence.ts';
-import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
+import type { CatalogSelectionBasisSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import type {
   CatalogRetainedProduct,
   CatalogRetainedVariant,
-  CatalogRevisionInstant,
-} from './catalog-revision-reference.ts';
-import type { CatalogQuantityHandoff } from './catalog-quantity-handoff.ts';
+} from '@app/catalog-selection-contracts/catalog-revision-reference';
+import type { CatalogRevisionInstant } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogQuantityHandoff } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import type { SetCompositionRevision } from './set-composition.ts';
 
 type ReadyQuantity = Extract<CatalogQuantityHandoff, { readonly status: 'READY' }>;

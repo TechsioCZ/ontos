@@ -904,8 +904,8 @@ export const OmittedSchema = Schema.Struct(Struct.omit(ProjectedSchema.fields, [
 
 for (const [binding, subpath, allowed] of [
   ['CatalogSelectionWithQuantitySchema', CATALOG_SELECTION_CONTRACT_SUBPATH, true],
-  ['CatalogSelectionSchema', CATALOG_SELECTION_CONTRACT_SUBPATH, true],
-  ['CatalogResourceRefSchema', 'catalog-revision-reference', true],
+  ['CatalogSelectionSchema', 'catalog-selection', true],
+  ['CatalogResourceRefSchema', 'catalog-resource-reference', true],
   ['privateCatalogDispatch', CATALOG_SELECTION_CONTRACT_SUBPATH, false],
 ] as const) {
   it.live(`checks actual Catalog selection source and dependency chain for ${binding}`, () =>
@@ -920,7 +920,7 @@ for (const [binding, subpath, allowed] of [
       yield* write(
         root,
         'apps/shell-super-app/src/catalog-selection-consumer.ts',
-        `import { ${binding} } from '@app/catalog/domain/${subpath}';\n`,
+        `import { ${binding} } from '@app/catalog-selection-contracts/${subpath}';\n`,
       );
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
       expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(allowed);

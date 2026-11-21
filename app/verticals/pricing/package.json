@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@app/catalog": "workspace:*",
+    "@app/catalog-selection-contracts": "workspace:*",
     "@app/commerce-cart-finalization-contracts": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",

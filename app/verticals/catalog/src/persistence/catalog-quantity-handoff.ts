@@ -2,14 +2,12 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { DateTime, Effect } from 'effect';
 import type { Crypto } from 'effect';
 
-import type {
-  CatalogQuantityHandoff,
-  CatalogQuantityHandoffBasisFacts,
-} from '../../shared/domain/catalog-quantity-handoff.ts';
+import type { CatalogQuantityHandoff } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import type { CatalogQuantityHandoffBasisFacts } from '../../shared/domain/catalog-quantity-handoff.ts';
 import { assembleCatalogQuantityHandoff } from '../../shared/domain/catalog-quantity-handoff.ts';
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { QuantityNormalization } from '../../shared/domain/purchase-quantity.ts';
 import type { CatalogQuantityPreparation } from './catalog-quantity-preparation.ts';
 import { catalogQuantityPreparationForScope } from './catalog-quantity-preparation.ts';

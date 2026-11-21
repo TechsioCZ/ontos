@@ -20,10 +20,10 @@ import {
 } from '../../shared/domain/product-type-rules.ts';
 import type { AttributeDefinitionRef } from '../../shared/resources/attribute-definition.ts';
 import { AttributeDefinitionRefSchema } from '../../shared/resources/attribute-definition.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import {
   attributeDefinitions,
   attributeDefinitionRevisions,

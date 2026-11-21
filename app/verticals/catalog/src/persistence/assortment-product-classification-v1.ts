@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { AssortmentProductClassificationFactsV1Schema } from '../../shared/apis/assortment-product-classification-v1.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import type {
   AssortmentProductClassificationObservationV1,
   AssortmentProductClassificationV1OperationRequest,

@@ -1,6 +1,6 @@
-import { CatalogQuantityBasisSchema } from '@app/catalog/domain/catalog-quantity-handoff';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { catalogUnitConversionProves } from '@app/catalog/domain/catalog-unit-conversion-evidence';
+import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { catalogUnitConversionProves } from '@app/catalog-selection-contracts/catalog-unit-conversion-evidence';
 import {
   CatalogQuantityBasisCompatibleConversionSchema,
   CatalogQuantityBasisConversionStepSchema,
@@ -9,12 +9,12 @@ import {
   CatalogQuantityBasisNoConversionRequiredSchema,
   CatalogQuantityBasisUnavailableSchema,
   CatalogQuantityBasisUnverifiableSchema,
-} from '@app/catalog/api/quantity-basis-compatibility';
+} from '@app/catalog-selection-contracts/quantity-basis-compatibility';
 import type {
   CatalogQuantityBasisCompatibilityEndpoint,
   CatalogQuantityBasisCompatibilityEndpoints,
   CatalogQuantityBasisEndpointRoleSchema,
-} from '@app/catalog/api/quantity-basis-compatibility';
+} from '@app/catalog-selection-contracts/quantity-basis-compatibility';
 import { Match, Schema } from 'effect';
 
 import { PricingInstantSchema } from '../apis/current-supported-currencies.ts';

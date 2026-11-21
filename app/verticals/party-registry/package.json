@@ -90,6 +90,7 @@
   "dependencies": {
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/privacy": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",

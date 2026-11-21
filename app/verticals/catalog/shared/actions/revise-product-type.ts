@@ -1,8 +1,11 @@
 import { Schema } from 'effect';
 
-import { CatalogRevisionInstantSchema, CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import {
+  CatalogRevisionInstantSchema,
+  CatalogRevisionNumberSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductTypeAttributeRuleSchema } from '../domain/product-type-rules.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductTypeRefSchema } from '../resources/product-type.ts';
 
 /** The owner-side impact scan issues a SHA-256 digest of its complete v2 basis. */

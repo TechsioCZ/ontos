@@ -3,11 +3,11 @@
 // @ontos-outbox-topic commerce.catalog.set-composition-revised.v1
 import { Schema } from 'effect';
 
-import { SetCompositionSelectionRevisionSchema } from '../domain/catalog-selection-evidence.ts';
-import { CatalogRevisionInstantSchema } from '../domain/catalog-revision-reference.ts';
+import { SetCompositionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogRevisionInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductActionInvocationIdSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 const TenantIdSchema = checkedUuid.pipe(Schema.brand('CatalogTenantId'), Schema.decodeTo(checkedUuid));

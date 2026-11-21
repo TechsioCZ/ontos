@@ -80,6 +80,9 @@
       "path": "packages/catalog-selection-contracts"
     },
     {
+      "path": "packages/party-registry-contracts"
+    },
+    {
       "path": "packages/commerce-cart-contracts"
     },
     {

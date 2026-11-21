@@ -2,8 +2,8 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { CatalogQuantityHandoffSchema } from '../domain/catalog-quantity-handoff.ts';
-import { CatalogSelectionSchema } from '../domain/catalog-selection-evidence.ts';
+import { CatalogQuantityHandoffSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { CatalogSelectionPurposeSchema } from '../domain/catalog-selection-purpose.ts';
 
 export const QuantityPreparationRequestSchema = Schema.Struct({

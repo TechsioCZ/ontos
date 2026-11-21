@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { PricingCurrencySubject } from '@app/pricing-contracts/current-supported-currencies';
 import { PricingCurrencySubjectSchema } from '@app/pricing-contracts/current-supported-currencies';
 import type { PricingCommercialTotalSafeProjection } from '@app/pricing-contracts/domain/commercial-total';

@@ -10,8 +10,8 @@ import { ProductVariantSchema } from '../../shared/domain/product.ts';
 import type { ProductVariant } from '../../shared/domain/product.ts';
 import { VariantCombinationKeySchema } from '../../shared/domain/variant-axes.ts';
 import { AttributeDefinitionRefSchema } from '../../shared/resources/attribute-definition.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import { manufacturerRelations, productVariantRevisions, productVariants, products } from '../database/schema.ts';
 import {
   recoverCatalogActionResult,

@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionNumberSchema,
-} from '../../shared/domain/catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 import type { MeasuredConstraint } from '../../shared/domain/configuration-constraints.ts';
 import { validateConfigurationSelection } from '../../shared/domain/configuration-selection-validator.ts';
 import type { ConfigurationValidationBasis } from '../../shared/domain/configuration-selection-validator.ts';
@@ -12,8 +12,8 @@ import type {
   ProductConfiguration,
   ProductConfigurationDefinitionRevision,
 } from '../../shared/domain/product-configuration.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const ref = (resourceType: string, resourceId: string) =>

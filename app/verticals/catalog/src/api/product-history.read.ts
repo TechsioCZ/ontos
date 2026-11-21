@@ -8,7 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
-import { CatalogRevisionLookupResultSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionLookupResultSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
 
 import { ProductHistoryRequestSchema, ProductHistoryResponseSchema } from '../../shared/apis/product-history.ts';
 import type { ProductHistoryRequest, ProductHistoryResponse } from '../../shared/apis/product-history.ts';
