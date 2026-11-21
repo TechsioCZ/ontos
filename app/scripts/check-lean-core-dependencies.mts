@@ -1249,15 +1249,18 @@ const CapabilitySchema = Schema.Literals([
 ]);
 type Capability = typeof CapabilitySchema.Type;
 
-/** A name that is a capability wherever it occurs, and the one declaration that made it one, if any. */
+/**
+ * A name that may hold a capability wherever it occurs: every capability it may hold (its free one and each
+ * its declarations give it), and the declarations whose value is one.
+ */
 interface CapabilityName {
-  readonly capability: Capability;
-  readonly declaration: Node | null;
+  readonly declarations: Set<Node>;
+  readonly meanings: Set<Capability>;
 }
 
 /** One source's walk: its names, its declarations, and the loads found so far. */
 interface LoadAnalysis {
-  /** Each name that is a capability throughout the file, whatever scope an occurrence is in. */
+  /** Each name that may hold a capability throughout the file, whatever scope an occurrence is in. */
   readonly capabilities: Map<string, CapabilityName>;
   readonly computedLoads: number[];
   /** The declarators of the runtime `const` declarations the file does not export. */
@@ -1361,12 +1364,42 @@ const declare = (analysis: LoadAnalysis, identifier: Node | null | undefined): v
   }
 };
 
-/** Makes a name the capability its first import from node:module gives it. */
-const importCapabilityName = (analysis: LoadAnalysis, identifier: Node, capability: Capability): void => {
-  if (identifier.type === 'Identifier' && !analysis.capabilities.has(identifier.name)) {
-    analysis.capabilities.set(identifier.name, { capability, declaration: identifier });
+/**
+ * Adds to the meanings of identifier's name each of capabilities and, when declaration, identifier to the
+ * declarations that give it one; true when the name gained a meaning or a declaration.
+ */
+const addMeanings = (
+  analysis: LoadAnalysis,
+  identifier: Node,
+  capabilities: ReadonlySet<Capability>,
+  declaration: boolean,
+): boolean => {
+  if (identifier.type !== 'Identifier' || capabilities.size === 0) {
+    return false;
   }
+  const known = analysis.capabilities.get(identifier.name) ?? { declarations: new Set(), meanings: new Set() };
+  const before = known.meanings.size + known.declarations.size;
+  for (const capability of capabilities) {
+    known.meanings.add(capability);
+  }
+  if (declaration) {
+    known.declarations.add(identifier);
+  }
+  analysis.capabilities.set(identifier.name, known);
+  return known.meanings.size + known.declarations.size !== before;
 };
+
+/** The one capability name holds, if any: none for a name of no capability and for an ambiguous one. */
+const capabilityOf = (analysis: LoadAnalysis, name: string): Capability | undefined => {
+  const meanings = analysis.capabilities.get(name)?.meanings;
+  return meanings?.size === 1 ? [...meanings][0] : undefined;
+};
+
+/** Whether identifier is a declaration that gives its name the one capability the name holds. */
+const bindsOneCapability = (analysis: LoadAnalysis, identifier: Node): boolean =>
+  identifier.type === 'Identifier' &&
+  capabilityOf(analysis, identifier.name) !== undefined &&
+  analysis.capabilities.get(identifier.name)?.declarations.has(identifier) === true;
 
 const propertyName = (key: Node): string | undefined => (key.type === 'Identifier' ? key.name : literalString(key));
 
@@ -1384,7 +1417,7 @@ const declareImports = (analysis: LoadAnalysis, node: ImportDeclaration): void =
     if (specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type') {
       declare(analysis, specifier.local);
       if (builtin) {
-        importCapabilityName(analysis, specifier.local, importedCapability(specifier));
+        addMeanings(analysis, specifier.local, new Set([importedCapability(specifier)]), true);
       }
     }
   }
@@ -1394,7 +1427,7 @@ const declareImportEquals = (analysis: LoadAnalysis, node: TSImportEqualsDeclara
   const target = node.moduleReference.type === 'TSExternalModuleReference' ? node.moduleReference.expression.value : '';
   declare(analysis, node.id);
   if (node.importKind === 'value' && moduleBuiltins.has(target)) {
-    importCapabilityName(analysis, node.id, 'namespace');
+    addMeanings(analysis, node.id, new Set(['namespace']), true);
   }
 };
 
@@ -1816,60 +1849,54 @@ const unwrapValue = (node: Node | null | undefined): Node | null | undefined => 
   return node;
 };
 
-/** The capability an expression evaluates to, read from its form and the file's capability names alone. */
-const valueCapability = (analysis: LoadAnalysis, expression: Node | null | undefined): Capability | undefined => {
+/** Each capability an expression may evaluate to, read from its form and the meanings of the file's names alone. */
+const valueCapabilities = (analysis: LoadAnalysis, expression: Node | null | undefined): ReadonlySet<Capability> => {
   const value = unwrapValue(expression);
   if (value === null || value === undefined) {
-    return undefined;
+    return new Set();
   }
   if (value.type === 'Identifier') {
-    return analysis.capabilities.get(value.name)?.capability;
+    return analysis.capabilities.get(value.name)?.meanings ?? new Set();
   }
   if (value.type === 'ImportExpression') {
-    return importedNamespace(value);
+    const namespace = importedNamespace(value);
+    return new Set(namespace === undefined ? [] : [namespace]);
   }
   if (value.type === 'AwaitExpression') {
-    return valueCapability(analysis, value.argument) === namespacePromise ? 'namespace' : undefined;
+    return new Set(valueCapabilities(analysis, value.argument).has(namespacePromise) ? ['namespace'] : []);
   }
   if (value.type === 'MemberExpression') {
-    const transition = memberCapabilities.get(valueCapability(analysis, value.object) ?? 'opaque');
-    return transition !== undefined && transition[0] === staticMemberName(value) ? transition[1] : undefined;
+    const member = staticMemberName(value);
+    return new Set(
+      [...valueCapabilities(analysis, value.object)].flatMap((capability) => {
+        const transition = memberCapabilities.get(capability);
+        return transition !== undefined && transition[0] === member ? [transition[1]] : [];
+      }),
+    );
   }
   if (value.type === 'CallExpression') {
-    const callee = valueCapability(analysis, value.callee);
-    if (callee === 'factory') {
-      return loaderCreatedFrom(analysis, value.arguments[0]);
-    }
-    return callee === 'loader' && isBuiltinLoad(value) ? 'namespace' : undefined;
+    return new Set(
+      [...valueCapabilities(analysis, value.callee)].flatMap((callee): readonly Capability[] => {
+        if (callee === 'factory') {
+          return [loaderCreatedFrom(analysis, value.arguments[0])];
+        }
+        return callee === 'loader' && isBuiltinLoad(value) ? ['namespace'] : [];
+      }),
+    );
   }
-  return isImportMeta(value) ? 'meta' : undefined;
+  return new Set(isImportMeta(value) ? ['meta'] : []);
 };
 
-/** Makes identifier's name the capability, unless another declaration made it one first. */
-const establish = (analysis: LoadAnalysis, identifier: Node, capability: Capability | undefined): boolean => {
-  const known = identifier.type === 'Identifier' ? analysis.capabilities.get(identifier.name) : undefined;
-  const madeBy = known?.declaration ?? null;
-  if (
-    identifier.type !== 'Identifier' ||
-    capability === undefined ||
-    (madeBy !== null && madeBy !== identifier) ||
-    (madeBy === identifier && known?.capability === capability)
-  ) {
-    return false;
-  }
-  analysis.capabilities.set(identifier.name, { capability, declaration: identifier });
-  return true;
-};
-
+/** Adds what a const declarator gives its names: its value's capabilities, or createRequire of a namespace. */
 const establishDeclarator = (analysis: LoadAnalysis, declarator: Node): boolean => {
   if (declarator.type !== 'VariableDeclarator') {
     return false;
   }
-  const capability = valueCapability(analysis, declarator.init);
+  const capabilities = valueCapabilities(analysis, declarator.init);
   if (declarator.id.type === 'Identifier') {
-    return establish(analysis, declarator.id, capability);
+    return addMeanings(analysis, declarator.id, capabilities, true);
   }
-  if (capability !== 'namespace' || declarator.id.type !== 'ObjectPattern') {
+  if (!capabilities.has('namespace') || declarator.id.type !== 'ObjectPattern') {
     return false;
   }
   return declarator.id.properties
@@ -1878,32 +1905,33 @@ const establishDeclarator = (analysis: LoadAnalysis, declarator: Node): boolean 
         property.type === 'Property' &&
         !property.computed &&
         propertyName(property.key) === 'createRequire' &&
-        establish(analysis, property.value, 'factory'),
+        addMeanings(analysis, property.value, new Set(['factory']), true),
     )
     .includes(true);
 };
 
 /**
- * The capability names of the file: its imports of node:module, the free `require` and `module`, and each
- * const it does not export whose initialiser is a capability, until no initialiser changes its name.
+ * The meanings of the file's names: the free `require` (and `module` where it can run as CommonJS), its
+ * imports of node:module, and what each const it does not export gets from its initialiser, until no name
+ * gains a meaning. Meanings only add up, so a declaration never replaces a name's free meaning nor
+ * another declaration's, and the result does not depend on the order of the declarations: a name with
+ * two meanings is ambiguous.
  */
 const establishCapabilityNames = (analysis: LoadAnalysis): void => {
   for (const [name, capability] of freeCapabilities(analysis.moduleSource)) {
-    if (!analysis.capabilities.has(name)) {
-      analysis.capabilities.set(name, { capability, declaration: null });
-    }
+    const known = analysis.capabilities.get(name) ?? { declarations: new Set(), meanings: new Set() };
+    known.meanings.add(capability);
+    analysis.capabilities.set(name, known);
   }
   const constants = [...analysis.constants];
-  for (let round = 0; round <= constants.length; round += 1) {
-    if (!constants.map((declarator) => establishDeclarator(analysis, declarator)).includes(true)) {
-      return;
-    }
+  for (let changed = true; changed;) {
+    changed = constants.map((declarator) => establishDeclarator(analysis, declarator)).includes(true);
   }
 };
 
 /**
  * In module source no runtime defines `module`, so the name is no capability there, but the text
- * `module.require` still is one, whatever `module` names.
+ * `module.require` still is one when the file gives `module` no meaning.
  */
 const moduleRequireObject = (identifier: Node, parent: Node | undefined): Capability | undefined =>
   identifier.type === 'Identifier' &&
@@ -1916,28 +1944,31 @@ const moduleRequireObject = (identifier: Node, parent: Node | undefined): Capabi
 
 /**
  * Every occurrence of a capability name that is no declaration starts a settlement, whatever scope it is
- * in; every declaration of such a name but the one that made it a capability is a computed load, since
- * what the name means there the check does not read.
+ * in, and is a computed load when the name is ambiguous; every declaration of such a name that does not
+ * give it a capability is a computed load, since what the name means there the check does not read.
  */
 const seedCapabilityUses = (analysis: LoadAnalysis): void => {
   for (const identifier of analysis.identifiers) {
     const parent = analysis.parents.get(identifier);
     const grandparent = parent === undefined ? undefined : analysis.parents.get(parent);
+    const known = identifier.type === 'Identifier' ? analysis.capabilities.get(identifier.name) : undefined;
     const capability =
       identifier.type === 'Identifier'
-        ? (analysis.capabilities.get(identifier.name)?.capability ?? moduleRequireObject(identifier, parent))
+        ? (capabilityOf(analysis, identifier.name) ??
+          (known === undefined ? moduleRequireObject(identifier, parent) : undefined))
         : undefined;
-    if (
-      capability !== undefined &&
-      !analysis.declaredIds.has(identifier) &&
-      !isNameOnly(identifier, parent, grandparent)
-    ) {
+    if (analysis.declaredIds.has(identifier) || isNameOnly(identifier, parent, grandparent)) {
+      continue;
+    }
+    if (capability !== undefined) {
       analysis.pending.push([identifier, capability]);
+    } else if (known !== undefined) {
+      analysis.computedLoads.push(identifier.start);
     }
   }
-  for (const [name, { declaration }] of analysis.capabilities) {
+  for (const [name, { declarations }] of analysis.capabilities) {
     for (const identifier of analysis.declarations.get(name) ?? []) {
-      if (identifier !== declaration) {
+      if (!declarations.has(identifier)) {
         analysis.computedLoads.push(identifier.start);
       }
     }
@@ -1993,26 +2024,22 @@ const recognisedUses = {
 } satisfies Readonly<Record<Capability, CapabilityUse>>;
 
 /**
- * A const the file does not export, whose name its initialiser made the capability, is a recognised use; so
- * is a const destructuring of the namespace, where each member but createRequire under the name it made a
- * factory is a computed load.
+ * A const the file does not export, whose name holds the one capability its initialiser gives it, is a
+ * recognised use; so is a const destructuring of the namespace, where each member but createRequire under
+ * a name that holds only the factory is a computed load.
  */
 const bindsCapability = (analysis: LoadAnalysis, node: Node, parent: Node, capability: Capability): boolean => {
   if (parent.type !== 'VariableDeclarator' || parent.init !== node || !analysis.constants.has(parent)) {
     return false;
   }
   if (parent.id.type === 'Identifier') {
-    return analysis.capabilities.get(parent.id.name)?.declaration === parent.id;
+    return bindsOneCapability(analysis, parent.id);
   }
   if (capability !== 'namespace' || parent.id.type !== 'ObjectPattern') {
     return false;
   }
   for (const property of parent.id.properties) {
-    if (
-      property.type !== 'Property' ||
-      property.value.type !== 'Identifier' ||
-      analysis.capabilities.get(property.value.name)?.declaration !== property.value
-    ) {
+    if (property.type !== 'Property' || !bindsOneCapability(analysis, property.value)) {
       analysis.computedLoads.push(property.start);
     }
   }

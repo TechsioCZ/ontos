@@ -1573,9 +1573,11 @@ for (const [variant, extension, prefix] of commonJsCapable) {
   );
 }
 
+const reviewCjs = 'verticals/alpha/src/review.cjs';
+
 it.live('takes every occurrence of a capability name as the capability, and counts each other declaration of it', () =>
   Effect.gen(function* capabilityByName() {
-    const review = 'verticals/alpha/src/review.cjs';
+    const review = reviewCjs;
     expect(
       yield* freezeViolations({
         [review]: "function get(v = require('../../beta/package.json')) {\n  var require;\n  return v;\n}\nget();\n",
@@ -1584,16 +1586,49 @@ it.live('takes every occurrence of a capability name as the capability, and coun
   }),
 );
 
-it.live('takes module for a capability only in CommonJS, and the text module.require for a loader everywhere', () =>
-  Effect.gen(function* moduleName() {
-    const named = 'verticals/alpha/src/module-name.ts';
-    expect(
-      yield* freezeViolations({
-        [named]: "for (const module of [1]) {\n  void module;\n}\nexport const beta = module.require('@app/beta');\n",
-      }),
-    ).toEqual(betaRuntimeEdge(`${named}:4`));
-  }),
+it.live(
+  'takes module for a capability only where a file can run as CommonJS, and the text module.require for a loader everywhere',
+  () =>
+    Effect.gen(function* moduleName() {
+      const named = 'verticals/alpha/src/module-name.ts';
+      expect(
+        yield* freezeViolations({
+          [named]: "for (const module of [1]) {\n  void module;\n}\nexport const beta = module.require('@app/beta');\n",
+        }),
+      ).toEqual(betaRuntimeEdge(`${named}:4`));
+    }),
 );
+
+/** Declarations that would give the free `require` another capability, in a nested scope. */
+const freeNameRivals: readonly (readonly [reviewer: string, file: string, source: string, lines: readonly number[]])[] =
+  [
+    [
+      "Sol's nested createRequire",
+      reviewCjs,
+      "function local() { const require = module.require('node:module').createRequire; }\nconst beta = require('@app/beta');\n",
+      [1, 2],
+    ],
+    [
+      "Astra's destructured createRequire",
+      reviewCjs,
+      "{ const { createRequire: require } = module.require('node:module'); }\nconst beta = require('@app/beta');\n",
+      [1, 2],
+    ],
+    [
+      'a destructured createRequire in module source',
+      'verticals/alpha/src/review.ts',
+      "import 'node:path';\n{ const { createRequire: require } = await import('node:module'); }\nexport const beta = require('@app/beta');\n",
+      [2, 3],
+    ],
+  ];
+
+for (const [reviewer, file, source, lines] of freeNameRivals) {
+  it.live(`keeps the free meaning of require beside ${reviewer}, so each reference is a computed load`, () =>
+    Effect.gen(function* freeNameRival() {
+      expect(yield* freezeViolations({ [file]: source })).toEqual([computedLoad(file, lines)]);
+    }),
+  );
+}
 
 for (const file of ['verticals/alpha/src/own.cjs', 'verticals/alpha/src/own.cts']) {
   it.live(`keeps require a loader where a declaration gives it the free meaning again, in ${file}`, () =>
@@ -1603,6 +1638,24 @@ for (const file of ['verticals/alpha/src/own.cjs', 'verticals/alpha/src/own.cts'
           [file]: "const require = module.require('node:module').createRequire(__filename);\nrequire('@app/beta');\n",
         }),
       ).toEqual(betaRuntimeEdge(`${file}:2`));
+    }),
+  );
+}
+
+const ownLoad = '{\n  const load = createRequire(import.meta.url);\n}\n';
+const foreignLoad = "{\n  const load = createRequire('/elsewhere/');\n}\n";
+for (const [order, first, second] of [
+  ['own base first', ownLoad, foreignLoad],
+  ['foreign base first', foreignLoad, ownLoad],
+] as const) {
+  it.live(`takes a name two declarations give two capabilities as ambiguous, ${order}`, () =>
+    Effect.gen(function* ambiguousName() {
+      const file = 'verticals/alpha/src/ambiguous.ts';
+      expect(
+        yield* freezeViolations({
+          [file]: `${createRequireImport}${first}${second}export const beta = load('@app/beta');\n`,
+        }),
+      ).toEqual([computedLoad(file, [3, 6, 8])]);
     }),
   );
 }
