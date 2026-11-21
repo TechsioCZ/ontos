@@ -4,9 +4,11 @@ import { DateTime, Effect, Match, Schema } from 'effect';
 
 import { normalizeSku } from '../../shared/domain/commercial-code.ts';
 import type { SkuTarget } from '../../shared/domain/commercial-code.ts';
+import type { CatalogSourceCorrelation } from '../../shared/domain/catalog-source-correlation.ts';
 import { SkuTargetSchema } from '../../shared/actions/assign-sku.ts';
 import { resolveEffectiveRevision } from './package-persistence.ts';
 import {
+  catalogSourceCorrelations,
   commercialSkuAssignmentRevisions,
   commercialSkuReservations,
   packageContentRevisions,
@@ -55,6 +57,26 @@ const SkuTargetResolutionSchema = Schema.Union([
 type SkuTargetResolution = typeof SkuTargetResolutionSchema.Type;
 
 const resolvedTarget = (target: ResolvedTarget): SkuTargetResolution => ({ _tag: 'RESOLVED', target });
+
+/**
+ * Who asks decides which Variant may take a code. A staff change needs an Active Product and an Active Variant. The
+ * source route that created the Variant may also name a draft one (a DRAFT Product, a WORK_IN_PROGRESS Variant),
+ * since an imported Product stays a draft. A Retired Product or Variant never takes a code.
+ */
+export const SkuTargetAdmissionSchema = Schema.Literals(['CURRENT', 'SOURCE_ROUTE']);
+export type SkuTargetAdmission = typeof SkuTargetAdmissionSchema.Type;
+export const variantSkuLifecycleRefusal = (
+  admission: SkuTargetAdmission,
+  productLifecycle: string,
+  variantLifecycle: string,
+): 'PRODUCT_NOT_ACTIVE' | 'VARIANT_NOT_ACTIVE' | undefined => {
+  const admitted = (lifecycle: string, draft: string) =>
+    lifecycle === 'ACTIVE' || (admission === 'SOURCE_ROUTE' && lifecycle === draft);
+  if (!admitted(productLifecycle, 'DRAFT')) {
+    return 'PRODUCT_NOT_ACTIVE';
+  }
+  return admitted(variantLifecycle, 'WORK_IN_PROGRESS') ? undefined : 'VARIANT_NOT_ACTIVE';
+};
 
 export interface SkuCurrentOptionSnapshot {
   readonly content: Pick<
@@ -185,6 +207,8 @@ export interface SkuRenameInput extends SkuChangeInput {
 
 const SkuChangeOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('applied', { revision: Schema.Int }),
+  /** The source sent the code the Variant already holds: nothing is written. */
+  Schema.TaggedStruct('unchanged', { revision: Schema.Int }),
   Schema.TaggedStruct('conflict', {}),
   Schema.TaggedStruct('invalid', { reason: Schema.String }),
   Schema.TaggedStruct('not_found', {}),
@@ -397,7 +421,10 @@ export const skuPersistenceForScope = (transaction: ScopedTransaction, scope: Op
       .limit(1)
       .pipe(Effect.mapError(unavailable));
   /* oxlint-disable eslint/complexity -- Exact scope: authoritative SKU target resolution. Evidence: focused #398 outcome tests require separate missing, invalid, and indeterminate branches. Owner/tracking: Catalog #398. Remove when Variant and Package Option expose one approved typed Current-read contract; expires: 2027-03-31. */
-  const resolveTarget = Effect.fn('SkuPersistence.resolveTarget')(function* resolveTarget(target: SkuTarget) {
+  const resolveTarget = Effect.fn('SkuPersistence.resolveTarget')(function* resolveTarget(
+    target: SkuTarget,
+    admission: SkuTargetAdmission,
+  ) {
     if (target.kind === 'PACKAGE_OPTION') {
       const [definition] = yield* transaction
         .select()
@@ -544,11 +571,9 @@ export const skuPersistenceForScope = (transaction: ScopedTransaction, scope: Op
     if (product === undefined) {
       return { _tag: 'INDETERMINATE', reason: 'PRODUCT_PROOF_INCOMPLETE' } as const;
     }
-    if (product.lifecycleState !== 'ACTIVE') {
-      return { _tag: 'INVALID_CURRENT', reason: 'PRODUCT_NOT_ACTIVE' } as const;
-    }
-    if (variant.lifecycleState !== 'ACTIVE') {
-      return { _tag: 'INVALID_CURRENT', reason: 'VARIANT_NOT_ACTIVE' } as const;
+    const refusal = variantSkuLifecycleRefusal(admission, product.lifecycleState, variant.lifecycleState);
+    if (refusal !== undefined) {
+      return { _tag: 'INVALID_CURRENT', reason: refusal } as const;
     }
     return resolvedTarget({
       packageDefinitionId: null,
@@ -557,8 +582,8 @@ export const skuPersistenceForScope = (transaction: ScopedTransaction, scope: Op
     });
   });
   /* oxlint-enable eslint/complexity */
-  const resolveChangeTarget = (target: SkuTarget) =>
-    resolveTarget(target).pipe(
+  const resolveChangeTarget = (target: SkuTarget, admission: SkuTargetAdmission = 'CURRENT') =>
+    resolveTarget(target, admission).pipe(
       Effect.flatMap((resolution) =>
         Match.value(resolution).pipe(
           Match.tag('RESOLVED', ({ target: resolvedValue }) => Effect.succeed({ target: resolvedValue })),
@@ -600,11 +625,14 @@ export const skuPersistenceForScope = (transaction: ScopedTransaction, scope: Op
       variantId: target.variantId,
     });
 
-  const assign = Effect.fn('SkuPersistence.assign')(function* assign(input: SkuChangeInput) {
+  const assign = Effect.fn('SkuPersistence.assign')(function* assign(
+    input: SkuChangeInput,
+    admission: SkuTargetAdmission = 'CURRENT',
+  ) {
     if (!validSkuChangeInput(input, tenantId) || input.expectedRevision !== 0) {
       return { _tag: 'invalid', reason: 'Invalid SKU assignment or initial revision' } as const;
     }
-    const targetDecision = yield* resolveChangeTarget(input.target);
+    const targetDecision = yield* resolveChangeTarget(input.target, admission);
     const { target } = targetDecision;
     if (target === null) {
       return targetDecision.outcome;
@@ -766,7 +794,10 @@ export const skuPersistenceForScope = (transaction: ScopedTransaction, scope: Op
   });
 
   /* oxlint-disable eslint/complexity -- One transaction coordinates two reservations, CAS, and two append-only revisions. expires: 2027-03-31. */
-  const rename = Effect.fn('SkuPersistence.rename')(function* rename(input: SkuRenameInput) {
+  const rename = Effect.fn('SkuPersistence.rename')(function* rename(
+    input: SkuRenameInput,
+    admission: SkuTargetAdmission = 'CURRENT',
+  ) {
     const oldNormalized = normalizeSku(input.oldCode);
     const newNormalized = normalizeSku(input.code);
     if (
@@ -777,7 +808,7 @@ export const skuPersistenceForScope = (transaction: ScopedTransaction, scope: Op
     ) {
       return { _tag: 'invalid', reason: 'Invalid SKU rename or unchanged comparison code' } as const;
     }
-    const targetDecision = yield* resolveChangeTarget(input.target);
+    const targetDecision = yield* resolveChangeTarget(input.target, admission);
     const { target } = targetDecision;
     if (target === null) {
       return targetDecision.outcome;
@@ -877,5 +908,72 @@ export const skuPersistenceForScope = (transaction: ScopedTransaction, scope: Op
   });
   /* oxlint-enable eslint/complexity */
 
-  return { assign, correct, lookup, rename };
+  /**
+   * The code the source route that created a Variant sends for it. Catalog first proves the route: its qualified
+   * source record names this Variant and was written by this same principal. The Variant may then be a draft: a first
+   * code is assigned, and a different code replaces the Current one by the rename rule, so the old code stays reserved
+   * as Historical. The code the Variant already holds is the assignment it has.
+   */
+  const assignFromSource = Effect.fn('SkuPersistence.assignFromSource')(function* assignFromSource(
+    input: SkuChangeInput,
+    source: CatalogSourceCorrelation,
+  ) {
+    const { target } = input;
+    if (target.kind !== 'VARIANT') {
+      return { _tag: 'invalid', reason: 'A source SKU names a Variant' } as const;
+    }
+    const [record] = yield* transaction
+      .select({
+        actingPrincipalId: catalogSourceCorrelations.actingPrincipalId,
+        variantId: catalogSourceCorrelations.variantId,
+      })
+      .from(catalogSourceCorrelations)
+      .where(
+        and(
+          eq(catalogSourceCorrelations.tenantId, tenantId),
+          eq(catalogSourceCorrelations.issuerId, source.issuerId),
+          eq(catalogSourceCorrelations.routeScope, source.routeScope),
+          eq(catalogSourceCorrelations.recordNamespace, source.recordNamespace),
+          eq(catalogSourceCorrelations.entityKind, 'VARIANT'),
+          eq(catalogSourceCorrelations.recordId, source.recordId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (record?.variantId !== target.variantId || record.actingPrincipalId !== input.principalId) {
+      return { _tag: 'invalid', reason: 'The source record does not name this Variant for this principal' } as const;
+    }
+    const [current] = yield* transaction
+      .select({
+        currentRevision: commercialSkuReservations.currentRevision,
+        displayCode: commercialSkuReservations.displayCode,
+        normalizedCode: commercialSkuReservations.normalizedCode,
+      })
+      .from(commercialSkuReservations)
+      .where(
+        and(
+          eq(commercialSkuReservations.tenantId, tenantId),
+          eq(commercialSkuReservations.variantId, target.variantId),
+          isNull(commercialSkuReservations.packageDefinitionId),
+          eq(commercialSkuReservations.state, 'CURRENT'),
+        ),
+      )
+      .for('update')
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (current === undefined) {
+      return yield* assign(input, 'SOURCE_ROUTE');
+    }
+    if (current.normalizedCode === normalizeSku(input.code)) {
+      return current.displayCode === input.code
+        ? ({ _tag: 'unchanged', revision: current.currentRevision } as const)
+        : ({ _tag: 'conflict' } as const);
+    }
+    return yield* rename(
+      { ...input, expectedRevision: current.currentRevision, oldCode: current.displayCode },
+      'SOURCE_ROUTE',
+    );
+  });
+
+  return { assign, assignFromSource, correct, lookup, rename };
 };

@@ -10,6 +10,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   catalogRelations,
+  catalogSourceCorrelations,
   commercialSkuAssignmentRevisions,
   commercialSkuReservations,
   packageContentRevisions,
@@ -509,6 +510,146 @@ it.live('enforces tenant-wide normalized Current and historical SKU reservations
         'applied',
       );
       expectTagged(yield* lookup(tenantA, 'new-01'), 'ambiguous');
+    }),
+  ),
+);
+
+it.live('assigns, keeps and replaces the SKU a source route sends for a draft Variant it created', () =>
+  Effect.scoped(
+    Effect.gen(function* sourceSkuPostgresTest() {
+      const tenantId = randomUUID();
+      const draftProduct = randomUUID();
+      const draftVariant = randomUUID();
+      const otherVariant = randomUUID();
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, catalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, catalogRelations);
+      const withTenant = <Value, Failure>(
+        operation: (transaction: CatalogTransaction) => Effect.Effect<Value, Failure>,
+      ) =>
+        runtime.transaction((transaction) =>
+          Effect.gen(function* scopedSourceSkuTransaction() {
+            yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+            return yield* operation(transaction);
+          }),
+        );
+      const source = {
+        issuerId: 'akros-erp',
+        mappingRevision: 'akros-symmy-products-v1',
+        recordId: 'variant:variantId:AKROS-10001-V1',
+        recordNamespace: 'akros',
+        routeScope: randomUUID(),
+      };
+      const target = { kind: 'VARIANT' as const, tenantId, variantId: draftVariant };
+      const fromSource = (code: string) =>
+        withTenant((transaction) => sku(transaction, tenantId).assignFromSource(change(code, target), source));
+      yield* admin.insert(products).values({
+        createdByActionInvocationId: randomUUID(),
+        createdByPrincipalId: principalId,
+        lifecycleState: 'DRAFT',
+        productId: draftProduct,
+        tenantId,
+      });
+      yield* admin.insert(productVariantAxisEvents).values({
+        actingPrincipalId: principalId,
+        actionInvocationId: randomUUID(),
+        attributeDefinitionIds: [],
+        axisRevision: 1,
+        evidenceRefs: ['sku-postgres-test:source'],
+        productId: draftProduct,
+        reason: 'Test fixture',
+        tenantId,
+      });
+      yield* admin.insert(productVariants).values([
+        {
+          combinationAxisRevision: 1,
+          combinationKey: 'f'.repeat(64),
+          createdByActionInvocationId: randomUUID(),
+          createdByPrincipalId: principalId,
+          lifecycleState: 'WORK_IN_PROGRESS',
+          productId: draftProduct,
+          tenantId,
+          variantId: draftVariant,
+        },
+        {
+          combinationAxisRevision: 1,
+          combinationKey: '9'.repeat(64),
+          createdByActionInvocationId: randomUUID(),
+          createdByPrincipalId: principalId,
+          lifecycleState: 'WORK_IN_PROGRESS',
+          productId: draftProduct,
+          tenantId,
+          variantId: otherVariant,
+        },
+      ]);
+      const otherSource = { ...source, recordId: 'variant:variantId:AKROS-10001-V2' };
+      const correlation = (record: typeof source, variantId: string) => ({
+        ...record,
+        actingPrincipalId: principalId,
+        actionInvocationId: randomUUID(),
+        entityKind: 'VARIANT',
+        intentFingerprint: 'a'.repeat(64),
+        productId: draftProduct,
+        tenantId,
+        variantId,
+      });
+      yield* admin
+        .insert(catalogSourceCorrelations)
+        .values([correlation(source, draftVariant), correlation(otherSource, otherVariant)]);
+
+      // A staff assignment still needs an Active Product and Variant.
+      expectTagged(
+        yield* withTenant((transaction) => sku(transaction, tenantId).assign(change('DIN933-M8', target))),
+        'invalid',
+      );
+      // The source route assigns the first code to its draft Variant, keeps it when it is sent again and replaces it
+      // with another one, which leaves the old code reserved as Historical.
+      expectTagged(yield* fromSource('DIN933-M8'), 'applied', { revision: 1 });
+      expectTagged(yield* fromSource('DIN933-M8'), 'unchanged', { revision: 1 });
+      expectTagged(yield* fromSource('DIN933-M8-ZN'), 'applied', { revision: 1 });
+      const lookupIn = (code: string) => withTenant((transaction) => sku(transaction, tenantId).lookup(code));
+      expectTagged(yield* lookupIn('din933-m8-zn'), 'found', { state: 'CURRENT', target });
+      expectTagged(yield* lookupIn('DIN933-M8'), 'found', { state: 'HISTORICAL', target });
+      // A source record Catalog does not bind to the Variant is refused.
+      expectTagged(
+        yield* withTenant((transaction) =>
+          sku(transaction, tenantId).assignFromSource(
+            change('OTHER-01', { ...target, variantId: otherVariant }),
+            source,
+          ),
+        ),
+        'invalid',
+      );
+      // A code the Tenant already holds, Current for another Variant or Historical for this one, is a conflict.
+      expectTagged(
+        yield* withTenant((transaction) =>
+          sku(transaction, tenantId).assignFromSource(
+            change('TAKEN-01', { ...target, variantId: otherVariant }),
+            otherSource,
+          ),
+        ),
+        'applied',
+        { revision: 1 },
+      );
+      expectTagged(yield* fromSource('TAKEN-01'), 'conflict');
+      expectTagged(yield* fromSource('DIN933-M8'), 'conflict');
+      // A Retired Variant never takes a code, from any caller.
+      yield* admin
+        .update(productVariants)
+        .set({ combinationAxisRevision: null, combinationKey: null, lifecycleState: 'RETIRED' })
+        .where(and(eq(productVariants.tenantId, tenantId), eq(productVariants.variantId, draftVariant)));
+      expectTagged(yield* fromSource('DIN933-M8-A2'), 'invalid');
+      expect(
+        yield* admin
+          .select()
+          .from(commercialSkuReservations)
+          .where(
+            and(
+              eq(commercialSkuReservations.tenantId, tenantId),
+              eq(commercialSkuReservations.variantId, draftVariant),
+            ),
+          ),
+      ).toHaveLength(2);
     }),
   ),
 );

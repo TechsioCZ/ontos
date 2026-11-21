@@ -80,6 +80,10 @@ export const assignSkuRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Recover the exact original Variant SKU assignment for the registered C14 integration',
+      workloads: ['commerce.catalog.symmy-variant-sku-recovery'],
+    },
     entrypoint: assignSkuRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

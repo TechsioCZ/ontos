@@ -456,7 +456,10 @@ export const makeCatalogApiRuntime = (
     assignCatalogMediaActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignCatalogMediaRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     assignSkuActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    assignSkuRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    assignSkuRecoveryReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      Layer.provide(governedActionRuntimeLive),
+    ),
     assortmentProductClassificationV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     assortmentSelectionAssessmentV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     assortmentSetCompositionV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

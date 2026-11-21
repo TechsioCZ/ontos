@@ -1,5 +1,6 @@
 import { Effect, Schema } from 'effect';
 
+import { AssignSkuPayloadSchema } from '../actions/assign-sku.ts';
 import { BindInitialVariantSourcePayloadSchema } from '../actions/bind-initial-variant-source.ts';
 import { CorrectProductPayloadSchema } from '../actions/correct-product.ts';
 import { CreateProductPayloadSchema } from '../actions/create-product.ts';
@@ -45,6 +46,9 @@ export const bindInitialVariantSourceRequestIdentity = (payload: Schema.Json) =>
 
 export const setProductLocalizedFactsRequestIdentity = (payload: Schema.Json) =>
   requestIdentity(SetProductLocalizedFactsPayloadSchema, payload, 'commerce.catalog.set-product-localized-facts', '1');
+
+export const assignSkuRequestIdentity = (payload: Schema.Json) =>
+  requestIdentity(AssignSkuPayloadSchema, payload, 'commerce.catalog.assign-sku', '1');
 
 export const setVariantLocalizedFactsRequestIdentity = (payload: Schema.Json) =>
   requestIdentity(SetVariantLocalizedFactsPayloadSchema, payload, 'commerce.catalog.set-variant-localized-facts', '1');
