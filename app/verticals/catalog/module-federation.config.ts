@@ -31,6 +31,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   exposes: {
     './CatalogWidget': './src/components/catalog-widget.tsx',
+    './PageProducts': './src/routes/[lang]/katalog/produkty/page.tsx',
     './Route': './src/federation-entry.tsx',
     './Widget': './src/components/catalog-widget.tsx',
   },

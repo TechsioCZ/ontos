@@ -16,6 +16,74 @@
     "role": "catalog",
     "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
     "title": "Catalog Vertical",
-    "widgetBody": "Vlastní routovanou plochu verticalu."
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "products": {
+        "title": "Produkty",
+        "description": "Produkty katalogu importované z ERP s cenou a skladem z ERP.",
+        "intro": "Produkty, které do katalogu OntOS importoval ERP (Symmy), ve všech stavech. U variant je cena a sklad z ERP. Stránka je jen pro čtení.",
+        "offerMissing": "Cena a sklad z ERP se nezobrazí: chybí nabídka ERP. Otevřete stránku s parametry customerConfigurationId, channelId, marketId, currencyCode a unitId v adrese; prohlížeč si je zapamatuje.",
+        "search": "Hledat podle názvu",
+        "searchSubmit": "Hledat",
+        "loading": "Načítám produkty…",
+        "failed": "Produkty se nepodařilo načíst",
+        "failedDescription": "Katalog teď neodpověděl, nebo k němu nemáte oprávnění. Zkuste stránku načíst znovu.",
+        "empty": "Žádné produkty",
+        "emptyDescription": "Katalog zatím neobsahuje žádný produkt, který by odpovídal hledání.",
+        "noCompany": "Vyberte firmu",
+        "noCompanyDescription": "Cena a sklad z ERP patří firmě. Vyberte firmu v záhlaví.",
+        "noName": "Bez názvu v tomto jazyce",
+        "showVariants": "Zobrazit varianty",
+        "hideVariants": "Skrýt varianty",
+        "range": "{{from}}–{{to}} z {{count}}",
+        "rangeEmpty": "0 produktů",
+        "previous": "Předchozí",
+        "next": "Další",
+        "columns": {
+          "name": "Název",
+          "lifecycle": "Stav",
+          "variants": "Varianty",
+          "detail": "Detail"
+        },
+        "lifecycle": {
+          "DRAFT": "Koncept",
+          "ACTIVE": "Aktivní",
+          "RETIRED": "Vyřazený"
+        },
+        "variantLifecycle": {
+          "WORK_IN_PROGRESS": "Rozpracovaná",
+          "ACTIVE": "Aktivní",
+          "RETIRED": "Vyřazená"
+        },
+        "variants": {
+          "caption": "Varianty produktu s cenou a skladem z ERP",
+          "loading": "Načítám cenu a sklad…",
+          "failed": "Cenu a sklad se nepodařilo načíst.",
+          "sku": "SKU",
+          "noSku": "Bez SKU",
+          "options": "Varianta",
+          "lifecycle": "Stav",
+          "price": "Cena ERP (bez DPH)",
+          "stock": "Sklad ERP"
+        },
+        "price": {
+          "NO_PRICE": "Bez ceny",
+          "PRICING_CONFLICT": "Cena v konfliktu",
+          "PRICING_INDETERMINATE": "Cenu teď nelze určit",
+          "CURRENCY_NOT_SUPPORTED": "Měna není podporována",
+          "NOT_CONFIGURED": "Nenastaveno",
+          "READ_FAILED": "Nepodařilo se načíst"
+        },
+        "stock": {
+          "ON_HAND": "{{quantity}} ks",
+          "NO_STOCK_ITEM": "Bez skladové položky",
+          "CONFLICTING_BINDINGS": "Nejednoznačná skladová položka",
+          "NO_POSITION": "Bez skladové pozice",
+          "ON_HAND_UNKNOWN": "Neznámé",
+          "NOT_CONFIGURED": "Nenastaveno",
+          "READ_FAILED": "Nepodařilo se načíst"
+        }
+      }
+    }
   }
 }

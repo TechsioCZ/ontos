@@ -6,6 +6,8 @@
     "./api": "./shared/api.ts",
     "./api/assortment-product-classification-v1": "./shared/apis/assortment-product-classification-v1.ts",
     "./api/client": "./src/api/catalog-client.ts",
+    "./locales/cs": "./locales/cs/catalog.json",
+    "./locales/en": "./locales/en/catalog.json",
     "./api/pricing-purpose-equivalence": "./shared/apis/pricing-purpose-equivalence.ts",
     "./api/pricing-purpose-equivalence-client": "./src/api/pricing-purpose-equivalence-client.ts",
     "./api/quantity-basis-compatibility": "./shared/apis/quantity-basis-compatibility.ts",
@@ -120,7 +122,10 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "@app/catalog-selection-contracts": "workspace:*",
-    "@app/commerce-cart-contracts": "workspace:*"
+    "@app/commerce-cart-contracts": "workspace:*",
+    "@app/inventory": "workspace:*",
+    "@app/pricing": "workspace:*",
+    "@techsio/ui-kit": "catalog:"
   },
   "devDependencies": {
     "@effect/tsgo": "0.69.0",
