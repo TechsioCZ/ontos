@@ -108,6 +108,7 @@ it.live('judges the whole client aggregate of a module that publishes no package
       ['export const load = (path: string) => require(path);\n', 'loads a module it does not read statically'],
       ["export * from './missing.ts';\n", 'names ./missing.ts, which is no file of the workspace'],
       ['export const = ;\n', `${aggregate}: does not parse`],
+      ["export { Typo } from './archive-project-action-client.ts';\n", `${aggregate}: export Typo cannot be followed`],
     ] as const) {
       const diagnostics: string[] = [];
       expect(

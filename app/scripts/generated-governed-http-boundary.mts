@@ -4903,10 +4903,8 @@ const exportedReadProblem = (
   if (origin.kind === 'foreign') {
     return origin.trail.length > 1 || origin.specifier.startsWith('.') ? outside : undefined;
   }
-  if (origin.kind === 'namespace') {
-    return `${leaves} passes on the whole module ${origin.file}${admitted}`;
-  }
-  return `${leaves} cannot be followed: ${origin.file} ${origin.reason}${through}${admitted}`;
+  // A name that cannot be followed fails for every owner entry (`reexportedProblems`).
+  return origin.kind === 'namespace' ? `${leaves} passes on the whole module ${origin.file}${admitted}` : undefined;
 };
 
 /** The module bindings of an entry it exports itself under a name: `export const`, `export { a as b }`. */
@@ -4949,6 +4947,7 @@ const reexportedProblems = (
   graph: ModuleGraph,
   entry: OwnerEntry,
   names: (target: string | undefined) => boolean,
+  chained: Set<string>,
 ): readonly string[] => {
   const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
   const exported = moduleExports(graph, entry.file);
@@ -4983,12 +4982,23 @@ const reexportedProblems = (
           !files.has(target)
         ) {
           files.add(target);
+          // A file of a workspace library the chain enters is read like any other file on it.
+          chained.add(target);
           pending.push(target);
         }
       }
     }
   }
-  return problems;
+  // A name the entry exports that cannot be followed (one a file does not export, say) fails, reads or none.
+  const unfollowed = exported.names.flatMap((name) =>
+    exportOrigins(graph, entry.file, name).flatMap((origin) => {
+      const through = origin.trail.length > 1 ? ` through ${origin.trail.slice(1).join(', ')}` : '';
+      return origin.kind === 'unresolved'
+        ? [`${entry.file}: export ${name} cannot be followed: ${origin.file} ${origin.reason}${through}${admitted}`]
+        : [];
+    }),
+  );
+  return [...problems, ...unfollowed];
 };
 
 /** Whether a declaration of the entry reaches a read: a binding `readReach` found, or an expression referring to one. */
@@ -6776,6 +6786,25 @@ const settledSteps = (steps: readonly CompositionStep[]): CompositionStep => {
   return !steps.includes(false) && steps.flatMap((step) => (step === false || 'kind' in step ? [] : step));
 };
 
+/**
+ * What a value written in a composition composes: the reference or the readable load it is written as, under the
+ * wrappers and its members (`(layer)`, `Library.layer`, `require('…').layer`), judged as mounted when it is; else the
+ * value itself, a new one.
+ */
+const writtenQuestion = (site: CompositionSite, node: Node, mounted: boolean): CompositionQuestion => {
+  const rooted = (candidate: Node): boolean =>
+    isWithin(candidate, node) && memberChain(site.bindings, candidate).outer === node;
+  const identifier = [
+    ...site.bindings.references.map((reference) => reference.identifier),
+    ...site.bindings.local.keys(),
+  ].find(rooted);
+  if (identifier !== undefined) {
+    return { identifier, kind: 'reference', mounted, site };
+  }
+  const load = readableLoads(site.bindings).find(rooted);
+  return load === undefined ? { kind: 'node', node, site } : { kind: 'load', load, mounted, site };
+};
+
 /** What a reference an inner scope binds composes: a plain alias, a declaration's initializer, a parameter. */
 const localStep = ({ identifier, mounted, site }: ReferenceQuestion, declared: Node): CompositionStep => {
   // What a `let` or `var`, or a binding written again, holds is not its declaration alone.
@@ -6785,10 +6814,10 @@ const localStep = ({ identifier, mounted, site }: ReferenceQuestion, declared: N
   }
   const declaration = site.bindings.parents.get(declared);
   if (declaration?.type === 'VariableDeclarator' && declaration.init !== null) {
-    if (declaration.id === declared && declaration.init.type === 'Identifier') {
-      return [{ identifier: declaration.init, kind: 'reference', mounted, site }];
+    if (declaration.id === declared) {
+      return [writtenQuestion(site, declaration.init, mounted)];
     }
-    return declaration.id === declared || !mounted ? [{ kind: 'node', node: declaration.init, site }] : false;
+    return !mounted && [{ kind: 'node', node: declaration.init, site }];
   }
   // A parameter or catch binding holds what its caller passes, which is judged where it is passed; a local function
   // or class is judged whole. Neither is a declaration a mount can resolve to.
@@ -6992,16 +7021,7 @@ const composedProblems = (context: CompositionContext, entry: OwnerEntryComposit
       ? [unknown(binding.name)]
       : [],
   );
-  // A value composed under wrappers or taken as a member (`(layer)`, `Library.layer`) is the reference it is written as.
-  const references = [...bindings.references.map(({ identifier }) => identifier), ...bindings.local.keys()];
-  const composed = entry.composed(bindings).map((node) => {
-    const identifier = references.find(
-      (candidate) => isWithin(candidate, node) && memberChain(bindings, candidate).outer === node,
-    );
-    const question: CompositionQuestion =
-      identifier === undefined ? { kind: 'node', node, site } : { identifier, kind: 'reference', mounted: true, site };
-    return [node, question] as const;
-  });
+  const composed = entry.composed(bindings).map((node) => [node, writtenQuestion(site, node, true)] as const);
   // One walk over the whole composition first; only a composition that fails is judged value by value.
   const failing =
     compositionRefusal(
@@ -7075,11 +7095,14 @@ const ownerEntryProblems = (
     ...(aggregate === undefined ? [] : [[aggregate.file, aggregate.source] as const]),
   ]);
   const workspace = workspaceOf(sources);
+  // The files an owner entry's re-exports reach (`reexportedProblems`), a workspace library's among them.
+  const chained = new Set<string>();
   const graph = moduleGraph(
     resolvedSpecifier((file) => sources.has(file), workspace.packages),
     (target) =>
       entrySources.get(target) ??
-      (CODE_FILE.test(target) && workspace.readDirectories.some((directory) => target.startsWith(directory))
+      (CODE_FILE.test(target) &&
+      (chained.has(target) || workspace.readDirectories.some((directory) => target.startsWith(directory)))
         ? sources.get(target)
         : undefined),
   );
@@ -7155,7 +7178,7 @@ const ownerEntryProblems = (
               (node) =>
                 `${entry.file}:${lineOf(entry.source, node.start)} loads a module it does not read statically; admitted: ${OWNER_ENTRY_READ_FORMS}`,
             ),
-            ...reexportedProblems(graph, entry, namesFile),
+            ...reexportedProblems(graph, entry, namesFile, chained),
           ];
     }),
     ...composedProblems(context, { composed: mountedApis, file: sharedFile, source: inputs.sharedApi }),

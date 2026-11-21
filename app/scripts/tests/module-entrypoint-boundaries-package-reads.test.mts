@@ -855,6 +855,26 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       expect(unresolved.diagnostics, label).toContain(`names ${specifier}, which is no file of the workspace`);
     }
     expect(judged(sources, reexportedStartup).valid).toBe(true);
+    // A re-export chain that enters a file of a library package the sources hold reads that file as any other on it.
+    for (const [label, startupSource, expected] of [
+      [
+        'a library file passing on the package read',
+        `export { CurrentPaymentTermsApi as Startup } from '${contractSpecifier}';\n`,
+        `${sharedApiFile}: export Startup passes on the package read`,
+      ],
+      [
+        'a library file re-exporting a missing file',
+        "export { Startup } from './does-not-exist.ts';\n",
+        'names ./does-not-exist.ts, which is no file of the workspace',
+      ],
+    ] as const) {
+      const chained = judged(sources, [
+        ...reexportedStartup,
+        ['packages/shared-contracts/src/startup.ts', startupSource],
+      ]);
+      expect(chained.valid, label).toBe(false);
+      expect(chained.diagnostics, label).toContain(expected);
+    }
     // The handler root is no owner entry: the net does not apply there.
     expect(judged(sources, [[handlerFile, `${handler}\nlet counter = 0;\nvoid counter;\n`]]).valid).toBe(true);
     // Every binding a mounted declaration of the owner uses is judged by its origin, whatever specifier, path or name
@@ -1295,6 +1315,39 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     expect(rebound.valid).toBe(false);
     expect(rebound.diagnostics).toContain(unknown(handlerFile, 'readiness'));
     expect(rebound.diagnostics).toContain(`${handlerFile} readiness is declared with let`);
+    // A readable load and a plain alias of a member are judged as what they are written as, as composed; the module's own
+    // layer under parentheses and through a plain alias still pass.
+    for (const [label, source, layer] of [
+      [
+        'an inline load',
+        replaced(handler, layersStart, `    require('@effect/platform-node/NodeCrypto').layer,\n${layersStart}`),
+        "require('@effect/platform-node/NodeCrypto').layer",
+      ],
+      [
+        'a local alias of a member',
+        replaced(
+          handler,
+          factoryComposition,
+          `  const extraLayer = FetchHttpClient.layer;\n${replaced(factoryComposition, 'mergeAll(\n', 'mergeAll(\n    extraLayer,\n')}`,
+        ),
+        'extraLayer',
+      ],
+    ] as const) {
+      const verdict = judged(sources, [[handlerFile, source]]);
+      expect(verdict.valid, label).toBe(false);
+      expect(verdict.diagnostics, label).toContain(unknown(handlerFile, layer));
+    }
+    const parenthesized = judged(sources, [
+      [
+        handlerFile,
+        replaced(
+          handler,
+          factoryComposition,
+          replaced(factoryComposition, 'paymentTermCatalogReadinessLayer,', '(paymentTermCatalogReadinessLayer),'),
+        ),
+      ],
+    ]);
+    expect(parenthesized.valid, parenthesized.diagnostics).toBe(true);
     expect(
       seam(sources, [
         [
