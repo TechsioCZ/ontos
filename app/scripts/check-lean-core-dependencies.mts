@@ -1251,8 +1251,6 @@ type Capability = typeof CapabilitySchema.Type;
 /** A name a scope declares: the capability an import gives it, and the references that resolve to it. */
 interface Binding {
   readonly capability: Capability | undefined;
-  /** For a parameter declared as a plain name: its function and its position. */
-  readonly parameter: { readonly callee: Node; readonly index: number } | undefined;
   readonly references: Node[];
 }
 
@@ -1263,14 +1261,16 @@ interface LoadAnalysis {
   readonly computedLoads: number[];
   readonly declared: Map<Node, Binding>;
   readonly identifiers: Set<Node>;
+  /** Every identifier of the file by name, in any scope and any position, types included. */
+  readonly names: Map<string, Node[]>;
   readonly parents: Map<Node, Node>;
   readonly pending: (readonly [Node, Capability])[];
   readonly references: ModuleReference[];
-  /** The binding each reference resolves to, when the file declares it. */
-  readonly resolved: Map<Node, Binding>;
   readonly scopes: Map<Node, Map<string, Binding>>;
   /** The nodes inside a type or an ambient declaration. */
   readonly typeOnly: Set<Node>;
+  /** The `with` statements of the file, which make any name resolve anywhere. */
+  readonly withStatements: Node[];
 }
 
 const freeCapabilities = new Map<string, Capability>([
@@ -1373,13 +1373,12 @@ const bind = (
   scope: Node | undefined,
   identifier: Node | null | undefined,
   capability?: Capability,
-  parameter?: Binding['parameter'],
 ): void => {
   if (scope === undefined || identifier?.type !== 'Identifier') {
     return;
   }
   const names = analysis.scopes.get(scope) ?? new Map<string, Binding>();
-  const binding = names.get(identifier.name) ?? { capability, parameter, references: [] };
+  const binding = names.get(identifier.name) ?? { capability, references: [] };
   names.set(identifier.name, binding);
   analysis.scopes.set(scope, names);
   analysis.declared.set(identifier, binding);
@@ -1411,10 +1410,8 @@ const declareImportEquals = (analysis: LoadAnalysis, node: TSImportEqualsDeclara
 };
 
 const declareFunction = (analysis: LoadAnalysis, node: ArrowFunctionExpression | FunctionNode): void => {
-  for (const [index, parameter] of node.params.entries()) {
-    for (const identifier of patternIdentifiers(parameter)) {
-      bind(analysis, node, identifier, undefined, identifier === parameter ? { callee: node, index } : undefined);
-    }
+  for (const identifier of node.params.flatMap((parameter) => patternIdentifiers(parameter))) {
+    bind(analysis, node, identifier);
   }
   if (node.type !== 'ArrowFunctionExpression') {
     // A declaration names the function in its enclosing scope; an expression names it only inside itself.
@@ -1497,6 +1494,12 @@ const trackStructure = (analysis: LoadAnalysis, program: Program): void => {
       return;
     }
     analysis.parents.set(node, parent);
+    if (node.type === 'Identifier' || node.type === 'JSXIdentifier') {
+      analysis.names.set(node.name, [...(analysis.names.get(node.name) ?? []), node]);
+    }
+    if (node.type === 'WithStatement') {
+      analysis.withStatements.push(node);
+    }
     if (analysis.typeOnly.has(parent) || isTypeOnly(node)) {
       analysis.typeOnly.add(node);
     }
@@ -1626,9 +1629,6 @@ const resolveReferences = (analysis: LoadAnalysis): void => {
     if (!isNameOnly(identifier, parent, grandparent)) {
       const binding = lookup(analysis, identifier, identifier.name);
       const capability = binding === undefined ? freeCapabilities.get(identifier.name) : binding.capability;
-      if (binding !== undefined) {
-        analysis.resolved.set(identifier, binding);
-      }
       if (capability === undefined) {
         binding?.references.push(identifier);
       } else {
@@ -1661,12 +1661,12 @@ const resolveCall = (analysis: LoadAnalysis, node: Node, parent: Node): CallExpr
   return user === undefined ? undefined : calledWith(member, user);
 };
 
-/** The binding that names a function: a declaration, or a const initialised with it; none when it is exported. */
-const functionBinding = (analysis: LoadAnalysis, callee: Node): Binding | undefined => {
+/** The identifier that names a helper: of a function declaration, or of a const initialised with it; none when exported. */
+const helperName = (analysis: LoadAnalysis, callee: Node): Node | undefined => {
   const parent = analysis.parents.get(callee);
   if (callee.type === 'FunctionDeclaration') {
     const exported = parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration';
-    return exported || callee.id === null ? undefined : analysis.declared.get(callee.id);
+    return exported || callee.id === null ? undefined : callee.id;
   }
   const declaration = parent === undefined ? undefined : analysis.parents.get(parent);
   const named = callee.type === 'FunctionExpression' && callee.id !== null;
@@ -1681,25 +1681,35 @@ const functionBinding = (analysis: LoadAnalysis, callee: Node): Binding | undefi
   ) {
     return undefined;
   }
-  return analysis.declared.get(parent.id);
+  return parent.id;
 };
 
-/** The literal target of one call of a helper whose parameter at index a loader loads. */
-const helperCallTarget = (analysis: LoadAnalysis, reference: Node, index: number): ModuleReference | undefined => {
-  const call = analysis.parents.get(reference);
-  if (
-    call?.type !== 'CallExpression' ||
-    call.callee !== reference ||
-    call.arguments.some((argument) => argument.type === 'SpreadElement')
-  ) {
+/**
+ * The calls of the helper that name declares, read from the whole file by name alone: every identifier
+ * of that name, in any scope and position, is that declaration or the callee of a direct call. None when
+ * one is anything else, so the helper may run from somewhere the check does not see.
+ */
+const helperCalls = (analysis: LoadAnalysis, name: Node): readonly CallExpression[] | undefined => {
+  if (name.type !== 'Identifier') {
+    return undefined;
+  }
+  const calls = (analysis.names.get(name.name) ?? [])
+    .filter((occurrence) => occurrence !== name)
+    .map((occurrence) => {
+      const call = analysis.parents.get(occurrence);
+      return call?.type === 'CallExpression' && call.callee === occurrence ? call : undefined;
+    });
+  return calls.every((call) => call !== undefined) ? calls.filter((call) => call !== undefined) : undefined;
+};
+
+/** The literal target one call of a helper passes at index, without a spread. */
+const helperCallTarget = (call: CallExpression, index: number): ModuleReference | undefined => {
+  if (call.arguments.some((argument) => argument.type === 'SpreadElement')) {
     return undefined;
   }
   const target = literalString(call.arguments[index]);
   return target === undefined || moduleBuiltins.has(target) ? undefined : { index: call.start, specifier: target };
 };
-
-/** Names that reach a function's parameters without naming them. */
-const parameterAliases = new Set(['arguments', 'eval']);
 
 const isInside = (analysis: LoadAnalysis, node: Node, ancestor: Node): boolean => {
   for (let parent = analysis.parents.get(node); parent !== undefined; parent = analysis.parents.get(parent)) {
@@ -1710,48 +1720,65 @@ const isInside = (analysis: LoadAnalysis, node: Node, ancestor: Node): boolean =
   return false;
 };
 
-/**
- * The one helper form whose call literals are a load's targets: every parameter a plain name (no `this`,
- * destructuring, rest or default value), the loaded parameter named nowhere in the function but where it
- * is declared and as the loader's single argument, and neither `arguments` nor `eval` in the function.
- */
-const isLiteralForwardingHelper = (analysis: LoadAnalysis, callee: Node, argument: Node): boolean => {
-  if (
-    (callee.type !== 'ArrowFunctionExpression' &&
-      callee.type !== 'FunctionDeclaration' &&
-      callee.type !== 'FunctionExpression') ||
-    argument.type !== 'Identifier' ||
-    !callee.params.every((parameter) => parameter.type === 'Identifier' && parameter.name !== 'this')
-  ) {
-    return false;
+const enclosingFunction = (analysis: LoadAnalysis, node: Node): ArrowFunctionExpression | FunctionNode | undefined => {
+  for (let parent = analysis.parents.get(node); parent !== undefined; parent = analysis.parents.get(parent)) {
+    if (
+      parent.type === 'ArrowFunctionExpression' ||
+      parent.type === 'FunctionDeclaration' ||
+      parent.type === 'FunctionExpression'
+    ) {
+      return parent;
+    }
   }
-  const declaration = callee.params.find(
-    (parameter) => parameter.type === 'Identifier' && parameter.name === argument.name,
-  );
-  return [...analysis.identifiers].every(
-    (identifier) =>
-      identifier.type !== 'Identifier' ||
-      !isInside(analysis, identifier, callee) ||
-      (!parameterAliases.has(identifier.name) &&
-        (identifier.name !== argument.name || identifier === argument || identifier === declaration)),
-  );
+  return undefined;
 };
 
 /**
- * The targets of a load whose argument is a parameter of a function of this file: the literal each call
- * passes, when the function has the helper shape and is only ever called directly, without a spread, with a
- * literal in that position. None for any other use, which keeps the load computed.
+ * The position of the parameter a loader loads, when its function has the one form whose call literals
+ * are the load's targets: every parameter a plain name (no `this`, destructuring, rest or default value),
+ * that parameter's name occurring in the function only where it is declared and as the loader's single
+ * argument, and no `arguments` in the function.
  */
-const parameterTargets = (analysis: LoadAnalysis, argument: Node): readonly ModuleReference[] | undefined => {
-  const parameter = analysis.resolved.get(argument)?.parameter;
-  if (parameter === undefined || !isLiteralForwardingHelper(analysis, parameter.callee, argument)) {
+const forwardedParameter = (
+  analysis: LoadAnalysis,
+  callee: ArrowFunctionExpression | FunctionNode,
+  argument: Node,
+): number | undefined => {
+  if (
+    argument.type !== 'Identifier' ||
+    !callee.params.every((parameter) => parameter.type === 'Identifier' && parameter.name !== 'this')
+  ) {
     return undefined;
   }
-  const calls = functionBinding(analysis, parameter.callee)?.references.map((reference) =>
-    helperCallTarget(analysis, reference, parameter.index),
+  const index = callee.params.findIndex(
+    (parameter) => parameter.type === 'Identifier' && parameter.name === argument.name,
   );
-  return calls?.every((target) => target !== undefined) === true
-    ? calls.filter((target) => target !== undefined)
+  const inside = (identifier: Node): boolean => isInside(analysis, identifier, callee);
+  const occurrences = (analysis.names.get(argument.name) ?? []).filter(inside);
+  const usesArguments = (analysis.names.get('arguments') ?? []).some(inside);
+  return index === -1 || occurrences.length !== 2 || usesArguments ? undefined : index;
+};
+
+/** A `with` statement or an `eval` anywhere lets any name of the file reach anything. */
+const admitsHelpers = (analysis: LoadAnalysis): boolean =>
+  analysis.withStatements.length === 0 && !analysis.names.has('eval');
+
+/**
+ * The targets of a load whose argument is a parameter of the function around it: the literal each call of
+ * that function passes, when the file admits helpers, the function has the one helper form, its name
+ * occurs only as its declaration and as callees of direct calls, and each call passes a literal there.
+ * None for any other use, which keeps the load computed.
+ */
+const parameterTargets = (analysis: LoadAnalysis, argument: Node): readonly ModuleReference[] | undefined => {
+  const callee = admitsHelpers(analysis) ? enclosingFunction(analysis, argument) : undefined;
+  const index = callee === undefined ? undefined : forwardedParameter(analysis, callee, argument);
+  const name = callee === undefined || index === undefined ? undefined : helperName(analysis, callee);
+  const targets =
+    name === undefined || index === undefined
+      ? undefined
+      : helperCalls(analysis, name)?.map((call) => helperCallTarget(call, index));
+  return targets?.every((target) => target !== undefined) === true
+    ? targets.filter((target) => target !== undefined)
     : undefined;
 };
 
@@ -1977,12 +2004,13 @@ const loadsIn = (file: string, source: string, packageType: string | undefined):
     computedLoads: [],
     declared: new Map(),
     identifiers: new Set(),
+    names: new Map(),
     parents: new Map(),
     pending: [],
     references: [],
-    resolved: new Map(),
     scopes: new Map(),
     typeOnly: new Set(),
+    withStatements: [],
   };
   trackStructure(analysis, result.program);
   new Visitor(sourceSites(analysis, result.program)).visit(result.program);
