@@ -410,6 +410,10 @@ const paymentVertical = 'verticals/payment-term-catalog';
 const paymentContracts = 'packages/payment-term-catalog-contracts';
 const paymentSlug = 'payment-term-catalog';
 const paymentHistoryRead = 'payment-term-history';
+const customerVertical = 'verticals/commerce-customer-context';
+const customerRecoveryRead = 'market-retirement-reservation-recovery';
+const customerRecoveryContracts = 'packages/customer-market-retirement-contracts';
+const customerSlug = 'commerce-customer-context';
 
 const sourceTree = async (root: string, directory: string): Promise<readonly (readonly [string, string])[]> => {
   const entries = await readdir(path.join(root, directory), { withFileTypes: true });
@@ -428,6 +432,38 @@ const sourceTree = async (root: string, directory: string): Promise<readonly (re
 /** A file of the copy and what it becomes before the retirement (from `''` when the module has no such file). */
 type CopyEdit = readonly [file: string, edit: (source: string) => string];
 
+/** A module specifier naming one of the read's files: its contract, Read binding, client or server. */
+const namesReadFile = (read: string): RegExp =>
+  new RegExp(`['"\`][^'"\`]*${read}(?:\\.read|-client|-read-server)?(?:\\.ts)?['"\`]`, 'u');
+
+/**
+ * What a person removes before retiring a read, since no generator wrote it: the module's and the package's own
+ * tests of the read, and the package root's re-exports of the read's contract and client.
+ */
+const handWrittenUses = Effect.fn(function* handWrittenUses(read: string, folders: readonly string[]) {
+  const trees = yield* Effect.promise(() => Promise.all(folders.map((folder) => sourceTree(appRoot, folder))));
+  return trees.flat().flatMap(([file, source]): readonly CopyEdit[] => {
+    if (!namesReadFile(read).test(source)) {
+      return [];
+    }
+    if (file.includes('/tests/')) {
+      return [[file, () => '']];
+    }
+    return file.endsWith('/src/index.ts')
+      ? [
+          [
+            file,
+            (text) =>
+              text
+                .split('\n')
+                .filter((line) => !namesReadFile(read).test(line))
+                .join('\n'),
+          ],
+        ]
+      : [];
+  });
+});
+
 /** Retire one read of an actual module in a copy, and return the module and its contract package as they remain. */
 const retireInCopy = Effect.fn(function* retireInCopy(
   name: string,
@@ -435,6 +471,7 @@ const retireInCopy = Effect.fn(function* retireInCopy(
   contracts: string = paymentContracts,
   slug: string = paymentSlug,
   edits: readonly CopyEdit[] = [],
+  prepare: (read: string, folders: readonly string[]) => Effect.Effect<readonly CopyEdit[]> = handWrittenUses,
 ) {
   const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-retire-read-')));
   return yield* Effect.gen(function* retireAndRead() {
@@ -446,7 +483,8 @@ const retireInCopy = Effect.fn(function* retireInCopy(
         }),
       );
     }
-    for (const [file, edit] of edits) {
+    const prepared = yield* prepare(name, [vertical, contracts]);
+    for (const [file, edit] of [...prepared, ...edits]) {
       const target = path.join(root, file);
       const source = yield* Effect.promise(() => readFile(target, 'utf-8').catch(() => ''));
       yield* Effect.promise(() => writeFile(target, edit(source)));
@@ -581,10 +619,10 @@ const unboundNames = (file: string, source: string): ReadonlySet<string> => {
 for (const [label, read, vertical, contracts, slug, api] of [
   [
     'a package read of Commerce Customer Context',
-    'market-retirement-reservation-recovery',
-    'verticals/commerce-customer-context',
-    'packages/customer-market-retirement-contracts',
-    'commerce-customer-context',
+    customerRecoveryRead,
+    customerVertical,
+    customerRecoveryContracts,
+    customerSlug,
     'MarketRetirementReservationRecoveryApi',
   ],
   [
@@ -618,21 +656,17 @@ for (const [label, read, vertical, contracts, slug, api] of [
 it.live(
   'refuses to retire a read another declaration of an owner entry still uses, naming the file and the line',
   Effect.fn(function* refuseSurvivingUse() {
-    const vertical = 'verticals/commerce-customer-context';
+    const vertical = customerVertical;
     const sharedApiFile = `${vertical}/shared/api.ts`;
     const use = 'export const retainedApi = MarketRetirementReservationRecoveryApi;\n';
     const line = (yield* Effect.promise(() => readFile(path.join(appRoot, sharedApiFile), 'utf-8'))).split('\n').length;
     yield* expectFailure(
-      retireInCopy(
-        'market-retirement-reservation-recovery',
-        vertical,
-        'packages/customer-market-retirement-contracts',
-        'commerce-customer-context',
-        [[sharedApiFile, (source) => `${source}${use}`]],
-      ),
+      retireInCopy(customerRecoveryRead, vertical, customerRecoveryContracts, customerSlug, [
+        [sharedApiFile, (source) => `${source}${use}`],
+      ]),
       (cause) => {
         expect(String(cause)).toContain(
-          `${sharedApiFile}:${line} still uses MarketRetirementReservationRecoveryApi of the retired read`,
+          `${sharedApiFile}:${line} still uses MarketRetirementReservationRecoveryApi, which the retirement unbinds`,
         );
       },
     );
@@ -662,7 +696,9 @@ it.live(
           [file, (source) => `${source}${use}`],
         ]),
         (cause) => {
-          expect(String(cause), file).toContain(`${file}:${line} still names ${specifier} of the retired read`);
+          expect(String(cause), file).toContain(
+            `${file}:${line} still names ${specifier}, which the retirement deletes`,
+          );
         },
       );
     }
@@ -683,5 +719,116 @@ it.live(
     expect(retired).toContain(unrelated);
     expect(retired).not.toContain("from './payment-term-history-client.ts'");
     expect(retired).not.toContain('PaymentTermHistoryRequestSchema');
+  }),
+);
+
+/** The line count of a file of the module as it is checked in: the line an appended use stands on. */
+const lineCount = async (file: string): Promise<number> => {
+  const source = await readFile(path.join(appRoot, file), 'utf-8');
+  return source.split('\n').length;
+};
+
+it.live(
+  'judges the planned retirement as a whole before it writes anything, wherever the read is still named',
+  Effect.fn(function* refuseBrokenPlan() {
+    const aggregate = `${paymentVertical}/src/api/payment-term-catalog-client.ts`;
+    const manifestFile = `${paymentVertical}/vertical.manifest.ts`;
+    const forwarder = `${paymentVertical}/src/api/history-public.ts`;
+    const loader = `${paymentVertical}/src/api/history-loader.ts`;
+    for (const [label, edits, refusal] of [
+      [
+        'a client loads the retired contract through a template literal without interpolation',
+        [
+          [
+            aggregate,
+            (source: string) =>
+              `${source}export const loadHistory = () => import(\`../../shared/apis/payment-term-history.ts\`);\n`,
+          ],
+        ],
+        `${aggregate}:${yield* Effect.promise(async () => await lineCount(aggregate))} still names ../../shared/apis/payment-term-history.ts, which the retirement deletes`,
+      ],
+      [
+        'the manifest uses the retired API value its generated import brought in',
+        [[manifestFile, (source: string) => `${source}export const history = PaymentTermHistoryApi;\n`]],
+        `${manifestFile}:${yield* Effect.promise(async () => await lineCount(manifestFile))} still uses PaymentTermHistoryApi, which the retirement unbinds`,
+      ],
+      [
+        'an entry star-exports an owner file that star-exports the retired client',
+        [
+          [forwarder, () => "export * from './payment-term-history-client.ts';\n"],
+          [aggregate, (source: string) => `${source}export * from './history-public.ts';\n`],
+        ],
+        `${forwarder}:1 still names ./payment-term-history-client.ts, which the retirement deletes`,
+      ],
+      [
+        'a source that names the retired read loads a module it builds at run time',
+        [
+          [
+            loader,
+            () =>
+              `const read = 'payment-term-history';\nexport const loadHistory = () => import(\`./\${read}-client.ts\`);\n`,
+          ],
+        ],
+        `${loader}:2 loads a module it does not name statically`,
+      ],
+    ] as const) {
+      yield* expectFailure(
+        retireInCopy(paymentHistoryRead, paymentVertical, paymentContracts, paymentSlug, edits),
+        (cause) => {
+          expect(String(cause), label).toContain(refusal);
+        },
+      );
+    }
+  }),
+);
+
+it.live(
+  'refuses a retirement that leaves an edited file unparsable, naming the file and the line',
+  Effect.fn(function* refuseUnparsablePlan() {
+    const vertical = customerVertical;
+    const sharedApiFile = `${vertical}/shared/api.ts`;
+    const before = yield* Effect.promise(() => readFile(path.join(appRoot, sharedApiFile), 'utf-8'));
+    const use =
+      'export type OnlyRecovery = Readonly<typeof MarketRetirementReservationRecoveryApi | typeof MarketRetirementReservationRecoveryApi>;\n';
+    yield* expectFailure(
+      retireInCopy(customerRecoveryRead, vertical, customerRecoveryContracts, customerSlug, [
+        [sharedApiFile, (source) => `${source}${use}`],
+      ]),
+      (cause) => {
+        expect(String(cause)).toContain(
+          `${sharedApiFile}:${before.split('\n').length} does not parse as the retirement leaves it`,
+        );
+      },
+    );
+  }),
+);
+
+it.live(
+  "refuses to retire a read the module's own tests and package root still name, before anything is written",
+  Effect.fn(function* refuseHandWrittenUses() {
+    const behaviour = `${paymentVertical}/tests/unit/payment-term-behavior.test.ts`;
+    const line = (yield* Effect.promise(() => readFile(path.join(appRoot, behaviour), 'utf-8')))
+      .split('\n')
+      .findIndex((text) => text.includes("from '../../src/api/payment-term-history.read.ts'"));
+    expect(line).toBeGreaterThan(-1);
+    yield* expectFailure(
+      retireInCopy(paymentHistoryRead, paymentVertical, paymentContracts, paymentSlug, [], () => Effect.succeed([])),
+      (cause) => {
+        expect(String(cause)).toContain(
+          `${behaviour}:${line + 1} still names ../../src/api/payment-term-history.read.ts, which the retirement deletes`,
+        );
+      },
+    );
+    const packageRoot = `${paymentContracts}/src/index.ts`;
+    yield* expectFailure(
+      retireInCopy('current-payment-terms', paymentVertical, paymentContracts, paymentSlug, [], () =>
+        Effect.succeed([]),
+      ),
+      (cause) => {
+        expect(String(cause)).toContain(
+          `${packageRoot}:2 still names ./apis/current-payment-terms.ts, which the retirement deletes`,
+        );
+      },
+    );
   }),
 );
