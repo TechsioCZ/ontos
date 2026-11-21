@@ -10,6 +10,7 @@ import {
   materializeZeropsSetupFiles,
   SPICEDB_ENDPOINT_VARIABLE,
   SYMMY_INGRESS_VARIABLE,
+  SYMMY_PRICE_READ_SOURCES_VARIABLE,
   SYMMY_RETENTION_POLICIES_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { MUTATION_MARKER } from '../zerops/delivery-plan.mts';
@@ -397,6 +398,7 @@ it.effect('materializes every Zerops setup with the deploying environment named 
     let endpointCount = 0;
     let ingressCount = 0;
     let retentionCount = 0;
+    let priceReadCount = 0;
     for (const [index] of zerops.entries()) {
       for (const phase of ['build', 'run']) {
         const environment = ['zerops', index, phase, 'envVariables'];
@@ -429,12 +431,19 @@ it.effect('materializes every Zerops setup with the deploying environment named 
           source.deleteIn(retention);
           retentionCount += 1;
         }
+        const priceRead = [...environment, SYMMY_PRICE_READ_SOURCES_VARIABLE];
+        if (source.hasIn(priceRead)) {
+          expect(actual.hasIn(priceRead)).toBe(false);
+          source.deleteIn(priceRead);
+          priceReadCount += 1;
+        }
       }
     }
     expect(environmentCount).toBeGreaterThan(0);
     expect(endpointCount).toBeGreaterThan(0);
     expect(ingressCount).toBeGreaterThan(0);
     expect(retentionCount).toBeGreaterThan(0);
+    expect(priceReadCount).toBeGreaterThan(0);
     expect(Schema.decodeUnknownSync(Schema.Unknown)(actual.toJS())).toEqual(
       Schema.decodeUnknownSync(Schema.Unknown)(source.toJS()),
     );
