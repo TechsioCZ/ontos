@@ -509,6 +509,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
           { method: 'POST', path: '/api/portal-auth/enrollment/current/resume' },
           { method: 'POST', path: '/api/portal-auth/enrollment/current/restart' },
           { method: 'GET', path: '/api/portal-auth/customer-account' },
+          { method: 'GET', path: '/api/portal-auth/customer-address-book' },
           { method: 'GET', path: '/api/portal-auth/customer-profile' },
           { method: 'POST', path: '/api/portal-auth/customer-profile' },
           { method: 'GET', path: '/api/portal-auth/customer-consent' },
