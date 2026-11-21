@@ -488,12 +488,12 @@ const lineBefore = (before: string, after: string, line: number): number => {
   return line;
 };
 
-/** A TypeScript source of the owner module: what the post-condition of a retirement reads. */
-const CODE_FILE = /\.(?:[cm]?ts|tsx)$/u;
+/** A JavaScript or TypeScript source of the owner module: what the post-condition of a retirement reads. */
+const CODE_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
 /** Build output and dependencies: never sources of the module. */
 const SKIPPED_DIRECTORIES = new Set(['.modern-js', '.output', 'dist', 'dist-cloudflare', 'node_modules']);
 
-/** Every TypeScript source under the directories, by path, outside build output and dependencies. */
+/** Every JavaScript or TypeScript source under the directories, by path, outside build output and dependencies. */
 const moduleSources = Effect.fn('moduleSources')(function* moduleSourcesEffect(directories: readonly string[]) {
   const fileSystem = yield* FileSystem.FileSystem;
   const sources = new Map<string, string>();
@@ -523,6 +523,15 @@ const moduleSources = Effect.fn('moduleSources')(function* moduleSourcesEffect(d
   return sources;
 });
 
+/** Every string a source writes statically, decoded: its string literals and the text of its template literals. */
+const writtenStrings = (bindings: ModuleBindings): readonly string[] =>
+  [...bindings.parents.keys()].flatMap((node): readonly string[] => {
+    if (node.type === 'Literal') {
+      return Predicate.isString(node.value) ? [node.value] : [];
+    }
+    return node.type === 'TemplateElement' ? [node.value.cooked ?? node.value.raw] : [];
+  });
+
 /** The names a source refers to that no declaration of it binds. */
 const unboundNames = (bindings: ModuleBindings): ReadonlySet<string> =>
   new Set(bindings.references.flatMap((reference) => (reference.bindings.length === 0 ? [reference.name] : [])));
@@ -534,11 +543,15 @@ interface PlannedSource {
   readonly file: string;
 }
 
-/** The post-condition's failures in one source; `retired` holds what the plan deletes, by path or package specifier. */
+/**
+ * The post-condition's failures in one source; `retired` holds what the plan deletes, by path or package specifier,
+ * and `names` the base names of the deleted files.
+ */
 const sourceProblems = (
   { after, before, file }: PlannedSource,
   edited: boolean,
   retired: ReadonlySet<string>,
+  names: readonly string[],
   exists: (candidate: string) => boolean,
 ): readonly string[] => {
   const at = (start: number): string =>
@@ -565,10 +578,17 @@ const sourceProblems = (
       ? [`${at(literal.start)} still names ${specifier}, which the retirement deletes: remove that use first`]
       : [],
   );
-  const unreadable = unreadableSpecifiers(bindings).map(
-    (node) =>
-      `${at(node.start)} loads a module it does not name statically, beside the name of a retired file: remove that use first`,
-  );
+  // A file names a retired file when its text does, or a string it writes does once decoded.
+  const naming =
+    edited ||
+    names.some((name) => after.includes(name)) ||
+    writtenStrings(bindings).some((text) => names.some((name) => text.includes(name)));
+  const unreadable = naming
+    ? unreadableSpecifiers(bindings).map(
+        (node) =>
+          `${at(node.start)} loads a module it does not name statically, beside the name of a retired file: remove that use first`,
+      )
+    : [];
   return [...unbound, ...named, ...unreadable];
 };
 
@@ -576,9 +596,11 @@ const sourceProblems = (
  * The post-condition of a retirement plan, computed on the planned result before anything is written: (a) every file
  * the plan edits still parses; (b) no file the plan edits leaves a name unbound that was bound before; (c) no module
  * specifier of any kind (a string literal or a template literal without interpolation) in any source of the owner
- * module resolves to a file the plan deletes, and a source that names a deleted file's base name loads no module it
- * does not name statically. A specifier that resolves to a deleted file names its base name, so only the sources that
- * hold one are parsed. Each failure names the file and its line as the file stands.
+ * module (JavaScript or TypeScript) resolves to a file the plan deletes, its value decoded, and a source that names a
+ * deleted file's base name loads no module it does not name statically. A specifier that resolves to a deleted file
+ * names its base name once decoded, and without an escape (a backslash) the decoded text is the raw text: so a source
+ * whose raw text holds neither a deleted file's base name nor a backslash is the only one skipped unparsed. Each
+ * failure names the file and its line as the file stands.
  */
 const retirementProblems = (
   sources: ReadonlyMap<string, string>,
@@ -598,8 +620,8 @@ const retirementProblems = (
     const before = sources.get(file);
     const after = planned.get(file) ?? before ?? '';
     const edited = planned.has(file);
-    return edited || names.some((name) => after.includes(name))
-      ? sourceProblems({ after, before, file }, edited, new Set(retired.files.keys()), exists)
+    return edited || after.includes('\\') || names.some((name) => after.includes(name))
+      ? sourceProblems({ after, before, file }, edited, new Set(retired.files.keys()), names, exists)
       : [];
   });
 };
