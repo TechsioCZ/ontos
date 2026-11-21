@@ -12,8 +12,8 @@ import {
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { PriceDefinitionSchema } from '@app/pricing-contracts/domain/price-definition';
 import { ProductActionInvocationIdSchema, ProductSchema } from '@app/catalog/domain/product';
-import { ProductRefSchema } from '@app/catalog/resources/product';
-import { VariantRefSchema } from '@app/catalog/resources/variant';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import type { OntosModuleDeploymentContract } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { grantTestTenantRoleAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';

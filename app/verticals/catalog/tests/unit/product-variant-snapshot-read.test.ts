@@ -4,8 +4,8 @@ import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ProductVariantSnapshotResponseSchema } from '../../shared/apis/product-variant-snapshot.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
-import { CatalogSelectionValidEvidenceSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type { ProductVariantSnapshotServices } from '../../src/api/product-variant-snapshot.read.ts';
 import { readProductVariantSnapshot } from '../../src/api/product-variant-snapshot.read.ts';
 import type {

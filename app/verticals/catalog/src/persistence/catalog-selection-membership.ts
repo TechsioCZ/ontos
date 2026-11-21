@@ -2,10 +2,10 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Schema } from 'effect';
 
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
-import { CatalogSelectionMembershipSchema } from '../../shared/domain/catalog-selection-evidence.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionMembershipSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import { productVariants, products } from '../database/schema.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
 

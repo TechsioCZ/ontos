@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductNameSchema, ProductReasonSchema } from '../domain/product.ts';
 import { ProductTypeAttributeRuleSchema } from '../domain/product-type-rules.ts';
 import { ProductTypeRefSchema } from '../resources/product-type.ts';

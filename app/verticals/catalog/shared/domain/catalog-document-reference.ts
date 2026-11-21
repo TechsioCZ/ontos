@@ -6,9 +6,9 @@ import {
   sameCatalogDocumentResourceRef,
 } from './catalog-media-assignment.ts';
 import type { CatalogCurrentUse, CatalogDocumentOwnerRevision } from './catalog-media-assignment.ts';
-import { CatalogRevisionInstantSchema } from './catalog-revision-reference.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { CatalogRevisionInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const sameTargetRef = (
   left: {

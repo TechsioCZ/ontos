@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { ProductEvidenceReferenceSchema, ProductInstantSchema, ProductReasonSchema } from './product.ts';
 
 /** The meaning is closed; a note cannot introduce an unreviewed relationship type. */

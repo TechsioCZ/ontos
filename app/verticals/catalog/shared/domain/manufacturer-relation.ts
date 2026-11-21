@@ -2,8 +2,8 @@ import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { Schema } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { ProductEvidenceReferenceSchema, ProductInstantSchema, ProductReasonSchema } from './product.ts';
 
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());

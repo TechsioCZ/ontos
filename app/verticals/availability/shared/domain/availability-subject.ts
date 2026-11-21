@@ -1,5 +1,5 @@
-import { CatalogSelectionWithQuantitySchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { CatalogSelectionWithQuantitySchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import {
   PricingPurchaseContextVerificationEvidenceSchema,
   PricingPurchaseContextVerificationRequestSchema,

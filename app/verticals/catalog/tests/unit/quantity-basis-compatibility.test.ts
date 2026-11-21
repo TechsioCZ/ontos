@@ -3,8 +3,8 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { QuantityBasisCompatibilityResponseSchema } from '../../shared/apis/quantity-basis-compatibility.ts';
 import type { QuantityBasisCompatibilityResponse } from '../../shared/apis/quantity-basis-compatibility.ts';
-import { CatalogQuantityHandoffReadySchema } from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   assessQuantityBasisCompatibility,
   quantityBasisUnavailable,

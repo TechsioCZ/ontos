@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
-import { CatalogSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { resolvePackageContent } from '../../shared/domain/package-content.ts';
 import { assessPackageOption } from '../../shared/domain/package-option.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const ref = (type: string, id: string) => ({

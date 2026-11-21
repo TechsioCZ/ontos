@@ -13,8 +13,8 @@ import {
 
 import { ProductCategoryRefSchema } from '../../shared/resources/product-category.ts';
 import type { ProductCategoryRef } from '../../shared/resources/product-category.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 
 export class CategoryPersistenceUnavailable extends Schema.TaggedError<CategoryPersistenceUnavailable>()(
   'CategoryPersistenceUnavailable',

@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductNameSchema } from './product.ts';
 
 /** A locale identifies the language of the supplied fact; it is not a Product identity. */

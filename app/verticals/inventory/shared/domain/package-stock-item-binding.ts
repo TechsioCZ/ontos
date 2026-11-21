@@ -1,4 +1,4 @@
-import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { Effect as EffectType } from 'effect';
 import { Effect, Schema } from 'effect';
 

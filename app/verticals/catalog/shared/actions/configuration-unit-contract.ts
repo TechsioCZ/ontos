@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 
 import { ConfigurationUnitRefSchema } from '../resources/configuration-unit.ts';
 
-export { CatalogRevisionInstantSchema as ConfigurationUnitInstantSchema } from '../domain/catalog-revision-reference.ts';
+export { CatalogRevisionInstantSchema as ConfigurationUnitInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 export const ConfigurationUnitTextSchema = Schema.String.check(
   Schema.isMinLength(1),

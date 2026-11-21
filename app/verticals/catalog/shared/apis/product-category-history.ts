@@ -9,7 +9,7 @@ import {
 } from '../actions/create-product-category.ts';
 import { ProductInstantSchema } from '../domain/product.ts';
 import { ProductCategoryRefSchema } from '../resources/product-category.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 const CategoryLifecycleSchema = Schema.Literals(['ACTIVE', 'RETIRED']);
 const checkedInvocationId = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());

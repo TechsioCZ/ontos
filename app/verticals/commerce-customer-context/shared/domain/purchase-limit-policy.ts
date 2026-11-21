@@ -1,7 +1,7 @@
 import { PrincipalRefSchema } from '@app/core-runtime';
 import type { OperationalScope, PrincipalRef } from '@app/core-runtime';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
-import type { CounterpartyRef } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { Context, Match, Schema } from 'effect';
 import type { Effect } from 'effect';
 import { PurchaseLimitPolicyRefSchema } from '../resources/purchase-limit-policy.ts';

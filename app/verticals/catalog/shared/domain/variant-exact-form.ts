@@ -1,6 +1,6 @@
 import { Option } from 'effect';
 
-import { CatalogIdentityScopeSchema } from './identity-scope.ts';
+import { CatalogIdentityScopeSchema } from '@app/catalog-selection-contracts/identity-scope';
 import type { Product, ProductVariant } from './product.ts';
 
 /**

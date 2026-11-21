@@ -6,23 +6,23 @@ import type { CatalogSelectionCurrentFacts } from './catalog-selection-assessmen
 import {
   CatalogSelectionRevisionSchema,
   CatalogSelectionSchema,
-  CatalogSelectionValidEvidenceSchema,
-} from './catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type {
   CatalogSelectionMembership,
-  CatalogSelection,
   CatalogSelectionEvidence,
-} from './catalog-selection-evidence.ts';
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionNumberSchema,
-  sameCatalogRevisionReference,
-} from './catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import { resolvePackageContent } from './package-content.ts';
 import type { PackageContentRevision, PackageResolution } from './package-content.ts';
 import type { QuantityNormalization } from './purchase-quantity.ts';
-import { VariantExactFormSchema } from './variant-exact-form.ts';
+import { VariantExactFormSchema } from '@app/catalog-selection-contracts/variant-exact-form';
 
 const quantityText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const CatalogQuantityTargetIdSchema = Schema.String.check(Schema.isUUID(), Schema.isTrimmed()).pipe(

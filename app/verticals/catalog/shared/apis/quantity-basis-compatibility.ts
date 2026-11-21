@@ -3,17 +3,23 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Match, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { CatalogQuantityBasisSchema, CatalogQuantityHandoffReadySchema } from '../domain/catalog-quantity-handoff.ts';
-import { CatalogSelectionRevisionSchema, CatalogSelectionSchema } from '../domain/catalog-selection-evidence.ts';
+import {
+  CatalogQuantityBasisSchema,
+  CatalogQuantityHandoffReadySchema,
+} from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import {
+  CatalogSelectionRevisionSchema,
+  CatalogSelectionSchema,
+} from '@app/catalog-selection-contracts/catalog-selection';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionInstantSchema,
-  sameCatalogRevisionReference,
-} from '../domain/catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import {
   CatalogUnitConversionEvidenceSchema,
   catalogUnitConversionProves,
-} from '../domain/catalog-unit-conversion-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-unit-conversion-evidence';
 
 const positiveDecimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/u;
 const catalogModuleId = 'commerce.catalog';

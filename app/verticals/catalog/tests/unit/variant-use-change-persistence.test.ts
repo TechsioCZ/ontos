@@ -16,7 +16,7 @@ import {
   CartOpenSelectionPopulationEvidenceSchema,
   CartOpenSelectionPopulationUnavailable,
 } from '../../shared/domain/catalog-open-selection-population.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
   CurrentVariantAxes,
   CurrentVariantAxisValue,

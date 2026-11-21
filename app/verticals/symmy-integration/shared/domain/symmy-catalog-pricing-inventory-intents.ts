@@ -5,8 +5,8 @@ import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-acti
 import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
 import { UpdateProductPayloadSchema } from '@app/catalog/api/update-product-action';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
-import { ProductRefSchema } from '@app/catalog/resources/product';
-import { VariantRefSchema } from '@app/catalog/resources/variant';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
 import { ImportSourceAssertionPayloadSchema } from '@app/inventory/source-import';
 import { CreatePriceGroupPayloadSchema } from '@app/price-group-catalog/actions/create-price-group';

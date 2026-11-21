@@ -20,7 +20,7 @@ import type {
 import { assessAttributeUnitChange } from '../../shared/domain/attribute-unit-change.ts';
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
 import { readCartOpenSelectionPopulation } from '../../shared/domain/catalog-open-selection-population.ts';
-import type { CatalogResourceRefInput } from '../../shared/domain/catalog-revision-reference.ts';
+import type { CatalogResourceRefInput } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import type { ColorDetails } from '../../shared/domain/color.ts';
 import { ColorDetailsSchema } from '../../shared/domain/color.ts';
 import type { AttributeDefinitionRef } from '../../shared/resources/attribute-definition.ts';

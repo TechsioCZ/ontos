@@ -13,10 +13,10 @@ import { Crypto, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductUnitRuleRevisionSchema } from '../../shared/resources/product-unit.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
 import { ProductActionInvocationIdSchema } from '../../shared/domain/product.ts';
 import { executeSelectionEvidenceWithAuthorization } from '../../src/api/selection-evidence-client.ts';

@@ -4,7 +4,7 @@ import type { SQL } from 'drizzle-orm';
 import { Effect, Exit, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import type { ConfigurationUnitPersistence } from '../../src/persistence/configuration-unit-persistence.ts';
 
 import {

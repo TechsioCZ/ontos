@@ -8,7 +8,7 @@ import {
   ProductVariantSchema,
   catalogReadiness,
 } from '../../shared/domain/product.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const productId = '22222222-2222-4222-8222-222222222222';

@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
 import { ProductReasonSchema, ProductRevisionSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductTypeRefSchema } from '../resources/product-type.ts';
 
 /** A caller-held preview token is intent, not authority; the Action must verify it. */

@@ -1,7 +1,7 @@
-import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
-import type { CatalogSelectionRevision } from './catalog-selection-evidence.ts';
-import type { VariantExactForm } from './variant-exact-form.ts';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
+import type { VariantExactForm } from '@app/catalog-selection-contracts/variant-exact-form';
 
 /** A revision is immutable after issue; storage must reject mutation of an issued key. */
 export interface PackageContentRevision {

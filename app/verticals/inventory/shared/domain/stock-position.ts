@@ -1,4 +1,4 @@
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { Effect, Match, Schema } from 'effect';
 import type { Result } from 'effect';
 

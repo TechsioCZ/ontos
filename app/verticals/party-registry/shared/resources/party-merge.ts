@@ -13,7 +13,10 @@ import {
 } from '../domain/merge-selection.ts';
 import { PartyRefSchema } from './party.ts';
 import type { PartyRef } from './party.ts';
-import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
+import {
+  PartyRegistryResourceIdJsonSchema,
+  PartyRegistryTenantIdJsonSchema,
+} from '@app/party-registry-contracts/resources/resource-ref-identifiers';
 
 export const PartyMergeRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),

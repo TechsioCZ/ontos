@@ -2,7 +2,8 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { CatalogSelectionSchema, CatalogSelectionBasisRoles } from '../domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionBasisRoles } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import {
   CatalogSelectionOwnerAssessmentResultSchema,
   CatalogSelectionInjectedOwnerEvidenceSchema,

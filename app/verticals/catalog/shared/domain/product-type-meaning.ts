@@ -1,10 +1,13 @@
 import { Effect, Match, Schema } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductTypeRefSchema } from '../resources/product-type.ts';
 import type { ProductTypeRef } from '../resources/product-type.ts';
-import { CatalogRevisionNumberSchema, CatalogResourceRefSchema } from './catalog-revision-reference.ts';
-import type { CatalogRevisionNumber } from './catalog-revision-reference.ts';
+import {
+  CatalogRevisionNumberSchema,
+  CatalogResourceRefSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogRevisionNumber } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductTypeAttributeRuleSchema, ProductTypeRulesRevisionSchema } from './product-type-rules.ts';
 import type { ProductTypeAttributeRule } from './product-type-rules.ts';
 

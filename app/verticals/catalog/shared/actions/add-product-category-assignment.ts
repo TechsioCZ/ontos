@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 
 import { CategoryCounterSchema, CategoryReasonSchema } from './create-product-category.ts';
 import { ProductCategoryRefSchema } from '../resources/product-category.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const AddProductCategoryAssignmentPayloadSchema = Schema.Struct({
   categoryRef: ProductCategoryRefSchema,

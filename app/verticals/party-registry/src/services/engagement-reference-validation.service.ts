@@ -7,7 +7,8 @@ import {
 } from '../../shared/domain/engagement-profile.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
-import type { CounterpartyRef, PartyRef } from '../../shared/party-registry-references.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
+import type { PartyRef } from '../../shared/party-registry-references.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 import { findCounterpartyRecord } from './counterparty-persistence.service.ts';
