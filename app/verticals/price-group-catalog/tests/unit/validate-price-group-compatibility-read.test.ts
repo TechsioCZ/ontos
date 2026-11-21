@@ -1,5 +1,18 @@
-import { Effect, Predicate, Schema } from 'effect';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import {
+  preserveSystemPrincipalContextTrust,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import {
+  makeAuthority,
+  makeCheck,
+  tenant,
+} from '../../../../packages/core-runtime/tests/unit/access-decision-support.ts';
 import {
   getReadPermissionTargetResolver,
   getReadServiceFactory,
@@ -421,4 +434,72 @@ describe('Validate Price Group Compatibility governed Read', () => {
       'priceGroupCatalogPersistenceForScope',
     );
   });
+});
+
+/*
+ * The signed-in customer's page: Commerce's resolution and Pricing's interpretation each ask this read for the
+ * Storefront client that relayed the customer's session. Core's own decision service decides it over the read's real
+ * carrier; only its identity, workload registry and role ports are scripted.
+ */
+/** The storefront principal as the subject of a tenant-scoped module call, sealed beside its calling module. */
+const storefrontCalledBy = (appId: string) => {
+  const subject = {
+    ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+      authBindingId: '70000000-0000-4000-8000-000000000001',
+      authContextRef: 'api_key:akros-playground-storefront',
+      authMethod: 'api_key',
+      principalId: '183e774e-aa24-44e0-b524-f7ceac47c918',
+      tenantId: tenant,
+    }),
+    correlationId: 'storefront-price-group-compatibility',
+  };
+  const verified = trustVerifiedGatewayPrincipalContext(subject, 'c'.repeat(64), undefined, {
+    appId,
+    buildMarker: 'storefront-price-group-compatibility-caller',
+    principalId: '66666666-6666-4666-8666-666666666666',
+  });
+  return preserveSystemPrincipalContextTrust(verified, { ...verified, correlationId: subject.correlationId });
+};
+
+describe('Validate Price Group Compatibility for the Storefront client', () => {
+  const company = LegalEntityIdSchema.make('c0c78a3e-6e2a-47e0-9d0d-86253499fee7');
+  const { descriptor } = validatePriceGroupCompatibilityRead;
+  const carrier: GateInput['carrier'] = {
+    accessActor: descriptor.accessActor,
+    accessDeclaration: descriptor.accessDeclaration,
+    accessWorkload: descriptor.accessWorkload,
+  };
+  const decide = (appId: string, keys: readonly string[]) => {
+    const authority = {
+      cells: [],
+      legalEntityScope: { _tag: 'LegalEntity' as const, legalEntityId: company, tenantId: tenant },
+    };
+    return makeAccessDecisionService({
+      authorityFor: () => makeAuthority(authority).port,
+      check: makeCheck({ authority }).port,
+      decisionLog: { record: () => Effect.void },
+      legalEntities: { listCandidateIds: () => Effect.succeed([company]) },
+      principalKinds: { readKind: () => Effect.succeed(Option.some('service' as const)) },
+      workloadBindings: {
+        readWorkloadAuthority: () =>
+          Effect.succeed({ activeCompanyIds: new Set([company]), workloadKeys: new Set(keys) }),
+      },
+    })
+      .decide({
+        carrier,
+        legalEntityScope: 'forbidden',
+        now: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-21T15:00:00.000Z')),
+        scope: storefrontCalledBy(appId),
+      })
+      .pipe(Effect.map(({ outcome }) => outcome));
+  };
+
+  it.effect("admits it as the subject of Commerce's and Pricing's calls and of no other module's", () =>
+    Effect.gen(function* storefrontSubject() {
+      expect(yield* decide('commerce-customer-context', ['commerce.storefront-client'])).toBe('ALLOWED');
+      expect(yield* decide('pricing', ['commerce.storefront-client'])).toBe('ALLOWED');
+      expect(yield* decide('catalog', ['commerce.storefront-client'])).toBe('DENIED');
+      expect(yield* decide('pricing', ['demo.storefront-client'])).toBe('DENIED');
+    }),
+  );
 });

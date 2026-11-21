@@ -1,10 +1,28 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
+import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
+import type { AccessDecision } from '@app/core-runtime/access/decision/contract';
+import type { GateInput } from '@app/core-runtime/access/enforcement';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
+import {
+  preserveSystemPrincipalContextTrust,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { DateTime, Deferred, Effect, Fiber, Option, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 
-import { ownerAuthorizationFromExit } from '@app/core-runtime';
+import { ownerAuthorizationFromExit, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { CommercePortalAuthSessionReadUnavailable } from '../../api/portal-auth/provider/session-read-unavailable.ts';
+import { bindScopedWorkloadAdmission } from '../../../../packages/core-runtime/src/access/enforcement/workload-admission.ts';
+import {
+  at,
+  makeAuthority,
+  makeCheck,
+  tenant,
+} from '../../../../packages/core-runtime/tests/unit/access-decision-support.ts';
+import { CustomerPriceGroupResolutionRequestSchema } from '../../shared/apis/customer-price-group-resolution.ts';
+import { customerPriceGroupOwnerFacts } from '../../src/api/customer-price-group-read-permission.ts';
+import { customerPriceGroupResolutionRead } from '../../src/api/customer-price-group-resolution.read.ts';
 import { makeCommerceCustomerContextOwnerAuthorizationOverlay } from '../../src/persistence/owner-authorization-overlay.ts';
 import type { CommercePortalSessionLivenessService } from '../../src/portal-auth/persistence/portal-auth-session-liveness.ts';
 
@@ -505,3 +523,219 @@ it.effect('does not accept unsealed credentials as source Assignment or receipt 
     expect(calls).toEqual([]);
   }),
 );
+
+/*
+ * The stage run: the Commerce portal prices a signed-in customer's page through Pricing for the Storefront client that
+ * relayed the session, and Pricing asks this resolution for that same workload. Core's own decision service decides the
+ * call over the read's real carrier (only its identity, workload registry and role ports are scripted), Core's own
+ * admission seals the transaction with the branch it chose, and the owner's real overlay decides on that seal.
+ */
+const company = LegalEntityIdSchema.make('c0c78a3e-6e2a-47e0-9d0d-86253499fee7');
+const otherCompany = LegalEntityIdSchema.make('c0c78a3e-6e2a-47e0-9d0d-86253499feff');
+const storefrontPrincipal = '183e774e-aa24-44e0-b524-f7ceac47c918';
+const profileId = '14604891-d3c2-4def-b165-5c889e8885ab';
+const now = at('2026-11-21T15:00:00.000Z');
+const storefrontOperationAt = DateTime.makeUnsafe('2026-11-21T15:00:00.000Z');
+
+const resolutionRequest = Schema.decodeUnknownSync(CustomerPriceGroupResolutionRequestSchema)({
+  authorizationSubject: { kind: 'RETAIL' },
+  effectiveAt: '2026-11-21T15:00:00.000Z',
+  profile: {
+    kind: 'RETAIL',
+    moduleId: 'commerce.customer-context',
+    resourceId: profileId,
+    resourceType: 'commerce.customer-context.retail-customer-profile',
+    tenantId: tenant,
+  },
+});
+const companyCounterpartyId = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f';
+const companyRequest = Schema.decodeUnknownSync(CustomerPriceGroupResolutionRequestSchema)({
+  authorizationSubject: {
+    counterpartyRef: {
+      moduleId: 'party.registry',
+      resourceId: companyCounterpartyId,
+      resourceType: 'party.registry.counterparty',
+      tenantId: tenant,
+    },
+    kind: 'COUNTERPARTY',
+  },
+  effectiveAt: '2026-11-21T15:00:00.000Z',
+  profile: {
+    kind: 'COUNTERPARTY',
+    moduleId: 'commerce.customer-context',
+    resourceId: '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a',
+    resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+    tenantId: tenant,
+  },
+});
+
+const { descriptor } = customerPriceGroupResolutionRead;
+const resolutionCarrier: GateInput['carrier'] = {
+  accessActor: descriptor.accessActor,
+  accessDeclaration: descriptor.accessDeclaration,
+};
+
+/** The Storefront client as the subject of a module call, with the Shell's seal of the calling module beside it. */
+const calledBy = (appId: string, companyId: string = company) => {
+  const subject = {
+    ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+      authBindingId: '70000000-0000-4000-8000-000000000001',
+      authContextRef: 'api_key:akros-playground-storefront',
+      authMethod: 'api_key',
+      legalEntityId: companyId,
+      principalId: storefrontPrincipal,
+      tenantId: tenant,
+    }),
+    correlationId: 'storefront-price-group-resolution',
+  };
+  const verified = trustVerifiedGatewayPrincipalContext(subject, 'c'.repeat(64), undefined, {
+    appId,
+    buildMarker: 'storefront-price-group-resolution-caller',
+    principalId: '66666666-6666-4666-8666-666666666666',
+  });
+  return preserveSystemPrincipalContextTrust(verified, { ...verified, correlationId: subject.correlationId });
+};
+type CallScope = ReturnType<typeof calledBy>;
+
+/** The workload registry the stage holds: the storefront principal bound to these keys, registered for these companies. */
+const gateFor = (keys: readonly string[], companies: readonly string[] = [company]) => {
+  const authority = {
+    cells: [],
+    legalEntityScope: { _tag: 'LegalEntity' as const, legalEntityId: company, tenantId: tenant },
+  };
+  return makeAccessDecisionService({
+    authorityFor: () => makeAuthority(authority).port,
+    check: makeCheck({ authority }).port,
+    decisionLog: { record: () => Effect.void },
+    legalEntities: { listCandidateIds: () => Effect.succeed([company]) },
+    principalKinds: { readKind: () => Effect.succeed(Option.some('service' as const)) },
+    workloadBindings: {
+      readWorkloadAuthority: () =>
+        Effect.succeed({
+          activeCompanyIds: new Set(companies.map((id) => LegalEntityIdSchema.make(id))),
+          workloadKeys: new Set(keys),
+        }),
+    },
+  });
+};
+const decide = (callScope: CallScope, keys: readonly string[], companies?: readonly string[]) =>
+  gateFor(keys, companies).decide({ carrier: resolutionCarrier, legalEntityScope: 'required', now, scope: callScope });
+
+/** The owner's routines over the scoped transaction of the read's own company, each row decoded by its schema. */
+const storefrontTransaction = (callScope: CallScope, handler: RoutineHandler): ScopedTransactionExecutor => ({
+  ...transactionWith(handler),
+  scope: { legalEntityId: callScope.legalEntityId, tenantId: callScope.tenantId },
+});
+
+/** The transaction exactly as the read runtime hands it to the owner overlay: sealed with the gate's own decision. */
+const sealed = (callScope: CallScope, decision: AccessDecision | undefined, handler: RoutineHandler) =>
+  bindScopedWorkloadAdmission(
+    storefrontTransaction(callScope, handler),
+    { carrier: resolutionCarrier, scope: callScope },
+    decision,
+  ).transaction;
+
+const ownerInput = (callScope: CallScope, request: typeof resolutionRequest): OwnerAuthorizationInput => ({
+  capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+  operation: 'read',
+  operationAt: storefrontOperationAt,
+  operationKey: descriptor.readKey,
+  ownerFacts: customerPriceGroupOwnerFacts(request),
+  owningModuleKey: 'commerce.customer-context',
+  scope: callScope,
+  targets: [],
+});
+
+const PROFILE_INSPECT = 'price-group.profile.inspect';
+/** The selling company's own Retail profile, current at the instant. */
+const retailProfileOfThisCompany = (routineKey: string): readonly object[] =>
+  routineKey === PROFILE_INSPECT
+    ? [{ counterparty_resource_id: null, outcome: 'CURRENT', profile_state: 'ACTIVE', revision: 1 }]
+    : [];
+
+/** The caller is bound to no Retail profile: what the Retail rule reads for a caller that is not the customer. */
+const notBoundToTheStorefront = (routineKey: string): readonly object[] =>
+  routineKey === 'profile.resolve-principal'
+    ? [
+        {
+          outcome: 'RETAIL_PRINCIPAL_NOT_BOUND',
+          payload: { observedAt: '2026-11-21T15:00:00.000Z', profileId, revision: 1 },
+        },
+      ]
+    : retailProfileOfThisCompany(routineKey);
+
+describe("a storefront-relayed resolution of its own shop's Retail customer", () => {
+  it.effect('is admitted by the gate as commerce.storefront-client and by the owner rule for that profile', () =>
+    Effect.gen(function* admitted() {
+      const callScope = calledBy('pricing');
+      const decision = yield* decide(callScope, ['commerce.storefront-client']);
+      expect(decision.outcome).toBe('ALLOWED');
+      const routineCalls: (readonly [string, readonly unknown[]])[] = [];
+      const answer = yield* makeCommerceCustomerContextOwnerAuthorizationOverlay().authorize(
+        sealed(callScope, decision, (routineKey, values) => {
+          routineCalls.push([routineKey, values]);
+          return retailProfileOfThisCompany(routineKey);
+        }),
+        ownerInput(callScope, resolutionRequest),
+      );
+      expect(answer).toBe('allowed');
+      // Only the profile's own company is asked: a Retail profile with this id, at the operation's instant.
+      expect(routineCalls).toEqual([[PROFILE_INSPECT, [profileId, 'RETAIL', '2026-11-21T15:00:00.000Z', null]]]);
+    }),
+  );
+
+  it.effect('refuses a profile that is no Retail profile of the company the storefront is registered for', () =>
+    Effect.gen(function* foreignProfile() {
+      const callScope = calledBy('pricing');
+      const decision = yield* decide(callScope, ['commerce.storefront-client']);
+      const answer = yield* makeCommerceCustomerContextOwnerAuthorizationOverlay().authorize(
+        sealed(callScope, decision, (routineKey) =>
+          routineKey === PROFILE_INSPECT
+            ? [{ counterparty_resource_id: null, outcome: 'NOT_FOUND', profile_state: null, revision: 0 }]
+            : [],
+        ),
+        ownerInput(callScope, resolutionRequest),
+      );
+      expect(answer).toEqual({ decision: 'denied', reasons: ['deny.owner.storefront_profile_outside_company'] });
+    }),
+  );
+
+  it.effect("refuses another company's storefront, another workload and another calling module at the gate", () =>
+    Effect.gen(function* refusedAtGate() {
+      // Registered only for another company: the workload may not act in this one.
+      expect((yield* decide(calledBy('pricing'), ['commerce.storefront-client'], [otherCompany])).outcome).toBe(
+        'DENIED',
+      );
+      expect((yield* decide(calledBy('pricing'), ['demo.storefront-client'])).outcome).toBe('DENIED');
+      expect((yield* decide(calledBy('catalog'), ['commerce.storefront-client'])).outcome).toBe('DENIED');
+    }),
+  );
+
+  it.effect('decides a call without the storefront branch and a company profile exactly as before', () =>
+    Effect.gen(function* unchanged() {
+      const callScope = calledBy('pricing');
+      const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+      // Admitted without a workload branch (a person): the Retail rule asks whether the caller is bound to the profile.
+      expect(
+        yield* overlay.authorize(
+          sealed(callScope, undefined, notBoundToTheStorefront),
+          ownerInput(callScope, resolutionRequest),
+        ),
+      ).toEqual({
+        decision: 'denied',
+        reasons: ['deny.owner.retail_binding_not_found', 'requires.retail.profile.read'],
+      });
+      // A Counterparty (B2B) profile still needs the caller's own Counterparty grant, storefront or not.
+      const decision = yield* decide(callScope, ['commerce.storefront-client']);
+      expect(
+        yield* overlay.authorize(
+          sealed(callScope, decision, () => []),
+          ownerInput(callScope, companyRequest),
+        ),
+      ).toEqual({
+        decision: 'denied',
+        reasons: ['deny.owner.counterparty_grant_missing', 'requires.counterparty.profile.read'],
+      });
+    }),
+  );
+});

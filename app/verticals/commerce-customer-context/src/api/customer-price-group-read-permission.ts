@@ -13,7 +13,9 @@ export interface CustomerPriceGroupReadPermissionInput {
 /**
  * The owner-local facts of a customer price-group read (O67-Q1, O70): a counterparty subject is
  * checked against that counterparty's own profile grant, a Retail subject against the Retail Portal
- * profile capability. The v2 declaration gates the read itself, and a missing fact denies.
+ * profile capability. The v2 declaration gates the read itself, and a missing fact denies. On the demo line, a
+ * Retail profile's resolution is also admitted for the storefront workload of the profile's own selling company (see
+ * `authorizeStorefrontRetailPriceGroup` in the owner overlay).
  */
 export const customerPriceGroupOwnerFacts = (input: CustomerPriceGroupReadPermissionInput): OwnerAccessFacts =>
   input.authorizationSubject.kind === 'RETAIL'

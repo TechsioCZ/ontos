@@ -13,7 +13,7 @@ import type {
   PriceGroupAssignmentResolutionResponse,
 } from '@app/pricing-contracts/domain/price-group-interpretation';
 import type { StablePriceGroupRef } from '@app/price-group-catalog-contracts/price-group';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -25,6 +25,8 @@ import {
   tenant,
 } from '../../../../packages/core-runtime/tests/unit/access-decision-support.ts';
 import { CatalogPagePricesRequestSchema } from '../../shared/apis/catalog-page-prices.ts';
+import { makeCommerceResolutionPort } from '../../src/integrations/commerce-price-group-resolution.ts';
+import { makePriceGroupCompatibilityPort } from '../../src/integrations/price-group-compatibility.ts';
 import type { CatalogPagePrice, CatalogPagePriceItem } from '../../shared/apis/catalog-page-prices.ts';
 import { catalogPagePricesRead } from '../../src/api/catalog-page-prices.read.ts';
 import {
@@ -886,6 +888,141 @@ describe('catalogue page Price admission', () => {
       expect(
         yield* decide({ keys: ['commerce.storefront-client'], kind: 'human' }, callerScope('session')),
       ).toMatchObject({ outcome: 'DENIED' });
+    }),
+  );
+});
+
+/*
+ * The stage run of the Akros storefront: the demo customer's Retail profile holds VELKOOBCHOD, whose Price of the screw
+ * on the key B2C / the Akros market / CZK / one unit is 2.25. Commerce's resolution and the Price Group Catalog answer
+ * through Pricing's own ports, each with all of its checks; only the transport under them is scripted.
+ */
+/** The owner's Current Tenant Currency Support proof. */
+const currentSupport = () => Effect.succeed({ _tag: 'current' as const, current: storedSupport });
+/** A live owner connection; the owner call under it is scripted. */
+const ownerConnection = () =>
+  Effect.succeed({ baseUrl: new URL('https://owner.example.test'), credential: Redacted.make('credential') });
+
+describe("the Akros storefront's signed-in demo customer", () => {
+  const stageMarket = 'e57c614d-3911-5a52-941e-29168b1db5e4';
+  const velkoobchod = { ...priceGroupRef, resourceId: '64cc6324-0de4-418d-bbec-7fe26077db8c' };
+  const stageCustomer = {
+    ...customer,
+    profile: { ...customer.profile, resourceId: '14604891-d3c2-4def-b165-5c889e8885ab' },
+  } as const;
+  const screw = variantIds.priced;
+  const withoutGroupPrice = variantIds.tiered;
+  const stageRequest = Schema.decodeUnknownSync(CatalogPagePricesRequestSchema)({
+    channelId: 'B2C',
+    currencyCode: 'CZK',
+    items: [itemFor(screw), itemFor(withoutGroupPrice)],
+    marketId: stageMarket,
+  });
+  const screwGroupRef = priceRefFor('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb25');
+  const screwRef = priceRefFor('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb75');
+  /** VELKOOBCHOD prices only the screw; both variants have a no-group Price. */
+  const stageLookup =
+    (lookups: ExactPriceLookupRequest[]): ExactPriceResolutionDependencies['lookupExact'] =>
+    (lookup) => {
+      lookups.push(lookup);
+      const variantId = lookup.exactKey.catalogSelection.variantRef.resourceId;
+      const selector = lookup.exactKey.priceGroupSelector;
+      if (selector.kind === 'PRICE_GROUP') {
+        return Effect.succeed(
+          variantId === screw && selector.priceGroupRef.resourceId === velkoobchod.resourceId
+            ? found(lookup, screwGroupRef, '2.250000000', 'cccccccc-cccc-4ccc-8ccc-cccccccccc25')
+            : { _tag: 'ABSENT' as const, evidence, request: lookup },
+        );
+      }
+      return Effect.succeed(
+        variantId === screw
+          ? found(lookup, screwRef, '2.750000000', 'cccccccc-cccc-4ccc-8ccc-cccccccccc75')
+          : found(lookup, tieredRef, '10.500000000', 'cccccccc-cccc-4ccc-8ccc-cccccccccc10'),
+      );
+    };
+  const stageOwner = (lookups: ExactPriceLookupRequest[]): CatalogPagePricesOwnerReads => ({
+    loadCurrencySupport: currentSupport,
+    readCurrentQuantityTierSet: ({ priceRef }) => Effect.succeed(tierSetFor(priceRef)),
+    resolveExactPrice: makeExactPriceResolutionService({
+      loadCurrencySupport: currentSupport,
+      lookupExact: stageLookup(lookups),
+    }).resolve,
+  });
+  const owners = {
+    compositionRevision: 'c'.repeat(64),
+    legalEntityId,
+    requestCorrelation: 'stage-customer-page',
+    scope: { ...callerScope('api_key'), legalEntityId },
+    tenantId,
+  };
+  /** Commerce answers VELKOOBCHOD for the profile; the Catalog proves it on its own clock, after the instant. */
+  const { interpret } = makePriceGroupInterpretationService({
+    commerce: makeCommerceResolutionPort({
+      acquire: ownerConnection,
+      context: owners,
+      execute: () => Effect.succeed(assigned(velkoobchod, stageCustomer.profile)),
+    }),
+    compatibility: makePriceGroupCompatibilityPort({
+      acquire: ownerConnection,
+      context: owners,
+      execute: (validation) =>
+        Effect.succeed({ evidence: compatibilityFor(validation.priceGroupRef), kind: 'USABLE' as const }),
+    }),
+  });
+
+  it.effect('pays 2.25 for the screw with VELKOOBCHOD, and the no-group Price where the group has none', () =>
+    Effect.gen(function* stageCustomerPage() {
+      const lookups: ExactPriceLookupRequest[] = [];
+      const variants = yield* customerCatalogPageVariants(stageRequest, stageCustomer, trusted, interpret);
+      const prices = pricesOf(yield* readCatalogPagePrices(trusted, stageOwner(lookups), variants));
+      expect(prices.map(answerOf)).toEqual([
+        {
+          channelId: 'B2C',
+          kind: 'PRICE_FOUND',
+          priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: velkoobchod },
+          priceRef: screwGroupRef,
+          priceRevision: {
+            effectiveFrom: '2026-09-01T00:00:00.000Z',
+            monetaryAmount: { amount: '2.250000000', currencyCode: 'CZK' },
+            monetaryBoundary: 'PRE_TAX',
+            revision: 2,
+            revisionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccc25',
+          },
+        },
+        {
+          channelId: 'B2C',
+          kind: 'PRICE_FOUND',
+          priceGroupSelector: { kind: 'NO_GROUP' },
+          priceRef: tieredRef,
+          priceRevision: {
+            effectiveFrom: '2026-09-01T00:00:00.000Z',
+            monetaryAmount: { amount: '10.500000000', currencyCode: 'CZK' },
+            monetaryBoundary: 'PRE_TAX',
+            revision: 2,
+            revisionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccc10',
+          },
+        },
+      ]);
+      // The group key first; the no-group key only for the variant the group proves it does not price.
+      expect(
+        lookups.map(({ exactKey }) => [
+          exactKey.catalogSelection.variantRef.resourceId,
+          exactKey.priceGroupSelector.kind,
+        ]),
+      ).toEqual([
+        [screw, 'PRICE_GROUP'],
+        [withoutGroupPrice, 'PRICE_GROUP'],
+        [withoutGroupPrice, 'NO_GROUP'],
+      ]);
+      for (const { exactKey } of lookups) {
+        expect(exactKey.commercialScope).toEqual({
+          channelId: 'B2C',
+          marketId: stageMarket,
+          sellingLegalEntityId: legalEntityId,
+        });
+        expect(exactKey.currencyCode).toBe('CZK');
+        expect(exactKey.unitBasis).toEqual({ quantity: '1', unitRef });
+      }
     }),
   );
 });
