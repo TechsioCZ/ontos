@@ -563,8 +563,15 @@ const configuration = ConfigProvider.fromEnvRecord({
 interface ReviseProblem {
   readonly _tag: string;
   readonly code: string;
+  /** The owner Action that refuses; a REVISE by default. */
+  readonly path?: string;
   readonly status: number;
 }
+/** The current localized text Catalog holds for every source record the lookup names in a locale. */
+const currentSourceText = { name: 'Kladivo', revision: 3 };
+/** The further Variant source record Catalog binds to its own Variant; every other one is the initial Variant. */
+const furtherVariantRecordId = 'further-variant-1';
+const furtherVariantId = '10000000-0000-4000-8000-000000000031';
 /** The Pricing owner reads and refusals the batch route adds: the current definition of a price and a REVISE refusal. */
 const pricingOwnerMock = (
   request: Request,
@@ -574,11 +581,12 @@ const pricingOwnerMock = (
   if (request.url.includes('/reads/price-group-catalog-head')) {
     return { event: 'owner-catalog-head-read', response: Response.json({ catalogRevision: 6 }) };
   }
-  if (reviseProblem !== undefined && request.url.includes('/actions/revise-price')) {
+  if (reviseProblem !== undefined && request.url.includes(reviseProblem.path ?? '/actions/revise-price')) {
+    const { path: _path, ...problem } = reviseProblem;
     return {
       event: 'owner-write',
       response: Response.json(
-        { ...reviseProblem, detail: 'Internal owner refusal', title: 'Refused', type: 'https://ontos.dev/problems/x' },
+        { ...problem, detail: 'Internal owner refusal', title: 'Refused', type: 'https://ontos.dev/problems/x' },
         { headers: { 'content-type': 'application/problem+json' }, status: reviseProblem.status },
       ),
     };
@@ -604,6 +612,45 @@ const pricingOwnerMock = (
           outcome: 'PRICE_DEFINITION_CURRENT',
         }),
       }
+    : undefined;
+};
+
+const sourceLookupResponse = (request: Request, lookupProductId: string) =>
+  request
+    .clone()
+    .json()
+    .then((body: { readonly entityKind: string; readonly locale?: string; readonly recordId: string }) => {
+      const owned = { ...productRef, resourceId: lookupProductId };
+      const item = {
+        entityKind: body.entityKind,
+        originalActionInvocationId: invocationId,
+        product: {
+          ...result.product,
+          productRef: owned,
+          variants: result.product.variants.map((variant) => ({ ...variant, productRef: owned })),
+        },
+        source: sourceCorrelation,
+        variantId: body.recordId === furtherVariantRecordId ? furtherVariantId : variantId,
+        variantSources: [],
+      };
+      if (body.locale !== undefined) {
+        Object.assign(item, { localized: currentSourceText });
+      }
+      return Response.json({ items: [item], outcome: 'FOUND' });
+    });
+/**
+ * The Catalog source lookup (with the record's current text when it names a locale) and the localized facts writes and
+ * recoveries, which answer one new revision of the text.
+ */
+const catalogOwnerMock = (request: Request, lookupProductId: string) => {
+  if (request.url.includes('localized-facts')) {
+    return {
+      event: request.url.includes('/reads/') ? 'owner-recovery' : 'owner-write',
+      response: Promise.resolve(Response.json({ changed: true, revision: currentSourceText.revision + 1 })),
+    };
+  }
+  return request.url.includes('/reads/catalog-source-products')
+    ? { event: 'owner-source-read', response: sourceLookupResponse(request, lookupProductId) }
     : undefined;
 };
 
@@ -685,30 +732,10 @@ const harness = (
       events.push('owner-price-recovery');
       return Promise.resolve(Response.json(priceWire.receipt));
     }
-    if (request.url.includes('/reads/catalog-source-products')) {
-      events.push('owner-source-read');
-      return Promise.resolve(
-        Response.json({
-          items: [
-            {
-              entityKind: 'PRODUCT',
-              originalActionInvocationId: invocationId,
-              product: {
-                ...result.product,
-                productRef: { ...productRef, resourceId: lookupProductId },
-                variants: result.product.variants.map((variant) => ({
-                  ...variant,
-                  productRef: { ...productRef, resourceId: lookupProductId },
-                })),
-              },
-              source: sourceCorrelation,
-              variantId,
-              variantSources: [],
-            },
-          ],
-          outcome: 'FOUND',
-        }),
-      );
+    const catalogMock = catalogOwnerMock(request, lookupProductId);
+    if (catalogMock !== undefined) {
+      events.push(catalogMock.event);
+      return catalogMock.response;
     }
     events.push(request.url.includes('/reads/') ? 'owner-recovery' : 'owner-write');
     if (request.url.includes('/actions/import-source-assertion')) {
@@ -1576,6 +1603,33 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
+  it.effect('settles a lifecycle update Catalog refuses as not catalog ready instead of retrying it', () => {
+    const h = harness(
+      false,
+      updateEffect,
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      {
+        _tag: 'UpdateProductActionIneligibleProblem',
+        code: 'product_not_catalog_ready',
+        path: '/actions/update-product',
+        status: 422,
+      },
+    );
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute(h.input);
+        expect(outcome.status).toBe('unresolved');
+        expect(h.events.filter((event) => event === 'owner-write')).toHaveLength(1);
+      }),
+    );
+  });
   it.effect('refuses a batch REVISE whose intent names no price list', () => {
     const h = harness(false, priceReviseEffect());
     return h.provide(
@@ -1964,6 +2018,7 @@ const dependentEffect = (
   request: ResolutionFields,
   operation: { readonly entrypointKey: string; readonly moduleId: string; readonly schemaVersion: string },
   named: readonly (typeof productParent)[] = [],
+  record: { readonly entityKind: string; readonly sourceRecordId: string } = effect.ref.occurrence.record,
 ) => {
   const [variant] = named;
   const intent = { _tag: 'CatalogProductDependentEffect', parent: productParent, request };
@@ -1971,7 +2026,11 @@ const dependentEffect = (
     ...effect,
     dependsOn: [productParent, ...named],
     intent: variant === undefined ? intent : { ...intent, variantParent: variant },
-    ref: { ...effect.ref, operation },
+    ref: {
+      ...effect.ref,
+      occurrence: { ...effect.ref.occurrence, record: { ...effect.ref.occurrence.record, ...record } },
+      operation,
+    },
   });
 };
 const updateOperation = {
@@ -1998,7 +2057,6 @@ const factsEffectOf = (named: readonly (typeof productParent)[] = []) =>
       _tag: 'SetVariantLocalizedFacts',
       payload: {
         evidenceRefs: ['symmy-product:key:0'],
-        expectedRevision: 0,
         facts: { name: 'Chair' },
         locale: 'en',
         reason: 'Symmy product import',
@@ -2006,7 +2064,45 @@ const factsEffectOf = (named: readonly (typeof productParent)[] = []) =>
     },
     factsOperation,
     named,
+    { entityKind: 'VARIANT', sourceRecordId: named.length > 0 ? furtherVariantRecordId : 'initial-variant-1' },
   );
+const productFactsOperation = {
+  entrypointKey: 'commerce.catalog.set-product-localized-facts',
+  moduleId: 'commerce.catalog',
+  schemaVersion: '1',
+};
+const productTextRequest = {
+  evidenceRefs: ['symmy-product:key:0'],
+  facts: { description: 'Ocelové kladivo', name: 'Kladivo 500 g' },
+  locale: 'cs-CZ',
+  reason: 'Symmy product import',
+};
+const productFactsEffectOf = () =>
+  dependentEffect({ _tag: 'SetProductLocalizedFacts', payload: productTextRequest }, productFactsOperation);
+/** The Product text command once resolved, at the revision Catalog holds for it. */
+const resolvedProductTextOf = (facts: ResolutionFields) =>
+  Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...effect,
+    intent: {
+      _tag: 'CatalogSetProductLocalizedFacts',
+      payload: { ...productTextRequest, expectedRevision: currentSourceText.revision, facts, productRef },
+    },
+    ref: { ...effect.ref, operation: productFactsOperation, originalTarget: productRef },
+  });
+/** The locales the Catalog source lookups of a run named, in order. */
+const lookupLocales = Effect.fn('CpiAdapterFixture.lookupLocales')(function* lookupLocales(
+  requests: readonly Request[],
+) {
+  return yield* Effect.forEach(
+    requests.filter((request) => request.url.includes('/reads/catalog-source-products')),
+    Effect.fn('CpiAdapterFixture.lookupLocale')(function* lookupLocale(request) {
+      const body = yield* Effect.promise(() => request.clone().text());
+      return Schema.decodeUnknownSync(
+        Schema.fromJsonString(Schema.Struct({ locale: Schema.optionalKey(Schema.String) })),
+      )(body).locale;
+    }),
+  );
+});
 const priceEffectOf = () => {
   const planned = priceDefinitionEffect(priceGroupA);
   const priceIntent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[7])(planned.intent);
@@ -2039,6 +2135,7 @@ const resolutionOf = (
 const resolvedIntentOf = (resolved: SymmyPinnedEffect | undefined) => ({
   payload: Match.value(resolved?.intent).pipe(
     Match.tags({
+      CatalogSetProductLocalizedFacts: ({ payload }) => payload,
       CatalogSetVariantLocalizedFacts: ({ payload }) => payload,
       CatalogUpdateProduct: ({ payload }) => payload,
       PriceDefine: ({ payload }) => payload,
@@ -2068,16 +2165,79 @@ describe('Symmy commands on the Product the same job creates', () => {
       const [initialResolved] = initial.h.resolvedEffects;
       expect(resolvedIntentOf(initialResolved).tag).toBe('CatalogSetVariantLocalizedFacts');
       expect(resolvedIntentOf(initialResolved).payload).toMatchObject({
+        expectedRevision: currentSourceText.revision,
         facts: { name: 'Chair' },
         locale: 'en',
         productRef,
         variantRef,
       });
       expect(initialResolved?.ref.originalTarget).toEqual(variantRef);
+      // The revision is the one Catalog holds for the text's locale, read before the command is recorded.
+      expect((yield* lookupLocales(initial.h.requests))[0]).toBe('en');
+      expect(initial.h.events.indexOf('owner-source-read')).toBeLessThan(initial.h.events.indexOf('resolved-target'));
       const further = yield* resolutionOf(factsEffectOf([variantParent]), [parentState, variantParentState]);
       const [furtherResolved] = further.h.resolvedEffects;
-      expect(resolvedIntentOf(furtherResolved).payload).toMatchObject({ productRef, variantRef: furtherVariantRef });
+      expect(resolvedIntentOf(furtherResolved).payload).toMatchObject({
+        expectedRevision: currentSourceText.revision,
+        productRef,
+        variantRef: furtherVariantRef,
+      });
       expect(furtherResolved?.ref.originalTarget).toEqual(furtherVariantRef);
+    }),
+  );
+
+  it.effect('resolves a Product text to the Product of the receipt at the revision Catalog holds for it', () =>
+    Effect.gen(function* resolvesProductText() {
+      const { h } = yield* resolutionOf(productFactsEffectOf(), [parentState]);
+      const [resolved] = h.resolvedEffects;
+      expect(resolvedIntentOf(resolved)).toEqual({
+        payload: { ...productTextRequest, expectedRevision: currentSourceText.revision, productRef },
+        tag: 'CatalogSetProductLocalizedFacts',
+      });
+      expect(resolved?.ref.originalTarget).toEqual(productRef);
+      expect((yield* lookupLocales(h.requests))[0]).toBe('cs-CZ');
+      expect(h.events.indexOf('resolved-target')).toBeLessThan(h.events.indexOf('owner-write'));
+      // A record Catalog binds to another Product than the receipt names is never written.
+      const elsewhere = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: variantRef,
+            productRef: { ...productRef, resourceId: '10000000-0000-4000-8000-0000000000cc' },
+          }),
+        ),
+      };
+      const bound = yield* resolutionOf(productFactsEffectOf(), [elsewhere]);
+      expect(Exit.isFailure(bound.exit)).toBe(true);
+      expect(bound.h.resolvedEffects).toHaveLength(0);
+      expect(bound.h.events).not.toContain('owner-write');
+    }),
+  );
+
+  it.effect('writes a changed Product text at its revision and reports an unchanged one without a write', () =>
+    Effect.gen(function* writesProductText() {
+      const changed = harness(false, resolvedProductTextOf({ name: 'Kladivo 500 g' }));
+      yield* changed.provide(
+        Effect.gen(function* change() {
+          const adapter = yield* changed.adapter;
+          const outcome = yield* adapter.execute(changed.input);
+          expect(outcome.status).toBe('accepted_change');
+          const writes = changed.requests.filter((request) => request.url.includes('/actions/'));
+          expect(writes).toHaveLength(1);
+          expect(writes[0]?.url).toContain('/actions/set-product-localized-facts');
+        }),
+      );
+      const unchanged = harness(false, resolvedProductTextOf({ name: currentSourceText.name }));
+      yield* unchanged.provide(
+        Effect.gen(function* same() {
+          const adapter = yield* unchanged.adapter;
+          const outcome = yield* adapter.execute(unchanged.input);
+          expect(outcome.status).toBe('accepted_no_change');
+          expect(unchanged.events).not.toContain('owner-write');
+        }),
+      );
     }),
   );
 

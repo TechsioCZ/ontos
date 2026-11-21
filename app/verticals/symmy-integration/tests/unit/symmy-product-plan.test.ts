@@ -41,6 +41,7 @@ const createProduct = operation('commerce.catalog', 'commerce.catalog.create-pro
 const updateProduct = operation('commerce.catalog', 'commerce.catalog.update-product', '1');
 const createVariant = operation('commerce.catalog', 'commerce.catalog.create-variant', '2');
 const variantFacts = operation('commerce.catalog', 'commerce.catalog.set-variant-localized-facts', '1');
+const productFacts = operation('commerce.catalog', 'commerce.catalog.set-product-localized-facts', '1');
 const priceDefine = operation('commerce.pricing', 'commerce.pricing.define-price', '2');
 const priceDefaults = {
   commercialScope: { channelId: 'B2B', marketId: 'cz-market' },
@@ -53,7 +54,7 @@ const templateInput = (defaults?: typeof priceDefaults) => {
   };
   return {
     items: [
-      enroll('PRODUCT', 'enrolled-product', createProduct, updateProduct),
+      enroll('PRODUCT', 'enrolled-product', createProduct, updateProduct, productFacts),
       enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts),
       enroll('PRICE', 'enrolled-price', priceDefine),
     ],
@@ -140,6 +141,14 @@ const priceRequestOf = (effect: Effect_) =>
     ),
   );
 const requestTagOf = (effect: Effect_) => dependentOf(effect)?.request._tag;
+const textRequestOf = (effect: Effect_) =>
+  Option.getOrUndefined(
+    Match.value(dependentOf(effect)?.request).pipe(
+      Match.when({ _tag: 'SetProductLocalizedFacts' }, ({ payload }) => payload),
+      Match.when({ _tag: 'SetVariantLocalizedFacts' }, ({ payload }) => payload),
+      Match.option,
+    ),
+  );
 const variantCreateOf = (effect: Effect_) =>
   Option.getOrUndefined(
     Match.value(effect.intent).pipe(
@@ -380,6 +389,7 @@ describe('Symmy product plan from the public rows', () => {
         rowsOf(product({ lifecycle: 'ACTIVE' })),
         rowsOf(product({}, [variant(), variant()])),
         rowsOf(product({}, [variant({ localized: [{ locale: 'en', name: 'Chair' }] })])),
+        rowsOf(product({ localized: [{ locale: 'cs-CZ', name: 'Židle' }] })),
         rowsOf(product({}, [variant({ prices: [price()] })])),
       ]) {
         expect(Option.isNone(yield* build(rows, { template: narrow }))).toBe(true);
@@ -428,6 +438,71 @@ describe('Symmy product plan from the public rows', () => {
       expect(requestTagOf(effectOf(plan, 'product-0-variant-0-price-0', 'price-define'))).toBe('DefinePrice');
     }),
   );
+
+  it.effect('writes each text of the product as its localized facts, on the first import and on every re-send', () =>
+    Effect.gen(function* productTexts() {
+      const rows = rowsOf(
+        product(
+          {
+            identifier: { type: 'erpId', value: 'AKROS-1' },
+            lifecycle: 'ACTIVE',
+            localized: [
+              { description: 'Ocelové kladivo', locale: 'cs-CZ', name: 'Kladivo' },
+              { locale: 'en', name: 'Hammer' },
+            ],
+          },
+          [variant({ identifier: { type: 'variantId', value: 'AKROS-1-A' } })],
+        ),
+      );
+      const plan = Option.getOrThrow(yield* build(rows));
+      expect(itemKeys(plan)).toEqual(['product-0']);
+      const parent = { effectKey: 'product-create', itemKey: 'product-0' };
+      const czech = effectOf(plan, 'product-0', 'product-facts-0');
+      expect(czech.operation).toEqual(productFacts);
+      expect(czech.dependsOn).toEqual(['product-create']);
+      expect(czech.originalTarget).toBeUndefined();
+      expect(dependentOf(czech)?.parent).toEqual(parent);
+      expect(dependentOf(czech)?.variantParent).toBeUndefined();
+      expect(requestTagOf(czech)).toBe('SetProductLocalizedFacts');
+      expect(textRequestOf(czech)).toEqual({
+        evidenceRefs: textRequestOf(effectOf(plan, 'product-0', 'product-facts-1'))?.evidenceRefs,
+        facts: { description: 'Ocelové kladivo', name: 'Kladivo' },
+        locale: 'cs-CZ',
+        reason: 'Symmy product import',
+      });
+      // The owner's current revision is read when the text is written, never planned.
+      expect(textRequestOf(czech)).not.toHaveProperty('expectedRevision');
+      expect(textRequestOf(effectOf(plan, 'product-0', 'product-facts-1'))?.facts).toEqual({ name: 'Hammer' });
+      // An activation needs a localized name, so the lifecycle waits for the texts.
+      expect(effectOf(plan, 'product-0', 'product-update').dependsOn).toEqual([
+        'product-create',
+        'product-facts-0',
+        'product-facts-1',
+      ]);
+      expect(itemOf(plan, 'product-0').unsupportedBranches).toBeUndefined();
+      const resent = Option.getOrThrow(yield* build(rows, { idempotencyKey: 'product-key-2' }));
+      expect(effectOf(resent, 'product-0', 'product-facts-0').intent).toEqual(czech.intent);
+      expect(effectOf(resent, 'product-0', 'product-create').intent).toEqual(
+        effectOf(plan, 'product-0', 'product-create').intent,
+      );
+    }),
+  );
+
+  it.effect('plans a variant text without a revision, so a later change is written at the current one', () =>
+    Effect.gen(function* variantTexts() {
+      const plan = Option.getOrThrow(
+        yield* build(rowsOf(product({}, [variant({ localized: [{ locale: 'cs-CZ', name: 'Červená' }] })]))),
+      );
+      const text = textRequestOf(effectOf(plan, 'product-0-variant-0', 'variant-facts-0'));
+      expect(text).toEqual({
+        evidenceRefs: text?.evidenceRefs,
+        facts: { name: 'Červená' },
+        locale: 'cs-CZ',
+        reason: 'Symmy product import',
+      });
+      expect(text).not.toHaveProperty('expectedRevision');
+    }),
+  );
 });
 
 describe('Symmy product plan size', () => {
@@ -439,12 +514,16 @@ describe('Symmy product plan size', () => {
         variants: [{ localized: texts(2), prices: [{}] }, { prices: [{}, {}] }],
       }),
     ).toEqual({ effects: 1 + 1 + 1 + 2 + 3, items: 1 + 2 + 3 });
+    expect(symmyProductPlanSize({ localized: texts(2), variants: [{}] })).toEqual({ effects: 1 + 2, items: 1 });
   });
 
   it('accepts a product of 32 effects and rejects one of 33', () => {
     const decode = Schema.decodeUnknownResult(SymmyProductRowsSchema);
     expect(Result.isSuccess(decode([product({}, [variant({ localized: texts(31) })])]))).toBe(true);
     expect(Result.isFailure(decode([product({}, [variant({ localized: texts(32) })])]))).toBe(true);
+    expect(Result.isFailure(decode([product({ localized: texts(16) }, [variant({ localized: texts(16) })])]))).toBe(
+      true,
+    );
   });
 
   it('rejects a request that needs more than sixteen plan items', () => {

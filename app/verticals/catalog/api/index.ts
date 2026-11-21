@@ -637,7 +637,10 @@ export const makeCatalogApiRuntime = (
     setProductBrandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setProductBrandRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setProductLocalizedFactsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    setProductLocalizedFactsRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    setProductLocalizedFactsRecoveryReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      Layer.provide(governedActionRuntimeLive),
+    ),
     setProductManufacturerActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setProductManufacturerRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setProductTypeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

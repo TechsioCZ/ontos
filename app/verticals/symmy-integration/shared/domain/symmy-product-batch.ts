@@ -77,6 +77,8 @@ export const SymmyProductRowSchema = Schema.Struct({
     Schema.Struct({ type: Schema.Literals(['sku', 'ean', 'erpId']), value: identifierValue }),
   ),
   lifecycle: Schema.optionalKey(ProductLifecycleSchema),
+  /** The Product's own texts, one per locale, written as Catalog's localized Product facts. */
+  localized: Schema.optionalKey(Schema.Array(SymmyProductLocalizedSchema)),
   name: ProductNameSchema,
   unsupported: Schema.Array(SymmyProductHintKindSchema).check(
     Schema.makeFilter(
@@ -89,6 +91,7 @@ export type SymmyProductRow = typeof SymmyProductRowSchema.Type;
 
 interface SizedProduct {
   readonly lifecycle?: 'DRAFT' | 'ACTIVE' | 'RETIRED' | undefined;
+  readonly localized?: readonly unknown[] | undefined;
   readonly variants: readonly {
     readonly localized?: readonly unknown[] | undefined;
     readonly prices?: readonly unknown[] | undefined;
@@ -96,12 +99,16 @@ interface SizedProduct {
 }
 
 /**
- * What a product needs in a plan: a create (and an update for a lifecycle other than the created DRAFT), one
- * create per further variant, one text effect per localized text and one define per price. A source record
- * belongs to one item, so the product, each variant that has its own effects and each price is an item.
+ * What a product needs in a plan: a create (and an update for a lifecycle other than the created DRAFT), one text
+ * effect per localized text of the product, one create per further variant, one text effect per localized text of a
+ * variant and one define per price. A source record belongs to one item, so the product, each variant that has its
+ * own effects and each price is an item.
  */
-export const symmyProductPlanSize = ({ lifecycle, variants }: SizedProduct) => {
-  const texts = variants.reduce((total, variant) => total + (variant.localized?.length ?? 0), 0);
+export const symmyProductPlanSize = ({ lifecycle, localized: productTexts, variants }: SizedProduct) => {
+  const texts = variants.reduce(
+    (total, variant) => total + (variant.localized?.length ?? 0),
+    productTexts?.length ?? 0,
+  );
   const prices = variants.reduce((total, variant) => total + (variant.prices?.length ?? 0), 0);
   const variantItems = variants.filter((variant, index) => index > 0 || (variant.localized?.length ?? 0) > 0).length;
   return {
@@ -128,6 +135,7 @@ export const symmyProductBatchLimit = (products: readonly SizedProduct[]): strin
 export const SymmyProductPlanSizeSchema = Schema.Array(
   Schema.Struct({
     lifecycle: Schema.optionalKey(ProductLifecycleSchema),
+    localized: Schema.optionalKey(Schema.Array(Schema.Unknown)),
     variants: Schema.Array(
       Schema.Struct({
         localized: Schema.optionalKey(Schema.Array(Schema.Unknown)),

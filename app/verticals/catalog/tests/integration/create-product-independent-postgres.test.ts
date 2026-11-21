@@ -626,7 +626,14 @@ it.live(
           expect(replayResult).toEqual(sourced);
         });
 
-        const sourceConflict = yield* create({ ...sourcePayload, name: 'Conflicting new intent' }).pipe(Effect.flip);
+        // The legacy text is not part of the source record's identity: a re-send with another text asks for the same
+        // Product (its text changes through the localized facts), while another create intent still conflicts.
+        const renamed = yield* create({ ...sourcePayload, description: 'Changed in the source', name: 'Renamed' });
+        expect(renamed.product.productRef).toEqual(sourced.product.productRef);
+        expect(renamed.businessOriginalCreateInvocationId).toBe(sourced.businessOriginalCreateInvocationId);
+        expect(renamed.product.name).toBe(sourcePayload.name);
+        expect((yield* observe()).products).toHaveLength(sourceBeforeReplay.products.length);
+        const sourceConflict = yield* create({ ...sourcePayload, variantId: yield* nextId }).pipe(Effect.flip);
         expect(Schema.is(CreateProductActionConflictProblemSchema)(sourceConflict)).toBe(true);
         const remapConflict = yield* create({
           ...sourcePayload,
@@ -643,6 +650,15 @@ it.live(
           return yield* Schema.decodeUnknownEffect(CatalogSourceProductsResponseSchema)(body);
         });
         const lookup = yield* sourceRead({ ...source, entityKind: 'PRODUCT', operation: 'LOOKUP' });
+        expect(lookup.items[0]).not.toHaveProperty('localized');
+        // A lookup in a locale answers the record's current localized text and the revision a change of it expects.
+        const textLookup = yield* sourceRead({
+          ...source,
+          entityKind: 'PRODUCT',
+          locale: 'cs-CZ',
+          operation: 'LOOKUP',
+        });
+        expect(textLookup.items[0]?.localized).toEqual({ revision: 0 });
         expect(lookup.items).toMatchObject([
           {
             product: { lifecycle: 'DRAFT', productRef: sourced.product.productRef },

@@ -16,6 +16,7 @@ import { groupOperation, priceOperation } from '../../src/persistence/symmy-pric
 import {
   createProductOperation,
   createVariantOperation,
+  productFactsOperation,
   updateProductOperation,
   variantFactsOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
@@ -346,6 +347,7 @@ describe('Symmy route inventories', () => {
     ])[] = [
       ['productsBatch', createProductOperation, 'PRODUCT'],
       ['productsBatch', updateProductOperation, 'PRODUCT'],
+      ['productsBatch', productFactsOperation, 'PRODUCT'],
       ['productsBatch', createVariantOperation, 'VARIANT'],
       ['productsBatch', variantFactsOperation, 'VARIANT'],
       ['productsBatch', priceOperation, 'PRICE'],

@@ -4,6 +4,7 @@ import { Effect, Option, Schema } from 'effect';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { catalogSourceProductsForScope } from '../persistence/catalog-source-correlation.ts';
 import type { CatalogSourceCorrelation } from '../../shared/domain/catalog-source-correlation.ts';
+import type { Product } from '../../shared/domain/product.ts';
 import type { CatalogSourceProductsRequest } from '../../shared/apis/catalog-source-products.ts';
 import {
   CatalogSourceProductsRequestSchema,
@@ -21,6 +22,35 @@ const unavailable = (cause?: unknown) => {
   return failure;
 };
 type SourceProductsServices = Effect.Success<ReturnType<typeof catalogSourceProductsForScope>>;
+/**
+ * The current localized text of a source record in one locale: the Product's for a Product record, the Variant's
+ * for a Variant record. A source write states its revision as the one it expects.
+ */
+const currentText = Effect.fn('CatalogSourceProducts.currentText')(function* currentText(
+  services: SourceProductsServices,
+  row: { readonly entityKind: string; readonly variantId: string },
+  product: Product,
+  locale: string,
+) {
+  const variant = product.variants.find(({ variantId }) => variantId === row.variantId);
+  if (row.entityKind === 'VARIANT' && variant === undefined) {
+    return yield* unavailable();
+  }
+  const fact = yield* (
+    row.entityKind === 'VARIANT' && variant !== undefined
+      ? services.currentVariant(product.productRef, variant.variantRef, locale)
+      : services.currentProduct(product.productRef, locale)
+  ).pipe(Effect.mapError(unavailable));
+  const text = { revision: fact.revision };
+  if (fact.kind === 'PRESENT' && fact.name !== undefined) {
+    Object.assign(text, { name: fact.name });
+  }
+  if (fact.kind === 'PRESENT' && fact.description !== undefined) {
+    Object.assign(text, { description: fact.description });
+  }
+  return text;
+});
+
 const sourceOf = (row: CatalogSourceCorrelation) => ({
   issuerId: row.issuerId,
   mappingRevision: row.mappingRevision,
@@ -50,7 +80,7 @@ export const readCatalogSourceProducts = Effect.fn('CatalogSourceProducts.read')
       ) {
         return yield* unavailable();
       }
-      return {
+      const bound = {
         entityKind: row.entityKind,
         originalActionInvocationId: row.actionInvocationId,
         product: product.value,
@@ -58,6 +88,9 @@ export const readCatalogSourceProducts = Effect.fn('CatalogSourceProducts.read')
         variantId: row.variantId,
         variantSources: variants.map((variant) => ({ source: sourceOf(variant), variantId: variant.variantId })),
       };
+      return input.operation === 'LOOKUP' && input.locale !== undefined
+        ? { ...bound, localized: yield* currentText(services, row, product.value, input.locale) }
+        : bound;
     }),
     { concurrency: 1 },
   );

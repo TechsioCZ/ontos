@@ -3,6 +3,8 @@
     "commerce.assortment.symmy-fixture-currentness",
     "commerce.assortment.symmy-fixture-rule-import",
     "commerce.catalog.symmy-product-import",
+    "commerce.catalog.symmy-product-localized-facts",
+    "commerce.catalog.symmy-product-localized-facts-recovery",
     "commerce.catalog.symmy-product-read",
     "commerce.catalog.symmy-variant-localized-facts",
     "commerce.catalog.symmy-variant-localized-facts-recovery",
