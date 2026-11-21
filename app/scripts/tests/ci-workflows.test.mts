@@ -834,7 +834,7 @@ it('publishes the planner comparison base only to the Lean Core row, which fetch
 const leanCoreChecked = (comparison: string) => `mise exec -- pnpm lean-core:check --base ${comparison}`;
 
 it.live(
-  'runs the Lean Core shrink-only rule against that base, the first parent on schedule and dispatch, and fails closed without one',
+  'runs the Lean Core shrink-only rule against the planner base on every event, and fails closed without one',
   () =>
     Effect.sync(() => {
       const { jobs } = Schema.decodeUnknownSync(ComparisonBaseWorkflowSchema)(readGateWorkflow());
@@ -842,8 +842,6 @@ it.live(
         .flatMap(({ parallel }) => parallel ?? [])
         .find(({ name }) => name === LEAN_CORE_STEP);
       expect(leanCore?.env).toEqual({ COMPARISON_BASE: expression(COMPARISON_BASE_OUTPUT) });
-      const head = 'a'.repeat(40);
-      const parent = 'b'.repeat(40);
       const base = 'c'.repeat(40);
       /** Runs the row with a recording git, whose fetch exits with fetchExit, and a recording mise. */
       const run = (event: string, comparisonBase: string, fetchExit = 0) => {
@@ -854,15 +852,7 @@ it.live(
           const record = `printf '%s\\n' "$(basename "$0") $*" >> '${calls}'`;
           writeFileSync(
             path.join(directory, 'git'),
-            [
-              BASH_SHEBANG,
-              record,
-              'case "$1" in',
-              `  fetch) exit ${fetchExit} ;;`,
-              `  rev-parse) echo ${parent} ;;`,
-              'esac',
-              '',
-            ].join('\n'),
+            [BASH_SHEBANG, record, `[[ "$1" != fetch ]] || exit ${fetchExit}`, ''].join('\n'),
           );
           writeFileSync(path.join(directory, 'mise'), [BASH_SHEBANG, record, ''].join('\n'));
           chmodSync(path.join(directory, 'git'), 0o755);
@@ -870,7 +860,7 @@ it.live(
           const passed = stepPasses(leanCore?.run ?? 'exit 1', {
             COMPARISON_BASE: comparisonBase,
             GITHUB_EVENT_NAME: event,
-            GITHUB_SHA: head,
+            GITHUB_SHA: 'a'.repeat(40),
             PATH: `${directory}:${STEP_PATH}`,
           });
           return { calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean), passed };
@@ -878,78 +868,187 @@ it.live(
           rmSync(directory, { force: true, recursive: true });
         }
       };
-      for (const event of ['pull_request', 'merge_group', 'push']) {
-        expect(run(event, base), event).toEqual({
-          calls: [`git fetch --quiet --no-tags --depth=1 origin ${base}`, leanCoreChecked(base)],
-          passed: true,
-        });
-        // No published base, or a base that is not a commit name, fails the row before anything runs.
+      const fetched = `git fetch --quiet --no-tags --depth=1 origin ${base}`;
+      // One path for every event: the planner names the base, the row fetches that commit alone and checks it.
+      for (const event of ['pull_request', 'merge_group', 'push', 'schedule', 'workflow_dispatch']) {
+        expect(run(event, base), event).toEqual({ calls: [fetched, leanCoreChecked(base)], passed: true });
+        // No named base, or one that is not a commit name, fails the row before anything runs.
         for (const missing of ['', 'HEAD~1']) {
           expect(run(event, missing), `${event} ${missing}`).toEqual({ calls: [], passed: false });
         }
-      }
-      expect(run('merge_group', base, 128)).toEqual({
-        calls: [`git fetch --quiet --no-tags --depth=1 origin ${base}`],
-        passed: false,
-      });
-      for (const event of ['schedule', 'workflow_dispatch']) {
-        expect(run(event, ''), event).toEqual({
-          calls: [
-            `git fetch --quiet --no-tags --depth=2 origin ${head}`,
-            'git rev-parse --verify HEAD^1^{commit}',
-            leanCoreChecked(parent),
-          ],
-          passed: true,
-        });
+        expect(run(event, base, 128), `${event} unfetchable`).toEqual({ calls: [fetched], passed: false });
       }
     }),
 );
 
-it.live('publishes as the base exactly the commit the planner compared with, and none without that comparison', () =>
-  Effect.sync(() => {
-    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-base-'));
-    const git = (...args: string[]) =>
-      execFileSync('/usr/bin/git', ['-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid', ...args], {
-        cwd: directory,
-        encoding: 'utf-8',
-      }).trim();
-    try {
-      git('init', '--quiet');
-      writeFileSync(path.join(directory, 'runtime.ts'), 'before\n');
-      git('add', '.');
-      git('commit', '--quiet', '-m', 'base');
-      const base = git('rev-parse', 'HEAD');
-      writeFileSync(path.join(directory, 'runtime.ts'), 'after\n');
-      git('commit', '--quiet', '-am', 'change');
-      const published = (event: string, comparison: string) => {
-        const output = path.join(directory, 'outputs');
-        writeFileSync(output, '');
-        execFileSync(
-          '/bin/bash',
-          [fileURLToPath(new URL('../plan-ci-changes.sh', import.meta.url)), path.join(directory, 'paths')],
-          {
-            cwd: directory,
-            env: {
-              BASE_SHA: comparison,
-              GITHUB_EVENT_NAME: event,
-              GITHUB_OUTPUT: output,
-              HEAD_SHA: git('rev-parse', 'HEAD'),
-              PATH: STEP_PATH,
-            },
-            stdio: 'pipe',
-          },
+const NATIVE_GIT = '/usr/bin/git';
+/** Runs git in cwd as the CI test author. */
+const gitIn =
+  (cwd: string) =>
+  (...args: readonly string[]) =>
+    execFileSync(NATIVE_GIT, ['-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid', ...args], {
+      cwd,
+      encoding: 'utf-8',
+    }).trim();
+
+const PLAN_BRANCH = 'demo';
+const PLAN_REPOSITORY = 'TechsioCZ/ontos';
+const PLAN_RUN_ID = '44500000000';
+const PLAN_WORKFLOW_ID = 342_952_200;
+
+it.live(
+  'names the base the planner compared with, else the first parent where a merge queue or no comparison stands behind the run',
+  () =>
+    Effect.sync(() => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-base-'));
+      const origin = path.join(directory, 'origin');
+      mkdirSync(origin);
+      const git = gitIn(origin);
+      const commits: string[] = [];
+      try {
+        git('init', '--quiet');
+        for (const name of ['c0', 'c1', 'c2', 'c3']) {
+          writeFileSync(path.join(origin, 'runtime.ts'), `${name}\n`);
+          git('add', '.');
+          git('commit', '--quiet', '-m', name);
+          commits.push(git('rev-parse', 'HEAD'));
+        }
+        const [c0 = '', c1 = '', c2 = '', c3 = ''] = commits;
+        /** A checkout of origin's HEAD as deep as ci-plan's checkout is on the event: 0 is the whole history. */
+        const checkout = (name: string, depth: number) => {
+          const target = path.join(directory, name);
+          execFileSync(NATIVE_GIT, [
+            'clone',
+            '--quiet',
+            ...(depth === 0 ? [] : [`--depth=${depth}`]),
+            `file://${origin}`,
+            target,
+          ]);
+          return target;
+        };
+        const depthTwo = checkout('depth-two', 2);
+        const whole = checkout('whole', 0);
+        const depthOne = checkout('depth-one', 1);
+        // A pull request is tested as its merge commit, whose first parent is the base it merges into.
+        const merge = checkout('merge', 2);
+        const mergeGit = gitIn(merge);
+        mergeGit('checkout', '--quiet', '-b', 'feature');
+        writeFileSync(path.join(merge, 'feature.ts'), 'feature\n');
+        mergeGit('add', '.');
+        mergeGit('commit', '--quiet', '-m', 'feature');
+        mergeGit('checkout', '--quiet', '-');
+        mergeGit('merge', '--quiet', '--no-ff', '-m', 'merge', 'feature');
+        // A branch without a merge queue looks up its newest green push run; this gh lists the runs it is given.
+        const bin = path.join(directory, 'bin');
+        mkdirSync(bin);
+        const runs = path.join(directory, 'runs.json');
+        writeFileSync(
+          path.join(bin, 'gh'),
+          [BASH_SHEBANG, `case "$*" in *--jq*) echo ${PLAN_WORKFLOW_ID} ;; *) cat '${runs}' ;; esac`, ''].join('\n'),
         );
-        return readFileSync(output, 'utf-8')
-          .split('\n')
-          .filter((line) => line.startsWith('base='));
-      };
-      expect(published('merge_group', base)).toEqual([`base=${base}`]);
-      expect(published('merge_group', '0'.repeat(40))).toEqual(['base=']);
-      expect(published('schedule', base)).toEqual(['base=']);
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  }),
+        chmodSync(path.join(bin, 'gh'), 0o755);
+        const greenPushes = (...shas: readonly string[]) =>
+          writeFileSync(
+            runs,
+            JSON.stringify({
+              workflow_runs: shas.map((sha, index) => ({
+                conclusion: 'success',
+                created_at: new Date(Date.UTC(2026, 10, 20, 12) - index * 60_000).toISOString(),
+                event: 'push',
+                head_branch: PLAN_BRANCH,
+                head_sha: sha,
+                status: 'completed',
+                workflow_id: PLAN_WORKFLOW_ID,
+              })),
+            }),
+          );
+        const plan = (cwd: string, environment: Readonly<Record<string, string>>) => {
+          const output = path.join(directory, 'outputs');
+          writeFileSync(output, '');
+          execFileSync(
+            '/bin/bash',
+            [fileURLToPath(new URL('../plan-ci-changes.sh', import.meta.url)), path.join(directory, 'paths')],
+            {
+              cwd,
+              env: {
+                GITHUB_OUTPUT: output,
+                GITHUB_REF_NAME: PLAN_BRANCH,
+                GITHUB_REPOSITORY: PLAN_REPOSITORY,
+                GITHUB_RUN_ID: PLAN_RUN_ID,
+                HEAD_SHA: gitIn(cwd)('rev-parse', 'HEAD'),
+                PATH: `${bin}:${STEP_PATH}`,
+                ...environment,
+              },
+              stdio: 'pipe',
+            },
+          );
+          const outputs = new Map(
+            readFileSync(output, 'utf-8')
+              .split('\n')
+              .flatMap((line) =>
+                /^(?:base|mode|reason)=/u.test(line)
+                  ? [[line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)] as const]
+                  : [],
+              ),
+          );
+          return `${outputs.get('base') ?? 'unset'} ${outputs.get('mode') ?? 'unset'}: ${outputs.get('reason') ?? 'unset'}`;
+        };
+        const unavailable = 'The exact comparison is unavailable; the complete suite is required.';
+        const complete = 'This event requires the complete suite.';
+        const affected = 'Application impact must be resolved from the complete changed-path list.';
+        const queueBranchPush = { GITHUB_EVENT_NAME: 'push', QUEUE_PROOF: 'success' };
+        const noQueuePush = { BASE_SHA: c2, GITHUB_EVENT_NAME: 'push', QUEUE_PROOF: 'skipped' };
+        greenPushes();
+        const withoutGreenPush = plan(whole, noQueuePush);
+        greenPushes(c1);
+        const withGreenPush = plan(whole, noQueuePush);
+        expect({
+          'merge queue': plan(whole, { BASE_SHA: c0, GITHUB_EVENT_NAME: 'merge_group' }),
+          'merge queue with an unreachable base': plan(whole, {
+            BASE_SHA: 'f'.repeat(40),
+            GITHUB_EVENT_NAME: 'merge_group',
+          }),
+          'pull request': plan(merge, { GITHUB_EVENT_NAME: 'pull_request' }),
+          'pull request that is no merge commit': plan(depthTwo, { GITHUB_EVENT_NAME: 'pull_request' }),
+          'push behind the merge queue, event.before in the checkout': plan(whole, {
+            ...queueBranchPush,
+            BASE_SHA: c0,
+          }),
+          'push behind the merge queue, one commit': plan(depthTwo, { ...queueBranchPush, BASE_SHA: c2 }),
+          'push behind the merge queue, several commits': plan(depthTwo, { ...queueBranchPush, BASE_SHA: c0 }),
+          'push behind the merge queue, unproven by it': plan(depthTwo, { ...queueBranchPush, QUEUE_PROOF: 'failure' }),
+          'push without a merge queue, with a green push': withGreenPush,
+          'push without a merge queue, without a green push': withoutGreenPush,
+          schedule: plan(depthTwo, { GITHUB_EVENT_NAME: 'schedule' }),
+          'schedule without the parent in the checkout': plan(depthOne, { GITHUB_EVENT_NAME: 'schedule' }),
+          'workflow dispatch': plan(depthTwo, { GITHUB_EVENT_NAME: 'workflow_dispatch', QUEUE_PROOF: 'success' }),
+          'workflow dispatch with force-ci-full': plan(depthTwo, {
+            FORCE_FULL: 'true',
+            GITHUB_EVENT_NAME: 'workflow_dispatch',
+            QUEUE_PROOF: 'skipped',
+          }),
+        }).toEqual({
+          'merge queue': `${c0} affected: ${affected}`,
+          'merge queue with an unreachable base': ` full: ${unavailable}`,
+          'pull request': `${c3} affected: ${affected}`,
+          'pull request that is no merge commit': ` full: ${unavailable}`,
+          // The exact comparison base wins over the first parent whenever the checkout holds it.
+          'push behind the merge queue, event.before in the checkout': `${c0} affected: ${affected}`,
+          'push behind the merge queue, one commit': `${c2} affected: ${affected}`,
+          // event.before lies outside the two-commit checkout: the plan stays complete, the base is the parent.
+          'push behind the merge queue, several commits': `${c2} full: ${unavailable}`,
+          'push behind the merge queue, unproven by it': `${c2} full: ${unavailable}`,
+          'push without a merge queue, with a green push': `${c1} affected: ${affected}`,
+          'push without a merge queue, without a green push': ` full: ${unavailable}`,
+          schedule: `${c2} full: ${complete}`,
+          'schedule without the parent in the checkout': ` full: ${complete}`,
+          'workflow dispatch': `${c2} full: ${complete}`,
+          'workflow dispatch with force-ci-full': `${c2} full: ${complete}`,
+        });
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
+    }),
 );
 
 /** Helper jobs that run a planned list, with the ci-plan output that lists their rows. */

@@ -8,7 +8,7 @@ paths_file="${1:?Pass the changed-paths output file}"
 
 mode=full
 reason='This event requires the complete suite.'
-# The commit the exact comparison ran against, published for the checks that hold a baseline to it.
+# The commit baselines are held to (Lean Core Dependencies): the exact comparison base when there is one.
 comparison_base=
 if [[ "${QUEUE_PROVEN:-false}" == true && "${FORCE_FULL:-false}" != true ]]; then
   mode=proven
@@ -82,6 +82,19 @@ elif [[ "${FORCE_FULL:-false}" != true && "${GITHUB_EVENT_NAME:-}" =~ ^(pull_req
   else
     reason='The exact comparison is unavailable; the complete suite is required.'
   fi
+fi
+
+# Without an exact comparison, schedule and dispatch runs and a push on a branch with a merge queue hold
+# baselines to the first parent: every commit pushed behind the queue already passed it against the queue's
+# base, so a multi-commit entry whose event.before lies outside the checkout is no reason to fail. ci-plan
+# checks exactly these runs out two commits deep, so the parent is present. A push on a branch without a merge
+# queue and without a green ancestor names no base: what is unproven there can be any number of commits, so
+# the check that needs a base fails. This names a commit only; mode, reason and the changed paths stay those
+# of the comparison above.
+if [[ -z "$comparison_base" ]] &&
+  [[ "${GITHUB_EVENT_NAME:-}" == schedule || "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ||
+    ("${GITHUB_EVENT_NAME:-}" == push && "${QUEUE_PROOF:-}" != skipped) ]]; then
+  comparison_base="$(git rev-parse --verify --quiet 'HEAD^1^{commit}')" || comparison_base=''
 fi
 
 # A formatter, linter or hook configuration reformats or re-lints files nobody touched: the one real
