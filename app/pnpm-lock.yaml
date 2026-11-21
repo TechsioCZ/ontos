@@ -678,6 +678,9 @@ importers:
 
   packages/catalog-selection-contracts:
     dependencies:
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
       effect:
         specifier: 4.0.7
         version: 4.0.7
