@@ -67,6 +67,7 @@ const prices = {
     {
       _tag: "PRICE_FOUND",
       catalogSelection: { productRef, variantRef: variantRef(1) },
+      priceGroupSelector: { kind: "NO_GROUP" },
       priceRevision: { monetaryAmount: { amount: "249.9", currencyCode: "CZK" } },
     },
     { _tag: "NO_APPLICABLE_PRICE", catalogSelection: { productRef, variantRef: variantRef(2) } },
@@ -117,7 +118,7 @@ async function setup() {
   vi.stubEnv("ONTOS_STOREFRONT_ERP_OFFERS", JSON.stringify({ [legalEntityId]: offer }));
   vi.stubEnv("STOREFRONT_BRAND", "akros");
   const request = nextRequest(`${network.origin}/cs`, {
-    headers: { "x-akros-market-locale": "cs" },
+    headers: { host: new URL(network.origin).host, "x-akros-market-locale": "cs" },
   });
   const [listing, detail, cart, providers, routerContext, hooksContext, router, adapters] =
     await Promise.all([
