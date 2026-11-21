@@ -361,67 +361,73 @@ it.live(
       const delta = yield* tenantA.create({ name: 'delta legacy' });
       const foreign = yield* tenantB.create({ name: 'alfa b legacy' });
       const categoryId = yield* nextId;
-      yield* staff.prepareOwner((transaction, scope) =>
-        Effect.gen(function* seedTenantA() {
-          yield* setVariantText(transaction, scope, imported, {
-            description: 'Ocelové kladivo',
-            locale: 'cs-CZ',
-            name: 'Kladivo 500 g',
-          });
-          yield* activate(transaction, scope, at, alfa, [
-            { locale: 'cs-CZ', name: 'Alfa' },
-            { locale: 'en', name: 'Alpha' },
-          ]);
-          yield* activate(transaction, scope, at, beta, [{ description: 'Popis bety', locale: 'cs-CZ', name: 'Beta' }]);
-          yield* activate(transaction, scope, at, delta, [{ locale: 'en', name: 'Delta' }]);
-          const categories = yield* categoryPersistenceForScope(transaction, scope);
-          const base = { principalId: scope.principalId, reason: setupReason, tenantId: scope.tenantId };
-          const created = yield* categories.createCategory({
-            ...base,
-            actionInvocationId: yield* nextId,
-            categoryId,
-            name: 'Ruční nářadí',
-          });
-          expect(
-            Match.value(created).pipe(
-              Match.tag('created', () => true),
-              Match.orElse(() => false),
-            ),
-          ).toBe(true);
-          for (const product of [imported, alfa]) {
-            const added = yield* categories.addAssignment({
+      yield* staff
+        .prepareOwner((transaction, scope) =>
+          Effect.gen(function* seedTenantA() {
+            yield* setVariantText(transaction, scope, imported, {
+              description: 'Ocelové kladivo',
+              locale: 'cs-CZ',
+              name: 'Kladivo 500 g',
+            });
+            yield* activate(transaction, scope, at, alfa, [
+              { locale: 'cs-CZ', name: 'Alfa' },
+              { locale: 'en', name: 'Alpha' },
+            ]);
+            yield* activate(transaction, scope, at, beta, [
+              { description: 'Popis bety', locale: 'cs-CZ', name: 'Beta' },
+            ]);
+            yield* activate(transaction, scope, at, delta, [{ locale: 'en', name: 'Delta' }]);
+            const categories = yield* categoryPersistenceForScope(transaction, scope);
+            const base = { principalId: scope.principalId, reason: setupReason, tenantId: scope.tenantId };
+            const created = yield* categories.createCategory({
               ...base,
               actionInvocationId: yield* nextId,
               categoryId,
-              productId: product.productId,
+              name: 'Ruční nářadí',
             });
             expect(
-              Match.value(added).pipe(
-                Match.tag('added', () => true),
+              Match.value(created).pipe(
+                Match.tag('created', () => true),
                 Match.orElse(() => false),
               ),
             ).toBe(true);
-          }
-          const sku = yield* skuPersistenceForScope(transaction, scope).assign({
-            actionInvocationId: yield* nextId,
-            code: 'ALFA-1',
-            evidenceRefs: setupEvidence,
-            expectedRevision: 0,
-            principalId: scope.principalId,
-            reason: setupReason,
-            target: { kind: 'VARIANT', tenantId: scope.tenantId, variantId: alfa.variantId },
-          });
-          expect(
-            Match.value(sku).pipe(
-              Match.tag('applied', () => true),
-              Match.orElse(() => false),
-            ),
-          ).toBe(true);
-        }),
-      );
-      yield* pageOnly.prepareOwner((transaction, scope) =>
-        activate(transaction, scope, at, foreign, [{ locale: 'cs-CZ', name: 'Alfa B' }]),
-      );
+            for (const product of [imported, alfa]) {
+              const added = yield* categories.addAssignment({
+                ...base,
+                actionInvocationId: yield* nextId,
+                categoryId,
+                productId: product.productId,
+              });
+              expect(
+                Match.value(added).pipe(
+                  Match.tag('added', () => true),
+                  Match.orElse(() => false),
+                ),
+              ).toBe(true);
+            }
+            const sku = yield* skuPersistenceForScope(transaction, scope).assign({
+              actionInvocationId: yield* nextId,
+              code: 'ALFA-1',
+              evidenceRefs: setupEvidence,
+              expectedRevision: 0,
+              principalId: scope.principalId,
+              reason: setupReason,
+              target: { kind: 'VARIANT', tenantId: scope.tenantId, variantId: alfa.variantId },
+            });
+            expect(
+              Match.value(sku).pipe(
+                Match.tag('applied', () => true),
+                Match.orElse(() => false),
+              ),
+            ).toBe(true);
+          }),
+        )
+        .pipe(Effect.provide(staff.layer));
+      yield* pageOnly
+        .prepareOwner((transaction, scope) =>
+          activate(transaction, scope, at, foreign, [{ locale: 'cs-CZ', name: 'Alfa B' }]),
+        )
+        .pipe(Effect.provide(pageOnly.layer));
 
       // ACTIVE only, by the name in the locale and Products without one last; count is the total before paging.
       const activePage = yield* tenantA.page({});
