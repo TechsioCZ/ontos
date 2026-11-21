@@ -8,6 +8,8 @@
     "./actions/revise-price": "./shared/actions/revise-price.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/pricing-client.ts",
+    "./apis/catalog-page-prices": "./shared/apis/catalog-page-prices.ts",
+    "./apis/catalog-page-prices-client": "./src/api/catalog-page-prices-client.ts",
     "./apis/price-group-source-prices": "./shared/apis/price-group-source-prices.ts",
     "./apis/price-result-lookup": "./shared/apis/price-result-lookup.ts",
     "./apis/price-schedule": "./shared/apis/price-schedule.ts",

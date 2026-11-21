@@ -1543,9 +1543,15 @@ importers:
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
+      '@app/inventory':
+        specifier: workspace:*
+        version: link:../inventory
       '@app/party-registry':
         specifier: workspace:*
         version: link:../party-registry
+      '@app/pricing':
+        specifier: workspace:*
+        version: link:../pricing
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -1606,6 +1612,9 @@ importers:
       '@tanstack/react-router':
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@techsio/ui-kit':
+        specifier: 'catalog:'
+        version: 0.59.3(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)

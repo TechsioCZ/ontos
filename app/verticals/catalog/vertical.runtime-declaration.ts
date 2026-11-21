@@ -253,9 +253,9 @@ type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
 type PublicComponentContributionInput = typeof ShellPublicComponentContributionSchema.Encoded;
 type ReportContributionInput = typeof ShellReportContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
-const _navigationContribution = (value: NavigationContributionInput) =>
+const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
-const _pageContribution = (value: PageContributionInput) =>
+const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 const publicComponentContribution = (value: PublicComponentContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
@@ -268,11 +268,13 @@ const partyDetailProviderEntrypoint = 'party.registry.api.party-detail';
 const manufacturerPartyCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.party-current';
 const manufacturerExactRevisionEvidence = 'commerce.catalog.evidence.manufacturer-target.exact-revision';
 const manufacturerLegalEntityCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.legal-entity-current';
+const catalogModuleKey = 'commerce.catalog';
+const productsPageKey = 'commerce.catalog.page.products';
 export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'] = {
   module: {
     description: 'Catalog business capability.',
     displayName: 'Catalog',
-    id: 'commerce.catalog',
+    id: catalogModuleKey,
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
@@ -614,10 +616,56 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       mediaAttachments: [],
       navigation: [
         // <generated-module-shell-navigation>
+        navigationContribution({
+          accessDeclaration: {
+            key: 'commerce.catalog.navigation-products.read',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'product', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          contributionKey: 'commerce.catalog.navigation.products',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: productsPageKey,
+            moduleKey: catalogModuleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
+          groupKey: 'shell.navigation.commerce',
+          icon: 'icon-[mdi--package-variant]',
+          label: { cs: 'Produkty', en: 'Products' },
+          order: 505,
+          pageKey: productsPageKey,
+        }),
         // </generated-module-shell-navigation>
       ],
       pages: [
         // <generated-module-shell-pages>
+        pageContribution({
+          accessDeclaration: {
+            key: 'commerce.catalog.products.view',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'product', level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          componentKey: 'commerce.catalog.page-products',
+          contributionKey: productsPageKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: productsPageKey,
+            moduleKey: catalogModuleKey,
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageProducts',
+          routePath: '/katalog/produkty',
+        }),
         // </generated-module-shell-pages>
       ],
       publicComponents: [

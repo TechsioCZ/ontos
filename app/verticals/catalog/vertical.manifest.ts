@@ -13,6 +13,7 @@ import { controlledAttributeValueResourceDescriptor } from './shared/resources/c
 import { packageDefinitionResourceDescriptor } from './shared/resources/package-definition.ts';
 import { productCategoryResourceDescriptor } from './shared/resources/product-category.ts';
 import { productResourceDescriptor } from './shared/resources/product.ts';
+import { ProductsPage } from './src/routes/[lang]/katalog/produkty/page.tsx';
 import { productTypeResourceDescriptor } from './shared/resources/product-type.ts';
 import { productUnitResourceDescriptor } from './shared/resources/product-unit.ts';
 import { variantResourceDescriptor } from './shared/resources/variant.ts';
@@ -37,6 +38,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
     components: {
       // <generated-module-manifest-components>
       'catalog-widget': CatalogWidget,
+      'page-products': ProductsPage,
       // </generated-module-manifest-components>
     },
     events: [],

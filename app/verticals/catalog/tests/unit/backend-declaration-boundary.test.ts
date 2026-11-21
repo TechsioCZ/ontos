@@ -19,6 +19,7 @@ import {
   catalogRuntimeManifest as runtimeManifest,
 } from '../../vertical.runtime-declaration.ts';
 import { CatalogWidget } from '../../src/components/catalog-widget.tsx';
+import { ProductsPage } from '../../src/routes/[lang]/katalog/produkty/page.tsx';
 import { selectionEvidenceRead } from '../../src/api/selection-evidence.read.ts';
 import { quantityPreparationRead } from '../../src/api/quantity-preparation.read.ts';
 import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-compatibility.read.ts';
@@ -95,6 +96,7 @@ describe('Catalog backend declaration and full publication', () => {
   it('retains the complete frontend publication and actual component exports', () => {
     expect(manifest.publicSurface.components).toEqual({
       'catalog-widget': CatalogWidget,
+      'page-products': ProductsPage,
     });
     expect(manifest.publicSurface.resourceTypes).toHaveLength(11);
     expect(new Set(Object.keys(manifest.publicSurface))).toEqual(

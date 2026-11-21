@@ -5,6 +5,8 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/inventory-client.ts",
+    "./api/catalog-variant-on-hand-page": "./shared/apis/catalog-variant-on-hand-page.ts",
+    "./api/catalog-variant-on-hand-page-client": "./src/api/catalog-variant-on-hand-page-client.ts",
     "./backend-configuration": "./shared/domain/inventory-backend-configuration.ts",
     "./launch-scope": "./shared/inventory-launch-scope.ts",
     "./outbox/commerce-inventory-commitment-protection-changed-v1": "./shared/outbox/commerce-inventory-commitment-protection-changed-v1.ts",

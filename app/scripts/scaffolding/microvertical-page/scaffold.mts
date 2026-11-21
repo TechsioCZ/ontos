@@ -438,6 +438,8 @@ const pageWiring = (
 interface PageOwnerWiring {
   readonly manifest: string;
   readonly registration: string;
+  /** The split backend owner's next content; its Shell page and navigation slots replace the manifest's. */
+  readonly runtimeDeclaration?: string;
 }
 
 const patchPageWiring = (
@@ -461,16 +463,18 @@ const patchPageWiring = (
     [wiring.manifestComponent],
     (candidate) => candidate.endsWith(','),
   );
-  manifest = insertSortedSlot(
-    manifest,
+  // A split owner keeps its Shell contributions in the runtime declaration the manifest spreads.
+  let shell = vertical.runtimeDeclaration?.content ?? manifest;
+  shell = insertSortedSlot(
+    shell,
     MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
     MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
     [wiring.manifestPage],
     (candidate) => candidate.endsWith(','),
   );
   if (wiring.manifestNavigation !== undefined) {
-    manifest = insertSortedSlot(
-      manifest,
+    shell = insertSortedSlot(
+      shell,
       MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
       MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
       [wiring.manifestNavigation],
@@ -484,7 +488,9 @@ const patchPageWiring = (
     [wiring.registrationPage],
     (candidate) => candidate.endsWith(','),
   );
-  return { manifest, registration };
+  return vertical.runtimeDeclaration === undefined
+    ? { manifest: shell, registration }
+    : { manifest, registration, runtimeDeclaration: shell };
 };
 
 const renderRouteMetadata = (
@@ -629,7 +635,13 @@ const readOwnerRoutes = (
     if (!(yield* fileExists(manifestPath))) {
       return [];
     }
-    const manifest = yield* readTextFile(manifestPath);
+    // A split owner declares its Shell pages in its runtime declaration, not in the manifest.
+    const declarationPath = resolveContainedPath(verticalRoot, owner, 'vertical.runtime-declaration.ts');
+    const declaration = (yield* fileExists(declarationPath)) ? yield* readTextFile(declarationPath) : undefined;
+    const manifest =
+      declaration?.includes(MODULE_MANIFEST_SHELL_PAGE_SLOT_START) === true
+        ? declaration
+        : yield* readTextFile(manifestPath);
     return yield* Effect.all(
       readGeneratedSlotEntries(
         manifest,
@@ -1046,6 +1058,14 @@ const planPageScaffold = (
       vertical.registrationContent,
       wiring.registration,
     );
+    const runtimeDeclarationMutation =
+      vertical.runtimeDeclaration === undefined || wiring.runtimeDeclaration === undefined
+        ? undefined
+        : updateMutation(
+            vertical.runtimeDeclaration.path,
+            vertical.runtimeDeclaration.content,
+            wiring.runtimeDeclaration,
+          );
     const federationMutation = updateMutation(
       federationPath,
       federationContent,
@@ -1061,6 +1081,7 @@ const planPageScaffold = (
       ...localeMutations,
       manifestMutation,
       registrationMutation,
+      runtimeDeclarationMutation,
       federationMutation,
     ].filter((mutation) => mutation !== undefined);
     ensureUniqueMutationPaths(mutations);

@@ -32,6 +32,9 @@ const productPageEntrypoint = defineTenantModuleEntrypoint({
 });
 
 /**
+ * Catalog Products carry no company, so the page is decided in the tenant context. Its scope is optional: a staff
+ * member pages it from a Shell session with a selected company, a storefront workload with or without one.
+ *
  * Demo-line rule: any caller admitted to the page may page DRAFT and ACTIVE Products, because every Product an ERP
  * import (Symmy) creates is a DRAFT with WORK_IN_PROGRESS Variants and Catalog's path to ACTIVE cannot be driven
  * from an import. Only RETIRED stays reserved to whoever may read the detail of any Product, whatever its lifecycle;
@@ -202,7 +205,7 @@ export const productPageRead = defineRead(
       policyKey: 'commerce.catalog.api.product-page.evidence.v1',
     },
     inputSchema: ProductPageRequestSchema,
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: catalogModuleKey,
     policies: [],
     readKey: 'commerce.catalog.api.product-page',

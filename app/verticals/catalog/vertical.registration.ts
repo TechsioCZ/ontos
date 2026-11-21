@@ -160,6 +160,7 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
     },
     pages: {
       // <generated-module-registration-pages>
+      'page-products': () => import('./src/routes/[lang]/katalog/produkty/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {
