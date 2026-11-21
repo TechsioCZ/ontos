@@ -1020,6 +1020,139 @@ it.live('admits a first baseline against a base without one only when the base t
   }),
 );
 
+const betaRuntimeEdge = (made: string) => [unlisted(moduleToModule, alphaToBetaEdge, 'runtime', made)];
+const createRequireImport = "import { createRequire } from 'node:module';\n";
+
+/** Each form a source can name a package with, the module file that uses it, and the line that names it. */
+const referenceForms: readonly (readonly [form: string, file: string, source: string, line: number])[] = [
+  ['a TypeScript import type', 'src/beta-type.ts', "export type Beta = import('@app/beta').Beta;\n", 1],
+  ['a TypeScript import-equals', 'src/beta-equals.ts', "import beta = require('@app/beta');\nexport { beta };\n", 1],
+  ['a literal require', 'src/beta-require.cjs', "module.exports = require('@app/beta');\n", 1],
+  ['require.resolve', 'src/beta-resolve.ts', "export const beta = require.resolve('@app/beta');\n", 1],
+  ['module.require', 'src/beta-module-require.cjs', "module.exports = module.require('@app/beta');\n", 1],
+  [
+    'a call of createRequire(...)',
+    'src/beta-create-require.ts',
+    `${createRequireImport}export const beta = createRequire(import.meta.url)('@app/beta');\n`,
+    2,
+  ],
+  [
+    'resolve on createRequire(...)',
+    'src/beta-create-require-resolve.ts',
+    `${createRequireImport}export const beta = createRequire(import.meta.url).resolve('@app/beta');\n`,
+    2,
+  ],
+  [
+    'a binding of createRequire(...)',
+    'src/beta-load.ts',
+    `${createRequireImport}const load = createRequire(import.meta.url);\nexport const beta = load('@app/beta');\n`,
+    3,
+  ],
+  ['import.meta.resolve', 'src/beta-meta-resolve.ts', "export const beta = import.meta.resolve('@app/beta');\n", 1],
+  ['a reference types directive', 'src/beta-types.d.ts', '/// <reference types="@app/beta" />\n', 1],
+  ['a reference path directive', 'src/beta-path.d.ts', '/// <reference path="../../beta/src/index.ts" />\n', 1],
+  [
+    'a re-export inside an ambient module',
+    'src/beta-ambient.d.ts',
+    "declare module 'alpha-augment' {\n  export { beta } from '@app/beta';\n}\n",
+    2,
+  ],
+  ['a relative import of the package directory', 'src/beta-directory.ts', "export { beta } from '../../beta';\n", 1],
+  ['a .js module', 'src/beta.js', betaImportSource, 1],
+  ['a .mjs module', 'src/beta.mjs', betaImportSource, 1],
+  ['a .mts module', 'src/beta.mts', `${betaImportSource}export const value: number = beta;\n`, 1],
+  ['a .cts module', 'src/beta.cts', `${betaImportSource}export const value: number = beta;\n`, 1],
+  ['a .jsx module', 'src/beta.jsx', `${betaImportSource}export const view = <b>{beta}</b>;\n`, 1],
+  [
+    'a .tsx module',
+    'src/beta.tsx',
+    `${betaImportSource}export const view = (count: number) => <b>{beta + count}</b>;\n`,
+    1,
+  ],
+];
+
+for (const [form, relative, source, line] of referenceForms) {
+  it.live(`derives a module edge from ${form}`, () =>
+    Effect.gen(function* referenceForm() {
+      const file = `${alphaModule}/${relative}`;
+      expect(yield* freezeViolations({ [file]: source })).toEqual(betaRuntimeEdge(`${file}:${line}`));
+    }),
+  );
+}
+
+it.live('reads a reference path directive as a path, never as a package name', () =>
+  Effect.gen(function* referencePathIsAPath() {
+    expect(
+      yield* freezeViolations({
+        // "beta" is also the name of a workspace package; the directive names alpha's own src/beta/index.d.ts.
+        'verticals/alpha/src/beta/index.d.ts': 'export {};\n',
+        'verticals/alpha/src/local.d.ts': '/// <reference path="beta/index.d.ts" />\n',
+        'verticals/gamma/package.json': freezeManifest('beta'),
+      }),
+    ).toEqual([]);
+  }),
+);
+
+/** Dependency declarations that install @app/beta under another name, each imported by that name. */
+const aliasedDeclarations: readonly (readonly [protocol: string, range: string])[] = [
+  ['a workspace: alias', 'workspace:@app/beta@*'],
+  ['an npm: alias onto a workspace package', 'npm:@app/beta@^1.0.0'],
+  ['a workspace: path', 'workspace:../beta'],
+  ['a link: path', 'link:../beta'],
+  ['a file: path', 'file:../beta'],
+];
+
+for (const [protocol, range] of aliasedDeclarations) {
+  it.live(`resolves ${protocol} to the workspace package it installs, for the declaration and its imports`, () =>
+    Effect.gen(function* aliasedDeclaration() {
+      expect(
+        yield* freezeViolations({
+          [alphaManifest]: freezeManifest(alphaName, { dependencies: { 'beta-alias': range } }),
+          [alphaUsesBeta]: "import { beta } from 'beta-alias/shared';\n",
+        }),
+      ).toEqual([
+        unlisted(
+          moduleToModule,
+          alphaToBetaEdge,
+          'runtime',
+          `${alphaManifest} dependencies; ${alphaUsesBeta}:1`,
+          `${alphaManifest}:1`,
+        ),
+      ]);
+    }),
+  );
+}
+
+it.live('resolves a declared name to what it installs, not to the workspace package of that name', () =>
+  Effect.gen(function* aliasedAway() {
+    expect(
+      yield* freezeViolations({
+        [alphaManifest]: freezeManifest(alphaName, { dependencies: { '@app/beta': 'npm:left-pad@1.3.0' } }),
+        [alphaUsesBeta]: betaImportSource,
+      }),
+    ).toEqual([]);
+  }),
+);
+
+it.live('resolves a package imports entry to every target it maps a # specifier to', () =>
+  Effect.gen(function* subpathImports() {
+    const subpathFile = 'verticals/alpha/src/subpath.ts';
+    expect(
+      yield* freezeViolations({
+        [alphaManifest]: JSON.stringify({
+          imports: {
+            '#beta': { default: '@app/beta', node: './src/own.ts' },
+            '#peer/*': '../beta/src/*.ts',
+          },
+          name: alphaName,
+        }),
+        [subpathFile]:
+          "import { beta } from '#beta';\nimport { peer } from '#peer/index';\nimport { own } from '#own';\n",
+      }),
+    ).toEqual([unlisted(moduleToModule, alphaToBetaEdge, 'runtime', `${subpathFile}:1,2`, `${subpathFile}:1`)]);
+  }),
+);
+
 it.live("passes today's tree against its committed baseline", () =>
   Effect.gen(function* todaysTree() {
     expect(yield* reportedViolations(fileURLToPath(new URL('../..', import.meta.url)))).toEqual([]);
