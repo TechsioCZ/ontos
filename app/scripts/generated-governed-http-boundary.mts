@@ -45,12 +45,14 @@ import {
   moduleBindings,
   moduleExports,
   moduleGraph,
-  moduleLoads,
   moduleSpecifiers,
   rebinding,
+  readableLoads,
   referenceOrigins,
   takenMembers,
   topLevelStatement,
+  unreadableLoadLine,
+  unreadableLoads,
 } from './module-bindings.mts';
 import type { DeclaredExport, ExportOrigin, ModuleBinding, ModuleBindings, ModuleGraph } from './module-bindings.mts';
 import {
@@ -4654,7 +4656,8 @@ const readReach = (
  * the name the read declares, and uses it only as the argument of an `.addHttpApi(…)` inside the initializer of the
  * module's own HttpApi value or inside that value's type annotation; the aggregate imports nothing that resolves to a
  * read; neither re-exports a read's file nor loads a module that passes on a read (`import()`, `require`, `import x =
- * require`). Every name either exports resolves to (1) a declaration of the entry that, per declarator and per
+ * require`); neither holds, anywhere, a load no static rule reads (`unreadableLoads`), and no name either exports
+ * passes through a file that holds one. Every name either exports resolves to (1) a declaration of the entry that, per declarator and per
  * destructured name, refers to nothing that resolves to a read, directly or through module bindings of the entry; (2)
  * a declaration of another file of the owner that is no read's; or (3) something the entry itself takes from outside
  * the owner that is no read's.
@@ -4663,12 +4666,13 @@ const readReach = (
  * member of a whole module, and a declaration that is only another name, in every file of the workspace's modules and
  * contract packages. Where another name ends and something new begins: a declaration is only another name when what it
  * writes, once parentheses (of a value or a type), `as`, `satisfies`, `!`, `<T>`, its own type annotation and its own
- * type parameters are taken off, is a name, a module load named statically (`import('…')`, `require('…')`) or a member
- * of either, by name or by a literal (`const B = A`, `const B = Read.A`, `const B = Read['A']`, `const { A: B } = Read`,
+ * type parameters are taken off, is a name, a readable load (`import(<literal>)`, `require(<literal>)`, `import x =
+ * require(<literal>)`, its callee read through the same wrappers and `await` of it taken off) or a member of either, by name or by a literal (`const B = A`, `const B = Read.A`, `const B = Read['A']`, `const { A: B } = Read`,
  * `const { 'A': B } = Read`, `const B = (await import('…')).A`, `type B = A`, `type B<_T> = A`, `type B = (Read.A)`,
  * `type B = typeof Read.A`, `type B = import('…').A`, `import B = Read.A`); a member is followed only into a whole
- * module. A `let` or `var`, a binding an assignment writes again, a member or a module load that cannot be read
- * statically, cannot be followed, and fails. Anything else is
+ * module. A `let` or `var`, a binding an assignment writes again, a member no literal names, and every load that is
+ * not readable (a load no literal names, the global `require` used other than as the callee of a readable load,
+ * `module.require`, `import.meta.resolve`, Node's module loader) cannot be followed, and fails. Anything else is
  * something new, a declaration of its own: a call (`A.pipe(…)`, `Schema.Struct({ … })`), an object, array, class or
  * struct it builds (`{ A }`, `[A]`), an operator, a template, type arguments (`Pick<A, 'x'>`), and a member of a declared
  * value rather than of a whole module. A chain that ends outside the owner after passing through an owner file on a
@@ -4744,11 +4748,17 @@ const readTakingProblems = (
       ? [at(node, 'loads', target)]
       : [];
   });
-  return [...new Set([...imports, ...reexports, ...loads])];
+  // A load no static rule reads, anywhere in the entry, may take anything from a read.
+  const unreadable = unreadableLoads(bindings).map(
+    (node) =>
+      `${entry.file}:${lineOf(entry.source, node.start)} loads a module it does not read statically; admitted: ${OWNER_ENTRY_READ_FORMS}`,
+  );
+  return [...new Set([...imports, ...reexports, ...loads, ...unreadable])];
 };
 
 /** What one name an owner entry exports resolves to, judged against the module's package reads. */
 const exportedReadProblem = (
+  graph: ModuleGraph,
   entry: OwnerEntry,
   ownerPath: string,
   reads: ModuleReadFiles,
@@ -4758,6 +4768,17 @@ const exportedReadProblem = (
   const leaves = `${entry.file}: export ${name}`;
   const admitted = `; admitted: ${OWNER_ENTRY_READ_FORMS}`;
   const through = origin.trail.length > 1 ? ` through ${origin.trail.slice(1).join(', ')}` : '';
+  // A file on the chain that holds a load no static rule reads may pass on anything.
+  const unreadable = origin.trail.slice(1).flatMap((file) => {
+    const bindings = graph.parsed(file);
+    const line = bindings === undefined || bindings === 'unparsable' ? undefined : unreadableLoadLine(bindings);
+    return line === undefined
+      ? []
+      : [`${leaves} passes through ${file}, which loads a module it does not read statically at ${line}${admitted}`];
+  });
+  if (unreadable[0] !== undefined) {
+    return unreadable[0];
+  }
   const read = readFileOf(reads, origin);
   if (read !== undefined) {
     return `${leaves} passes on the package read ${read}${through}${admitted}`;
@@ -4883,7 +4904,7 @@ const ownerEntryReadProblems = (
       ...new Set([
         ...readTakingProblems(graph, entry, bindings, reads),
         ...ownExports,
-        ...exported.flatMap((named) => exportedReadProblem(entry, ownerPath, reads, reaching, named) ?? []),
+        ...exported.flatMap((named) => exportedReadProblem(graph, entry, ownerPath, reads, reaching, named) ?? []),
       ]),
     ];
   });
@@ -6460,7 +6481,8 @@ const isApiFile = (file: string): boolean => API_FILES.some((pattern) => pattern
  * group, endpoint, middleware or server layer of a read or Action of another module (a declaration of an API file built
  * with the HttpApi family, or anything of a server), and every value it mounts is admitted in turn. Inside such a
  * declaration, a declaration of another file of this module or of its contract packages is judged the same way, a
- * module it loads (`import('…')`, `require('…')`) is judged as a namespace import of the module it names, and a whole
+ * readable load in it (`import(<literal>)`, `require(<literal>)`) is judged as a namespace import of the module it
+ * names, any other load in it fails (`unreadableLoads`), and a whole
  * module it uses as a value by everything that module exports. A declaration of another module, in any of its files or
  * contract packages, is used, never mounted, and only when it is not built with the HttpApi family (`isApiDeclaration`):
  * its schemas, helpers, constants and read clients may be used; its API value, its foundation API, any group, endpoint,
@@ -6518,8 +6540,9 @@ const isInFunction = (bindings: ModuleBindings, identifier: Node, part: Node): b
 /**
  * Whether another module's declaration is built with the HttpApi family: anything of a server, a declaration that
  * uses the family itself, or one built, outside its functions, from such a declaration of any file (an API value, the
- * foundation API, a group, an endpoint, a middleware, a server layer), or from what cannot be followed. A schema, a
- * helper and a read client, which only calls the read's API value inside its functions, are none.
+ * foundation API, a group, an endpoint, a middleware, a server layer), whether it names it or loads it with a readable
+ * load, or from what cannot be followed; and one that holds, anywhere, a load no static rule reads. A schema, a helper
+ * and a read client, which only calls the read's API value inside its functions, are none.
  */
 const isApiDeclaration = (context: CompositionContext, origin: DeclaredExport): boolean => {
   const key = originKey(origin);
@@ -6531,14 +6554,24 @@ const isApiDeclaration = (context: CompositionContext, origin: DeclaredExport): 
   const pending = [origin];
   const visited = new Set([key]);
   for (let next = pending.pop(); next !== undefined && !found; next = pending.pop()) {
+    const { bindings, file } = next;
     const parts = originParts(next);
-    for (const { identifier } of next.bindings.references) {
-      const part = parts.find((candidate) => isWithin(identifier, candidate));
-      const built = part !== undefined && !isInFunction(next.bindings, identifier, part);
+    const partOf = (node: Node): Node | undefined => parts.find((candidate) => isWithin(node, candidate));
+    // A load no static rule reads, anywhere in the declaration, is what the classifier cannot follow.
+    found ||= unreadableLoads(bindings).some((load) => partOf(load) !== undefined);
+    const uses = [
+      ...bindings.references.flatMap(({ identifier }) =>
+        isInType(bindings, identifier) || partOf(identifier) === undefined ? [] : [identifier],
+      ),
+      ...readableLoads(bindings).filter((load) => partOf(load) !== undefined),
+    ];
+    for (const use of uses) {
+      const part = partOf(use);
+      const built = part !== undefined && !isInFunction(bindings, use, part);
       const reached =
-        part === undefined || isInType(next.bindings, identifier)
-          ? []
-          : referenceTarget(context.graph, next.file, next.bindings, identifier);
+        use.type === 'Identifier'
+          ? referenceTarget(context.graph, file, bindings, use)
+          : loadOrigins(context.graph, file, bindings, use);
       for (const target of reached) {
         found ||=
           (target.kind === 'foreign' && HTTP_API_FAMILY.has(target.name.split('.')[0] ?? '')) ||
@@ -6686,6 +6719,16 @@ const compositionStep = (context: CompositionContext, question: CompositionQuest
   const { site } = question;
   if (question.kind === 'node') {
     const { node } = question;
+    // A load no static rule reads, anywhere in what is judged as the module's own, fails closed.
+    const unreadableLoad = unreadableLoads(site.bindings).find((load) => isWithin(load, node));
+    if (unreadableLoad !== undefined) {
+      return {
+        file: site.file,
+        kind: 'unresolved',
+        reason: `loads a module it does not read statically at line ${lineOf(site.bindings.source, unreadableLoad.start)}`,
+        trail: [site.file],
+      };
+    }
     const values = (identifier: Node): boolean => isWithin(identifier, node) && !isInType(site.bindings, identifier);
     const mounted = (inner: Node): boolean => isMountArgument(site.bindings, memberChain(site.bindings, inner).outer);
     const references = [
@@ -6701,7 +6744,7 @@ const compositionStep = (context: CompositionContext, question: CompositionQuest
         mounted: mounted(identifier),
         site,
       })),
-      ...moduleLoads(site.bindings).flatMap((load): readonly CompositionQuestion[] =>
+      ...readableLoads(site.bindings).flatMap((load): readonly CompositionQuestion[] =>
         isWithin(load, node) ? [{ kind: 'load', load, mounted: mounted(load), site }] : [],
       ),
     ];
