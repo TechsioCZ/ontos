@@ -8,6 +8,7 @@ describe('Pricing module contract', () => {
   it('publishes the headless governed Pricing management surface', () => {
     expect(pricingManifest.module.id).toBe('commerce.pricing');
     expect(Object.keys(pricingManifest.publicSurface.api)).toEqual([
+      'catalog-page-prices',
       'commercial-fee-definition',
       'commercial-fee-result-lookup',
       'commercial-fee-schedule',
