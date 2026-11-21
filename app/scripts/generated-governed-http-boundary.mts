@@ -40,10 +40,14 @@ import {
   isInType,
   isWithin,
   lineOf,
+  loadOrigins,
+  memberChain,
   moduleBindings,
   moduleExports,
   moduleGraph,
+  moduleLoads,
   moduleSpecifiers,
+  rebinding,
   referenceOrigins,
   takenMembers,
   topLevelStatement,
@@ -4658,9 +4662,13 @@ const readReach = (
  * Resolving follows `export … from`, `export *`, `export * as`, an imported binding exported again under any name, a
  * member of a whole module, and a declaration that is only another name, in every file of the workspace's modules and
  * contract packages. Where another name ends and something new begins: a declaration is only another name when what it
- * writes, once parentheses, `as`, `satisfies`, `!`, `<T>` and its own type annotation are taken off, is a name or a
- * member of names (`const B = A`, `const B = Read.A`, `const { A: B } = Read`, `type B = A`, `type B = typeof Read.A`,
- * `type B = import('…').A`, `import B = Read.A`); a member is followed only into a whole module. Anything else is
+ * writes, once parentheses (of a value or a type), `as`, `satisfies`, `!`, `<T>`, its own type annotation and its own
+ * type parameters are taken off, is a name, a module load named statically (`import('…')`, `require('…')`) or a member
+ * of either, by name or by a literal (`const B = A`, `const B = Read.A`, `const B = Read['A']`, `const { A: B } = Read`,
+ * `const { 'A': B } = Read`, `const B = (await import('…')).A`, `type B = A`, `type B<_T> = A`, `type B = (Read.A)`,
+ * `type B = typeof Read.A`, `type B = import('…').A`, `import B = Read.A`); a member is followed only into a whole
+ * module. A `let` or `var`, a binding an assignment writes again, a member or a module load that cannot be read
+ * statically, cannot be followed, and fails. Anything else is
  * something new, a declaration of its own: a call (`A.pipe(…)`, `Schema.Struct({ … })`), an object, array, class or
  * struct it builds (`{ A }`, `[A]`), an operator, a template, type arguments (`Pick<A, 'x'>`), and a member of a declared
  * value rather than of a whole module. A chain that ends outside the owner after passing through an owner file on a
@@ -6451,15 +6459,19 @@ const isApiFile = (file: string): boolean => API_FILES.some((pattern) => pattern
  * written in the entry, in which nothing, at any depth, through what each binding it uses resolves to, is the API value,
  * group, endpoint, middleware or server layer of a read or Action of another module (a declaration of an API file built
  * with the HttpApi family, or anything of a server), and every value it mounts is admitted in turn. Inside such a
- * declaration, a declaration of another file of this module or of its contract packages is judged the same way; a
- * schema of an API file, of any module, may be used; and what another module's code outside its API files builds (its
- * read clients, its helpers) is that module's business, used but never mounted and not judged within. A mounted or
- * composed value that resolves to anything but such a declaration fails, and so does a binding, mounted or used, whose
- * origin cannot be established: a missing file or name, a whole module used as a value, a module or contract package
- * subpath the graph cannot read.
+ * declaration, a declaration of another file of this module or of its contract packages is judged the same way, a
+ * module it loads (`import('…')`, `require('…')`) is judged as a namespace import of the module it names, and a whole
+ * module it uses as a value by everything that module exports. A declaration of another module, in any of its files or
+ * contract packages, is used, never mounted, and only when it is not built with the HttpApi family (`isApiDeclaration`):
+ * its schemas, helpers, constants and read clients may be used; its API value, its foundation API, any group, endpoint,
+ * middleware or layer it declares, and whatever of it cannot be followed fail. A mounted or composed value resolves only
+ * through `const` declarations and modules named statically: one that resolves to anything but such a declaration
+ * fails, and so does a binding, mounted or used, whose origin cannot be established, and the diagnostic says why: a
+ * missing file or name, a `let` or `var` or a binding an assignment writes again, a member or a module load that
+ * cannot be read statically, a module or contract package subpath the graph cannot read.
  */
 const OWNER_MOUNT_FORMS =
-  "the API value or server layer of a read or Action of this module, or a declaration of an owner file in which nothing, through what each binding resolves to, is another module's read or Action API value or server layer";
+  "the API value or server layer of a read or Action of this module, or a declaration of an owner file in which nothing, through what each binding resolves to, is another module's read or Action API value or server layer or anything else of another module built with the HttpApi family";
 
 /** What the owner entries may compose. */
 interface CompositionContext {
@@ -6488,20 +6500,26 @@ const originParts = (origin: DeclaredExport): readonly Node[] => {
   return binding === undefined ? [origin.node] : declarationParts(origin.bindings, binding);
 };
 
-/** What the references inside a declaration resolve to. */
-const referencedOrigins = (graph: ModuleGraph, origin: DeclaredExport): readonly ExportOrigin[] => {
-  const parts = originParts(origin);
-  return origin.bindings.references.flatMap(({ identifier }) =>
-    parts.some((part) => isWithin(identifier, part))
-      ? referenceTarget(graph, origin.file, origin.bindings, identifier)
-      : [],
-  );
+const FUNCTION_TYPES = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression']);
+
+/** Whether a reference stands in a function of a declaration part: code that runs when it is called. */
+const isInFunction = (bindings: ModuleBindings, identifier: Node, part: Node): boolean => {
+  for (let node = bindings.parents.get(identifier); node !== undefined; node = bindings.parents.get(node)) {
+    if (FUNCTION_TYPES.has(node.type)) {
+      return true;
+    }
+    if (node === part) {
+      return false;
+    }
+  }
+  return false;
 };
 
 /**
- * Whether a declaration of an API file is an API value, group, endpoint, middleware or server layer: anything
- * of a server, or a declaration built, through the declarations of API files it uses, with the HttpApi family. A schema
- * is none.
+ * Whether another module's declaration is built with the HttpApi family: anything of a server, a declaration that
+ * uses the family itself, or one built, outside its functions, from such a declaration of any file (an API value, the
+ * foundation API, a group, an endpoint, a middleware, a server layer), or from what cannot be followed. A schema, a
+ * helper and a read client, which only calls the read's API value inside its functions, are none.
  */
 const isApiDeclaration = (context: CompositionContext, origin: DeclaredExport): boolean => {
   const key = originKey(origin);
@@ -6513,11 +6531,22 @@ const isApiDeclaration = (context: CompositionContext, origin: DeclaredExport): 
   const pending = [origin];
   const visited = new Set([key]);
   for (let next = pending.pop(); next !== undefined && !found; next = pending.pop()) {
-    for (const reached of referencedOrigins(context.graph, next)) {
-      found ||= reached.kind === 'foreign' && HTTP_API_FAMILY.has(reached.name.split('.')[0] ?? '');
-      if (reached.kind === 'declared' && isApiFile(reached.file) && !visited.has(originKey(reached))) {
-        visited.add(originKey(reached));
-        pending.push(reached);
+    const parts = originParts(next);
+    for (const { identifier } of next.bindings.references) {
+      const part = parts.find((candidate) => isWithin(identifier, candidate));
+      const built = part !== undefined && !isInFunction(next.bindings, identifier, part);
+      const reached =
+        part === undefined || isInType(next.bindings, identifier)
+          ? []
+          : referenceTarget(context.graph, next.file, next.bindings, identifier);
+      for (const target of reached) {
+        found ||=
+          (target.kind === 'foreign' && HTTP_API_FAMILY.has(target.name.split('.')[0] ?? '')) ||
+          (built && (target.kind === 'unresolved' || target.kind === 'namespace'));
+        if (built && target.kind === 'declared' && !visited.has(originKey(target))) {
+          visited.add(originKey(target));
+          pending.push(target);
+        }
       }
     }
   }
@@ -6546,13 +6575,44 @@ interface NodeQuestion {
   readonly site: CompositionSite;
 }
 
-type CompositionQuestion = DeclarationQuestion | NodeQuestion | ReferenceQuestion;
+/** An `import()` or `require()` inside a judged node: judged as a namespace import of the module it names. */
+interface LoadQuestion {
+  readonly kind: 'load';
+  readonly load: Node;
+  readonly mounted: boolean;
+  readonly site: CompositionSite;
+}
+
+/** A whole module used as a value, never mounted: what it exports, each judged as used. */
+interface NamespaceQuestion {
+  readonly file: string;
+  readonly kind: 'namespace';
+}
+
+type CompositionQuestion = DeclarationQuestion | LoadQuestion | NamespaceQuestion | NodeQuestion | ReferenceQuestion;
+
+/** A link the judge cannot follow, with its reason. */
+type Unfollowed = Extract<ExportOrigin, { readonly kind: 'unresolved' }>;
+
+/** What one step of the composition judge gives: the questions it rests on, a refusal, or a link it cannot follow. */
+type CompositionStep = readonly CompositionQuestion[] | false | Unfollowed;
+
+/** The steps of several origins as one: the first link that cannot be followed, else a refusal, else every question. */
+const settledSteps = (steps: readonly CompositionStep[]): CompositionStep => {
+  const unfollowed = steps.find((step) => step !== false && 'kind' in step);
+  if (unfollowed !== undefined) {
+    return unfollowed;
+  }
+  return !steps.includes(false) && steps.flatMap((step) => (step === false || 'kind' in step ? [] : step));
+};
 
 /** What a reference an inner scope binds composes: a plain alias, a declaration's initializer, a parameter. */
-const localStep = (
-  { identifier, mounted, site }: ReferenceQuestion,
-  declared: Node,
-): readonly CompositionQuestion[] | false => {
+const localStep = ({ identifier, mounted, site }: ReferenceQuestion, declared: Node): CompositionStep => {
+  // What a `let` or `var`, or a binding written again, holds is not its declaration alone.
+  const changing = rebinding(site.bindings, declared);
+  if (changing !== undefined) {
+    return { file: site.file, kind: 'unresolved', reason: changing, trail: [site.file] };
+  }
   const declaration = site.bindings.parents.get(declared);
   if (declaration?.type === 'VariableDeclarator' && declaration.init !== null) {
     if (declaration.id === declared && declaration.init.type === 'Identifier') {
@@ -6574,16 +6634,13 @@ const localStep = (
 };
 
 /**
- * What an origin composes, by what it is: the API value or server layer of a read or Action of this module; a
- * declaration of an API file (another module's API value or server layer fails, a schema may be used); a declaration
- * of this module's code, judged in turn (mounted, only an owner file's); another module's code or a library binding,
- * used but never mounted; nothing else.
+ * What an origin composes, by what it is: the API value or server layer of a read or Action of this module; another
+ * module's declaration, used but never mounted, and never one built with the HttpApi family; a declaration of an API
+ * file of this module, used; a declaration of this module's code, judged in turn (mounted, only an owner file's); a
+ * whole module, used, judged by what it exports; a library binding, used; a link that cannot be followed fails with its
+ * reason.
  */
-const originStep = (
-  context: CompositionContext,
-  origin: ExportOrigin,
-  mounted: boolean,
-): readonly CompositionQuestion[] | false => {
+const originStep = (context: CompositionContext, origin: ExportOrigin, mounted: boolean): CompositionStep => {
   if (origin.kind === 'foreign') {
     // A relative module is followed unless it is data (`import artifact from './build.json'`); a missing one fails.
     const followable = origin.specifier.startsWith('.')
@@ -6591,63 +6648,70 @@ const originStep = (
       : !isUnreadWorkspaceTarget(context.workspace, origin.target);
     return !mounted && followable && [];
   }
-  if (origin.kind !== 'declared') {
-    return false;
+  if (origin.kind === 'unresolved') {
+    return origin;
+  }
+  if (origin.kind === 'namespace') {
+    return !mounted && [{ file: origin.file, kind: 'namespace' }];
   }
   if (isExportedDeclaration(context.admitted, origin)) {
     return [];
   }
-  if (isApiFile(origin.file)) {
-    const own = context.own.some((directory) => origin.file.startsWith(directory));
-    return !mounted && (own || !isApiDeclaration(context, origin)) && [];
-  }
-  // Another module's code is that module's business: what it builds is used, never mounted, and not judged within.
+  // Another module's declaration is used, never mounted, and never one built with the HttpApi family: its schemas,
+  // helpers and read clients, never its API values, groups, endpoints, middleware or layers.
   if (!context.own.some((directory) => origin.file.startsWith(directory))) {
+    return !mounted && !isApiDeclaration(context, origin) && [];
+  }
+  if (isApiFile(origin.file)) {
     return !mounted && [];
   }
   return (!mounted || origin.file.startsWith(`${context.ownerPath}/`)) && [{ kind: 'declaration', mounted, origin }];
 };
 
-/** The node a member access or qualified name of names ends at, from its leftmost name: `Read.X.Y` for `Read`. */
-const memberOuter = (bindings: ModuleBindings, identifier: Node): Node => {
-  let outer = identifier;
-  for (let parent = bindings.parents.get(outer); parent !== undefined; parent = bindings.parents.get(outer)) {
-    const takes =
-      (parent.type === 'MemberExpression' && !parent.computed && parent.object === outer) ||
-      (parent.type === 'TSQualifiedName' && parent.left === outer);
-    if (!takes) {
-      return outer;
-    }
-    outer = parent;
-  }
-  return outer;
-};
-
 /** One step of the composition judge: false when the question fails, else the questions it rests on. */
-const compositionStep = (
-  context: CompositionContext,
-  question: CompositionQuestion,
-): readonly CompositionQuestion[] | false => {
+const compositionStep = (context: CompositionContext, question: CompositionQuestion): CompositionStep => {
   if (question.kind === 'declaration') {
     const { origin } = question;
     const site: CompositionSite = { bindings: origin.bindings, file: origin.file };
     return originParts(origin).map((node): CompositionQuestion => ({ kind: 'node', node, site }));
   }
+  if (question.kind === 'namespace') {
+    const { names, opaque } = moduleExports(context.graph, question.file);
+    return settledSteps(
+      [...names.flatMap((name) => exportOrigins(context.graph, question.file, name)), ...opaque].map((origin) =>
+        originStep(context, origin, false),
+      ),
+    );
+  }
   const { site } = question;
   if (question.kind === 'node') {
     const { node } = question;
     const values = (identifier: Node): boolean => isWithin(identifier, node) && !isInType(site.bindings, identifier);
-    return [
+    const mounted = (inner: Node): boolean => isMountArgument(site.bindings, memberChain(site.bindings, inner).outer);
+    const references = [
       ...site.bindings.references.flatMap(({ identifier }) => (values(identifier) ? [identifier] : [])),
       ...[...site.bindings.local].flatMap(([identifier, declared]) =>
         values(identifier) && !isWithin(declared, node) ? [identifier] : [],
       ),
-    ].map((identifier): CompositionQuestion => ({
-      identifier,
-      kind: 'reference',
-      mounted: isMountArgument(site.bindings, memberOuter(site.bindings, identifier)),
-      site,
-    }));
+    ];
+    return [
+      ...references.map((identifier): CompositionQuestion => ({
+        identifier,
+        kind: 'reference',
+        mounted: mounted(identifier),
+        site,
+      })),
+      ...moduleLoads(site.bindings).flatMap((load): readonly CompositionQuestion[] =>
+        isWithin(load, node) ? [{ kind: 'load', load, mounted: mounted(load), site }] : [],
+      ),
+    ];
+  }
+  if (question.kind === 'load') {
+    return settledSteps(
+      loadOrigins(context.graph, site.file, site.bindings, question.load).map((origin) =>
+        originStep(context, origin, question.mounted),
+      ),
+    );
   }
   const declared = site.bindings.local.get(question.identifier);
   if (declared !== undefined) {
@@ -6661,10 +6725,11 @@ const compositionStep = (
   if (bound.every((binding) => importsExported(context.admitted, site.file, binding))) {
     return [];
   }
-  const steps = referenceTarget(context.graph, site.file, site.bindings, question.identifier).map((origin) =>
-    originStep(context, origin, question.mounted),
+  return settledSteps(
+    referenceTarget(context.graph, site.file, site.bindings, question.identifier).map((origin) =>
+      originStep(context, origin, question.mounted),
+    ),
   );
-  return steps.every((step) => step !== false) && steps.flat();
 };
 
 const questionKey = (question: CompositionQuestion): string => {
@@ -6674,11 +6739,23 @@ const questionKey = (question: CompositionQuestion): string => {
   if (question.kind === 'node') {
     return `${question.site.file}@${question.node.start}-${question.node.end}:${question.node.type}`;
   }
+  if (question.kind === 'load') {
+    return `${question.site.file}@${question.load.start}:load:${question.mounted ? 'mounted' : 'used'}`;
+  }
+  if (question.kind === 'namespace') {
+    return `${question.file}:namespace`;
+  }
   return `${question.site.file}@${question.identifier.start}:reference:${question.mounted ? 'mounted' : 'used'}`;
 };
 
-/** Whether every question holds, each judged once: what they compose is admitted (`OWNER_MOUNT_FORMS`). */
-const composesOnlyAdmitted = (context: CompositionContext, questions: readonly CompositionQuestion[]): boolean => {
+/**
+ * Why the questions do not all hold, each judged once: a refusal, or a link that cannot be followed; undefined when
+ * what they compose is admitted (`OWNER_MOUNT_FORMS`).
+ */
+const compositionRefusal = (
+  context: CompositionContext,
+  questions: readonly CompositionQuestion[],
+): false | Unfollowed | undefined => {
   const pending = [...questions];
   const visited = new Set<string>();
   for (let question = pending.pop(); question !== undefined; question = pending.pop()) {
@@ -6686,13 +6763,13 @@ const composesOnlyAdmitted = (context: CompositionContext, questions: readonly C
     if (!visited.has(key)) {
       visited.add(key);
       const next = compositionStep(context, question);
-      if (next === false) {
-        return false;
+      if (next === false || 'kind' in next) {
+        return next;
       }
       pending.push(...next);
     }
   }
-  return true;
+  return undefined;
 };
 
 /** What one owner entry may compose and where its composed values stand. */
@@ -6743,17 +6820,22 @@ const composedProblems = (context: CompositionContext, entry: OwnerEntryComposit
     return [node, question] as const;
   });
   // One walk over the whole composition first; only a composition that fails is judged value by value.
-  const failing = composesOnlyAdmitted(
-    context,
-    composed.map(([, question]) => question),
-  )
-    ? []
-    : composed.filter(([, question]) => !composesOnlyAdmitted(context, [question]));
+  const failing =
+    compositionRefusal(
+      context,
+      composed.map(([, question]) => question),
+    ) === undefined
+      ? []
+      : composed.flatMap(([node, question]) => {
+          const refusal = compositionRefusal(context, [question]);
+          return refusal === undefined ? [] : [[node, refusal] as const];
+        });
   return [
     ...takenImports,
-    ...failing.map(([node]) =>
-      unknown(node.type === 'Identifier' ? node.name : entry.source.slice(node.start, node.end)),
-    ),
+    ...failing.map(([node, refusal]) => {
+      const refused = unknown(node.type === 'Identifier' ? node.name : entry.source.slice(node.start, node.end));
+      return refusal === false ? refused : `${refused} (cannot be followed: ${refusal.file} ${refusal.reason})`;
+    }),
   ];
 };
 

@@ -783,10 +783,101 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
         "import { HiddenApi } from '@app/pricing-contracts/hidden';\nexport const ExtraApi = HiddenApi.pipe(identity);",
         [],
       ],
+      // A module load is a namespace import of the module it names.
+      [
+        "a member of a dynamic import of another module's read",
+        `export const ExtraApi = (await import('${foreignSpecifier}')).${foreign};`,
+        [],
+      ],
+      [
+        "a member of a require of another module's read",
+        `export const ExtraApi = require('${foreignSpecifier}').${foreign};`,
+        [],
+      ],
+      [
+        "a dynamic import of another module's read mounted in an API of the owner",
+        `export const ExtraApi = HttpApi.make('Extra').addHttpApi((await import('${foreignSpecifier}')).${foreign});`,
+        [],
+      ],
+      // Another module's declaration built with the HttpApi family is never the owner's, whatever it is wrapped in.
+      [
+        "another module's whole HttpApi value through a pipe",
+        "import { priceGroupCatalogApi } from '@app/price-group-catalog/api';\nexport const ExtraApi = priceGroupCatalogApi.pipe(identity);",
+        [],
+      ],
+      [
+        "another module's foundation API through an annotation",
+        "import { priceGroupCatalogFoundationApi } from '@app/price-group-catalog/api';\nexport const ExtraApi = priceGroupCatalogFoundationApi.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });",
+        [],
+      ],
     ] as const) {
       const verdict = extraMounted(extra, changes);
       expect(verdict.valid, label).toBe(false);
       expect(verdict.diagnostics, label).toContain(unknown(sharedApiFile, 'ExtraApi'));
+    }
+    // A value the module mounts resolves only through const declarations and modules named statically; anything else
+    // fails closed, and the diagnostic says why.
+    for (const [label, extra, reason] of [
+      [
+        "a let the module assigns another module's read after its declaration",
+        `import { ${foreign} as Foreign } from '${foreignSpecifier}';\nconst Local = HttpApi.make('Local');\nexport let ExtraApi: typeof Local | typeof Foreign = Local;\nExtraApi = Foreign;`,
+        'ExtraApi is assigned after its declaration',
+      ],
+      ['a let', "export let ExtraApi = HttpApi.make('Local');", 'ExtraApi is declared with let'],
+      ['a var', "export var ExtraApi = HttpApi.make('Local');", 'ExtraApi is declared with var'],
+      [
+        'a member of a module loaded by a name it builds',
+        `const leaf = '${foreignSpecifier}';\nexport const ExtraApi = (await import(leaf)).${foreign};`,
+        'loads a module it does not name statically',
+      ],
+      [
+        'a module loaded by a name it builds inside an API of the owner',
+        `const leaf = '${foreignSpecifier}';\nexport const ExtraApi = HttpApi.make('Extra').pipe((api) => {\n  void import(leaf);\n  return api;\n});`,
+        'loads a module it does not name statically',
+      ],
+    ] as const) {
+      const { diagnostics } = extraMounted(extra);
+      expect(diagnostics, label).toContain(unknown(sharedApiFile, 'ExtraApi'));
+      expect(diagnostics, label).toContain(`(cannot be followed: ${owner}/shared/extra.ts ${reason}`);
+    }
+    // Another module's schema, helper or read client is used, not mounted: one of its entry may be used inside an API
+    // of the owner.
+    expect(
+      extraMounted(
+        [
+          "import { priceGroupCatalogItemSchema } from '@app/price-group-catalog/api';",
+          "export const ExtraApi = HttpApi.make('Extra').add(",
+          "  HttpApiGroup.make('extra').add(HttpApiEndpoint.get('extra', '/extra', { success: priceGroupCatalogItemSchema })),",
+          ').pipe(identity);',
+        ].join('\n'),
+      ).valid,
+    ).toBe(true);
+    // So may one of its read clients, which uses the read's API value only inside its functions, and a module of the
+    // owner may be loaded.
+    for (const [label, extra, changes] of [
+      [
+        "another module's read client",
+        [
+          "import { executePriceGroupDefinitionWithAuthorization } from '@app/price-group-catalog-contracts/price-group-definition/client';",
+          "export const ExtraApi = HttpApi.make('Extra').pipe((api) => {",
+          '  void executePriceGroupDefinitionWithAuthorization;',
+          '  return api;',
+          '});',
+        ].join('\n'),
+        [],
+      ],
+      [
+        'a module of the owner it loads',
+        [
+          "export const ExtraApi = HttpApi.make('Extra').pipe((api) => {",
+          "  void import('./extra-loaded.ts');",
+          '  return api;',
+          '});',
+        ].join('\n'),
+        [[`${owner}/shared/extra-loaded.ts`, 'export const loaded = 1;\n']],
+      ],
+    ] as const) {
+      expect(extraMounted(extra, changes).valid, label).toBe(true);
     }
     // The provider's rename in its own entry is its own business; and another module's schema may be used inside an
     // API of the owner's own.
@@ -892,18 +983,19 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
     }
     // The module's own API and layer: a layer through a plain alias in the runtime factory, and an API declared in a
     // file of the owner, by name or as its default export, mounted outside the slots.
-    expect(
-      seam(sources, [
-        [
-          handlerFile,
-          replaced(
-            handler,
-            '  const apiHandlersLive = Layer.mergeAll(\n    paymentTermCatalogReadinessLayer,',
-            '  const readiness = paymentTermCatalogReadinessLayer;\n  const apiHandlersLive = Layer.mergeAll(\n    readiness,',
-          ),
-        ],
-      ]),
-    ).toBe(true);
+    const factoryComposition = '  const apiHandlersLive = Layer.mergeAll(\n    paymentTermCatalogReadinessLayer,';
+    const throughLocal = (declaration: string) =>
+      replaced(
+        handler,
+        factoryComposition,
+        `  ${declaration} readiness = paymentTermCatalogReadinessLayer;\n  const apiHandlersLive = Layer.mergeAll(\n    readiness,`,
+      );
+    expect(seam(sources, [[handlerFile, throughLocal('const')]])).toBe(true);
+    // A layer composed through a local `let` fails closed, and says why.
+    const rebound = judged(sources, [[handlerFile, throughLocal('let')]]);
+    expect(rebound.valid).toBe(false);
+    expect(rebound.diagnostics).toContain(unknown(handlerFile, 'readiness'));
+    expect(rebound.diagnostics).toContain(`${handlerFile} readiness is declared with let`);
     expect(
       seam(sources, [
         [
@@ -1146,6 +1238,7 @@ it.live('follows every name an owner entry passes on from an owner file to where
     const shellProbe = `${BOUNDARY_FIXTURE_SHELL_PATH}/src/price-group-probe.ts`;
     const passesOnTheRead = 'passes on the package read';
     const exportsPublicApi = 'export PublicApi';
+    const exportsPublicRequest = 'export PublicRequest';
     /** The full check after appending a re-export to an owner entry and writing the files it passes on. */
     const judgedChain = Effect.fn(function* judgedChain(
       entry: string,
@@ -1221,7 +1314,7 @@ it.live('follows every name an owner entry passes on from an owner file to where
             `export type { PriceGroupDefinitionRequest as PublicRequest } from '${read}';\n`,
           ],
         ],
-        'export PublicRequest',
+        exportsPublicRequest,
         passesOnTheRead,
       ],
       // Declarations that are only another name, followed transitively in owner files: an annotated alias, an alias that
@@ -1333,12 +1426,89 @@ it.live('follows every name an owner entry passes on from an owner file to where
           'reaches a package read of the module',
         ] as const,
       ]),
+      // A parenthesized type, a member taken by a string, and an alias with type parameters of its own are only another
+      // name; a member that cannot be read statically fails closed.
+      [
+        'a re-export of a parenthesized type of a member of the whole read',
+        sharedApi,
+        "export type { PublicRequest } from './public.ts';\n",
+        [
+          [
+            `${priceGroups}/shared/public.ts`,
+            `import type * as Read from '${read}';\n\nexport type PublicRequest = (Read.PriceGroupDefinitionRequest);\n`,
+          ],
+        ],
+        exportsPublicRequest,
+        passesOnTheRead,
+      ],
+      ...(
+        [
+          ['a string key', "export const { 'PriceGroupDefinitionApi': PublicApi } = Read;", passesOnTheRead],
+          ['a template key', 'export const { [`PriceGroupDefinitionApi`]: PublicApi } = Read;', passesOnTheRead],
+          ['a computed string key', "export const { ['PriceGroupDefinitionApi']: PublicApi } = Read;", passesOnTheRead],
+          ['a string member access', "export const PublicApi = Read['PriceGroupDefinitionApi'];", passesOnTheRead],
+          ['an optional chain', 'export const PublicApi = Read?.PriceGroupDefinitionApi;', passesOnTheRead],
+          [
+            'a dynamic import of it',
+            `export const PublicApi = (await import('${read}')).PriceGroupDefinitionApi;`,
+            passesOnTheRead,
+          ],
+          ['a require of it', `export const PublicApi = require('${read}').PriceGroupDefinitionApi;`, passesOnTheRead],
+          ['an indexed type', "export type PublicApi = (typeof Read)['PriceGroupDefinitionApi'];", passesOnTheRead],
+          [
+            'a computed key it builds',
+            "const key = 'PriceGroupDefinitionApi';\nexport const { [key]: PublicApi } = Read;",
+            'is taken a member that cannot be read statically',
+          ],
+          [
+            'a member access it builds',
+            "const key = 'PriceGroupDefinitionApi';\nexport const PublicApi = Read[key];",
+            'is taken a member that cannot be read statically',
+          ],
+        ] as const
+      ).map(
+        ([taken, declaration, expected]) =>
+          [
+            `a member of the whole read taken by ${taken}, re-exported by ${sharedApi}`,
+            sharedApi,
+            "export { PublicApi } from './public.ts';\n",
+            [[`${priceGroups}/shared/public.ts`, `import * as Read from '${read}';\n\n${declaration}\n`]],
+            exportsPublicApi,
+            expected,
+          ] as const,
+      ),
+      [
+        'a re-export of an alias with a type parameter of its own of the read type',
+        sharedApi,
+        "export type { PublicRequest } from './public.ts';\n",
+        [
+          [
+            `${priceGroups}/shared/public.ts`,
+            `import type { PriceGroupDefinitionRequest } from '${read}';\n\nexport type PublicRequest<_T = unknown> = PriceGroupDefinitionRequest;\n`,
+          ],
+        ],
+        exportsPublicRequest,
+        passesOnTheRead,
+      ],
+      [
+        "a re-export of an alias with a type parameter of its own of the typeof the read's API value",
+        sharedApi,
+        "export type { PublicApi } from './public.ts';\n",
+        [
+          [
+            `${priceGroups}/shared/public.ts`,
+            `import type { PriceGroupDefinitionApi } from '${read}';\n\nexport type PublicApi<_T = unknown> = typeof PriceGroupDefinitionApi;\n`,
+          ],
+        ],
+        exportsPublicApi,
+        passesOnTheRead,
+      ],
       [
         'a re-export of a name the owner file does not export',
         sharedApi,
         "export type { PublicRequest } from './extra.ts';\n",
         [[`${priceGroups}/shared/extra.ts`, 'export const Other = 1;\n']],
-        'export PublicRequest',
+        exportsPublicRequest,
         'exports no PublicRequest',
       ],
       // A chain that ends anywhere but on a declaration of an owner file cannot be followed, and fails closed.
