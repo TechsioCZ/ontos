@@ -259,6 +259,7 @@
     "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/party-registry": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/payment-term-catalog-contracts": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/pricing-contracts": "workspace:*",

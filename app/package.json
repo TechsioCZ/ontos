@@ -146,7 +146,9 @@
   "devDependencies": {
     "@app/assortment": "workspace:*",
     "@app/catalog": "workspace:*",
+    "@app/catalog-selection-contracts": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/pricing": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
