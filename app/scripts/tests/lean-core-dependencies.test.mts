@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
 import type { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -752,6 +752,8 @@ it.live('admits only the exact Privacy profile-authority client composition pair
 );
 
 const workspaceRange = 'workspace:*';
+const betaWorkspaceAlias = 'workspace:@app/beta@*';
+const unparsableSource = 'export const = ;\n';
 const alphaModule = 'verticals/alpha';
 const betaModule = 'verticals/beta';
 const alphaManifest = 'verticals/alpha/package.json';
@@ -862,7 +864,7 @@ it.live('derives an edge from an undeclared package import, and refuses a source
     expect(
       yield* freezeViolations({
         [alphaUsesBeta]: "export const load = () => import('@app/beta/shared/beta-value');\n",
-        'verticals/alpha/src/unreadable.ts': 'export const = ;\n',
+        'verticals/alpha/src/unreadable.ts': unparsableSource,
       }),
     ).toEqual([
       'verticals/alpha/src/unreadable.ts:1: Workspace source does not parse, so the package edges it makes are unknown',
@@ -1124,7 +1126,7 @@ it.live('reads a reference path directive as a path, never as a package name', (
 
 /** Dependency declarations that install @app/beta under another name, each imported by that name. */
 const aliasedDeclarations: readonly (readonly [protocol: string, range: string])[] = [
-  ['a workspace: alias', 'workspace:@app/beta@*'],
+  ['a workspace: alias', betaWorkspaceAlias],
   ['an npm: alias onto a workspace package', 'npm:@app/beta@^1.0.0'],
   ['a workspace: path', 'workspace:../beta'],
   ['a link: path', 'link:../beta'],
@@ -1371,12 +1373,44 @@ it.live('parses a .cjs source as CommonJS, where a top-level return is valid', (
   }),
 );
 
+for (const extension of ['.js', '.jsx']) {
+  it.live(`parses a ${extension} source as CommonJS when it does not parse as a module, and only then fails it`, () =>
+    Effect.gen(function* commonJsFallback() {
+      const early = `verticals/alpha/src/early${extension}`;
+      const broken = `verticals/alpha/src/broken${extension}`;
+      expect(
+        yield* freezeViolations({
+          [broken]: unparsableSource,
+          [early]: "if (process.env.SKIP_BETA === '1') {\n  return;\n}\nmodule.exports = require('@app/beta');\n",
+        }),
+      ).toEqual([
+        `${broken}:1: Workspace source does not parse, so the package edges it makes are unknown`,
+        ...betaRuntimeEdge(`${early}:4`),
+      ]);
+    }),
+  );
+}
+
+it.live('refuses a computed-load count that is not a positive integer, and an entry for a file without loads', () =>
+  Effect.gen(function* computedLoadCountValues() {
+    const missing = 'verticals/alpha/src/missing.ts';
+    for (const count of [0, -1, 1.5]) {
+      const root = yield* freezeRoot(freezeBaseline([], [{ count, file: missing }]));
+      const exit = yield* Effect.exit(freezeReport(root));
+      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause).includes('count')).toBe(true);
+    }
+    expect(yield* freezeViolations(freezeBaseline([], [{ count: 1, file: missing }]))).toEqual([
+      baselineFile(`Computed-load entry ${missing} (1) names a file without computed loads: remove it`),
+    ]);
+  }),
+);
+
 it.live('resolves a bare specifier through the root package.json when its own package does not declare it', () =>
   Effect.gen(function* rootDeclaration() {
     expect(
       yield* freezeViolations({
         [alphaUsesBeta]: "import { beta } from 'peer';\n",
-        'package.json': JSON.stringify({ devDependencies: { peer: 'workspace:@app/beta@*' }, name: 'workspace-root' }),
+        'package.json': JSON.stringify({ devDependencies: { peer: betaWorkspaceAlias }, name: 'workspace-root' }),
       }),
     ).toEqual(betaRuntimeEdge(`${alphaUsesBeta}:1`));
   }),
@@ -1430,7 +1464,7 @@ const committedTree = {
 const transientDirectory = 'verticals/alpha/.ontos-contract-a1b2c3';
 const transientFiles = {
   [`${transientDirectory}/bundle.mjs`]: betaImportSource,
-  [`${transientDirectory}/entry.mts`]: 'export const = ;\n',
+  [`${transientDirectory}/entry.mts`]: unparsableSource,
   'packages/core-runtime/src/transient.ts': "import { z } from 'zod';\n",
 } as const;
 

@@ -1063,7 +1063,7 @@ const ModuleEdgeBaselineEntrySchema = Schema.Struct({
 type ModuleEdgeBaselineEntry = typeof ModuleEdgeBaselineEntrySchema.Type;
 /** A source of a module or a package and how many loads in it name a target the check cannot read. */
 const ComputedLoadBaselineEntrySchema = Schema.Struct({
-  count: Schema.Number,
+  count: Schema.Int.check(Schema.isGreaterThan(0)),
   file: Schema.String,
 });
 type ComputedLoadBaselineEntry = typeof ComputedLoadBaselineEntrySchema.Type;
@@ -1775,22 +1775,36 @@ const settleCapability = (analysis: LoadAnalysis, start: Node, capability: Capab
 const byIndex = Order.mapInput(Order.Number, (reference: ModuleReference) => reference.index);
 
 /**
+ * How a source is parsed: `.cjs` as CommonJS; `.js` and `.jsx`, whose format the nearest package.json
+ * decides, as a module and, when that does not parse, as CommonJS; every other format as a module.
+ */
+const sourceTypesOf = (file: string): readonly ('commonjs' | 'module')[] => {
+  const extension = posixPath.extname(file);
+  if (extension === '.cjs') {
+    return ['commonjs'];
+  }
+  return extension === '.js' || extension === '.jsx' ? ['module', 'commonjs'] : ['module'];
+};
+
+/**
  * What the file loads. Specifiers: static imports and re-exports at any depth, literal `import()`, TypeScript
  * import types and `import x = require()`, triple-slash reference directives, and each recognised use of a
  * loader capability with a literal target. A capability enters a file only as the free `require`,
  * `module.require`, `import.meta.resolve`, an import of `node:module` or `module` (or `require` or
  * `import()` of it) and a non-literal `import()`; every other use of one is a computed load, whose target the
- * check cannot read. None when the file does not parse, so its loads are unknown.
+ * check cannot read. None when the file parses in none of its formats, so its loads are unknown.
  */
 const loadsIn = (file: string, source: string): Option.Option<SourceLoads> => {
-  const parsed = parseSync(file, source, {
-    astType: 'ts',
-    lang: moduleLanguage(file),
-    sourceType: file.endsWith('.cjs') ? 'commonjs' : 'module',
-  });
-  if (parsed.errors.length > 0) {
+  const parsed = sourceTypesOf(file)
+    .map((sourceType) => ({
+      result: parseSync(file, source, { astType: 'ts', lang: moduleLanguage(file), sourceType }),
+      sourceType,
+    }))
+    .find(({ result }) => result.errors.length === 0);
+  if (parsed === undefined) {
     return Option.none();
   }
+  const { result } = parsed;
   const analysis: LoadAnalysis = {
     computedLoads: [],
     declared: new Map(),
@@ -1801,13 +1815,13 @@ const loadsIn = (file: string, source: string): Option.Option<SourceLoads> => {
     scopes: new Map(),
     typeOnly: new Set(),
   };
-  trackStructure(analysis, parsed.program);
-  new Visitor(sourceSites(analysis, parsed.program)).visit(parsed.program);
+  trackStructure(analysis, result.program);
+  new Visitor(sourceSites(analysis, result.program)).visit(result.program);
   resolveReferences(analysis);
   for (let next = analysis.pending.pop(); next !== undefined; next = analysis.pending.pop()) {
     settleCapability(analysis, ...next);
   }
-  for (const comment of parsed.comments) {
+  for (const comment of result.comments) {
     const directive = comment.type === 'Line' ? referenceDirective.exec(comment.value)?.groups : undefined;
     const target = directive?.target;
     if (target !== undefined) {
