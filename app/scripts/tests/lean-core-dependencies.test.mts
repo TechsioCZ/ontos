@@ -1524,11 +1524,51 @@ const callerEscapes: readonly (readonly [form: string, source: string, line: num
   ],
 ];
 
+/**
+ * Formats that can run as sloppy CommonJS: `.cjs`, `.cts` even with an import, and typeless `.js` and `.ts`
+ * without an import or export that stays in the code Node runs once it strips the types.
+ */
+const commonJsCapable: readonly (readonly [variant: string, extension: string, prefix: string])[] = [
+  ['a .cjs source', '.cjs', ''],
+  ['a .cts source', '.cts', ''],
+  ['a .cts source with an import', '.cts', "import 'node:path';\n"],
+  ['a .js source of a typeless package', '.js', ''],
+  ['a .ts source of a typeless package', '.ts', ''],
+  ['a .ts source with only a type import', '.ts', "import type { Effect } from 'effect';\n"],
+];
+
 for (const [form, source, line] of callerEscapes) {
-  it.live(`admits no helper in CommonJS, so a load reached through ${form} stays computed`, () =>
-    Effect.gen(function* callerEscape() {
-      const file = 'verticals/alpha/src/b.cjs';
-      expect(yield* freezeViolations({ [file]: source })).toEqual([computedLoad(file, [line])]);
+  for (const [variant, extension, prefix] of commonJsCapable) {
+    it.live(`admits no helper in ${variant}, so a load reached through ${form} stays computed`, () =>
+      Effect.gen(function* callerEscape() {
+        const file = `verticals/alpha/src/b${extension}`;
+        expect(yield* freezeViolations({ [file]: `${prefix}${source}` })).toEqual([
+          computedLoad(file, [line + (prefix === '' ? 0 : 1)]),
+        ]);
+      }),
+    );
+  }
+}
+
+it.live('takes a .ts source of a module package as module source, which admits a helper', () =>
+  Effect.gen(function* modulePackageHelper() {
+    const file = 'verticals/alpha/src/b.ts';
+    expect(
+      yield* freezeViolations({
+        [alphaManifest]: JSON.stringify({ name: alphaName, type: 'module' }),
+        [file]: "function load(p: string) {\n  return import.meta.resolve(p);\n}\nload('@app/beta');\n",
+      }),
+    ).toEqual(betaRuntimeEdge(`${file}:4`));
+  }),
+);
+
+for (const [variant, extension, prefix] of commonJsCapable) {
+  it.live(`takes module for the module object in ${variant}, also passed on under another name`, () =>
+    Effect.gen(function* moduleObjectAlias() {
+      const file = `verticals/alpha/src/self${extension}`;
+      expect(
+        yield* freezeViolations({ [file]: `${prefix}const self = module;\nself.require('@app/beta');\n` }),
+      ).toEqual(betaRuntimeEdge(`${file}:${prefix === '' ? 2 : 3}`));
     }),
   );
 }
@@ -1554,6 +1594,18 @@ it.live('takes module for a capability only in CommonJS, and the text module.req
     ).toEqual(betaRuntimeEdge(`${named}:4`));
   }),
 );
+
+for (const file of ['verticals/alpha/src/own.cjs', 'verticals/alpha/src/own.cts']) {
+  it.live(`keeps require a loader where a declaration gives it the free meaning again, in ${file}`, () =>
+    Effect.gen(function* sameMeaning() {
+      expect(
+        yield* freezeViolations({
+          [file]: "const require = module.require('node:module').createRequire(__filename);\nrequire('@app/beta');\n",
+        }),
+      ).toEqual(betaRuntimeEdge(`${file}:2`));
+    }),
+  );
+}
 
 it.live('resolves the literals a same-file helper passes to its loader, and counts any other helper as computed', () =>
   Effect.gen(function* helperParameter() {

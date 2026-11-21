@@ -1259,8 +1259,6 @@ interface CapabilityName {
 interface LoadAnalysis {
   /** Each name that is a capability throughout the file, whatever scope an occurrence is in. */
   readonly capabilities: Map<string, CapabilityName>;
-  /** Whether the source parsed as CommonJS, where `__filename` names the file itself. */
-  readonly commonJs: boolean;
   readonly computedLoads: number[];
   /** The declarators of the runtime `const` declarations the file does not export. */
   readonly constants: Set<Node>;
@@ -1268,6 +1266,11 @@ interface LoadAnalysis {
   readonly declarations: Map<string, Node[]>;
   readonly declaredIds: Set<Node>;
   readonly identifiers: Set<Node>;
+  /**
+   * Whether the source is module source for certain, strict and without a module object; every other
+   * source can run as CommonJS, where `module` is the module object and `__filename` the file itself.
+   */
+  readonly moduleSource: boolean;
   /** Every identifier of the file by name, in any scope and any position, types included. */
   readonly names: Map<string, Node[]>;
   readonly parents: Map<Node, Node>;
@@ -1281,11 +1284,12 @@ interface LoadAnalysis {
 
 const moduleObject = ['module', 'module'] as const;
 /**
- * The names that are capabilities in a file that does not establish them otherwise: `require` in every
- * file, and `module`, the module object, in CommonJS, the one goal whose runtime defines it.
+ * The names a capability whatever the file declares: `require` in every file (TypeScript's CommonJS
+ * output gives even module source one), and `module`, the module object, in a file that can run as
+ * CommonJS, whose runtime defines it.
  */
-const freeCapabilities = (commonJs: boolean): ReadonlyMap<string, Capability> =>
-  new Map<string, Capability>(commonJs ? [moduleObject, ['require', 'loader']] : [['require', 'loader']]);
+const freeCapabilities = (moduleSource: boolean): ReadonlyMap<string, Capability> =>
+  new Map<string, Capability>(moduleSource ? [['require', 'loader']] : [moduleObject, ['require', 'loader']]);
 /** The TypeScript nodes that hold runtime code; every other TypeScript node is a type and loads nothing. */
 const runtimeTypeScript = new Set([
   'TSAsExpression',
@@ -1720,9 +1724,13 @@ const forwardedParameter = (
   return index === -1 || occurrences.length !== 2 || usesArguments ? undefined : index;
 };
 
-/** A `with` statement or an `eval` anywhere lets any name of the file reach anything. */
+/**
+ * Only module source for certain admits helpers: in a file that can run as sloppy CommonJS a function's
+ * caller can call it with any argument, and a `with` statement or an `eval` anywhere lets any name of the
+ * file reach anything.
+ */
 const admitsHelpers = (analysis: LoadAnalysis): boolean =>
-  !analysis.commonJs && analysis.withStatements.length === 0 && !analysis.names.has('eval');
+  analysis.moduleSource && analysis.withStatements.length === 0 && !analysis.names.has('eval');
 
 /**
  * The targets of a load whose argument is a parameter of the function around it: the literal each call of
@@ -1768,10 +1776,13 @@ const loaderUse = (analysis: LoadAnalysis, node: Node, parent: Node): boolean =>
   return literalLoad(analysis, call ?? resolveCall(analysis, node, parent));
 };
 
-/** The base a loader is created from is the file itself: `import.meta.url`, or `__filename` in CommonJS. */
+/**
+ * The base a loader is created from is the file itself: `import.meta.url`, or `__filename` in a file that
+ * can run as CommonJS and declares no `__filename`.
+ */
 const isOwnBase = (analysis: LoadAnalysis, node: Node | undefined): boolean =>
   isImportMetaUrl(node) ||
-  (analysis.commonJs &&
+  (!analysis.moduleSource &&
     node?.type === 'Identifier' &&
     node.name === '__filename' &&
     !analysis.declarations.has('__filename'));
@@ -1877,7 +1888,7 @@ const establishDeclarator = (analysis: LoadAnalysis, declarator: Node): boolean 
  * const it does not export whose initialiser is a capability, until no initialiser changes its name.
  */
 const establishCapabilityNames = (analysis: LoadAnalysis): void => {
-  for (const [name, capability] of freeCapabilities(analysis.commonJs)) {
+  for (const [name, capability] of freeCapabilities(analysis.moduleSource)) {
     if (!analysis.capabilities.has(name)) {
       analysis.capabilities.set(name, { capability, declaration: null });
     }
@@ -1891,7 +1902,7 @@ const establishCapabilityNames = (analysis: LoadAnalysis): void => {
 };
 
 /**
- * Outside CommonJS no runtime defines `module`, so the name is no capability there, but the text
+ * In module source no runtime defines `module`, so the name is no capability there, but the text
  * `module.require` still is one, whatever `module` names.
  */
 const moduleRequireObject = (identifier: Node, parent: Node | undefined): Capability | undefined =>
@@ -2022,21 +2033,57 @@ const byIndex = Order.mapInput(Order.Number, (reference: ModuleReference) => ref
 
 const manifestName = 'package.json';
 
-const isPackageFormatted = (file: string): boolean => ['.js', '.jsx'].includes(posixPath.extname(file));
+const SourceTypeSchema = Schema.Literals(['commonjs', 'module']);
+type SourceType = typeof SourceTypeSchema.Type;
+
+/** Whether a top-level statement is a static import or export that stays in the code a runtime runs. */
+const isModuleSyntax = (statement: Node): boolean => {
+  if (statement.type === 'ImportDeclaration') {
+    return statement.importKind !== 'type';
+  }
+  if (statement.type === 'ExportAllDeclaration') {
+    return statement.exportKind !== 'type';
+  }
+  if (statement.type === 'ExportNamedDeclaration') {
+    return statement.exportKind !== 'type' && (statement.declaration === null || !isTypeOnly(statement.declaration));
+  }
+  return statement.type === 'ExportDefaultDeclaration' && !isTypeOnly(statement.declaration);
+};
+
+interface ParsedSource {
+  readonly moduleSource: boolean;
+  readonly result: ReturnType<typeof parseSync>;
+}
 
 /**
- * How a source is parsed: `.cjs` as CommonJS; `.js` and `.jsx` as the `type` of their nearest
- * package.json says, `module` or `commonjs`, and without one as Node decides by syntax, as a module and,
- * when that does not parse, as CommonJS; every other format as a module.
+ * How a source is parsed, and which class its loader rules follow; the two differ. Module source for
+ * certain: `.mjs` and `.mts`; any other format but `.cjs` and `.cts` whose nearest package.json says
+ * `"type": "module"`; and one that parses as a module with a top-level static import or export that
+ * stays in the code that runs, which Node, TypeScript's CommonJS output and a bundler all run strict.
+ * Every other source can run as sloppy CommonJS, and is parsed with the first goal that parses, CommonJS
+ * and then module; `.js` and `.jsx` under `"type": "commonjs"` only as CommonJS. None when no goal
+ * parses, so the source's loads are unknown.
  */
-const sourceTypesOf = (file: string, packageType: string | undefined): readonly ('commonjs' | 'module')[] => {
-  if (posixPath.extname(file) === '.cjs') {
-    return ['commonjs'];
+const parseSource = (file: string, source: string, packageType: string | undefined): ParsedSource | undefined => {
+  const extension = posixPath.extname(file);
+  const parseAs = (sourceType: SourceType): ReturnType<typeof parseSync> =>
+    parseSync(file, source, { astType: 'ts', lang: moduleLanguage(file), sourceType });
+  const firstParsing = (sourceTypes: readonly SourceType[], moduleSource: boolean): ParsedSource | undefined => {
+    const result = sourceTypes.map(parseAs).find(({ errors }) => errors.length === 0);
+    return result === undefined ? undefined : { moduleSource, result };
+  };
+  const commonJsFormat = ['.cjs', '.cts'].includes(extension);
+  if (['.mjs', '.mts'].includes(extension) || (!commonJsFormat && packageType === 'module')) {
+    return firstParsing(['module'], true);
   }
-  if (!isPackageFormatted(file)) {
-    return ['module'];
+  if (['.js', '.jsx'].includes(extension) && packageType === 'commonjs') {
+    return firstParsing(['commonjs'], false);
   }
-  return packageType === 'module' || packageType === 'commonjs' ? [packageType] : ['module', 'commonjs'];
+  const asModule = commonJsFormat ? undefined : parseAs('module');
+  if (asModule?.errors.length === 0 && asModule.program.body.some(isModuleSyntax)) {
+    return { moduleSource: true, result: asModule };
+  }
+  return firstParsing(['commonjs', 'module'], false);
 };
 
 const PackageTypeFromJson = Schema.fromJsonString(Schema.Struct({ type: Schema.optional(Schema.String) }));
@@ -2050,7 +2097,7 @@ const nearestManifest = (manifests: ReadonlySet<string>, directory: string): str
   return directory === '.' ? undefined : nearestManifest(manifests, posixPath.dirname(directory));
 };
 
-/** Each `.js` and `.jsx` source among files with the `type` of its nearest listed package.json. */
+/** Each source among files with the `type` of its nearest listed package.json. */
 const packageTypes = (
   root: string,
   listed: readonly string[],
@@ -2060,11 +2107,7 @@ const packageTypes = (
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const manifests = new Set(listed.filter((file) => posixPath.basename(file) === manifestName));
-    const nearest = new Map(
-      files
-        .filter(isPackageFormatted)
-        .map((file) => [file, nearestManifest(manifests, posixPath.dirname(file))] as const),
-    );
+    const nearest = new Map(files.map((file) => [file, nearestManifest(manifests, posixPath.dirname(file))] as const));
     const types = new Map(
       yield* Effect.all(
         [...new Set(nearest.values())].filter(Predicate.isString).map((manifest) =>
@@ -2087,27 +2130,22 @@ const packageTypes = (
  * loader capability with a literal target. A capability enters a file only as the free `require`,
  * `module.require`, `import.meta.resolve`, an import of `node:module` or `module` (or `require` or
  * `import()` of it) and a non-literal `import()`; every other use of one is a computed load, whose target the
- * check cannot read. None when the file parses in none of its formats, so its loads are unknown.
+ * check cannot read. None when the file parses in none of its goals, so its loads are unknown.
  */
 const loadsIn = (file: string, source: string, packageType: string | undefined): Option.Option<SourceLoads> => {
-  const parsed = sourceTypesOf(file, packageType)
-    .map((sourceType) => ({
-      result: parseSync(file, source, { astType: 'ts', lang: moduleLanguage(file), sourceType }),
-      sourceType,
-    }))
-    .find(({ result }) => result.errors.length === 0);
+  const parsed = parseSource(file, source, packageType);
   if (parsed === undefined) {
     return Option.none();
   }
   const { result } = parsed;
   const analysis: LoadAnalysis = {
     capabilities: new Map(),
-    commonJs: parsed.sourceType === 'commonjs',
     computedLoads: [],
     constants: new Set(),
     declarations: new Map(),
     declaredIds: new Set(),
     identifiers: new Set(),
+    moduleSource: parsed.moduleSource,
     names: new Map(),
     parents: new Map(),
     pending: [],
