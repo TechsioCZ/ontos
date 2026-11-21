@@ -1,3 +1,4 @@
+import { AssignSkuPayloadSchema } from '@app/catalog/api/assign-sku-action';
 import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
 import { ProductDescriptionSchema, ProductNameSchema } from '@app/catalog/domain/product';
 import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
@@ -65,6 +66,8 @@ const SymmyProductVariantSchema = Schema.Struct({
   ),
   localized: Schema.Array(SymmyProductLocalizedSchema),
   prices: Schema.Array(SymmyProductPriceSchema),
+  /** The ERP item number, assigned as the Variant's SKU in Catalog. */
+  sku: Schema.optionalKey(AssignSkuPayloadSchema.fields.code),
 });
 
 /**
@@ -95,14 +98,15 @@ interface SizedProduct {
   readonly variants: readonly {
     readonly localized?: readonly unknown[] | undefined;
     readonly prices?: readonly unknown[] | undefined;
+    readonly sku?: unknown;
   }[];
 }
 
 /**
  * What a product needs in a plan: a create (and an update for a lifecycle other than the created DRAFT), one text
  * effect per localized text of the product, one create per further variant, one text effect per localized text of a
- * variant and one define per price. A source record belongs to one item, so the product, each variant that has its
- * own effects and each price is an item.
+ * variant, one SKU effect per variant that names its SKU and one define per price. A source record belongs to one
+ * item, so the product, each variant that has its own effects and each price is an item.
  */
 export const symmyProductPlanSize = ({ lifecycle, localized: productTexts, variants }: SizedProduct) => {
   const texts = variants.reduce(
@@ -110,9 +114,13 @@ export const symmyProductPlanSize = ({ lifecycle, localized: productTexts, varia
     productTexts?.length ?? 0,
   );
   const prices = variants.reduce((total, variant) => total + (variant.prices?.length ?? 0), 0);
-  const variantItems = variants.filter((variant, index) => index > 0 || (variant.localized?.length ?? 0) > 0).length;
+  const skus = variants.filter((variant) => variant.sku !== undefined).length;
+  const variantItems = variants.filter(
+    (variant, index) => index > 0 || (variant.localized?.length ?? 0) > 0 || variant.sku !== undefined,
+  ).length;
   return {
-    effects: 1 + (lifecycle === 'ACTIVE' || lifecycle === 'RETIRED' ? 1 : 0) + (variants.length - 1) + texts + prices,
+    effects:
+      1 + (lifecycle === 'ACTIVE' || lifecycle === 'RETIRED' ? 1 : 0) + (variants.length - 1) + texts + skus + prices,
     items: 1 + variantItems + prices,
   };
 };
@@ -140,6 +148,7 @@ export const SymmyProductPlanSizeSchema = Schema.Array(
       Schema.Struct({
         localized: Schema.optionalKey(Schema.Array(Schema.Unknown)),
         prices: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+        sku: Schema.optionalKey(Schema.Unknown),
       }),
     ),
   }),

@@ -34,10 +34,7 @@ const unsupportedGroups = (product: Product): readonly SymmyProductHintKind[] =>
       (product.localized ?? []).some((text) => !hasText(text)) ||
         product.sku !== undefined ||
         product.gtin !== undefined ||
-        variants.some(
-          ({ gtin, localized, sku }) =>
-            sku !== undefined || gtin !== undefined || (localized ?? []).some((text) => !hasText(text)),
-        ),
+        variants.some(({ gtin, localized }) => gtin !== undefined || (localized ?? []).some((text) => !hasText(text))),
     ],
     [
       'ClassificationHint',
@@ -90,6 +87,10 @@ const mapVariant = (variant: Variant): VariantRow => {
   };
   if (variant.identifier !== undefined) {
     mapped.identifier = variant.identifier;
+  }
+  // The ERP item number is the Variant's SKU in Catalog.
+  if (variant.sku !== undefined) {
+    mapped.sku = variant.sku;
   }
   return mapped;
 };

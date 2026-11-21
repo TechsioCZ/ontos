@@ -159,7 +159,6 @@ describe('Symmy products batch public mapping', () => {
 
   it('reports the variant fields no intent writes, and drops a localized text that has no text', () => {
     const cases: readonly (readonly [string, Fields, readonly string[]])[] = [
-      ['sku', { sku: 'CHAIR-RED' }, ['DescriptiveHint']],
       ['gtin', { gtin: { code: '8590000000011', effectiveAt: '2026-01-01T00:00:00Z' } }, ['DescriptiveHint']],
       [
         'attributes',
@@ -176,6 +175,14 @@ describe('Symmy products batch public mapping', () => {
     }
     const [row] = map([product({}, [{ localized: [{ locale: 'cs' }, { locale: 'en', name: 'Chair' }] }])]);
     expect(row?.variants[0]?.localized).toEqual([{ locale: 'en', name: 'Chair' }]);
+  });
+
+  it("hands a variant's SKU to the owner admission as a supported meaning, and still reports a product SKU", () => {
+    const [row] = map([product({}, [{ sku: 'DIN933-M8x40-ZN' }])]);
+    expect(row?.unsupported).toEqual([]);
+    expect(row?.variants[0]?.sku).toBe('DIN933-M8x40-ZN');
+    expect(map([product({}, [{}])])[0]?.variants[0]).not.toHaveProperty('sku');
+    expect(map([product({ sku: 'CHAIR' })])[0]?.unsupported).toEqual(['DescriptiveHint']);
   });
 
   it('never carries a price list ref, a contract version or a reason', () => {

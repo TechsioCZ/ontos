@@ -638,11 +638,40 @@ const sourceLookupResponse = (request: Request, lookupProductId: string) =>
       }
       return Response.json({ items: [item], outcome: 'FOUND' });
     });
+/** The SKU the Variant already holds, and the code another Variant of the Tenant holds. */
+const heldSku = 'DIN933-M8x40-ZN';
+const takenSku = 'TAKEN-1';
+/** Catalog's SKU assignment: a code the Variant holds is no change, a code another Variant holds is a conflict. */
+const skuAssignmentResponse = (request: Request) =>
+  request
+    .clone()
+    .json()
+    .then((body: { readonly code: string }) =>
+      body.code === takenSku
+        ? Response.json(
+            {
+              _tag: 'AssignSkuActionConflictProblem',
+              code: 'sku_action_conflict',
+              detail: 'The Action conflicts with current state.',
+              status: 409,
+              title: 'Action conflict',
+              type: 'https://ontos.dev/problems/action-conflict',
+            },
+            { headers: { 'content-type': 'application/problem+json' }, status: 409 },
+          )
+        : Response.json({ changed: body.code !== heldSku, revision: 1 }),
+    );
 /**
- * The Catalog source lookup (with the record's current text when it names a locale) and the localized facts writes and
- * recoveries, which answer one new revision of the text.
+ * The Catalog source lookup (with the record's current text when it names a locale), the localized facts writes and
+ * recoveries, which answer one new revision of the text, and the SKU assignment.
  */
 const catalogOwnerMock = (request: Request, lookupProductId: string) => {
+  if (request.url.includes('/actions/assign-sku')) {
+    return { event: 'owner-write', response: skuAssignmentResponse(request) };
+  }
+  if (request.url.includes('/reads/assign-sku-recovery')) {
+    return { event: 'owner-recovery', response: Promise.resolve(Response.json({ changed: true, revision: 1 })) };
+  }
   if (request.url.includes('localized-facts')) {
     return {
       event: request.url.includes('/reads/') ? 'owner-recovery' : 'owner-write',
@@ -2079,6 +2108,25 @@ const productTextRequest = {
 };
 const productFactsEffectOf = () =>
   dependentEffect({ _tag: 'SetProductLocalizedFacts', payload: productTextRequest }, productFactsOperation);
+const skuOperation = { entrypointKey: 'commerce.catalog.assign-sku', moduleId: 'commerce.catalog', schemaVersion: '1' };
+const skuEffectOf = (code: string, named: readonly (typeof productParent)[] = []) =>
+  dependentEffect(
+    {
+      _tag: 'AssignVariantSku',
+      payload: { code, evidenceRefs: ['symmy-product:key:0'], reason: 'Symmy product import' },
+    },
+    skuOperation,
+    named,
+    { entityKind: 'VARIANT', sourceRecordId: named.length > 0 ? furtherVariantRecordId : 'initial-variant-1' },
+  );
+/** The source record of a Variant item of the fixture route, as Catalog qualifies it. */
+const variantSourceOf = (recordId: string) => ({
+  issuerId: 'internal-ebs',
+  mappingRevision: 'internal-1',
+  recordId,
+  recordNamespace: 'catalog',
+  routeScope: 'route-1',
+});
 /** The Product text command once resolved, at the revision Catalog holds for it. */
 const resolvedProductTextOf = (facts: ResolutionFields) =>
   Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
@@ -2135,6 +2183,7 @@ const resolutionOf = (
 const resolvedIntentOf = (resolved: SymmyPinnedEffect | undefined) => ({
   payload: Match.value(resolved?.intent).pipe(
     Match.tags({
+      CatalogAssignVariantSku: ({ payload }) => payload,
       CatalogSetProductLocalizedFacts: ({ payload }) => payload,
       CatalogSetVariantLocalizedFacts: ({ payload }) => payload,
       CatalogUpdateProduct: ({ payload }) => payload,
@@ -2238,6 +2287,54 @@ describe('Symmy commands on the Product the same job creates', () => {
           expect(unchanged.events).not.toContain('owner-write');
         }),
       );
+    }),
+  );
+
+  it.effect('resolves a Variant SKU to the Variant of the receipt and its own source record, then assigns it', () =>
+    Effect.gen(function* resolvesSku() {
+      const initial = yield* resolutionOf(skuEffectOf('DIN933-M8x40-A2'), [parentState]);
+      const [resolved] = initial.h.resolvedEffects;
+      expect(resolvedIntentOf(resolved)).toEqual({
+        payload: {
+          code: 'DIN933-M8x40-A2',
+          evidenceRefs: ['symmy-product:key:0'],
+          expectedRevision: 0,
+          reason: 'Symmy product import',
+          sourceCorrelation: variantSourceOf('initial-variant-1'),
+          target: { kind: 'VARIANT', tenantId, variantId },
+        },
+        tag: 'CatalogAssignVariantSku',
+      });
+      expect(resolved?.ref.originalTarget).toEqual(variantRef);
+      expect(Exit.isSuccess(initial.exit) && initial.exit.value.status).toBe('accepted_change');
+      // Catalog proves the source binding itself, so the assignment reads nothing before it writes.
+      expect(initial.h.events).not.toContain('owner-source-read');
+      const writes = initial.h.requests.filter((request) => request.url.includes('/actions/'));
+      expect(writes).toHaveLength(1);
+      expect(writes[0]?.url).toContain('/actions/assign-sku');
+      const further = yield* resolutionOf(skuEffectOf('DIN933-M8x40-A4', [variantParent]), [
+        parentState,
+        variantParentState,
+      ]);
+      const [furtherResolved] = further.h.resolvedEffects;
+      expect(resolvedIntentOf(furtherResolved).payload).toMatchObject({
+        sourceCorrelation: variantSourceOf(furtherVariantRecordId),
+        target: { kind: 'VARIANT', tenantId, variantId: furtherVariantRef.resourceId },
+      });
+      expect(furtherResolved?.ref.originalTarget).toEqual(furtherVariantRef);
+    }),
+  );
+
+  it.effect('reports the SKU the Variant holds as no change and a code another Variant holds as a conflict', () =>
+    Effect.gen(function* skuOutcomes() {
+      const unchanged = yield* resolutionOf(skuEffectOf(heldSku), [parentState]);
+      expect(Exit.isSuccess(unchanged.exit) && unchanged.exit.value.status).toBe('accepted_no_change');
+      const taken = yield* resolutionOf(skuEffectOf(takenSku), [parentState]);
+      expect(Exit.isSuccess(taken.exit) && taken.exit.value.status).toBe('conflict');
+      // Without the settled create receipt nothing is resolved or written.
+      const orphan = yield* resolutionOf(skuEffectOf(heldSku), []);
+      expect(Exit.isFailure(orphan.exit)).toBe(true);
+      expect(orphan.h.events).not.toContain('owner-write');
     }),
   );
 

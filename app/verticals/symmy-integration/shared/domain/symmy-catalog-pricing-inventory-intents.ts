@@ -1,3 +1,4 @@
+import { AssignSkuPayloadSchema } from '@app/catalog/api/assign-sku-action';
 import { BindInitialVariantSourcePayloadSchema } from '@app/catalog/api/bind-initial-variant-source-action';
 import { CorrectProductPayloadSchema } from '@app/catalog/api/correct-product-action';
 import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-action';
@@ -101,6 +102,17 @@ const productDependentRequest = Schema.Union([
   }),
   Schema.TaggedStruct('SetVariantLocalizedFacts', { payload: localizedTextRequest }),
   Schema.TaggedStruct('SetProductLocalizedFacts', { payload: localizedTextRequest }),
+  /**
+   * The SKU the source sends for a Variant it creates. The Variant and its source record are the receipt's and the
+   * occurrence's, so the request names only the code and its evidence.
+   */
+  Schema.TaggedStruct('AssignVariantSku', {
+    payload: Schema.Struct({
+      code: AssignSkuPayloadSchema.fields.code,
+      evidenceRefs: AssignSkuPayloadSchema.fields.evidenceRefs,
+      reason: AssignSkuPayloadSchema.fields.reason,
+    }),
+  }),
   Schema.TaggedStruct('DefinePrice', {
     payload: Schema.Struct({
       ...DefinePricePayloadSchema.fields,
@@ -185,6 +197,16 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('CatalogSetProductLocalizedFacts', {
     payload: SetProductLocalizedFactsPayloadSchema.check(
       Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || localizedEvidenceRequired),
+    ),
+  }),
+  /** A Variant SKU from the source route: always for one Variant and always naming its source record. */
+  Schema.TaggedStruct('CatalogAssignVariantSku', {
+    payload: AssignSkuPayloadSchema.check(
+      Schema.makeFilter(
+        ({ sourceCorrelation, target }) =>
+          (sourceCorrelation !== undefined && target.kind === 'VARIANT') ||
+          'A source SKU names one Variant and its source record',
+      ),
     ),
   }),
 ]);
