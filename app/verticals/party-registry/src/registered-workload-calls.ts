@@ -3,7 +3,10 @@ import type { OntosRegisteredWorkloadCallInput } from '@app/core-runtime';
 const integrationSymmyExecuteSymmyJob = 'integration.symmy.execute-symmy-job';
 const partyRegistrySourceRead = 'party.registry.source-read';
 const partyRegistrySourceWrite = 'party.registry.source-write';
+const privacyCoreApiOrganizationBusinessApplicability = 'privacy.core.api.organization-business-applicability';
 const privacyCoreApiSourceProcessingEligibility = 'privacy.core.api.source-processing-eligibility';
+const privacyCoreOrganizationBusinessApplicabilityRead = 'privacy.core.organization-business-applicability.read';
+const privacyCoreOrganizationBusinessCheck = 'privacy.core.organization-business-check';
 const privacyCoreSourceProcessingCheck = 'privacy.core.source-processing-check';
 const privacyCoreSourceProcessingEligibilityRead = 'privacy.core.source-processing-eligibility.read';
 
@@ -50,12 +53,24 @@ export const partyRegistryRegisteredWorkloadCalls = [
   // origin/main 5608aae1d: organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
     audience: 'privacy',
-    declarationKey: 'privacy.core.organization-business-applicability.read',
-    entrypointKey: 'privacy.core.api.organization-business-applicability',
+    declarationKey: privacyCoreOrganizationBusinessApplicabilityRead,
+    entrypointKey: privacyCoreApiOrganizationBusinessApplicability,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'required',
     schemaVersion: '1',
     sourceWorkloadKey: partyRegistrySourceWrite,
-    workloadKey: 'privacy.core.organization-business-check',
+    workloadKey: privacyCoreOrganizationBusinessCheck,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach party.registry.requirement.api.party-source-effect-receipt-organization-business-privacy, read when Symmy recovers a lost Party write
+  {
+    allowRecoverySource: true,
+    audience: 'privacy',
+    declarationKey: privacyCoreOrganizationBusinessApplicabilityRead,
+    entrypointKey: privacyCoreApiOrganizationBusinessApplicability,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: partyRegistrySourceRead,
+    workloadKey: privacyCoreOrganizationBusinessCheck,
   },
 ] as const satisfies readonly OntosRegisteredWorkloadCallInput[];
