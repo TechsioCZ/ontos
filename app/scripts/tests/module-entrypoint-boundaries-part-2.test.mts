@@ -5,7 +5,7 @@ import { expect, it } from 'effect-rstest';
 import {
   hasCompleteGeneratedModuleApiSeam,
   hasGeneratedActionHttpRunnerBinding,
-  hasPublishedGeneratedContractShim,
+  hasPublishedGeneratedActionContractShim,
   hasGeneratedGovernedServerContract,
 } from '../generated-governed-http-boundary.mts';
 import { hasGeneratedModuleApiContract, hasGeneratedSourceHeader } from '../generated-module-api-boundary.mts';
@@ -1333,7 +1333,7 @@ it('binds native handler audiences to the actual owner and preserves thin server
   }
 });
 
-it('classifies only exact published native contract shims with a proved read or Action HTTP target category', () => {
+it('classifies only exact published Action HTTP contract shims and no read forwarder', () => {
   const owner = INVENTORY_VERTICAL_PATH;
   const packageFile = 'packages/inventory-public-contracts/package.json';
   const readContractFile = `${owner}/shared/apis/stock-list.ts`;
@@ -1369,15 +1369,11 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(HttpApiGrou
     [STOCK_LIST_PUBLISHED_SOURCE, readTarget],
     [RESERVE_PUBLISHED_SOURCE, actionTarget],
   ]);
-  const acceptsRead = (source = readShim) => hasPublishedGeneratedContractShim(sources, readContractFile, source);
-  const acceptsAction = (source = actionShim) => hasPublishedGeneratedContractShim(sources, actionFile, source);
-  expect(acceptsRead()).toBe(true);
+  const acceptsRead = (source = readShim) => hasPublishedGeneratedActionContractShim(sources, readContractFile, source);
+  const acceptsAction = (source = actionShim) => hasPublishedGeneratedActionContractShim(sources, actionFile, source);
+  // A module read is published from its package with no owner file; an owner read forwarder is never accepted.
+  expect(acceptsRead()).toBe(false);
   expect(acceptsAction()).toBe(true);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget.replace(NATIVE_HTTP_SOURCE_IMPORT, FAKE_HTTP_SOURCE_IMPORT));
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, `${readTarget}\nconst HttpApiGroup = fakeGroup;`);
-  expect(acceptsRead()).toBe(false);
-  sources.set(STOCK_LIST_PUBLISHED_SOURCE, readTarget);
   const disconnected = `${actionTarget.replace(
     'export const ReserveActionApi =',
     UNUSED_NATIVE_API_DECLARATION,
@@ -1434,15 +1430,14 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(ReserveActi
   sources.set(RESERVE_PUBLISHED_SOURCE, actionTarget);
   for (const invalid of [
     { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, packageName: '@app/other' } },
-    { ...metadata, exports: { ...metadata.exports, './stock-list': '../private.ts' } },
-    { ...metadata, ontosContractOwner: { ...metadata.ontosContractOwner, moduleApis: [] } },
+    { ...metadata, exports: { ...metadata.exports, './reserve-action': '../private.ts' } },
   ]) {
     sources.set(packageFile, JSON.stringify(invalid));
-    expect(acceptsRead()).toBe(false);
+    expect(acceptsAction()).toBe(false);
   }
   sources.set(packageFile, JSON.stringify(metadata));
   sources.set('packages/ambiguous/package.json', JSON.stringify(metadata));
-  expect(acceptsRead()).toBe(false);
+  expect(acceptsAction()).toBe(false);
 });
 
 it.live('binds actual governed Action HTTP runners across formatting and an authenticated observer', () =>

@@ -1,8 +1,18 @@
 import { Effect, FileSystem, Schema, Predicate } from 'effect';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
+import { discoverPublicContractPackage } from '../governed-contribution/scaffold.mts';
+import type { PublicContractPackage } from '../governed-contribution/scaffold.mts';
 import {
   ACTION_GENERATOR_HEADER,
+  GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  GOVERNED_HTTP_API_ADDITION_SLOT_START,
+  GOVERNED_HTTP_API_IMPORT_SLOT_END,
+  GOVERNED_HTTP_API_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END,
+  GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+  GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
   MODULE_MANIFEST_ACTION_SLOT_END,
   MODULE_MANIFEST_ACTION_SLOT_START,
   MODULE_MANIFEST_API_SLOT_END,
@@ -11,6 +21,8 @@ import {
   MODULE_MANIFEST_COMPONENT_SLOT_START,
   MODULE_MANIFEST_IMPORT_SLOT_END,
   MODULE_MANIFEST_IMPORT_SLOT_START,
+  MODULE_MANIFEST_OPERATION_SLOT_END,
+  MODULE_MANIFEST_OPERATION_SLOT_START,
   MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
   MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
   MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
@@ -23,12 +35,17 @@ import {
   MODULE_REGISTRATION_IMPORT_SLOT_START,
   MODULE_REGISTRATION_PAGE_SLOT_END,
   MODULE_REGISTRATION_PAGE_SLOT_START,
+  MODULE_REGISTRATION_READ_SLOT_END,
+  MODULE_REGISTRATION_READ_SLOT_START,
   OUTBOX_SLOT_END,
   OUTBOX_SLOT_START,
   deleteMutationEffect,
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
+  asJsonObject,
+  patchJsonObjectProperty,
   readGeneratedSlotEntries,
+  readJsonEffect,
   removeGeneratedSlotEntry,
   requireCanonicalSlug,
   resolveContainedPath,
@@ -172,56 +189,205 @@ const planActionRetirement = Effect.fn('planActionRetirement')(function* planAct
   ];
 });
 
+interface SlotRemoval {
+  readonly end: string;
+  readonly label: string;
+  readonly matches: (entry: string) => boolean;
+  /** Reads generated before operation contracts and Read bindings existed carry none of them. */
+  readonly optional?: true;
+  readonly start: string;
+}
+
+/** Remove the generated entry from each slot: exactly one, or at most one where older reads may lack it. */
+const removeSlotEntries = (content: string, removals: readonly SlotRemoval[]): string => {
+  let next = content;
+  for (const removal of removals) {
+    const present =
+      next.includes(removal.start) &&
+      readGeneratedSlotEntries(next, removal.start, removal.end).some((entry) => removal.matches(entry));
+    if (present || removal.optional === undefined) {
+      next = removeGeneratedSlotEntry(next, removal.start, removal.end, removal.matches, removal.label);
+    }
+  }
+  return next;
+};
+
+const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEffect(
+  filePath: string,
+  label: string,
+  removals: readonly SlotRemoval[],
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const content = yield* fileSystem
+    .readFileString(filePath)
+    .pipe(Effect.mapError((cause) => scaffoldError(`${label} is missing at ${filePath}`, cause)));
+  const next = yield* trySync(() => removeSlotEntries(content, removals), `failed to retire ${label}`);
+  return { content: next, kind: 'update' as const, path: filePath };
+});
+
+/** The package stops exporting and claiming the read it no longer publishes. */
+const retirePackagePublication = Effect.fn('retirePackagePublication')(function* retirePackagePublicationEffect(
+  publication: PublicContractPackage,
+  name: string,
+) {
+  const manifestPath = yield* trySync(
+    () => resolveContainedPath(publication.directory, 'package.json'),
+    `failed to resolve the package manifest of ${publication.packageName}`,
+  );
+  const { content, value } = yield* readJsonEffect(manifestPath, `contract package ${publication.packageName}`);
+  const exports = asJsonObject(value['exports'], `${publication.packageName} exports`);
+  const owner = asJsonObject(value['ontosContractOwner'], `${publication.packageName} ontosContractOwner`);
+  const { moduleApis } = owner;
+  if (!Array.isArray(moduleApis) || !moduleApis.includes(name)) {
+    return yield* scaffoldError(`${publication.packageName} does not claim ${name}`);
+  }
+  const next = yield* trySync(
+    () =>
+      patchJsonObjectProperty(
+        patchJsonObjectProperty(
+          content,
+          [],
+          'exports',
+          Object.fromEntries(
+            Object.entries(exports).filter(([key]) => key !== `./${name}` && key !== `./${name}/client`),
+          ),
+        ),
+        ['ontosContractOwner'],
+        'moduleApis',
+        moduleApis.filter((candidate) => candidate !== name),
+      ),
+    `failed to retire ${name} from ${publication.packageName}`,
+  );
+  return { content: next, kind: 'update' as const, path: manifestPath };
+});
+
 const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetirementEffect(
+  workspaceRoot: string,
   vertical: OntosVerticalMetadata,
   name: string,
 ) {
   const type = toPascalCase(name);
   const value = `${type}Api`;
+  const camel = toCamelCase(name);
+  const publication = yield* discoverPublicContractPackage(workspaceRoot, vertical, name).pipe(
+    Effect.catchTag('PlatformError', (cause) =>
+      Effect.fail(scaffoldError('failed to inspect contract packages', cause)),
+    ),
+  );
+  const contractImport = publication?.contractSpecifier ?? `./shared/apis/${name}.ts`;
+  const sharedApiImport = publication?.contractSpecifier ?? `./apis/${name}.ts`;
+  const clientImport = publication?.clientSpecifier ?? `./src/api/${name}-client.ts`;
   const paths = yield* trySync(
     () =>
       [
-        resolveContainedPath(vertical.directory, 'shared', 'apis', `${name}.ts`),
+        publication?.contractPath ?? resolveContainedPath(vertical.directory, 'shared', 'apis', `${name}.ts`),
         resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
-        resolveContainedPath(vertical.directory, 'src', 'api', `${name}-client.ts`),
+        publication?.clientPath ?? resolveContainedPath(vertical.directory, 'src', 'api', `${name}-client.ts`),
         resolveContainedPath(vertical.directory, 'api', `${name}-read-server.ts`),
       ] as const,
     `failed to resolve generated module API ${name}`,
   );
   const checks = [
     [`${API_GENERATOR_HEADER}\n`, `export const ${value}`],
-    [`${API_GENERATOR_HEADER}\n`, `export const ${toCamelCase(name)}Read`],
+    [`${API_GENERATOR_HEADER}\n`, `export const ${camel}Read`],
     [`${API_GENERATOR_HEADER}\n`, `execute${type}WithAuthorization`],
-    [`${API_GENERATOR_HEADER}\n`, `export const ${toCamelCase(name)}ReadApiLive`],
+    [`${API_GENERATOR_HEADER}\n`, `export const ${camel}ReadApiLive`],
   ] as const;
   yield* Effect.all(
     paths.map((filePath, index) => readGeneratedArtifact(filePath, `module API ${name}`, checks[index] ?? [])),
     { concurrency: 'unbounded' },
   );
+  const readImport = `import { ${camel}Read } from './src/api/${name}.read.ts';`;
   const { nextManifest, nextRegistration } = yield* trySync(
     () => ({
-      nextManifest: removeGeneratedSlotEntry(
-        removeGeneratedSlotEntry(
-          vertical.manifestContent,
-          MODULE_MANIFEST_IMPORT_SLOT_START,
-          MODULE_MANIFEST_IMPORT_SLOT_END,
-          (entry) => entry === `import { ${value} } from './shared/apis/${name}.ts';`,
-          `module API import ${name}`,
-        ),
-        MODULE_MANIFEST_API_SLOT_START,
-        MODULE_MANIFEST_API_SLOT_END,
-        (entry) => entry === `'${name}': ${value},`,
-        `module API descriptor ${name}`,
-      ),
-      nextRegistration: removeGeneratedSlotEntry(
-        vertical.registrationContent,
-        MODULE_REGISTRATION_API_SLOT_START,
-        MODULE_REGISTRATION_API_SLOT_END,
-        (entry) => entry === `'${name}': () => import('./src/api/${name}-client.ts'),`,
-        `module API registration ${name}`,
-      ),
+      nextManifest: removeSlotEntries(vertical.manifestContent, [
+        {
+          end: MODULE_MANIFEST_IMPORT_SLOT_END,
+          label: `module API import ${name}`,
+          matches: (entry) => entry === `import { ${value} } from '${contractImport}';`,
+          start: MODULE_MANIFEST_IMPORT_SLOT_START,
+        },
+        {
+          end: MODULE_MANIFEST_IMPORT_SLOT_END,
+          label: `module API read import ${name}`,
+          matches: (entry) => entry === readImport,
+          optional: true,
+          start: MODULE_MANIFEST_IMPORT_SLOT_START,
+        },
+        {
+          end: MODULE_MANIFEST_API_SLOT_END,
+          label: `module API descriptor ${name}`,
+          matches: (entry) => entry === `'${name}': ${value},`,
+          start: MODULE_MANIFEST_API_SLOT_START,
+        },
+        {
+          end: MODULE_MANIFEST_OPERATION_SLOT_END,
+          label: `module API operation contract ${name}`,
+          matches: (entry) => entry.includes(`apiKey: '${name}'`),
+          optional: true,
+          start: MODULE_MANIFEST_OPERATION_SLOT_START,
+        },
+      ]),
+      nextRegistration: removeSlotEntries(vertical.registrationContent, [
+        {
+          end: MODULE_REGISTRATION_IMPORT_SLOT_END,
+          label: `module API registration read import ${name}`,
+          matches: (entry) => entry === readImport,
+          optional: true,
+          start: MODULE_REGISTRATION_IMPORT_SLOT_START,
+        },
+        {
+          end: MODULE_REGISTRATION_READ_SLOT_END,
+          label: `module API registration read ${name}`,
+          matches: (entry) => entry === `${camel}Read,`,
+          optional: true,
+          start: MODULE_REGISTRATION_READ_SLOT_START,
+        },
+        {
+          end: MODULE_REGISTRATION_API_SLOT_END,
+          label: `module API registration ${name}`,
+          matches: (entry) => entry === `'${name}': () => import('${clientImport}'),`,
+          start: MODULE_REGISTRATION_API_SLOT_START,
+        },
+      ]),
     }),
     `failed to retire generated module API ${name}`,
+  );
+  const sharedApi = yield* updateOwnerFile(
+    yield* trySync(() => resolveContainedPath(vertical.directory, 'shared', 'api.ts'), 'failed to resolve shared API'),
+    `governed HTTP API root of ${name}`,
+    [
+      {
+        end: GOVERNED_HTTP_API_IMPORT_SLOT_END,
+        label: `governed HTTP API import ${name}`,
+        matches: (entry) => entry === `import { ${value} } from '${sharedApiImport}';`,
+        start: GOVERNED_HTTP_API_IMPORT_SLOT_START,
+      },
+      {
+        end: GOVERNED_HTTP_API_ADDITION_SLOT_END,
+        label: `governed HTTP API mount ${name}`,
+        matches: (entry) => entry === `.addHttpApi(${value})`,
+        start: GOVERNED_HTTP_API_ADDITION_SLOT_START,
+      },
+    ],
+  );
+  const handlerRoot = yield* updateOwnerFile(
+    yield* trySync(() => resolveContainedPath(vertical.directory, 'api', 'index.ts'), 'failed to resolve handler root'),
+    `governed HTTP handler root of ${name}`,
+    [
+      {
+        end: GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END,
+        label: `governed HTTP handler import ${name}`,
+        matches: (entry) => entry === `import { ${camel}ReadApiLive } from './${name}-read-server.ts';`,
+        start: GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
+      },
+      {
+        end: GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+        label: `governed HTTP handler layer ${name}`,
+        matches: (entry) => entry.startsWith(`${camel}ReadApiLive.pipe(`),
+        start: GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+      },
+    ],
   );
   const deletes = yield* Effect.all(paths.map(deleteMutationEffect), {
     concurrency: 'unbounded',
@@ -237,6 +403,9 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
       kind: 'update' as const,
       path: vertical.registrationPath,
     },
+    sharedApi,
+    handlerRoot,
+    ...(publication === undefined ? [] : [yield* retirePackagePublication(publication, name)]),
     ...deletes,
   ];
 });
@@ -338,7 +507,7 @@ const planRetireContributionScaffold = Effect.fn('RetireContributionScaffold.pla
     if (config.kind === 'action') {
       mutations = yield* planActionRetirement(vertical, name);
     } else if (config.kind === 'api') {
-      mutations = yield* planApiRetirement(vertical, name);
+      mutations = yield* planApiRetirement(workspaceRoot, vertical, name);
     } else {
       mutations = yield* planPageRetirement(vertical, name);
     }

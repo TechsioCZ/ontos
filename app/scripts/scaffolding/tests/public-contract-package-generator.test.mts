@@ -21,18 +21,10 @@ const canonicalClientFile = `${publicContractPackagePath}/src/api/current-paymen
 const canonicalGatewayFile = `${publicContractPackagePath}/src/api/action-gateway.ts`;
 const ownerContractFile = `${paymentVerticalPath}/shared/apis/current-payment-terms.ts`;
 const ownerClientFile = `${paymentVerticalPath}/src/api/current-payment-terms-client.ts`;
-const governedContractFiles = [
-  canonicalClientFile,
-  canonicalContractFile,
-  canonicalGatewayFile,
-  ownerClientFile,
-  ownerContractFile,
-] as const;
+const governedContractFiles = [canonicalClientFile, canonicalContractFile, canonicalGatewayFile] as const;
 const customerVerticalPath = 'verticals/commerce-customer-context';
 const customerContractPackagePath = 'packages/customer-payment-term-contracts';
 const customerSharedApiFile = `${customerVerticalPath}/shared/api.ts`;
-const customerOwnerContractFile = `${customerVerticalPath}/shared/apis/payment-term-affected-use-assessment.ts`;
-const customerOwnerClientFile = `${customerVerticalPath}/src/api/payment-term-affected-use-assessment-client.ts`;
 const customerCanonicalContractFile = `${customerContractPackagePath}/src/apis/payment-term-affected-use-assessment.ts`;
 const customerCanonicalClientFile = `${customerContractPackagePath}/src/api/payment-term-affected-use-assessment-client.ts`;
 const customerCanonicalGatewayFile = `${customerContractPackagePath}/src/api/action-gateway.ts`;
@@ -40,8 +32,6 @@ const customerGovernedContractFiles = [
   customerCanonicalClientFile,
   customerCanonicalContractFile,
   customerCanonicalGatewayFile,
-  customerOwnerClientFile,
-  customerOwnerContractFile,
 ] as const;
 
 const readSourceTree = async (relativeDirectory: string, sources: Map<string, string>): Promise<void> => {
@@ -82,11 +72,7 @@ const loadCustomerContractSources = (): Promise<Map<string, string>> => {
 const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
   const manifestApiStart = '// <generated-module-manifest-apis>';
   const manifestApiEnd = '// </generated-module-manifest-apis>';
-  const focused = new Map(
-    [...sources].filter(
-      ([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`) || file === customerOwnerContractFile,
-    ),
-  );
+  const focused = new Map([...sources].filter(([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`)));
   for (const [file, start, end] of [
     [`${customerVerticalPath}/vertical.manifest.ts`, manifestApiStart, manifestApiEnd],
     [
@@ -186,10 +172,12 @@ it.effect(
       governedContractFiles.map((file) => before.get(file)),
     );
     expect(plan.result).toEqual({
-      artifactPath: path.join(appRoot, ownerContractFile),
-      clientPath: path.join(appRoot, paymentVerticalPath, 'src/api/current-payment-terms-client.ts'),
+      artifactPath: path.join(appRoot, canonicalContractFile),
+      clientPath: path.join(appRoot, canonicalClientFile),
       serverPath: path.join(appRoot, paymentVerticalPath, 'api/current-payment-terms-read-server.ts'),
     });
+    // The read lives in its package alone: the owner keeps no contract or client file for it.
+    expect([ownerContractFile, ownerClientFile].filter((file) => after.has(file))).toEqual([]);
     expect(expectsCompletePaymentSeam(after)).toBe(true);
   }),
 );
@@ -257,7 +245,10 @@ it.live(
 
     const handwrittenOwnerFacade = new Map([
       ...valid,
-      [ownerContractFile, `${valid.get(ownerContractFile) ?? ''}\nexport const unsafeOwnerExtension = true;\n`],
+      [
+        ownerContractFile,
+        "export * from '@app/payment-term-catalog-contracts/current-payment-terms';\nexport const unsafeOwnerExtension = true;\n",
+      ],
     ]);
     expect(expectsCompletePaymentSeam(handwrittenOwnerFacade)).toBe(false);
   }),
@@ -279,8 +270,8 @@ it.effect(
       customerGovernedContractFiles.map((file) => before.get(file)),
     );
     expect(plan.result).toEqual({
-      artifactPath: path.join(appRoot, customerOwnerContractFile),
-      clientPath: path.join(appRoot, customerVerticalPath, 'src/api/payment-term-affected-use-assessment-client.ts'),
+      artifactPath: path.join(appRoot, customerCanonicalContractFile),
+      clientPath: path.join(appRoot, customerCanonicalClientFile),
       serverPath: path.join(appRoot, customerVerticalPath, 'api/payment-term-affected-use-assessment-read-server.ts'),
     });
     expect(
@@ -311,5 +302,24 @@ it.live(
       const sources = new Map([...valid, [packageManifestFile, invalidManifest]]);
       expect(expectsCompletePaymentSeam(sources)).toBe(false);
     }
+  }),
+);
+
+it.effect(
+  'plans a new owner read beside a package read, whose package import the declaration slots accept',
+  Effect.fn(function* ownerReadBesidePackageRead() {
+    const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
+      authorization: 'protected',
+      name: 'payment-term-probe',
+      vertical: paymentVertical,
+    }).pipe(Effect.provide(NodeServices.layer));
+    const manifest = plan.mutations.find(
+      (mutation) => mutation.path === path.join(appRoot, paymentVerticalPath, 'vertical.manifest.ts'),
+    );
+    expect(manifest?.kind).toBe('update');
+    expect(manifest !== undefined && 'content' in manifest ? manifest.content : '').toContain(
+      "import { CurrentPaymentTermsApi } from '@app/payment-term-catalog-contracts/current-payment-terms';",
+    );
+    expect(plan.result.artifactPath).toBe(path.join(appRoot, paymentVerticalPath, 'shared/apis/payment-term-probe.ts'));
   }),
 );
