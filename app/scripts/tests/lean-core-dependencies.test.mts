@@ -1497,6 +1497,32 @@ for (const extension of ['.js', '.jsx']) {
   );
 }
 
+it.live('parses a .js source of a package of type module as a module only, so a top-level return does not parse', () =>
+  Effect.gen(function* modulePackage() {
+    const early = 'verticals/alpha/src/early.js';
+    expect(
+      yield* freezeViolations({
+        [alphaManifest]: JSON.stringify({ name: alphaName, type: 'module' }),
+        [early]: "if (true) return;\nmodule.exports = require('@app/beta');\n",
+      }),
+    ).toEqual([`${early}:1: Workspace source does not parse, so the package edges it makes are unknown`]);
+  }),
+);
+
+it.live('parses a .js source under a nearest package.json of type commonjs as CommonJS, based on the file itself', () =>
+  Effect.gen(function* commonJsPackage() {
+    const legacy = 'verticals/alpha/legacy/load.js';
+    expect(
+      yield* freezeViolations({
+        [alphaManifest]: JSON.stringify({ name: alphaName, type: 'module' }),
+        [legacy]:
+          "const { createRequire } = require('node:module');\nmodule.exports = createRequire(__filename)('../../beta/package.json');\n",
+        'verticals/alpha/legacy/package.json': JSON.stringify({ type: 'commonjs' }),
+      }),
+    ).toEqual(betaRuntimeEdge(`${legacy}:2`));
+  }),
+);
+
 it.live('refuses a computed-load count that is not a positive integer, and an entry for a file without loads', () =>
   Effect.gen(function* computedLoadCountValues() {
     const missing = 'verticals/alpha/src/missing.ts';
