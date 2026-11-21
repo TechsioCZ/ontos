@@ -1031,10 +1031,20 @@ const hasCachedCompleteModuleApiSeam = (
 const deploymentOwner = (state: BoundaryCheckState, file: string): string | undefined =>
   [...state.owners.keys()].find((owner) => file.startsWith(`${owner}/`));
 
-/** The deployment identity owning a file; a value-only contract package carries its owner's identity. */
-const ownerIdentity = (state: BoundaryCheckState, file: string): string | undefined => {
-  const owner = deploymentOwner(state, file);
-  return owner === undefined ? undefined : state.owners.get(owner);
+/**
+ * Whether a consumer reaches a target owner as its own: the same owner, or the same deployment identity.
+ * A value-only contract package carries its owner's identity for that owner's files, never for its own
+ * imports, so a kernel cannot read its owner's private source as local.
+ */
+const isLocalOwner = (state: BoundaryCheckState, consumer: string, targetOwner: string): boolean => {
+  const consumerOwner = deploymentOwner(state, consumer);
+  if (targetOwner === consumerOwner) {
+    return true;
+  }
+  if (consumerOwner === undefined || consumerOwner.startsWith('packages/')) {
+    return false;
+  }
+  return state.owners.get(targetOwner) === state.owners.get(consumerOwner);
 };
 
 // This adapter only locates literal declaration edges in the inventory. Value binding
@@ -3897,7 +3907,7 @@ const foreignPrivateOrigin = (
   visited: Set<string>,
 ): string | undefined => {
   const owner = deploymentOwner(state, target);
-  if (owner === undefined || state.owners.get(owner) === ownerIdentity(state, consumer)) {
+  if (owner === undefined || isLocalOwner(state, consumer, owner)) {
     return undefined;
   }
   if (isApprovedOwnerContract(state, consumer, target)) {
@@ -3940,17 +3950,16 @@ const validateResolvedOwnerImports = (
   importedModuleSpecifiers: readonly string[],
 ) =>
   Effect.gen(function* validateResolvedOwnerImportsEffect() {
-    const consumerIdentity = ownerIdentity(state, file);
     const specifiers = importedModuleSpecifiers.filter((specifier) => {
       const direct = ownershipDeclarationTarget(state, file, specifier);
       const owner = direct === undefined ? undefined : deploymentOwner(state, direct);
-      if (owner !== undefined && state.owners.get(owner) !== consumerIdentity) {
+      if (owner !== undefined && !isLocalOwner(state, file, owner)) {
         return true;
       }
       return [...state.ownershipPackages.values()].some(
         ({ directory, metadata }) =>
           state.owners.has(directory) &&
-          state.owners.get(directory) !== consumerIdentity &&
+          !isLocalOwner(state, file, directory) &&
           metadata.name !== undefined &&
           (specifier === metadata.name || specifier.startsWith(`${metadata.name}/`)),
       );
