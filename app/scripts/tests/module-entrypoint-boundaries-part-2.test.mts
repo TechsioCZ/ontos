@@ -1931,16 +1931,25 @@ for (const [name, imported, allowed] of [
   );
 }
 
-for (const [subpath, publicBinding] of [
-  ['catalog-selection-purpose', 'selectSmallestCompleteCatalogSelectionBasis'],
-  ['catalog-unit-conversion-evidence', 'catalogUnitConversionProves'],
+for (const [owner, file, specifier, publicBinding] of [
+  [
+    'verticals/catalog',
+    'verticals/catalog/shared/domain/catalog-selection-purpose.ts',
+    '@app/catalog/domain/catalog-selection-purpose',
+    'selectSmallestCompleteCatalogSelectionBasis',
+  ],
+  [
+    'packages/catalog-selection-contracts',
+    'packages/catalog-selection-contracts/src/domain/catalog-unit-conversion-evidence.ts',
+    '@app/catalog-selection-contracts/catalog-unit-conversion-evidence',
+    'catalogUnitConversionProves',
+  ],
 ] as const) {
   for (const privateSelection of [false, true]) {
     it.live(`checks actual published Catalog routine ${publicBinding} private=${privateSelection}`, () =>
       Effect.gen(function* actualPublishedCatalogRoutine() {
-        const file = `verticals/catalog/shared/domain/${subpath}.ts`;
         const root = yield* makeActualCatalogSelectionFixture(file);
-        const privateOrigin = 'verticals/catalog/src/handlers/private-contract.ts';
+        const privateOrigin = `${owner}/src/handlers/private-contract.ts`;
         yield* write(root, privateOrigin, 'export const privateRoutine = () => true;\n');
         const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
         yield* write(
@@ -1954,7 +1963,7 @@ for (const [subpath, publicBinding] of [
         yield* write(
           root,
           'apps/shell-super-app/src/catalog-routine-consumer.ts',
-          `import { ${binding} } from '@app/catalog/domain/${subpath}';\n`,
+          `import { ${binding} } from '${specifier}';\n`,
         );
         const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
         expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(

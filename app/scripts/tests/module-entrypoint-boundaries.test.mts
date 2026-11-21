@@ -1534,8 +1534,8 @@ for (const [variant, addition, privateSelection, allowed] of [
         root,
         'apps/shell-super-app/src/catalog-quantity-consumer.ts',
         privateSelection
-          ? "import { privateQuantityDispatch } from '@app/catalog/domain/catalog-quantity-handoff';\n"
-          : "import { CatalogQuantityBasisSchema, CatalogQuantityHandoffReadySchema, CatalogQuantityHandoffSchema } from '@app/catalog/domain/catalog-quantity-handoff';\nimport type { CatalogQuantityHandoff, CatalogQuantityHandoffReady } from '@app/catalog/domain/catalog-quantity-handoff';\n",
+          ? "import { privateQuantityDispatch } from '@app/catalog-selection-contracts/catalog-quantity-handoff';\n"
+          : "import { CatalogQuantityBasisSchema, CatalogQuantityHandoffReadySchema, CatalogQuantityHandoffSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';\nimport type { CatalogQuantityHandoff, CatalogQuantityHandoffReady } from '@app/catalog-selection-contracts/catalog-quantity-handoff';\n",
       );
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
       expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : variant).toBe(allowed);
