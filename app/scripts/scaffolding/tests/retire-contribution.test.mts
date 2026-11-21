@@ -464,6 +464,18 @@ const handWrittenUses = Effect.fn(function* handWrittenUses(read: string, folder
   });
 });
 
+/** A copy of actual modules or packages and the topology, outside their dependencies. */
+const copyModule = Effect.fn(function* copyModule(root: string, folders: readonly string[]) {
+  for (const relative of [...folders, 'topology/reference-topology.json']) {
+    yield* Effect.promise(() =>
+      cp(path.join(appRoot, relative), path.join(root, relative), {
+        filter: (source) => !source.includes(`${path.sep}node_modules`),
+        recursive: true,
+      }),
+    );
+  }
+});
+
 /** Retire one read of an actual module in a copy, and return the module and its contract package as they remain. */
 const retireInCopy = Effect.fn(function* retireInCopy(
   name: string,
@@ -475,14 +487,7 @@ const retireInCopy = Effect.fn(function* retireInCopy(
 ) {
   const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-retire-read-')));
   return yield* Effect.gen(function* retireAndRead() {
-    for (const relative of [vertical, contracts, 'topology/reference-topology.json']) {
-      yield* Effect.promise(() =>
-        cp(path.join(appRoot, relative), path.join(root, relative), {
-          filter: (source) => !source.includes(`${path.sep}node_modules`),
-          recursive: true,
-        }),
-      );
-    }
+    yield* copyModule(root, [vertical, contracts]);
     const prepared = yield* prepare(name, [vertical, contracts]);
     for (const [file, edit] of [...prepared, ...edits]) {
       const target = path.join(root, file);
@@ -735,6 +740,8 @@ it.live(
     const manifestFile = `${paymentVertical}/vertical.manifest.ts`;
     const forwarder = `${paymentVertical}/src/api/history-public.ts`;
     const loader = `${paymentVertical}/src/api/history-loader.ts`;
+    const mjsLoader = `${paymentVertical}/src/api/loader.mjs`;
+    const escapedForwarder = `${paymentVertical}/src/api/history-escaped.ts`;
     for (const [label, edits, refusal] of [
       [
         'a client loads the retired contract through a template literal without interpolation',
@@ -761,12 +768,38 @@ it.live(
         `${forwarder}:1 still names ./payment-term-history-client.ts, which the retirement deletes`,
       ],
       [
+        'a JavaScript loader imports the retired client',
+        [[mjsLoader, () => "import * as history from './payment-term-history-client.ts';\nexport default history;\n"]],
+        `${mjsLoader}:1 still names ./payment-term-history-client.ts, which the retirement deletes`,
+      ],
+      [
+        'an owner file star-exports the retired client under an escaped specifier',
+        [[escapedForwarder, () => "export * from './payment\\u002dterm-history-client.ts';\n"]],
+        `${escapedForwarder}:1 still names ./payment-term-history-client.ts, which the retirement deletes`,
+      ],
+      [
+        'a loader loads the retired client under an escaped specifier',
+        [[loader, () => "export const loadHistory = () => import('./payment\\x2dterm-history-client.ts');\n"]],
+        `${loader}:1 still names ./payment-term-history-client.ts, which the retirement deletes`,
+      ],
+      [
         'a source that names the retired read loads a module it builds at run time',
         [
           [
             loader,
             () =>
               `const read = 'payment-term-history';\nexport const loadHistory = () => import(\`./\${read}-client.ts\`);\n`,
+          ],
+        ],
+        `${loader}:2 loads a module it does not name statically`,
+      ],
+      [
+        'a source that names the retired read only through an escape loads a module it builds at run time',
+        [
+          [
+            loader,
+            () =>
+              `const read = 'payment\\x2dterm-history';\nexport const loadHistory = () => import(\`./\${read}-client.ts\`);\n`,
           ],
         ],
         `${loader}:2 loads a module it does not name statically`,
@@ -803,32 +836,35 @@ it.live(
   }),
 );
 
+/** Retire one read of the untouched Payment Term module in a copy, which refuses: the refusal, the copy byte for byte as it was. */
+const refusedInCopy = Effect.fn(function* refusedInCopy(name: string) {
+  const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-retire-refused-')));
+  return yield* Effect.gen(function* refuseAndCompare() {
+    yield* copyModule(root, [paymentVertical, paymentContracts]);
+    const before = yield* snapshotTree(root);
+    const refusal = yield* runScaffoldEffect(
+      RETIRE_CONTRIBUTION_COMMAND,
+      [VERTICAL_FLAG, paymentSlug, '--kind', 'api', '--name', name],
+      { workspaceRoot: root },
+    ).pipe(Effect.provide(NodeServices.layer), Effect.flip);
+    expect(yield* snapshotTree(root), name).toEqual(before);
+    return String(refusal);
+  }).pipe(Effect.ensuring(Effect.promise(() => rm(root, { force: true, recursive: true }))));
+});
+
 it.live(
-  "refuses to retire a read the module's own tests and package root still name, before anything is written",
+  "refuses to retire a read the module's own tests and package root still name, and changes nothing",
   Effect.fn(function* refuseHandWrittenUses() {
     const behaviour = `${paymentVertical}/tests/unit/payment-term-behavior.test.ts`;
     const line = (yield* Effect.promise(() => readFile(path.join(appRoot, behaviour), 'utf-8')))
       .split('\n')
       .findIndex((text) => text.includes("from '../../src/api/payment-term-history.read.ts'"));
     expect(line).toBeGreaterThan(-1);
-    yield* expectFailure(
-      retireInCopy(paymentHistoryRead, paymentVertical, paymentContracts, paymentSlug, [], () => Effect.succeed([])),
-      (cause) => {
-        expect(String(cause)).toContain(
-          `${behaviour}:${line + 1} still names ../../src/api/payment-term-history.read.ts, which the retirement deletes`,
-        );
-      },
+    expect(yield* refusedInCopy(paymentHistoryRead)).toContain(
+      `${behaviour}:${line + 1} still names ../../src/api/payment-term-history.read.ts, which the retirement deletes`,
     );
-    const packageRoot = `${paymentContracts}/src/index.ts`;
-    yield* expectFailure(
-      retireInCopy('current-payment-terms', paymentVertical, paymentContracts, paymentSlug, [], () =>
-        Effect.succeed([]),
-      ),
-      (cause) => {
-        expect(String(cause)).toContain(
-          `${packageRoot}:2 still names ./apis/current-payment-terms.ts, which the retirement deletes`,
-        );
-      },
+    expect(yield* refusedInCopy('current-payment-terms')).toContain(
+      `${paymentContracts}/src/index.ts:2 still names ./apis/current-payment-terms.ts, which the retirement deletes`,
     );
   }),
 );
