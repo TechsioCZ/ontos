@@ -868,6 +868,16 @@ importers:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
 
+  packages/party-registry-contracts:
+    dependencies:
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@types/node':
+        specifier: 20.19.43
+        version: 20.19.43
+
   packages/payment-term-catalog-contracts:
     dependencies:
       '@app/core-runtime':
