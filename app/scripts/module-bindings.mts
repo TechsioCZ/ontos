@@ -40,6 +40,7 @@ export interface ModuleBindings {
   readonly referenceOf: ReadonlyMap<Node, ModuleReference>;
   /** The same references, in source order. */
   readonly references: readonly ModuleReference[];
+  readonly source: string;
 }
 
 type Lookup = 'namespace' | BindingNamespace;
@@ -546,6 +547,7 @@ export const moduleBindings = (file: string, source: string): ModuleBindings | u
     program,
     referenceOf: new Map(references.map((reference) => [reference.identifier, reference])),
     references,
+    source,
   };
 };
 
@@ -666,27 +668,6 @@ const NO_MEMBER: Pending = { member: [] };
 /** The target of a global: what no module declares. */
 const GLOBAL = 'globalThis';
 
-/** A call of `require`: a module load. */
-const isRequireCall = (node: Node): boolean =>
-  node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require';
-
-/** What a node writes as a module specifier, when it takes one: null or undefined when it names none. */
-const writtenSpecifier = (node: Node): Node | null | undefined => {
-  if (
-    node.type === 'ImportDeclaration' ||
-    node.type === 'ExportAllDeclaration' ||
-    node.type === 'ExportNamedDeclaration' ||
-    node.type === 'ImportExpression' ||
-    node.type === 'TSImportType'
-  ) {
-    return node.source;
-  }
-  if (node.type === 'TSExternalModuleReference') {
-    return node.expression;
-  }
-  return node.type === 'CallExpression' && isRequireCall(node) ? (node.arguments[0] ?? null) : undefined;
-};
-
 /** The text a node writes statically: a literal, or a template literal without interpolation. */
 const staticText = (written: Node): string | undefined => {
   if (written.type === 'Literal') {
@@ -711,13 +692,166 @@ const memberName = (key: Node, computed: boolean): string => {
   return staticText(key) ?? UNREAD_MEMBER;
 };
 
-/** The module load a node is, under parentheses and `await`: `import('…')` or `require('…')`. */
-const moduleLoad = (node: Node): Node | undefined => {
-  let inner = node;
-  while (inner.type === 'ParenthesizedExpression' || inner.type === 'AwaitExpression') {
-    inner = inner.type === 'AwaitExpression' ? inner.argument : inner.expression;
+/** Node's module loader: what it exports makes loaders whose targets no static rule reads. */
+const NODE_MODULE = new Set(['module', 'node:module']);
+
+/** What one wrapper but `await` wraps: parentheses (of a value or a type), an optional chain, `as`, `satisfies`, `!`, `<T>x`, `typeof`, a type reference without type arguments. */
+const strippedOnce = (node: Node): Node | undefined => {
+  if (
+    node.type === 'ParenthesizedExpression' ||
+    node.type === 'ChainExpression' ||
+    node.type === 'TSAsExpression' ||
+    node.type === 'TSSatisfiesExpression' ||
+    node.type === 'TSNonNullExpression' ||
+    node.type === 'TSTypeAssertion'
+  ) {
+    return node.expression;
   }
-  return inner.type === 'ImportExpression' || isRequireCall(inner) ? inner : undefined;
+  if (node.type === 'TSParenthesizedType') {
+    return node.typeAnnotation;
+  }
+  if (node.type === 'TSTypeQuery') {
+    return node.typeArguments === null ? node.exprName : undefined;
+  }
+  return node.type === 'TSTypeReference' && node.typeArguments === null ? node.typeName : undefined;
+};
+
+const strippedAll = (node: Node): Node => {
+  let inner = node;
+  for (let next = strippedOnce(inner); next !== undefined; next = strippedOnce(inner)) {
+    inner = next;
+  }
+  return inner;
+};
+
+/** Whether a reference is the global `require`: a name no scope of the file declares. */
+const isGlobalRequire = (bindings: ModuleBindings, node: Node): boolean =>
+  node.type === 'Identifier' && node.name === 'require' && bindings.referenceOf.get(node)?.bindings.length === 0;
+
+/** Whether a node is a load: an `import()`, or a call whose callee, under the wrappers, is the global `require`. */
+const isLoad = (bindings: ModuleBindings, node: Node): boolean =>
+  node.type === 'ImportExpression' ||
+  (node.type === 'CallExpression' && isGlobalRequire(bindings, strippedAll(node.callee)));
+
+/**
+ * What one wrapper wraps, the one list every rule reads names, member chains and loads through: `strippedOnce`, and
+ * `await` of a load.
+ */
+const wraps = (bindings: ModuleBindings, node: Node): Node | undefined =>
+  strippedOnce(node) ??
+  (node.type === 'AwaitExpression' && isLoad(bindings, strippedAll(node.argument)) ? node.argument : undefined);
+
+/** A node with every wrapper around it taken off. */
+const unwrapped = (bindings: ModuleBindings, node: Node): Node => {
+  let inner = node;
+  for (let next = wraps(bindings, inner); next !== undefined; next = wraps(bindings, inner)) {
+    inner = next;
+  }
+  return inner;
+};
+
+/** The outermost node that only wraps a node: where what it stands for is used. */
+const wrapperOf = (bindings: ModuleBindings, node: Node): Node => {
+  let outer = node;
+  for (let parent = bindings.parents.get(outer); parent !== undefined && wraps(bindings, parent) === outer;) {
+    outer = parent;
+    parent = bindings.parents.get(outer);
+  }
+  return outer;
+};
+
+/**
+ * The module a load names when it is readable: `import(<literal>)`, `require(<literal>)` or `import x =
+ * require(<literal>)`, the literal a string or a template without interpolation; undefined for
+ * any other load, and for Node's module loader, whose loaders no static rule reads.
+ */
+const loadSpecifier = (load: Node): string | undefined => {
+  let written: Node | undefined;
+  if (load.type === 'ImportExpression') {
+    written = load.source;
+  } else if (load.type === 'TSExternalModuleReference') {
+    written = load.expression;
+  } else if (load.type === 'CallExpression' && load.arguments.length === 1) {
+    [written] = load.arguments;
+  }
+  const text = written === undefined || written.type === 'SpreadElement' ? undefined : staticText(written);
+  return text === undefined || NODE_MODULE.has(text) ? undefined : text;
+};
+
+/** Whether a node, under the wrappers, is taken the member `name` (or one no literal names). */
+const takesMember = (bindings: ModuleBindings, node: Node, name: string): boolean => {
+  const outer = wrapperOf(bindings, node);
+  const parent = bindings.parents.get(outer);
+  if (parent?.type !== 'MemberExpression' || parent.object !== outer) {
+    return false;
+  }
+  const member = memberName(parent.property, parent.computed);
+  return member === name || member === UNREAD_MEMBER;
+};
+
+/** Whether a node is one appearance of a load no static rule reads (`unreadableLoads`). */
+const isUnreadableLoad = (bindings: ModuleBindings, node: Node): boolean => {
+  if (isLoad(bindings, node) || node.type === 'TSExternalModuleReference') {
+    return loadSpecifier(node) === undefined;
+  }
+  if (isGlobalRequire(bindings, node)) {
+    const outer = wrapperOf(bindings, node);
+    const parent = bindings.parents.get(outer);
+    return parent?.type !== 'CallExpression' || parent.callee !== outer;
+  }
+  if (node.type === 'Identifier' && node.name === 'module' && bindings.referenceOf.get(node)?.bindings.length === 0) {
+    return takesMember(bindings, node, 'require');
+  }
+  if (node.type === 'MetaProperty') {
+    return node.meta.name === 'import' && takesMember(bindings, node, 'resolve');
+  }
+  return (
+    (node.type === 'ImportDeclaration' ||
+      node.type === 'ExportAllDeclaration' ||
+      node.type === 'ExportNamedDeclaration') &&
+    node.source !== null &&
+    NODE_MODULE.has(node.source.value)
+  );
+};
+
+const unreadable = new WeakMap<ModuleBindings, readonly Node[]>();
+
+/**
+ * Every appearance of a load in a source that no static rule reads, the one definition every rule and the retirement
+ * planner use: an `import()` or a call of the global `require` that is not readable (`loadSpecifier`); the global
+ * `require` used other than as the callee of a load (`const load = require`, an argument, `require.resolve`);
+ * `module.require`; `import.meta.resolve`; and any import, re-export or load of Node's module loader
+ * (`createRequire`).
+ */
+export const unreadableLoads = (bindings: ModuleBindings): readonly Node[] => {
+  const known = unreadable.get(bindings);
+  if (known !== undefined) {
+    return known;
+  }
+  const found = [...bindings.parents.keys()].filter((node) => isUnreadableLoad(bindings, node));
+  unreadable.set(bindings, found);
+  return found;
+};
+
+const readable = new WeakMap<ModuleBindings, readonly Node[]>();
+
+/** Every readable load of a source: an `import()` or a `require()` of a module a literal names. */
+export const readableLoads = (bindings: ModuleBindings): readonly Node[] => {
+  const known = readable.get(bindings);
+  if (known !== undefined) {
+    return known;
+  }
+  const found = [...bindings.parents.keys()].filter(
+    (node) => isLoad(bindings, node) && loadSpecifier(node) !== undefined,
+  );
+  readable.set(bindings, found);
+  return found;
+};
+
+/** Where a source holds a load no static rule reads, as `line N`; undefined for a source that holds none. */
+export const unreadableLoadLine = (bindings: ModuleBindings): string | undefined => {
+  const [first] = unreadableLoads(bindings);
+  return first === undefined ? undefined : `line ${lineOf(bindings.source, first.start)}`;
 };
 
 const specifierName = (node: Node): string => {
@@ -737,6 +871,14 @@ const declaredIdentifiers = (declaration: Node | null): readonly Node[] => {
 
 /** A whole module: a namespace of a module the graph reads, else a foreign export of `*`. */
 const wholeModule = (graph: ModuleGraph, step: ExportStep, specifier: string): ExportOrigin => {
+  if (NODE_MODULE.has(specifier)) {
+    return {
+      file: step.file,
+      kind: 'unresolved',
+      reason: `takes Node's module loader ${specifier}`,
+      trail: step.trail,
+    };
+  }
   const target = graph.target(step.file, specifier);
   return graph.parsed(target) === undefined
     ? { kind: 'foreign', name: '*', specifier, star: false, target, trail: step.trail }
@@ -745,6 +887,14 @@ const wholeModule = (graph: ModuleGraph, step: ExportStep, specifier: string): E
 
 /** `name` of the module `specifier` names: followed in a module the graph reads, else foreign. */
 const namedIn = (graph: ModuleGraph, step: ExportStep, specifier: string, name: string): Expansion => {
+  if (NODE_MODULE.has(specifier)) {
+    return {
+      file: step.file,
+      kind: 'unresolved',
+      reason: `takes Node's module loader ${specifier}`,
+      trail: step.trail,
+    };
+  }
   const target = graph.target(step.file, specifier);
   return graph.parsed(target) === undefined
     ? { kind: 'foreign', name, specifier, star: false, target, trail: step.trail }
@@ -752,45 +902,18 @@ const namedIn = (graph: ModuleGraph, step: ExportStep, specifier: string, name: 
 };
 
 /**
- * Parentheses (of a value or a type), an optional chain, `as`, `satisfies`, `!`, `<T>x` and `typeof`: what they wrap is
- * still the same binding.
- */
-const unwrappedName = (node: Node): Node => {
-  let inner = node;
-  for (;;) {
-    if (
-      inner.type === 'ParenthesizedExpression' ||
-      inner.type === 'ChainExpression' ||
-      inner.type === 'TSAsExpression' ||
-      inner.type === 'TSSatisfiesExpression' ||
-      inner.type === 'TSNonNullExpression' ||
-      inner.type === 'TSTypeAssertion'
-    ) {
-      inner = inner.expression;
-    } else if (inner.type === 'TSParenthesizedType') {
-      inner = inner.typeAnnotation;
-    } else if (inner.type === 'TSTypeQuery' && inner.typeArguments === null) {
-      inner = inner.exprName;
-    } else if (inner.type === 'TSTypeReference' && inner.typeArguments === null) {
-      inner = inner.typeName;
-    } else {
-      return inner;
-    }
-  }
-};
-
-/**
  * `A`, `A.B`, `A['B']`, `(await import('…')).B`, `(typeof A)['B']`, `import('…').B` (as an expression, a qualified
- * type name or an indexed type): the root, a name, a module load or an import type, and the members after it.
+ * type name or an indexed type), under the wrappers at every level: the root, a name, a load or an import type, and
+ * the members after it.
  */
-const memberPath = (node: Node): readonly [Node, readonly string[]] | undefined => {
-  const load = moduleLoad(node);
+const memberPath = (bindings: ModuleBindings, written: Node): readonly [Node, readonly string[]] | undefined => {
+  const node = unwrapped(bindings, written);
   if (
-    load !== undefined ||
+    isLoad(bindings, node) ||
     node.type === 'Identifier' ||
     (node.type === 'TSImportType' && node.typeArguments === null)
   ) {
-    return [load ?? node, []];
+    return [node, []];
   }
   let object: Node;
   let member: string;
@@ -807,7 +930,7 @@ const memberPath = (node: Node): readonly [Node, readonly string[]] | undefined 
   } else {
     return undefined;
   }
-  const inner = memberPath(unwrappedName(object));
+  const inner = memberPath(bindings, object);
   return inner === undefined ? undefined : [inner[0], [...inner[1], member]];
 };
 
@@ -904,7 +1027,7 @@ const importTypeLinks = (
   if (node.qualifier === null) {
     return [owedBy(wholeModule(graph, step, node.source.value), owed)];
   }
-  const qualified = memberPath(node.qualifier);
+  const qualified = memberPath(step.bindings, node.qualifier);
   return qualified === undefined
     ? undefined
     : [
@@ -932,10 +1055,16 @@ const rootLinks = (graph: ModuleGraph, step: ExportStep, root: Node, owed: Pendi
       ]
     );
   }
-  const written = writtenSpecifier(root);
-  const specifier = written === null || written === undefined ? undefined : staticText(written);
+  const specifier = loadSpecifier(root);
   return specifier === undefined
-    ? [{ file: step.file, kind: 'unresolved', reason: 'loads a module it does not name statically', trail: step.trail }]
+    ? [
+        {
+          file: step.file,
+          kind: 'unresolved',
+          reason: `loads a module it does not read statically at line ${lineOf(step.bindings.source, root.start)}`,
+          trail: step.trail,
+        },
+      ]
     : [owedBy(wholeModule(graph, step, specifier), owed)];
 };
 
@@ -943,11 +1072,11 @@ const rootLinks = (graph: ModuleGraph, step: ExportStep, root: Node, owed: Pendi
  * What a declaration is only another name for, when it is one (`OWNER_ENTRY_READ_FORMS` states the boundary): `const B =
  * A`, `const B = Read.A`, `const B = Read['A']`, `const { A: B } = Read`, `const { 'A': B = d, ...Rest } = Read`,
  * `const B = (await import('…')).A`, `const B = require('…').A`, `type B = A`, `type B<_T = unknown> = A`, `type B =
- * typeof Read.A`, `type B = import('…').A`, `import B = Read.A`, `import B = require('…')`, each with or without
- * parentheses (of a value or a type), `as`, `satisfies`, `!`, `<T>` and a type annotation. Anything else, a call, an
- * object, array or struct it builds, an array pattern, an operator, type arguments, is a declaration of its own. A
- * `let`, a `var` or a binding written again (`rebinding`), a member no literal names (`UNREAD_MEMBER`) taken of a whole
- * module, and a module load no literal names cannot be followed.
+ * typeof Read.A`, `type B = import('…').A`, `import B = Read.A`, `import B = require('…')`, each through the wrappers
+ * at every level (`wraps`) and a type annotation. Anything else, a call, an object, array or struct it builds, an array
+ * pattern, an operator, type arguments, is a declaration of its own. A `let`, a `var` or a binding written again
+ * (`rebinding`), a member no literal names (`UNREAD_MEMBER`) taken of a whole module, a load that is not readable
+ * (`loadSpecifier`), and the global `require` used other than as the callee of a load cannot be followed.
  */
 const aliasLinks = (
   graph: ModuleGraph,
@@ -957,11 +1086,11 @@ const aliasLinks = (
 ): readonly Expansion[] | undefined => {
   const found = writtenFor(step.bindings, binding.identifier);
   const taken = found?.taken ?? [];
-  const inner = found === undefined ? undefined : unwrappedName(found.written);
+  const inner = found === undefined ? undefined : unwrapped(step.bindings, found.written);
   if (inner?.type === 'TSExternalModuleReference') {
-    return [owedBy(wholeModule(graph, step, inner.expression.value), { holder: declared, member: taken })];
+    return rootLinks(graph, step, inner, { holder: declared, member: taken });
   }
-  const path = inner === undefined ? undefined : memberPath(inner);
+  const path = inner === undefined ? undefined : memberPath(step.bindings, inner);
   return path === undefined
     ? undefined
     : rootLinks(graph, step, path[0], { holder: declared, member: [...path[1], ...taken] });
@@ -1028,6 +1157,16 @@ const referenceLinks = ({ identifier, step }: ReferenceLink): readonly Expansion
       },
     ];
   }
+  if (isUnreadableLoad(step.bindings, identifier)) {
+    return [
+      {
+        file: step.file,
+        kind: 'unresolved',
+        reason: `uses the global ${reference.name} other than to load a module a literal names, at line ${lineOf(step.bindings.source, identifier.start)}`,
+        trail: step.trail,
+      },
+    ];
+  }
   return reference.bindings.length === 0
     ? [{ kind: 'foreign', name: reference.name, specifier: '', star: false, target: GLOBAL, trail: step.trail }]
     : reference.bindings.map((binding) => ({ ...NO_MEMBER, binding, kind: 'binding', step }));
@@ -1063,7 +1202,7 @@ const statementLinks = (graph: ModuleGraph, step: ExportStep, statement: Node, n
     if (declared.length > 0) {
       return declared.map((binding): Expansion => ({ ...NO_MEMBER, binding, kind: 'binding', step }));
     }
-    const path = memberPath(unwrappedName(exported));
+    const path = memberPath(step.bindings, exported);
     return path === undefined
       ? [{ bindings: step.bindings, file: step.file, kind: 'declared', node: exported, trail: step.trail }]
       : rootLinks(graph, step, path[0], { member: path[1] });
@@ -1203,16 +1342,6 @@ export const referenceOrigins = (
       );
 };
 
-const wrappers = new Set([
-  'ChainExpression',
-  'ParenthesizedExpression',
-  'TSAsExpression',
-  'TSNonNullExpression',
-  'TSParenthesizedType',
-  'TSSatisfiesExpression',
-  'TSTypeAssertion',
-]);
-
 /** What a member access of a name or a module load takes where it stands, and the node the access ends at. */
 interface MemberChain {
   readonly members: readonly string[];
@@ -1220,8 +1349,8 @@ interface MemberChain {
 }
 
 /**
- * The members a reference or a module load takes where it stands (`X` of `Read.X`, `Read['X']`, the type name
- * `Read.X`, `(await import('…')).X`), through parentheses, `as`, `satisfies`, `!` and `<T>`, and the outermost node.
+ * The members a reference or a load takes where it stands (`X` of `Read.X`, `Read['X']`, the type name `Read.X`,
+ * `(typeof Read)['X']`, `(await import('…')).X`), through the wrappers (`wraps`), and the outermost node.
  */
 export const memberChain = (bindings: ModuleBindings, node: Node): MemberChain => {
   const members: string[] = [];
@@ -1231,7 +1360,11 @@ export const memberChain = (bindings: ModuleBindings, node: Node): MemberChain =
       members.push(memberName(parent.property, parent.computed));
     } else if (parent.type === 'TSQualifiedName' && parent.left === outer) {
       members.push(memberName(parent.right, false));
-    } else if (!wrappers.has(parent.type) && !(parent.type === 'AwaitExpression' && moduleLoad(outer) !== undefined)) {
+    } else if (parent.type === 'TSIndexedAccessType' && parent.objectType === outer) {
+      members.push(
+        parent.indexType.type === 'TSLiteralType' ? memberName(parent.indexType.literal, true) : UNREAD_MEMBER,
+      );
+    } else if (wraps(bindings, parent) !== outer) {
       return { members, outer };
     }
     outer = parent;
@@ -1242,10 +1375,6 @@ export const memberChain = (bindings: ModuleBindings, node: Node): MemberChain =
 /** The members a reference takes where it stands. */
 export const takenMembers = (bindings: ModuleBindings, identifier: Node): readonly string[] =>
   memberChain(bindings, identifier).members;
-
-/** Every `import()` and `require()` of a source: what a declaration loads at run time. */
-export const moduleLoads = (bindings: ModuleBindings): readonly Node[] =>
-  [...bindings.parents.keys()].filter((node) => node.type === 'ImportExpression' || isRequireCall(node));
 
 /** What a module load of `file` gives, with the members taken of it where it stands, followed as `exportOrigins` does. */
 export const loadOrigins = (
@@ -1318,34 +1447,29 @@ export const moduleExports = (graph: ModuleGraph, file: string): ModuleExports =
   return { names: [...names], opaque };
 };
 
-/** A module specifier as a source writes it: the string literal, and the node that writes it. */
+/** A module specifier as a source writes it: the node that writes it, and the specifier. */
 interface ModuleSpecifier {
-  readonly literal: Node;
   readonly node: Node;
   readonly specifier: string;
 }
 
 /**
- * Every module specifier of a source, of any kind, written as a string literal or a template literal without
- * interpolation: a static import, an `export … from`, an `import()` expression, an `import('…')` type, a
- * `require('…')` and an `import x = require('…')`.
+ * Every module specifier of a source: a static import, an `export … from`, an `import('…')` type, and every readable
+ * load (`loadSpecifier`: an `import()`, a `require()` and an `import x = require()` a literal names).
  */
 export const moduleSpecifiers = (bindings: ModuleBindings): readonly ModuleSpecifier[] =>
   [...bindings.parents.keys()].flatMap((node): readonly ModuleSpecifier[] => {
-    const written = writtenSpecifier(node);
-    const specifier = written === null || written === undefined ? undefined : staticText(written);
-    return written === null || written === undefined || specifier === undefined
-      ? []
-      : [{ literal: written, node, specifier }];
-  });
-
-/** Every `import()` and `require()` of a source whose module is computed at run time, so cannot be read statically. */
-export const unreadableSpecifiers = (bindings: ModuleBindings): readonly Node[] =>
-  [...bindings.parents.keys()].filter((node) => {
-    const written = writtenSpecifier(node);
-    return (
-      (node.type === 'ImportExpression' || node.type === 'CallExpression') &&
-      written !== undefined &&
-      (written === null || staticText(written) === undefined)
-    );
+    if (
+      (node.type === 'ImportDeclaration' ||
+        node.type === 'ExportAllDeclaration' ||
+        node.type === 'ExportNamedDeclaration' ||
+        node.type === 'TSImportType') &&
+      node.source !== null
+    ) {
+      const specifier = staticText(node.source);
+      return specifier === undefined ? [] : [{ node, specifier }];
+    }
+    const specifier =
+      isLoad(bindings, node) || node.type === 'TSExternalModuleReference' ? loadSpecifier(node) : undefined;
+    return specifier === undefined ? [] : [{ node, specifier }];
   });

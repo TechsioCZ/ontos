@@ -741,6 +741,10 @@ it.live(
     const forwarder = `${paymentVertical}/src/api/history-public.ts`;
     const loader = `${paymentVertical}/src/api/history-loader.ts`;
     const mjsLoader = `${paymentVertical}/src/api/loader.mjs`;
+    const cjsLoader = `${paymentVertical}/src/api/loader.cjs`;
+    const helper = `${paymentVertical}/src/api/history-helper.ts`;
+    const packageLoader = `${paymentContracts}/src/loader.ts`;
+    const deletedClient = './payment-term-history-client.ts';
     const escapedForwarder = `${paymentVertical}/src/api/history-escaped.ts`;
     for (const [label, edits, refusal] of [
       [
@@ -771,6 +775,47 @@ it.live(
         'a JavaScript loader imports the retired client',
         [[mjsLoader, () => "import * as history from './payment-term-history-client.ts';\nexport default history;\n"]],
         `${mjsLoader}:1 still names ./payment-term-history-client.ts, which the retirement deletes`,
+      ],
+      // Any string written whole that names a deleted file refuses the plan, whatever it stands in.
+      [
+        'a CommonJS loader requires the retired client through a parenthesized require',
+        [[cjsLoader, () => `module.exports = (require)('${deletedClient}');\n`]],
+        `${cjsLoader}:1 still names ${deletedClient}, which the retirement deletes`,
+      ],
+      [
+        'a URL of the retired client',
+        [[helper, () => `export const where = new URL('${deletedClient}', import.meta.url);\n`]],
+        `${helper}:1 still names ${deletedClient}, which the retirement deletes`,
+      ],
+      [
+        'an argument of a function the rules do not know',
+        [
+          [
+            helper,
+            () => `declare const lazy: (path: string) => unknown;\nexport const history = lazy('${deletedClient}');\n`,
+          ],
+        ],
+        `${helper}:2 still names ${deletedClient}, which the retirement deletes`,
+      ],
+      // A relative path names a deleted file with any JavaScript or TypeScript extension, or without one.
+      ...(['./payment-term-history-client.js', './payment-term-history-client'] as const).map(
+        (specifier) =>
+          [
+            `an owner file star-exports the retired client as ${specifier}`,
+            [[helper, () => `export * from '${specifier}';\n`]],
+            `${helper}:1 still names ${specifier}, which the retirement deletes`,
+          ] as const,
+      ),
+      // Every contract package the module owns is read, whether or not it publishes the read.
+      [
+        'a contract package of the module re-exports the retired client of the module by a relative path',
+        [
+          [
+            packageLoader,
+            () => "export * from '../../../verticals/payment-term-catalog/src/api/payment-term-history-client.ts';\n",
+          ],
+        ],
+        `${packageLoader}:1 still names ../../../verticals/payment-term-catalog/src/api/payment-term-history-client.ts, which the retirement deletes`,
       ],
       [
         'an owner file star-exports the retired client under an escaped specifier',

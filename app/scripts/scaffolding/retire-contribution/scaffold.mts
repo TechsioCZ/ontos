@@ -1,6 +1,6 @@
 import nodePath from 'node:path';
 
-import { Effect, FileSystem, Schema, Predicate } from 'effect';
+import { Effect, FileSystem, Option, Schema, Predicate } from 'effect';
 import type { Node } from 'oxc-parser';
 
 import {
@@ -9,9 +9,8 @@ import {
   moduleBindings,
   moduleExports,
   moduleGraph,
-  moduleSpecifiers,
   parseProblem,
-  unreadableSpecifiers,
+  unreadableLoads,
 } from '../../module-bindings.mts';
 import type { ModuleBindings, ModuleGraph } from '../../module-bindings.mts';
 
@@ -523,6 +522,29 @@ const moduleSources = Effect.fn('moduleSources')(function* moduleSourcesEffect(d
   return sources;
 });
 
+/** Every string a source writes whole, decoded, with the node that writes it: a string literal, a template literal without interpolation. */
+const wholeStrings = (bindings: ModuleBindings): readonly (readonly [Node, string])[] =>
+  [...bindings.parents.keys()].flatMap((node): readonly (readonly [Node, string])[] => {
+    if (node.type === 'Literal') {
+      return Predicate.isString(node.value) ? [[node, node.value]] : [];
+    }
+    const text =
+      node.type === 'TemplateLiteral' && node.expressions.length === 0 ? node.quasis[0]?.value.cooked : undefined;
+    return text === undefined || text === null ? [] : [[node, text]];
+  });
+
+/** A JavaScript or TypeScript extension: `./a.js` names `a.ts` under bundler resolution, and so does `./a`. */
+const SOURCE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
+
+/** What the plan deletes, as a specifier may name it: each path without its extension, and the directory of an index. */
+const deletedNames = (deleted: ReadonlySet<string>): ReadonlySet<string> =>
+  new Set(
+    [...deleted].flatMap((file) => {
+      const bare = file.replace(SOURCE_EXTENSION, '');
+      return nodePath.basename(bare) === 'index' ? [bare, nodePath.dirname(bare)] : [bare];
+    }),
+  );
+
 /** Every string a source writes statically, decoded: its string literals and the text of its template literals. */
 const writtenStrings = (bindings: ModuleBindings): readonly string[] =>
   [...bindings.parents.keys()].flatMap((node): readonly string[] => {
@@ -531,6 +553,47 @@ const writtenStrings = (bindings: ModuleBindings): readonly string[] =>
     }
     return node.type === 'TemplateElement' ? [node.value.cooked ?? node.value.raw] : [];
   });
+
+const ContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('ContractOwnerModuleId'));
+const ContractOwnerManifestSchema = Schema.Struct({
+  ontosContractOwner: Schema.Struct({ moduleId: ContractOwnerModuleIdSchema }),
+});
+
+/** Every contract package of the workspace that names the module as its owner, whatever reads it publishes. */
+const ownedContractPackages = Effect.fn('ownedContractPackages')(function* ownedContractPackagesEffect(
+  workspaceRoot: string,
+  vertical: OntosVerticalMetadata,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const packages = yield* trySync(() => resolveContainedPath(workspaceRoot, 'packages'), 'failed to resolve packages');
+  const listed = yield* fileSystem
+    .exists(packages)
+    .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${packages}`, cause)));
+  const entries = listed
+    ? yield* fileSystem
+        .readDirectory(packages)
+        .pipe(Effect.mapError((cause) => scaffoldError(`failed to list ${packages}`, cause)))
+    : [];
+  const owned: string[] = [];
+  for (const entry of entries.toSorted()) {
+    const manifest = nodePath.join(packages, entry, 'package.json');
+    const present = yield* fileSystem
+      .exists(manifest)
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${manifest}`, cause)));
+    const source = present
+      ? yield* fileSystem
+          .readFileString(manifest)
+          .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${manifest}`, cause)))
+      : '';
+    const owner = Option.getOrUndefined(
+      Schema.decodeUnknownOption(Schema.fromJsonString(ContractOwnerManifestSchema))(source),
+    );
+    if (owner?.ontosContractOwner.moduleId === vertical.moduleId) {
+      owned.push(nodePath.join(packages, entry));
+    }
+  }
+  return owned;
+});
 
 /** The names a source refers to that no declaration of it binds. */
 const unboundNames = (bindings: ModuleBindings): ReadonlySet<string> =>
@@ -544,15 +607,14 @@ interface PlannedSource {
 }
 
 /**
- * The post-condition's failures in one source; `retired` holds what the plan deletes, by path or package specifier,
- * and `names` the base names of the deleted files.
+ * The post-condition's failures in one source; `retired` holds what the plan deletes, by path without its extension
+ * (and the directory of an index) or by package specifier, and `names` the base names of the deleted files.
  */
 const sourceProblems = (
   { after, before, file }: PlannedSource,
   edited: boolean,
   retired: ReadonlySet<string>,
   names: readonly string[],
-  exists: (candidate: string) => boolean,
 ): readonly string[] => {
   const at = (start: number): string =>
     `${file}:${before === undefined ? lineOf(after, start) : lineBefore(before, after, lineOf(after, start))}`;
@@ -573,9 +635,15 @@ const sourceProblems = (
               ]
             : [],
         );
-  const named = moduleSpecifiers(bindings).flatMap(({ literal, specifier }) =>
-    retired.has(importTarget(file, specifier, exists))
-      ? [`${at(literal.start)} still names ${specifier}, which the retirement deletes: remove that use first`]
+  // Any string the source writes whole that names a deleted file, whatever it stands in: an import, a load under
+  // any name, `new URL(…)`, an argument of any function.
+  const namesDeleted = (text: string): boolean =>
+    text.startsWith('.') || text.startsWith('/')
+      ? retired.has(nodePath.resolve(nodePath.dirname(file), text).replace(SOURCE_EXTENSION, ''))
+      : retired.has(text);
+  const named = wholeStrings(bindings).flatMap(([node, text]) =>
+    namesDeleted(text)
+      ? [`${at(node.start)} still names ${text}, which the retirement deletes: remove that use first`]
       : [],
   );
   // A file names a retired file when its text does, or a string it writes does once decoded.
@@ -584,7 +652,7 @@ const sourceProblems = (
     names.some((name) => after.includes(name)) ||
     writtenStrings(bindings).some((text) => names.some((name) => text.includes(name)));
   const unreadable = naming
-    ? unreadableSpecifiers(bindings).map(
+    ? unreadableLoads(bindings).map(
         (node) =>
           `${at(node.start)} loads a module it does not name statically, beside the name of a retired file: remove that use first`,
       )
@@ -594,13 +662,15 @@ const sourceProblems = (
 
 /**
  * The post-condition of a retirement plan, computed on the planned result before anything is written: (a) every file
- * the plan edits still parses; (b) no file the plan edits leaves a name unbound that was bound before; (c) no module
- * specifier of any kind (a string literal or a template literal without interpolation) in any source of the owner
- * module (JavaScript or TypeScript) resolves to a file the plan deletes, its value decoded, and a source that names a
- * deleted file's base name loads no module it does not name statically. A specifier that resolves to a deleted file
- * names its base name once decoded, and without an escape (a backslash) the decoded text is the raw text: so a source
- * whose raw text holds neither a deleted file's base name nor a backslash is the only one skipped unparsed. Each
- * failure names the file and its line as the file stands.
+ * the plan edits still parses; (b) no file the plan edits leaves a name unbound that was bound before; (c) no string
+ * a source of the module or of any contract package it owns (JavaScript or TypeScript) writes whole (a string literal
+ * or a template literal without interpolation), decoded, names a file the plan deletes, whatever the string stands in
+ * (an import, a load under any name, `new URL(…)`, an argument of any function), a relative path naming it with any
+ * JavaScript or TypeScript extension, without one, or as the directory of an index; and a source that names a deleted
+ * file's base name holds no load no static rule reads (`unreadableLoads`). A string that names a deleted file names
+ * its base name once decoded, and without an escape (a backslash) the decoded text is the raw text: so a source whose
+ * raw text holds neither a deleted file's base name nor a backslash is the only one skipped unparsed. Each failure
+ * names the file and its line as the file stands.
  */
 const retirementProblems = (
   sources: ReadonlyMap<string, string>,
@@ -613,15 +683,18 @@ const retirementProblems = (
       mutation.kind !== 'delete' && CODE_FILE.test(mutation.path) ? [[mutation.path, mutation.content] as const] : [],
     ),
   );
-  const names = [...deleted].map((file) => nodePath.basename(file).replace(/\.[^.]*$/u, ''));
-  const exists = (candidate: string): boolean => sources.has(candidate) || deleted.has(candidate);
+  const named = new Set([
+    ...deletedNames(deleted),
+    ...[...retired.files.keys()].filter((key) => !nodePath.isAbsolute(key)),
+  ]);
+  const names = [...deletedNames(deleted)].map((bare) => nodePath.basename(bare));
   const files = new Set([...sources.keys(), ...planned.keys()].filter((file) => !deleted.has(file)));
   return [...files].flatMap((file) => {
     const before = sources.get(file);
     const after = planned.get(file) ?? before ?? '';
     const edited = planned.has(file);
     return edited || after.includes('\\') || names.some((name) => after.includes(name))
-      ? sourceProblems({ after, before, file }, edited, new Set(retired.files.keys()), names, exists)
+      ? sourceProblems({ after, before, file }, edited, named, names)
       : [];
   });
 };
@@ -868,7 +941,14 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
   ];
   // The post-condition judges the planned result as a whole; nothing is written when it fails.
   const problems = retirementProblems(
-    yield* moduleSources([vertical.directory, ...(publication === undefined ? [] : [publication.directory])]),
+    // The module and every contract package it owns, whether or not the package publishes this read.
+    yield* moduleSources([
+      ...new Set([
+        vertical.directory,
+        ...(publication === undefined ? [] : [publication.directory]),
+        ...(yield* ownedContractPackages(workspaceRoot, vertical)),
+      ]),
+    ]),
     mutations,
     retired,
   );
