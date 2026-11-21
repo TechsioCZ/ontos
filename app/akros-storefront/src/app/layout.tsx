@@ -13,6 +13,8 @@ import { CartNotifications } from "@/features/cart/cart-notifications";
 import { dictionaryFor, dictionaryLanguage } from "@/i18n";
 import { getMarketResolution, toClientMarket } from "@/ontos/active-market";
 import { MarketProvider } from "@/ontos/market-context";
+import { ErpCatalogueProvider } from "@/ontos/erp-catalogue-context";
+import { getErpOffer } from "@/ontos/erp-config";
 import { MarketGatePage } from "@/ontos/market-pages";
 
 // Inter is split into two pre-built files (see app/scripts/fonts/subset-fonts.mjs): a preloaded core
@@ -72,11 +74,13 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <BrandProvider brand={toClientBrand(brand, market.locale)}>
           <MarketProvider market={market}>
             <CatalogProvider snapshot={snapshot}>
-              {/* Each market keeps its own carts: prices and currency differ between markets. */}
-              <CartProvider storageScope={market.marketCode}>
-                {children}
-                <CartNotifications />
-              </CartProvider>
+              <ErpCatalogueProvider enabled={getErpOffer() !== undefined}>
+                {/* Each market keeps its own carts: prices and currency differ between markets. */}
+                <CartProvider storageScope={market.marketCode}>
+                  {children}
+                  <CartNotifications />
+                </CartProvider>
+              </ErpCatalogueProvider>
             </CatalogProvider>
           </MarketProvider>
         </BrandProvider>
