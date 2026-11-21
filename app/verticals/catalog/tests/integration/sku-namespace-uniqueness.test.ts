@@ -550,20 +550,8 @@ it.live('assigns, keeps and replaces the SKU a source route sends for a draft Va
         productId: draftProduct,
         tenantId,
       });
-      yield* admin.insert(productVariantAxisEvents).values({
-        actingPrincipalId: principalId,
-        actionInvocationId: randomUUID(),
-        attributeDefinitionIds: [],
-        axisRevision: 1,
-        evidenceRefs: ['sku-postgres-test:source'],
-        productId: draftProduct,
-        reason: 'Test fixture',
-        tenantId,
-      });
       yield* admin.insert(productVariants).values([
         {
-          combinationAxisRevision: 1,
-          combinationKey: 'f'.repeat(64),
           createdByActionInvocationId: randomUUID(),
           createdByPrincipalId: principalId,
           lifecycleState: 'WORK_IN_PROGRESS',
@@ -572,8 +560,6 @@ it.live('assigns, keeps and replaces the SKU a source route sends for a draft Va
           variantId: draftVariant,
         },
         {
-          combinationAxisRevision: 1,
-          combinationKey: '9'.repeat(64),
           createdByActionInvocationId: randomUUID(),
           createdByPrincipalId: principalId,
           lifecycleState: 'WORK_IN_PROGRESS',
