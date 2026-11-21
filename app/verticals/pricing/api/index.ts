@@ -74,6 +74,7 @@ import { currentSupportedCurrenciesReadApiLive } from './current-supported-curre
 import { defineCommercialFeeActionApiLive } from './define-commercial-fee-action-server.ts';
 import { definePriceActionApiLive } from './define-price-action-server.ts';
 import { exactPriceResolutionReadApiLive } from './exact-price-resolution-read-server.ts';
+import { grantExternalPriceSourceAuthorityActionApiLive } from './grant-external-price-source-authority-action-server.ts';
 import { manageCommitmentConfirmationActionApiLive } from './manage-commitment-confirmation-action-server.ts';
 import { manageContractualDiscountActionApiLive } from './manage-contractual-discount-action-server.ts';
 import { manageProductCommercialFeesBulkActionApiLive } from './manage-product-commercial-fees-bulk-action-server.ts';
@@ -256,6 +257,7 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   defineCommercialFeeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   definePriceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   exactPriceResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  grantExternalPriceSourceAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageCommitmentConfirmationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageContractualDiscountActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageProductCommercialFeesBulkActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

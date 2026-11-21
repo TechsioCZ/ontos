@@ -20,6 +20,7 @@ import { CurrentSupportedCurrenciesApi } from './apis/current-supported-currenci
 import { DefineCommercialFeeActionApi } from './apis/define-commercial-fee-action.ts';
 import { DefinePriceActionApi } from './apis/define-price-action.ts';
 import { ExactPriceResolutionApi } from './apis/exact-price-resolution.ts';
+import { GrantExternalPriceSourceAuthorityActionApi } from './apis/grant-external-price-source-authority-action.ts';
 import { ManageCommitmentConfirmationActionApi } from './apis/manage-commitment-confirmation-action.ts';
 import { ManageContractualDiscountActionApi } from './apis/manage-contractual-discount-action.ts';
 import { ManageProductCommercialFeesBulkActionApi } from './apis/manage-product-commercial-fees-bulk-action.ts';
@@ -116,6 +117,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(DefineCommercialFeeActionApi)
   .addHttpApi(DefinePriceActionApi)
   .addHttpApi(ExactPriceResolutionApi)
+  .addHttpApi(GrantExternalPriceSourceAuthorityActionApi)
   .addHttpApi(ManageCommitmentConfirmationActionApi)
   .addHttpApi(ManageContractualDiscountActionApi)
   .addHttpApi(ManageProductCommercialFeesBulkActionApi)
