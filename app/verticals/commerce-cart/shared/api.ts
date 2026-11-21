@@ -14,7 +14,7 @@ import { FinalCartCandidateApi } from '@app/commerce-cart-finalization-contracts
 import { FinalizeCartCandidateActionApi } from './apis/finalize-cart-candidate-action.ts';
 import { InitializePopulationAuthorityActionApi } from './apis/initialize-population-authority-action.ts';
 import { OpenSelectionPopulationApi } from '@app/commerce-cart-contracts/open-selection-population';
-import { PreapprovalCartObservationApi } from './apis/preapproval-cart-observation.ts';
+import { PreapprovalCartObservationApi } from '@app/commerce-cart-contracts/preapproval-cart-observation';
 import { ReviseCartDraftActionApi } from './apis/revise-cart-draft-action.ts';
 // </generated-governed-http-api-imports>
 
