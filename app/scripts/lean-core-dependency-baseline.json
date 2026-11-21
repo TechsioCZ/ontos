@@ -1,15 +1,5 @@
 [
   {
-    "from": "packages/pricing-contracts",
-    "to": "verticals/catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "packages/pricing-contracts",
-    "to": "verticals/party-registry",
-    "class": "runtime"
-  },
-  {
     "from": "verticals/assortment",
     "to": "verticals/catalog",
     "class": "runtime"
@@ -22,11 +12,6 @@
   {
     "from": "verticals/assortment",
     "to": "verticals/commerce-market-catalog",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/availability",
-    "to": "verticals/catalog",
     "class": "runtime"
   },
   {
@@ -112,11 +97,6 @@
   {
     "from": "verticals/commerce-order",
     "to": "verticals/tax",
-    "class": "runtime"
-  },
-  {
-    "from": "verticals/inventory",
-    "to": "verticals/catalog",
     "class": "runtime"
   },
   {
