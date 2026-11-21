@@ -29,7 +29,6 @@ export type {
   ManageExternalPriceSourcePolicyPayload,
   ManageExternalPriceSourcePolicyResult,
 } from '../../shared/actions/manage-external-price-source-policy.ts';
-export { ExternalPriceSourceAuthorityPersistenceUnavailable } from '../persistence/external-price-source-authority-persistence.ts';
 export { ExternalPriceSourcePolicyConflict } from './external-price-source-policy-conflict.ts';
 export { ExternalPriceSourcePolicyRejected } from './external-price-source-policy-rejected.ts';
 

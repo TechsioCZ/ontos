@@ -15,7 +15,6 @@ export const ExternalPriceSourcePolicyIdSchema = checkedUuid.pipe(
   Schema.brand('PricingExternalPriceSourcePolicyId'),
   Schema.decodeTo(checkedUuid),
 );
-export type ExternalPriceSourcePolicyId = typeof ExternalPriceSourcePolicyIdSchema.Type;
 
 /**
  * Which Price Group selectors of a Price key a policy covers. `NO_GROUP` covers base Prices only, `PRICE_GROUP`
