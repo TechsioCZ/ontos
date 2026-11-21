@@ -1,11 +1,12 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
-import { Clock, DateTime, Effect, Schema } from 'effect';
+import { Clock, DateTime, Effect, FileSystem, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { moduleReleaseWorkerName } from '../http/module-release-identity.ts';
 import {
+  ActiveApplicationCompositionSnapshotSchema,
   makeActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
@@ -13,6 +14,7 @@ import { ActiveApplicationCompositionUnavailableError } from '../modules/active-
 import {
   ApplicationCompositionCloudflareWorkerBackendSchema,
   ApplicationCompositionSchema,
+  ONTOS_APPLICATION_COMPOSITION_MAX_BYTES,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosShellRuntimeContractSchema,
@@ -88,6 +90,55 @@ export const makeModuleContractFixture = <Subscription extends object = never>({
 });
 
 export const compositionFixtureContentDigest = (document: string): string => Hex.encode(sha256(utf8ToBytes(document)));
+
+export const PrivateFixtureCompositionReferenceSchema = Schema.Struct({
+  sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+});
+
+const privateFixtureCompositionDocument = Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema);
+
+export class PrivateFixtureCompositionUnavailable extends Schema.TaggedError<PrivateFixtureCompositionUnavailable>()(
+  'PrivateFixtureCompositionUnavailable',
+  {},
+) {}
+
+/** Only the public snapshot is written in the caller's scoped 0700 socket directory. */
+export const writePrivateFixtureComposition = Effect.fn('CoreTesting.writePrivateFixtureComposition')(
+  function* writePrivateFixtureComposition(
+    socketPath: string,
+    snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type,
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const document = yield* Schema.encodeEffect(privateFixtureCompositionDocument)(snapshot);
+    if (new TextEncoder().encode(document).byteLength > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES) {
+      return yield* new PrivateFixtureCompositionUnavailable();
+    }
+    yield* fs.writeFileString(`${socketPath}.composition.json`, document, { flag: 'wx', mode: 0o600 });
+    return { sha256: compositionFixtureContentDigest(document) };
+  },
+);
+
+/** Read beside a validated socket path and check the exact bytes before schema decoding. */
+export const readPrivateFixtureComposition = Effect.fn('CoreTesting.readPrivateFixtureComposition')(
+  function* readPrivateFixtureComposition(
+    socketPath: string,
+    reference: typeof PrivateFixtureCompositionReferenceSchema.Type,
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = `${socketPath}.composition.json`;
+    const info = yield* fs.lstat(path);
+    if (info.type !== 'File' || info.mode % 0o1000 !== 0o600 || info.size > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES) {
+      return yield* new PrivateFixtureCompositionUnavailable();
+    }
+    const document = yield* fs.readFileString(path);
+    if (compositionFixtureContentDigest(document) !== reference.sha256) {
+      return yield* new PrivateFixtureCompositionUnavailable();
+    }
+    return yield* Schema.decodeUnknownEffect(privateFixtureCompositionDocument, { onExcessProperty: 'error' })(
+      document,
+    );
+  },
+);
 const contractJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const shellRuntimeJsonSchema = Schema.fromJsonString(OntosShellRuntimeContractSchema);
 const fixtureShellOrigin = 'https://shell-fixture.example';

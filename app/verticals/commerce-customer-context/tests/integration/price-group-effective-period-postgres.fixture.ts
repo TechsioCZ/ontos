@@ -1,4 +1,5 @@
 import type { DatabaseIdentity, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { writePrivateFixtureComposition } from '@app/core-runtime/testing/module-contract';
 import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../support/database-identities.ts';
 import { projectPriceGroupCatalogDatabaseCertificate } from '../support/price-group-current-receiver.fixture.ts';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,7 @@ import {
   priceGroupTemporalSocketEnvironment,
   PriceGroupOwnedDatabaseCertificateSchema,
   PriceGroupTemporalBootstrapSchema,
+  PriceGroupTemporalWireBootstrapSchema,
   PriceGroupTemporalResponseSchema,
   guardPriceGroupOwnedDatabase,
   priceGroupTemporalClosedEnvironment,
@@ -569,7 +571,8 @@ const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startR
         ),
       ),
     );
-  yield* send(yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(bootstrap));
+  const composition = yield* writePrivateFixtureComposition(channel.socketPath, bootstrap.composition);
+  yield* send(yield* Schema.encodeEffect(PriceGroupTemporalWireBootstrapSchema)({ ...bootstrap, composition }));
   yield* diagnosticStage('P_BOOTSTRAP_SENT');
   const schemasReady = yield* receive;
   yield* requireCondition(schemasReady.type === 'SCHEMAS_READY', 'owner-schemas-ready');
@@ -2430,9 +2433,8 @@ export const bootstrapByteBudgetScenario = Effect.fn('TemporalNative.bootstrapBy
     yield* guardPriceGroupPreparedArtifact(catalog.prepared, 'price-group-catalog');
     const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(native.bootstrap);
     const { legalEntityId: _selectedLegalEntity, ...tenantActor } = encodedBootstrap.actor;
-    const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
+    const catalogBootstrap = {
       actor: tenantActor,
-      composition: encodedBootstrap.composition,
       database: projectPriceGroupCatalogDatabaseCertificate(encodedBootstrap.database),
       deniedCapabilityKeys: encodedBootstrap.catalogDeniedCapabilityKeys,
       issuer: encodedBootstrap.issuer,
@@ -2440,11 +2442,11 @@ export const bootstrapByteBudgetScenario = Effect.fn('TemporalNative.bootstrapBy
       spiceDb: encodedBootstrap.spiceDb,
       type: 'bootstrap',
       version: 'ontos.price-group-current.fixture.v1',
-    });
-    const bootstrapByteLength = new TextEncoder().encode(`${bootstrapLine}\n`).byteLength;
-    yield* Effect.logInfo('Actual owned PriceGroup bootstrap byte count', { byteLength: bootstrapByteLength });
-    expect(bootstrapByteLength).toBeGreaterThan(131_072);
-    expect(bootstrapByteLength).toBeLessThan(262_144);
+    };
+    const compositionDocument = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
+      encodedBootstrap.composition,
+    );
+    expect(new TextEncoder().encode(compositionDocument).byteLength).toBeGreaterThan(131_072);
     const readySchema = Schema.Struct({
       buildMarker: Schema.Literal(catalog.marker.buildMarker),
       compositionRevision: Schema.Literal(native.snapshot.composition.revision),
@@ -2469,8 +2471,14 @@ export const bootstrapByteBudgetScenario = Effect.fn('TemporalNative.bootstrapBy
           });
           yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
           yield* Stream.runDrain(child.stdout).pipe(Effect.forkScoped);
-          // JSON whitespace preserves every actual authority, owner contract and credential byte.
-          // channel.send appends the one newline included in the receiver's cumulative byte budget.
+          const composition = yield* writePrivateFixtureComposition(channel.socketPath, native.snapshot);
+          const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
+            ...catalogBootstrap,
+            composition,
+          });
+          const bootstrapByteLength = new TextEncoder().encode(`${bootstrapLine}\n`).byteLength;
+          expect(bootstrapByteLength).toBeLessThan(262_144);
+          // The receiver's per-frame limit includes the newline appended by channel.send.
           const paddedLine = `${' '.repeat(wireByteLength - bootstrapByteLength)}${bootstrapLine}`;
           expect(new TextEncoder().encode(`${paddedLine}\n`).byteLength).toBe(wireByteLength);
           if (wireByteLength === 262_144) {

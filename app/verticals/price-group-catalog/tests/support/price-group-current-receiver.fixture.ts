@@ -1,6 +1,10 @@
 import { CapabilityKeySchema } from '@app/core-runtime/access/ids';
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { makeTestActionAccessLayers } from '@app/core-runtime/testing/actions';
+import {
+  PrivateFixtureCompositionReferenceSchema,
+  readPrivateFixtureComposition,
+} from '@app/core-runtime/testing/module-contract';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import { priceGroupCurrentInputGuard } from './price-group-current-input.ts';
@@ -117,6 +121,10 @@ const BootstrapSchema = Schema.Struct({
   type: Schema.Literal('bootstrap'),
   version: Schema.Literal(version),
 }).annotate(strict);
+const WireBootstrapSchema = Schema.Struct({
+  ...BootstrapSchema.fields,
+  composition: PrivateFixtureCompositionReferenceSchema,
+}).annotate(strict);
 const MutationCommandSchema = Schema.Struct({
   authorization: secret,
   requestId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PriceGroupCurrentFixtureRequestId')),
@@ -124,7 +132,7 @@ const MutationCommandSchema = Schema.Struct({
   version: Schema.Literal(version),
 }).annotate(strict);
 const StopSchema = Schema.Struct({ type: Schema.Literal('stop'), version: Schema.Literal(version) }).annotate(strict);
-const CommandSchema = Schema.Union([BootstrapSchema, MutationCommandSchema, StopSchema]);
+const CommandSchema = Schema.Union([WireBootstrapSchema, MutationCommandSchema, StopSchema]);
 const ResponseSchema = Schema.Union([
   Schema.Struct({
     code: Schema.optionalKey(
@@ -205,6 +213,7 @@ const connectParent = Effect.gen(function* connectParent() {
       Schema.encodeEffect(Schema.fromJsonString(ResponseSchema))(response).pipe(
         Effect.flatMap((line) => writer.write(`${line}\n`)),
       ),
+    socketPath,
   };
 });
 
@@ -474,7 +483,7 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
 });
 
 const program = Effect.gen(function* priceGroupCurrentChild() {
-  const { pull, send } = yield* connectParent;
+  const { pull, send, socketPath } = yield* connectParent;
   const commands = yield* Queue.bounded<typeof CommandSchema.Type | PriceGroupCurrentFixtureFailure>(8);
   const acceptsInput = priceGroupCurrentInputGuard();
   yield* Stream.fromPull(Effect.succeed(pull)).pipe(
@@ -500,7 +509,9 @@ const program = Effect.gen(function* priceGroupCurrentChild() {
   if (bootstrap.type !== 'bootstrap') {
     return yield* fail('bootstrap-order');
   }
-  const receiver = yield* serveOwner(bootstrap).pipe(
+  const receiver = yield* readPrivateFixtureComposition(socketPath, bootstrap.composition).pipe(
+    Effect.mapError(() => fail('private-composition')),
+    Effect.flatMap((composition) => serveOwner({ ...bootstrap, composition })),
     Effect.tapCause((cause) => {
       let stage:
         | 'BOOTSTRAP_OWNED_DATABASE'

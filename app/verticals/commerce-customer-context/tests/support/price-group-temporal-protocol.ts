@@ -21,6 +21,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import {
+  PrivateFixtureCompositionReferenceSchema,
   makeApplicationCompositionSnapshotFixture,
   makeOwnerApplicationCompositionFixture,
 } from '@app/core-runtime/testing/module-contract';
@@ -121,6 +122,10 @@ export const PriceGroupTemporalBootstrapSchema = Schema.Struct({
   }).annotate(strict),
   type: Schema.Literal('bootstrap'),
   version: Schema.Literal(priceGroupTemporalProtocol),
+}).annotate(strict);
+export const PriceGroupTemporalWireBootstrapSchema = Schema.Struct({
+  ...PriceGroupTemporalBootstrapSchema.fields,
+  composition: PrivateFixtureCompositionReferenceSchema,
 }).annotate(strict);
 export const PriceGroupTemporalResponseSchema = Schema.Union([
   Schema.Struct({

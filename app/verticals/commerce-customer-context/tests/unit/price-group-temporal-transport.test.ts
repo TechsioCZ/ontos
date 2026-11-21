@@ -5,6 +5,12 @@ import { FetchHttpClient, HttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import {
+  PrivateFixtureCompositionUnavailable,
+  makeApplicationCompositionSnapshotFixture,
+  readPrivateFixtureComposition,
+  writePrivateFixtureComposition,
+} from '@app/core-runtime/testing/module-contract';
+import {
   describePriceGroupTemporalOwner,
   openPriceGroupTemporalChannel,
   guardPriceGroupTemporalSocketPath,
@@ -19,6 +25,22 @@ const responseSchema = Schema.Struct({ type: Schema.Literal('STOPPED') });
 it.layer(
   NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCrypto.layer)),
 )('Price Group private Unix transport #1248', (suite) => {
+  suite.effect('reassembles the public composition and rejects altered bytes', () =>
+    Effect.scoped(
+      Effect.gen(function* compositionTransfer() {
+        const fs = yield* FileSystem.FileSystem;
+        const { socketPath } = yield* openPriceGroupTemporalChannel(responseSchema);
+        const snapshot = yield* makeApplicationCompositionSnapshotFixture(['price-group-catalog']);
+        const reference = yield* writePrivateFixtureComposition(socketPath, snapshot);
+        expect(yield* readPrivateFixtureComposition(socketPath, reference)).toEqual(snapshot);
+
+        const path = `${socketPath}.composition.json`;
+        yield* fs.writeFileString(path, '\n', { flag: 'a' });
+        const failure = yield* readPrivateFixtureComposition(socketPath, reference).pipe(Effect.flip);
+        assert(Schema.is(PrivateFixtureCompositionUnavailable)(failure));
+      }),
+    ),
+  );
   suite.effect('retains the real reader through STOP/STOPPED and removes its private directory', () =>
     Effect.gen(function* roundtrip() {
       const fs = yield* FileSystem.FileSystem;

@@ -124,10 +124,11 @@ import {
   profileReconfirmationPolicyUnavailableLive,
 } from '../../src/integrations/profile-reactivation-eligibility.ts';
 import { commerceCustomerContextOwnerAuthorizationOverlayLive } from '../../src/persistence/owner-authorization-overlay.ts';
+import type { PriceGroupTemporalBootstrapSchema } from './price-group-temporal-protocol.ts';
 import {
   PriceGroupOwnedDatabaseCertificateSchema,
-  PriceGroupTemporalBootstrapSchema,
   PriceGroupTemporalResponseSchema,
+  PriceGroupTemporalWireBootstrapSchema,
   guardPriceGroupOwnedDatabase,
   guardPriceGroupPreparedArtifact,
   guardPriceGroupTemporalSocketPath,
@@ -146,6 +147,10 @@ import {
   requireCondition,
 } from './price-group-temporal-protocol.ts';
 import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
+import {
+  readPrivateFixtureComposition,
+  writePrivateFixtureComposition,
+} from '@app/core-runtime/testing/module-contract';
 
 const RequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PriceGroupTemporalRequestId'),
@@ -157,7 +162,7 @@ const partyAppId = 'party-registry' as const;
 const catalogAppId = 'price-group-catalog' as const;
 const catalogProtocol = 'ontos.price-group-current.fixture.v1' as const;
 const FixtureCommandSchema = Schema.Union([
-  PriceGroupTemporalBootstrapSchema,
+  PriceGroupTemporalWireBootstrapSchema,
   Schema.Struct({
     type: Schema.Literal('IDENTITIES_READY'),
     version: Schema.Literal(priceGroupTemporalProtocol),
@@ -847,7 +852,10 @@ const startCatalog = Effect.fn('PriceGroupTemporal.startCatalog')(function* star
   const send = (command: Schema.Json) =>
     Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(command).pipe(Effect.flatMap(channel.send));
   const { legalEntityId: _selectedLegalEntity, ...tenantActor } = bootstrap.actor;
-  const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalBootstrapSchema)(bootstrap);
+  const encodedBootstrap = yield* Schema.encodeEffect(PriceGroupTemporalWireBootstrapSchema)({
+    ...bootstrap,
+    composition: yield* writePrivateFixtureComposition(channel.socketPath, bootstrap.composition),
+  });
   const bootstrapLine = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))({
     actor: tenantActor,
     composition: encodedBootstrap.composition,
@@ -1297,6 +1305,7 @@ const connectParent = Effect.gen(function* connectParent() {
       Schema.encodeEffect(Schema.fromJsonString(PriceGroupTemporalResponseSchema))(response).pipe(
         Effect.flatMap((line) => writer.write(`${line}\n`)),
       ),
+    socketPath,
   };
 });
 const validateBootstrap = Effect.fn('PriceGroupTemporal.validateBootstrap')(function* validateBootstrap(
@@ -1340,13 +1349,16 @@ const validateBootstrap = Effect.fn('PriceGroupTemporal.validateBootstrap')(func
 export const runReceiver = Effect.fn('PriceGroupTemporal.runReceiver')(function* runPriceGroupCurrentReceiver(
   retailResolverLayerFor: RetailResolverLayerFor,
 ) {
-  const { next, sendParent } = yield* connectParent;
+  const { next, sendParent, socketPath } = yield* connectParent;
   yield* diagnosticStage('C_SOCKET_CONNECTED');
   const first = yield* next;
   if (first.type !== 'bootstrap') {
     return yield* failure('bootstrap-order');
   }
-  const bootstrap = first;
+  const composition = yield* readPrivateFixtureComposition(socketPath, first.composition).pipe(
+    Effect.mapError(() => failure('private-composition')),
+  );
+  const bootstrap = { ...first, composition };
   yield* validateBootstrap(bootstrap);
   yield* diagnosticStage('C_BOOTSTRAP_VALID');
   yield* diagnosticStage('C_CCC_MIGRATION_BEGIN');
