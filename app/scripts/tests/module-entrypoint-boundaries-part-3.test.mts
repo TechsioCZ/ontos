@@ -988,7 +988,7 @@ it.live('binds actual package Read clients to their package and the owner aggreg
     }
     const aggregateFile = `${owner}/src/api/price-group-catalog-client.ts`;
     const aggregate = yield* Effect.promise(() => readFile(path.join(root, aggregateFile), 'utf-8'));
-    yield* write(root, aggregateFile, `${aggregate}\nexport const unclaimedClientCallable = () => globalThis;`);
+    yield* write(root, aggregateFile, `${aggregate}\nexport const unclaimedClientCallable = () => 'unclaimed';`);
     const consumer = 'apps/shell-super-app/src/published-package-client-consumer.ts';
     const packageClient = `import { executePriceGroupDefinitionWithAuthorization } from '${contractPackageName}/price-group-definition/client';\n`;
     for (const [source, allowed] of [

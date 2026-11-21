@@ -4,15 +4,16 @@ import { Effect, FileSystem, Option, Schema, Predicate } from 'effect';
 import type { Node } from 'oxc-parser';
 
 import {
+  PackageExportsSchema,
   exportOrigins,
   lineOf,
   moduleBindings,
-  moduleExports,
   moduleGraph,
   parseProblem,
+  resolvedSpecifier,
   unreadableLoads,
 } from '../../module-bindings.mts';
-import type { ModuleBindings, ModuleGraph } from '../../module-bindings.mts';
+import type { ModuleBindings, ModuleGraph, WorkspacePackage } from '../../module-bindings.mts';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { discoverPublicContractPackage } from '../governed-contribution/scaffold.mts';
@@ -234,20 +235,10 @@ const isSlotEntry =
   (entry: string): boolean =>
     normalizeGeneratedSlotEntry(entry) === normalizeGeneratedSlotEntry(expected);
 
-/** What a retired read leaves behind: each deleted file, by its path or its package specifier, with its source. */
+/** What a retired read leaves behind: each file the plan deletes, by its path. */
 interface RetiredRead {
-  readonly files: ReadonlyMap<string, string>;
+  readonly files: ReadonlySet<string>;
 }
-
-/** What a specifier of `importer` names: a path when relative (the candidate that exists), else the specifier. */
-const importTarget = (importer: string, specifier: string, exists: (candidate: string) => boolean): string => {
-  if (!specifier.startsWith('.')) {
-    return specifier;
-  }
-  const target = nodePath.resolve(nodePath.dirname(importer), specifier);
-  const candidates = nodePath.extname(target) === '' ? [`${target}.ts`, nodePath.join(target, 'index.ts')] : [target];
-  return candidates.find(exists) ?? target;
-};
 
 const parsedBindings = (filePath: string, content: string): ModuleBindings => {
   const bindings = moduleBindings(filePath, content);
@@ -257,18 +248,26 @@ const parsedBindings = (filePath: string, content: string): ModuleBindings => {
   return bindings;
 };
 
-/** The owner files each owner entry passes on, keyed by path, as they are before the retirement. */
-type OwnerSources = ReadonlyMap<string, string>;
-
-const isKnown = (retired: RetiredRead, sources: OwnerSources) => (candidate: string) =>
-  retired.files.has(candidate) || sources.has(candidate);
-
-/** The module graph of a retirement: the owner files an owner entry passes bindings on from, and the retired files. */
-const retirementGraph = (retired: RetiredRead, sources: OwnerSources): ModuleGraph =>
-  moduleGraph(
-    (importer, specifier) => importTarget(importer, specifier, isKnown(retired, sources)),
-    (target) => retired.files.get(target) ?? sources.get(target),
+/**
+ * The module graph of a retirement, over the sources of the module and of its contract packages as they are before
+ * it, each specifier resolved as the checks resolve it (`resolvedSpecifier`), packages through their `exports`.
+ */
+const retirementGraph = (
+  sources: ReadonlyMap<string, string>,
+  packages: ReadonlyMap<string, RetirementPackage>,
+): ModuleGraph => {
+  const files = [...sources.keys()];
+  const resolved = new Map(
+    [...packages].map(([name, { dir, exports, readable }]) => [
+      name,
+      { dir, exports, read: readable && files.some((file) => file.startsWith(`${dir}${nodePath.sep}`)) },
+    ]),
   );
+  return moduleGraph(
+    resolvedSpecifier((file) => sources.has(file), resolved),
+    (file) => sources.get(file),
+  );
+};
 
 /**
  * Whether what `file` exports as `name` comes from a retired file: followed, as the checks follow it
@@ -326,19 +325,23 @@ const sourceEdits = (
   graph: ModuleGraph,
   statement: Node,
 ): readonly SourceEdit[] => {
-  const target = (specifier: string): string => graph.target(filePath, specifier);
+  const target = (specifier: string): string | undefined => graph.target(filePath, specifier);
   const removal: SourceEdit = {
     end: content.charAt(statement.end) === '\n' ? statement.end + 1 : statement.end,
     start: statement.start,
     text: '',
   };
-  if (statement.type === 'ExportAllDeclaration') {
-    return retired.files.has(target(statement.source.value)) ? [removal] : [];
+  const from =
+    (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportNamedDeclaration') &&
+    statement.source !== null
+      ? target(statement.source.value)
+      : undefined;
+  if (from === undefined || statement.type === 'ExportAllDeclaration') {
+    return from !== undefined && retired.files.has(from) ? [removal] : [];
   }
   if (statement.type !== 'ExportNamedDeclaration' || statement.source === null) {
     return [];
   }
-  const from = target(statement.source.value);
   const kept = statement.specifiers.filter((specifier) => {
     const local = specifier.local.type === 'Identifier' ? specifier.local.name : specifier.local.value;
     return !comesFromRetired(graph, retired, from, local);
@@ -363,16 +366,16 @@ const sourceEdits = (
 const retiredUseEdits = (
   filePath: string,
   retired: RetiredRead,
-  sources: OwnerSources,
+  graph: ModuleGraph,
   bindings: ModuleBindings,
   inSlot: (node: Node) => boolean,
 ): readonly SourceEdit[] => {
   const unions = new Map<Node, Set<Node>>();
   for (const reference of bindings.references) {
-    const retiredBinding = reference.bindings.some(
-      ({ imported }) =>
-        imported !== undefined && retired.files.has(importTarget(filePath, imported.source, isKnown(retired, sources))),
-    );
+    const retiredBinding = reference.bindings.some(({ imported }) => {
+      const target = imported === undefined ? undefined : graph.target(filePath, imported.source);
+      return target !== undefined && retired.files.has(target);
+    });
     const query = bindings.parents.get(reference.identifier);
     const union = query === undefined ? undefined : bindings.parents.get(query);
     if (
@@ -399,7 +402,7 @@ const withoutRetiredRead = (
   filePath: string,
   content: string,
   retired: RetiredRead,
-  sources: OwnerSources,
+  graph: ModuleGraph,
   removals: readonly SlotRemoval[],
 ): string => {
   const bindings = parsedBindings(filePath, content);
@@ -409,10 +412,9 @@ const withoutRetiredRead = (
     return from === -1 || to === -1 ? [] : [[from, to] as const];
   });
   const inSlot = (node: Node): boolean => slots.some(([from, to]) => node.start > from && node.end < to);
-  const graph = retirementGraph(retired, sources);
   const edits = [
     ...bindings.program.body.flatMap((statement) => sourceEdits(filePath, content, retired, graph, statement)),
-    ...retiredUseEdits(filePath, retired, sources, bindings, inSlot),
+    ...retiredUseEdits(filePath, retired, graph, bindings, inSlot),
   ];
   let next = content;
   for (const edit of edits.toSorted((left, right) => right.start - left.start)) {
@@ -420,50 +422,6 @@ const withoutRetiredRead = (
   }
   return next;
 };
-
-/** The files a relative module target may be: itself when it has an extension, else `<path>.ts` or `<path>/index.ts`. */
-const targetCandidates = (target: string): readonly string[] =>
-  nodePath.extname(target) === '' ? [`${target}.ts`, nodePath.join(target, 'index.ts')] : [target];
-
-/**
- * The source of every owner file inside `directory` an export of an owner entry is followed into (`exportOrigins`,
- * the resolver the checks use), read until no export leads to an owner file not yet read.
- */
-const readOwnerSources = Effect.fn('readOwnerSources')(function* readOwnerSourcesEffect(
-  filePath: string,
-  content: string,
-  directory: string,
-  retired: RetiredRead,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const sources = new Map<string, string>([[filePath, content]]);
-  const graph = retirementGraph(retired, sources);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    const { names, opaque } = moduleExports(graph, filePath);
-    const unread = [...opaque, ...names.flatMap((name) => exportOrigins(graph, filePath, name))].flatMap((origin) =>
-      origin.kind === 'foreign' && origin.specifier.startsWith('.') ? targetCandidates(origin.target) : [],
-    );
-    for (const candidate of new Set(unread)) {
-      if (candidate.startsWith(`${directory}${nodePath.sep}`) && !sources.has(candidate)) {
-        const exists = yield* fileSystem
-          .exists(candidate)
-          .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${candidate}`, cause)));
-        if (exists) {
-          sources.set(
-            candidate,
-            yield* fileSystem
-              .readFileString(candidate)
-              .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${candidate}`, cause))),
-          );
-          grew = true;
-        }
-      }
-    }
-  }
-  return sources;
-});
 
 /**
  * The line `before` holds line `line` of `after`, which the retirement made from it by removing and rewriting
@@ -533,17 +491,35 @@ const wholeStrings = (bindings: ModuleBindings): readonly (readonly [Node, strin
     return text === undefined || text === null ? [] : [[node, text]];
   });
 
-/** A JavaScript or TypeScript extension: `./a.js` names `a.ts` under bundler resolution, and so does `./a`. */
+/** A JavaScript or TypeScript extension. */
 const SOURCE_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
 
-/** What the plan deletes, as a specifier may name it: each path without its extension, and the directory of an index. */
-const deletedNames = (deleted: ReadonlySet<string>): ReadonlySet<string> =>
-  new Set(
-    [...deleted].flatMap((file) => {
-      const bare = file.replace(SOURCE_EXTENSION, '');
-      return nodePath.basename(bare) === 'index' ? [bare, nodePath.dirname(bare)] : [bare];
+/**
+ * The names a specifier may give a file the plan deletes, as text it holds: each file's base name (and the directory of
+ * an index), and each package specifier whose `exports` entry resolves to one, whole.
+ */
+const deletedNames = (
+  deleted: ReadonlySet<string>,
+  graph: ModuleGraph,
+  packages: ReadonlyMap<string, RetirementPackage>,
+): readonly string[] => {
+  const files = [...deleted].flatMap((file) => {
+    const bare = file.replace(SOURCE_EXTENSION, '');
+    return nodePath.basename(bare) === 'index' ? [bare, nodePath.dirname(bare)] : [bare];
+  });
+  const published = [...packages].flatMap(([name, { dir, exports }]) =>
+    (exports === undefined || exports === null || Predicate.isString(exports) || Array.isArray(exports)
+      ? []
+      : Object.keys(exports)
+    ).flatMap((subpath) => {
+      const specifier = subpath === '.' ? name : `${name}${subpath.slice(1)}`;
+      // A package specifier resolves the same from anywhere.
+      const target = graph.target(dir, specifier);
+      return target !== undefined && deleted.has(target) ? [specifier] : [];
     }),
   );
+  return [...new Set([...files.map((bare) => nodePath.basename(bare)), ...published])];
+};
 
 /** Every string a source writes statically, decoded: its string literals and the text of its template literals. */
 const writtenStrings = (bindings: ModuleBindings): readonly string[] =>
@@ -555,49 +531,70 @@ const writtenStrings = (bindings: ModuleBindings): readonly string[] =>
   });
 
 const ContractOwnerModuleIdSchema = Schema.String.pipe(Schema.brand('ContractOwnerModuleId'));
-const ContractOwnerManifestSchema = Schema.Struct({
-  ontosContractOwner: Schema.Struct({ moduleId: ContractOwnerModuleIdSchema }),
+const WorkspacePackageNameSchema = Schema.String.pipe(Schema.brand('WorkspacePackageName'));
+const WorkspaceManifestSchema = Schema.Struct({
+  exports: Schema.optionalKey(PackageExportsSchema),
+  name: WorkspacePackageNameSchema,
+  ontosContractOwner: Schema.optionalKey(Schema.Struct({ moduleId: ContractOwnerModuleIdSchema })),
 });
 
-/** Every contract package of the workspace that names the module as its owner, whatever reads it publishes. */
-const ownedContractPackages = Effect.fn('ownedContractPackages')(function* ownedContractPackagesEffect(
-  workspaceRoot: string,
-  vertical: OntosVerticalMetadata,
-) {
+/** A package of the workspace as the retirement reads it: where it lies, what it exports, the module owning it. */
+interface RetirementPackage extends Omit<WorkspacePackage, 'read'> {
+  readonly owner: string | undefined;
+  /** A module or a contract package: one the graph reads when the retirement reads its sources. */
+  readonly readable: boolean;
+}
+
+/** Every package of the workspace (`apps`, `verticals`, `packages`), by name, as its manifest declares it. */
+const workspacePackages = Effect.fn('workspacePackages')(function* workspacePackagesEffect(workspaceRoot: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const packages = yield* trySync(() => resolveContainedPath(workspaceRoot, 'packages'), 'failed to resolve packages');
-  const listed = yield* fileSystem
-    .exists(packages)
-    .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${packages}`, cause)));
-  const entries = listed
-    ? yield* fileSystem
-        .readDirectory(packages)
-        .pipe(Effect.mapError((cause) => scaffoldError(`failed to list ${packages}`, cause)))
-    : [];
-  const owned: string[] = [];
-  for (const entry of entries.toSorted()) {
-    const manifest = nodePath.join(packages, entry, 'package.json');
-    const present = yield* fileSystem
-      .exists(manifest)
-      .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${manifest}`, cause)));
-    const source = present
+  const found = new Map<string, RetirementPackage>();
+  for (const root of ['apps', 'verticals', 'packages']) {
+    const directory = yield* trySync(() => resolveContainedPath(workspaceRoot, root), `failed to resolve ${root}`);
+    const listed = yield* fileSystem
+      .exists(directory)
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${directory}`, cause)));
+    const entries = listed
       ? yield* fileSystem
-          .readFileString(manifest)
-          .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${manifest}`, cause)))
-      : '';
-    const owner = Option.getOrUndefined(
-      Schema.decodeUnknownOption(Schema.fromJsonString(ContractOwnerManifestSchema))(source),
-    );
-    if (owner?.ontosContractOwner.moduleId === vertical.moduleId) {
-      owned.push(nodePath.join(packages, entry));
+          .readDirectory(directory)
+          .pipe(Effect.mapError((cause) => scaffoldError(`failed to list ${directory}`, cause)))
+      : [];
+    for (const entry of entries.toSorted()) {
+      const manifest = nodePath.join(directory, entry, 'package.json');
+      const present = yield* fileSystem
+        .exists(manifest)
+        .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${manifest}`, cause)));
+      const source = present
+        ? yield* fileSystem
+            .readFileString(manifest)
+            .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${manifest}`, cause)))
+        : '';
+      const decoded = Option.getOrUndefined(
+        Schema.decodeUnknownOption(Schema.fromJsonString(WorkspaceManifestSchema))(source),
+      );
+      if (decoded !== undefined) {
+        found.set(decoded.name, {
+          dir: nodePath.join(directory, entry),
+          exports: decoded.exports,
+          owner: root === 'packages' ? decoded.ontosContractOwner?.moduleId : undefined,
+          readable: root === 'verticals' || decoded.ontosContractOwner !== undefined,
+        });
+      }
     }
   }
-  return owned;
+  return found;
 });
 
 /** The names a source refers to that no declaration of it binds. */
 const unboundNames = (bindings: ModuleBindings): ReadonlySet<string> =>
   new Set(bindings.references.flatMap((reference) => (reference.bindings.length === 0 ? [reference.name] : [])));
+
+/** What the plan deletes, and how a string names it. */
+interface PlannedDeletion {
+  readonly deleted: ReadonlySet<string>;
+  readonly graph: ModuleGraph;
+  readonly names: readonly string[];
+}
 
 /** What one source of the owner module is before the plan and as the plan leaves it. */
 interface PlannedSource {
@@ -607,14 +604,13 @@ interface PlannedSource {
 }
 
 /**
- * The post-condition's failures in one source; `retired` holds what the plan deletes, by path without its extension
- * (and the directory of an index) or by package specifier, and `names` the base names of the deleted files.
+ * The post-condition's failures in one source; `deleted` holds the files the plan deletes, `graph` resolves a string
+ * as the checks resolve a specifier, and `names` holds what a string naming a deleted file holds (`deletedNames`).
  */
 const sourceProblems = (
   { after, before, file }: PlannedSource,
   edited: boolean,
-  retired: ReadonlySet<string>,
-  names: readonly string[],
+  { deleted, graph, names }: PlannedDeletion,
 ): readonly string[] => {
   const at = (start: number): string =>
     `${file}:${before === undefined ? lineOf(after, start) : lineBefore(before, after, lineOf(after, start))}`;
@@ -635,12 +631,12 @@ const sourceProblems = (
               ]
             : [],
         );
-  // Any string the source writes whole that names a deleted file, whatever it stands in: an import, a load under
-  // any name, `new URL(…)`, an argument of any function.
-  const namesDeleted = (text: string): boolean =>
-    text.startsWith('.') || text.startsWith('/')
-      ? retired.has(nodePath.resolve(nodePath.dirname(file), text).replace(SOURCE_EXTENSION, ''))
-      : retired.has(text);
+  // Any string the source writes whole that names a deleted file, resolved as a specifier is (`resolvedSpecifier`),
+  // whatever it stands in: an import, a load under any name, `new URL(…)`, an argument of any function.
+  const namesDeleted = (text: string): boolean => {
+    const target = graph.target(file, text);
+    return target !== undefined && deleted.has(target);
+  };
   const named = wholeStrings(bindings).flatMap(([node, text]) =>
     namesDeleted(text)
       ? [`${at(node.start)} still names ${text}, which the retirement deletes: remove that use first`]
@@ -675,7 +671,8 @@ const sourceProblems = (
 const retirementProblems = (
   sources: ReadonlyMap<string, string>,
   mutations: readonly Mutation[],
-  retired: RetiredRead,
+  graph: ModuleGraph,
+  packages: ReadonlyMap<string, RetirementPackage>,
 ): readonly string[] => {
   const deleted = new Set(mutations.flatMap((mutation) => (mutation.kind === 'delete' ? [mutation.path] : [])));
   const planned = new Map(
@@ -683,18 +680,14 @@ const retirementProblems = (
       mutation.kind !== 'delete' && CODE_FILE.test(mutation.path) ? [[mutation.path, mutation.content] as const] : [],
     ),
   );
-  const named = new Set([
-    ...deletedNames(deleted),
-    ...[...retired.files.keys()].filter((key) => !nodePath.isAbsolute(key)),
-  ]);
-  const names = [...deletedNames(deleted)].map((bare) => nodePath.basename(bare));
+  const deletion: PlannedDeletion = { deleted, graph, names: deletedNames(deleted, graph, packages) };
   const files = new Set([...sources.keys(), ...planned.keys()].filter((file) => !deleted.has(file)));
   return [...files].flatMap((file) => {
     const before = sources.get(file);
     const after = planned.get(file) ?? before ?? '';
     const edited = planned.has(file);
-    return edited || after.includes('\\') || names.some((name) => after.includes(name))
-      ? sourceProblems({ after, before, file }, edited, named, names)
+    return edited || after.includes('\\') || deletion.names.some((name) => after.includes(name))
+      ? sourceProblems({ after, before, file }, edited, deletion)
       : [];
   });
 };
@@ -704,15 +697,14 @@ const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEf
   label: string,
   removals: readonly SlotRemoval[],
   retired: RetiredRead,
-  directory: string,
+  graph: ModuleGraph,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const content = yield* fileSystem
     .readFileString(filePath)
     .pipe(Effect.mapError((cause) => scaffoldError(`${label} is missing at ${filePath}`, cause)));
-  const sources = yield* readOwnerSources(filePath, content, directory, retired);
   const next = yield* trySync(
-    () => removeSlotEntries(withoutRetiredRead(filePath, content, retired, sources, removals), removals),
+    () => removeSlotEntries(withoutRetiredRead(filePath, content, retired, graph, removals), removals),
     `failed to retire ${label}`,
   );
   return { content: next, kind: 'update' as const, path: filePath };
@@ -797,22 +789,23 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     [`${API_GENERATOR_HEADER}\n`, `execute${type}WithAuthorization`],
     [`${API_GENERATOR_HEADER}\n`, `export const ${camel}ReadApiLive`],
   ] as const;
-  const artifacts = yield* Effect.all(
+  // Each file the plan deletes is the generated artifact it names.
+  yield* Effect.all(
     paths.map((filePath, index) => readGeneratedArtifact(filePath, `module API ${name}`, checks[index] ?? [])),
     { concurrency: 'unbounded' },
   );
-  const [contractSource = '', , clientSource = ''] = artifacts;
-  const retired: RetiredRead = {
-    files: new Map([
-      ...paths.map((filePath, index) => [filePath, artifacts[index] ?? ''] as const),
-      ...(publication === undefined
-        ? []
-        : [
-            [publication.contractSpecifier, contractSource] as const,
-            [publication.clientSpecifier, clientSource] as const,
-          ]),
+  const retired: RetiredRead = { files: new Set(paths) };
+  // The module and every contract package it owns, whether or not the package publishes this read, as they are
+  // before the retirement: what the plan follows its owner entries through and judges as a whole.
+  const packages = yield* workspacePackages(workspaceRoot);
+  const sources = yield* moduleSources([
+    ...new Set([
+      vertical.directory,
+      ...(publication === undefined ? [] : [publication.directory]),
+      ...[...packages.values()].flatMap(({ dir, owner }) => (owner === vertical.moduleId ? [dir] : [])),
     ]),
-  };
+  ]);
+  const graph = retirementGraph(sources, packages);
   const readImport = `import { ${camel}Read } from './src/api/${name}.read.ts';`;
   const { nextManifest, nextRegistration } = yield* trySync(
     () => ({
@@ -887,7 +880,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
       },
     ],
     retired,
-    vertical.directory,
+    graph,
   );
   const handlerRoot = yield* updateOwnerFile(
     yield* trySync(() => resolveContainedPath(vertical.directory, 'api', 'index.ts'), 'failed to resolve handler root'),
@@ -907,7 +900,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
       },
     ],
     retired,
-    vertical.directory,
+    graph,
   );
   const aggregatePath = yield* trySync(
     () => ownerClientAggregatePath(vertical),
@@ -917,7 +910,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
   const aggregate = (yield* (yield* FileSystem.FileSystem)
     .exists(aggregatePath)
     .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${aggregatePath}`, cause))))
-    ? [yield* updateOwnerFile(aggregatePath, `client aggregate of ${name}`, [], retired, vertical.directory)]
+    ? [yield* updateOwnerFile(aggregatePath, `client aggregate of ${name}`, [], retired, graph)]
     : [];
   const deletes = yield* Effect.all(paths.map(deleteMutationEffect), {
     concurrency: 'unbounded',
@@ -940,18 +933,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     ...deletes,
   ];
   // The post-condition judges the planned result as a whole; nothing is written when it fails.
-  const problems = retirementProblems(
-    // The module and every contract package it owns, whether or not the package publishes this read.
-    yield* moduleSources([
-      ...new Set([
-        vertical.directory,
-        ...(publication === undefined ? [] : [publication.directory]),
-        ...(yield* ownedContractPackages(workspaceRoot, vertical)),
-      ]),
-    ]),
-    mutations,
-    retired,
-  );
+  const problems = retirementProblems(sources, mutations, graph, packages);
   if (problems.length > 0) {
     return yield* scaffoldError(`cannot retire ${name}:\n${problems.join('\n')}`);
   }

@@ -464,9 +464,29 @@ const handWrittenUses = Effect.fn(function* handWrittenUses(read: string, folder
   });
 });
 
-/** A copy of actual modules or packages and the topology, outside their dependencies. */
+/**
+ * The manifest of every module and package of the workspace: what the `@app/…` specifiers of a copied module resolve
+ * through, held without their files.
+ */
+const workspaceManifests = async (): Promise<readonly string[]> => {
+  const listed = await Promise.all(
+    ['packages', 'verticals'].map(async (folder) => {
+      const entries = await readdir(path.join(appRoot, folder), { withFileTypes: true });
+      return entries.filter((entry) => entry.isDirectory()).map((entry) => `${folder}/${entry.name}/package.json`);
+    }),
+  );
+  const manifests = await Promise.all(
+    listed
+      .flat()
+      .map(async (file) => [file, await readFile(path.join(appRoot, file), 'utf-8').catch(() => '')] as const),
+  );
+  return manifests.flatMap(([file, source]) => (source === '' ? [] : [file]));
+};
+
+/** A copy of actual modules or packages and the topology, outside their dependencies, beside the workspace's manifests. */
 const copyModule = Effect.fn(function* copyModule(root: string, folders: readonly string[]) {
-  for (const relative of [...folders, 'topology/reference-topology.json']) {
+  const manifests = yield* Effect.promise(workspaceManifests);
+  for (const relative of [...manifests, ...folders, 'topology/reference-topology.json']) {
     yield* Effect.promise(() =>
       cp(path.join(appRoot, relative), path.join(root, relative), {
         filter: (source) => !source.includes(`${path.sep}node_modules`),
@@ -500,7 +520,13 @@ const retireInCopy = Effect.fn(function* retireInCopy(
     const trees = yield* Effect.promise(() =>
       Promise.all([vertical, contracts].map((folder) => sourceTree(root, folder))),
     );
-    return new Map(trees.flat());
+    const manifests = yield* Effect.promise(async () => {
+      const files = await workspaceManifests();
+      return await Promise.all(
+        files.map(async (file) => [file, await readFile(path.join(root, file), 'utf-8')] as const),
+      );
+    });
+    return new Map([...manifests, ...trees.flat()]);
   }).pipe(Effect.ensuring(Effect.promise(() => rm(root, { force: true, recursive: true }))));
 });
 
@@ -727,6 +753,21 @@ it.live(
   }),
 );
 
+it.live(
+  'keeps a name an enum member or a var of a class static block declares, whatever import it shares a name with',
+  Effect.fn(function* keepScopedNames() {
+    const manifestFile = `${paymentVertical}/vertical.manifest.ts`;
+    const scoped =
+      'enum Kinds {\n  PaymentTermHistoryApi = 1,\n  Other = PaymentTermHistoryApi,\n}\nclass Holder {\n  static {\n    var PaymentTermHistoryApi = Kinds.Other;\n    void PaymentTermHistoryApi;\n  }\n}\nvoid Holder;\n';
+    const sources = yield* retireInCopy(paymentHistoryRead, paymentVertical, paymentContracts, paymentSlug, [
+      [manifestFile, (source) => `${source}${scoped}`],
+    ]);
+    const retired = sources.get(manifestFile) ?? '';
+    expect(retired).toContain(scoped);
+    expect(retired).not.toContain('import { PaymentTermHistoryApi }');
+  }),
+);
+
 /** The line count of a file of the module as it is checked in: the line an appended use stands on. */
 const lineCount = async (file: string): Promise<number> => {
   const source = await readFile(path.join(appRoot, file), 'utf-8');
@@ -762,6 +803,18 @@ it.live(
         'the manifest uses the retired API value its generated import brought in',
         [[manifestFile, (source: string) => `${source}export const history = PaymentTermHistoryApi;\n`]],
         `${manifestFile}:${yield* Effect.promise(async () => await lineCount(manifestFile))} still uses PaymentTermHistoryApi, which the retirement unbinds`,
+      ],
+      // A `var` of a class static block is declared in the block: the manifest's later use is still of the import.
+      [
+        'the manifest uses the retired API value past a var of the same name in a class static block',
+        [
+          [
+            manifestFile,
+            (source: string) =>
+              `${source}class Holder {\n  static {\n    var PaymentTermHistoryApi = 1;\n    void PaymentTermHistoryApi;\n  }\n}\nvoid Holder;\nexport const leaked = PaymentTermHistoryApi;\n`,
+          ],
+        ],
+        `${manifestFile}:${(yield* Effect.promise(async () => await lineCount(manifestFile))) + 7} still uses PaymentTermHistoryApi, which the retirement unbinds`,
       ],
       [
         'an entry star-exports an owner file that star-exports the retired client',
@@ -816,6 +869,22 @@ it.live(
           ],
         ],
         `${packageLoader}:1 still names ../../../verticals/payment-term-catalog/src/api/payment-term-history-client.ts, which the retirement deletes`,
+      ],
+      // A whole workspace package specifier resolves through the package's exports.
+      [
+        "a contract package re-exports the retired contract through the owner package's exports",
+        [
+          [
+            `${paymentVertical}/package.json`,
+            (source: string) =>
+              source.replace(
+                '"exports": {\n',
+                () => '"exports": {\n    "./apis/payment-term-history": "./shared/apis/payment-term-history.ts",\n',
+              ),
+          ],
+          [packageLoader, () => "export * from '@app/payment-term-catalog/apis/payment-term-history';\n"],
+        ],
+        `${packageLoader}:1 still names @app/payment-term-catalog/apis/payment-term-history, which the retirement deletes`,
       ],
       [
         'an owner file star-exports the retired client under an escaped specifier',
@@ -911,5 +980,38 @@ it.live(
     expect(yield* refusedInCopy('current-payment-terms')).toContain(
       `${paymentContracts}/src/index.ts:2 still names ./apis/current-payment-terms.ts, which the retirement deletes`,
     );
+  }),
+);
+
+it.live(
+  // The owner entry net (`ENTRY_SYNTAX`) holds what the generators write: a read scaffolded today passes the seam whole.
+  'scaffolds a fresh read into Payment Term whose owner entries hold only the syntax the read check reads',
+  Effect.fn(function* scaffoldedEntrySyntax() {
+    const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-scaffolded-entry-')));
+    yield* Effect.gen(function* scaffoldAndJudge() {
+      yield* copyModule(root, [paymentVertical, paymentContracts]);
+      yield* runScaffoldEffect(
+        'module-api',
+        [VERTICAL_FLAG, paymentSlug, '--name', 'payment-term-probe', '--authorization', 'protected'],
+        { workspaceRoot: root },
+      ).pipe(Effect.provide(NodeServices.layer));
+      const files = yield* Effect.promise(workspaceManifests);
+      const manifests = yield* Effect.promise(() =>
+        Promise.all(files.map(async (file) => [file, await readFile(path.join(root, file), 'utf-8')] as const)),
+      );
+      const trees = yield* Effect.promise(() =>
+        Promise.all([paymentVertical, paymentContracts].map((folder) => sourceTree(root, folder))),
+      );
+      const sources = new Map([...manifests, ...trees.flat()]);
+      expect(sources.get(`${paymentVertical}/shared/api.ts`)).toContain('PaymentTermProbeApi');
+      const diagnostics: string[] = [];
+      const valid = hasCompleteGeneratedModuleApiSeam(
+        sources,
+        `${paymentVertical}/shared/api.ts`,
+        paymentSlug,
+        diagnostics,
+      );
+      expect(valid, diagnostics.join('\n')).toBe(true);
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(root, { force: true, recursive: true }))));
   }),
 );

@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
 import { planGovernedContributionScaffold } from '../governed-contribution/scaffold.mts';
+import { readWorkspaceManifests } from '../../tests/module-entrypoint-boundary-fixtures.mts';
 import { readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 
 const paymentVertical = 'payment-term-catalog';
@@ -52,25 +53,38 @@ const readSourceTree = async (relativeDirectory: string, sources: Map<string, st
   );
 };
 
-const loadPaymentContractSources = (): Promise<Map<string, string>> => {
-  const sources = new Map<string, string>();
-  return Promise.all([
-    readSourceTree(paymentVerticalPath, sources),
-    readSourceTree(publicContractPackagePath, sources),
-  ]).then(() => sources);
-};
+/** The workspace's package manifests, then the folders: a check resolves every `@app/…` specifier through them. */
+const loadSources = Effect.fn(function* loadSources(folders: readonly string[]) {
+  const sources = new Map(yield* readWorkspaceManifests(appRoot, ['packages', 'verticals']));
+  yield* Effect.promise(
+    async () => await Promise.all(folders.map(async (folder) => await readSourceTree(folder, sources))),
+  );
+  return sources;
+});
 
-const loadCustomerContractSources = (): Promise<Map<string, string>> => {
-  const sources = new Map<string, string>();
-  return Promise.all([
-    readSourceTree(customerVerticalPath, sources),
-    readSourceTree(customerContractPackagePath, sources),
-    readSourceTree(publicContractPackagePath, sources),
-  ]).then(() => sources);
-};
+const loadPaymentContractSources = () => loadSources([paymentVerticalPath, publicContractPackagePath]);
+
+const loadCustomerContractSources = () =>
+  loadSources([
+    customerVerticalPath,
+    customerContractPackagePath,
+    // The module's other contract package: a seam reads every contract package its module owns.
+    'packages/customer-market-retirement-contracts',
+    publicContractPackagePath,
+  ]);
+
+/** The reads the module's other contract package publishes, which stay beside the focused one. */
+const marketRetirementReads = [
+  'market-affected-use-assessment',
+  'market-subject-restrictions-current',
+  'market-retirement-reservation-recovery',
+];
 
 const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
   const manifestApiStart = '// <generated-module-manifest-apis>';
+  const kept = ['payment-term-affected-use-assessment', ...marketRetirementReads];
+  const keptBindings =
+    /[Pp]aymentTermAffectedUseAssessment|[Mm]arketAffectedUseAssessment|[Mm]arketSubjectRestrictionsCurrent|[Mm]arketRetirementReservationRecovery|ActionApi/u;
   const manifestApiEnd = '// </generated-module-manifest-apis>';
   // Only the owner's read contracts leave; its Action contracts stay, since the code beyond the slots still uses them.
   const focused = new Map(
@@ -119,7 +133,7 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
           if (!insideSlot) {
             return true;
           }
-          if (line.includes("'payment-term-affected-use-assessment'")) {
+          if (kept.some((name) => line.includes(`'${name}'`))) {
             keepTargetEntry = !line.trimEnd().endsWith(',');
             return true;
           }
@@ -154,7 +168,7 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
   ] as const) {
     let source = focused.get(file) ?? '';
     for (const entry of readGeneratedSlotEntries(source, start, end)) {
-      if (!/PaymentTermAffectedUseAssessment|paymentTermAffectedUseAssessment|ActionApi/u.test(entry)) {
+      if (!keptBindings.test(entry)) {
         source = removeGeneratedSlotEntry(source, start, end, (candidate) => candidate === entry, 'unfocused entry');
       }
     }
@@ -176,10 +190,10 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
     (entry) => !focusedApis.includes(entry),
   );
   const operations = readGeneratedSlotEntries(manifest, operationStart, operationEnd);
-  const targetOperations = operations.filter((entry) =>
-    entry.includes("apiKey: 'payment-term-affected-use-assessment'"),
-  );
-  expect(targetOperations).toHaveLength(1);
+  const keptOperations = operations.filter((entry) => kept.some((name) => entry.includes(`apiKey: '${name}'`)));
+  expect(
+    keptOperations.filter((entry) => entry.includes("apiKey: 'payment-term-affected-use-assessment'")),
+  ).toHaveLength(1);
   for (const operation of operations) {
     const apiKey = /\bapiKey:\s*'(?<apiKey>[^']+)'/u.exec(operation)?.groups?.['apiKey'];
     if (apiKey !== undefined && prunedApis.some((entry) => entry.startsWith(`'${apiKey}':`))) {
@@ -192,7 +206,7 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
       );
     }
   }
-  expect(readGeneratedSlotEntries(manifest, operationStart, operationEnd)).toEqual(targetOperations);
+  expect(readGeneratedSlotEntries(manifest, operationStart, operationEnd)).toEqual(keptOperations);
   focused.set(manifestFile, manifest);
   return focused;
 };
@@ -203,13 +217,13 @@ const expectsCompletePaymentSeam = (sources: ReadonlyMap<string, string>): boole
 it.effect(
   'accepts the Payment-owned companion contract package as an idempotent module API scaffold',
   Effect.fn(function* publicContractPackageIdempotence() {
-    const before = yield* Effect.promise(loadPaymentContractSources);
+    const before = yield* loadPaymentContractSources();
     const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
       authorization: 'protected',
       name: 'current-payment-terms',
       vertical: paymentVertical,
     }).pipe(Effect.provide(NodeServices.layer));
-    const after = yield* Effect.promise(loadPaymentContractSources);
+    const after = yield* loadPaymentContractSources();
 
     expect(plan.mutations).toEqual([]);
     expect(governedContractFiles.map((file) => after.get(file))).toEqual(
@@ -265,7 +279,7 @@ it.effect(
 it.live(
   'rejects canonical companion contract and client drift at the complete module API seam',
   Effect.fn(function* publicContractDrift() {
-    const valid = yield* Effect.promise(loadPaymentContractSources);
+    const valid = yield* loadPaymentContractSources();
     expect(expectsCompletePaymentSeam(valid)).toBe(true);
 
     const wrongEndpoint = new Map([
@@ -301,13 +315,13 @@ it.live(
 it.effect(
   'accepts the Customer-owned affected-use companion package as an idempotent module API scaffold',
   Effect.fn(function* customerPublicContractPackageIdempotence() {
-    const before = yield* Effect.promise(loadCustomerContractSources);
+    const before = yield* loadCustomerContractSources();
     const plan = yield* planGovernedContributionScaffold(appRoot, moduleApiKind, {
       authorization: 'protected',
       name: 'payment-term-affected-use-assessment',
       vertical: 'commerce-customer-context',
     }).pipe(Effect.provide(NodeServices.layer));
-    const after = yield* Effect.promise(loadCustomerContractSources);
+    const after = yield* loadCustomerContractSources();
 
     expect(plan.mutations).toEqual([]);
     expect(customerGovernedContractFiles.map((file) => after.get(file))).toEqual(
@@ -331,7 +345,7 @@ it.effect(
 it.live(
   'rejects a companion package whose ownership metadata no longer matches the Payment module',
   Effect.fn(function* publicContractOwnership() {
-    const valid = yield* Effect.promise(loadPaymentContractSources);
+    const valid = yield* loadPaymentContractSources();
     const manifest = valid.get(packageManifestFile);
     if (manifest === undefined) {
       expect.unreachable(`expected ${packageManifestFile}`);

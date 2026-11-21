@@ -22,6 +22,7 @@ import {
   makeActualCustomerContextAggregateFixture,
   makeFixture,
   readPricingSourceTree,
+  readWorkspaceManifests,
   write,
 } from './module-entrypoint-boundary-fixtures.mts';
 
@@ -54,7 +55,8 @@ const annotated = (api: string): string =>
 const loadSources = Effect.fn(function* loadSources(folders: readonly string[]) {
   const root = path.resolve(import.meta.dirname, '../..');
   const trees = yield* Effect.all(folders.map((folder) => readPricingSourceTree(root, folder)));
-  return new Map(trees.flat());
+  const manifests = yield* readWorkspaceManifests(root, ['packages', 'verticals']);
+  return new Map([...manifests, ...trees.flat()]);
 });
 
 const required = (sources: ReadonlyMap<string, string>, file: string): string => {
@@ -671,6 +673,24 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
         'an expression that only asserts its type',
         `export const LaunderedApi = ${foreign} satisfies HttpApi.Constraint;`,
       ],
+      // A mount is found under every wrapper and by every member a literal names.
+      [
+        'an API of the owner mounting it by a string member',
+        `export const LaunderedApi = HttpApi.make('Other')['addHttpApi'](${foreign});`,
+      ],
+      [
+        'an API of the owner mounting it by a non-null member',
+        `export const LaunderedApi = HttpApi.make('Other').addHttpApi!(${foreign});`,
+      ],
+      // A library value is used freely but never mounted: these hold only when the mount is found.
+      [
+        'an API of the owner mounting a library value by a string member',
+        "export const LaunderedApi = HttpApi.make('Other')['addHttpApi'](pipe);",
+      ],
+      [
+        'an API of the owner mounting a library value by a non-null member',
+        "export const LaunderedApi = HttpApi.make('Other').addHttpApi!(pipe);",
+      ],
       [
         'a pipe through it',
         `export const LaunderedApi = pipe(${foreign}, (api) => api.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' }));`,
@@ -700,6 +720,79 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       expect(laundered.valid, label).toBe(false);
       expect(laundered.diagnostics, label).toContain(unknown(sharedApiFile, 'LaunderedApi'));
     }
+    // In the entry, a mount by a string member is a mount, and what `export default` and `export =` write is judged
+    // for reach as a named export's declaration is.
+    const ownApiLine = 'export const paymentTermCatalogFoundationApi';
+    expect(sharedApi).toContain(ownApiLine);
+    const foreignImported = `import { ${foreign} } from '${foreignSpecifier}';\n${sharedApi}`;
+    const stringMounted = judged(sources, [
+      [sharedApiFile, replaced(foreignImported, additionsStart, `  ['addHttpApi'](${foreign})\n${additionsStart}`)],
+    ]);
+    expect(stringMounted.valid).toBe(false);
+    expect(stringMounted.diagnostics).toContain(unknown(sharedApiFile, foreign));
+    for (const [label, written] of [
+      [
+        'export default of the own API asserted to the type of the read',
+        'export default (paymentTermCatalogFoundationApi as unknown as typeof CurrentPaymentTermsApi);',
+      ],
+      ['export = of the read', 'export = CurrentPaymentTermsApi;'],
+    ] as const) {
+      const exported = judged(sources, [[sharedApiFile, `${sharedApi}\n${written}\n`]]);
+      expect(exported.valid, label).toBe(false);
+      expect(exported.diagnostics, label).toContain(
+        `${sharedApiFile}: export default reaches a package read of the module`,
+      );
+    }
+    // A member no literal names, of any whole module, may be any of its exports: it fails closed.
+    const namespaceMember = judged(sources, [
+      [`${owner}/shared/out.ts`, "import * as E from 'effect';\n\nconst k = 'Array';\nexport const Out = E[k];\n"],
+      [sharedApiFile, `${sharedApi}\nexport { Out } from './out.ts';\n`],
+    ]);
+    expect(namespaceMember.valid).toBe(false);
+    expect(namespaceMember.diagnostics).toMatch(/export Out .*is taken a member that cannot be read statically/u);
+    // An owner entry holds only the syntax today's entries hold: anything else, in `./api` or the `./api/client`
+    // aggregate, fails with its kind and line, and so does `addHttpApi` named other than as a mount's member.
+    const aggregateSource = required(sources, aggregateFile);
+    for (const [label, file, source, kind] of [
+      ['a let', sharedApiFile, `${sharedApi}\nlet counter = 0;\nvoid counter;\n`, 'VariableDeclaration let'],
+      [
+        'a member no literal names',
+        sharedApiFile,
+        `${sharedApi}\nconst k = 'make';\nexport const Out = HttpApi[k];\n`,
+        'MemberExpression computed',
+      ],
+      [
+        'a non-null mount',
+        sharedApiFile,
+        replaced(foreignImported, additionsStart, `  .addHttpApi!(${foreign})\n${additionsStart}`),
+        'TSNonNullExpression',
+      ],
+      ['a loop in the aggregate', aggregateFile, `${aggregateSource}\nfor (const _ of []) {\n}\n`, 'ForOfStatement'],
+      [
+        'a class member in the aggregate',
+        aggregateFile,
+        `${aggregateSource}\nexport class Held {\n  static x = 1;\n}\n`,
+        'PropertyDefinition',
+      ],
+    ] as const) {
+      const net = judged(sources, [[file, source]]);
+      expect(net.valid, label).toBe(false);
+      expect(net.diagnostics, label).toMatch(
+        new RegExp(`${file}:\\d+ the owner entry uses syntax the read check does not read: ${kind}`, 'u'),
+      );
+    }
+    const mentioned = judged(sources, [
+      [sharedApiFile, `${sharedApi}\nexport const mount = paymentTermCatalogFoundationApi.addHttpApi.call;\n`],
+    ]);
+    expect(mentioned.valid).toBe(false);
+    expect(mentioned.diagnostics).toMatch(
+      new RegExp(
+        `${sharedApiFile}:\\d+ the owner entry names addHttpApi other than as the member a mount of one API calls`,
+        'u',
+      ),
+    );
+    // The handler root is no owner entry: the net does not apply there.
+    expect(judged(sources, [[handlerFile, `${handler}\nlet counter = 0;\nvoid counter;\n`]]).valid).toBe(true);
     // Every binding a mounted declaration of the owner uses is judged by its origin, whatever specifier, path or name
     // it is taken under: another module's read or Action API value fails, and so does one the rule cannot follow.
     const priceGroups = PRICE_GROUP_OWNER;
@@ -708,6 +801,7 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       contracts,
       customerContracts,
       'packages/pricing-contracts',
+      'packages/catalog-selection-contracts',
       priceGroupContracts,
       priceGroups,
     ]);
@@ -833,6 +927,17 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
             [[`${priceGroups}/shared/foreign.ts`, `${declaration}\n`]],
           ] as const,
       ),
+      // A workspace path resolves as TypeScript's bundler resolution resolves it: `.js` names the TypeScript file.
+      [
+        "another module's entry bridging its read imported by a .js path",
+        "import { Bridge } from '@app/price-group-catalog/api';\nexport const ExtraApi = Bridge.pipe(identity);",
+        [
+          [
+            `${priceGroups}/shared/api.ts`,
+            `${priceGroupApi}import { PriceGroupCatalogHeadApi as A } from './apis/price-group-catalog-head.js';\nexport const Bridge = A.pipe((x) => x);\n`,
+          ],
+        ],
+      ],
       [
         "another module's entry exporting what a load of its read gives",
         "import { Bridge } from '@app/price-group-catalog/api';\nexport const ExtraApi = Bridge.pipe(identity);",
@@ -888,6 +993,87 @@ it.live('resolves every mount and handler layer of the owner entries, wherever i
       const { diagnostics } = extraMounted(extra);
       expect(diagnostics, label).toContain(unknown(sharedApiFile, 'ExtraApi'));
       expect(diagnostics, label).toContain(`(cannot be followed: ${owner}/shared/extra.ts ${reason}`);
+    }
+    // A global that holds a loader (`require`, `module`, `process`, `import.meta`) is judged where it appears: any
+    // appearance but a readable load or a member the tree uses fails closed, and so does any load that is not exactly
+    // one literal string; a `var` of a class static block or a function body hides no global outside it.
+    for (const [label, extra] of [
+      [
+        'a destructuring of require out of module',
+        `const { require: load } = module;\nexport const ExtraApi = load('${foreignSpecifier}').${foreign};`,
+      ],
+      ['an alias of module', `const m = module;\nexport const ExtraApi = m.require('${foreignSpecifier}').${foreign};`],
+      [
+        "Node's module loader from process.getBuiltinModule",
+        `export const ExtraApi = process.getBuiltinModule('node:module').createRequire(import.meta.url)('${foreignSpecifier}').${foreign};`,
+      ],
+      [
+        "Node's module loader destructured from process.getBuiltinModule",
+        `const { createRequire } = process.getBuiltinModule('node:module');\nexport const ExtraApi = createRequire(import.meta.url)('${foreignSpecifier}').${foreign};`,
+      ],
+      ['module.parent.require', `export const ExtraApi = module.parent.require('${foreignSpecifier}').${foreign};`],
+      [
+        'process.mainModule.require',
+        `export const ExtraApi = process.mainModule.require('${foreignSpecifier}').${foreign};`,
+      ],
+      [
+        "a bundler's import.meta.webpackContext",
+        `export const ExtraApi = import.meta.webpackContext('@app/customer-payment-term-contracts')('./src/apis/payment-term-affected-use-assessment.ts').${foreign};`,
+      ],
+      [
+        'a destructuring of import.meta',
+        "const { resolve } = import.meta;\nexport const ExtraApi = HttpApi.make('Extra').pipe((api) => {\n  void resolve;\n  return api;\n});",
+      ],
+      ['a load of a number', `export const ExtraApi = (await import(17)).${foreign};`],
+      ['a require of a boolean', `export const ExtraApi = require(false).${foreign};`],
+      [
+        'a load with options',
+        `export const ExtraApi = (await import('${foreignSpecifier}', { with: { type: 'json' } })).${foreign};`,
+      ],
+      ['a require with a second argument', `export const ExtraApi = require('${foreignSpecifier}', {}).${foreign};`],
+      [
+        "an import type of Node's module loader",
+        "export const ExtraApi = HttpApi.make('Extra') as unknown as typeof import('node:module').createRequire;",
+      ],
+      [
+        'the global require past a var of a class static block',
+        `class Example {\n  static {\n    var require = 1;\n    void require;\n  }\n}\nvoid Example;\nconst k = '${foreignSpecifier}';\nexport const ExtraApi = require(k).${foreign};`,
+      ],
+      [
+        'the global require in a default parameter past a var of the function body',
+        `const k = '${foreignSpecifier}';\nfunction build(load = require(k)) {\n  var require = 1;\n  void require;\n  return load;\n}\nexport const ExtraApi = HttpApi.make('Extra').pipe((api) => {\n  void build;\n  return api;\n});`,
+      ],
+    ] as const) {
+      const { diagnostics } = extraMounted(extra);
+      expect(diagnostics, label).toContain(unknown(sharedApiFile, 'ExtraApi'));
+      expect(diagnostics, label).toMatch(
+        new RegExp(
+          `\\(cannot be followed: ${owner}/shared/extra\\.ts (?:${LOADS_UNREAD}|uses the global [\\w.]+ other than to load a module a literal names)`,
+          'u',
+        ),
+      );
+    }
+    // The members of the loader globals the tree uses, a builtin module `process.getBuiltinModule` loads, and a
+    // `.js` path naming a TypeScript file of the owner are read.
+    for (const [label, extra, changes] of [
+      [
+        'the members of the loader globals the tree uses',
+        "export const ExtraApi = HttpApi.make('Extra').pipe((api) => {\n  void [process.argv, process.cwd(), import.meta.url, globalThis.crypto, globalThis.fetch];\n  return api;\n});",
+        [],
+      ],
+      [
+        'a builtin module process.getBuiltinModule loads',
+        "export const ExtraApi = HttpApi.make('Extra').pipe((api) => {\n  void process.getBuiltinModule('node:path');\n  return api;\n});",
+        [],
+      ],
+      [
+        'an owner file imported by a .js path',
+        "import { helper } from './extra-helper.js';\nexport const ExtraApi = HttpApi.make('Extra').pipe((api) => {\n  void helper;\n  return api;\n});",
+        [[`${owner}/shared/extra-helper.ts`, 'export const helper = 1;\n']],
+      ],
+    ] as const) {
+      const verdict = extraMounted(extra, changes);
+      expect(verdict.valid, `${label}: ${verdict.diagnostics}`).toBe(true);
     }
     // Another module's schema, helper or read client is used, not mounted: one of its entry may be used inside an API
     // of the owner.
@@ -1529,11 +1715,28 @@ it.live('follows every name an owner entry passes on from an owner file to where
             `export const PublicApi = require!('${read}').PriceGroupDefinitionApi;`,
             passesOnTheRead,
           ],
-          // A file on the chain that holds a load no static rule reads may pass anything on.
+          // A file on the chain that holds a load no static rule reads may pass anything on: judged once, as a file.
           [
             'an alias of the global require',
             `const load = require;\nexport const PublicApi = load('${read}').PriceGroupDefinitionApi;`,
             `${LOADS_UNREAD} at line 3`,
+            `re-exports through ${priceGroups}/shared/public.ts`,
+          ],
+          // A default may hold anything; an object rest holds the whole, which its members are taken of.
+          [
+            'a destructuring with a default',
+            'export const { PriceGroupDefinitionApi: PublicApi = undefined } = Read;',
+            'PublicApi is destructured with a default, so what it holds cannot be read',
+          ],
+          [
+            'a destructuring with a default of an object rest',
+            'const { ...rest } = Read;\nexport const { PriceGroupDefinitionApi: PublicApi = rest } = rest;',
+            'PublicApi is destructured with a default, so what it holds cannot be read',
+          ],
+          [
+            'a member of an object rest',
+            'const { Other: _other, ...rest } = Read;\nexport const PublicApi = rest.PriceGroupDefinitionApi;',
+            passesOnTheRead,
           ],
           ['an indexed type', "export type PublicApi = (typeof Read)['PriceGroupDefinitionApi'];", passesOnTheRead],
           [
@@ -1548,13 +1751,13 @@ it.live('follows every name an owner entry passes on from an owner file to where
           ],
         ] as const
       ).map(
-        ([taken, declaration, expected]) =>
+        ([taken, declaration, expected, leaves = exportsPublicApi]: readonly [string, string, string, string?]) =>
           [
             `a member of the whole read taken by ${taken}, re-exported by ${sharedApi}`,
             sharedApi,
             "export { PublicApi } from './public.ts';\n",
             [[`${priceGroups}/shared/public.ts`, `import * as Read from '${read}';\n\n${declaration}\n`]],
-            exportsPublicApi,
+            leaves,
             expected,
           ] as const,
       ),
@@ -1607,7 +1810,57 @@ it.live('follows every name an owner entry passes on from an owner file to where
         "export { Missing } from './missing.ts';\n",
         [],
         'export Missing',
-        'which is no declaration of an owner file',
+        'names ./missing.ts, which is no file of the workspace',
+      ],
+      // A workspace specifier resolves as TypeScript's bundler resolution and the package's exports resolve it; one that
+      // names no file fails closed.
+      ...(
+        [
+          ['a missing subpath of a contract package', '@app/price-group-catalog-contracts/missing'],
+          ['a missing owner file by a .js path', './gone.js'],
+          ['an unknown workspace package', '@app/no-such-package'],
+        ] as const
+      ).map(
+        ([label, specifier]) =>
+          [
+            `a re-export of ${label}`,
+            sharedApi,
+            `export { Missing } from '${specifier}';\n`,
+            [],
+            'export Missing',
+            `names ${specifier}, which is no file of the workspace`,
+          ] as const,
+      ),
+      // Every file the entry's re-exports reach is judged once, as a file, whatever order the re-exports stand in.
+      ...(
+        [
+          ['public.ts first', "export * from './public.ts';\nexport * from './second.ts';\n"],
+          ['second.ts first', "export * from './second.ts';\nexport * from './public.ts';\n"],
+        ] as const
+      ).map(
+        ([order, reexports]) =>
+          [
+            `a star re-export of a file that loads what it does not read and re-exports a file the entry also re-exports, ${order}`,
+            sharedApi,
+            reexports,
+            [
+              [
+                `${priceGroups}/shared/public.ts`,
+                `export { ok } from './second.ts';\n\nconst target = '${read}';\nvoid import(target);\n`,
+              ],
+              [`${priceGroups}/shared/second.ts`, 'export const ok = 1;\n'],
+            ],
+            `re-exports through ${priceGroups}/shared/public.ts`,
+            `${LOADS_UNREAD} at line 4`,
+          ] as const,
+      ),
+      [
+        'a star re-export of a file without exports that loads what it does not read',
+        sharedApi,
+        "export * from './side.ts';\n",
+        [[`${priceGroups}/shared/side.ts`, `const target = '${read}';\nvoid import(target);\n`]],
+        `re-exports through ${priceGroups}/shared/side.ts`,
+        `${LOADS_UNREAD} at line 2`,
       ],
     ] as const) {
       const failure = yield* judgedChain(entry, appended, files);
@@ -1622,6 +1875,11 @@ it.live('follows every name an owner entry passes on from an owner file to where
         LOADS_UNREAD,
       ],
       ['a dynamic import of the read', `export const loadRead = () => import('${read}');\n`, 'loads the package read'],
+      [
+        'a dynamic import of the read by a relative .js path',
+        "export const loadRead = () => import('../../../packages/price-group-catalog-contracts/src/apis/price-group-definition.js');\n",
+        'loads the package read',
+      ],
       ['require.resolve', `export const where = require.resolve('${read}');\n`, LOADS_UNREAD],
       ['module.require', `export const load = module.require;\n`, LOADS_UNREAD],
       ['import.meta.resolve', `export const where = import.meta.resolve('${read}');\n`, LOADS_UNREAD],
