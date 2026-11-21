@@ -1,4 +1,7 @@
+import nodePath from 'node:path';
+
 import { Effect, FileSystem, Schema, Predicate } from 'effect';
+import { parseSync } from 'oxc-parser';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { discoverPublicContractPackage } from '../governed-contribution/scaffold.mts';
@@ -44,7 +47,9 @@ import {
   ensureUniqueMutationPaths,
   asJsonObject,
   patchJsonObjectProperty,
+  normalizeGeneratedSlotEntry,
   readGeneratedSlotEntries,
+  raiseScaffoldFailure,
   readJsonEffect,
   removeGeneratedSlotEntry,
   requireCanonicalSlug,
@@ -212,18 +217,130 @@ const removeSlotEntries = (content: string, removals: readonly SlotRemoval[]): s
   return next;
 };
 
+/** A generated slot entry, whatever line breaks the formatter put into it. */
+const isSlotEntry =
+  (expected: string) =>
+  (entry: string): boolean =>
+    normalizeGeneratedSlotEntry(entry) === normalizeGeneratedSlotEntry(expected);
+
+/** What a retired read leaves behind: its deleted files (paths, or package specifiers) and the names they exported. */
+interface RetiredRead {
+  readonly files: ReadonlySet<string>;
+  readonly names: ReadonlySet<string>;
+}
+
+const parsedModule = (filePath: string, content: string) => {
+  const parsed = parseSync(filePath, content, { astType: 'ts', lang: 'ts', sourceType: 'module' });
+  if (parsed.errors.length > 0) {
+    raiseScaffoldFailure(`cannot parse ${filePath}`);
+  }
+  return parsed.program;
+};
+
+const exportedNames = (filePath: string, content: string): readonly string[] =>
+  parsedModule(filePath, content).body.flatMap((statement) => {
+    if (statement.type !== 'ExportNamedDeclaration') {
+      return [];
+    }
+    const { declaration } = statement;
+    if (declaration?.type === 'VariableDeclaration') {
+      return declaration.declarations.flatMap((declarator) =>
+        declarator.id.type === 'Identifier' ? [declarator.id.name] : [],
+      );
+    }
+    const declared = declaration !== null && declaration !== undefined && 'id' in declaration ? declaration.id : null;
+    return [
+      ...(declared?.type === 'Identifier' ? [declared.name] : []),
+      ...statement.specifiers.flatMap((specifier) =>
+        specifier.exported.type === 'Identifier' ? [specifier.exported.name] : [],
+      ),
+    ];
+  });
+
+const specifierName = (node: { readonly name?: string; readonly type: string; readonly value?: unknown }): string =>
+  node.type === 'Identifier' ? (node.name ?? '') : String(node.value);
+
+/**
+ * An owner entry without the retired read: re-exports of its deleted files and re-exported names only those files
+ * declared are removed; an import of either is refused, since code outside the generated slots still uses it.
+ */
+const withoutRetiredRead = (filePath: string, content: string, retired: RetiredRead): string => {
+  const edits: { readonly end: number; readonly start: number; readonly text: string }[] = [];
+  const removal = (start: number, end: number) => ({
+    end: content.charAt(end) === '\n' ? end + 1 : end,
+    start,
+    text: '',
+  });
+  for (const statement of parsedModule(filePath, content).body) {
+    const source =
+      statement.type === 'ImportDeclaration' ||
+      statement.type === 'ExportAllDeclaration' ||
+      (statement.type === 'ExportNamedDeclaration' && statement.source !== null)
+        ? statement.source?.value
+        : undefined;
+    if (source !== undefined) {
+      const target = source.startsWith('.') ? nodePath.resolve(nodePath.dirname(filePath), source) : source;
+      const fromRetiredFile = retired.files.has(target);
+      if (statement.type === 'ImportDeclaration') {
+        if (
+          fromRetiredFile ||
+          statement.specifiers.some(
+            (specifier) => specifier.type === 'ImportSpecifier' && retired.names.has(specifierName(specifier.imported)),
+          )
+        ) {
+          raiseScaffoldFailure(`${filePath} still imports the retired read: remove that use first`);
+        }
+      } else if (fromRetiredFile) {
+        edits.push(removal(statement.start, statement.end));
+      } else if (statement.type === 'ExportNamedDeclaration') {
+        const kept = statement.specifiers.filter((specifier) => !retired.names.has(specifierName(specifier.local)));
+        if (kept.length === 0) {
+          edits.push(removal(statement.start, statement.end));
+        } else if (kept.length < statement.specifiers.length) {
+          const names = kept.map((specifier) => content.slice(specifier.start, specifier.end)).join(', ');
+          edits.push({
+            end: statement.end,
+            start: statement.start,
+            text: `export ${statement.exportKind === 'type' ? 'type ' : ''}{ ${names} } from '${source}';`,
+          });
+        }
+      }
+    }
+  }
+  let next = content;
+  for (const edit of edits.toSorted((left, right) => right.start - left.start)) {
+    next = `${next.slice(0, edit.start)}${edit.text}${next.slice(edit.end)}`;
+  }
+  return next;
+};
+
 const updateOwnerFile = Effect.fn('updateOwnerFile')(function* updateOwnerFileEffect(
   filePath: string,
   label: string,
   removals: readonly SlotRemoval[],
+  retired: RetiredRead,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const content = yield* fileSystem
     .readFileString(filePath)
     .pipe(Effect.mapError((cause) => scaffoldError(`${label} is missing at ${filePath}`, cause)));
-  const next = yield* trySync(() => removeSlotEntries(content, removals), `failed to retire ${label}`);
+  const next = yield* trySync(
+    () => withoutRetiredRead(filePath, removeSlotEntries(content, removals), retired),
+    `failed to retire ${label}`,
+  );
   return { content: next, kind: 'update' as const, path: filePath };
 });
+
+/** The owner's `./api/client` aggregate, from its package exports or the generated default location. */
+const ownerClientAggregatePath = (vertical: OntosVerticalMetadata): string => {
+  const { exports } = vertical.packageJson;
+  const target =
+    exports === undefined ? undefined : asJsonObject(exports, `${vertical.packageName} exports`)['./api/client'];
+  return resolveContainedPath(
+    vertical.directory,
+    ...(Predicate.isString(target) ? target : `./src/api/${vertical.appId}-client.ts`).split('/'),
+  );
+};
 
 /** The package stops exporting and claiming the read it no longer publishes. */
 const retirePackagePublication = Effect.fn('retirePackagePublication')(function* retirePackagePublicationEffect(
@@ -293,10 +410,24 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     [`${API_GENERATOR_HEADER}\n`, `execute${type}WithAuthorization`],
     [`${API_GENERATOR_HEADER}\n`, `export const ${camel}ReadApiLive`],
   ] as const;
-  yield* Effect.all(
+  const artifacts = yield* Effect.all(
     paths.map((filePath, index) => readGeneratedArtifact(filePath, `module API ${name}`, checks[index] ?? [])),
     { concurrency: 'unbounded' },
   );
+  const [contractPath, , clientPath] = paths;
+  const [contractSource = '', , clientSource = ''] = artifacts;
+  const retired: RetiredRead = {
+    files: new Set([
+      ...paths,
+      ...(publication === undefined ? [] : [publication.contractSpecifier, publication.clientSpecifier]),
+    ]),
+    names: new Set(
+      yield* trySync(
+        () => [...exportedNames(contractPath, contractSource), ...exportedNames(clientPath, clientSource)],
+        `failed to read the exports of module API ${name}`,
+      ),
+    ),
+  };
   const readImport = `import { ${camel}Read } from './src/api/${name}.read.ts';`;
   const { nextManifest, nextRegistration } = yield* trySync(
     () => ({
@@ -304,20 +435,20 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
         {
           end: MODULE_MANIFEST_IMPORT_SLOT_END,
           label: `module API import ${name}`,
-          matches: (entry) => entry === `import { ${value} } from '${contractImport}';`,
+          matches: isSlotEntry(`import { ${value} } from '${contractImport}';`),
           start: MODULE_MANIFEST_IMPORT_SLOT_START,
         },
         {
           end: MODULE_MANIFEST_IMPORT_SLOT_END,
           label: `module API read import ${name}`,
-          matches: (entry) => entry === readImport,
+          matches: isSlotEntry(readImport),
           optional: true,
           start: MODULE_MANIFEST_IMPORT_SLOT_START,
         },
         {
           end: MODULE_MANIFEST_API_SLOT_END,
           label: `module API descriptor ${name}`,
-          matches: (entry) => entry === `'${name}': ${value},`,
+          matches: isSlotEntry(`'${name}': ${value},`),
           start: MODULE_MANIFEST_API_SLOT_START,
         },
         {
@@ -332,21 +463,21 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
         {
           end: MODULE_REGISTRATION_IMPORT_SLOT_END,
           label: `module API registration read import ${name}`,
-          matches: (entry) => entry === readImport,
+          matches: isSlotEntry(readImport),
           optional: true,
           start: MODULE_REGISTRATION_IMPORT_SLOT_START,
         },
         {
           end: MODULE_REGISTRATION_READ_SLOT_END,
           label: `module API registration read ${name}`,
-          matches: (entry) => entry === `${camel}Read,`,
+          matches: isSlotEntry(`${camel}Read,`),
           optional: true,
           start: MODULE_REGISTRATION_READ_SLOT_START,
         },
         {
           end: MODULE_REGISTRATION_API_SLOT_END,
           label: `module API registration ${name}`,
-          matches: (entry) => entry === `'${name}': () => import('${clientImport}'),`,
+          matches: isSlotEntry(`'${name}': () => import('${clientImport}'),`),
           start: MODULE_REGISTRATION_API_SLOT_START,
         },
       ]),
@@ -360,16 +491,17 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
       {
         end: GOVERNED_HTTP_API_IMPORT_SLOT_END,
         label: `governed HTTP API import ${name}`,
-        matches: (entry) => entry === `import { ${value} } from '${sharedApiImport}';`,
+        matches: isSlotEntry(`import { ${value} } from '${sharedApiImport}';`),
         start: GOVERNED_HTTP_API_IMPORT_SLOT_START,
       },
       {
         end: GOVERNED_HTTP_API_ADDITION_SLOT_END,
         label: `governed HTTP API mount ${name}`,
-        matches: (entry) => entry === `.addHttpApi(${value})`,
+        matches: isSlotEntry(`.addHttpApi(${value})`),
         start: GOVERNED_HTTP_API_ADDITION_SLOT_START,
       },
     ],
+    retired,
   );
   const handlerRoot = yield* updateOwnerFile(
     yield* trySync(() => resolveContainedPath(vertical.directory, 'api', 'index.ts'), 'failed to resolve handler root'),
@@ -378,7 +510,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
       {
         end: GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END,
         label: `governed HTTP handler import ${name}`,
-        matches: (entry) => entry === `import { ${camel}ReadApiLive } from './${name}-read-server.ts';`,
+        matches: isSlotEntry(`import { ${camel}ReadApiLive } from './${name}-read-server.ts';`),
         start: GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
       },
       {
@@ -388,7 +520,18 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
         start: GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
       },
     ],
+    retired,
   );
+  const aggregatePath = yield* trySync(
+    () => ownerClientAggregatePath(vertical),
+    'failed to resolve the owner client aggregate',
+  );
+  // A module without a client aggregate has none to clean.
+  const aggregate = (yield* (yield* FileSystem.FileSystem)
+    .exists(aggregatePath)
+    .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${aggregatePath}`, cause))))
+    ? [yield* updateOwnerFile(aggregatePath, `client aggregate of ${name}`, [], retired)]
+    : [];
   const deletes = yield* Effect.all(paths.map(deleteMutationEffect), {
     concurrency: 'unbounded',
   });
@@ -405,6 +548,7 @@ const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetire
     },
     sharedApi,
     handlerRoot,
+    ...aggregate,
     ...(publication === undefined ? [] : [yield* retirePackagePublication(publication, name)]),
     ...deletes,
   ];

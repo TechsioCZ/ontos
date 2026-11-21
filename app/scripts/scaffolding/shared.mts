@@ -2208,7 +2208,7 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
   return entries;
 };
 
-const normalizeGeneratedSlotEntry = (entry: string): string =>
+export const normalizeGeneratedSlotEntry = (entry: string): string =>
   entry
     .replaceAll(/,\s*(?<closing>[\]})])/gu, '$<closing>')
     .replaceAll(/\s+/gu, ' ')
