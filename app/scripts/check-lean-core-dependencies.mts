@@ -3,6 +3,7 @@ import posixPath from 'node:path/posix';
 import { NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
+  Cause,
   Console,
   Effect,
   Exit,
@@ -1546,6 +1547,10 @@ const command = Command.make(
 const [, invokedPath] = process.argv;
 if (invokedPath === import.meta.filename) {
   const leanCoreDependencyRuntime = ManagedRuntime.make(NodeServices.layer);
-  const exit = await leanCoreDependencyRuntime.runPromiseExit(Command.run(command, { version: '1.0.0' }));
+  // A failure that is not a listed violation (a file that cannot be read, a manifest that does not decode)
+  // would otherwise end the run with exit code 1 and no line saying why.
+  const exit = await leanCoreDependencyRuntime.runPromiseExit(
+    Command.run(command, { version: '1.0.0' }).pipe(Effect.tapCause((cause) => Console.error(Cause.pretty(cause)))),
+  );
   process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
 }
