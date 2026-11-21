@@ -2063,6 +2063,12 @@ const manifestName = 'package.json';
 const SourceTypeSchema = Schema.Literals(['commonjs', 'module']);
 type SourceType = typeof SourceTypeSchema.Type;
 
+/**
+ * The exported declarations that are certain to stay in the code a runtime runs. A namespace is not one:
+ * Node strips one that holds only types, which leaves the file CommonJS. An enum is left out with it.
+ */
+const runtimeDeclarations = new Set(['ClassDeclaration', 'FunctionDeclaration', 'VariableDeclaration']);
+
 /** Whether a top-level statement is a static import or export that stays in the code a runtime runs. */
 const isModuleSyntax = (statement: Node): boolean => {
   if (statement.type === 'ImportDeclaration') {
@@ -2072,7 +2078,11 @@ const isModuleSyntax = (statement: Node): boolean => {
     return statement.exportKind !== 'type';
   }
   if (statement.type === 'ExportNamedDeclaration') {
-    return statement.exportKind !== 'type' && (statement.declaration === null || !isTypeOnly(statement.declaration));
+    return (
+      statement.exportKind !== 'type' &&
+      (statement.declaration === null ||
+        (runtimeDeclarations.has(statement.declaration.type) && !isTypeOnly(statement.declaration)))
+    );
   }
   return statement.type === 'ExportDefaultDeclaration' && !isTypeOnly(statement.declaration);
 };
@@ -2088,8 +2098,8 @@ interface ParsedSource {
  * `"type": "module"`; and one that parses as a module with a top-level static import or export that
  * stays in the code that runs, which Node, TypeScript's CommonJS output and a bundler all run strict.
  * Every other source can run as sloppy CommonJS, and is parsed with the first goal that parses, CommonJS
- * and then module; `.js` and `.jsx` under `"type": "commonjs"` only as CommonJS. None when no goal
- * parses, so the source's loads are unknown.
+ * and then module; `.cjs`, `.cts`, and `.js` and `.jsx` under `"type": "commonjs"` only as CommonJS,
+ * the one goal Node gives them. None when no goal parses, so the source's loads are unknown.
  */
 const parseSource = (file: string, source: string, packageType: string | undefined): ParsedSource | undefined => {
   const extension = posixPath.extname(file);
@@ -2103,11 +2113,11 @@ const parseSource = (file: string, source: string, packageType: string | undefin
   if (['.mjs', '.mts'].includes(extension) || (!commonJsFormat && packageType === 'module')) {
     return firstParsing(['module'], true);
   }
-  if (['.js', '.jsx'].includes(extension) && packageType === 'commonjs') {
+  if (commonJsFormat || (['.js', '.jsx'].includes(extension) && packageType === 'commonjs')) {
     return firstParsing(['commonjs'], false);
   }
-  const asModule = commonJsFormat ? undefined : parseAs('module');
-  if (asModule?.errors.length === 0 && asModule.program.body.some(isModuleSyntax)) {
+  const asModule = parseAs('module');
+  if (asModule.errors.length === 0 && asModule.program.body.some(isModuleSyntax)) {
     return { moduleSource: true, result: asModule };
   }
   return firstParsing(['commonjs', 'module'], false);

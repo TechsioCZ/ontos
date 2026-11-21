@@ -1526,7 +1526,8 @@ const callerEscapes: readonly (readonly [form: string, source: string, line: num
 
 /**
  * Formats that can run as sloppy CommonJS: `.cjs`, `.cts` even with an import, and typeless `.js` and `.ts`
- * without an import or export that stays in the code Node runs once it strips the types.
+ * without an import or export that stays in the code Node runs once it strips the types; a namespace that
+ * holds only types is stripped whole.
  */
 const commonJsCapable: readonly (readonly [variant: string, extension: string, prefix: string])[] = [
   ['a .cjs source', '.cjs', ''],
@@ -1535,6 +1536,7 @@ const commonJsCapable: readonly (readonly [variant: string, extension: string, p
   ['a .js source of a typeless package', '.js', ''],
   ['a .ts source of a typeless package', '.ts', ''],
   ['a .ts source with only a type import', '.ts', "import type { Effect } from 'effect';\n"],
+  ['a .ts source that exports only a namespace of types', '.ts', 'export namespace N { export type X = 1 }\n'],
 ];
 
 for (const [form, source, line] of callerEscapes) {
@@ -1693,6 +1695,17 @@ it.live('parses a .cjs source as CommonJS, where a top-level return is valid', (
     ).toEqual(betaRuntimeEdge(`${early}:4`));
   }),
 );
+
+for (const extension of ['.cjs', '.cts']) {
+  it.live(`parses a ${extension} source as CommonJS only, so a top-level await does not parse`, () =>
+    Effect.gen(function* commonJsOnly() {
+      const waiting = `verticals/alpha/src/waiting${extension}`;
+      expect(yield* freezeViolations({ [waiting]: 'await 0;\n' })).toEqual([
+        `${waiting}:1: Workspace source does not parse, so the package edges it makes are unknown`,
+      ]);
+    }),
+  );
+}
 
 for (const extension of ['.js', '.jsx']) {
   it.live(`parses a ${extension} source as CommonJS when it does not parse as a module, and only then fails it`, () =>
