@@ -1445,6 +1445,63 @@ for (const [form, relative, source, line] of helperEscapes) {
   );
 }
 
+it.live('keeps the load of a helper with eval anywhere in its file computed', () =>
+  Effect.gen(function* fileEval() {
+    const file = 'verticals/alpha/src/file-eval.ts';
+    expect(
+      yield* freezeViolations({
+        [file]:
+          "function load(p: string) {\n  return require(p);\n}\neval(\"load = () => require('@app/beta')\");\nexport const e = load('effect');\n",
+      }),
+    ).toEqual([computedLoad(file, [2])]);
+  }),
+);
+
+const commonJsAlpha = { [alphaManifest]: JSON.stringify({ name: alphaName, type: 'commonjs' }) } as const;
+const ownBaseLoader = "const here = require('node:module').createRequire(__filename);\n";
+const blockHelper =
+  "{\n  function load(p) {\n    return require(p);\n  }\n  load('effect');\n}\nmodule.exports = load('@app/beta');\n";
+
+for (const [variant, file, files] of [
+  ['a .cjs source', 'verticals/alpha/src/b.cjs', {}],
+  ['a .js source of a commonjs package', 'verticals/alpha/src/b.js', commonJsAlpha],
+] as const) {
+  it.live(`takes every direct call of a helper's name in ${variant} as its call, outside its block too`, () =>
+    Effect.gen(function* blockFunction() {
+      expect(yield* freezeViolations({ ...files, [file]: blockHelper })).toEqual(betaRuntimeEdge(`${file}:7`));
+    }),
+  );
+}
+
+for (const [variant, extra] of [
+  ['beside a direct call', "load('node:path');\n"],
+  ['as its only other occurrence', ''],
+] as const) {
+  it.live(`keeps a helper computed whose name a default parameter captures, ${variant}`, () =>
+    Effect.gen(function* capturedHelper() {
+      const file = 'verticals/alpha/src/capture.js';
+      expect(
+        yield* freezeViolations({
+          ...commonJsAlpha,
+          [file]: `${ownBaseLoader}function load(p) {\n  return here(p);\n}\n${extra}function run(read = load) {\n  var load;\n  return read('../../beta/package.json');\n}\nrun();\n`,
+        }),
+      ).toEqual([computedLoad(file, [3])]);
+    }),
+  );
+}
+
+it.live('keeps the load of a helper in a file with a with statement computed', () =>
+  Effect.gen(function* withStatement() {
+    const file = 'verticals/alpha/src/with.js';
+    expect(
+      yield* freezeViolations({
+        ...commonJsAlpha,
+        [file]: `${ownBaseLoader}function load(p) {\n  with ({ ['p']: '../../beta/package.json' }) {\n    return here(p);\n  }\n}\nload('effect');\n`,
+      }),
+    ).toEqual([computedLoad(file, [4])]);
+  }),
+);
+
 it.live('resolves the literals a same-file helper passes to its loader, and counts any other helper as computed', () =>
   Effect.gen(function* helperParameter() {
     const config = 'verticals/alpha/backend-federation.config.ts';
