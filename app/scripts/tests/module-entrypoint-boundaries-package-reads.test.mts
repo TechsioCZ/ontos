@@ -1,9 +1,28 @@
+import { mkdir, symlink } from 'node:fs/promises';
 import path from 'node:path';
-import { Effect } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { undeclaredPackageReadImports } from '../check-module-entrypoint-boundaries.mts';
 import { hasCompleteGeneratedModuleApiSeam } from '../generated-governed-http-boundary.mts';
-import { readPricingSourceTree } from './module-entrypoint-boundary-fixtures.mts';
+import {
+  APP_PACKAGE_LINK_DIRECTORY,
+  BOUNDARY_FIXTURE_SHELL_ID,
+  BOUNDARY_FIXTURE_SHELL_PATH,
+  BOUNDARY_FIXTURE_TOPOLOGY,
+  INVENTORY_DEPLOYMENT_ID,
+  INVENTORY_VERTICAL_PATH,
+  SHARED_CONTRACTS_WORKSPACE_NAME,
+  SHARED_CONTRACTS_WORKSPACE_PATH,
+  SHELL_PACKAGE_JSON_PATH,
+  SHELL_PACKAGE_SPECIFIER,
+  VERTICALS_WORKSPACE_DECLARATION,
+  WORKSPACE_DEPENDENCY_VERSION,
+  WORKSPACE_MANIFEST_PATH,
+  checkModuleEntrypointBoundaries,
+  makeFixture,
+  readPricingSourceTree,
+  write,
+} from './module-entrypoint-boundary-fixtures.mts';
 
 // Payment Term Catalog publishes `current-payment-terms` from its contract package; its other reads stay in the owner.
 const owner = 'verticals/payment-term-catalog';
@@ -41,7 +60,20 @@ const replaced = (source: string, from: string, to: string): string => {
   return source.replace(from, to);
 };
 
+const withoutLines = (source: string, lines: readonly string[]): string => {
+  let next = source;
+  for (const line of lines) {
+    next = replaced(next, line, '');
+  }
+  return next;
+};
+
 const claim = `"moduleApis": [\n      "${name}"\n    ]`;
+const paymentOwner: ContractOwnerFixture = {
+  appId: 'payment-term-catalog',
+  moduleId: 'payment.term-catalog',
+  packageName: '@app/payment-term-catalog',
+};
 const contractExport = `"./${name}": "./src/apis/${name}.ts",`;
 
 const seam = (
@@ -56,8 +88,38 @@ const seam = (
       changed.set(file, source);
     }
   }
-  return hasCompleteGeneratedModuleApiSeam(changed, sharedApiFile, 'payment-term-catalog');
+  return hasCompleteGeneratedModuleApiSeam(changed, sharedApiFile, paymentOwner.appId);
 };
+
+/** The seam's verdict and diagnostics after `changes`. */
+const judged = (sources: ReadonlyMap<string, string>, changes: readonly (readonly [string, string | undefined])[]) => {
+  const changed = new Map(sources);
+  for (const [file, source] of changes) {
+    if (source === undefined) {
+      changed.delete(file);
+    } else {
+      changed.set(file, source);
+    }
+  }
+  const diagnostics: string[] = [];
+  const valid = hasCompleteGeneratedModuleApiSeam(changed, sharedApiFile, paymentOwner.appId, diagnostics);
+  return { diagnostics: diagnostics.join('\n'), valid };
+};
+
+const secondPackage = 'packages/zz-reads';
+
+interface ContractOwnerFixture {
+  readonly appId: string;
+  readonly moduleId: string;
+  readonly packageName: string;
+}
+
+interface ContractPackageFixture {
+  readonly exports?: Readonly<Record<string, string | Readonly<Record<string, string>>>>;
+  readonly ontosContractOwner?: ContractOwnerFixture & { readonly moduleApis: readonly string[] };
+}
+
+const packageJson = (fields: ContractPackageFixture) => `${JSON.stringify({ name: '@app/zz-reads', ...fields })}\n`;
 
 it.live('finds a package read from its package and rejects orphan, unclaimed, unexported and duplicated reads', () =>
   Effect.gen(function* packageReadDiscovery() {
@@ -193,6 +255,44 @@ it.live('finds a package read from its package and rejects orphan, unclaimed, un
     ] as const) {
       expect(seam(sources, changes), label).toBe(false);
     }
+    // A header-carrying leaf is found whatever its package manifest says about exports, and judged by the module it names.
+    for (const [label, manifest] of [
+      ['without exports', packageJson({ ontosContractOwner: { ...paymentOwner, moduleApis: [] } })],
+      [
+        'with only an unrelated conditional root export',
+        packageJson({
+          exports: { '.': { import: './src/index.ts' } },
+          ontosContractOwner: { ...paymentOwner, moduleApis: [] },
+        }),
+      ],
+    ] as const) {
+      const verdict = judged(sources, [
+        [`${secondPackage}/package.json`, manifest],
+        [`${secondPackage}/src/apis/orphan.ts`, `${HEADER}export const OrphanApi = {};\n`],
+      ]);
+      expect(verdict.valid, label).toBe(false);
+      expect(verdict.diagnostics, label).toContain(`${secondPackage}/src/apis/orphan.ts: not a package read`);
+    }
+    // One read name of one owner has one claiming package, whatever the second package holds at that path.
+    for (const [label, leaf] of [
+      ['an ordinary file', 'export const currentPaymentTerms = true;\n'],
+      ['a copy of the contract', contract],
+    ] as const) {
+      const verdict = judged(sources, [
+        [
+          `${secondPackage}/package.json`,
+          packageJson({
+            exports: { [`./${name}`]: `./src/apis/${name}.ts` },
+            ontosContractOwner: { ...paymentOwner, moduleApis: [name] },
+          }),
+        ],
+        [`${secondPackage}/src/apis/${name}.ts`, leaf],
+      ]);
+      expect(verdict.valid, label).toBe(false);
+      expect(verdict.diagnostics, label).toContain(
+        `${name}: one read of payment.term-catalog is claimed by more than one package`,
+      );
+    }
   }),
 );
 
@@ -238,6 +338,42 @@ it.live('binds every owner file of a package read to its package and keeps the o
       ],
       ['./api re-exports the package read', sharedApiFile, `${sharedApi}\nexport * from '${contractSpecifier}';\n`],
       ['./api re-exports the mounted API value', sharedApiFile, `${sharedApi}\nexport { CurrentPaymentTermsApi };\n`],
+      // Outside the generated import slot, so only the owner-entry rule sees the second binding.
+      [
+        './api imports a second binding of the read and re-exports it',
+        sharedApiFile,
+        `import { CurrentPaymentTermsRequestSchema } from '${contractSpecifier}';\n${sharedApi}\nexport { CurrentPaymentTermsRequestSchema };\n`,
+      ],
+      [
+        './api imports a second binding of the read without exporting it',
+        sharedApiFile,
+        `import { CurrentPaymentTermsRequestSchema } from '${contractSpecifier}';\n${sharedApi}`,
+      ],
+      [
+        './api imports the API value under another local name',
+        sharedApiFile,
+        `import { CurrentPaymentTermsApi as PaymentTermsApi } from '${contractSpecifier}/client';\n${sharedApi}\nexport { PaymentTermsApi };\n`,
+      ],
+      [
+        './api exports the API value under another name',
+        sharedApiFile,
+        `${sharedApi}\nexport const X = CurrentPaymentTermsApi;\n`,
+      ],
+      [
+        './api renames the API value on export',
+        sharedApiFile,
+        `${sharedApi}\nexport { CurrentPaymentTermsApi as Renamed };\n`,
+      ],
+      [
+        './api exports a type alias that names the read',
+        sharedApiFile,
+        `${sharedApi}\ntype CurrentPaymentTermsShape = typeof CurrentPaymentTermsApi;\nexport type { CurrentPaymentTermsShape };\n`,
+      ],
+      [
+        './api/client aggregate imports the package contract',
+        aggregateFile,
+        `import { CurrentPaymentTermsApi } from '${contractSpecifier}';\n${aggregate}\nexport const leaked = CurrentPaymentTermsApi;\n`,
+      ],
       [
         './api/client aggregate re-exports the package client',
         aggregateFile,
@@ -252,6 +388,205 @@ it.live('binds every owner file of a package read to its package and keeps the o
       expect(source, label).not.toBe(sources.get(file));
       expect(seam(sources, [[file, source]]), label).toBe(false);
     }
+  }),
+);
+
+it.live('resolves every mount and read handler layer of the owner entries to a read of the module', () =>
+  Effect.gen(function* packageReadMounts() {
+    const sources = yield* loadSources([owner, contracts, 'packages/customer-payment-term-contracts']);
+    expect(seam(sources)).toBe(true);
+    const sharedApi = required(sources, sharedApiFile);
+    const handlerFile = `${owner}/api/index.ts`;
+    const handler = required(sources, handlerFile);
+    const manifest = required(sources, manifestFile);
+    const registration = required(sources, registrationFile);
+    const packageManifestSource = required(sources, packageManifest);
+    // The read is gone everywhere but the mount, the handler layer and their imports.
+    const removed = judged(sources, [
+      [packageContract, undefined],
+      [packageClient, undefined],
+      [`${owner}/src/api/${name}.read.ts`, undefined],
+      [serverFile, undefined],
+      [
+        packageManifest,
+        replaced(
+          replaced(replaced(packageManifestSource, claim, '"moduleApis": []'), `    ${contractExport}\n`, ''),
+          `    "./${name}/client": "./src/api/${name}-client.ts",\n`,
+          '',
+        ),
+      ],
+      [
+        manifestFile,
+        withoutLines(manifest, [
+          `import { CurrentPaymentTermsApi } from '${contractSpecifier}';\n`,
+          `import { currentPaymentTermsRead } from './src/api/${name}.read.ts';\n`,
+          `      '${name}': CurrentPaymentTermsApi,\n`,
+          `      {\n        apiKey: '${name}',\n        operationKey: 'currentPaymentTerms.execute',\n        registration: currentPaymentTermsRead,\n      },\n`,
+        ]),
+      ],
+      [
+        registrationFile,
+        withoutLines(registration, [
+          `      '${name}': () => import('${contractSpecifier}/client'),\n`,
+          `    currentPaymentTermsRead,\n`,
+          `import { currentPaymentTermsRead } from './src/api/${name}.read.ts';\n`,
+        ]),
+      ],
+    ]);
+    expect(removed.valid).toBe(false);
+    expect(removed.diagnostics).toContain(
+      `${sharedApiFile}: CurrentPaymentTermsApi is no read or Action of this module`,
+    );
+    expect(removed.diagnostics).toContain(
+      `${handlerFile}: currentPaymentTermsReadApiLive is no read or Action of this module`,
+    );
+    // Another module's real package read mounted in Payment, which neither declares nor registers it.
+    const foreign = 'PaymentTermAffectedUseAssessmentApi';
+    const mounted = judged(sources, [
+      [
+        sharedApiFile,
+        replaced(
+          replaced(
+            sharedApi,
+            '// </generated-governed-http-api-imports>',
+            `import { ${foreign} } from '@app/customer-payment-term-contracts/payment-term-affected-use-assessment';\n// </generated-governed-http-api-imports>`,
+          ),
+          '  // </generated-governed-http-api-additions>',
+          `  .addHttpApi(${foreign})\n  // </generated-governed-http-api-additions>`,
+        ),
+      ],
+    ]);
+    expect(mounted.valid).toBe(false);
+    expect(mounted.diagnostics).toContain(`${sharedApiFile}: ${foreign} is no read or Action of this module`);
+    expect(handler).toContain('currentPaymentTermsReadApiLive');
+  }),
+);
+
+/** A workspace the full entrypoint check runs on: Price Group Catalog, its contract package and a readiness-only module. */
+const makePackageReadWorkspace = Effect.fn(function* makePackageReadWorkspace() {
+  const root = yield* makeFixture();
+  const workspace = path.resolve(import.meta.dirname, '../..');
+  const priceGroups = 'verticals/price-group-catalog';
+  const priceGroupContracts = 'packages/price-group-catalog-contracts';
+  yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+  yield* write(
+    root,
+    BOUNDARY_FIXTURE_TOPOLOGY,
+    JSON.stringify({
+      shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+      verticals: [
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+        { id: 'price-group-catalog', path: priceGroups },
+        { id: 'warehouse', path: 'verticals/warehouse' },
+      ],
+    }),
+  );
+  for (const folder of [priceGroups, priceGroupContracts, SHARED_CONTRACTS_WORKSPACE_PATH]) {
+    for (const [file, source] of yield* readPricingSourceTree(workspace, folder)) {
+      yield* write(root, file, source);
+    }
+  }
+  yield* write(
+    root,
+    SHELL_PACKAGE_JSON_PATH,
+    JSON.stringify({
+      dependencies: Object.fromEntries(
+        ['@app/price-group-catalog', '@app/price-group-catalog-contracts'].map((dependency) => [
+          dependency,
+          WORKSPACE_DEPENDENCY_VERSION,
+        ]),
+      ),
+      name: SHELL_PACKAGE_SPECIFIER,
+    }),
+  );
+  yield* write(root, 'verticals/warehouse/package.json', JSON.stringify({ name: '@app/warehouse' }));
+  yield* write(
+    root,
+    'verticals/warehouse/vertical.manifest.ts',
+    '// @ontos-deployment-app-id warehouse\n// @ontos-module-id inventory.warehouse\nexport const warehouseManifest = {};\n',
+  );
+  yield* write(
+    root,
+    'verticals/warehouse/shared/api.ts',
+    [
+      "import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';",
+      '',
+      "export const warehouseApi = HttpApi.make('WarehouseApi').add(",
+      "  HttpApiGroup.make('foundation').add(HttpApiEndpoint.get('readiness', '/warehouse/readiness', {})),",
+      ');',
+      "export const warehouseApiContract = { readinessPath: '/warehouse-api/warehouse/readiness' } as const;",
+      '',
+    ].join('\n'),
+  );
+  yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+  for (const [linkName, folder] of [
+    ['price-group-catalog', priceGroups],
+    ['price-group-catalog-contracts', priceGroupContracts],
+    [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
+  ] as const) {
+    yield* Effect.promise(() =>
+      symlink(path.join(root, folder), path.join(root, APP_PACKAGE_LINK_DIRECTORY, linkName), 'dir'),
+    );
+  }
+  return root;
+});
+
+const entrypointFailure = Effect.fn(function* entrypointFailure(root: string) {
+  const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+  return Exit.isFailure(result) ? Cause.pretty(result.cause) : undefined;
+});
+
+it.live('requires the declared dependency for a package read a CommonJS source imports', () =>
+  Effect.gen(function* commonJsPackageRead() {
+    const root = yield* makePackageReadWorkspace();
+    const probe = `${BOUNDARY_FIXTURE_SHELL_PATH}/src/probe.cjs`;
+    yield* write(
+      root,
+      probe,
+      "module.exports = () => import('@app/price-group-catalog-contracts/price-group-definition/client');\n",
+    );
+    expect(yield* entrypointFailure(root)).toBeUndefined();
+    yield* write(
+      root,
+      SHELL_PACKAGE_JSON_PATH,
+      JSON.stringify({
+        dependencies: { '@app/price-group-catalog': WORKSPACE_DEPENDENCY_VERSION },
+        name: SHELL_PACKAGE_SPECIFIER,
+      }),
+    );
+    expect(yield* entrypointFailure(root)).toContain(probe);
+    expect(yield* entrypointFailure(root)).toContain('is a package read: declare its contract package');
+  }),
+);
+
+it.live('judges every header-carrying package leaf against the modules of the topology', () =>
+  Effect.gen(function* packageReadOwnership() {
+    const root = yield* makePackageReadWorkspace();
+    expect(yield* entrypointFailure(root)).toBeUndefined();
+    const leaf = 'packages/warehouse-reads/src/apis/stock-level.ts';
+    yield* write(root, leaf, `${HEADER}export const StockLevelApi = {};\n`);
+    const readsPackage = (contractOwner?: ContractOwnerFixture) => {
+      const manifest = { exports: { './stock-level': './src/apis/stock-level.ts' }, name: '@app/warehouse-reads' };
+      return write(
+        root,
+        'packages/warehouse-reads/package.json',
+        JSON.stringify(
+          contractOwner === undefined
+            ? manifest
+            : { ...manifest, ontosContractOwner: { ...contractOwner, moduleApis: ['stock-level'] } },
+        ),
+      );
+    };
+    // A package read naming a module that has only readiness is judged by that module's read seam.
+    yield* readsPackage({ appId: 'warehouse', moduleId: 'inventory.warehouse', packageName: '@app/warehouse' });
+    expect(yield* entrypointFailure(root)).toContain('verticals/warehouse/shared/api.ts');
+    yield* readsPackage({ appId: 'zz-orphan', moduleId: 'zz.orphan', packageName: '@app/zz-orphan' });
+    expect(yield* entrypointFailure(root)).toContain(leaf);
+    expect(yield* entrypointFailure(root)).toContain('which is no module of the topology');
+    yield* readsPackage();
+    expect(yield* entrypointFailure(root)).toContain(
+      'a module-api contract in a package without a valid ontosContractOwner',
+    );
   }),
 );
 
