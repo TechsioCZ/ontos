@@ -1186,7 +1186,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   const snapshotJson = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
     snapshot,
   );
-  yield* Effect.logInfo('Privacy composition environment byte count', new TextEncoder().encode(snapshotJson).length);
   const compositionContext = yield* Layer.build(NodeHttpServer.layerTest);
   const source = Context.get(compositionContext, HttpServer.HttpServer);
   yield* source.serve(Effect.succeed(HttpServerResponse.text(snapshotJson, { contentType: 'application/json' })));
@@ -1217,7 +1216,6 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     BETTER_AUTH_URL: 'http://localhost:3020',
     DATABASE_URL: isolated.connections.runtime.connectionString,
     ONTOS_1258_TEST_ADDITIONAL_LE: additionalLegalEntity,
-    ONTOS_1258_TEST_COMPOSITION: snapshotJson,
     ONTOS_1258_TEST_DATABASE: ownedName,
     ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
     ONTOS_1258_TEST_RUNTIME: ownedRuntime,

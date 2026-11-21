@@ -883,7 +883,6 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
       ONTOS_1258_OWNED_DATABASE_OID: capability.databaseOid,
       ONTOS_1258_PRIVACY_DIRECTORY: `${appRoot}verticals/privacy`,
       ONTOS_1258_TEST_ADDITIONAL_LE: 'none',
-      ONTOS_1258_TEST_COMPOSITION: snapshotJson,
       ONTOS_1258_TEST_DATABASE: capability.databaseName,
       ONTOS_1258_TEST_REVISION: snapshot.composition.revision,
       ONTOS_1258_TEST_RUNTIME: input.connections.runtime.user,
