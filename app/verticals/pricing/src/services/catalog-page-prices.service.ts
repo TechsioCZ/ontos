@@ -1,11 +1,17 @@
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
 import type { ExactPriceLookupFound } from '@app/pricing-contracts/domain/exact-price-lookup';
 import type { ExactPriceResolution } from '@app/pricing-contracts/domain/exact-price-resolution';
+import type { PriceGroupFallbackResolutionInput } from '@app/pricing-contracts/domain/price-group-fallback';
+import type {
+  PriceGroupInterpretation,
+  PriceGroupInterpretationBasis,
+} from '@app/pricing-contracts/domain/price-group-interpretation';
 import { compareQuantityTierDecimalValues } from '@app/pricing-contracts/domain/quantity-tier';
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import { DateTime, Effect, Match, Schema } from 'effect';
 
 import type {
+  CatalogPageCustomer,
   CatalogPagePrice,
   CatalogPagePriceItem,
   CatalogPagePricesRequest,
@@ -16,6 +22,7 @@ import type {
   ExactPriceResolutionService,
   ExactPriceResolutionTrustedContext,
 } from './exact-price-resolution.service.ts';
+import type { PriceGroupInterpretationService } from './price-group-interpretation.service.ts';
 import type { QuantityTierPersistence } from './quantity-tier-persistence.service.ts';
 
 /** The owner reads a catalogue page is resolved from, all inside the one scoped transaction of the Read. */
@@ -104,15 +111,99 @@ const catalogPagePriceOf = (
   );
 };
 
-/**
- * Prices a catalogue page for an anonymous visitor in the owner's own terms: each variant is the Guest input of
- * the exact Price resolution (the exact no-group Price key of its Channel, Market, currency and Unit basis) at
- * the trusted instant, with the same Current Tenant Currency Support proof the whole-candidate decision uses.
- */
-export const readCatalogPagePrices = Effect.fn('CatalogPagePrices.read')(function* read(
+/** One variant of the page with the exact Price resolution input it is priced by. */
+export interface CatalogPageVariant {
+  readonly item: CatalogPagePriceItem;
+  readonly resolutionInput: PriceGroupFallbackResolutionInput;
+}
+
+const basisOf = (
+  request: CatalogPagePricesRequest,
+  item: CatalogPagePriceItem,
+  trusted: ExactPriceResolutionTrustedContext,
+): PriceGroupInterpretationBasis => ({
+  catalogSelection: item.catalogSelection,
+  commercialScope: {
+    channelId: request.channelId,
+    marketId: request.marketId,
+    sellingLegalEntityId: trusted.legalEntityId,
+  },
+  currencyCode: request.currencyCode,
+  unitBasis: item.unitBasis,
+});
+
+/** An anonymous visitor's page: each variant is the owner's Guest input, the exact no-group Price key. */
+export const guestCatalogPageVariants = (
   request: CatalogPagePricesRequest,
   trusted: ExactPriceResolutionTrustedContext,
+): readonly CatalogPageVariant[] =>
+  request.items.map((item) => ({
+    item,
+    resolutionInput: {
+      _tag: 'GUEST',
+      basis: basisOf(request, item, trusted),
+      effectiveAt: DateTime.formatIso(trusted.trustedOperationAt),
+    },
+  }));
+
+/** The resolution input of an interpreted variant, exactly as the whole-candidate decision builds it. */
+const customerResolutionInput = (
+  interpretation: PriceGroupInterpretation,
+  effectiveAt: string,
+  profile: CatalogPageCustomer['profile'],
+): PriceGroupFallbackResolutionInput =>
+  Match.value(interpretation).pipe(
+    Match.tag('ASSIGNED', (assigned) => ({ _tag: 'ASSIGNED' as const, effectiveAt, interpretation: assigned })),
+    Match.tag('NONE', (none) => ({
+      _tag: 'OWNER_NONE' as const,
+      effectiveAt,
+      interpretation: none,
+      ownerResolution: { effectiveAt, profile, resolution: none.assignmentResolution },
+    })),
+    Match.orElse((blocked) => ({ _tag: 'BLOCKED' as const, effectiveAt, interpretation: blocked })),
+  );
+
+/**
+ * The signed-in customer's page: Commerce's own answer for the customer's profile at the trusted instant, interpreted
+ * for each variant. An assigned group prices with its own Group key first and with the no-group key only once the
+ * Group key is proven absent; Commerce's NONE prices with the no-group key; an assignment Commerce or the Price Group
+ * Catalog cannot prove blocks the variant instead of pricing it as a guest. It calls other owners, so it runs before
+ * the Read's transaction.
+ */
+export const customerCatalogPageVariants = Effect.fn('CatalogPagePrices.customerVariants')(function* customerVariants(
+  request: CatalogPagePricesRequest,
+  customer: CatalogPageCustomer,
+  trusted: ExactPriceResolutionTrustedContext,
+  interpret: PriceGroupInterpretationService['interpret'],
+) {
+  const effectiveAt = DateTime.formatIso(trusted.trustedOperationAt);
+  const assignmentRequest = {
+    authorizationSubject: customer.authorizationSubject,
+    effectiveAt,
+    profile: customer.profile,
+  };
+  return yield* Effect.forEach(
+    request.items,
+    (item) =>
+      interpret({ assignmentRequest, basis: basisOf(request, item, trusted) }).pipe(
+        Effect.map((interpretation): CatalogPageVariant => ({
+          item,
+          resolutionInput: customerResolutionInput(interpretation, effectiveAt, customer.profile),
+        })),
+      ),
+    { concurrency: 1 },
+  );
+});
+
+/**
+ * Prices a catalogue page in the owner's own terms: each variant through the exact Price resolution with its own
+ * resolution input at the trusted instant, with the same Current Tenant Currency Support proof the whole-candidate
+ * decision uses.
+ */
+export const readCatalogPagePrices = Effect.fn('CatalogPagePrices.read')(function* read(
+  trusted: ExactPriceResolutionTrustedContext,
   owner: CatalogPagePricesOwnerReads,
+  variants: readonly CatalogPageVariant[],
 ) {
   const effectiveAt = DateTime.formatIso(trusted.trustedOperationAt);
   const currencySupport = yield* resolveCurrentSupportedCurrencies(
@@ -124,29 +215,10 @@ export const readCatalogPagePrices = Effect.fn('CatalogPagePrices.read')(functio
     return { _tag: 'CURRENCY_SUPPORT_NOT_CURRENT' as const, currencySupport, effectiveAt };
   }
   const prices = yield* Effect.forEach(
-    request.items,
-    (item) =>
+    variants,
+    ({ item, resolutionInput }) =>
       owner
-        .resolveExactPrice(
-          {
-            currencySupport,
-            resolutionInput: {
-              _tag: 'GUEST',
-              basis: {
-                catalogSelection: item.catalogSelection,
-                commercialScope: {
-                  channelId: request.channelId,
-                  marketId: request.marketId,
-                  sellingLegalEntityId: trusted.legalEntityId,
-                },
-                currencyCode: request.currencyCode,
-                unitBasis: item.unitBasis,
-              },
-              effectiveAt,
-            },
-          },
-          trusted,
-        )
+        .resolveExactPrice({ currencySupport, resolutionInput }, trusted)
         .pipe(Effect.flatMap((resolution) => catalogPagePriceOf(item, resolution, owner.readCurrentQuantityTierSet))),
     // Every variant is read through the one owner transaction of this Read, one statement after another.
     { concurrency: 1 },

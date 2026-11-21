@@ -80,6 +80,15 @@ const customerContextModuleId = 'commerce.customer-context';
 const purchaseContextVerificationProviderEntrypoint =
   'commerce.customer-context.api.pricing-purchase-context-verification';
 const purchaseContextCurrentAuthorityEvidence = 'commerce.pricing.evidence.purchase-context.current-authority';
+const priceGroupAssignmentSetEvidence = 'commerce.pricing.evidence.price-group.complete-current-assignment-set';
+const priceGroupProfileRevisionEvidence = 'commerce.pricing.evidence.price-group.exact-profile-revision';
+const priceGroupDefinitionEvidence = 'commerce.pricing.evidence.price-group.exact-current-definition';
+const priceGroupScopeEvidence = 'commerce.pricing.evidence.price-group.scope-compatibility';
+const profilePriceGroupCondition = 'commerce.pricing.condition.profile-price-group-assignment-required';
+const assignedGroupCompatibilityCondition = 'commerce.pricing.condition.assigned-price-group-compatibility-required';
+const priceGroupResolutionProviderEntrypoint = 'commerce.customer-context.api.customer-price-group-resolution';
+const priceGroupCompatibilityProviderEntrypoint = 'pricing.price-group-catalog.api.validate-price-group-compatibility';
+const priceGroupCatalogModuleId = 'pricing.price-group-catalog';
 
 export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -388,30 +397,46 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
         },
       },
       {
-        condition: 'commerce.pricing.condition.profile-price-group-assignment-required',
+        condition: profilePriceGroupCondition,
         entrypointKey: currentPricingDecisionRead.descriptor.entrypoint.entrypointKey,
-        evidence: [
-          'commerce.pricing.evidence.price-group.complete-current-assignment-set',
-          'commerce.pricing.evidence.price-group.exact-profile-revision',
-        ],
+        evidence: [priceGroupAssignmentSetEvidence, priceGroupProfileRevisionEvidence],
         key: 'commerce.pricing.requirement.current-pricing-decision-profile-price-group',
         provider: {
-          entrypointKey: 'commerce.customer-context.api.customer-price-group-resolution',
+          entrypointKey: priceGroupResolutionProviderEntrypoint,
           moduleId: customerContextModuleId,
           schemaVersion: '1',
         },
       },
       {
-        condition: 'commerce.pricing.condition.assigned-price-group-compatibility-required',
+        condition: assignedGroupCompatibilityCondition,
         entrypointKey: currentPricingDecisionRead.descriptor.entrypoint.entrypointKey,
-        evidence: [
-          'commerce.pricing.evidence.price-group.exact-current-definition',
-          'commerce.pricing.evidence.price-group.scope-compatibility',
-        ],
+        evidence: [priceGroupDefinitionEvidence, priceGroupScopeEvidence],
         key: 'commerce.pricing.requirement.current-pricing-decision-assigned-group-compatibility',
         provider: {
-          entrypointKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
-          moduleId: 'pricing.price-group-catalog',
+          entrypointKey: priceGroupCompatibilityProviderEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: profilePriceGroupCondition,
+        entrypointKey: catalogPagePricesRead.descriptor.entrypoint.entrypointKey,
+        evidence: [priceGroupAssignmentSetEvidence, priceGroupProfileRevisionEvidence],
+        key: 'commerce.pricing.requirement.catalog-page-prices-profile-price-group',
+        provider: {
+          entrypointKey: priceGroupResolutionProviderEntrypoint,
+          moduleId: customerContextModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: assignedGroupCompatibilityCondition,
+        entrypointKey: catalogPagePricesRead.descriptor.entrypoint.entrypointKey,
+        evidence: [priceGroupDefinitionEvidence, priceGroupScopeEvidence],
+        key: 'commerce.pricing.requirement.catalog-page-prices-assigned-group-compatibility',
+        provider: {
+          entrypointKey: priceGroupCompatibilityProviderEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
           schemaVersion: '1',
         },
       },
@@ -472,30 +497,24 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
         },
       },
       {
-        condition: 'commerce.pricing.condition.profile-price-group-assignment-required',
+        condition: profilePriceGroupCondition,
         entrypointKey: manageQuotationAction.descriptor.entrypoint.entrypointKey,
-        evidence: [
-          'commerce.pricing.evidence.price-group.complete-current-assignment-set',
-          'commerce.pricing.evidence.price-group.exact-profile-revision',
-        ],
+        evidence: [priceGroupAssignmentSetEvidence, priceGroupProfileRevisionEvidence],
         key: 'commerce.pricing.requirement.manage-quotation-profile-price-group',
         provider: {
-          entrypointKey: 'commerce.customer-context.api.customer-price-group-resolution',
+          entrypointKey: priceGroupResolutionProviderEntrypoint,
           moduleId: customerContextModuleId,
           schemaVersion: '1',
         },
       },
       {
-        condition: 'commerce.pricing.condition.assigned-price-group-compatibility-required',
+        condition: assignedGroupCompatibilityCondition,
         entrypointKey: manageQuotationAction.descriptor.entrypoint.entrypointKey,
-        evidence: [
-          'commerce.pricing.evidence.price-group.exact-current-definition',
-          'commerce.pricing.evidence.price-group.scope-compatibility',
-        ],
+        evidence: [priceGroupDefinitionEvidence, priceGroupScopeEvidence],
         key: 'commerce.pricing.requirement.manage-quotation-assigned-group-compatibility',
         provider: {
-          entrypointKey: 'pricing.price-group-catalog.api.validate-price-group-compatibility',
-          moduleId: 'pricing.price-group-catalog',
+          entrypointKey: priceGroupCompatibilityProviderEntrypoint,
+          moduleId: priceGroupCatalogModuleId,
           schemaVersion: '1',
         },
       },

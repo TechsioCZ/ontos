@@ -404,6 +404,7 @@ export default defineConfig({
       // These exact Pricing composition roots construct owner-local services behind Context-backed exports; the test support file only builds deterministic evidence.
       files: [
         'verticals/pricing/src/actions/manage-quotation.action.ts',
+        'verticals/pricing/src/api/catalog-page-prices.read.ts',
         'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts',
         'verticals/pricing/src/integrations/current-pricing-decision-whole-evaluation-adapters.ts',
         'verticals/pricing/src/services/current-pricing-decision-evaluation.service.ts',
@@ -1050,9 +1051,11 @@ export default defineConfig({
         'verticals/price-group-catalog/shared/apis/validate-price-group-compatibility.ts',
         'verticals/price-group-catalog/src/api/price-group-definition-client.ts',
         'verticals/price-group-catalog/src/api/validate-price-group-compatibility-client.ts',
+        'verticals/pricing/shared/apis/catalog-page-prices.ts',
         'verticals/pricing/shared/apis/current-pricing-decision.ts',
         'verticals/pricing/shared/apis/current-supported-currencies.ts',
         'verticals/pricing/shared/apis/price-definition.ts',
+        'verticals/pricing/src/api/catalog-page-prices-client.ts',
         'verticals/pricing/src/api/current-pricing-decision-client.ts',
         'verticals/pricing/src/api/current-supported-currencies-client.ts',
         'verticals/pricing/src/api/price-definition-client.ts',

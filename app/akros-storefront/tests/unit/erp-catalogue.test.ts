@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   shownVariantRefs,
   erpCardSummary,
+  erpCopy,
   erpPriceLabel,
+  isYourPrice,
   erpStockLabel,
   toErpProducts,
   type CatalogPagePrices,
@@ -66,9 +68,10 @@ const onHand: CatalogVariantOnHand[] = [
   { outcome: "CONFLICTING_BINDINGS", variantRef: variantRef(5) },
   { outcome: "NO_STOCK_ITEM", variantRef: variantRef(6) },
 ];
-const found = (n: number, amount: string) => ({
+const found = (n: number, amount: string, group?: "PRICE_GROUP") => ({
   _tag: "PRICE_FOUND",
   catalogSelection: { productRef, variantRef: variantRef(n) },
+  priceGroupSelector: { kind: group ?? "NO_GROUP" },
   priceRevision: { monetaryAmount: { amount, currencyCode: "CZK" } },
 });
 const prices: CatalogPagePrices = {
@@ -116,7 +119,38 @@ describe("ERP product page model", () => {
       priceLabel: "od 99,00\u00a0Kč bez DPH",
       stockLabel: "Skladem",
       stockTone: "in-stock",
+      yourPrice: false,
     });
+  });
+
+  it("marks only a Price of the signed-in customer's own Price Group „Vaše cena“", () => {
+    const groupPriced: CatalogPagePrices = {
+      _tag: "CATALOG_PAGE_PRICED",
+      prices: [found(1, "950", "PRICE_GROUP"), found(2, "99")],
+    };
+    const [product] = toErpProducts(page, onHand, groupPriced);
+    expect(product!.variants.slice(0, 2).map(({ price }) => [price, isYourPrice(price)])).toEqual([
+      [{ kind: "price", amount: "950", currencyCode: "CZK", yours: true }, true],
+      [{ kind: "price", amount: "99", currencyCode: "CZK", yours: false }, false],
+    ]);
+    expect(product!.variants.slice(2).every(({ price }) => !isYourPrice(price))).toBe(true);
+    // The card shows the lowest price: the no-group 99 here, so no label.
+    expect(erpCardSummary(product!, "cs")).toMatchObject({
+      priceLabel: "od 99,00\u00a0Kč bez DPH",
+      yourPrice: false,
+    });
+    const [single] = toErpProducts(
+      { count: 1, items: [{ ...page.items[0]!, variants: [variant(1)] }] },
+      onHand,
+      groupPriced,
+    );
+    expect(erpCardSummary(single!, "cs")).toEqual({
+      priceLabel: "950,00\u00a0Kč bez DPH",
+      stockLabel: "Skladem: 42 ks",
+      stockTone: "in-stock",
+      yourPrice: true,
+    });
+    expect(erpCopy.yourPrice).toBe("Vaše cena");
   });
 
   it("prices nothing when Currency Support is not current, and shows unknown stock without a figure", () => {
@@ -127,6 +161,7 @@ describe("ERP product page model", () => {
       priceLabel: "Cena na dotaz",
       stockLabel: "Dostupnost ověřujeme",
       stockTone: "limited-stock",
+      yourPrice: false,
     });
   });
 
@@ -162,6 +197,7 @@ describe("ERP product page model", () => {
       priceLabel: "1\u00a0234,50\u00a0Kč bez DPH",
       stockLabel: "Skladem: 42 ks",
       stockTone: "in-stock",
+      yourPrice: false,
     });
   });
 });

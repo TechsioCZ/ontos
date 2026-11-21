@@ -13361,6 +13361,12 @@
             "moduleKey": "commerce.pricing",
             "role": "api",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "identity"
           }
         },
         {
