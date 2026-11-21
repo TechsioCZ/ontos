@@ -24,7 +24,11 @@ import type {
   PriceActionResultLookupPersistence,
 } from '../../src/services/price-persistence.service.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
-import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
+import {
+  acceptedPriceSourceProvenanceMatches,
+  preparePriceSourceEvidence,
+  unchangedPriceSourceProvenanceMatches,
+} from '../../src/services/price-source-provenance.service.ts';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { priceGroupSourcePricesPersistenceForScope } from '../../src/persistence/price-group-source-prices-persistence.ts';
 import type { PriceGroupSourcePricesRequest } from '../../shared/apis/price-group-source-prices.ts';
@@ -88,30 +92,34 @@ const priceRef = (resourceId: string): PriceRef => ({
 });
 
 const sourceAssertion = (input: {
+  readonly amount?: string;
+  readonly effectiveAt?: string;
   readonly importedAt: string;
   readonly sourceAssertionId: string;
+  readonly sourceAuthorityRef?: string | undefined;
+  readonly sourceChangeCorrelation?: string;
   readonly sourceRecordVersion?: string;
 }): PriceSourceAssertionInput =>
   Schema.decodeSync(PriceSourceAssertionInputSchema)({
     lineage: { kind: 'INITIAL' },
     mapping: { mappingContractRef: 'erp-price-v2', mappingContractVersion: '2' },
     originalAssertion: {
-      monetaryAmount: { amount: '100.000000000', currencyCode: 'CZK' },
+      monetaryAmount: { amount: input.amount ?? '100.000000000', currencyCode: 'CZK' },
       monetaryBoundary: 'PRE_TAX',
       unitBasis: { quantity: '1.000000000', unitRef },
     },
     sourceAssertionId: input.sourceAssertionId,
-    sourceAuthority: { sourceAuthorityRef: 'pricing-owner', sourceAuthorityVersion: '7' },
+    sourceAuthority: { sourceAuthorityRef: input.sourceAuthorityRef ?? 'pricing-owner', sourceAuthorityVersion: '7' },
     sourceRecord: {
-      sourceChangeCorrelation: 'erp-change-84',
+      sourceChangeCorrelation: input.sourceChangeCorrelation ?? 'erp-change-84',
       sourceRecordRef: 'erp-price-row-42',
       sourceRecordVersion: input.sourceRecordVersion ?? '9',
       sourceSystem: { ownerModuleId: 'commerce.pricing', sourceSystemRef: 'erp-eu' },
     },
     timing: {
       importedAt: input.importedAt,
-      ownerBusinessEffectiveAt: effectiveFrom,
-      sourceEffectiveAt: '2026-09-27T09:55:00.000Z',
+      ownerBusinessEffectiveAt: input.effectiveAt ?? effectiveFrom,
+      sourceEffectiveAt: input.effectiveAt ?? '2026-09-27T09:55:00.000Z',
     },
   });
 
@@ -122,9 +130,9 @@ const evidenceFor = (
 ): PriceSourceEvidence => {
   const prepared = preparePriceSourceEvidence({
     actingPrincipalId: principalId,
-    effectiveFrom,
+    effectiveFrom: assertion.timing.ownerBusinessEffectiveAt,
     identityKey: assertedIdentityKey,
-    monetaryAmount: { amount: '100.000000000', currencyCode: 'CZK' },
+    monetaryAmount: assertion.originalAssertion.monetaryAmount,
     sourceAssertion: assertion,
     tenantId,
     trustedOperationAt: instant(recordedAt),
@@ -144,15 +152,51 @@ const defineCommand = (input: {
 }): DefinePricePersistenceCommand => ({
   actingPrincipalId: principalId,
   actionInvocationId: input.actionInvocationId,
-  effectiveFrom,
+  effectiveFrom: input.evidence.sourceAssertion.timing.ownerBusinessEffectiveAt,
   identityKey: input.identityKey ?? identityKey,
-  monetaryAmount: { amount: '100.000000000', currencyCode: 'CZK' },
+  monetaryAmount: input.evidence.sourceAssertion.originalAssertion.monetaryAmount,
   priceRef: priceRef(input.priceId),
   reason: 'Record the exact owner-qualified source Price.',
   requestCorrelationId: input.requestCorrelationId,
   sourceEvidence: input.evidence,
   trustedOperationAt: instant(input.evidence.recordedAt),
 });
+
+/**
+ * What a source such as Symmy sends for one stable price record: a new Price id, source assertion and change
+ * correlation each time, the same source authority and mapping, its own effective time.
+ */
+const sourceDefine = (input: {
+  readonly actionInvocationId: string;
+  readonly amount: string;
+  readonly effectiveAt: string;
+  readonly recordedAt: string;
+  readonly sourceAssertionId: string;
+  readonly sourceAuthorityRef?: string;
+  readonly supersede?: false;
+}) => {
+  const evidence = evidenceFor(
+    sourceAssertion({
+      amount: input.amount,
+      effectiveAt: input.effectiveAt,
+      importedAt: input.recordedAt,
+      sourceAssertionId: input.sourceAssertionId,
+      sourceAuthorityRef: input.sourceAuthorityRef,
+      sourceChangeCorrelation: input.sourceAssertionId,
+    }),
+    input.recordedAt,
+  );
+  const command = defineCommand({
+    actionInvocationId: input.actionInvocationId,
+    evidence,
+    priceId: input.actionInvocationId,
+    requestCorrelationId: `price-source:same-source:${input.actionInvocationId}`,
+  });
+  return {
+    command: input.supersede === false ? command : { ...command, onExactKeyBound: 'SUPERSEDE_SAME_SOURCE' as const },
+    evidence,
+  };
+};
 
 const withPersistence = <Value, Failure>(
   database: PricingTestDatabase,
@@ -668,4 +712,217 @@ it.live(
         return yield* Effect.void;
       }),
     ),
+);
+
+it.live('lets the same source change its own Current Price at a bound exact key and keeps every other key bound', () =>
+  Effect.scoped(
+    Effect.gen(function* sameSourcePriceSupersession() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      yield* cleanup(admin);
+      yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
+
+      const define = (request: ReturnType<typeof sourceDefine>) =>
+        withPersistence(runtime, (persistence) => persistence.define(request.command));
+      const boundPriceId = 'e7600000-0000-4000-8000-000000000101';
+      const firstSourceAssertionId = 'e7600000-0000-4000-8000-000000000111';
+      const changedSourceAssertionId = 'e7600000-0000-4000-8000-000000000112';
+
+      const first = yield* define(
+        sourceDefine({
+          actionInvocationId: boundPriceId,
+          amount: '100.000000000',
+          effectiveAt: '2026-09-27T10:00:00.000Z',
+          recordedAt: '2026-09-27T10:02:00.000Z',
+          sourceAssertionId: firstSourceAssertionId,
+        }),
+      );
+      expect(first).toMatchObject({ definition: { priceRef: priceRef(boundPriceId) }, outcome: 'CREATED' });
+      if (first.outcome !== 'CREATED') {
+        return yield* Effect.die('Expected the first source Price');
+      }
+
+      // A changed amount: the same Price takes it as its next revision from the asserted time.
+      const changedRequest = sourceDefine({
+        actionInvocationId: 'e7600000-0000-4000-8000-000000000102',
+        amount: '120.000000000',
+        effectiveAt: '2026-09-28T10:00:00.000Z',
+        recordedAt: '2026-09-28T10:02:00.000Z',
+        sourceAssertionId: changedSourceAssertionId,
+      });
+      const changed = yield* define(changedRequest);
+      expect(changed).toMatchObject({
+        definition: {
+          priceRef: priceRef(boundPriceId),
+          revision: {
+            effectiveFrom: '2026-09-28T10:00:00.000Z',
+            monetaryAmount: { amount: '120.000000000', currencyCode: 'CZK' },
+            revision: 2,
+          },
+        },
+        outcome: 'CREATED',
+        provenance: {
+          evidence: {
+            lineage: {
+              actingPrincipalId: principalId,
+              kind: 'SUPERSESSION',
+              supersededSourceAssertionId: firstSourceAssertionId,
+            },
+            sourceAssertion: {
+              lineage: { kind: 'SUPERSESSION', supersededSourceAssertionId: firstSourceAssertionId },
+              sourceAssertionId: changedSourceAssertionId,
+            },
+          },
+          provenanceRef: changedSourceAssertionId,
+        },
+      });
+      if (changed.outcome !== 'CREATED') {
+        return yield* Effect.die('Expected the superseding source revision');
+      }
+      // The define-price Action accepts this answer as the canonical write of the asserted fact.
+      expect(
+        acceptedPriceSourceProvenanceMatches({
+          definition: changed.definition,
+          expectedEvidence: changedRequest.evidence,
+          provenance: changed.provenance,
+        }),
+      ).toBe(true);
+      const schedule = yield* withPersistence(runtime, (persistence) =>
+        persistence.readSchedule(priceRef(boundPriceId), instant('2026-09-28T10:02:00.000Z')),
+      );
+      if (schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' || schedule.schedule.current === undefined) {
+        return yield* Effect.die('Expected the revised Current source Price');
+      }
+      expect(schedule.schedule.current.definition.revision).toEqual(changed.definition.revision);
+      expect(
+        schedule.schedule.revisions.map(({ definition, effectivePeriod }) => [
+          definition.revision.revision,
+          effectivePeriod,
+        ]),
+      ).toEqual([
+        [1, { effectiveFrom: '2026-09-27T10:00:00.000Z', effectiveTo: '2026-09-28T10:00:00.000Z' }],
+        [2, { effectiveFrom: '2026-09-28T10:00:00.000Z', effectiveTo: null }],
+      ]);
+      expect(
+        yield* withPersistence(runtime, (persistence) =>
+          persistence.lookupResult({ actionInvocationId: 'e7600000-0000-4000-8000-000000000102' }),
+        ),
+      ).toMatchObject({ outcome: 'PRICE_ACTION_RESULT_FOUND', result: { outcome: 'CREATED' } });
+
+      // The same amount again changes nothing and answers the Current source fact.
+      const unchangedRequest = sourceDefine({
+        actionInvocationId: 'e7600000-0000-4000-8000-000000000103',
+        amount: '120.000000000',
+        effectiveAt: '2026-09-29T10:00:00.000Z',
+        recordedAt: '2026-09-29T10:02:00.000Z',
+        sourceAssertionId: 'e7600000-0000-4000-8000-000000000113',
+      });
+      const unchanged = yield* define(unchangedRequest);
+      expect(unchanged).toMatchObject({
+        definition: { revision: changed.definition.revision },
+        outcome: 'REUSED',
+        provenance: { provenanceRef: changedSourceAssertionId },
+      });
+      if (unchanged.outcome !== 'REUSED') {
+        return yield* Effect.die('Expected the unchanged source Price');
+      }
+      expect(
+        unchangedPriceSourceProvenanceMatches({
+          definition: unchanged.definition,
+          expectedEvidence: unchangedRequest.evidence,
+          monetaryAmount: unchangedRequest.command.monetaryAmount,
+          provenance: unchanged.provenance,
+        }),
+      ).toBe(true);
+
+      // Another source authority, and any caller that does not ask for it, still meet the bound key.
+      const boundConflict = { outcome: 'CONFLICT', reason: 'EXACT_KEY_ALREADY_BOUND' };
+      expect(
+        yield* define(
+          sourceDefine({
+            actionInvocationId: 'e7600000-0000-4000-8000-000000000104',
+            amount: '130.000000000',
+            effectiveAt: '2026-09-30T10:00:00.000Z',
+            recordedAt: '2026-09-30T10:02:00.000Z',
+            sourceAssertionId: 'e7600000-0000-4000-8000-000000000114',
+            sourceAuthorityRef: 'other-price-owner',
+          }),
+        ),
+      ).toEqual(boundConflict);
+      expect(
+        yield* define(
+          sourceDefine({
+            actionInvocationId: 'e7600000-0000-4000-8000-000000000105',
+            amount: '130.000000000',
+            effectiveAt: '2026-09-30T10:00:00.000Z',
+            recordedAt: '2026-09-30T10:02:00.000Z',
+            sourceAssertionId: 'e7600000-0000-4000-8000-000000000115',
+            supersede: false,
+          }),
+        ),
+      ).toEqual(boundConflict);
+
+      // A retired Price stays retired: after its end, and inside its retired period alike.
+      const { current } = schedule.schedule;
+      const retired = yield* withPersistence(runtime, (persistence) =>
+        persistence.revise({
+          actingPrincipalId: principalId,
+          actionInvocationId: 'e7600000-0000-4000-8000-000000000106',
+          expectedCurrent: {
+            effectivePeriod: current.effectivePeriod,
+            priceRef: priceRef(boundPriceId),
+            revision: current.definition.revision.revision,
+            revisionId: current.definition.revision.revisionId,
+            scheduleRevision: schedule.schedule.scheduleRevision,
+          },
+          intent: 'RETIRE_CURRENT',
+          priceRef: priceRef(boundPriceId),
+          reason: 'Retire the source Price before the source asserts it again.',
+          requestCorrelationId: 'price-source:same-source:retire',
+          trustedOperationAt: instant('2026-10-01T10:00:00.000Z'),
+        }),
+      );
+      expect(retired.outcome).toBe('REVISED');
+      expect(
+        yield* define(
+          sourceDefine({
+            actionInvocationId: 'e7600000-0000-4000-8000-000000000107',
+            amount: '140.000000000',
+            effectiveAt: '2026-10-02T10:00:00.000Z',
+            recordedAt: '2026-10-02T10:02:00.000Z',
+            sourceAssertionId: 'e7600000-0000-4000-8000-000000000117',
+          }),
+        ),
+      ).toEqual({ outcome: 'CONFLICT', reason: 'UNVERIFIABLE_CURRENTNESS' });
+      expect(
+        yield* define(
+          sourceDefine({
+            actionInvocationId: 'e7600000-0000-4000-8000-000000000108',
+            amount: '150.000000000',
+            effectiveAt: '2026-09-30T12:00:00.000Z',
+            recordedAt: '2026-10-02T10:02:00.000Z',
+            sourceAssertionId: 'e7600000-0000-4000-8000-000000000118',
+          }),
+        ),
+      ).toEqual(boundConflict);
+
+      const counts = yield* admin.execute<{
+        readonly priceCount: number;
+        readonly provenanceCount: number;
+        readonly revisionCount: number;
+      }>(
+        sql`select
+              (select count(*)::integer from pricing.prices where tenant_id = ${tenantId}::uuid) as "priceCount",
+              (select count(*)::integer from pricing.price_source_assertions
+                where tenant_id = ${tenantId}::uuid) as "provenanceCount",
+              (select count(*)::integer from pricing.price_revisions
+                where tenant_id = ${tenantId}::uuid and price_id = ${boundPriceId}::uuid) as "revisionCount"`,
+        'objects',
+      );
+      // One Price: its first source revision, the superseding one, and the owner's retirement with its fact.
+      expect(counts).toEqual([{ priceCount: 1, provenanceCount: 3, revisionCount: 3 }]);
+      return null;
+    }),
+  ),
 );

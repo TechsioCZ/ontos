@@ -8,10 +8,12 @@ import {
   DefinePricePayloadSchema,
   DefinePriceRejected,
   applyPriceDefinition,
+  defineSupersedingSameSource,
 } from '../../src/actions/define-price.action.ts';
 import type { DefinePriceActionServices } from '../../src/actions/define-price.action.ts';
 import type { CommercialContextAssessment } from '../../src/integrations/commercial-context-evidence.ts';
 import { PricePersistenceUnavailable } from '../../src/services/price-persistence.service.ts';
+import type { DefinePricePersistenceCommand } from '../../src/services/price-persistence.service.ts';
 import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import {
   preparePriceSourceEvidence,
@@ -122,6 +124,41 @@ const provenance = Schema.decodeSync(PriceSourceProvenanceSchema)({
   provenanceRef: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 });
 const persistenceSuccess = (outcome: 'CREATED' | 'REUSED') => ({ definition, outcome, provenance });
+const laterTrusted = {
+  ...trusted,
+  actionInvocationId: '98989898-9898-4898-8898-989898989898',
+  trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-28T10:00:01.000Z')),
+} as const;
+/** A later assertion for the same exact key, as a source sends it: a new Price id, assertion and change each time. */
+const sameKeyAssertion = (input: {
+  readonly amount: string;
+  readonly effectiveFrom: string;
+  readonly sourceAssertionId: string;
+  readonly sourceAuthorityRef?: string;
+}) => {
+  const monetaryAmount = { amount: input.amount, currencyCode: 'CZK' };
+  return Schema.decodeUnknownSync(DefinePricePayloadSchema)({
+    ...payload,
+    effectiveFrom: input.effectiveFrom,
+    monetaryAmount,
+    priceRef: { ...priceRef, resourceId: 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1' },
+    sourceAssertion: {
+      ...payload.sourceAssertion,
+      originalAssertion: { ...payload.sourceAssertion.originalAssertion, monetaryAmount },
+      sourceAssertionId: input.sourceAssertionId,
+      sourceAuthority: {
+        ...payload.sourceAssertion.sourceAuthority,
+        sourceAuthorityRef: input.sourceAuthorityRef ?? payload.sourceAssertion.sourceAuthority.sourceAuthorityRef,
+      },
+      sourceRecord: { ...payload.sourceAssertion.sourceRecord, sourceChangeCorrelation: input.sourceAssertionId },
+      timing: {
+        importedAt: input.effectiveFrom,
+        ownerBusinessEffectiveAt: input.effectiveFrom,
+        sourceEffectiveAt: input.effectiveFrom,
+      },
+    },
+  });
+};
 const assessedAt = '2026-09-27T10:00:00.000Z';
 const validCatalogAssessment = Schema.decodeSync(CatalogSelectionOwnerAssessmentResultSchema)({
   assessedAt,
@@ -459,6 +496,150 @@ describe('Define Price Action', () => {
         retryable: true,
         sourceAssertionId: payload.sourceAssertion.sourceAssertionId,
       });
+    }),
+  );
+
+  it.effect('asks Pricing to let the same source supersede its own Current Price at a bound exact key', () =>
+    Effect.gen(function* askForSameSourceSupersession() {
+      const commands: DefinePricePersistenceCommand[] = [];
+      const define = defineSupersedingSameSource((command) => {
+        commands.push(command);
+        return Effect.succeed(persistenceSuccess('CREATED'));
+      });
+
+      yield* applyPriceDefinition(payload, trusted, servicesFor(define));
+
+      expect(commands.map(({ onExactKeyBound }) => onExactKeyBound)).toEqual(['SUPERSEDE_SAME_SOURCE']);
+    }),
+  );
+
+  it.effect('accepts a changed amount from the same source as the next revision of its bound Price', () =>
+    Effect.gen(function* acceptSameSourceRevision() {
+      const raised = sameKeyAssertion({
+        amount: '120',
+        effectiveFrom: '2026-09-28T10:00:00.000Z',
+        sourceAssertionId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      });
+      const supersession = {
+        kind: 'SUPERSESSION',
+        reason: 'The same source authority asserted a new amount for this exact Price key.',
+        supersededSourceAssertionId: payload.sourceAssertion.sourceAssertionId,
+      } as const;
+      const revisedDefinition = {
+        ...definition,
+        revision: {
+          effectiveFrom: raised.effectiveFrom,
+          monetaryAmount: raised.monetaryAmount,
+          monetaryBoundary: 'PRE_TAX' as const,
+          revision: 2,
+          revisionId: 'abababab-abab-4bab-8bab-abababababab',
+        },
+      };
+      // Pricing answers the bound Price, not the new Price id the source sent, with the superseding source fact.
+      const supersedingProvenance = yield* Schema.decodeUnknownEffect(PriceSourceProvenanceSchema)({
+        canonicalLink: {
+          effectiveFrom: raised.effectiveFrom,
+          identityKey: definition.identityKey,
+          monetaryAmount: raised.monetaryAmount,
+          monetaryBoundary: 'PRE_TAX',
+          priceRef,
+          revision: 2,
+          revisionId: revisedDefinition.revision.revisionId,
+        },
+        evidence: {
+          lineage: { ...supersession, actingPrincipalId: trusted.actingPrincipalId },
+          recordedAt: '2026-09-28T10:00:01.000Z',
+          sourceAssertion: { ...raised.sourceAssertion, lineage: supersession },
+          sourceFactFingerprint: priceSourceFactFingerprint(raised.sourceAssertion),
+          tenantId,
+        },
+        provenanceRef: raised.sourceAssertion.sourceAssertionId,
+      });
+
+      const result = yield* applyPriceDefinition(
+        raised,
+        laterTrusted,
+        servicesFor(() =>
+          Effect.succeed({ definition: revisedDefinition, outcome: 'CREATED', provenance: supersedingProvenance }),
+        ),
+      );
+
+      expect(result).toEqual({
+        outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED',
+        provenance: supersedingProvenance,
+      });
+    }),
+  );
+
+  it.effect('accepts the same amount from the same source as no change, proven by the Current source fact', () =>
+    Effect.gen(function* acceptUnchangedSameSourceAmount() {
+      const resent = sameKeyAssertion({
+        amount: payload.monetaryAmount.amount,
+        effectiveFrom: '2026-09-28T10:00:00.000Z',
+        sourceAssertionId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+      });
+      expect(priceSourceFactFingerprint(resent.sourceAssertion)).not.toBe(provenance.evidence.sourceFactFingerprint);
+
+      const result = yield* applyPriceDefinition(
+        resent,
+        laterTrusted,
+        servicesFor(() => Effect.succeed(persistenceSuccess('REUSED'))),
+      );
+
+      expect(result).toEqual({ outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED', provenance });
+    }),
+  );
+
+  it.effect('keeps refusing another authority, a retired Price and an unproven no-change', () =>
+    Effect.gen(function* refuseOtherBoundKeys() {
+      const otherAuthority = sameKeyAssertion({
+        amount: '130',
+        effectiveFrom: '2026-09-28T10:00:00.000Z',
+        sourceAssertionId: 'efefefef-efef-4fef-8fef-efefefefefef',
+        sourceAuthorityRef: 'other-price-owner',
+      });
+      const boundByAnotherAuthority = yield* applyPriceDefinition(
+        otherAuthority,
+        laterTrusted,
+        servicesFor(() => Effect.succeed({ outcome: 'CONFLICT' as const, reason: 'EXACT_KEY_ALREADY_BOUND' as const })),
+      );
+      const retired = yield* applyPriceDefinition(
+        otherAuthority,
+        laterTrusted,
+        servicesFor(() =>
+          Effect.succeed({ outcome: 'CONFLICT' as const, reason: 'UNVERIFIABLE_CURRENTNESS' as const }),
+        ),
+      );
+      // A Current fact of another authority, or of another amount, never proves that nothing changed.
+      const otherAuthorityNoChange = yield* Effect.exit(
+        applyPriceDefinition(
+          sameKeyAssertion({
+            amount: payload.monetaryAmount.amount,
+            effectiveFrom: '2026-09-28T10:00:00.000Z',
+            sourceAssertionId: 'fafafafa-fafa-4afa-8afa-fafafafafafa',
+            sourceAuthorityRef: 'other-price-owner',
+          }),
+          laterTrusted,
+          servicesFor(() => Effect.succeed(persistenceSuccess('REUSED'))),
+        ),
+      );
+      const otherAmountNoChange = yield* Effect.exit(
+        applyPriceDefinition(
+          otherAuthority,
+          laterTrusted,
+          servicesFor(() => Effect.succeed(persistenceSuccess('REUSED'))),
+        ),
+      );
+
+      for (const refused of [boundByAnotherAuthority, retired]) {
+        expect(refused).toEqual({
+          outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+          reason: 'CANONICAL_CONFLICT_HELD',
+          sourceAssertionId: otherAuthority.sourceAssertion.sourceAssertionId,
+        });
+      }
+      expect(otherAuthorityNoChange.toString()).toContain(PricePersistenceUnavailable.name);
+      expect(otherAmountNoChange.toString()).toContain(PricePersistenceUnavailable.name);
     }),
   );
 
