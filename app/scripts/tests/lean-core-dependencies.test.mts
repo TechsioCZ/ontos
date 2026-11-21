@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,9 @@ import { expect, it } from 'effect-rstest';
 import {
   checkLeanCoreDependencies,
   checkModuleEdgeFreeze,
+  filesOnDisk,
   moduleEdgeBaselineRelative,
+  trackedFiles,
 } from '../check-lean-core-dependencies.mts';
 
 const commercePrivateFixturePath = 'verticals/commerce-customer-context/src/api/private.ts';
@@ -92,7 +94,7 @@ for (const [importer, suffixes] of [
             .join(''),
         ),
       );
-      expect(yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer))).toEqual([]);
+      expect(yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer))).toEqual([]);
       for (const [index, suffix] of suffixes.entries()) {
         yield* Effect.tryPromise(() =>
           writeFile(
@@ -108,7 +110,7 @@ for (const [importer, suffixes] of [
           `import { privateClient } from '@app/commerce-customer-context/api/client-private';\nimport { privateOwner } from '${privatePath}';\n`,
         ),
       );
-      const violations = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+      const violations = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
       expect(violations).toHaveLength(suffixes.length + 2);
       expect(violations.filter((violation) => violation.file === importer).map(({ line }) => line)).toEqual([1, 2]);
       for (const index of suffixes.keys()) {
@@ -234,7 +236,7 @@ it.live(
           }),
         ),
       );
-      const violations = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+      const violations = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
       expect(violations.map(({ file, line, reason }) => `${file}:${line}: ${reason}`)).toEqual([
         'apps/shell-super-app/api/auth/external-identity/bare-specifier-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context" (only published shared/ contracts and documented composition seams are allowed)',
         'apps/shell-super-app/api/auth/external-identity/multiline-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (only published shared/ contracts and documented composition seams are allowed)',
@@ -279,7 +281,7 @@ it.live('passes on a tree with only allowed dependencies and documented seams', 
         }),
       ),
     );
-    const violations = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    const violations = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
     expect(violations).toEqual([]);
   }),
 );
@@ -567,7 +569,7 @@ for (const control of hostGraphControls) {
           }),
         ),
       );
-      const violations = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+      const violations = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
       if (control.rejected) {
         expect(violations.some(({ reason }) => reason.includes('outside the pinned external specifier set'))).toBe(
           true,
@@ -630,7 +632,7 @@ it.live('admits only the six approved 1257 governed owner client composition pai
       yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
       yield* Effect.tryPromise(() => writeFile(file, source));
     }
-    const valid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    const valid = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
     expect(valid).toEqual([]);
     const adjacent = pairs.map(({ importer, specifier }, index) => ({
       importer: importer.replace(/\.ts$/u, `.unauthorized-${index}.ts`),
@@ -660,7 +662,7 @@ it.live('admits only the six approved 1257 governed owner client composition pai
       }),
     );
     yield* Effect.tryPromise(() => writeFile(path.join(root, commerceManifest), files.get(commerceManifest) ?? ''));
-    const invalid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    const invalid = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
     expect(invalid).toHaveLength(14);
     for (const { importer } of adjacent) {
       expect(invalid.filter((violation) => violation.file === importer)).toHaveLength(1);
@@ -706,7 +708,7 @@ it.live('admits only the exact Privacy profile-authority client composition pair
         .join('');
       yield* Effect.tryPromise(() => writeFile(file, source));
     }
-    const valid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    const valid = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
     expect(valid).toEqual([]);
     for (const [index, operation] of operations.entries()) {
       for (const importer of importers) {
@@ -736,7 +738,7 @@ it.live('admits only the exact Privacy profile-authority client composition pair
         ),
       );
     }
-    const invalid = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+    const invalid = yield* checkLeanCoreDependencies(root, filesOnDisk).pipe(Effect.provide(NodeServices.layer));
     expect(invalid).toHaveLength(12);
     for (const importer of importers) {
       expect(invalid.filter((violation) => violation.file === importer).map(({ line }) => line)).toEqual([1, 2]);
@@ -809,7 +811,7 @@ const freezeRoot = (files: FreezeFiles) =>
   });
 
 const freezeReport = (root: string, base?: string) =>
-  checkModuleEdgeFreeze(root, { base }).pipe(Effect.provide(NodeServices.layer));
+  checkModuleEdgeFreeze(root, { base, files: filesOnDisk }).pipe(Effect.provide(NodeServices.layer));
 
 const reportedViolations = (root: string, base?: string) =>
   Effect.map(freezeReport(root, base), ({ violations }) =>
@@ -1153,8 +1155,105 @@ it.live('resolves a package imports entry to every target it maps a # specifier 
   }),
 );
 
+/** A Git repository at root whose one commit holds the freeze workspace with files; root is its top. */
+const trackedRepository = (files: FreezeFiles) =>
+  Effect.gen(function* trackedRepositoryProgram() {
+    const root = yield* freezeRoot(files);
+    for (const args of [
+      ['init', '--quiet'],
+      ['add', '--all'],
+      ['commit', '--quiet', '-m', 'tracked'],
+    ]) {
+      execFileSync(
+        '/usr/bin/git',
+        ['-c', 'user.name=Lean Core test', '-c', 'user.email=lean-core@example.invalid', ...args],
+        { cwd: root },
+      );
+    }
+    return root;
+  });
+
+/** The commit under judgment: a Core package, the freeze workspace and committed build output it never reads. */
+const committedTree = {
+  ...freezeBaseline([]),
+  'packages/core-runtime/package.json': JSON.stringify({
+    dependencies: { effect: '4.0.7' },
+    name: '@app/core-runtime',
+  }),
+  'packages/core-runtime/src/index.ts': "export { Effect } from 'effect';\n",
+  'verticals/alpha/dist/bundle.js': betaImportSource,
+} as const;
+
+/** What module contract generation writes beside the check: a bundle directory inside a vertical, and more. */
+const transientDirectory = 'verticals/alpha/.ontos-contract-a1b2c3';
+const transientFiles = {
+  [`${transientDirectory}/bundle.mjs`]: betaImportSource,
+  [`${transientDirectory}/entry.mts`]: 'export const = ;\n',
+  'packages/core-runtime/src/transient.ts': "import { z } from 'zod';\n",
+} as const;
+
+const checkerEntryPoint = fileURLToPath(new URL('../check-lean-core-dependencies.mts', import.meta.url));
+/** Runs lean-core:check as CI does, from the root of the tree it judges. */
+const runCheck = (root: string) => spawnSync(process.execPath, [checkerEntryPoint], { cwd: root, encoding: 'utf-8' });
+
+it.live('judges only the files Git tracks: files written beside the check neither change the result nor fail it', () =>
+  Effect.gen(function* untrackedFiles() {
+    const root = yield* trackedRepository(committedTree);
+    yield* writeFreezeFiles(root, transientFiles);
+    const run = runCheck(root);
+    expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: '' });
+    expect(run.stdout).toContain('Lean-Core dependency boundaries verified');
+  }),
+);
+
+it.live('does not read a file that disappears between the listing and the read', () =>
+  Effect.gen(function* vanishingFile() {
+    const root = yield* trackedRepository(committedTree);
+    yield* writeFreezeFiles(root, transientFiles);
+    // The generator removes its bundle directory while the check runs: here, right after the listing.
+    const listing = (listed: string) =>
+      trackedFiles(listed).pipe(
+        Effect.tap(() =>
+          Effect.promise(() => rm(path.join(root, transientDirectory), { force: true, recursive: true })),
+        ),
+      );
+    const leanCore = yield* checkLeanCoreDependencies(root, listing).pipe(Effect.provide(NodeServices.layer));
+    yield* writeFreezeFiles(root, transientFiles);
+    const freeze = yield* checkModuleEdgeFreeze(root, { files: listing }).pipe(Effect.provide(NodeServices.layer));
+    expect({ freeze: freeze.violations, leanCore }).toEqual({ freeze: [], leanCore: [] });
+  }),
+);
+
+it.live('fails loudly, naming the file, when a tracked file cannot be read', () =>
+  Effect.gen(function* unreadableTrackedFile() {
+    const gone = 'verticals/alpha/src/gone.ts';
+    const root = yield* trackedRepository({ ...committedTree, [gone]: betaImportSource });
+    yield* Effect.promise(() => rm(path.join(root, gone)));
+    const run = runCheck(root);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(gone);
+    // Each check fails on its own: neither skips the file.
+    const failures = yield* Effect.all([
+      checkLeanCoreDependencies(root, trackedFiles).pipe(Effect.flip),
+      checkModuleEdgeFreeze(root, { files: trackedFiles }).pipe(Effect.flip),
+    ]).pipe(Effect.provide(NodeServices.layer));
+    expect(failures.map(({ message }) => message.includes(gone))).toEqual([true, true]);
+  }),
+);
+
+it.live('fails, rather than reading nothing, when Git cannot list the tracked files', () =>
+  Effect.gen(function* notARepository() {
+    const root = yield* freezeRoot(committedTree);
+    const failure = yield* trackedFiles(root).pipe(Effect.provide(NodeServices.layer), Effect.flip);
+    expect(failure.message).toContain('git ls-files exited with');
+  }),
+);
+
 it.live("passes today's tree against its committed baseline", () =>
   Effect.gen(function* todaysTree() {
-    expect(yield* reportedViolations(fileURLToPath(new URL('../..', import.meta.url)))).toEqual([]);
+    const report = yield* checkModuleEdgeFreeze(fileURLToPath(new URL('../..', import.meta.url)), {
+      files: trackedFiles,
+    }).pipe(Effect.provide(NodeServices.layer));
+    expect(report.violations).toEqual([]);
   }),
 );
