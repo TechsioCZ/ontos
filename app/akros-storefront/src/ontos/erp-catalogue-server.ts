@@ -1,8 +1,10 @@
 import "server-only";
 // The products Symmy imported into main's owners, read only through their governed reads, as the storefront workload
 // (`commerce.storefront-client`): Catalog's product page (Tenant-wide, so no company is sent), Inventory's on-hand
-// page and Pricing's catalogue page prices (both for this storefront's company). An import leaves its Products DRAFT
-// with WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
+// page and Pricing's catalogue page prices (both for this storefront's company). A visitor with a portal session has
+// the prices read through Commerce's portal for that signed-in customer, with the customer's own Price Group; a guest,
+// or a session Commerce no longer admits, is priced as before. An import leaves its Products DRAFT with
+// WORK_IN_PROGRESS Variants (Catalog's path to ACTIVE is not an import's), so the page asks for DRAFT and ACTIVE.
 import { Predicate } from "effect";
 import { cache } from "react";
 import {
@@ -14,9 +16,10 @@ import {
   type ErpProduct,
   type OwnerRef,
 } from "@/lib/erp-catalogue";
+import { portalCookie, portalRequest, requestPortal } from "./account";
 import { getActiveMarket } from "./active-market";
 import { getErpOffer, type ErpOffer } from "./erp-config";
-import { readRecords } from "./gateway";
+import { OntosError, readRecords } from "./gateway";
 
 /** The owners answer at most 100 variants per stock or price read. */
 const VARIANT_PAGE = 100;
@@ -54,6 +57,26 @@ const readOnHand = async (offer: ErpOffer, variantRefs: readonly OwnerRef[]) =>
     )
   ).flat();
 
+/**
+ * One page of variants priced for the signed-in customer through Commerce's portal, or as a guest. The portal answers
+ * 401 or 403 for a session it does not admit as a storefront customer (expired, signed out, disabled): that visitor is a
+ * guest. An unavailable portal fails the page as an unavailable Pricing read does.
+ */
+const pricePage = async (page: unknown): Promise<CatalogPagePrices> => {
+  const { origin, cookie } = await requestPortal();
+  if (portalCookie(cookie) !== "") {
+    const response = await portalRequest("/catalog-page-prices", origin, cookie, page);
+    if (response.ok) return (await response.json()) as CatalogPagePrices;
+    await response.body?.cancel();
+    if (response.status !== 401 && response.status !== 403)
+      throw new OntosError(
+        `OntOS customer catalogue page prices failed: HTTP ${response.status}`,
+        response.status,
+      );
+  }
+  return (await readRecords("pricing", "catalog-page-prices", page)) as CatalogPagePrices;
+};
+
 const readPrices = async (
   offer: ErpOffer,
   page: CatalogProductPage,
@@ -67,7 +90,7 @@ const readPrices = async (
   const answers = await Promise.all(
     chunks(variantRefs).map(
       async (refs) =>
-        (await readRecords("pricing", "catalog-page-prices", {
+        await pricePage({
           channelId: offer.channelId,
           currencyCode: offer.currencyCode,
           marketId: offer.marketId,
@@ -90,7 +113,7 @@ const readPrices = async (
                   },
                 ];
           }),
-        })) as CatalogPagePrices,
+        }),
     ),
   );
   const refused = answers.find((answer) => !Predicate.isTagged(answer, "CATALOG_PAGE_PRICED"));

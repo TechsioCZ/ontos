@@ -27,7 +27,9 @@ import type { CatalogPagePrice, CatalogPagePricesRequest } from '../../shared/ap
 import { catalogPagePricesRead } from '../../src/api/catalog-page-prices.read.ts';
 import { resolveCurrentSupportedCurrencies } from '../../src/api/current-supported-currencies.read.ts';
 import { currencySupportPersistenceForScope } from '../../src/persistence/currency-support-persistence.ts';
+import { customerCatalogPageVariants, readCatalogPagePrices } from '../../src/services/catalog-page-prices.service.ts';
 import { exactPriceResolutionServiceForScope } from '../../src/services/exact-price-resolution.service.ts';
+import { makePriceGroupInterpretationService } from '../../src/services/price-group-interpretation.service.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
 import type { DefinePricePersistenceCommand } from '../../src/services/price-persistence.service.ts';
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
@@ -537,6 +539,88 @@ it.live(
         );
         expect(otherPage.prices.map(answerOf).map(({ kind }) => kind)).toEqual(['PRICE_FOUND', 'NO_APPLICABLE_PRICE']);
         expect(priceDecimalValuesEqual(amountOf(yield* nth(otherPage.prices, 0)), '70')).toBe(true);
+
+        // A signed-in customer whose profile Commerce assigns the group: the group's own Price from the owner's
+        // store where it has one, and the no-group Price only where the group is proven to have none.
+        const priceGroupRef = {
+          moduleId: 'pricing.price-group-catalog',
+          resourceId: ids.priceGroupId,
+          resourceType: 'pricing.price-group-catalog.price-group',
+          tenantId,
+        } as const;
+        const customer = {
+          authorizationSubject: { kind: 'RETAIL' },
+          profile: {
+            kind: 'RETAIL',
+            moduleId: 'commerce.customer-context',
+            resourceId: yield* withCrypto(nextId),
+            resourceType: 'commerce.customer-context.retail-customer-profile',
+            tenantId,
+          },
+        } as const;
+        const trusted = { legalEntityId: companyA, tenantId, trustedOperationAt: yield* DateTime.now };
+        const effectiveAt = DateTime.formatIso(trusted.trustedOperationAt);
+        const compatibility = {
+          catalogRevision: 1,
+          definitionEffectivePeriod: { effectiveFrom: supportFrom, effectiveTo: null },
+          definitionRevisionId: yield* withCrypto(nextId),
+          definitionRevisionNumber: 1,
+          meaningFingerprint: 'b'.repeat(64),
+          priceGroupRef,
+          requiredContract: { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
+          trustedOperationAt: effectiveAt,
+          verifiedAt: effectiveAt,
+        };
+        const customerVariants = yield* customerCatalogPageVariants(
+          request,
+          customer,
+          trusted,
+          makePriceGroupInterpretationService({
+            commerce: {
+              resolve: () =>
+                Effect.succeed({
+                  effectiveAt,
+                  profile: customer.profile,
+                  resolution: {
+                    _tag: 'ASSIGNED',
+                    assignmentRef: {
+                      moduleId: 'commerce.customer-context',
+                      resourceId: ids.principalId,
+                      resourceType: 'commerce.customer-context.customer-price-group-assignment',
+                      tenantId,
+                    },
+                    assignmentRevision: 1,
+                    compatibility,
+                    effectiveFrom: supportFrom,
+                    effectiveTo: null,
+                    priceGroupRef,
+                  },
+                }),
+            },
+            compatibility: { validate: () => Effect.succeed({ evidence: compatibility, kind: 'USABLE' }) },
+          }).interpret,
+        );
+        const customerPage = yield* pricedPage(
+          yield* withCrypto(
+            inScope(ids, runtime, companyA, (transaction, scope) =>
+              getReadServiceFactory(catalogPagePricesRead)(transaction, scope, compositionRevision).pipe(
+                Effect.flatMap((services) => readCatalogPagePrices(trusted, services, customerVariants)),
+              ),
+            ),
+          ),
+        );
+        expect(customerPage.prices.map(answerOf).map(({ kind }) => kind)).toEqual([
+          'PRICE_FOUND',
+          'NO_APPLICABLE_PRICE',
+          'NO_APPLICABLE_PRICE',
+          'PRICE_FOUND',
+        ]);
+        const groupPrice = yield* nth(customerPage.prices, 0);
+        expect(answerOf(groupPrice)).toMatchObject({ priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef } });
+        expect(priceDecimalValuesEqual(amountOf(groupPrice), '99')).toBe(true);
+        const fallbackPrice = yield* nth(customerPage.prices, 3);
+        expect(answerOf(fallbackPrice)).toMatchObject({ priceGroupSelector: { kind: 'NO_GROUP' }, priceRef: tiered });
+        expect(priceDecimalValuesEqual(amountOf(fallbackPrice), '100')).toBe(true);
       }),
     ),
 );

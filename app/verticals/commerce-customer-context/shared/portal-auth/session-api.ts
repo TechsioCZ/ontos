@@ -1,3 +1,7 @@
+import {
+  CatalogPagePricesPageSchema,
+  CatalogPagePricesResponseSchema,
+} from '@app/pricing-contracts/catalog-page-prices';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
@@ -204,6 +208,14 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
     HttpApiEndpoint.get('getCustomerAddressBook', '/api/portal-auth/customer-address-book', {
       error: getSessionErrors,
       success: CustomerOwnAddressBookSchema,
+    }),
+  )
+  /** Pricing's catalogue page Prices for the signed-in customer, with the customer's own Price Group (no profile is sent). */
+  .add(
+    HttpApiEndpoint.post('getCustomerCatalogPagePrices', '/api/portal-auth/catalog-page-prices', {
+      error: getSessionErrors,
+      payload: CatalogPagePricesPageSchema,
+      success: CatalogPagePricesResponseSchema,
     }),
   )
   .middleware(CommercePortalAuthSessionSchemaErrorMiddleware);

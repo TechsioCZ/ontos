@@ -517,6 +517,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
           { method: 'POST', path: '/api/portal-auth/change-password' },
           { method: 'POST', path: '/api/portal-auth/sign-out' },
           { method: 'POST', path: '/api/portal-auth/refresh' },
+          { method: 'POST', path: '/api/portal-auth/catalog-page-prices' },
         ],
       },
     ],

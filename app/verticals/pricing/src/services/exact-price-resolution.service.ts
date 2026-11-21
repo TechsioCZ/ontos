@@ -114,6 +114,11 @@ const currencySupportMatchesFreshOwnerState = (
 const trustedInstant = (trusted: ExactPriceResolutionTrustedContext): string =>
   DateTime.formatIso(trusted.trustedOperationAt);
 
+/**
+ * The assigned group is usable at the instant when its assignment is current then and the Price Group Catalog proved
+ * compatibility for exactly that instant. The Catalog verifies on its own clock, so its proof is taken at or after the
+ * instant it binds, never before it.
+ */
 const sourceIsUsableAt = (input: PriceGroupFallbackResolutionInput): boolean =>
   Match.value(input).pipe(
     Match.tag('ASSIGNED', ({ effectiveAt, interpretation }) => {
@@ -122,7 +127,7 @@ const sourceIsUsableAt = (input: PriceGroupFallbackResolutionInput): boolean =>
         assignmentResolution.effectiveFrom <= effectiveAt &&
         (assignmentResolution.effectiveTo === null || effectiveAt < assignmentResolution.effectiveTo) &&
         compatibilityEvidence.trustedOperationAt === effectiveAt &&
-        compatibilityEvidence.verifiedAt === effectiveAt
+        effectiveAt <= compatibilityEvidence.verifiedAt
       );
     }),
     Match.orElse(() => true),

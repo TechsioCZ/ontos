@@ -118,7 +118,10 @@ describe('Symmy price list plan from the public rows', () => {
       expect(groupCreateOf(effect)).toEqual({
         businessCode: 'CZ_WHOLESALE',
         classificationPurpose: 'Purpose of cz-wholesale',
-        compatibilityContracts: [{ contractId: 'internal.c14-price-group', version: 1 }],
+        compatibilityContracts: [
+          { contractId: 'internal.c14-price-group', version: 1 },
+          { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
+        ],
         description: 'Wholesale prices',
         displayName: 'List cz-wholesale',
         effectiveFrom: '2026-01-01T00:00:00.000Z',

@@ -177,6 +177,7 @@ it('publishes only the explicitly reviewed provider routes', () => {
     '/get-session',
     '/customer-account',
     '/customer-address-book',
+    '/catalog-page-prices',
     '/refresh',
     '/sign-in/email',
     '/sign-out',

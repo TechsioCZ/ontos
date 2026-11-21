@@ -12,6 +12,7 @@ import {
   erpPriceLabel,
   erpStockLabel,
   erpAvailabilityStatus,
+  isYourPrice,
   type ErpProduct,
 } from "@/lib/erp-catalogue";
 import { useDictionary, useMoney } from "@/ontos/market-context";
@@ -82,6 +83,11 @@ export function ErpProductDetail({ product }: { product: ErpProduct }) {
                 <span>{cs.product.price}</span>
                 <strong>{summary.priceLabel}</strong>
               </p>
+              {summary.yourPrice && (
+                <p className="m-0 text-sm text-(--color-fg-secondary)" data-sf-erp-your-price="">
+                  {erpCopy.yourPrice}
+                </p>
+              )}
               <p className="sf-product-detail__price-reason" role="note">
                 {erpCopy.orderNote}
               </p>
@@ -113,6 +119,14 @@ export function ErpProductDetail({ product }: { product: ErpProduct }) {
                     data-sf-erp-price=""
                   >
                     {erpPriceLabel(variant.price, locale)}
+                    {isYourPrice(variant.price) && (
+                      <span
+                        className="block text-xs text-(--color-fg-secondary)"
+                        data-sf-erp-your-price=""
+                      >
+                        {erpCopy.yourPrice}
+                      </span>
+                    )}
                   </Table.Cell>
                   <Table.Cell data-sf-erp-stock="">
                     <AvailabilityStatus

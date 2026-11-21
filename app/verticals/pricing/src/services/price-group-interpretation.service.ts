@@ -58,7 +58,7 @@ interface PriceGroupInterpretationDependencies {
   readonly compatibility: PriceGroupCompatibilityPort;
 }
 
-interface PriceGroupInterpretationRuntimeInput {
+export interface PriceGroupInterpretationRuntimeInput {
   readonly assignmentRequest: unknown;
   readonly basis: PriceGroupInterpretationBasis;
 }

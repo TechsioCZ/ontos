@@ -58,9 +58,14 @@ export const SymmyPriceListRowsSchema = Schema.NonEmptyArray(SymmyPriceListRowSc
 );
 export type SymmyPriceListRows = typeof SymmyPriceListRowsSchema.Type;
 
-/** Compatibility the Symmy price lists declare. Nothing in Pricing names a production contract yet. */
+/**
+ * Compatibility the Symmy price lists declare. The second contract is the one Commerce requires of a Price Group
+ * before it can be assigned to a customer profile (CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT): an imported price
+ * list is what a wholesale customer is assigned, so a list that did not declare it could never be anyone's price.
+ */
 export const SYMMY_PRICE_GROUP_COMPATIBILITY_CONTRACTS = [
   { contractId: 'internal.c14-price-group', version: 1 },
+  { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
 ] as const;
 export const SYMMY_PRICE_LIST_REASON = 'Symmy price list import';
 export const SYMMY_PRICE_REASON = 'Symmy price import';

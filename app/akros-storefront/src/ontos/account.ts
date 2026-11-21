@@ -166,14 +166,20 @@ export const readAccount = async (
   };
 };
 
-/** The fresh owner admission of the current server request, or null for a guest. */
-export const readRequestAccount = async (): Promise<CustomerAccount | null> => {
+/** The current server request's own origin and cookie, as the portal routes are called with them. */
+export const requestPortal = async (): Promise<{ origin: string; cookie: string | null }> => {
   const requestHeaders = await headers();
   const host = requestHeaders.get("host");
   if (!host) throw new Error("Storefront request host is missing");
   const protocol =
     host.startsWith("localhost:") || host.startsWith("127.0.0.1:") ? "http" : "https";
-  return readAccount(`${protocol}://${host}`, requestHeaders.get("cookie"));
+  return { origin: `${protocol}://${host}`, cookie: requestHeaders.get("cookie") };
+};
+
+/** The fresh owner admission of the current server request, or null for a guest. */
+export const readRequestAccount = async (): Promise<CustomerAccount | null> => {
+  const { origin, cookie } = await requestPortal();
+  return readAccount(origin, cookie);
 };
 
 /** Server pages require a fresh owner admission. No browser-storage or email-based identity fallback. */
