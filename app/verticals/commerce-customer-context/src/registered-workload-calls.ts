@@ -6,8 +6,10 @@ const commerceCustomerContextSourceWrite = 'commerce.customer-context.source-wri
 const integrationSymmyExecuteSymmyJob = 'integration.symmy.execute-symmy-job';
 const partyRegistry = 'party-registry';
 const partyRegistryApiCounterpartyOrganizationIcoFacts = 'party.registry.api.counterparty-organization-ico-facts';
+const partyRegistryApiSourceCounterpartyAdmission = 'party.registry.api.source-counterparty-admission';
 const partyRegistryApiSourcePersonAdmission = 'party.registry.api.source-person-admission';
 const partyRegistryCounterpartyOrganizationIcoFactsRead = 'party.registry.counterparty-organization-ico-facts.read';
+const partyRegistrySourceCounterpartyAdmissionRead = 'party.registry.source-counterparty-admission.read';
 const partyRegistrySourcePersonAdmissionRead = 'party.registry.source-person-admission.read';
 const partyRegistrySourceRead = 'party.registry.source-read';
 const privacyCoreApiOrganizationBusinessApplicability = 'privacy.core.api.organization-business-applicability';
@@ -161,6 +163,18 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     sourceWorkloadKey: commerceCustomerContextSourceRead,
     workloadKey: privacyCoreOrganizationProfileIcoCheck,
   },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.organization-profile-ico-read-privacy, read when Symmy recovers a lost company ICO change
+  {
+    allowRecoverySource: true,
+    audience: 'privacy',
+    declarationKey: privacyCoreOrganizationProfileIcoApplicabilityRead,
+    entrypointKey: privacyCoreApiOrganizationProfileIcoApplicability,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: commerceCustomerContextSourceRead,
+    workloadKey: privacyCoreOrganizationProfileIcoCheck,
+  },
   // origin/main 5608aae1d: organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
     audience: partyRegistry,
@@ -182,6 +196,40 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     legalEntityScope: 'required',
     schemaVersion: '1',
     sourceWorkloadKey: commerceCustomerContextOrganizationIcoFactsRead,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.create-counterparty-profile-source-role
+  {
+    audience: partyRegistry,
+    declarationKey: partyRegistrySourceCounterpartyAdmissionRead,
+    entrypointKey: partyRegistryApiSourceCounterpartyAdmission,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: commerceCustomerContextSourceWrite,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.customer-profile-source-counterparty
+  {
+    audience: partyRegistry,
+    declarationKey: partyRegistrySourceCounterpartyAdmissionRead,
+    entrypointKey: partyRegistryApiSourceCounterpartyAdmission,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: commerceCustomerContextSourceRead,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.customer-profile-source-counterparty, read when Symmy recovers a lost profile write
+  {
+    allowRecoverySource: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistrySourceCounterpartyAdmissionRead,
+    entrypointKey: partyRegistryApiSourceCounterpartyAdmission,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: commerceCustomerContextSourceRead,
     workloadKey: partyRegistrySourceRead,
   },
 ] as const satisfies readonly OntosRegisteredWorkloadCallInput[];
