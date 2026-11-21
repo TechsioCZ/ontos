@@ -226,6 +226,10 @@
       "count": 1
     },
     {
+      "file": "verticals/privacy/src/services/organization-business-applicability.service.ts",
+      "count": 1
+    },
+    {
       "file": "verticals/privacy/tests/integration/privacy-retained-purpose-self-service-http-postgres.test.ts",
       "count": 1
     }
