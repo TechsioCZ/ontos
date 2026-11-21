@@ -32,8 +32,10 @@ const productPageEntrypoint = defineTenantModuleEntrypoint({
 });
 
 /**
- * Whoever may read the detail of any Product, whatever its lifecycle, may also page Products that are not ACTIVE.
- * A registered storefront workload is never admitted to that declaration, so it pages ACTIVE Products only.
+ * Demo-line rule: any caller admitted to the page may page DRAFT and ACTIVE Products, because every Product an ERP
+ * import (Symmy) creates is a DRAFT with WORK_IN_PROGRESS Variants and Catalog's path to ACTIVE cannot be driven
+ * from an import. Only RETIRED stays reserved to whoever may read the detail of any Product, whatever its lifecycle;
+ * no registered workload is admitted to that declaration, so a storefront never pages RETIRED Products.
  */
 const productPageQuestions = { unpublished: canRun(productDetailRead) };
 
@@ -148,12 +150,12 @@ export const readProductPage = Effect.fn('ProductPageRead.read')(function* readP
       reason: 'The requested Category does not exist in the trusted tenant scope',
     });
   }
-  if (input.lifecycles.some((lifecycle) => lifecycle !== 'ACTIVE') && unpublished !== 'allowed') {
+  if (input.lifecycles.includes('RETIRED') && unpublished !== 'allowed') {
     return yield* unpublished === 'unavailable'
       ? unavailable()
       : new ReadPermissionDenied({
           code: 'read_permission_denied',
-          reason: 'Only a caller who may read any Product detail may page Products that are not ACTIVE',
+          reason: 'Only a caller who may read any Product detail may page RETIRED Products',
         });
   }
   const [total, productIds] = yield* Effect.all([services.page.count(input), services.page.productIds(input)], {
@@ -191,7 +193,7 @@ export const productPageRead = defineRead(
     accessQuestions: productPageQuestions,
     accessWorkload: {
       reason:
-        'The registered Storefront BFF pages the ACTIVE Catalog Products of its storefront before any human session exists',
+        'The registered Storefront BFF pages the DRAFT and ACTIVE Catalog Products of its storefront before any human session exists',
       workloads: ['commerce.storefront-client'],
     },
     entrypoint: productPageEntrypoint,

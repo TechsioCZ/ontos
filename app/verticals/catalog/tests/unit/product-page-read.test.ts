@@ -132,6 +132,7 @@ const localizedJoin =
   'from "catalog"."products" left join "catalog"."product_localized_facts" on (("catalog"."product_localized_facts"."tenant_id" = "catalog"."products"."tenant_id") and ("catalog"."product_localized_facts"."product_id" = "catalog"."products"."product_id") and ("catalog"."product_localized_facts"."locale" = $1))';
 const tenantAndLifecycle =
   '("catalog"."products"."tenant_id" = $2) and ("catalog"."products"."lifecycle_state" in ($3))';
+const retiredReason = 'Only a caller who may read any Product detail may page RETIRED Products';
 const pageOrder = 'order by "catalog"."product_localized_facts"."name" asc, "catalog"."products"."product_id" asc';
 
 describe('Catalog product page request', () => {
@@ -181,7 +182,7 @@ describe('Catalog product page admission and SQL', () => {
       selectors: [],
     });
     expect(descriptor.legalEntityScope).toBe('forbidden');
-    // The question the read asks for non-ACTIVE states targets a declaration no workload is admitted to.
+    // The question the read asks for RETIRED targets a declaration no workload is admitted to.
     expect(productDetailRead.descriptor.accessDeclaration?.key).toBe(detailCapability);
     expect(productDetailRead.descriptor.accessWorkload).toBeUndefined();
   });
@@ -206,15 +207,28 @@ describe('Catalog product page admission and SQL', () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('refuses the storefront workload any state other than ACTIVE before it reads a row', () =>
+  // Demo-line rule: imported Products are DRAFTs, so the storefront pages DRAFT and ACTIVE; RETIRED stays reserved.
+  it.effect('admits the storefront workload to DRAFT and ACTIVE Products in one tenant-scoped page', () =>
     Effect.gen(function* storefrontDrafts() {
       const { exit, ownerQueries } = yield* runPage(request({ lifecycles: ['DRAFT', 'ACTIVE'] }), {
         gate: workloadGate('service', [storefrontWorkload]),
         method: 'api_key',
       });
-      expect(deniedReason(exit)).toBe(
-        'Only a caller who may read any Product detail may page Products that are not ACTIVE',
-      );
+      expect(exit).toEqual(Exit.succeed({ count: 0, items: [] }));
+      expect(ownerQueries.map(({ params }) => params)).toEqual([
+        ['cs-CZ', tenantId, 'DRAFT', 'ACTIVE'],
+        ['cs-CZ', tenantId, 'DRAFT', 'ACTIVE', 5, 10],
+      ]);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it.effect('refuses the storefront workload RETIRED Products before it reads a row', () =>
+    Effect.gen(function* storefrontRetired() {
+      const { exit, ownerQueries } = yield* runPage(request({ lifecycles: ['ACTIVE', 'RETIRED'] }), {
+        gate: workloadGate('service', [storefrontWorkload]),
+        method: 'api_key',
+      });
+      expect(deniedReason(exit)).toBe(retiredReason);
       expect(ownerQueries).toEqual([]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
@@ -228,9 +242,7 @@ describe('Catalog product page admission and SQL', () => {
         });
         // Refused by the gate itself (deny.workload_unbound), not by the page's lifecycle rule.
         expect(deniedReason(exit)).toEqual(expect.any(String));
-        expect(deniedReason(exit)).not.toBe(
-          'Only a caller who may read any Product detail may page Products that are not ACTIVE',
-        );
+        expect(deniedReason(exit)).not.toBe(retiredReason);
         expect(ownerQueries).toEqual([]);
       }
     }).pipe(Effect.provide(NodeCrypto.layer)),
@@ -263,20 +275,22 @@ describe('Catalog product page admission and SQL', () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect('pages only ACTIVE Products for staff without Product detail, and nothing without the capability', () =>
-    Effect.gen(function* staffWithoutDetail() {
-      const pageOnly = { access: { [pageCapability]: 'allowed' as const }, method: 'session' as const };
-      const active = yield* runPage(request(), pageOnly);
-      expect(active.exit).toEqual(Exit.succeed({ count: 0, items: [] }));
-      const drafts = yield* runPage(request({ lifecycles: ['DRAFT'] }), pageOnly);
-      expect(deniedReason(drafts.exit)).toBe(
-        'Only a caller who may read any Product detail may page Products that are not ACTIVE',
-      );
-      expect(drafts.ownerQueries).toEqual([]);
-      const refused = yield* runPage(request(), { access: { [detailCapability]: 'allowed' }, method: 'session' });
-      expect(deniedReason(refused.exit)).toEqual(expect.any(String));
-      expect(refused.ownerQueries).toEqual([]);
-    }).pipe(Effect.provide(NodeCrypto.layer)),
+  it.effect(
+    'pages DRAFT and ACTIVE but not RETIRED for staff without Product detail, nothing without the capability',
+    () =>
+      Effect.gen(function* staffWithoutDetail() {
+        const pageOnly = { access: { [pageCapability]: 'allowed' as const }, method: 'session' as const };
+        const active = yield* runPage(request(), pageOnly);
+        expect(active.exit).toEqual(Exit.succeed({ count: 0, items: [] }));
+        const drafts = yield* runPage(request({ lifecycles: ['DRAFT'] }), pageOnly);
+        expect(drafts.exit).toEqual(Exit.succeed({ count: 0, items: [] }));
+        const retired = yield* runPage(request({ lifecycles: ['RETIRED'] }), pageOnly);
+        expect(deniedReason(retired.exit)).toBe(retiredReason);
+        expect(retired.ownerQueries).toEqual([]);
+        const refused = yield* runPage(request(), { access: { [detailCapability]: 'allowed' }, method: 'session' });
+        expect(deniedReason(refused.exit)).toEqual(expect.any(String));
+        expect(refused.ownerQueries).toEqual([]);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
 
@@ -458,6 +472,10 @@ describe('Catalog product page items', () => {
         'allowed',
         services(),
       );
+      // The storefront, which may not read any Product detail, gets the same page with the imported-like DRAFT.
+      expect(
+        yield* readProductPage(request({ lifecycles: ['ACTIVE', 'DRAFT'] }), tenantId, 'denied', services()),
+      ).toEqual(page);
       expect(page.count).toBe(2);
       expect(page.items).toEqual([
         {
