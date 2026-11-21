@@ -6,7 +6,7 @@ import type {
 } from '@app/core-runtime';
 import { OwnerAuthorizationOverlay, ownerAuthorizationDenial } from '@app/core-runtime';
 import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
-import { Effect, Layer, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 
 import {
   CounterpartyRefSchema,
@@ -15,14 +15,20 @@ import {
 import { COUNTERPARTY_PERMISSION_CODES, permissionDescriptor } from '../../shared/domain/permission-catalog.ts';
 import type { CounterpartyPermissionCode } from '../../shared/domain/permission-catalog.ts';
 import { RetailAccessDecisionRequestSchema } from '../../shared/apis/retail-access-decision.ts';
+import { CommerceCustomerProfileTargetSchema } from '../../shared/domain/price-group-contracts.ts';
 import { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import { RetailPortalPermissionCodeSchema } from '../../shared/domain/profile-contracts.ts';
 import type { RetailPortalPermissionCode } from '../../shared/domain/profile-contracts.ts';
-import { PORTAL_SESSION_FACT, portalOwnPermissionByOperation } from '../../shared/portal-auth/own-session.ts';
+import {
+  PORTAL_SESSION_FACT,
+  portalOwnPermissionByOperation,
+  STOREFRONT_CLIENT_WORKLOAD,
+} from '../../shared/portal-auth/own-session.ts';
 import { readRetailEnrollmentAccountAuthority } from '../enrollment/attempts/registration-persistence.ts';
 import { CommercePortalSessionLiveness } from '../portal-auth/persistence/portal-auth-session-liveness.ts';
 import type { CommercePortalSessionLivenessService } from '../portal-auth/persistence/portal-auth-session-liveness.ts';
 import { lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
+import { customerPriceGroupProfileValidationForTransaction } from './price-group-persistence.ts';
 import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
 
 /**
@@ -42,6 +48,7 @@ export const OWNER_DENIAL_REASON = {
   portalSessionNotLive: 'deny.owner.portal_session_not_live',
   portalSessionUnbound: 'deny.owner.portal_session_unbound',
   retailFactMissing: 'deny.owner.retail_fact_missing',
+  storefrontProfileOutsideCompany: 'deny.owner.storefront_profile_outside_company',
 } as const;
 
 const requires = (permission: string) => `requires.${permission}`;
@@ -71,6 +78,12 @@ const OWNER_FACT_COUNTERPARTY = 'counterpartyId';
 const OWNER_FACT_RETAIL_PERMISSION = 'retailPermission';
 const OWNER_FACT_RETAIL_PROFILE = 'retailProfileId';
 const OWNER_FACT_STOREFRONT = 'storefrontId';
+
+/** The owner and resource type of every Retail profile a fact names. */
+const RETAIL_PROFILE_OWNER = {
+  moduleId: 'commerce.customer-context',
+  resourceType: 'commerce.customer-context.retail-customer-profile',
+} as const;
 
 /** The owner-local Counterparty Permission a profile-reading capability needs (O67-Q1). */
 const COUNTERPARTY_PROFILE_READ: CounterpartyPermissionCode = 'counterparty.profile.read';
@@ -159,9 +172,8 @@ const checkRetailFacts = (
   }
   const request = Schema.decodeUnknownResult(RetailAccessDecisionRequestSchema)({
     profileRef: {
-      moduleId: 'commerce.customer-context',
+      ...RETAIL_PROFILE_OWNER,
       resourceId: profileId,
-      resourceType: 'commerce.customer-context.retail-customer-profile',
       tenantId: input.scope.tenantId,
     },
     requiredPermission,
@@ -254,9 +266,8 @@ const checkPortalSessionFacts = (
       return ownerAuthorizationDenial(OWNER_DENIAL_REASON.portalPartyMismatch);
     }
     const profileRef = yield* Schema.decodeEffect(RetailCustomerProfileRefSchema)({
-      moduleId: 'commerce.customer-context',
+      ...RETAIL_PROFILE_OWNER,
       resourceId: bound.value.profile_id,
-      resourceType: 'commerce.customer-context.retail-customer-profile',
       tenantId: input.scope.tenantId,
     });
     const services = profilePersistenceServicesForTransaction(transaction, {
@@ -343,6 +354,59 @@ const authorizeSourceOwnerFacts = (
     Effect.orElseSucceed(() => 'unavailable' as const),
   );
 
+const CUSTOMER_PRICE_GROUP_RESOLUTION = 'commerce.customer-context.api.customer-price-group-resolution';
+
+/** The profile the facts name is a Retail profile sold by the company the storefront is registered for. */
+const storefrontOwnRetailProfile = (
+  transaction: ScopedTransactionExecutor,
+  input: OwnerAuthorizationInput,
+): Effect.Effect<OwnerAuthorizationOutcome> => {
+  const { legalEntityId } = input.scope;
+  const profile = Schema.decodeUnknownResult(CommerceCustomerProfileTargetSchema)({
+    ...RETAIL_PROFILE_OWNER,
+    kind: 'RETAIL',
+    resourceId: input.ownerFacts?.[OWNER_FACT_RETAIL_PROFILE],
+    tenantId: input.scope.tenantId,
+  });
+  if (legalEntityId === undefined || Result.isFailure(profile)) {
+    return Effect.succeed(ownerAuthorizationDenial(OWNER_DENIAL_REASON.retailFactMissing));
+  }
+  return customerPriceGroupProfileValidationForTransaction(transaction, { ...input.scope, legalEntityId })
+    .inspect(profile.success, DateTime.formatIso(input.operationAt))
+    .pipe(
+      Effect.map((inspected) =>
+        Match.value(inspected).pipe(
+          Match.tag('CURRENT', (): OwnerAuthorizationOutcome => 'allowed'),
+          Match.tag('NOT_FOUND', () => ownerAuthorizationDenial(OWNER_DENIAL_REASON.storefrontProfileOutsideCompany)),
+          Match.exhaustive,
+        ),
+      ),
+      Effect.orElseSucceed(() => 'unavailable' as const),
+    );
+};
+
+/**
+ * DEMO-LINE RULE (`demo/sales-crm` only; `main` has not decided it): a storefront backend may read the Price Group of
+ * its own shop's Retail customers. The Commerce portal admits the signed-in customer's session and then prices the page
+ * through Pricing for the Storefront client that relayed it, so Pricing asks this resolution for that same workload.
+ * A workload is never bound to a customer's profile, so the Retail rule would always refuse it; and main carries no
+ * portal session across a module call (Party's profile read trusts the portal's attestation the same way), so the
+ * session rule cannot decide here. Core's gate has already admitted the subject as `commerce.storefront-client`
+ * registered for this company (the sealed workload branch, never a credential or payload claim); this rule adds only
+ * that the named profile is a Retail profile whose selling company is this one. Another workload, a person, a
+ * storefront of another company and every Counterparty (B2B) profile are decided exactly as before.
+ */
+const authorizeStorefrontRetailPriceGroup = (
+  transaction: ScopedTransactionExecutor,
+  input: OwnerAuthorizationInput,
+): Effect.Effect<OwnerAuthorizationOutcome> =>
+  readScopedAdmittedWorkload(transaction, input.scope, STOREFRONT_CLIENT_WORKLOAD).pipe(
+    Effect.flatMap((storefront) =>
+      storefront ? storefrontOwnRetailProfile(transaction, input) : authorizeStandardOwnerFacts(transaction, input),
+    ),
+    Effect.orElseSucceed(() => 'unavailable' as const),
+  );
+
 const sourceAddressActions = new Set([
   'commerce.customer-context.add-saved-address',
   'commerce.customer-context.update-saved-address',
@@ -375,6 +439,13 @@ export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (
       // The factory first proves the immutable original actor/action/hash, then current scoped
       // profile association and Privacy. This grants no generic Counterparty profile Read.
       return authorizeSourceOwnerFacts(transaction, input, 'commerce.customer-context.source-read');
+    }
+    if (
+      input.operation === 'read' &&
+      input.operationKey === CUSTOMER_PRICE_GROUP_RESOLUTION &&
+      input.ownerFacts?.[OWNER_FACT_RETAIL_PROFILE] !== undefined
+    ) {
+      return authorizeStorefrontRetailPriceGroup(transaction, input);
     }
     return authorizeStandardOwnerFacts(transaction, input);
   },
