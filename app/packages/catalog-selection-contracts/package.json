@@ -17,9 +17,7 @@
     "./quantity-basis-compatibility": "./src/domain/quantity-basis-compatibility.ts",
     "./resources/product": "./src/resources/product.ts",
     "./resources/product-unit": "./src/resources/product-unit.ts",
-    "./resources/variant": "./src/resources/variant.ts",
-    "./variant-exact-form": "./src/domain/variant-exact-form.ts"
-  },
+    "./resources/variant": "./src/resources/variant.ts"  },
   "scripts": {
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
