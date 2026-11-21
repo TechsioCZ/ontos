@@ -19,7 +19,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parseSync, Visitor } from 'oxc-parser';
-import type { ImportExpression, MemberExpression } from 'oxc-parser';
+import type { Argument, Expression, ImportExpression, MemberExpression } from 'oxc-parser';
 
 /**
  * Lean-Core gate: `packages/core-runtime` must never depend on Commerce,
@@ -79,8 +79,6 @@ interface ImportOccurrence {
 
 interface SourceImportAnalysis {
   readonly occurrences: readonly ImportOccurrence[];
-  /** False when the file does not parse, so none of its specifiers are known. */
-  readonly parsed: boolean;
   readonly unsupportedRuntimeImport: boolean;
 }
 
@@ -133,7 +131,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
     sourceType: file.endsWith('.cjs') ? 'script' : 'module',
   });
   if (parsed.errors.length > 0) {
-    return { occurrences: [], parsed: false, unsupportedRuntimeImport: true };
+    return { occurrences: [], unsupportedRuntimeImport: true };
   }
   const occurrences = parsed.program.body.flatMap((statement) => {
     const occurrence = occurrenceForStatement(statement);
@@ -193,7 +191,6 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
       [...occurrences, ...dynamicOccurrences],
       Order.mapInput(Order.Number, (occurrence: ImportOccurrence) => occurrence.index),
     ),
-    parsed: true,
     unsupportedRuntimeImport,
   };
 };
@@ -991,12 +988,29 @@ const BaselineEntryOrder = Order.combine(
   Order.mapInput(Order.String, (entry: ModuleEdgeBaselineEntry) => entry.to),
 );
 
+/** A target of a package `imports` entry: a path or package, null, or nested conditions and fallbacks. */
+type PackageImportsTarget =
+  | string
+  | null
+  | readonly PackageImportsTarget[]
+  | { readonly [condition: string]: PackageImportsTarget };
+const PackageImportsTargetSchema: Schema.Codec<PackageImportsTarget> = Schema.Union([
+  Schema.String,
+  Schema.Null,
+  Schema.Array(Schema.suspend((): Schema.Codec<PackageImportsTarget> => PackageImportsTargetSchema)),
+  Schema.Record(
+    Schema.String,
+    Schema.suspend((): Schema.Codec<PackageImportsTarget> => PackageImportsTargetSchema),
+  ),
+]);
+
 const dependencyFields = ['dependencies', 'peerDependencies', 'optionalDependencies', 'devDependencies'] as const;
 const DependencyFieldSchema = Schema.optional(Schema.Record(Schema.String, Schema.String));
 const PackageEdgeManifestFromJson = Schema.fromJsonString(
   Schema.Struct({
     dependencies: DependencyFieldSchema,
     devDependencies: DependencyFieldSchema,
+    imports: Schema.optional(Schema.Record(Schema.String, PackageImportsTargetSchema)),
     name: Schema.optional(Schema.String),
     optionalDependencies: DependencyFieldSchema,
     peerDependencies: DependencyFieldSchema,
@@ -1097,6 +1111,246 @@ const discoverWorkspacePackages = (
     );
   });
 
+/** Every source format a workspace package can hold, each parsed in its own language. */
+const moduleSourceExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
+
+const moduleLanguage = (file: string): 'js' | 'jsx' | 'ts' | 'tsx' => {
+  const extension = posixPath.extname(file);
+  if (extension === '.tsx' || extension === '.jsx') {
+    return extension === '.tsx' ? 'tsx' : 'jsx';
+  }
+  return extension === '.ts' || extension === '.mts' || extension === '.cts' ? 'ts' : 'js';
+};
+
+/** A specifier written in source, at the index of the construct that names it. */
+interface ModuleReference {
+  readonly index: number;
+  readonly specifier: string;
+}
+
+const literalString = (node: Argument | Expression | undefined): string | undefined => {
+  if (node?.type === 'Literal' && Predicate.isString(node.value)) {
+    return node.value;
+  }
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0]?.value.cooked ?? undefined;
+  }
+  return undefined;
+};
+
+const isCreateRequireCall = (node: Expression): boolean =>
+  node.type === 'CallExpression' &&
+  (node.callee.type === 'Identifier'
+    ? node.callee.name === 'createRequire'
+    : node.callee.type === 'MemberExpression' && staticMemberName(node.callee) === 'createRequire');
+
+const isImportMeta = (node: Expression): boolean =>
+  node.type === 'MetaProperty' && node.meta.name === 'import' && node.property.name === 'meta';
+
+const referenceDirective = /^\/\s*<reference\s+(?<kind>path|types)\s*=\s*["'](?<target>[^"']+)["']/u;
+
+/**
+ * Every specifier the file names with a literal: static imports and re-exports at any depth, `import()`,
+ * TypeScript import types and `import x = require()`, `require()` and `require.resolve()` (also through
+ * `module.require`, `createRequire(...)` and a binding of its result), `import.meta.resolve()`, and
+ * triple-slash reference directives. None when the file does not parse, so its edges are unknown.
+ */
+const moduleReferencesIn = (file: string, source: string): Option.Option<readonly ModuleReference[]> => {
+  const parsed = parseSync(file, source, {
+    astType: 'ts',
+    lang: moduleLanguage(file),
+    sourceType: file.endsWith('.cjs') ? 'script' : 'module',
+  });
+  if (parsed.errors.length > 0) {
+    return Option.none();
+  }
+  const references: ModuleReference[] = [];
+  const record = (index: number, specifier: string | null | undefined): void => {
+    if (Predicate.isString(specifier)) {
+      references.push({ index, specifier });
+    }
+  };
+  const loaders = new Set(['require']);
+  new Visitor({
+    VariableDeclarator: (node) => {
+      if (node.id.type === 'Identifier' && node.init !== null && isCreateRequireCall(node.init)) {
+        loaders.add(node.id.name);
+      }
+    },
+  }).visit(parsed.program);
+  const isLoader = (node: Expression): boolean =>
+    (node.type === 'Identifier' && loaders.has(node.name)) ||
+    (node.type === 'MemberExpression' && staticMemberName(node) === 'require') ||
+    isCreateRequireCall(node);
+  new Visitor({
+    CallExpression: (node) => {
+      const { callee } = node;
+      const resolves =
+        callee.type === 'MemberExpression' &&
+        staticMemberName(callee) === 'resolve' &&
+        (isLoader(callee.object) || isImportMeta(callee.object));
+      if (resolves || isLoader(callee)) {
+        record(node.start, literalString(node.arguments[0]));
+      }
+    },
+    ExportAllDeclaration: (node) => record(node.start, node.source.value),
+    ExportNamedDeclaration: (node) => record(node.start, node.source?.value),
+    ImportDeclaration: (node) => record(node.start, node.source.value),
+    ImportExpression: (node) => record(node.start, literalString(node.source)),
+    TSImportEqualsDeclaration: (node) =>
+      record(
+        node.start,
+        node.moduleReference.type === 'TSExternalModuleReference' ? node.moduleReference.expression.value : undefined,
+      ),
+    TSImportType: (node) => record(node.start, node.source.value),
+  }).visit(parsed.program);
+  for (const comment of parsed.comments) {
+    const directive = comment.type === 'Line' ? referenceDirective.exec(comment.value)?.groups : undefined;
+    const target = directive?.target;
+    if (target !== undefined) {
+      // A path directive is relative to its file even without a leading dot.
+      record(comment.start, directive?.kind === 'path' && !target.startsWith('.') ? `./${target}` : target);
+    }
+  }
+  return Option.some(
+    EffectArray.sort(
+      references,
+      Order.mapInput(Order.Number, (reference: ModuleReference) => reference.index),
+    ),
+  );
+};
+
+/** Every path or package an `imports` target can select, under any condition. */
+const importsTargetStrings = (target: PackageImportsTarget): readonly string[] => {
+  if (target === null) {
+    return [];
+  }
+  if (Predicate.isString(target)) {
+    return [target];
+  }
+  return (Array.isArray(target) ? target : Object.values(target)).flatMap(importsTargetStrings);
+};
+
+const versionProtocol = /^(?<protocol>[a-z][a-z+]*):(?<rest>.*)$/u;
+const aliasedPackage = /^(?<name>@[^/@]+\/[^/@]+|[^/@]+)(?:@|$)/u;
+const pathProtocols = new Set(['file', 'link', 'portal']);
+
+/** How specifiers and dependency declarations of the workspace at root land on its packages. */
+const workspaceResolver = (root: string, path: Path.Path, packages: readonly WorkspacePackage[]) => {
+  const directoryByName = new Map(
+    packages.flatMap(({ directory, manifest }) =>
+      manifest.name === undefined ? [] : [[manifest.name, directory] as const],
+    ),
+  );
+  const owner = (file: string): string | undefined =>
+    packages.find(({ directory }) => file === directory || file.startsWith(`${directory}/`))?.directory;
+  const ownerOfPath = (directory: string, target: string): string | undefined =>
+    owner(
+      path.isAbsolute(target)
+        ? path.relative(root, target).split(path.sep).join('/')
+        : posixPath.normalize(posixPath.join(directory, target)),
+    );
+  /**
+   * The workspace package a declaration installs: the key's own package for a plain range or a catalog, the
+   * named package for a `workspace:` or `npm:` alias, the package holding the path for a `workspace:`,
+   * `link:`, `file:` or `portal:` path, and none for any other protocol.
+   */
+  const declaredTarget = (directory: string, name: string, range: string): string | undefined => {
+    const groups = versionProtocol.exec(range)?.groups;
+    const protocol = groups?.protocol ?? 'catalog';
+    const rest = groups?.rest ?? '';
+    const isPath = rest.startsWith('.') || rest.startsWith('/');
+    if (pathProtocols.has(protocol) || (protocol === 'workspace' && isPath)) {
+      return ownerOfPath(directory, rest);
+    }
+    const alias = aliasedPackage.exec(rest)?.groups?.name;
+    if (protocol === 'npm' || (protocol === 'workspace' && rest.includes('@', 1))) {
+      return directoryByName.get(alias ?? '');
+    }
+    return protocol === 'catalog' || protocol === 'workspace' ? directoryByName.get(name) : undefined;
+  };
+  const declared = new Map(
+    packages.map(
+      ({ directory, manifest }) =>
+        [
+          directory,
+          new Map(
+            dependencyFields
+              .flatMap((field) => Object.entries(manifest[field] ?? {}))
+              .map(([name, range]) => [name, declaredTarget(directory, name, range)] as const),
+          ),
+        ] as const,
+    ),
+  );
+  /** A bare specifier loads what its package declares under that name, else the hoisted workspace package. */
+  const bareTarget = (directory: string, specifier: string): string | undefined => {
+    const name = specifierPackageName(specifier);
+    const own = declared.get(directory);
+    return own?.has(name) === true ? own.get(name) : directoryByName.get(name);
+  };
+  const importsEntryTargets = (directory: string, target: PackageImportsTarget, star: string) =>
+    importsTargetStrings(target).map((selected) => {
+      const expanded = selected.replaceAll('*', star);
+      return expanded.startsWith('.') ? ownerOfPath(directory, expanded) : bareTarget(directory, expanded);
+    });
+  /** A `#` specifier loads every target its package's `imports` entry (exact or one `*` pattern) maps it to. */
+  const subpathImportTargets = (
+    { directory, manifest }: WorkspacePackage,
+    specifier: string,
+  ): readonly (string | undefined)[] =>
+    Object.entries(manifest.imports ?? {}).flatMap(([key, target]) => {
+      const [prefix = '', suffix] = key.split('*');
+      if (suffix === undefined) {
+        return key === specifier ? importsEntryTargets(directory, target, '') : [];
+      }
+      const matched = specifier.startsWith(prefix) && specifier.endsWith(suffix) && specifier.length >= key.length - 1;
+      return matched
+        ? importsEntryTargets(directory, target, specifier.slice(prefix.length, specifier.length - suffix.length))
+        : [];
+    });
+  /** The packages a specifier written in `relative`, a file of `workspacePackage`, loads. */
+  const referenceTargets = (
+    workspacePackage: WorkspacePackage,
+    relative: string,
+    specifier: string,
+  ): readonly (string | undefined)[] => {
+    if (specifier.startsWith('.')) {
+      return [owner(resolveRelativeSpecifier(relative, specifier))];
+    }
+    return specifier.startsWith('#')
+      ? subpathImportTargets(workspacePackage, specifier)
+      : [bareTarget(workspacePackage.directory, specifier)];
+  };
+  return { declaredTarget, referenceTargets };
+};
+
+/** Each source of a workspace package with its path relative to root. */
+const packageSources = (
+  root: string,
+  workspacePackage: WorkspacePackage,
+): Effect.Effect<
+  readonly (readonly [WorkspacePackage, string, string])[],
+  PlatformError,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* packageSourcesProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const files = yield* collect(path.join(root, workspacePackage.directory), moduleSourceExtensions);
+    return yield* Effect.all(
+      files.map((file) =>
+        fileSystem
+          .readFileString(file, 'utf-8')
+          .pipe(
+            Effect.map(
+              (source) => [workspacePackage, path.relative(root, file).split(path.sep).join('/'), source] as const,
+            ),
+          ),
+      ),
+      { concurrency: 32 },
+    );
+  });
+
 /** The package edge graph of the tree at root, read from manifests and import specifiers only. */
 const derivePackageGraph = (
   root: string,
@@ -1105,13 +1359,7 @@ const derivePackageGraph = (
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const packages = yield* discoverWorkspacePackages(fileSystem, path, root);
-    const directoryByName = new Map(
-      packages.flatMap(({ directory, manifest }) =>
-        manifest.name === undefined ? [] : [[manifest.name, directory] as const],
-      ),
-    );
-    const owner = (file: string): string | undefined =>
-      packages.find(({ directory }) => file.startsWith(`${directory}/`))?.directory;
+    const { declaredTarget, referenceTargets } = workspaceResolver(root, path, packages);
     const sitesByEdge = new Map<string, { readonly from: string; readonly sites: EdgeSite[]; readonly to: string }>();
     const recordSite = (from: string, to: string | undefined, site: EdgeSite): void => {
       if (to === undefined || to === from) {
@@ -1125,8 +1373,8 @@ const derivePackageGraph = (
 
     for (const { directory, manifest } of packages) {
       for (const field of dependencyFields) {
-        for (const dependency of Object.keys(manifest[field] ?? {})) {
-          recordSite(directory, directoryByName.get(dependency), {
+        for (const [dependency, range] of Object.entries(manifest[field] ?? {})) {
+          recordSite(directory, declaredTarget(directory, dependency, range), {
             class: field === 'devDependencies' ? 'test' : 'runtime',
             field,
             file: `${directory}/package.json`,
@@ -1136,39 +1384,23 @@ const derivePackageGraph = (
       }
     }
 
-    const files = yield* Effect.all(
-      packages.map(({ directory }) => collect(path.join(root, directory), graphSourceExtensions)),
-      { concurrency: 4 },
-    );
     const sources = yield* Effect.all(
-      files
-        .flat()
-        .map((file) =>
-          fileSystem
-            .readFileString(file, 'utf-8')
-            .pipe(Effect.map((source) => [path.relative(root, file).split(path.sep).join('/'), source] as const)),
-        ),
-      { concurrency: 32 },
-    );
+      packages.map((workspacePackage) => packageSources(root, workspacePackage)),
+      { concurrency: 4 },
+    ).pipe(Effect.map((perPackage) => perPackage.flat()));
     const unparsable: string[] = [];
-    for (const [relative, source] of sources) {
-      // Every collected file lies inside the package directory it was collected from.
-      const from = owner(relative) ?? relative;
-      const analysis = analyzeImports(relative, source);
-      if (!analysis.parsed) {
+    for (const [workspacePackage, relative, source] of sources) {
+      const references = moduleReferencesIn(relative, source);
+      if (Option.isNone(references)) {
         unparsable.push(relative);
         continue;
       }
       const siteClass: EdgeClass = isTestSource(relative) ? 'test' : 'runtime';
-      for (const { index, specifier } of analysis.occurrences) {
+      for (const { index, specifier } of references.value) {
         const line = sourceLine(source, index);
-        recordSite(
-          from,
-          specifier.startsWith('.')
-            ? owner(resolveRelativeSpecifier(relative, specifier))
-            : directoryByName.get(specifierPackageName(specifier)),
-          { class: siteClass, file: relative, line },
-        );
+        for (const target of referenceTargets(workspacePackage, relative, specifier)) {
+          recordSite(workspacePackage.directory, target, { class: siteClass, file: relative, line });
+        }
       }
     }
 
