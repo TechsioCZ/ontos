@@ -86,6 +86,14 @@ type AdmissionStore = Effect.Success<ReturnType<typeof symmyJobStoreFactory>>;
 const retiredReceiptProbeKey = 'integration.symmy.test-retired-stock-receipt';
 const retiredReceiptProbe = defineAction(
   {
+    accessDeclaration: {
+      key: retiredReceiptProbeKey,
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'native-fixture', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${retiredReceiptProbeKey}.access.v1` },
     actionKey: retiredReceiptProbeKey,
     auditProfile: 'standard',
