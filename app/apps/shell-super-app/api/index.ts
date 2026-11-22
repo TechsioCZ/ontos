@@ -3001,6 +3001,20 @@ const coreMediaDownloadHandlersLive = coreMediaDownloadGroupLive.pipe(
 );
 /** The upload route with its composed dependency: the object store. The confirm Action runs under the caller. */
 const coreMediaUploadHandlersLive = coreMediaUploadGroupLive.pipe(Layer.provide(coreMediaObjectStorageLive));
+
+// @ontos-codesmith-core-action-server-handlers:start
+
+// @ontos-core-action confirm-asset
+const coreActionConfirmAssetHandlersLive = coreActionConfirmAssetGroupLive.pipe(
+  Layer.provide(coreMediaObjectStorageLive),
+);
+
+// @ontos-core-action upload-asset
+const coreActionUploadAssetHandlersLive = coreActionUploadAssetGroupLive.pipe(
+  Layer.provide(coreMediaObjectStorageLive),
+);
+// @ontos-codesmith-core-action-server-handlers:end
+
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.effect(Tracer.Tracer, Tracer.Tracer),
@@ -3488,10 +3502,10 @@ export const makeShellAuthenticationApiRuntime = (
     coreActionRenameDisplayFilenameGroupLive,
 
     // @ontos-core-action confirm-asset
-    coreActionConfirmAssetGroupLive,
+    coreActionConfirmAssetHandlersLive,
 
     // @ontos-core-action upload-asset
-    coreActionUploadAssetGroupLive,
+    coreActionUploadAssetHandlersLive,
     // @ontos-codesmith-core-action-server-layers:end
     coreMediaDownloadHandlersLive,
     coreMediaUploadHandlersLive,
