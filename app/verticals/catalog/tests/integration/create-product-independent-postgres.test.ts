@@ -1107,11 +1107,12 @@ it.live(
         yield* Effect.gen(function* nativeRequestIdentityParity() {
           const parityProduct = yield* create({ name: 'Internal request identity subject' });
           const updateKey = yield* nextId;
-          const updatePayload = yield* Schema.decodeUnknownEffect(UpdateProductPayloadSchema)({
+          const updateRequest = {
             expectedRevision: parityProduct.product.revision,
             productRef: parityProduct.product.productRef,
             reason: 'Internal fixture records the supported no-op update intent',
-          });
+          };
+          const updatePayload = yield* Schema.decodeUnknownEffect(UpdateProductPayloadSchema)(updateRequest);
           const updated = yield* requireExecutionResult(
             UpdateProductResultSchema,
             executeUpdateProductWithAuthorization(updatePayload, yield* authorization(), yield* nextId, {
@@ -1164,7 +1165,7 @@ it.live(
               invocationId: variantSnapshot.actionInvocationId,
             },
             {
-              identity: yield* updateProductRequestIdentity(updatePayload),
+              identity: yield* updateProductRequestIdentity(updateRequest),
               invocationId: updateInvocation.actionInvocationId,
             },
             {

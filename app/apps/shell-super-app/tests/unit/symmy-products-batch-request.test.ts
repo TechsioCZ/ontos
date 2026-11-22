@@ -20,7 +20,8 @@ const product = { name: 'Product', variants: [variant] };
 const withProduct = (extra: Readonly<Record<string, Json>>) => ({ products: [{ ...product, ...extra }] });
 const withVariant = (extra: Readonly<Record<string, Json>>) => withProduct({ variants: [{ ...variant, ...extra }] });
 const price = { amount: '10.5', currencyCode: 'CZK' };
-const texts = (count: number) => Array.from({ length: count }, (_, index) => ({ locale: `l${index}`, name: 'N' }));
+const texts = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({ locale: `en-x-fixture-${index}`, name: 'N' }));
 const channel = (resourceId: string) =>
   withVariant({ prices: [{ ...price, commercialScope: { channelRef: { ...productRef, resourceId } } }] });
 
