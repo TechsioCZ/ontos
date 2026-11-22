@@ -512,7 +512,10 @@ const reserve = Effect.fn('CoreMediaUploadEdgeTest.reserve')(function* reserve(
   const reservation = yield* harness
     .runtimeFor(persona.actor.kind === 'human' ? 'human' : 'machine')
     .runAction({
-      payload: reservationPayload(bytes),
+      // The stated origin must match the carrier: a person says `user`, a machine principal a machine origin.
+      payload: reservationPayload(bytes, {
+        ingestionSource: persona.actor.kind === 'human' ? 'user' : 'integration',
+      }),
       principal: principalOf(persona.world, persona.actor, persona.legalEntityId),
       registration: uploadAssetAction,
       transport: transportOf(`${key}-reserve`),
@@ -869,7 +872,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
           expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'human' })).status).toBe(403);
           expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'integration' })).status).toBe(200);
           expect(yield* statusOfRow(harness, world.tenantId, mediaAssetId)).toBe('ready');
-          expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.ingestion_source).toBe('user');
+          expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.ingestion_source).toBe('integration');
         }),
       ),
     );
