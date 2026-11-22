@@ -3,13 +3,16 @@ import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { getActionHandler } from '@app/core-runtime/testing/actions';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { OutboxWorkerDeferred } from '@app/core-runtime/outbox/worker';
-import { NodeCrypto } from '@effect/platform-node';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionUnavailableError,
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
-import { ConfigProvider, DateTime, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
+import { HttpServer, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -363,6 +366,44 @@ describe('The relay over the production transport (#1406 D1)', () => {
   );
 });
 
+const unavailableComposition = Layer.succeed(
+  ActiveApplicationCompositionService,
+  makeActiveApplicationCompositionService(
+    Effect.fail(
+      new ActiveApplicationCompositionUnavailableError({ cause: 'fictional', reason: 'Fictional authority' }),
+    ),
+  ),
+);
+const transportWith = (
+  configuration: Record<string, string>,
+  composition: Layer.Layer<ActiveApplicationCompositionService>,
+) =>
+  CommercePortalAuthCommunicationRequestSubmitter.pipe(
+    Effect.provide(
+      PortalAuthRelayTransportLive.pipe(
+        Layer.provide(Layer.merge(composition, ConfigProvider.layer(ConfigProvider.fromUnknown(configuration)))),
+      ),
+    ),
+  );
+
+/** A loopback Shell that records every request reaching it and answers each with an unavailable gateway. */
+const recordingShell = Effect.gen(function* recordingShellEffect() {
+  const received = yield* Ref.make(0);
+  const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+  yield* server.serve(
+    Ref.update(received, (count) => count + 1).pipe(Effect.as(HttpServerResponse.empty({ status: 503 }))),
+  );
+  if (!NetAddress.isInetAddress(server.address)) {
+    return yield* Effect.die('The recording Shell must bind one loopback TCP server');
+  }
+  return { origin: `http://127.0.0.1:${server.address.port}`, received };
+});
+const configurationOf = (origin: string) => ({
+  COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key',
+  ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: origin,
+  ONTOS_SHELL_GATEWAY_BASE_URL: `${origin}/shell-super-app-api`,
+});
+
 describe('The relay loop and the production relay transport (#1406 D1)', () => {
   it.effect(
     'the relay loop submits a committed row of the trusted Tenant within its interval, and none of another Tenant',
@@ -460,42 +501,34 @@ describe('The relay loop and the production relay transport (#1406 D1)', () => {
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  const unavailableComposition = Layer.succeed(
-    ActiveApplicationCompositionService,
-    makeActiveApplicationCompositionService(
-      Effect.fail(
-        new ActiveApplicationCompositionUnavailableError({ cause: 'fictional', reason: 'Fictional authority' }),
-      ),
-    ),
-  );
-  const transportWith = (configuration: Record<string, string>) =>
-    CommercePortalAuthCommunicationRequestSubmitter.pipe(
-      Effect.provide(
-        PortalAuthRelayTransportLive.pipe(
-          Layer.provide(
-            Layer.merge(unavailableComposition, ConfigProvider.layer(ConfigProvider.fromUnknown(configuration))),
-          ),
-        ),
-      ),
-    );
-
-  it.effect(
+  it.live(
     'the production transport fails closed, and sends nothing, without its configuration or an admitted composition',
     () =>
       Effect.gen(function* failClosed() {
         const request = yield* requestOf('pa-transport-9');
-        const unconfigured = yield* transportWith({});
-        const configured = yield* transportWith({
-          COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key',
-          ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'https://commerce.example.test',
-          ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test',
-        });
-        for (const transport of [unconfigured, configured]) {
+        const shell = yield* recordingShell;
+        const unconfigured = yield* transportWith({}, unavailableComposition);
+        const unadmitted = yield* transportWith(configurationOf(shell.origin), unavailableComposition);
+        for (const transport of [unconfigured, unadmitted]) {
           const failure = yield* Effect.flip(transport.submit(request));
           expect(Schema.is(PortalAuthCommunicationUnavailable)(failure)).toBe(true);
           expect(failure).toMatchObject({ operation: 'relay-portal-auth-communication-request' });
           expect(JSON.stringify(failure)).not.toContain('fictional-relay-key');
         }
-      }),
+        // nothing reached the network: the missing configuration and the missing composition each stopped it
+        expect(yield* Ref.get(shell.received)).toBe(0);
+        // CONTROL: the same configured transport with an admitted composition does reach the Shell, so the composition
+        // gate alone is what kept the call above from leaving
+        const snapshot = yield* makeApplicationCompositionSnapshotFixture(['commerce-customer-context']);
+        const admitted = yield* transportWith(
+          configurationOf(shell.origin),
+          Layer.succeed(
+            ActiveApplicationCompositionService,
+            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+          ),
+        );
+        expect(Schema.is(PortalAuthCommunicationUnavailable)(yield* Effect.flip(admitted.submit(request)))).toBe(true);
+        expect(yield* Ref.get(shell.received)).toBeGreaterThanOrEqual(1);
+      }).pipe(Effect.scoped),
   );
 });
