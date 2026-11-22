@@ -96,6 +96,7 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
               await realm.auth.api.sendTwoFactorOTP({ body: { trustDevice: false }, headers: challenge.headers }),
           );
           for (let attempt = 0; attempt < 200 && world.submissions.length === 0; attempt += 1) {
+            yield* world.relay;
             yield* Effect.sleep(25);
           }
           const issuance = Option.getOrThrow(

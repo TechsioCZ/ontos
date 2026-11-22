@@ -48,10 +48,11 @@ import {
  * Nothing here is Privacy, delivery or provider evidence.
  */
 
+/** The user asks for a reset; the issuance commits with its request, and one relay tick submits it. */
 const requestReset = (realm: PostgresRealm, address = realm.email) =>
   Effect.promise(
     async () => await realm.auth.api.requestPasswordReset({ body: { email: address }, headers: headersOf(realm.ip) }),
-  );
+  ).pipe(Effect.tap(() => realm.relay));
 
 const setup = Effect.fn('PasswordResetE2E.setup')(function* setupWorld(options?: Parameters<typeof authWorld>[0]) {
   const world = yield* authWorld(options ?? { mode: 'B' });
@@ -441,14 +442,15 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
   );
 
   it.live(
-    '[AC-06 restart] after a restart Auth cannot resume the issuance: a truthful stop and the link is never reproduced',
+    '[AC-06 D2] an issuance whose protected value Auth cleared is resumed by no Auth process, restarted or not: a truthful stop, never reproduced',
     () =>
       Effect.gen(function* restart() {
         const { realm, world } = yield* setup();
         yield* requestReset(realm);
         const intentId = yield* onlyIntent(world);
-        // a restart drops the process-local protected handoff: the entry is gone, observably the same
+        // Auth cleared the protected value (it serves nothing any more); a restarted process finds nothing to resume either
         yield* world.handoff.forget(issuanceRefOf(world));
+        yield* world.restartAuth;
         const outcome = yield* step(world, world.messageHandoff, intentId);
         expect(outcome.kind).not.toBe('HANDED_OFF');
         expect(world.mailbox).toHaveLength(0);

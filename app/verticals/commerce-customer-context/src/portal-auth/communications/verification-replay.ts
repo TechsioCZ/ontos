@@ -15,8 +15,8 @@ import { VerificationReplayUnavailable } from './verification-replay-unavailable
  * Request, intent and last outcome. A replay may never send a second message or issue a second link on mere uncertainty:
  *
  * - NOT_SUBMITTED: Communications has NO request for the issuance (any ADMITTED request is never NOT_SUBMITTED, whatever the
- *   caller saw: a timeout does not un-admit it) and this process never submitted one, so nothing was ever sent; the same
- *   issuance is issued. A request this process submitted (held, answer lost) is uncertain, not NOT_SUBMITTED;
+ *   caller saw: a timeout does not un-admit it) and Auth holds no issuance for it, so nothing was ever sent; the same
+ *   issuance is issued. A held issuance has a committed request in the Auth-local outbox: owed, not NOT_SUBMITTED;
  * - IN_PROGRESS, ACCEPTED, UNCERTAIN, NON_ACCEPTANCE_PROVEN: a message exists or is being continued under the approved
  *   recovery rule of the SAME intent; the replay sends nothing and issues nothing (an uncertain effect is reconciled, a
  *   proven non-acceptance continues the same intent, never a new link);
@@ -97,10 +97,10 @@ export const makeVerificationReplay = Effect.fn('CommercePortalAuthVerificationR
         }
         const outcome = yield* outcomes.outcomeOf({ flow: VERIFY_EMAIL, issuanceRef });
         if (outcome === 'NOT_SUBMITTED') {
-          // The request is held in this process before Communications is asked, so a held issuance means a submission WAS made:
-          // the caller may have seen a timeout for a request Communications nevertheless admitted, which `NOT_SUBMITTED` (no
-          // request admitted) cannot yet show. That is uncertainty, never proof that nothing was submitted.
-          const held = yield* handoff.issuanceOf(issuanceRef);
+          // A held issuance was committed together with its request in the Auth-local outbox, so its request exists and the relay
+          // submits it (or already has, with a lost answer that `NOT_SUBMITTED` cannot yet show). That is a request owed to the
+          // previous issuance, never proof that nothing was submitted.
+          const held = yield* handoff.issuanceOf(issuanceRef).pipe(Effect.mapError(unavailable));
           return Option.isSome(held)
             ? NO_NEW_ISSUANCE
             : yield* reserve({ issuanceRef, ownerInvocationId, providerSubjectId });

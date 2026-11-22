@@ -1,33 +1,33 @@
+import type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
 import { Context, DateTime, Effect, HashMap, Layer, Option, Ref } from 'effect';
 import type { Redacted } from 'effect';
 
+import { withSafeCause } from '../../../api/portal-auth/provider/safe-failure.ts';
 import { portalAuthOwnerRenderedSlotOf } from '../../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow, PortalAuthIssuanceRef } from '../../../shared/portal-auth-communications.ts';
+import { CommercePortalAuthCommunicationStore } from './communication-store.ts';
+import type { StoredIssuance } from './communication-store.ts';
+import { PortalAuthCommunicationUnavailable } from './communication-unavailable.ts';
 import type { PortalAuthIssuanceStateUnavailable } from './issuance-state-unavailable.ts';
 import type { HeldIssuance, IssuanceCurrentness, PortalAuthIssuance } from './issuance.ts';
 import { OwnerSlotStop } from './owner-slot-stop.ts';
+import { CommercePortalAuthProtectedValueSealer } from './protected-value.ts';
+import { storedRequestOf } from './request.ts';
 
 /**
  * The PROTECTED Auth handoff (ADR-0022): the one place that holds the secret of an issuance between the moment the
  * provider issues it and the moment Auth completes the owner-rendered slot of an approved message.
  *
- * It is NOT a token store and NOT a ledger: it keeps no copy beyond this process, writes nothing, and loses every entry
- * on restart. It holds a value only until the issuance expires or is spent, and it never offers the value to the generic
- * path: the single way out is `revealSecret`, which answers only for the exact issuance, only for its own owner-rendered
- * slot and only while Auth's Current lifecycle says the issuance is usable. Nothing is ever reproduced or reissued here;
- * a restart, an expiry or a spent issuance is a truthful stop and only Auth itself can issue a new one.
+ * D2: the protected side lives in Auth's own database, SEALED under the realm secret (`protected-value.ts`), so every Auth
+ * process of the deployment answers the same way: the instance that issued, another instance and a restarted one all complete
+ * the slot while Auth's Current lifecycle says the issuance is usable, and all of them stop once it is not. It is never a token
+ * ledger: Auth's own recovery ledger stays the authority on the issuance (the ledger probe below), the sealed value only lives
+ * until the issuance expires, is spent, superseded or decided not to be sent, and is then cleared. The single way out is
+ * `revealSecret`, which answers only for the exact issuance, only for its own owner-rendered slot and only while Current.
+ * Nothing is ever reproduced or reissued here; an issuance whose value is gone or does not open is a truthful stop.
  *
- * OPEN ITEM (D2): the last mile is single-instance and in-process. The protected handoff lives in this process's memory, so the
- * completion of an owner-rendered slot works only when the delivery that held the issuance and the Communications worker that
- * asks for the slot run in the SAME process; another instance, or a restart, answers NOT_RESUMABLE (a truthful stop, never a
- * reproduction). A cross-process last mile needs a published contract between the two owners: either a published Auth Read of
- * the issuance's Current lifecycle together with a published Auth completion Action that returns the slot value, or the
- * protected value stored by Auth under its own key. None of that is published, so nothing here claims a deployment topology
- * other than one process.
- *
- * Per-flow restart recognition (AC-06): after a restart the issuance is recognised only as NOT_RESUMABLE. The verification
- * link is a stateless signed token, a reset link is not reproducible from Auth's digest-only ledger, and a one-time code is
- * never stored by Auth outside the provider, so none of the three can be rebuilt safely; Auth's answer is the stop.
+ * D1: `hold` writes the issuance and its Communication Request into the Auth-local outbox in ONE Auth transaction, so the
+ * request exists exactly when the issuance does; the relay (`request-relay.ts`) submits it after that commit.
  */
 
 /**
@@ -57,11 +57,24 @@ export interface ProtectedHandoffService {
   readonly endpointOf: (
     issuanceRef: PortalAuthIssuanceRef,
   ) => Effect.Effect<Option.Option<Redacted.Redacted>, PortalAuthIssuanceStateUnavailable>;
-  readonly forget: (issuanceRef: PortalAuthIssuanceRef) => Effect.Effect<void>;
-  /** Holds one issuance; `supersede` marks the earlier issuance SUPERSEDED of the same flow and subject (a new link or code replaces it). */
-  readonly hold: (held: HeldIssuance, options: { readonly supersede: boolean }) => Effect.Effect<void>;
+  /** Clears the protected side of the issuance: nothing can complete its slot any more. */
+  readonly forget: (issuanceRef: PortalAuthIssuanceRef) => Effect.Effect<void, PortalAuthIssuanceStateUnavailable>;
+  /**
+   * Holds one issuance and records its Communication Request in the Auth-local outbox, atomically. `supersede` marks every
+   * earlier issuance of the same flow and subject SUPERSEDED (a new link or code replaces it).
+   */
+  readonly hold: (
+    held: HeldIssuance,
+    options: {
+      readonly request: CommunicationRequestEncoded;
+      readonly supersede: boolean;
+      readonly tenantId: string;
+    },
+  ) => Effect.Effect<void, PortalAuthCommunicationUnavailable>;
   /** The safe facts Auth tells Communications about the issuance; never the protected side. */
-  readonly issuanceOf: (issuanceRef: PortalAuthIssuanceRef) => Effect.Effect<Option.Option<PortalAuthIssuance>>;
+  readonly issuanceOf: (
+    issuanceRef: PortalAuthIssuanceRef,
+  ) => Effect.Effect<Option.Option<PortalAuthIssuance>, PortalAuthIssuanceStateUnavailable>;
   readonly reserve: (input: {
     readonly flow: PortalAuthEmailFlow;
     readonly providerSubjectId: string;
@@ -77,7 +90,7 @@ export interface ProtectedHandoffService {
   readonly settle: (input: {
     readonly issuanceRef: PortalAuthIssuanceRef;
     readonly state: 'CONSUMED' | 'REVOKED';
-  }) => Effect.Effect<void>;
+  }) => Effect.Effect<void, PortalAuthIssuanceStateUnavailable>;
   readonly takeReservation: (
     flow: PortalAuthEmailFlow,
     providerSubjectId: string,
@@ -89,68 +102,94 @@ export class CommercePortalAuthProtectedHandoff extends Context.Service<
   ProtectedHandoffService
 >()('@app/commerce-customer-context/portal-auth/communications/protected-handoff/CommercePortalAuthProtectedHandoff') {}
 
-interface Entry {
-  readonly held: HeldIssuance;
-  readonly settled: Option.Option<'CONSUMED' | 'REVOKED' | 'SUPERSEDED'>;
-}
-type Entries = HashMap.HashMap<PortalAuthIssuanceRef, Entry>;
-
 const reservationKey = (flow: PortalAuthEmailFlow, providerSubjectId: string) => `${flow}|${providerSubjectId}`;
-const isLive = (now: DateTime.Utc) => (entry: Entry) => DateTime.isGreaterThan(entry.held.issuance.expiresAt, now);
 
-const revokeIfSameSubject = (incoming: PortalAuthIssuance) => (entry: Entry) =>
-  entry.held.issuance.flow === incoming.flow &&
-  entry.held.issuance.providerSubjectId === incoming.providerSubjectId &&
-  Option.isNone(entry.settled)
-    ? { ...entry, settled: Option.some('SUPERSEDED' as const) }
-    : entry;
+const RECORD_OPERATION = 'issuance-record';
 
-/** The entries after one more issuance: expired entries are dropped (bounding memory), and a superseding issuance revokes its predecessor. */
-const withIssuance = (entries: Entries, incoming: HeldIssuance, now: DateTime.Utc, supersede: boolean): Entries => {
-  const live = entries.pipe(HashMap.filter(isLive(now)));
-  const kept = supersede ? live.pipe(HashMap.map(revokeIfSameSubject(incoming.issuance))) : live;
-  return kept.pipe(HashMap.set(incoming.issuance.issuanceRef, { held: incoming, settled: Option.none() }));
-};
+const issuanceOfStored = (stored: StoredIssuance) => stored.issuance;
+const endpointOfHeld = (held: HeldIssuance) => held.endpoint;
+const heldWith =
+  (issuance: PortalAuthIssuance) =>
+  (value: Pick<HeldIssuance, 'endpoint' | 'ledgerToken' | 'secret'>): HeldIssuance => ({ ...value, issuance });
 
-const settledAs = (state: 'CONSUMED' | 'REVOKED' | 'SUPERSEDED') => (entry: Entry) => ({
-  ...entry,
-  settled: Option.orElse(entry.settled, () => Option.some(state)),
-});
-
-/** The handoff over one process-local state. `ledgerProbe` is Auth's own Current-state reader of its ledger. */
+/**
+ * The handoff over Auth's store. `ledgerProbe` is Auth's own Current-state reader of its ledger. The provider-issuance
+ * reservation stays in this process on purpose: it only spans one provider call of one request (the enrollment gateway reserves,
+ * the provider's callback in the same request takes it), so it holds no issuance and nothing to resume.
+ */
 export const protectedHandoffLayer = (ledgerProbe: IssuanceLedgerProbe) =>
   Layer.effect(
     CommercePortalAuthProtectedHandoff,
     Effect.gen(function* makeProtectedHandoff() {
-      const held = yield* Ref.make<Entries>(HashMap.empty());
+      const store = yield* CommercePortalAuthCommunicationStore;
+      const sealer = yield* CommercePortalAuthProtectedValueSealer;
+
+      /** The held issuance of a stored row, when its protected side is still there and opens. */
+      const heldOfStored = (stored: StoredIssuance) =>
+        Option.match(stored.sealedValue, {
+          onNone: () => Effect.succeedNone,
+          onSome: (sealed) =>
+            sealer.open(stored.issuance, sealed).pipe(Effect.map(Option.map(heldWith(stored.issuance)))),
+        });
       const reservations = yield* Ref.make(HashMap.empty<string, IssuanceReservation>());
 
-      const entryOf = (issuanceRef: PortalAuthIssuanceRef) =>
-        Ref.get(held).pipe(Effect.map((entries) => entries.pipe(HashMap.get(issuanceRef))));
-
-      const currentness = Effect.fn('CommercePortalAuthProtectedHandoff.currentness')(function* currentnessOf(
+      /** The usable held issuance, or the state that stops it. */
+      const usable = Effect.fn('CommercePortalAuthProtectedHandoff.usable')(function* usableIssuance(
         issuanceRef: PortalAuthIssuanceRef,
-      ): Effect.fn.Return<IssuanceCurrentness, PortalAuthIssuanceStateUnavailable> {
-        const entry = yield* entryOf(issuanceRef);
-        if (Option.isNone(entry)) {
-          return 'NOT_RESUMABLE';
+      ): Effect.fn.Return<
+        { readonly held: Option.Option<HeldIssuance>; readonly state: IssuanceCurrentness },
+        PortalAuthIssuanceStateUnavailable
+      > {
+        const stored = yield* store.find(issuanceRef);
+        if (Option.isNone(stored)) {
+          return { held: Option.none(), state: 'NOT_RESUMABLE' };
         }
-        if (Option.isSome(entry.value.settled)) {
-          return entry.value.settled.value;
+        if (Option.isSome(stored.value.settled)) {
+          return { held: Option.none(), state: stored.value.settled.value };
         }
         const now = yield* DateTime.now;
-        if (!isLive(now)(entry.value)) {
-          return 'EXPIRED';
+        if (!DateTime.isGreaterThan(stored.value.issuance.expiresAt, now)) {
+          return { held: Option.none(), state: 'EXPIRED' };
         }
-        return yield* ledgerProbe(entry.value.held);
+        const held = yield* heldOfStored(stored.value);
+        if (Option.isNone(held)) {
+          return { held, state: 'NOT_RESUMABLE' };
+        }
+        const state = yield* ledgerProbe(held.value);
+        return { held: state === 'CURRENT' ? held : Option.none(), state };
       });
+
+      const currentness = (issuanceRef: PortalAuthIssuanceRef) =>
+        usable(issuanceRef).pipe(Effect.map(({ state }) => state));
 
       const hold = Effect.fn('CommercePortalAuthProtectedHandoff.hold')(function* holdIssuance(
         incoming: HeldIssuance,
-        options: { readonly supersede: boolean },
+        options: {
+          readonly request: CommunicationRequestEncoded;
+          readonly supersede: boolean;
+          readonly tenantId: string;
+        },
       ) {
+        const [sealedValue, request] = yield* Effect.all(
+          [
+            sealer.seal(incoming),
+            storedRequestOf(options.request).pipe(
+              Effect.mapError((cause) =>
+                withSafeCause(new PortalAuthCommunicationUnavailable({ operation: RECORD_OPERATION }), cause),
+              ),
+            ),
+          ],
+          { concurrency: 1 },
+        );
         const now = yield* DateTime.now;
-        yield* Ref.update(held, (entries) => withIssuance(entries, incoming, now, options.supersede));
+        yield* store.record({
+          issuance: incoming.issuance,
+          now,
+          request,
+          sealedValue,
+          supersede: options.supersede,
+          tenantId: options.tenantId,
+        });
       });
 
       const revealSecret = Effect.fn('CommercePortalAuthProtectedHandoff.revealSecret')(function* reveal(input: {
@@ -161,39 +200,31 @@ export const protectedHandoffLayer = (ledgerProbe: IssuanceLedgerProbe) =>
         if (portalAuthOwnerRenderedSlotOf(input.flow) !== input.slot) {
           return yield* new OwnerSlotStop({ reason: 'SLOT_NOT_DECLARED' });
         }
-        const state = yield* currentness(input.issuanceRef);
+        const { held, state } = yield* usable(input.issuanceRef);
         if (state !== 'CURRENT') {
           return yield* new OwnerSlotStop({ reason: state });
         }
-        const entry = yield* entryOf(input.issuanceRef);
-        if (Option.isNone(entry) || entry.value.held.issuance.flow !== input.flow) {
+        if (Option.isNone(held) || held.value.issuance.flow !== input.flow) {
           return yield* new OwnerSlotStop({ reason: 'NOT_RESUMABLE' });
         }
-        return entry.value.held.secret;
+        return held.value.secret;
       });
 
-      const endpointOf = Effect.fn('CommercePortalAuthProtectedHandoff.endpointOf')(function* endpoint(
-        issuanceRef: PortalAuthIssuanceRef,
-      ) {
-        const state = yield* currentness(issuanceRef);
-        return state === 'CURRENT'
-          ? (yield* entryOf(issuanceRef)).pipe(Option.map((entry) => entry.held.endpoint))
-          : Option.none();
-      });
+      const endpointOf = (issuanceRef: PortalAuthIssuanceRef) =>
+        usable(issuanceRef).pipe(Effect.map(({ held }) => held.pipe(Option.map(endpointOfHeld))));
 
       return {
         currentness,
         endpointOf,
-        forget: (issuanceRef) => Ref.update(held, (entries) => entries.pipe(HashMap.remove(issuanceRef))),
+        forget: store.forget,
         hold,
-        issuanceOf: (issuanceRef) => entryOf(issuanceRef).pipe(Effect.map(Option.map((entry) => entry.held.issuance))),
+        issuanceOf: (issuanceRef) => store.find(issuanceRef).pipe(Effect.map(Option.map(issuanceOfStored))),
         reserve: ({ flow, providerSubjectId, reservation }) =>
           Ref.update(reservations, (all) =>
             all.pipe(HashMap.set(reservationKey(flow, providerSubjectId), reservation)),
           ),
         revealSecret,
-        settle: ({ issuanceRef, state }) =>
-          Ref.update(held, (entries) => entries.pipe(HashMap.modify(issuanceRef, settledAs(state)))),
+        settle: store.settle,
         takeReservation: (flow, providerSubjectId) =>
           Ref.modify(reservations, (all) => {
             const key = reservationKey(flow, providerSubjectId);

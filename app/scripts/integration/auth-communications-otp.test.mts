@@ -51,7 +51,7 @@ const setup = Effect.fn('OtpE2E.setup')(function* setupWorld(options?: Parameter
   return { challenge, realm, world };
 });
 
-/** The provider may run the code callback in the background: wait until it has submitted its request. */
+/** The provider may run the code callback in the background: relay until its committed request has been submitted. */
 const sendCode = Effect.fn('OtpE2E.sendCode')(function* send(
   world: AuthWorld,
   realm: OtpRealm,
@@ -61,7 +61,10 @@ const sendCode = Effect.fn('OtpE2E.sendCode')(function* send(
   const wanted = expectedSubmissions ?? world.submissions.length + 1;
   yield* Effect.promise(async () => await realm.auth.api.sendTwoFactorOTP({ body: { trustDevice: false }, headers }));
   for (let attempt = 0; attempt < POLL_LIMIT && world.submissions.length < wanted; attempt += 1) {
-    yield* Effect.sleep(POLL_MS);
+    yield* world.relay;
+    if (world.submissions.length < wanted) {
+      yield* Effect.sleep(POLL_MS);
+    }
   }
   expect(world.submissions.length).toBeGreaterThanOrEqual(wanted);
 });
@@ -238,13 +241,14 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
   );
 
   it.live(
-    '[AC-06 restart] after a restart Auth cannot resume the code: a truthful stop and nothing is reproduced or reissued',
+    '[AC-06 D2] a code whose protected value Auth cleared is resumed by no Auth process, restarted or not: a truthful stop, nothing reproduced or reissued',
     () =>
       Effect.gen(function* restart() {
         const { challenge, realm, world } = yield* setup();
         yield* sendCode(world, realm, challenge.headers);
         const intentId = yield* onlyIntent(world);
         yield* world.handoff.forget(issuanceRefOf(world));
+        yield* world.restartAuth;
         expect((yield* step(world, world.messageHandoff, intentId)).kind).not.toBe('HANDED_OFF');
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued).toHaveLength(1);

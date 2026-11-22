@@ -2,9 +2,6 @@ import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effec
 
 import { PortalAuthIssuanceRefSchema } from '../../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow } from '../../../shared/portal-auth-communications.ts';
-import { PortalAuthCommunicationNotSent } from '../../../src/portal-auth/communications/communication-not-sent.ts';
-import { CommercePortalAuthCommunicationRequestSubmitter } from '../../../src/portal-auth/communications/communication-request-submitter.ts';
-import type { PortalAuthSubmission } from '../../../src/portal-auth/communications/communication-request-submitter.ts';
 import { PortalAuthCommunicationUnavailable } from '../../../src/portal-auth/communications/communication-unavailable.ts';
 import type { HeldIssuance, PortalAuthIssuance } from '../../../src/portal-auth/communications/issuance.ts';
 import { CommercePortalAuthProtectedHandoff } from '../../../src/portal-auth/communications/protected-handoff.ts';
@@ -26,7 +23,8 @@ import { CommercePortalAuthRawEmailDeliveryService } from './raw-email-delivery-
  *   completion can read;
  * - what Communications receives is a Communication Request built from the issuance alone (its own occurrence identity,
  *   the original subject and endpoint as references, the trusted scope), with an idempotency key that never derives from a
- *   token, link, code or address;
+ *   token, link, code or address. It is not submitted here: it is committed into the Auth-local outbox in the same Auth
+ *   transaction as the issuance (D1), and the relay (`request-relay.ts`) submits it after that commit;
  * - the issuance, its expiry, the binding to the account and the recovery ledger are exactly the provider's: nothing here
  *   issues, extends, reissues or repairs anything.
  *
@@ -105,19 +103,6 @@ interface IssuedSecret {
   readonly user: { readonly email: string; readonly id: string };
 }
 
-/** What Communications decided, reduced to whether any message can still leave: a stop is reported, never repaired by reissuing. */
-const notSentReasonOf = (submission: PortalAuthSubmission): Option.Option<string> => {
-  if (submission.outcome === 'CONFLICT') {
-    return Option.some('REQUEST_CONFLICT');
-  }
-  const { decision } = submission;
-  if (decision.kind === 'NO_MESSAGE') {
-    return Option.some(decision.reason);
-  }
-  const pending = decision.intents.some(({ status }) => status === 'PENDING_HANDOFF');
-  return pending ? Option.none() : Option.some(decision.intents.at(0)?.reason ?? 'NO_INTENT');
-};
-
 const issuanceOf = Effect.fn('CommercePortalAuthCommunicationsEmail.issuance')(function* issuance(
   issued: IssuedSecret,
   reservation: Option.Option<IssuanceReservation>,
@@ -155,7 +140,6 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
   CommercePortalAuthRawEmailDeliveryService,
   Effect.gen(function* makeCommercePortalAuthCommunicationsEmail() {
     const handoff = yield* CommercePortalAuthProtectedHandoff;
-    const submitter = yield* CommercePortalAuthCommunicationRequestSubmitter;
     const trustedScope = yield* CommercePortalAuthTrustedScope;
     const context = yield* Effect.context<Crypto.Crypto | CommercePortalAuthIssuedFacts>();
     const runWithContext = Effect.runPromiseWith(context);
@@ -167,10 +151,7 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
       issued: IssuedSecret,
     ): Effect.fn.Return<
       void,
-      | PortalAuthCommunicationNotSent
-      | PortalAuthCommunicationUnavailable
-      | PortalAuthTrustedScopeUnavailable
-      | Schema.SchemaError,
+      PortalAuthCommunicationUnavailable | PortalAuthTrustedScopeUnavailable | Schema.SchemaError,
       CommercePortalAuthIssuedFacts
     > {
       const scope = yield* trustedScope.current;
@@ -185,20 +166,13 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
           withSafeCause(new PortalAuthCommunicationUnavailable({ operation: ISSUANCE_REFERENCE_OPERATION }), cause),
         ),
       );
-      // the request is validated against the published contract BEFORE the secret is held, so a refused request leaves nothing behind
+      // the request is validated against the published contract BEFORE anything is held, so a refused request leaves nothing behind
       const request = yield* portalAuthCommunicationRequest(issuance, scope);
+      // ONE Auth transaction: the issuance, its sealed protected value and its request; a rollback leaves no request at all
       yield* handoff.hold(heldOf({ ...issued, ledgerToken: stored.ledgerToken }, issuance), {
+        request,
         supersede: supersedesEarlierIssuance(issued.flow),
-      });
-      // an unavailable intake keeps the held issuance: the request may exist, and its handoff must still find the secret
-      const submission = yield* submitter.submit(request);
-      // Communications decided that no message leaves: the held secret serves nothing. Auth never reissues to repair a stop.
-      yield* Option.match(notSentReasonOf(submission), {
-        onNone: () => Effect.void,
-        onSome: (reason) =>
-          handoff
-            .forget(issuance.issuanceRef)
-            .pipe(Effect.andThen(Effect.fail(new PortalAuthCommunicationNotSent({ reason })))),
+        tenantId: scope.tenantId,
       });
     });
 

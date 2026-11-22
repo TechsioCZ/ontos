@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Redacted, Schema, Layer } from 'effect';
+import { DateTime, Effect, Option, Redacted, Ref, Schema, Layer } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -17,15 +17,26 @@ import {
   fillOwnerRenderedSlots,
   ownerSlotCompletionLayer,
 } from '../../src/portal-auth/communications/owner-completion.ts';
-import type { IssuanceLedgerProbe } from '../../src/portal-auth/communications/protected-handoff.ts';
 import {
   CommercePortalAuthProtectedHandoff,
   protectedHandoffLayer,
 } from '../../src/portal-auth/communications/protected-handoff.ts';
+import type {
+  IssuanceLedgerProbe,
+  ProtectedHandoffService,
+} from '../../src/portal-auth/communications/protected-handoff.ts';
+import type { PortalAuthCommunicationStoreService } from '../../src/portal-auth/communications/communication-store.ts';
+import { portalAuthCommunicationRequest } from '../../src/portal-auth/communications/request.ts';
+import {
+  communicationStoreLayers,
+  makeCommunicationStoreDouble,
+} from '../support/portal-auth-communication-store.double.ts';
 
 /**
- * #1406 ADR-0022 and AC-06: the protected handoff holds an issuance only in this process, answers only Auth's own Current
- * lifecycle, completes only the slot the flow owns, and never reproduces or reissues anything. Every value below is FICTIONAL.
+ * #1406 ADR-0022 and AC-06 (D2): the protected handoff holds an issuance in Auth's own store, sealed, so every Auth process
+ * answers alike; it answers only Auth's own Current lifecycle, completes only the slot the flow owns, and never reproduces or
+ * reissues anything. The store here is the labelled in-memory double; PostgreSQL is proven by the integration suite. Every
+ * value below is FICTIONAL.
  */
 
 const ref = Schema.decodeSync(PortalAuthIssuanceRefSchema);
@@ -53,10 +64,18 @@ const held = (
 type ProbedState = Effect.Success<ReturnType<IssuanceLedgerProbe>>;
 const probed = (state: ProbedState) => state;
 const current: IssuanceLedgerProbe = () => Effect.succeed('CURRENT');
-const withHandoff = (probe: IssuanceLedgerProbe = current) =>
+const handoffOver = (store: PortalAuthCommunicationStoreService, probe: IssuanceLedgerProbe = current) =>
   Effect.gen(function* handoff() {
     return yield* CommercePortalAuthProtectedHandoff;
-  }).pipe(Effect.provide(protectedHandoffLayer(probe)));
+  }).pipe(Effect.provide(protectedHandoffLayer(probe).pipe(Layer.provide(communicationStoreLayers(store)))));
+const withHandoff = (probe: IssuanceLedgerProbe = current) =>
+  Effect.suspend(() => handoffOver(makeCommunicationStoreDouble().service, probe));
+const TENANT = '7e000000-0000-4000-8000-000000000001';
+/** Holds an issuance the way the delivery does: together with its Communication Request. */
+const holding = (handoff: ProtectedHandoffService, value: HeldIssuance, supersede: boolean) =>
+  portalAuthCommunicationRequest(value.issuance, { tenantId: TENANT }).pipe(
+    Effect.flatMap((request) => handoff.hold(value, { request, supersede, tenantId: TENANT })),
+  );
 
 describe('The protected Auth handoff (#1406, ADR-0022)', () => {
   it.effect(
@@ -65,7 +84,7 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
       Effect.gen(function* currentIssuance() {
         const handoff = yield* withHandoff();
         yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-        yield* handoff.hold(held('verify-email', 'pa-1'), { supersede: true });
+        yield* holding(handoff, held('verify-email', 'pa-1'), true);
         expect(yield* handoff.currentness(ref('pa-1'))).toBe('CURRENT');
         const value = yield* handoff.revealSecret({
           flow: 'verify-email',
@@ -86,7 +105,7 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
       Effect.gen(function* wrongSlot() {
         const handoff = yield* withHandoff();
         yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-        yield* handoff.hold(held('otp', 'pa-otp'), { supersede: true });
+        yield* holding(handoff, held('otp', 'pa-otp'), true);
         for (const slot of ['verification_link', 'reset_link', 'anything_else']) {
           const stop = yield* Effect.flip(handoff.revealSecret({ flow: 'otp', issuanceRef: ref('pa-otp'), slot }));
           expect(Schema.is(OwnerSlotStop)(stop)).toBe(true);
@@ -100,13 +119,14 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
   );
 
   it.effect(
-    'stops, truthfully, on expiry, on a spent or revoked issuance and after a restart, and never reproduces the secret',
+    'stops, truthfully, on expiry and on a spent or revoked issuance, in every Auth process, and never reproduces the secret',
     () =>
       Effect.gen(function* stops() {
-        const handoff = yield* withHandoff();
+        const store = makeCommunicationStoreDouble();
+        const handoff = yield* handoffOver(store.service);
         yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-        yield* handoff.hold(held('reset-password', 'pa-r1'), { supersede: false });
-        yield* handoff.hold(held('reset-password', 'pa-r2'), { supersede: false });
+        yield* holding(handoff, held('reset-password', 'pa-r1'), false);
+        yield* holding(handoff, held('reset-password', 'pa-r2'), false);
         // every unexpired reset link stays valid: a new one does not revoke the older one
         expect(yield* handoff.currentness(ref('pa-r1'))).toBe('CURRENT');
         yield* handoff.settle({ issuanceRef: ref('pa-r1'), state: 'CONSUMED' });
@@ -123,20 +143,33 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
           expect(Schema.is(OwnerSlotStop)(stop)).toBe(true);
         }
 
-        yield* handoff.hold(held('reset-password', 'pa-r3'), { supersede: false });
+        yield* holding(handoff, held('reset-password', 'pa-r3'), false);
+        // D2: another Auth process (or this one restarted) over the same store answers exactly alike
+        const restarted = yield* handoffOver(store.service);
+        expect(yield* restarted.currentness(ref('pa-r3'))).toBe('CURRENT');
+        const reopened = yield* restarted.revealSecret({
+          flow: 'reset-password',
+          issuanceRef: ref('pa-r3'),
+          slot: 'reset_link',
+        });
+        expect(Redacted.value(reopened)).toBe(SECRET);
+        // the store never holds the secret or the address in the clear
+        const stored = Option.getOrThrow((yield* Ref.get(store.issuances)).get('pa-r3')?.sealedValue ?? Option.none());
+        expect(stored).not.toContain(SECRET);
+        expect(stored).not.toContain(ADDRESS);
         yield* TestClock.adjust('16 minutes');
         expect(yield* handoff.currentness(ref('pa-r3'))).toBe('EXPIRED');
+        expect(yield* restarted.currentness(ref('pa-r3'))).toBe('EXPIRED');
 
-        // a restart: a fresh process-local state holds nothing, and says so
-        const restarted = yield* withHandoff();
-        expect(yield* restarted.currentness(ref('pa-r3'))).toBe('NOT_RESUMABLE');
-        expect(
-          yield* Effect.flip(
-            restarted.revealSecret({ flow: 'reset-password', issuanceRef: ref('pa-r3'), slot: 'reset_link' }),
-          ),
-        ).toMatchObject({
-          reason: 'NOT_RESUMABLE',
-        });
+        // a cleared protected value (decided not to be sent) or an unknown issuance is a truthful stop, never reproduced
+        yield* holding(handoff, held('reset-password', 'pa-r4', { lifetimeMinutes: 60 }), false);
+        yield* restarted.forget(ref('pa-r4'));
+        for (const issuanceRef of [ref('pa-r4'), ref('pa-unknown')]) {
+          expect(yield* handoff.currentness(issuanceRef)).toBe('NOT_RESUMABLE');
+          expect(
+            yield* Effect.flip(handoff.revealSecret({ flow: 'reset-password', issuanceRef, slot: 'reset_link' })),
+          ).toMatchObject({ reason: 'NOT_RESUMABLE' });
+        }
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -146,9 +179,9 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
       Effect.gen(function* supersede() {
         const handoff = yield* withHandoff();
         yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-        yield* handoff.hold(held('otp', 'pa-a'), { supersede: true });
-        yield* handoff.hold(held('otp', 'pa-b', { subject: 'subject-2' }), { supersede: true });
-        yield* handoff.hold(held('otp', 'pa-c'), { supersede: true });
+        yield* holding(handoff, held('otp', 'pa-a'), true);
+        yield* holding(handoff, held('otp', 'pa-b', { subject: 'subject-2' }), true);
+        yield* holding(handoff, held('otp', 'pa-c'), true);
         expect(yield* handoff.currentness(ref('pa-a'))).toBe('SUPERSEDED');
         expect(yield* handoff.currentness(ref('pa-b'))).toBe('CURRENT');
         expect(yield* handoff.currentness(ref('pa-c'))).toBe('CURRENT');
@@ -166,7 +199,7 @@ describe('The protected Auth handoff (#1406, ADR-0022)', () => {
             : Effect.succeed(offered.value),
         );
         yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-        yield* handoff.hold(held('verify-email', 'pa-l'), { supersede: true });
+        yield* holding(handoff, held('verify-email', 'pa-l'), true);
         expect(yield* handoff.currentness(ref('pa-l'))).toBe('CURRENT');
         for (const state of ['CONSUMED', 'EXPIRED', 'NOT_RESUMABLE', 'SUPERSEDED'] as const) {
           offered.value = state;
@@ -202,7 +235,7 @@ describe("Auth's owner facts and slot completion (#1406)", () => {
     Effect.gen(function* originalAddress() {
       const handoff = yield* withHandoff();
       yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-      yield* handoff.hold(held('reset-password', 'pa-e1'), { supersede: false });
+      yield* holding(handoff, held('reset-password', 'pa-e1'), false);
       const own = yield* originalEndpointOf(handoff, { issuanceRef: ref('pa-e1'), recipientSubjectId: 'subject-1' });
       expect(Redacted.value(Option.getOrThrow(own))).toBe(ADDRESS);
       // the same address under another subject never merges: nothing answers for it
@@ -235,7 +268,8 @@ describe("Auth's owner facts and slot completion (#1406)", () => {
     'the owner-slot completion fills the slot with a protected value and stops, typed, when the issuance cannot be completed',
     () =>
       Effect.gen(function* completion() {
-        const handoffLayer = protectedHandoffLayer(current);
+        const { service } = makeCommunicationStoreDouble();
+        const handoffLayer = protectedHandoffLayer(current).pipe(Layer.provide(communicationStoreLayers(service)));
         const layers = Layer.merge(handoffLayer, ownerSlotCompletionLayer.pipe(Layer.provide(handoffLayer)));
         const { complete, handoff } = yield* Effect.gen(function* services() {
           return {
@@ -244,7 +278,7 @@ describe("Auth's owner facts and slot completion (#1406)", () => {
           };
         }).pipe(Effect.provide(layers));
         yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
-        yield* handoff.hold(held('verify-email', 'pa-c1'), { supersede: true });
+        yield* holding(handoff, held('verify-email', 'pa-c1'), true);
         const values = yield* complete.complete({
           flow: 'verify-email',
           issuanceRef: ref('pa-c1'),

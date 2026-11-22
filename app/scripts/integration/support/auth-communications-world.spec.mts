@@ -9,8 +9,7 @@
 import { CommunicationRequestSchema } from '../../../packages/communications-contracts/src/communication-request.ts';
 import type { CommunicationRequestEncoded } from '../../../packages/communications-contracts/src/communication-request.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Layer, Match, Option, Ref, Result, Schema } from 'effect';
-import type { Redacted } from 'effect';
+import { Config, Crypto, Effect, Layer, Match, Option, Redacted, Ref, Result, Schema } from 'effect';
 import { createHash, randomBytes } from 'node:crypto';
 
 import { CommercePortalAuthRawEmailDeliveryService } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/raw-email-delivery-service.ts';
@@ -18,6 +17,18 @@ import { CommercePortalAuthIssuedFacts } from '../../../verticals/commerce-custo
 import type { IssuedFactsService } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/issued-facts.ts';
 import type { CommercePortalAuthRecoveryStore } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/recovery/store-service.ts';
 import { CommercePortalAuthCommunicationsEmailLive } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/communications-email-delivery.ts';
+import { parseCommercePortalAuthConfig } from '../../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
+import { CommercePortalAuthCommunicationStore } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/communication-store.ts';
+import { protectedValueSealerLayer } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/protected-value.ts';
+import { relayCommunicationRequests } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/request-relay.ts';
+import { makeCommercePortalAuthCommunicationStore } from '../../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-communication-store.ts';
+import { makeCommercePortalAuthDatabase } from '../../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-database.ts';
+import {
+  communicationIssuance,
+  communicationRequestOutbox,
+} from '../../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
+import { acquireOutlivingCleanup } from '../../../packages/core-runtime/tests/support/database.ts';
+import { eq, inArray } from 'drizzle-orm';
 import {
   PORTAL_AUTH_EMAIL_FLOWS,
   portalAuthCommunicationPurposeOf,
@@ -103,8 +114,11 @@ import { TEST_GATE_CHECK_TIMEOUT } from '../../../verticals/communications/tests
 
 /**
  * TEST-ONLY world of the three Portal Auth e-mail flows (#1406). Everything on the Auth side is the REAL Auth source: the
- * Better Auth realm callbacks, the recovery ledger, the Communications-routed delivery, the protected handoff, the owner-slot
- * completion and the enrollment gateway. Everything on the Communications side is the REAL owner code over native PostgreSQL
+ * Better Auth realm callbacks, the recovery ledger, the Communications-routed delivery, the protected handoff with its sealed
+ * values in Auth's own PostgreSQL store (D2), the Auth-local outbox and its relay (D1), the owner-slot completion and the
+ * enrollment gateway. A callback only commits its issuance and request; the suites' flow helpers then run ONE relay tick
+ * (`world.relay`), as the production relay loop does within its interval, so a request reaches Communications only from the
+ * committed outbox row. Everything on the Communications side is the REAL owner code over native PostgreSQL
  * as the runtime role: the public `submit-communication-request` handler, the durable decision and intents, the pre-handoff
  * step and the history Reads.
  *
@@ -114,12 +128,21 @@ import { TEST_GATE_CHECK_TIMEOUT } from '../../../verticals/communications/tests
  * - the pre-verification Privacy binding is the double of that missing path: `evidencing: true` yields a FICTIONAL binding;
  *   `false` is Auth's real production composition (no supported path, so no scope is declared);
  * - the trusted recipient language is scripted; Auth publishes no trusted locale source yet;
+ * - the relay's transport to the public Action is in process: the request is decided by the REAL handler under the sealed
+ *   registered-source-worker principal of `commerce.customer-context` (the carrier the production Outbox Worker obtains), with
+ *   no HTTP gateway between them;
  * - the Messaging Adapter (step 22) renders the pinned revision with the REAL generic renderer, asks Auth's REAL owner-slot
  *   completion for the secret slot, and then "sends" into an in-memory mailbox with a scripted provider answer;
  * - the approved Czech and English COPY does not exist: every revision below is clearly FICTIONAL and labelled so.
  */
 
 export const FICTIONAL_COPY = '[FICTIONAL TEST COPY]';
+/** The FICTIONAL realm secret every Auth "process" of a world shares, exactly as the realms below use it. */
+export const REALM_SECRET = 's'.repeat(64);
+const AUTH_DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
+);
+const RELAY = { leaseMillis: 30_000, leaseOwner: 'auth-world-relay', limit: 16, maxRetryMillis: 1000, retryMillis: 0 };
 export const PORTAL_ORIGIN = 'https://portal.example.test';
 
 export const cryptoLive = Layer.succeed(
@@ -207,18 +230,69 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     }),
   );
 
-  // the Auth side: one protected handoff of this "process"; a realm that owns a real recovery ledger installs its probe here
+  // the Auth side: one Auth "process" (its own pool, store, sealed handoff and slot completion); a realm that owns a real recovery
+  // ledger installs its probe here. `restartAuth` replaces it with a fresh process over the same database (D2).
   const ledgerProbe = {
     current: options.ledgerProbe ?? ((): ReturnType<IssuanceLedgerProbe> => Effect.succeed('CURRENT')),
   } satisfies { current: IssuanceLedgerProbe };
-  const handoff = yield* CommercePortalAuthProtectedHandoff.pipe(
-    Effect.provide(protectedHandoffLayer((held) => ledgerProbe.current(held))),
+  const openAuthProcess = Effect.gen(function* openProcess() {
+    const configuration = yield* parseCommercePortalAuthConfig({
+      COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(yield* AUTH_DATABASE_URL),
+      COMMERCE_PORTAL_AUTH_SECRET: REALM_SECRET,
+      COMMERCE_PORTAL_AUTH_URL: PORTAL_ORIGIN,
+    });
+    const authDatabase = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
+    const store = makeCommercePortalAuthCommunicationStore(authDatabase.executor);
+    const storeLayers = Layer.merge(
+      Layer.succeed(CommercePortalAuthCommunicationStore, store),
+      protectedValueSealerLayer(configuration.secret).pipe(Layer.provide(NodeCrypto.layer)),
+    );
+    const processHandoff = yield* CommercePortalAuthProtectedHandoff.pipe(
+      Effect.provide(protectedHandoffLayer((held) => ledgerProbe.current(held)).pipe(Layer.provide(storeLayers))),
+    );
+    const processCompletion = yield* CommercePortalAuthOwnerSlotCompletion.pipe(
+      Effect.provide(
+        ownerSlotCompletionLayer.pipe(Layer.provide(Layer.succeed(CommercePortalAuthProtectedHandoff, processHandoff))),
+      ),
+    );
+    return { authDatabase, completion: processCompletion, handoff: processHandoff, store };
+  });
+  const auth = { process: yield* openAuthProcess };
+  // the rows this world's Tenant left in the shared realm database are removed after it, whatever happened
+  const firstProcess = auth.process;
+  yield* Effect.addFinalizer(() =>
+    firstProcess.authDatabase.executor
+      .select({ issuanceRef: communicationRequestOutbox.issuanceRef })
+      .from(communicationRequestOutbox)
+      .where(eq(communicationRequestOutbox.tenantId, tenantId))
+      .pipe(
+        Effect.flatMap((rows) => {
+          const refs = rows.map(({ issuanceRef }) => issuanceRef);
+          return refs.length === 0
+            ? Effect.void
+            : firstProcess.authDatabase.executor
+                .delete(communicationRequestOutbox)
+                .where(inArray(communicationRequestOutbox.issuanceRef, refs))
+                .pipe(
+                  Effect.andThen(
+                    firstProcess.authDatabase.executor
+                      .delete(communicationIssuance)
+                      .where(inArray(communicationIssuance.issuanceRef, refs)),
+                  ),
+                );
+        }),
+        Effect.ignore,
+      ),
   );
-  const completion = yield* CommercePortalAuthOwnerSlotCompletion.pipe(
-    Effect.provide(
-      ownerSlotCompletionLayer.pipe(Layer.provide(Layer.succeed(CommercePortalAuthProtectedHandoff, handoff))),
+  const restartAuth = openAuthProcess.pipe(
+    Effect.tap((fresh) =>
+      Effect.sync(() => {
+        auth.process = fresh;
+      }),
     ),
+    Effect.asVoid,
   );
+  const { handoff } = auth.process;
   const binding = yield* CommercePortalAuthPreVerificationPrivacyBinding.pipe(
     Effect.provide(
       options.evidencing === false
@@ -258,7 +332,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
       Effect.gen(function* readIssuance() {
         sourceReads.count += 1;
         const issuanceRef = decodeIssuanceRef(request.occurrence.occurrenceId);
-        const currentness = yield* handoff
+        const currentness = yield* auth.process.handoff
           .currentness(issuanceRef)
           .pipe(Effect.mapError(() => new SourceOccurrenceUnavailable({ reason: 'OWNER_UNAVAILABLE' })));
         return {
@@ -272,7 +346,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
   const recipientGate = Layer.succeed(RecipientCurrentGate, {
     check: (query) =>
       Effect.gen(function* checkEndpoint() {
-        const address = yield* originalEndpointOf(handoff, {
+        const address = yield* originalEndpointOf(auth.process.handoff, {
           issuanceRef: decodeIssuanceRef(query.contact.contactRef.resourceId),
           recipientSubjectId: query.recipient.recipientRef.resourceId,
         }).pipe(Effect.mapError(() => new RecipientAuthorityUnavailable({ authority: 'SOURCE_OWNER' })));
@@ -299,7 +373,9 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
   const scopeDeclaration = Layer.succeed(ProcessingScopeDeclaration, {
     declare: ({ binding: recipientBinding, request, type }) =>
       Effect.gen(function* declareScope() {
-        const issuance = yield* handoff.issuanceOf(decodeIssuanceRef(request.occurrence.occurrenceId));
+        const issuance = yield* auth.process.handoff
+          .issuanceOf(decodeIssuanceRef(request.occurrence.occurrenceId))
+          .pipe(Effect.mapError(() => new ProcessingScopeUndeclared({ reason: 'NO_DECLARATION' })));
         if (Option.isNone(issuance)) {
           return yield* new ProcessingScopeUndeclared({ reason: 'NO_DECLARATION' });
         }
@@ -370,7 +446,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
         return { kind: 'REJECTED', reason: 'provider_rejected' } as const;
       }
       // the issuance reaches Auth as the contact reference of the ORIGINAL endpoint that Auth itself bound
-      const values = yield* completion.complete({
+      const values = yield* auth.process.completion.complete({
         flow,
         issuanceRef: decodeIssuanceRef(message.endpoint.contactRef.resourceId),
         slots: rendered.success.ownerSlots,
@@ -408,7 +484,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     );
   const runner = intakeRunnerOver(database, portsFor(types));
 
-  /** The adapter that stands where the registered Auth after-commit worker would call the public Action. */
+  /** The relay's transport, in process: the REAL handler under the sealed registered-source-worker principal of the source module. */
   const submitter = {
     submit: (request: CommunicationRequestEncoded) =>
       Effect.gen(function* submit() {
@@ -468,7 +544,6 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(CommercePortalAuthProtectedHandoff, handoff),
-            Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, submitter),
             Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId }) }),
             Layer.succeed(CommercePortalAuthIssuedFacts, delegatingStore),
             cryptoLive,
@@ -477,13 +552,28 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
       ),
     ),
   );
+  /** ONE relay tick over the Auth-local outbox of the current Auth process, through the world's transport. */
+  const relay = Effect.suspend(() =>
+    relayCommunicationRequests({ ...RELAY, tenantId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.succeed(CommercePortalAuthCommunicationStore, auth.process.store),
+          Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, submitter),
+        ),
+      ),
+    ),
+  );
 
   return {
     binding,
-    completion,
+    get completion() {
+      return auth.process.completion;
+    },
     database,
     documents,
-    handoff,
+    get handoff() {
+      return auth.process.handoff;
+    },
     languageRef: language,
     ledgerProbe,
     lostAnswerSubject,
@@ -495,12 +585,21 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     privacyQueries,
     providerAnswer,
     rawDelivery,
+    /** The Auth-local outbox rows of this world's Tenant, as Auth's runtime role reads them. */
+    outboxRows: Effect.suspend(() =>
+      auth.process.authDatabase.executor
+        .select()
+        .from(communicationRequestOutbox)
+        .where(eq(communicationRequestOutbox.tenantId, tenantId)),
+    ),
     read: <Row,>(
       select: (
         transaction: Parameters<Parameters<typeof database.inTenant>[1]>[0],
       ) => Effect.Effect<readonly Row[], unknown>,
     ) => database.inTenant(tenantId, select),
     recoveryStore,
+    relay,
+    restartAuth,
     runner,
     sourceReads,
     submissions,

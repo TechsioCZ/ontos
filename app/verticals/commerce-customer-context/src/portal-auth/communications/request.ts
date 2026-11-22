@@ -89,3 +89,13 @@ export const portalAuthCommunicationRequest = (
   // the published contract is the only judge of the request: a field it does not know is an error, never silently dropped
   return decodeRequest(encoded).pipe(Effect.flatMap(encodeRequest));
 };
+
+/**
+ * The request as the Auth-local outbox stores it: the published contract's own JSON form, written and read only through the
+ * contract, so a stored row that no longer decodes is refused rather than submitted half-understood.
+ */
+const StoredRequestSchema = Schema.fromJsonString(CommunicationRequestSchema);
+export const storedRequestOf = (request: CommunicationRequestEncoded) =>
+  decodeRequest(request).pipe(Effect.flatMap(Schema.encodeEffect(StoredRequestSchema)));
+export const requestOfStored = (stored: string): Effect.Effect<CommunicationRequestEncoded, Schema.SchemaError> =>
+  Schema.decodeUnknownEffect(StoredRequestSchema)(stored).pipe(Effect.flatMap(encodeRequest));

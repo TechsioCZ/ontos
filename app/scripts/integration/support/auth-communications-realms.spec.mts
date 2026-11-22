@@ -143,7 +143,19 @@ export const makePostgresRealm = Effect.fn('AuthCommunicationsRealm.postgres')(f
   );
   const accountOf = (address: string) =>
     database.executor.select({ id: user.id }).from(user).where(eq(user.email, address)).limit(1);
-  return { accountOf, auth, configuration, database, email, emailDelivery, ip, issued, recovery, store };
+  return {
+    accountOf,
+    auth,
+    configuration,
+    database,
+    email,
+    emailDelivery,
+    ip,
+    issued,
+    recovery,
+    relay: world.relay,
+    store,
+  };
 });
 export type PostgresRealm = Effect.Success<ReturnType<typeof makePostgresRealm>>;
 
