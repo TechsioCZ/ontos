@@ -150,11 +150,12 @@ export const ShellNativeSessionGatewayResponseSchema = Schema.TaggedStruct(sessi
 });
 export const ShellNativeTenantSetupGatewayRequestSchema = Schema.Struct({
   audience: Schema.Literals(['catalog', 'inventory', 'pricing']),
+  legalEntityId: Schema.optionalKey(Schema.Never),
 });
 export const ShellNativeSetupGatewayRequestSchema = Schema.Union([
   ShellNativeTenantSetupGatewayRequestSchema,
   Schema.Struct({
-    audience: Schema.Literals([marketAppId, 'privacy', 'party-registry', customerContextAppId]),
+    audience: Schema.Literals([marketAppId, 'pricing', 'privacy', 'party-registry', customerContextAppId]),
     legalEntityId: SwitchLegalEntityPayloadSchema.fields.legalEntityId,
   }),
 ]);
@@ -1109,7 +1110,7 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
           const request = yield* Schema.decodeUnknownEffect(ShellNativeSetupGatewayRequestSchema, {
             onExcessProperty: 'error',
           })(input).pipe(Effect.mapError(unavailable));
-          if (Schema.is(ShellNativeTenantSetupGatewayRequestSchema)(request)) {
+          if (request.legalEntityId === undefined) {
             const response = yield* exchange({
               _tag: 'tenant-setup-gateway',
               request: { ...request, compositionRevision: snapshot.composition.revision },
