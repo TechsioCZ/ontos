@@ -7,6 +7,9 @@ import {
   setVariantLocalizedFactsRequestIdentity,
   updateProductRequestIdentity,
 } from '@app/catalog/api/native-action-request-identity';
+import { AddProductCategoryAssignmentPayloadSchema } from '@app/catalog/api/add-product-category-assignment-action';
+import { executeAddProductCategoryAssignmentWithAuthorization } from '@app/catalog/api/client';
+import { executeAddProductCategoryAssignmentRecoveryWithAuthorization } from '@app/catalog/api/add-product-category-assignment-recovery-client';
 import { CreateProductRecoveryRequestSchema } from '@app/catalog/api/create-product-recovery';
 import {
   GovernVariantAxesActionConflictProblemSchema,
@@ -156,6 +159,7 @@ const readinessResolvedIntentSchema = Schema.Union([
   Schema.TaggedStruct('CatalogReadinessName', {}),
   Schema.TaggedStruct('CatalogReadinessUnit', {}),
   Schema.TaggedStruct('CatalogReadinessUntyped', {}),
+  Schema.TaggedStruct('CatalogAddProductCategoryAssignment', {}),
 ]);
 const readinessEffectInPlan = (input: SymmyEffectAdapterInput) => {
   const item = input.acceptedPlan?.items.find(({ itemId }) => itemId === input.effect.itemId);
@@ -361,6 +365,8 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
     ref.tenantId === tenantId && target !== undefined && sameRef(target, ref);
   const valid = Match.value(decodedIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: ({ payload }) =>
+        entityKind === 'PRODUCT' && expectedTarget(payload.productRef) && payload.categoryRef.tenantId === tenantId,
       CatalogBindInitialVariantSource: ({ payload }) =>
         target !== undefined && qualifiedSource(input, payload.productSource),
       CatalogCorrectProduct: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
@@ -433,6 +439,7 @@ const catalogModuleId = 'commerce.catalog' as const;
 const symmyCatalogPricingInventoryContracts: readonly AdapterContract[] = [
   ...(
     [
+      ['add-product-category-assignment', 'product-category-assignment.add', 'CatalogAddProductCategoryAssignment'],
       ['govern-variant-axes', 'variant-axes.govern', 'CatalogReadinessAxes'],
       ['confirm-variant-combination', 'variant-combination.confirm', 'CatalogReadinessConfirm'],
       ['set-product-localized-facts', 'product-localized-facts.set', 'CatalogReadinessName'],
@@ -795,6 +802,14 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
   const { originalTarget: target } = input.effect.ref;
   const { productRef } = product;
   return yield* Match.value(intent.request).pipe(
+    Match.tag('AddProductCategoryAssignment', ({ payload }) =>
+      target === undefined && payload.categoryRef.tenantId === productRef.tenantId && intent.variantParent === undefined
+        ? Effect.succeed({
+            intent: { _tag: 'CatalogAddProductCategoryAssignment', payload: { ...payload, productRef } },
+            target: productRef,
+          })
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
     Match.tag('UpdateProduct', ({ payload }) =>
       target === undefined
         ? Effect.succeed({
@@ -1118,6 +1133,7 @@ const validateProvisioningResolution = Effect.fn('SymmyOwnerAdapters.validatePro
         Schema.Union([
           Schema.TaggedStruct('ProvisionSourceStockItem', {}),
           Schema.TaggedStruct('CatalogReadiness', {}),
+          Schema.TaggedStruct('AddProductCategoryAssignment', {}),
         ]),
       )(admitted.request)
     ) {
@@ -1255,6 +1271,7 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
     };
     const selectedSource = Match.value(requestIntent).pipe(
       Match.tags({
+        CatalogAddProductCategoryAssignment: () => Option.some(occurrenceSource),
         CatalogBindInitialVariantSource: ({ payload }) => Option.some(payload.productSource),
         CatalogCorrectProduct: () => Option.some(occurrenceSource),
         CatalogCreateProduct: () => Option.none(),
@@ -1362,6 +1379,20 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
   )({ invocationId }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: Effect.fn('SymmyOwnerAdapters.recoverCategoryAssignment')(
+        function* recoverCategoryAssignment({ payload }) {
+          const result = yield* executeAddProductCategoryAssignmentRecoveryWithAuthorization(
+            catalogRequest,
+            credential,
+            requestCorrelation,
+            options,
+          ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+          if (!sameRef(result.categoryRef, payload.categoryRef) || !sameRef(result.productRef, payload.productRef)) {
+            return yield* symmyJobWorkerUnavailable();
+          }
+          return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+        },
+      ),
       CatalogBindInitialVariantSource: Effect.fn('SymmyOwnerAdapters.CatalogBindInitialVariantSource')(
         function* CatalogBindInitialVariantSource() {
           const result = yield* executeBindInitialVariantSourceRecoveryWithAuthorization(
@@ -1639,6 +1670,7 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
   const group = Schema.decodeUnknownEffect(PriceGroupResultLookupRequestSchema)({ actionInvocationId: invocationId });
   const result = yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: () => catalog,
       CatalogBindInitialVariantSource: () => catalog,
       CatalogCorrectProduct: () => catalog,
       CatalogCreateProduct: () => catalog,
@@ -1749,6 +1781,23 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
   const { credential, options, requestCorrelation } = wire;
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: Effect.fn('SymmyOwnerAdapters.assignCategory')(function* assignCategory({
+        payload,
+      }) {
+        const result = yield* executeAddProductCategoryAssignmentWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        if (!('changed' in result)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        if (!sameRef(result.categoryRef, payload.categoryRef) || !sameRef(result.productRef, payload.productRef)) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+      }),
       CatalogBindInitialVariantSource: Effect.fn('SymmyOwnerAdapters.CatalogBindInitialVariantSource')(
         function* CatalogBindInitialVariantSource(intent) {
           const result = yield* executeBindInitialVariantSourceWithAuthorization(
@@ -2043,6 +2092,12 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
     : Effect.succeed(operationLegalEntityId);
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: ({ payload }) =>
+        catalogReadinessHash(
+          'commerce.catalog.add-product-category-assignment',
+          AddProductCategoryAssignmentPayloadSchema,
+          payload,
+        ),
       CatalogBindInitialVariantSource: ({ payload }) =>
         bindInitialVariantSourceRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
@@ -2498,7 +2553,6 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
   return sameRef(priceGroupRef, requestedGroup.value);
 });
 
-const isPriceRevise = Schema.is(Schema.TaggedStruct('PriceRevise', {}));
 const heldPriceReviseCode = Schema.Literals([
   'price_schedule_absent',
   'price_schedule_acknowledgement_required',
@@ -2511,6 +2565,15 @@ const heldPriceReviseCode = Schema.Literals([
  */
 const priceReviseRefusalStatus = (error: typeof problemStatus.Type): 'invalid' | 'unresolved' =>
   Schema.is(Schema.Struct({ code: heldPriceReviseCode }))(error) ? 'unresolved' : 'invalid';
+
+const nativeAbsentOrHeldStatus = (intent: SymmyCatalogPricingInventoryIntent, error: typeof problemStatus.Type) =>
+  Match.value(intent).pipe(
+    Match.tag('CatalogAddProductCategoryAssignment', () => (error.status === 404 ? ('unresolved' as const) : null)),
+    Match.tag('PriceRevise', () =>
+      error.status === 404 || error.status === 422 ? priceReviseRefusalStatus(error) : null,
+    ),
+    Match.orElse(() => null),
+  );
 
 const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(function* commandFailure(
   input: SymmyEffectAdapterInput,
@@ -2550,8 +2613,11 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
     }
     return safeOutcome(input, 'conflict');
   }
-  if (Schema.is(problemStatus)(error) && (error.status === 404 || error.status === 422) && isPriceRevise(intent)) {
-    return safeOutcome(input, priceReviseRefusalStatus(error));
+  if (Schema.is(problemStatus)(error)) {
+    const status = nativeAbsentOrHeldStatus(intent, error);
+    if (status !== null) {
+      return safeOutcome(input, status);
+    }
   }
   return yield* symmyJobWorkerUnavailable(error);
 });

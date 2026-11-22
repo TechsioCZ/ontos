@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import type { ProductCategoryRef } from '@app/catalog/resources/product-category';
+import { executeCreateProductCategoryWithAuthorization } from '@app/catalog/api/client';
 import {
   executeManageExternalPriceSourcePolicyWithAuthorization,
   executeSetSupportedCurrenciesWithAuthorization,
@@ -42,7 +44,7 @@ const source = (entityKind: string) => ({
   sourceRecordId: 'INTERNAL_C14_SOURCE_ENROLLMENT',
 });
 
-/** One public Unit, Market, CurrencySupport and two standing policies, before either SKU exists. */
+/** Shared governed configuration, including the real Category the source explicitly selects for its rows. */
 export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetup')(function* pricingSetup(input: {
   readonly authority: Authority;
   readonly catalogUrl: string;
@@ -97,6 +99,17 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
     },
   });
   const options = { baseUrl: input.pricingUrl, compositionRevision };
+  const categoryGateway = yield* shell.issueFixtureSetupGateway({ audience: 'catalog' });
+  const category = yield* executeCreateProductCategoryWithAuthorization(
+    {
+      name: 'INTERNAL_C14 source-selected merchandise',
+      reason: 'Shared fixture merchandising classification explicitly selected by the source payload',
+    },
+    `Bearer ${categoryGateway.token}`,
+    randomUUID(),
+    { baseUrl: input.catalogUrl, compositionRevision, idempotencyKey: 'INTERNAL_C14_SOURCE_CATEGORY' },
+  );
+  assert.isOk('category' in category);
   const effectiveFrom = DateTime.formatIso(yield* DateTime.now);
   const currency = yield* shell.issueFixtureSetupGateway({ audience: 'pricing' });
   const currencies = yield* executeSetSupportedCurrenciesWithAuthorization(
@@ -164,6 +177,7 @@ export const prepareInternalSyncPricing = Effect.fn('InternalC14Sync.pricingSetu
       },
     },
     pricingSourceSystem: internalSyncPricingSystem,
+    sourceCategory: category.category.categoryRef,
   };
 });
 
@@ -207,6 +221,7 @@ export const internalSyncSkuPrices = [
 export const makeInternalSyncProducts = (
   keys: readonly (typeof internalStockItemKeys)[number][],
   effectiveFrom: string,
+  categories?: readonly ProductCategoryRef[],
 ): typeof Schema.Json.Type => ({
   products: internalSyncSkuPrices
     .filter(({ itemKey }) => keys.includes(itemKey))
@@ -215,12 +230,13 @@ export const makeInternalSyncProducts = (
         { amount: base, currencyCode: 'CZK', effectiveFrom },
         { amount: list, currencyCode: 'CZK', effectiveFrom, priceGroupCode: internalSyncListCode },
       ];
-      return {
+      const product = {
         identifier: { type: 'sku', value: itemKey },
         lifecycle: 'ACTIVE',
         name: itemKey,
         variants: [{ identifier: { type: 'sku', value: itemKey }, prices }],
       };
+      return categories === undefined ? product : { ...product, categories };
     }),
 });
 

@@ -42,6 +42,7 @@ const updateProduct = operation('commerce.catalog', 'commerce.catalog.update-pro
 const createVariant = operation('commerce.catalog', 'commerce.catalog.create-variant', '2');
 const variantFacts = operation('commerce.catalog', 'commerce.catalog.set-variant-localized-facts', '1');
 const priceDefine = operation('commerce.pricing', 'commerce.pricing.define-price', '2');
+const categoryAssignment = operation('commerce.catalog', 'commerce.catalog.add-product-category-assignment', '1');
 const priceDefaults = {
   commercialScope: { channelId: 'B2B', marketId: 'cz-market' },
   unitBasis: { quantity: '1', unitRef },
@@ -140,6 +141,53 @@ const priceRequestOf = (effect: Effect_) =>
     ),
   );
 const requestTagOf = (effect: Effect_) => dependentOf(effect)?.request._tag;
+
+it.effect('pins source Categories after Product creation and makes every Price wait for their assignments', () =>
+  Effect.gen(function* categoryPlan() {
+    const categories = [
+      ref('commerce.catalog', 'commerce.catalog.product-category', '81'),
+      ref('commerce.catalog', 'commerce.catalog.product-category', '82'),
+    ];
+    const source = templateInput(priceDefaults);
+    const enrolled = decodeTemplate({
+      ...source,
+      items: [
+        enroll('PRODUCT', 'enrolled-product', createProduct, updateProduct, categoryAssignment),
+        ...source.items.slice(1),
+      ],
+    });
+    const plan = Option.getOrThrow(
+      yield* build(rowsOf(product({ categories, lifecycle: 'ACTIVE' }, [variant({ prices: [price()] })])), {
+        template: enrolled,
+      }),
+    );
+    for (const [index, categoryRef] of categories.entries()) {
+      expect(effectOf(plan, 'product-0', `category-assign-${index}`)).toMatchObject({
+        dependsOn: [{ effectKey: 'product-create', itemKey: 'product-0' }],
+        intent: {
+          parent: { effectKey: 'product-create', itemKey: 'product-0' },
+          request: { _tag: 'AddProductCategoryAssignment', payload: { categoryRef, reason: 'Symmy product import' } },
+        },
+        operation: categoryAssignment,
+      });
+      expect(effectOf(plan, 'product-0-variant-0-price-0', 'price-define').dependsOn).toContainEqual({
+        effectKey: `category-assign-${index}`,
+        itemKey: 'product-0',
+      });
+    }
+    expect(Option.isNone(yield* build(rowsOf(product({ categories }))))).toBe(true);
+    expect(
+      Option.isNone(
+        yield* build(rowsOf(product({ categories: [{ ...categories[0], tenantId: legalEntityId }] })), {
+          template: enrolled,
+        }),
+      ),
+    ).toBe(true);
+    const absent = Option.getOrThrow(yield* build(rowsOf(product()), { template: enrolled }));
+    expect(itemOf(absent, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
+    expect(symmyProductPlanSize({ categories, variants: [{}] }).effects).toBe(3);
+  }),
+);
 
 it.effect('plans readiness only for explicit ACTIVE under an enrolled axis-free untyped policy', () =>
   Effect.gen(function* readinessPlan() {
@@ -465,7 +513,6 @@ describe('Symmy product plan from the public rows', () => {
   it.effect('reports every unsupported group of the product on its item, once', () =>
     Effect.gen(function* reports() {
       const kinds = [
-        'CategoryHint',
         'AttributeHint',
         'MediaHint',
         'VariantUpdateHint',

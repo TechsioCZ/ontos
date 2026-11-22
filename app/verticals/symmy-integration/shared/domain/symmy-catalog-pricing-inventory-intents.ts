@@ -1,4 +1,5 @@
 import { BindInitialVariantSourcePayloadSchema } from '@app/catalog/api/bind-initial-variant-source-action';
+import { AddProductCategoryAssignmentPayloadSchema } from '@app/catalog/api/add-product-category-assignment-action';
 import { CorrectProductPayloadSchema } from '@app/catalog/api/correct-product-action';
 import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-action';
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
@@ -91,6 +92,12 @@ const pricedIdentity = DefinePricePayloadSchema.fields.identityKey.fields;
  * plain intent.
  */
 const productDependentRequest = Schema.Union([
+  Schema.TaggedStruct('AddProductCategoryAssignment', {
+    payload: Schema.Struct({
+      categoryRef: AddProductCategoryAssignmentPayloadSchema.fields.categoryRef,
+      reason: AddProductCategoryAssignmentPayloadSchema.fields.reason,
+    }),
+  }),
   Schema.TaggedStruct('UpdateProduct', {
     payload: Schema.Struct({
       expectedRevision: updatedProduct.expectedRevision,
@@ -217,5 +224,6 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('CatalogReadinessName', { payload: SetProductLocalizedFactsPayloadSchema }),
   Schema.TaggedStruct('CatalogReadinessUnit', { payload: SetProductUnitTargetDivisibilityPayloadSchema }),
   Schema.TaggedStruct('CatalogReadinessUntyped', { payload: DecideProductTypeUnnecessaryPayloadSchema }),
+  Schema.TaggedStruct('CatalogAddProductCategoryAssignment', { payload: AddProductCategoryAssignmentPayloadSchema }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

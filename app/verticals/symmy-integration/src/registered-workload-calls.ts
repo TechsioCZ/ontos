@@ -76,6 +76,31 @@ const pricingPriceGroupCatalogSourceWrite = 'pricing.price-group-catalog.source-
 export const symmyIntegrationRegisteredWorkloadCalls = [
   {
     audience: 'catalog',
+    declarationKey: 'commerce.catalog.product-category-assignment.add',
+    entrypointKey: 'commerce.catalog.add-product-category-assignment',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commerceCatalogSymmyProductImport,
+  },
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: 'catalog',
+    declarationKey: 'commerce.catalog.add-product-category-assignment-recovery.read',
+    entrypointKey: 'commerce.catalog.api.add-product-category-assignment-recovery',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    recoveryOf: {
+      actionKey: 'commerce.catalog.add-product-category-assignment',
+      jobKey: integrationSymmyExecuteSymmyJob,
+    },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: commerceCatalogSymmyProductRead,
+  },
+  {
+    audience: 'catalog',
     declarationKey: 'commerce.catalog.variant-axes.govern',
     entrypointKey: 'commerce.catalog.govern-variant-axes',
     jobKey: integrationSymmyExecuteSymmyJob,
