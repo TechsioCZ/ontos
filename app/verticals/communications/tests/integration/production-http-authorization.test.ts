@@ -1,19 +1,37 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  ActiveApplicationCompositionService,
   applicationCompositionContentRevision,
   closeApplicationCompositionDurableAdmission,
   drainApplicationCompositionAuthority,
   loadDatabaseConnectionPair,
   lockApplicationCompositionPublication,
+  makeActiveApplicationCompositionService,
   OntosModuleDeploymentContractSchema,
+  OutboxRepositoryLive,
+  OutboxRuntime,
+  OutboxRuntimeLive,
   publishApplicationCompositionAuthority,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import type { ApplicationComposition, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import type {
+  ApplicationComposition,
+  OutboxCycleError,
+  OutboxCycleResult,
+  OutboxRuntimeService,
+  OutboxWorkerHandlerContext,
+} from '@app/core-runtime';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
+import {
+  defineOutboxWorkerEntry,
+  extractOutboxWorkerSubscriptions,
+  OutboxWorkerTenantScope,
+} from '@app/core-runtime/outbox/worker';
+import { communicationsRegistration } from '../../vertical.registration.ts';
+import { outboxWorkers } from '../../src/workers/index.ts';
+import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
 import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
@@ -35,7 +53,19 @@ import {
 } from '@app/shared-contracts';
 import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { ConfigProvider, Context, DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
+import {
+  ConfigProvider,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from 'effect';
+import type { Exit } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import { Reactivity } from 'effect/reactivity';
@@ -67,8 +97,9 @@ import type {
   PrepareTemplateRevisionPayloadSchema,
 } from '../../shared/template-revision.ts';
 import { PrivacyMeasureReporter } from '../../src/services/privacy-measure-reporter.ts';
+import type { PrivacyMeasureReporterService } from '../../src/services/privacy-measure-reporter.ts';
 import { handleReceivePrivacyMeasure } from '../../src/workers/receive-privacy-measure.worker.ts';
-import { handleReportPrivacyOwnerOutcome } from '../../src/workers/report-privacy-owner-outcome.worker.ts';
+import { reportPrivacyOwnerOutcomeWorker } from '../../src/workers/report-privacy-owner-outcome.worker.ts';
 import { decideOne, step } from '../support/history-world.ts';
 import { communicationRequest, handoffDouble, originalRecipient } from '../support/intake-fixtures.ts';
 import type { SetLanguagePolicyPayloadSchema } from '../../shared/language-policy.ts';
@@ -634,6 +665,59 @@ const deliveryContext = (
     ...fields,
   });
 
+/**
+ * One match + claim/handle/settle cycle of Core's own outbox runtime under the Communications worker binding, running only
+ * the continuation worker (the binding still checks every approved Communications subscription).
+ */
+const deliverContinuationCycle = (input: {
+  readonly outbox: OutboxRuntimeService;
+  readonly reporter: PrivacyMeasureReporterService;
+  readonly snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type;
+}) =>
+  Effect.gen(function* deliverContinuationCycleEffect() {
+    const { outbox, reporter, snapshot } = input;
+    const compositionRevision = snapshot.composition.revision;
+    const claimOwner = `communications-continuation-${randomUUID()}`;
+    const registrations = [reportPrivacyOwnerOutcomeWorker];
+    const subscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
+    const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+    const settle = (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) => Deferred.done(completed, exit);
+    yield* outbox.matchMessages({ compositionRevision });
+    const entry = defineOutboxWorkerEntry({
+      claimOwnerPrefix: 'communications-continuation',
+      expectedDeployment: { appId: 'communications', buildMarker: ultramodernDeliveryUnit.buildMarker },
+      layer: Layer.mergeAll(
+        Layer.succeed(PrivacyMeasureReporter, reporter),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
+        Layer.succeed(OutboxRuntime, {
+          ...outbox,
+          runCycle: () =>
+            outbox
+              .runCycle({
+                claimOwner,
+                compositionRevision,
+                registrations,
+                subscriptions: extractOutboxWorkerSubscriptions(registrations),
+              })
+              .pipe(Effect.provideService(PrivacyMeasureReporter, reporter), Effect.onExit(settle)),
+        }),
+      ),
+      ownerRegistration: communicationsRegistration,
+      registrations,
+      subscriptions,
+    });
+    return yield* Deferred.await(completed).pipe(
+      Effect.raceFirst(
+        entry
+          .runLoop({ config: { claimOwner, maxDeliveries: 50, pollIntervalMs: 1000 } })
+          .pipe(Effect.andThen(Effect.never)),
+      ),
+    );
+  }).pipe(Effect.scoped);
+
 describe('Communications templates, Privacy owner Reads and the owner evidence loop with the real authorization engine', () => {
   it.live(
     'allows, denies, revokes and isolates every remaining operation and pushes a later human confirmation to Privacy',
@@ -863,6 +947,23 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
               'objects',
             ),
           );
+          const coreRuntime = yield* makeCoreDatabase(connections.runtime);
+          const outboxServices = yield* Layer.build(
+            OutboxRuntimeLive.pipe(
+              Layer.provide(OutboxRepositoryLive),
+              Layer.provide(Layer.succeed(CoreDatabase, coreRuntime)),
+            ),
+          );
+          const outbox = Context.get(outboxServices, OutboxRuntime);
+          const deliverContinuations = () => deliverContinuationCycle({ outbox, reporter, snapshot });
+          const pendingContinuationWork = core.transaction((transaction) =>
+            transaction.execute<{ readonly work: string }>(
+              sql`select w.work_id as work from core.application_composition_durable_work w
+                   join core.outbox_messages m on w.work_id = 'outbox:' || m.outbox_message_id::text || ':communications.core'
+                  where m.tenant_id = ${tenant.tenantId}::uuid`,
+              'objects',
+            ),
+          );
           expect((yield* evidence(reader)).status).toBe(403);
           expect([401, 403]).toContain((yield* evidence({ ...foreignManager, tenantId: tenant.tenantId })).status);
           // the foreign manager in its own Tenant has no such handoff: refused, and nothing continues anywhere
@@ -894,16 +995,12 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
             'EXISTS',
           );
           expect(yield* continuationMessages).toHaveLength(1);
-          // 5. The continuation worker reports exactly that message to Privacy from its own claimed delivery
-          yield* handleReportPrivacyOwnerOutcome(
-            pushed,
-            deliveryContext(tenant.tenantId, {
-              producerModuleKey: 'communications.core',
-              topic: 'communications.core.owner-execution-evidence-recorded.v1',
-              workerKey: 'communications.core.report-privacy-owner-outcome',
-            }),
-          ).pipe(Effect.provideService(PrivacyMeasureReporter, reporter));
-          expect(continuations).toEqual([pushed]);
+          // 5. Core's own outbox runtime matches the message, claims it for the continuation worker and settles it: the
+          // worker reports exactly that message to Privacy from its real claimed delivery, and no durable work remains
+          const delivered = yield* deliverContinuations();
+          expect(delivered.succeeded).toBeGreaterThanOrEqual(1);
+          expect(continuations.filter((reported) => reported.measureId === handoff.measureId)).toEqual([pushed]);
+          expect(yield* pendingContinuationWork).toEqual([]);
           // 6. Privacy reads the receipt of the pushed attempt ITSELF, and its published state machine transitions
           const after = Option.getOrThrow((yield* receipt(manager, pushed.attempt)).receipt);
           expect(after.handoffFingerprint).toBe(fingerprint);
@@ -1005,6 +1102,12 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           yield* evidenceRole.revoke();
           expect((yield* evidence(reader, 'FICTIONAL-evidence-3')).status).toBe(403);
           expect(yield* continuationMessages).toHaveLength(2);
+          // the second confirmation is pushed too, as the next attempt, and leaves no unfinished work behind
+          yield* deliverContinuations();
+          expect(
+            continuations.filter((reported) => reported.measureId === handoff.measureId).map(({ attempt }) => attempt),
+          ).toEqual([2, 3]);
+          expect(yield* pendingContinuationWork).toEqual([]);
         }),
       ).pipe(Effect.provide(services)),
     180_000,
