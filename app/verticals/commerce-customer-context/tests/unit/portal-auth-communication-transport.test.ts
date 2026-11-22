@@ -41,6 +41,7 @@ import { PortalAuthRelayTransportLive } from '../../src/portal-auth/communicatio
 import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communications/trusted-scope.ts';
 import { PortalAuthTrustedScopeUnavailable } from '../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import { portalAuthCommunicationRequest, storedRequestOf } from '../../src/portal-auth/communications/request.ts';
+import { PortalAuthCommunicationRequestRefused } from '../../src/workers/portal-auth-communication-request-refused.ts';
 import { PortalAuthCommunicationSourceGateway } from '../../src/workers/portal-auth-communication-source-gateway.ts';
 import { PortalAuthPreVerificationPrivacyGateway } from '../../src/workers/portal-auth-pre-verification-privacy-gateway.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from '../../src/workers/submit-portal-auth-communication-request-rejected.ts';
@@ -143,19 +144,26 @@ const NO_MESSAGE_DECISION = {
  * the order they were called.
  */
 const gatewayDouble = (
-  answer: () => Effect.Effect<PortalAuthSubmission, SubmitPortalAuthCommunicationRequestRejected> = () =>
-    Effect.succeed(NO_MESSAGE_DECISION),
+  answer: () => Effect.Effect<
+    PortalAuthSubmission,
+    PortalAuthCommunicationRequestRefused | SubmitPortalAuthCommunicationRequestRejected
+  > = () => Effect.succeed(NO_MESSAGE_DECISION),
   privacyAnswer: () => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected> = () => Effect.void,
   reportAnswer: () => Effect.Effect<void, PortalAuthCommunicationUnavailable> = () => Effect.void,
 ) => {
   const calls: { readonly context: OutboxWorkerHandlerContext; readonly request: CommunicationRequestEncoded }[] = [];
   const order: string[] = [];
-  const reported: PortalAuthSubmission[] = [];
+  const reported: (PortalAuthSubmission | { readonly refused: string })[] = [];
   const layer = Layer.mergeAll(
     Layer.succeed(CommercePortalAuthCommunicationDecisionReporter, {
       decided: (request, submission) => {
         order.push(`report:${request.occurrence.occurrenceId}`);
         reported.push(submission);
+        return reportAnswer();
+      },
+      refused: (request, code) => {
+        order.push(`refused:${request.occurrence.occurrenceId}`);
+        reported.push({ refused: code });
         return reportAnswer();
       },
     }),
@@ -422,6 +430,45 @@ describe('The Portal Auth source worker reports the decision back to Auth (#1406
         'submit:pa-transport-report-2',
         'report:pa-transport-report-2',
       ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
+describe('The Portal Auth source worker ends a request Communications refused for good (#1406 D5)', () => {
+  it.effect('records the terminal outcome and acknowledges the delivery, even on its last ordinary attempt', () =>
+    Effect.gen(function* refusedForGood() {
+      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+      const request = yield* requestOf('pa-transport-refused');
+      const gateway = gatewayDouble(() =>
+        Effect.fail(new PortalAuthCommunicationRequestRefused({ code: 'communication_request_source_mismatch' })),
+      );
+      for (const attemptNumber of [1, 5]) {
+        // acknowledged: neither retried nor deferred, so Core never dead-letters it
+        yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf({ attemptNumber })).pipe(
+          Effect.provide(gateway.layer),
+        );
+      }
+      expect(gateway.reported).toStrictEqual([
+        { refused: 'communication_request_source_mismatch' },
+        { refused: 'communication_request_source_mismatch' },
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect('keeps a usable issuance retryable only while Auth cannot record the refusal', () =>
+    Effect.gen(function* storeOutage() {
+      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+      const request = yield* requestOf('pa-transport-refused-store');
+      const gateway = gatewayDouble(
+        () => Effect.fail(new PortalAuthCommunicationRequestRefused({ code: 'action_request_hash_conflict' })),
+        undefined,
+        storeDown,
+      );
+      const failure = yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(
+        Effect.provide(gateway.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ code: 'AUTH_STORE_UNAVAILABLE', retryable: true });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });

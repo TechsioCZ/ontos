@@ -23,6 +23,14 @@ export interface CommunicationDecisionReporterService {
     request: CommunicationRequestEncoded,
     submission: PortalAuthSubmission,
   ) => Effect.Effect<void, PortalAuthCommunicationUnavailable>;
+  /**
+   * Communications refused the request itself for good (#1406 D5): the row ends REFUSED with the closed refusal code and the
+   * sealed value is erased now, because no message can ever leave for it.
+   */
+  readonly refused: (
+    request: CommunicationRequestEncoded,
+    code: string,
+  ) => Effect.Effect<void, PortalAuthCommunicationUnavailable>;
 }
 
 export class CommercePortalAuthCommunicationDecisionReporter extends Context.Service<
@@ -33,6 +41,10 @@ export class CommercePortalAuthCommunicationDecisionReporter extends Context.Ser
 ) {}
 
 const decodeIssuanceRef = Schema.decodeUnknownOption(PortalAuthIssuanceRefSchema);
+/** The safe summary of a refused request: the closed code Communications refused it with, nothing else. */
+const encodeRefusal = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ code: Schema.String, outcome: Schema.Literal('REFUSED') })),
+);
 
 /** The callback over Auth's own store. */
 export const communicationDecisionReporterLayer = Layer.effect(
@@ -57,6 +69,22 @@ export const communicationDecisionReporterLayer = Layer.effect(
           state: submission.outcome,
         });
       }),
+      refused: Effect.fn('CommercePortalAuthCommunicationDecisionReporter.refused')(function* refused(
+        request: CommunicationRequestEncoded,
+        code: string,
+      ) {
+        const issuanceRef = decodeIssuanceRef(request.occurrence.occurrenceId);
+        if (Option.isNone(issuanceRef)) {
+          return;
+        }
+        yield* store.recordDecision({
+          forget: true,
+          issuanceRef: issuanceRef.value,
+          now: yield* DateTime.now,
+          outcome: yield* encodeRefusal({ code, outcome: 'REFUSED' }).pipe(Effect.option),
+          state: 'REFUSED',
+        });
+      }),
     };
   }),
 );
@@ -67,4 +95,5 @@ export const communicationDecisionReporterLayer = Layer.effect(
  */
 export const unreportedCommunicationDecisionLayer = Layer.succeed(CommercePortalAuthCommunicationDecisionReporter, {
   decided: () => Effect.void,
+  refused: () => Effect.void,
 });

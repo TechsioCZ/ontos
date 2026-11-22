@@ -27,14 +27,21 @@ export interface ClaimedCommunicationRequest {
 
 /**
  * How a relayed row ends: Communications DECIDED it (a stored decision, whatever it says), recorded a CONFLICT for it, the
- * transport RELAYED it to the module's source worker (queued in Core, decided later), or Auth itself saw the issuance EXPIRE
- * before its request could be submitted (nothing is submitted then).
+ * transport RELAYED it to the module's source worker (queued in Core, decided later), Communications REFUSED the request itself
+ * for good (reported back by the source worker; nothing is sent), or Auth itself saw the issuance EXPIRE before its request could
+ * be submitted (nothing is submitted then).
  */
-export const CommunicationRequestCompletionSchema = Schema.Literals(['CONFLICT', 'DECIDED', 'EXPIRED', 'RELAYED']);
+export const CommunicationRequestCompletionSchema = Schema.Literals([
+  'CONFLICT',
+  'DECIDED',
+  'EXPIRED',
+  'REFUSED',
+  'RELAYED',
+]);
 export type CommunicationRequestCompletion = typeof CommunicationRequestCompletionSchema.Type;
 
 /** How Communications itself ended a request the relay handed on, as the module's source worker reports it back. */
-export type CommunicationRequestDecision = Extract<CommunicationRequestCompletion, 'CONFLICT' | 'DECIDED'>;
+export type CommunicationRequestDecision = Extract<CommunicationRequestCompletion, 'CONFLICT' | 'DECIDED' | 'REFUSED'>;
 
 export interface PortalAuthCommunicationStoreService {
   /**

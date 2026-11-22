@@ -17,6 +17,8 @@ import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commer
 import { withSafeCause } from '../../api/portal-auth/provider/safe-failure.ts';
 import type { PortalAuthSubmission } from '../portal-auth/communications/communication-request-submitter.ts';
 import { CommercePortalAuthCommunicationDecisionReporter } from '../portal-auth/communications/decision-report.ts';
+import type { PortalAuthCommunicationUnavailable } from '../portal-auth/communications/communication-unavailable.ts';
+import type { PortalAuthCommunicationRequestRefused } from './portal-auth-communication-request-refused.ts';
 import { PortalAuthCommunicationSourceGateway } from './portal-auth-communication-source-gateway.ts';
 import { PortalAuthPreVerificationPrivacyGateway } from './portal-auth-pre-verification-privacy-gateway.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from './submit-portal-auth-communication-request-rejected.ts';
@@ -72,17 +74,13 @@ const deferWhileUsable = Effect.fn('SubmitPortalAuthCommunicationRequestWorker.d
 });
 
 /**
- * Reports Communications' decision back to Auth (#1406 D4), so a decision that leaves no message erases the issuance's
- * protected value now. While the issuance is usable an unreachable Auth store keeps the delivery retryable (the same request
- * lands on the same stored decision again); past its expiry the value is already cleared by the relay's sweep, so the delivery
- * is acknowledged.
+ * Reports what Communications answered back to Auth (#1406 D4, D5), so a decision that leaves no message, or a final refusal,
+ * erases the issuance's protected value now. While the issuance is usable an unreachable Auth store keeps the delivery
+ * retryable (the same request lands on the same stored answer again); past its expiry the value is already cleared by the
+ * relay's sweep, so the delivery is acknowledged.
  */
-const reportDecision = Effect.fn('SubmitPortalAuthCommunicationRequestWorker.reportDecision')(function* report(
-  payload: OutboxPayload,
-  submission: PortalAuthSubmission,
-) {
-  const reporter = yield* CommercePortalAuthCommunicationDecisionReporter;
-  return yield* reporter.decided(payload.request, submission).pipe(
+const reported = (payload: OutboxPayload, report: Effect.Effect<void, PortalAuthCommunicationUnavailable>) =>
+  report.pipe(
     Effect.catchTag('PortalAuthCommunicationUnavailable', (cause) =>
       DateTime.now.pipe(
         Effect.flatMap((now) =>
@@ -102,6 +100,29 @@ const reportDecision = Effect.fn('SubmitPortalAuthCommunicationRequestWorker.rep
       ),
     ),
   );
+
+const reportDecision = Effect.fn('SubmitPortalAuthCommunicationRequestWorker.reportDecision')(function* report(
+  payload: OutboxPayload,
+  submission: PortalAuthSubmission,
+) {
+  const reporter = yield* CommercePortalAuthCommunicationDecisionReporter;
+  return yield* reported(payload, reporter.decided(payload.request, submission));
+});
+
+/**
+ * A request Communications refused for good is ended HERE (#1406 D5): the same request delivered again would only be refused
+ * again, so the worker records the terminal REFUSED outcome in Auth's store (erasing the protected value), logs the closed code
+ * and acknowledges the delivery, instead of retrying it until it dead-letters.
+ */
+const endRefused = Effect.fn('SubmitPortalAuthCommunicationRequestWorker.endRefused')(function* endRefused(
+  payload: OutboxPayload,
+  refusal: PortalAuthCommunicationRequestRefused,
+) {
+  yield* Effect.annotateLogs(Effect.logWarning('Communications refused a Portal Auth request for good; it is ended'), {
+    code: refusal.code,
+  });
+  const reporter = yield* CommercePortalAuthCommunicationDecisionReporter;
+  return yield* reported(payload, reporter.refused(payload.request, refusal.code));
 });
 
 /**
@@ -124,6 +145,7 @@ export const handleSubmitPortalAuthCommunicationRequest = Effect.fn(
   return yield* privacy.bind(payload.request, context).pipe(
     Effect.andThen(() => gateway.submit(payload.request, context)),
     Effect.flatMap((submission) => reportDecision(payload, submission)),
+    Effect.catchTag('PortalAuthCommunicationRequestRefused', (refusal) => endRefused(payload, refusal)),
     Effect.catchIf(
       (rejected) => rejected.retryable && context.attemptNumber >= RETRY_POLICY.maxAttempts,
       (rejected) => deferWhileUsable(payload, rejected),

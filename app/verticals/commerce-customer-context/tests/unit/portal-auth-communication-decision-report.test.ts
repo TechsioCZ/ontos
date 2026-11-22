@@ -44,10 +44,10 @@ const intent = (status: 'NOT_SENT' | 'PENDING_HANDOFF' | 'SUPPRESSED') => ({
   status,
 });
 
-/** One issuance committed and relayed, then the given decision reported back (twice, as a redelivery would). */
+/** One issuance committed and relayed, then the given answer reported back (twice, as a redelivery would). */
 const reportedAfterRelay = Effect.fn('PortalAuthDecisionReportTest.run')(function* run(
   name: string,
-  submission: PortalAuthSubmission,
+  answer: PortalAuthSubmission | { readonly refused: string },
 ) {
   const store = makeCommunicationStoreDouble();
   const issuance = issuanceOf(name);
@@ -83,10 +83,11 @@ const reportedAfterRelay = Effect.fn('PortalAuthDecisionReportTest.run')(functio
       ),
     ),
   );
-  yield* reporter.decided(request, submission);
+  const report = 'refused' in answer ? reporter.refused(request, answer.refused) : reporter.decided(request, answer);
+  yield* report;
   const first = (yield* Ref.get(store.outbox)).get(name);
-  // the same stored decision again, as a redelivery or a replayed submission returns it
-  yield* reporter.decided(request, submission);
+  // the same answer again, as a redelivery or a replayed submission returns it
+  yield* report;
   return {
     first,
     row: (yield* Ref.get(store.outbox)).get(name),
@@ -150,6 +151,20 @@ describe('The Portal Auth relay completion callback (#1406 D4)', () => {
         'pa-report-5',
         decided({ kind: 'NO_MESSAGE', reason: 'NO_TYPE' }),
       );
+      expect(row).toStrictEqual(first);
+    }),
+  );
+
+  it.effect('D5: a final refusal ends the row REFUSED with its closed code only and erases the sealed value now', () =>
+    Effect.gen(function* refused() {
+      const { first, row, sealed } = yield* reportedAfterRelay('pa-report-6', {
+        refused: 'communication_request_invalid',
+      });
+      expect(row?.state).toBe('REFUSED');
+      expect(Option.getOrUndefined(row?.outcome ?? Option.none())).toBe(
+        '{"code":"communication_request_invalid","outcome":"REFUSED"}',
+      );
+      expect(Option.isNone(sealed)).toBe(true);
       expect(row).toStrictEqual(first);
     }),
   );

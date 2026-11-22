@@ -109,6 +109,7 @@ const servePeers = Effect.fnUntraced(function* servePeers(
   compositionRevision: string,
   outage: Ref.Ref<number>,
   tenantId: string,
+  refuse: boolean,
 ) {
   const received = yield* Ref.make<readonly Received[]>([]);
   const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
@@ -164,6 +165,20 @@ const servePeers = Effect.fnUntraced(function* servePeers(
           if (remaining > 0) {
             return HttpServerResponse.empty({ status: 503 });
           }
+          if (refuse) {
+            // Communications' published final refusal: the same idempotency key already carried another request
+            return yield* HttpServerResponse.json(
+              {
+                _tag: 'SubmitCommunicationRequestActionConflictProblem',
+                code: 'action_request_hash_conflict',
+                detail: 'Fictional conflicting request',
+                status: 409,
+                title: 'Conflict',
+                type: 'about:blank',
+              },
+              { contentType: 'application/problem+json', status: 409 },
+            );
+          }
           return yield* HttpServerResponse.json({
             decision: { kind: 'NO_MESSAGE', reason: 'FICTIONAL_STORED_DECISION' },
             decisionId: '5d000000-0000-4000-8000-0000000000a1',
@@ -198,6 +213,8 @@ const frozenClock = (real: Clock.Clock, now: Date): Clock.Clock => {
 
 const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(function* scenario(input: {
   readonly outageCalls: number;
+  /** Communications refuses the request for good once it answers. */
+  readonly refuse?: boolean;
   readonly validForMinutes: number;
 }) {
   const fixture = makeNativeOutboxWorkerFixture(getVerticalRuntimeOutboxWorkers(commerceCustomerContextRegistration));
@@ -323,7 +340,7 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
       .pipe(Effect.result);
   };
   const outage = yield* Ref.make(input.outageCalls);
-  const peers = yield* servePeers(revision, outage, tenantId);
+  const peers = yield* servePeers(revision, outage, tenantId, input.refuse === true);
   // the worker host's configuration: read when the gateway layer is built AND when each delegation is acquired
   const configuration = ConfigProvider.layer(
     ConfigProvider.fromUnknown({
@@ -334,9 +351,10 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
     }),
   );
   // LABELLED double of the completion callback to Auth's store (its store write is proven by the outbox suite)
-  const reported = yield* Ref.make<readonly PortalAuthSubmission[]>([]);
+  const reported = yield* Ref.make<readonly (PortalAuthSubmission | { readonly refused: string })[]>([]);
   const reporter = Layer.succeed(CommercePortalAuthCommunicationDecisionReporter, {
     decided: (_request, submission) => Ref.update(reported, (all) => [...all, submission]),
+    refused: (_request, code) => Ref.update(reported, (all) => [...all, { refused: code }]),
   });
   const gateway = Layer.mergeAll(
     PortalAuthCommunicationSourceGatewayLive,
@@ -525,6 +543,26 @@ it.live(
         expect(settled.status).toBe('dead');
         const received = yield* Ref.get(world.peers.received);
         expect(received.filter(({ path }) => path.endsWith(SUBMIT_PATH)).length).toBeGreaterThanOrEqual(5);
+      }),
+    ),
+  { timeout: 180_000 },
+);
+
+it.live(
+  'D5: a request Communications refuses for good is ended by the worker on its first delivery, never retried or dead-lettered',
+  () =>
+    native(
+      Effect.gen(function* refused() {
+        const world = yield* scenario({ outageCalls: 0, refuse: true, validForMinutes: 30 });
+        yield* world.relayAs(world.relayPrincipalId);
+        const settled = yield* settleDelivery(world, world.startedAt);
+        // one attempt, acknowledged: no retry, no deferral, no dead letter
+        expect(settled).toMatchObject({ attempts: 1, status: 'done' });
+        expect(settled.seen).not.toContain('dead');
+        const received = yield* Ref.get(world.peers.received);
+        expect(received.filter(({ path }) => path.endsWith(SUBMIT_PATH))).toHaveLength(1);
+        // the terminal outcome went back to Auth with Communications' closed code only
+        expect(yield* Ref.get(world.reported)).toStrictEqual([{ refused: 'action_request_hash_conflict' }]);
       }),
     ),
   { timeout: 180_000 },
