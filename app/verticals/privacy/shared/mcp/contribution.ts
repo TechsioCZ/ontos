@@ -23,6 +23,7 @@ const privacyMcpContributionWith = (
       'add-processing-purpose-version': {
         title: { cs: 'Přidat verzi účelu zpracování', en: 'Add a processing purpose version' },
       },
+      // Owner-to-owner source-module bind of a pre-verification subject (#1406 D.8); never a general agent tool.
       'assign-dsr-resolver': {
         title: { cs: 'Přiřadit řešitele žádosti subjektu údajů', en: 'Assign a data subject request resolver' },
       },
@@ -33,6 +34,7 @@ const privacyMcpContributionWith = (
         destructive: false,
         title: { cs: 'Přiřadit odpovědnost za ochranu osobních údajů', en: 'Assign a privacy responsibility' },
       },
+      'bind-pre-verification-subject': OntosMcpHidden,
       'consent-self-service': consentSelfService,
       // Production installs no DSR intake receipt authority; every invocation fails until it is wired.
       'create-dsr-case': OntosMcpHidden,
@@ -112,9 +114,11 @@ const privacyMcpContributionWith = (
       'upsert-dsr-owner-task': OntosMcpHidden,
       // Production installs no retention rule governance authority; every invocation fails until it is wired.
       'upsert-retention-rule': OntosMcpHidden,
+      // A final Privacy withdrawal of a pre-verification subject; no product approval for an agent tool exists yet.
       'upsert-temporary-dsr-export': {
         title: { cs: 'Uložit dočasný export pro subjekt údajů', en: 'Save a temporary data subject export' },
       },
+      'withdraw-pre-verification-binding': OntosMcpHidden,
     },
     approvals: false,
     description: {
@@ -144,6 +148,8 @@ const privacyMcpContributionWith = (
       // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
       'organization-profile-ico-applicability': OntosMcpHidden,
       'owner-inventory': { title: { cs: 'Přehled vlastníků osobních údajů', en: 'Personal data owner inventory' } },
+      // Owner-to-owner Communications read of a pre-verification subject's eligibility; never a general agent tool.
+      'pre-verification-eligibility': OntosMcpHidden,
       'privacy-subjects': { title: { cs: 'Subjekty údajů', en: 'Data subjects' } },
       'processing-activities': { title: { cs: 'Činnosti zpracování', en: 'Processing activities' } },
       'processing-eligibility': { title: { cs: 'Přípustnost zpracování', en: 'Processing eligibility' } },

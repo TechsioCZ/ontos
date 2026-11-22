@@ -19407,6 +19407,100 @@
         },
         {
           "accessDeclaration": {
+            "key": "privacy.core.pre-verification-binding.withdraw",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "manage"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.withdraw-pre-verification-binding",
+            "moduleKey": "privacy.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.pre-verification-eligibility.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.pre-verification-eligibility",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "communications"
+            ],
+            "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.pre-verification-subject.bind",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "critical",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.bind-pre-verification-subject",
+            "moduleKey": "privacy.core",
+            "role": "action",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "identity"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "privacy.core.privacy-applicability.record",
             "kind": "action",
             "modes": [

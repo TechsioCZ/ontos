@@ -19,7 +19,7 @@ export class CommercePortalAuthPreVerificationPrivacyTransport extends Context.S
   CommercePortalAuthPreVerificationPrivacyTransport,
   PreVerificationPrivacyTransportService
 >()(
-  '@app/commerce-customer-context/portal-auth/communications/pre-verification-privacy-binding/CommercePortalAuthPreVerificationPrivacyTransport',
+  '@app/commerce-customer-context/portal-auth/communications/pre-verification-privacy-transport/CommercePortalAuthPreVerificationPrivacyTransport',
 ) {}
 
 /** The only production transport until D1 is resolved: no path to Privacy, so nothing is bound and nothing is sent. */
