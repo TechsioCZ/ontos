@@ -587,9 +587,9 @@ it.effect('relays the requester to the Shell deployment for a Core operation the
     );
     expect(verified.payload['ver']).toBe(3);
     expect(verified.payload['principal']).toEqual(delegationUnitPrincipal);
-    // The requester's selected company travels with them (the hosted requirement relays the `subject`): it is what
-    // lets Core narrow the Current answer to the company's own assets (decision 7).
-    expect(verified.payload['principal']).toHaveProperty('legalEntityId', delegationUnitPrincipal.legalEntityId);
+    // The requester's selected company travels with them (the hosted requirement relays the `subject`), which is what
+    // lets Core narrow the Current answer to that company's own assets (decision 7): the principal above names it.
+    expect(delegationUnitPrincipal.legalEntityId).toBeDefined();
     expect(verified.payload['act']).toEqual({
       appId: 'catalog',
       buildMarker: 'catalog-build',

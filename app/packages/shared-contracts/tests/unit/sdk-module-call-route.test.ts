@@ -191,11 +191,11 @@ it.effect('relays a person as an Assertion and sends the governed headers', () =
 it.effect('relays the requester to the Shell host for a Core operation it hosts, at the operation path', () =>
   Effect.gen(function* hosted() {
     const request: CallRouteRequest = {
-      ...requestOf({ kind: 'person', legalEntityScope: 'tenant' }, revision),
+      ...requestOf({ kind: 'person', legalEntityScope: 'subject' }, revision),
       encodedInput: { mediaAssetRefs: [] },
       operation: coreOperations.assetCurrent,
       requirement: {
-        callers: [{ kind: 'person', legalEntityScope: 'tenant' }],
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         compositionRevision: revision,
         provider: coreOperations.assetCurrent.provider,
         providerAppId: SHELL_HOST_APP_ID,
@@ -228,7 +228,7 @@ it.effect('relays the requester to the Shell host for a Core operation it hosts,
     expect(isAnswered(answer)).toBe(true);
     // The audience is the Shell deployment, the subject is the requester's own verified scope, never a service's.
     expect(delegations).toHaveLength(1);
-    expect(delegations[0]).toMatchObject({ audience: SHELL_HOST_APP_ID, legalEntityScope: 'tenant' });
+    expect(delegations[0]).toMatchObject({ audience: SHELL_HOST_APP_ID, legalEntityScope: 'subject' });
     expect(assertedScopeOf(delegations[0])).toBe(principal);
     expect(sent[0]).toMatchObject({
       method: 'POST',
