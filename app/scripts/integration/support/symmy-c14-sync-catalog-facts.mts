@@ -1,4 +1,5 @@
 import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-action';
+import { CreateProductRecoveryResponseSchema } from '@app/catalog/api/create-product-recovery';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
 import { GovernVariantAxesRecoveryResponseSchema } from '@app/catalog/api/govern-variant-axes-recovery';
 import { ConfirmVariantCombinationResultSchema } from '@app/catalog/api/confirm-variant-combination-recovery';
@@ -23,6 +24,8 @@ const productReceiptSchema = Schema.TaggedStruct('ProductCreated', {
   actionInvocationId: ProductActionInvocationIdSchema,
   initialVariantRef: VariantRefSchema,
   productRef: ProductRefSchema,
+  productRevision: CreateProductRecoveryResponseSchema.fields.product.fields.revision,
+  variantRevision: CreateProductRecoveryResponseSchema.fields.product.fields.revision,
 });
 const snapshotSchema = Schema.Struct({
   acting_principal_id: uuid,
@@ -39,6 +42,7 @@ const snapshotSchema = Schema.Struct({
   owner_receipt: Schema.OptionFromNullOr(Schema.Json),
   owner_request_hash: digest,
   product_receipt: productReceiptSchema,
+  product_result: CreateProductRecoveryResponseSchema,
   ref: SymmyOwnerEffectRefSchema,
   result: Schema.Json,
   schema_version: Schema.Literal(1),
@@ -111,12 +115,18 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         e.resolved_effect#>'{intent,payload,sourceProduct}' as source_product,
         e.owner_invocation_id as invocation_id, e.owner_executor_principal_id, e.owner_request_hash,
         e.owner_receipt, e.outcome, parent.owner_receipt as product_receipt,
+        original.encoded_result as product_result,
         s.action_key, s.acting_principal_id, s.schema_version, s.encoded_result as result,
         i.status as core_status, i.action_key as core_action_key, i.principal_id as core_principal_id,
         i.request_hash as core_request_hash, i.committed_reply_json as committed_reply
       from symmy_integration.job_effects e
       join symmy_integration.job_effects parent on parent.tenant_id=e.tenant_id and parent.job_id=e.job_id
         and parent.item_id=e.item_id and parent.effect_key='product-create'
+      left join catalog.catalog_result_snapshots original on original.tenant_id=parent.tenant_id
+        and original.action_invocation_id::text=parent.owner_receipt->>'actionInvocationId'
+        and original.action_key='commerce.catalog.create-product'
+        and original.acting_principal_id=e.owner_executor_principal_id
+        and original.schema_version=1
       left join catalog.catalog_result_snapshots s on s.tenant_id=e.tenant_id
         and s.action_invocation_id=e.owner_invocation_id
       left join core.action_invocations i on i.tenant_id=e.tenant_id
@@ -146,6 +156,12 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         const untypedRow = rowFor('readiness-untyped');
         const receipt = axesRow.product_receipt;
         const { initialVariantRef, productRef } = receipt;
+        const original = axesRow.product_result;
+        expect(original.product.productRef).toEqual(productRef);
+        expect(original.variantId).toBe(initialVariantRef.resourceId);
+        expect(receipt.productRevision).toBe(original.product.revision);
+        assert.isDefined(original.initialVariantRevision);
+        expect(receipt.variantRevision).toBe(original.initialVariantRevision);
         expect(productRef.tenantId).toBe(tenantId);
         expect(initialVariantRef.tenantId).toBe(tenantId);
         for (const [row, action] of [
@@ -171,6 +187,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           expect(row.owner_request_hash).toBe(row.core_request_hash);
           expect(row.committed_reply.encoded).toEqual(row.result);
           expect(row.product_receipt).toEqual(receipt);
+          expect(row.product_result).toEqual(original);
           expect(row.outcome.effectId).toBe(row.ref.effectId);
           expect(row.outcome.owner).toBe('commerce.catalog');
           expect(row.outcome.status).toBe(input.adoption ? 'accepted_no_change' : 'accepted_change');
@@ -212,6 +229,8 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         expect(confirmed.variant.variantRef).toEqual(initialVariantRef);
         expect(confirmed.variant.lifecycle).toBe('ACTIVE');
         expect(confirmed.combinationAxisRevision).toBe(axes.axisRevision);
+        // Independent SHA-256 known vector for the axis-free [] encoding, not the Action's own result.
+        expect(confirmed.combinationKey).toBe('4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945');
         assert.isDefined(confirmed.variantRevision);
         const variantReceipt = yield* Schema.decodeUnknownEffect(variantReceiptSchema)(
           Option.getOrUndefined(confirmRow.owner_receipt),
@@ -312,6 +331,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
             invocationId: invocation_id,
           })),
           key,
+          productReceipt: receipt,
           snapshots: rows.map(({ effect_key, result }) => ({ effectKey: effect_key, result })),
           state: { correlations, current, productRef, variantRef: initialVariantRef },
         };

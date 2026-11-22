@@ -13,7 +13,18 @@ import { DefinePriceResultSchema } from '@app/pricing/actions/define-price';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Array as EffectArray, ConfigProvider, Effect, Exit, Match, Option, Schema, Struct } from 'effect';
+import {
+  Array as EffectArray,
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  Logger,
+  Match,
+  Option,
+  Schema,
+  Struct,
+} from 'effect';
 import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
@@ -939,8 +950,19 @@ const harness = (
       Effect.provideService(ConfigProvider.ConfigProvider, configuration),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
-  return { adapter, events, input, provide, receipts, requests, resolvedEffects };
+  return { adapter, events, fetch, input, provide, receipts, requests, resolvedEffects };
 };
+
+const preDispatchLogs = (entries: unknown[]) =>
+  Logger.layer([
+    Logger.make(({ message }) => {
+      if (Array.isArray(message)) {
+        entries.push(...message);
+      } else {
+        entries.push(message);
+      }
+    }),
+  ]);
 
 const gatewayRequestsFor = Effect.fn('CpiAdapterFixture.gatewayRequests')(function* gatewayRequests(
   requests: readonly Request[],
@@ -955,6 +977,66 @@ const gatewayRequestsFor = Effect.fn('CpiAdapterFixture.gatewayRequests')(functi
 });
 
 describe('Symmy native public owner adapter transport', () => {
+  it.effect('identifies owner request persistence failure without replacing or logging the original cause', () => {
+    const h = harness(false);
+    const entries: unknown[] = [];
+    const original = symmyJobWorkerUnavailable(new Error('private-token-payload-digest'));
+    return h.provide(
+      Effect.gen(function* persistenceFailure() {
+        const adapter = yield* h.adapter;
+        const exit = yield* Effect.exit(
+          adapter.execute({ ...h.input, recordOwnerRequest: () => Effect.fail(original) }),
+        );
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(original);
+        } else {
+          assert.fail('The original owner request failure must survive diagnostics');
+        }
+        expect(entries).toContainEqual({
+          effectId,
+          operation: 'CatalogCreateProduct',
+          stage: 'record-owner-request',
+          status: 'failed',
+        });
+        expect(entries).toContainEqual({
+          effectId,
+          operation: 'CatalogCreateProduct',
+          stage: 'request-hash',
+          status: 'succeeded',
+        });
+        expect(JSON.stringify(entries)).not.toContain('private-token-payload-digest');
+        expect(JSON.stringify(entries)).not.toContain('assertion-');
+        expect(h.events).not.toContain('owner-write');
+      }).pipe(Effect.provide(preDispatchLogs(entries))),
+    );
+  });
+
+  it.effect('keeps execution and the original failure intact when the diagnostic logger throws', () => {
+    const h = harness(false);
+    const original = symmyJobWorkerUnavailable(new Error('private-cause'));
+    const brokenLogger = Logger.layer([
+      Logger.make(() => {
+        throw new Error('diagnostic-capture-failed');
+      }),
+    ]);
+    return h.provide(
+      Effect.gen(function* diagnosticFailure() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute(h.input);
+        expect(outcome.status).toBe('accepted_change');
+        const exit = yield* Effect.exit(
+          adapter.execute({ ...h.input, recordOwnerRequest: () => Effect.fail(original) }),
+        );
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(original);
+        } else {
+          assert.fail('The original owner request failure must survive a broken logger');
+        }
+        expect(h.events.filter((event) => event === 'owner-write')).toHaveLength(1);
+      }).pipe(Effect.provide(brokenLogger)),
+    );
+  });
+
   it.effect('requires a fresh postcommit native fact for Stock instead of an admission-time absent snapshot', () => {
     const h = harness(false, stockEffectForBackend('native-backend-A'));
     return h.provide(
@@ -2283,6 +2365,90 @@ const provisionPlan = (provision: SymmyPinnedEffect) =>
   });
 
 describe('Symmy committed Catalog selection provisions Inventory through its public owner Action', () => {
+  for (const stage of ['fresh-gateway', 'machine-context', 'record-owner-request', 'success'] as const) {
+    it.effect(`reports the first provisioning pre-dispatch boundary: ${stage}`, () => {
+      const h = harness(false, provisionEffectOf());
+      const entries: unknown[] = [];
+      const original = symmyJobWorkerUnavailable(new Error('private-provisioning-cause'));
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        if (
+          request.url.includes('/auth/delegated/gateway-context') &&
+          (stage === 'fresh-gateway' || stage === 'machine-context')
+        ) {
+          return request
+            .clone()
+            .json()
+            .then(Schema.decodeUnknownSync(GatewayDelegatedContextRequestSchema))
+            .then((query) => {
+              if (query.audience !== 'inventory') {
+                return h.fetch(request);
+              }
+              return stage === 'fresh-gateway'
+                ? Response.json({ detail: 'private-gateway-cause' }, { status: 503 })
+                : Response.json({
+                    apiBaseUrl: '/inventory-api',
+                    compositionRevision,
+                    expiresAt: 1_700_000_300,
+                    token: 'private-gateway-token',
+                  });
+            });
+        }
+        return h.fetch(request);
+      };
+      return h.provide(
+        Effect.gen(function* provisioningBoundary() {
+          const adapter = yield* h.adapter;
+          const exit = yield* Effect.exit(
+            adapter.execute({
+              ...h.input,
+              acceptedPlan: provisionPlan(h.input.effect),
+              dependencies: [parentState],
+              inventoryBackendId: 'native-backend-A',
+              recordOwnerRequest:
+                stage === 'record-owner-request' ? () => Effect.fail(original) : h.input.recordOwnerRequest,
+            }),
+          );
+          expect(h.resolvedEffects).toHaveLength(1);
+          expect(entries).toContainEqual({
+            effectId: h.input.effect.ref.effectId,
+            operation: 'InventoryProvision',
+            stage: 'target-validation',
+            status: 'succeeded',
+          });
+          const failures = entries.filter(Schema.is(Schema.Struct({ status: Schema.Literal('failed') })));
+          if (stage === 'success' && Exit.isSuccess(exit)) {
+            expect(exit.value.status).toBe('accepted_change');
+            expect(failures).toEqual([]);
+            expect(h.events).toContain('owner-write');
+            expect(h.events.indexOf(`executor:${executorId}`)).toBeLessThan(h.events.indexOf('owner-write'));
+          } else if (stage !== 'success' && Exit.isFailure(exit)) {
+            const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+            expect(error).toMatchObject({ code: 'symmy_job_worker_unavailable' });
+            if (stage === 'record-owner-request') {
+              expect(error).toBe(original);
+            }
+            expect(failures).toEqual([
+              {
+                effectId: h.input.effect.ref.effectId,
+                operation: 'InventoryProvision',
+                stage,
+                status: 'failed',
+              },
+            ]);
+            expect(h.events).not.toContain('owner-write');
+            expect(h.events).not.toContain(`executor:${executorId}`);
+          } else {
+            assert.fail(`The ${stage} boundary changed its original execution result`);
+          }
+          expect(JSON.stringify(entries)).not.toContain('private-');
+          expect(JSON.stringify(entries)).not.toContain('assertion-');
+          expect(JSON.stringify(entries)).not.toContain('unseen-SKU');
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.provide(preDispatchLogs(entries))),
+      );
+    });
+  }
+
   it.effect('hashes reordered locations exactly as the native Inventory HTTP client sends them', () => {
     const h = harness(false, provisionEffectOf());
     return h.provide(
