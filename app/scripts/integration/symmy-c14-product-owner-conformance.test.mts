@@ -811,9 +811,10 @@ it.live(
         );
         expect(Option.getOrThrow(variantEffect.resolved_target)).toEqual(originalReceipt.productRef);
         expect(Option.getOrThrow(factsEffect.outcome)).toMatchObject({ status: 'accepted_change' });
-        // A price on a Product this job just created is linked to it and its Variant, and the owner decides it: the new
-        // Product has no source authority grant for that exact identity, so Pricing holds it and writes nothing.
+        // This category-free Product recovery case is not a Pricing success claim. Pricing decides the linked
+        // Product/Variant, which lacks Category evidence and a source authority grant for that exact identity.
         expect(Option.getOrThrow(priceEffect.outcome).status).not.toMatch(/^accepted/u);
+        expect(completed.some(({ effect_key }) => effect_key.startsWith('category-assign-'))).toBe(false);
         const [pricePlanned] = yield* admin<{
           selection: unknown;
         }>`select resolved_effect #> '{intent,payload,identityKey,catalogSelection}' as selection from symmy_integration.job_effects where job_id=${accepted.jobId} and effect_key='price-define'`;
@@ -835,10 +836,9 @@ it.live(
         const unsupported = (status.items ?? [])
           .flatMap((item) => item.effects)
           .filter((effect) => effect.status === 'unsupported');
-        expect(unsupported).toHaveLength(6);
+        expect(unsupported).toHaveLength(5);
         expect(unsupported.map(({ branchKind }) => branchKind)).toEqual(
           expect.arrayContaining([
-            'CategoryHint',
             'AttributeHint',
             'MediaHint',
             'VariantUpdateHint',
