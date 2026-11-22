@@ -1,10 +1,17 @@
+import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { communicationsApiContract } from '../../shared/api.ts';
 import { languagePolicyOperation } from '../../shared/apis/language-policy.ts';
 import { privacyOwnerCoverageOperation } from '../../shared/apis/privacy-owner-coverage.ts';
 import { privacyOwnerExecutionOutcomeOperation } from '../../shared/apis/privacy-owner-execution-outcome.ts';
+import { activateTemplateRevisionAction } from '../../src/actions/activate-template-revision.action.ts';
+import { deactivateTemplateRevisionAction } from '../../src/actions/deactivate-template-revision.action.ts';
+import { invalidateTemplateRevisionAction } from '../../src/actions/invalidate-template-revision.action.ts';
+import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
 import { recordOwnerExecutionEvidenceAction } from '../../src/actions/record-owner-execution-evidence.action.ts';
+import { setLanguagePolicyAction } from '../../src/actions/set-language-policy.action.ts';
+import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
 import { privacyOwnerExecutionOutcomeRead } from '../../src/api/privacy-owner-execution-outcome.read.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { communicationsManifest } from '../../vertical.manifest.ts';
@@ -117,6 +124,43 @@ describe('Communications module contract', () => {
         },
       }),
     ]);
+  });
+
+  it('[#1400 S13] declares no Action, Read or payload field a Tenant could use to switch optional notifications', () => {
+    // FICTIONAL vocabulary of a notification switch or preference; the module must name none of it anywhere public
+    const switchVocabulary = /notif|prefer|opt[-_]?in|opt[-_]?out|subscri|consent|marketing|switch|toggle|enabled/iu;
+    const { actions, api, operationContracts } = communicationsManifest.publicSurface;
+    const publicKeys = [
+      ...actions.map((action) => action.descriptor.actionKey),
+      ...Object.keys(api),
+      ...(operationContracts ?? []).map((contract) => contract.operationKey),
+    ];
+    expect(publicKeys.filter((key) => switchVocabulary.test(key))).toEqual([]);
+    // every public Action's own payload contract, checked to be exactly the published set so none escapes the scan
+    const registrations = [
+      activateTemplateRevisionAction,
+      deactivateTemplateRevisionAction,
+      invalidateTemplateRevisionAction,
+      prepareTemplateRevisionAction,
+      recordOwnerExecutionEvidenceAction,
+      setLanguagePolicyAction,
+      submitCommunicationRequestAction,
+    ];
+    expect(registrations.map(({ descriptor }) => descriptor.actionKey)).toEqual(
+      actions.map(({ descriptor }) => descriptor.actionKey),
+    );
+    /** Every object key at any depth of the payload's JSON Schema: its property names and its definitions. */
+    const payloadFields = registrations.flatMap(({ descriptor }) =>
+      [
+        ...JSON.stringify(Schema.toJsonSchemaDocument(descriptor.payloadSchema)).matchAll(
+          /"(?<field>(?:[^"\\]|\\.)*)":/gu,
+        ),
+      ].map((match) => `${descriptor.actionKey}:${match.groups?.['field'] ?? ''}`),
+    );
+    // the scan really reads the payloads: the language mode Action's one field is found
+    expect(payloadFields).toContain('communications.core.set-language-policy:mode');
+    expect(payloadFields).toContain('communications.core.submit-communication-request:originalRecipients');
+    expect(payloadFields.filter((field) => switchVocabulary.test(field.split(':').at(-1) ?? ''))).toEqual([]);
   });
 
   it('serves its API below the deployment prefix', () => {

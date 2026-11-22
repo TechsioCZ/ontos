@@ -196,6 +196,51 @@ describe('The set Action through the Core Action runtime', () => {
       }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
+  it.effect(
+    '[#1400 S13] a Tenant cannot set a switch for optional notifications: the only Tenant setting refuses one and nothing changes',
+    () =>
+      Effect.gen(function* noOptionalNotificationSwitch() {
+        const { harness, memory } = yield* makeHarness('allowed');
+        // FICTIONAL switch names a Tenant might try to smuggle into its only setting; none is a field of the contract
+        for (const [key, body] of [
+          ['switch-only', '{"optionalNotifications":true}'],
+          ['switch-with-mode', '{"mode":"A","optionalNotifications":true}'],
+          ['switch-off-with-mode', '{"mode":"B","optionalNotificationsEnabled":false}'],
+          ['preference-with-mode', '{"mode":"A","notificationPreference":"OPT_IN"}'],
+          ['per-type-with-mode', '{"mode":"A","messageTypes":{"fixture.optional-message":{"enabled":true}}}'],
+        ] as const) {
+          const failure = yield* Effect.flip(
+            harness.runtime.runAction({
+              payload: JSON.parse(body),
+              principal: principalOf(tenantOne),
+              registration: setLanguagePolicyAction,
+              transport: transport(key),
+            }),
+          );
+          expect(Schema.is(ActionPayloadValidationError)(failure)).toBe(true);
+        }
+        expect(memory.state.versions).toEqual([]);
+        expect(harness.snapshot().stages).not.toContain('handler_executed');
+        // the setting is the language mode and nothing else, and its answer carries no notification switch either
+        expect(Object.keys(SetLanguagePolicyPayloadSchema.fields)).toEqual(['mode']);
+        const accepted = yield* harness.runtime.runAction({
+          payload: { mode: 'A' },
+          principal: principalOf(tenantOne),
+          registration: setLanguagePolicyAction,
+          transport: transport('mode-only'),
+        });
+        expect(Object.keys(accepted).toSorted((left, right) => left.localeCompare(right))).toEqual([
+          'changed',
+          'effective',
+        ]);
+        expect(Object.keys(accepted.effective).toSorted((left, right) => left.localeCompare(right))).toEqual([
+          'mode',
+          'policy',
+        ]);
+        expect(memory.state.versions.map((version) => version.mode)).toEqual(['A']);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.effect('[AC-11] a replay with the same idempotency key appends nothing and answers the saved result', () =>
     Effect.gen(function* replay() {
       const { harness, memory } = yield* makeHarness('allowed');

@@ -22,7 +22,14 @@ export class PrivacyMeasureDispatchRejected extends Schema.TaggedError<PrivacyMe
   },
 ) {}
 
-const launchOwners = new Set(['party.registry', 'commerce.customer-context', 'integration.symmy']);
+// Communications takes a measure over through its own finite dispatch consumer and never executes it itself: its handoff is
+// routable, so this watchdog must not record it as an unsupported owner.
+const launchOwners = new Set([
+  'party.registry',
+  'commerce.customer-context',
+  'integration.symmy',
+  'communications.core',
+]);
 const WORKER_KEY = 'privacy.core.privacy-measure-dispatch' as const;
 
 /**
@@ -30,7 +37,7 @@ const WORKER_KEY = 'privacy.core.privacy-measure-dispatch' as const;
  * Action. This watchdog only rejects unroutable or cross-Tenant handoffs and never claims an owner
  * mutation succeeded.
  */
-const handlePrivacyMeasureDispatch = (
+export const handlePrivacyMeasureDispatch = (
   payload: OutboxPayload,
   context: OutboxWorkerHandlerContext,
 ): Effect.Effect<void, PrivacyMeasureDispatchRejected> => {

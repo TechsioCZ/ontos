@@ -200,6 +200,38 @@ describe('#1396 Rule: eligibility is exact and Current for every recipient', () 
       }),
   );
 
+  it.effect(
+    '[#1400 S13] an optional message is decided without any Tenant switch or preference: none is asked for and none can be passed',
+    () =>
+      Effect.gen(function* noTenantSwitchForOptional() {
+        expect(single.requiredness).toBe('OPTIONAL');
+        const { first, privacyQueries } = decideOne({
+          privacy: { 'recipient-a': privacyAllowed },
+          recipients: { 'contact-a': usable() },
+        });
+
+        expect(view(yield* first)).toEqual({ kind: 'Proceed', recipient: 'recipient-a' });
+        // the only question put to Privacy names the message and its exact scope, never a Tenant switch or preference
+        const [query] = privacyQueries;
+        expect(Object.keys(query ?? {}).toSorted((left, right) => left.localeCompare(right))).toEqual([
+          'occurrence',
+          'recipient',
+          'scope',
+          'sourceModule',
+          'tenantId',
+          'typeId',
+        ]);
+        // every object key at any depth of the question, read from its JSON text
+        const keys = [...JSON.stringify(query).matchAll(/"(?<key>(?:[^"\\]|\\.)*)":/gu)].map(
+          (match) => match.groups?.['key'] ?? '',
+        );
+        expect(keys).toContain('purposeVersionId');
+        expect(
+          keys.filter((key) => /notif|prefer|opt[-_]?in|opt[-_]?out|subscri|switch|toggle|enabled/iu.test(key)),
+        ).toEqual([]);
+      }),
+  );
+
   it.effect('Scenario: a historical ALLOWED for another purpose is not applied and a Current result is required', () =>
     Effect.gen(function* historicalMarketingAllowed() {
       const { first } = decideOne({
