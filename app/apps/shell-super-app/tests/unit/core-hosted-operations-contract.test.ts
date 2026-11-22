@@ -65,7 +65,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Shell sources o
       const end = index.indexOf('const coreMediaObjectStorageLive');
       expect(start).toBeGreaterThan(0);
       const handler = index.slice(start, end);
-      expect(handler).toContain('authenticatePrincipal: authenticateHostedOperation');
+      // The authenticator is built from the very registration the handler serves, so the caller check cannot name
+      // another operation than the one answered.
+      expect(handler).toContain('authenticatePrincipal: authenticateHostedOperation(assetCurrentRead)');
       expect(handler).toContain('registration: assetCurrentRead');
       expect(handler).not.toMatch(/resolveTenantContext|AuthenticationService|cookie/iu);
     }),
