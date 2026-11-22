@@ -18,6 +18,7 @@ import type { TestGateAnswer } from '@app/core-runtime/access/enforcement';
 import { Crypto, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { catalogDocumentCurrentRead } from '../../src/api/catalog-document-current.read.ts';
 import { catalogMediaCurrentRead } from '../../src/api/catalog-media-current.read.ts';
 import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equivalence.read.ts';
 import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-compatibility.read.ts';
@@ -347,6 +348,43 @@ it.live(
           ownerFixtureRetention: 'retain-complete-context',
         }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, catalogRegistration));
         yield* assertCatalogReadMatrix(fixture, accessGate).pipe(Effect.provide(fixture.layer));
+      }),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+it.live(
+  'accepts the company a requester selected on the document Current read, as it accepts none, and still refuses a foreign company',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* catalogDocumentCurrentCompany() {
+        const accessGate = mutableCatalogReadGate();
+        const fixture = yield* makeNativeReadTestContext({
+          accessDecision: accessGate.bound,
+          contextPermissions: [],
+          moduleId: 'commerce.catalog',
+          ownerFixtureRetention: 'retain-complete-context',
+        }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, catalogRegistration));
+        yield* Effect.gen(function* run() {
+          const created = yield* fixture.prepareOwner(produceNativeCatalogProduct);
+          accessGate.grant('commerce.catalog.catalog-document-current.read');
+          const target = created.product.productRef;
+          const ask = (principal: TrustedPrincipalContext) =>
+            fixture.runtime.runRead({
+              input: { target },
+              principal,
+              registration: catalogDocumentCurrentRead,
+              transport: { correlationId: 'catalog-document-current-company' },
+            });
+          // The fixture principal selected a company: the read runs under it (a target with no assignment asks Core nothing).
+          expect(fixture.principal.legalEntityId).toBeDefined();
+          expect((yield* ask(fixture.principal)).assignments).toEqual([]);
+          // No company selected is the whole tenant, the platform rule of an `optional` company.
+          const { legalEntityId: _selected, ...tenantOnly } = fixture.principal;
+          expect((yield* ask(tenantOnly)).assignments).toEqual([]);
+          // A company that is not the principal's own never resolves a trusted scope.
+          const foreign = yield* ask({ ...fixture.principal, legalEntityId: randomUUID() }).pipe(Effect.flip);
+          expect(Schema.is(OperationContextDenied)(foreign)).toBe(true);
+        }).pipe(Effect.provide(fixture.layer));
       }),
     ).pipe(Effect.provide(NodeCrypto.layer)),
 );

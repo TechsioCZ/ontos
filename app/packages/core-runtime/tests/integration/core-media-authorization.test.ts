@@ -2342,6 +2342,63 @@ it.layer(suiteLayer, { excludeTestServices: true })(
         ),
     );
     suite.effect(
+      "a requester Catalog relays under their selected company gets another company's asset as ABSENT, exactly what an asset that never existed gets, and sees everything only when no company is selected",
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* relayedCompanyScope() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* grantOnly(world, seeded, { keys: [CURRENT], principalId: CURRENT_HOLDER, slot: 12 });
+            yield* reconcile(scenario);
+            const companyLess = yield* readyWithBytes(world, 'cur-rel-none');
+            const inCompanyA = yield* readyWithBytes(world, 'cur-rel-a');
+            const inCompanyB = yield* readyWithBytes(world, 'cur-rel-b');
+            for (const [mediaAssetId, companyId] of [
+              [inCompanyA.resourceId, COMPANY_A],
+              [inCompanyB.resourceId, COMPANY_B],
+            ] as const) {
+              yield* scenario.admin.unsafe(
+                `update core.media_assets set legal_entity_id = $3 where tenant_id = $1 and media_asset_id = $2`,
+                [scenario.tenantId, mediaAssetId, companyId],
+              );
+            }
+            const neverExisted = { ...inCompanyB, resourceId: uid(9901) };
+            const asked = [companyLess, inCompanyA, inCompanyB, neverExisted] as const;
+            // The gate decides a requester Catalog relays under a selected company exactly as it decides them in the
+            // tenant context: the requester's own Current right, never the company, authorizes (`rights`).
+            const relayedDecision = Effect.fn('CoreMediaAuthorizationTest.relayedCompanyDecision')(
+              function* relayedCompanyDecision(principalId: string, legalEntityId: string) {
+                return yield* world.live.boundGate.decide({
+                  carrier: carrierOf(assetCurrentRead.descriptor),
+                  legalEntityScope: 'optional',
+                  now: DECISION_AT,
+                  scope: relayedBy(yield* scenario.scopeFor(principalId, legalEntityId), 'catalog'),
+                  target: targetOf(companyLess.resourceId),
+                });
+              },
+            );
+            for (const legalEntityId of [COMPANY_A, COMPANY_B]) {
+              expect((yield* relayedDecision(CURRENT_HOLDER, legalEntityId)).outcome).toBe('ALLOWED');
+              expect((yield* relayedDecision(PLAIN, legalEntityId)).outcome).toBe('DENIED');
+            }
+            // What the relayed requester then asks is run as that same requester under the same selected company.
+            const relayedAs = (legalEntityId?: string) =>
+              currentAs(world, CURRENT_HOLDER, asked, withOptional({}, 'legalEntityId', legalEntityId));
+            const asCompanyA = yield* relayedAs(COMPANY_A);
+            // The company-less asset and company A's own are available; company B's is the answer a missing asset gets.
+            expect(asCompanyA.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE', 'AVAILABLE', 'ABSENT', 'ABSENT']);
+            expect(asCompanyA.entries[2]).toEqual({ kind: 'ABSENT', resourceRef: inCompanyB });
+            expect(asCompanyA.entries[3]).toEqual({ kind: 'ABSENT', resourceRef: neverExisted });
+            // The platform rule of an `optional` company: none selected is the whole tenant, so no narrowing at all.
+            const asTenant = yield* relayedAs();
+            expect(asTenant.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE', 'AVAILABLE', 'AVAILABLE', 'ABSENT']);
+            // The other company's holder sees the mirror image.
+            const asCompanyB = yield* relayedAs(COMPANY_B);
+            expect(asCompanyB.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE', 'ABSENT', 'AVAILABLE', 'ABSENT']);
+          }),
+        ),
+    );
+    suite.effect(
       'a module that relays its requester gets Current only for a requester who holds it, only from an allow-listed module, and never any other media capability',
       () =>
         withMediaWorld((world) =>
