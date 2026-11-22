@@ -1,6 +1,8 @@
 import { Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { assetCurrentRead, renameDisplayFilenameAction } from '@app/core-runtime';
+
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
@@ -10,11 +12,15 @@ import { templateDatabaseLayer } from '../support/access-admin-real-gate-fixture
 import { MEDIA_CAPABILITIES, withMediaE2eWorld } from '../support/core-media-e2e-fixture.ts';
 import type { E2eActor, MediaE2eWorld } from '../support/core-media-e2e-fixture.ts';
 import {
+  currentOf,
   digestOf,
   downloadOf,
+  failureCodeOf,
+  failureTagOf,
   metadataOf,
   patternBytes,
   putBytes,
+  refOf,
   requireFaultInjection,
   reserve,
   rowOf,
@@ -171,18 +177,26 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
     );
 
     suite.effect(
-      'a ready asset whose stored bytes are replaced is never delivered as ready bytes (CONTROLLED FAULT INJECTION: out-of-band replacement at the emulator)',
+      'a ready asset whose stored bytes are replaced is never delivered as ready bytes, and the proven corruption closes it as failed through the bound integrity workload (CONTROLLED FAULT INJECTION: out-of-band replacement at the emulator)',
       (ctx) =>
         withMediaE2eWorld(ctx, platform, (world) =>
           Effect.scoped(
             Effect.gen(function* corruptedAfterReady() {
               const uploader = person(world, 'uploader');
               const reader = person(world, 'downloader');
+              const asker = person(world, 'currentOnly');
               yield* world.grant(uploader, uploaderCapabilities);
               yield* world.grant(reader, readerCapabilities);
+              yield* world.grant(asker, [MEDIA_CAPABILITIES.current]);
+              // The operator's enrolment of the one workload that may record proven corruption, and nothing else.
+              yield* world.bindSystemWorkload('core.media.integrity');
               const edge = yield* world.shell;
               const original = patternBytes(786_433);
               const id = yield* readyAsset(world, edge, original, 'corrupt-1');
+              const ref = refOf(world.tenantId, id);
+              const before = yield* rowOf(world, id);
+              expect(before?.processing_status).toBe('ready');
+              expect((yield* currentOf(world, asker, [ref])).entries.map(({ kind }) => kind)).toEqual(['AVAILABLE']);
               // Same size, other bytes: only the digest can tell.
               const substituted = patternBytes(786_433).map((byte, index) =>
                 index === 786_000 ? (byte + 1) % 256 : byte,
@@ -199,6 +213,94 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               // The transfer starts, and it is stopped without a clean end at the proof of corruption.
               expect(response.status).toBe(200);
               expect(Exit.isFailure(ended)).toBe(true);
+
+              // The proof is recorded: the asset is failed, and keeps the identity the corruption was measured against.
+              const after = yield* rowOf(world, id);
+              expect(after?.processing_status).toBe('failed');
+              expect(after).toMatchObject({
+                byte_size: before?.byte_size,
+                content_sha256: before?.content_sha256,
+                storage_key: before?.storage_key,
+              });
+              // A failed asset is never delivered or vouched for again: nothing downloads, Current is no longer AVAILABLE.
+              expect((yield* downloadOf(edge, reader, id)).status).toBe(409);
+              expect((yield* metadataOf(edge, reader, id)).json).toMatchObject({ processingStatus: 'failed' });
+              expect((yield* currentOf(world, asker, [ref])).entries.map(({ kind }) => kind)).toEqual([
+                'CURRENT_UNVERIFIED',
+              ]);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'the integrity workload principal can record corruption and nothing else: it cannot rename or read Current (least privilege)',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* integrityWorkloadIsLeastPrivilege() {
+              const uploader = person(world, 'uploader');
+              yield* world.grant(uploader, uploaderCapabilities);
+              const { principal } = yield* world.bindSystemWorkload('core.media.integrity');
+              const edge = yield* world.shell;
+              const bytes = patternBytes(4099);
+              const id = yield* readyAsset(world, edge, bytes, 'least-privilege');
+              const ref = refOf(world.tenantId, id);
+
+              // It is a real, active, bound principal, yet no other capability admits it.
+              const renameCode = yield* failureCodeOf(
+                world.withStorage(
+                  world.actions.runAction({
+                    payload: { displayFilename: 'renamed-by-workload.pdf', mediaAssetRef: ref },
+                    principal,
+                    registration: renameDisplayFilenameAction,
+                    transport: { correlationId: 'e2e-workload-rename', idempotencyKey: 'workload-rename' },
+                  }),
+                ),
+              );
+              expect(renameCode).toBe('action_permission_denied');
+              expect(
+                yield* failureTagOf(
+                  world.withStorage(
+                    world.reads.runRead({
+                      input: { mediaAssetRefs: [ref] },
+                      principal,
+                      registration: assetCurrentRead,
+                      transport: { correlationId: 'e2e-workload-current' },
+                    }),
+                  ),
+                ),
+              ).toBe('ReadPermissionDenied');
+              expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'proven corruption with no bound integrity workload still aborts the transfer and records nothing: the asset stays ready (fail closed)',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* corruptionWithoutWorkload() {
+              const uploader = person(world, 'uploader');
+              const reader = person(world, 'downloader');
+              yield* world.grant(uploader, uploaderCapabilities);
+              yield* world.grant(reader, readerCapabilities);
+              const edge = yield* world.shell;
+              const original = patternBytes(70_001);
+              const id = yield* readyAsset(world, edge, original, 'corrupt-unbound');
+              yield* world.replaceStoredObject(
+                id,
+                patternBytes(70_001).map((byte, index) => (index === 70_000 ? (byte + 1) % 256 : byte)),
+              );
+              const response = yield* edge.open({
+                actor: reader,
+                method: 'GET',
+                path: `/core/media/assets/${id}/content`,
+              });
+              expect(Exit.isFailure(yield* readToEnd(response))).toBe(true);
+              expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
             }),
           ),
         ),
