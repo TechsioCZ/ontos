@@ -11,6 +11,7 @@
     "./api/pre-verification-eligibility/client": "./src/api/pre-verification-eligibility-client.ts",
     "./api/bind-pre-verification-subject-action": "./shared/apis/bind-pre-verification-subject-action.ts",
     "./api/bind-pre-verification-subject-action/client": "./src/api/bind-pre-verification-subject-action-client.ts",
+    "./actions/bind-pre-verification-subject": "./shared/actions/bind-pre-verification-subject.ts",
     "./api/measure-execution-eligibility": "./shared/apis/measure-execution-eligibility.ts",
     "./api/record-owner-execution-outcome-action": "./shared/apis/record-owner-execution-outcome-action.ts",
     "./api/organization-business-applicability": "./shared/apis/organization-business-applicability.ts",
