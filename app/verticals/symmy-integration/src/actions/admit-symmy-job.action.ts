@@ -12,6 +12,7 @@ import {
 } from '../../shared/domain/symmy-job-admission.ts';
 import type { AdmitSymmyJobPayload } from '../../shared/domain/symmy-job-admission.ts';
 import { symmyJobOperationFactory } from '../auth/symmy-job-operation-factory.ts';
+import { SYMMY_PRODUCT_PLAN_LIMIT_REASON } from '../../shared/domain/symmy-product-batch.ts';
 import { requireSymmyCustomerIntakePrivacy } from '../services/symmy-customer-intake-privacy.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/integration-symmy-job-admitted-v1.ts';
 import { createAdmitSymmyJobIntegrationSymmyJobAdmittedV1OutboxMessage } from './admit-symmy-job-integration-symmy-job-admitted-v1.outbox-message.ts';
@@ -28,6 +29,10 @@ const rejected = {
   idempotency_conflict: {
     code: 'symmy_job_intent_conflict',
     reason: 'The idempotency key is already bound to a different accepted intent.',
+  },
+  plan_limit_exceeded: {
+    code: 'symmy_job_plan_limit_exceeded',
+    reason: SYMMY_PRODUCT_PLAN_LIMIT_REASON,
   },
   route_denied: routeDenied,
   stock_assertion_denied: routeDenied,

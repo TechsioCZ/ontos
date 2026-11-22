@@ -1,15 +1,24 @@
 import { createHash } from 'node:crypto';
 
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, Match, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { AdmitSymmyJobPayloadSchema } from '../../shared/domain/symmy-job-admission.ts';
+import { AdmitSymmyJobPayloadSchema, AdmitSymmyJobRejected } from '../../shared/domain/symmy-job-admission.ts';
+import { mapAdmitSymmyJobBusinessProblem } from '../../shared/domain/admit-symmy-job-business-problems.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
-import { SymmyProductRowsSchema, symmyProductPlanSize } from '../../shared/domain/symmy-product-batch.ts';
+import {
+  SymmyProductPlanLimitError,
+  SymmyProductRowsSchema,
+  symmyProductPlanSize,
+} from '../../shared/domain/symmy-product-batch.ts';
 import type { SymmyProductPriceGroupFacts } from '../../shared/domain/symmy-product-batch.ts';
 import { symmyRequestItemKey } from '../../src/persistence/symmy-job-execution-store.ts';
-import { buildSymmyProductPlan, readinessOperations } from '../../src/persistence/symmy-product-plan.ts';
+import {
+  buildSymmyProductPlan,
+  provisionStockItemOperation,
+  readinessOperations,
+} from '../../src/persistence/symmy-product-plan.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -586,6 +595,124 @@ describe('Symmy product plan from the public rows', () => {
 });
 
 describe('Symmy product plan size', () => {
+  it.effect('reports route-generated readiness overflow as a size error, not an unenrolled route', () =>
+    Effect.gen(function* generatedReadinessLimit() {
+      const categories = Array.from({ length: 26 }, (_, index) => ({
+        moduleId: 'commerce.catalog',
+        resourceId: `99990000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        resourceType: 'commerce.catalog.product-category',
+        tenantId,
+      }));
+      const source = templateInput(priceDefaults);
+      const selected = decodeTemplate({
+        ...source,
+        catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
+        items: [
+          enroll('PRODUCT', 'enrolled-product', createProduct, categoryAssignment, ...readinessOperations),
+          ...source.items.slice(1),
+        ],
+      });
+      const rows = rowsOf(product({ categories, lifecycle: 'ACTIVE' }));
+      expect(symmyProductPlanSize(rows[0]).effects).toBe(28);
+      const result = yield* build(rows, { template: selected }).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        expect(Schema.is(SymmyProductPlanLimitError)(Option.getOrThrow(Cause.findErrorOption(result.cause)))).toBe(
+          true,
+        );
+      }
+      const fits = Option.getOrThrow(
+        yield* build(rowsOf(product({ categories: categories.slice(0, 25), lifecycle: 'ACTIVE' })), {
+          template: selected,
+        }),
+      );
+      expect(itemOf(fits, 'product-0').effects).toHaveLength(32);
+      const pricedFits = Option.getOrThrow(
+        yield* build(
+          rowsOf(
+            product({ categories: categories.slice(0, 25), lifecycle: 'ACTIVE' }, [variant({ prices: [price()] })]),
+          ),
+          { template: selected },
+        ),
+      );
+      expect(itemOf(pricedFits, 'product-0').effects).toHaveLength(32);
+      expect(pricedFits.items).toHaveLength(2);
+      const withoutReadiness = decodeTemplate({
+        ...source,
+        items: [
+          enroll('PRODUCT', 'enrolled-product', createProduct, updateProduct, categoryAssignment),
+          ...source.items.slice(1),
+        ],
+      });
+      const ordinary = Option.getOrThrow(yield* build(rows, { template: withoutReadiness }));
+      expect(itemOf(ordinary, 'product-0').effects).toHaveLength(28);
+    }),
+  );
+
+  it.effect('counts generated Inventory provisioning at the actual 32-effect boundary', () =>
+    Effect.gen(function* generatedProvisioningLimit() {
+      const categories = Array.from({ length: 31 }, (_, index) => ({
+        moduleId: 'commerce.catalog',
+        resourceId: `99990000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        resourceType: 'commerce.catalog.product-category',
+        tenantId,
+      }));
+      const source = templateInput(priceDefaults);
+      const selected = decodeTemplate({
+        ...source,
+        inventoryBackendId: 'budget-backend',
+        inventorySource: {
+          customerConfigurationId: 'budget-configuration',
+          externalScope: 'budget-stock',
+          issuer: { backendId: 'budget-backend', backendKind: 'external_business_system' },
+          locations: [
+            {
+              locationKey: 'warehouse',
+              stockLocationRef: {
+                moduleId: 'commerce.inventory',
+                resourceId: '88880000-0000-4000-8000-000000000001',
+                resourceType: 'commerce.inventory.stock-location',
+                tenantId,
+              },
+            },
+          ],
+          namespace: 'budget-stock',
+          policyRef: {
+            moduleId: 'commerce.inventory',
+            resourceId: '88880000-0000-4000-8000-000000000002',
+            resourceType: 'commerce.inventory.source-provisioning-policy',
+            tenantId,
+          },
+          unitRef,
+        },
+        items: [
+          enroll('PRODUCT', 'enrolled-product', createProduct, categoryAssignment, provisionStockItemOperation),
+          ...source.items.slice(1),
+        ],
+      });
+      const input = (count: number) =>
+        rowsOf(product({ categories: categories.slice(0, count), identifier: { type: 'sku', value: 'budget-sku' } }));
+      const failure = yield* build(input(31), { template: selected }).pipe(Effect.flip);
+      expect(Schema.is(SymmyProductPlanLimitError)(failure)).toBe(true);
+      const fits = Option.getOrThrow(yield* build(input(30), { template: selected }));
+      expect(itemOf(fits, 'product-0').effects).toHaveLength(32);
+      expect(effectOf(fits, 'product-0', 'inventory-provision-0')).toBeDefined();
+    }),
+  );
+
+  it('projects plan capacity as an actionable invalid request rather than route authorization', () => {
+    const problem = mapAdmitSymmyJobBusinessProblem(
+      new AdmitSymmyJobRejected({ code: 'symmy_job_plan_limit_exceeded', reason: 'not public diagnostic detail' }),
+    );
+    expect(problem).toMatchObject({
+      code: 'symmy_job_plan_limit_exceeded',
+      status: 400,
+    });
+    expect(problem.detail).toContain('32 owner effects');
+    expect(problem.detail).toContain('Split the batch');
+    expect(problem.detail).not.toContain('not public diagnostic detail');
+  });
+
   it('counts a create, a lifecycle update, each further variant, each text and each price as an effect', () => {
     expect(symmyProductPlanSize({ variants: [{}] })).toEqual({ effects: 1, items: 1 });
     expect(

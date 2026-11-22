@@ -3,7 +3,13 @@ import { DateTime, Effect, Option, Schema } from 'effect';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SYMMY_PRICE_REASON } from '../../shared/domain/symmy-price-list-batch.ts';
-import { SYMMY_PRODUCT_REASON } from '../../shared/domain/symmy-product-batch.ts';
+import {
+  SYMMY_PRODUCT_BATCH_MAX_ITEMS,
+  SYMMY_PRODUCT_MAX_EFFECTS,
+  SYMMY_PRODUCT_PLAN_LIMIT_REASON,
+  SYMMY_PRODUCT_REASON,
+  SymmyProductPlanLimitError,
+} from '../../shared/domain/symmy-product-batch.ts';
 import type {
   SymmyProductHintKind,
   SymmyProductPriceGroupFacts,
@@ -696,7 +702,7 @@ export interface SymmyProductPlanInput<Failure> {
  */
 export const buildSymmyProductPlan = Effect.fn('SymmyProductPlan.build')(function* buildSymmyProductPlan<Failure>(
   input: SymmyProductPlanInput<Failure>,
-): Effect.fn.Return<Option.Option<SymmyFixtureExecutionPlan>, Failure> {
+): Effect.fn.Return<Option.Option<SymmyFixtureExecutionPlan>, Failure | SymmyProductPlanLimitError> {
   const { digest, idempotencyKey, legalEntityId, priceGroups, receivedAt, route, rows, template, tenantId } = input;
   if (rows.some(({ categories }) => categories?.some((ref) => ref.tenantId !== tenantId) === true)) {
     return Option.none();
@@ -746,7 +752,16 @@ export const buildSymmyProductPlan = Effect.fn('SymmyProductPlan.build')(functio
       }),
     { concurrency: 1 },
   );
-  return Option.flatMap(Option.all(products), (items) =>
-    Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema)({ items: items.flat() }),
-  );
+  const planned = Option.all(products);
+  if (Option.isNone(planned)) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
+  const items = planned.value.flat();
+  if (
+    items.length > SYMMY_PRODUCT_BATCH_MAX_ITEMS ||
+    items.some(({ effects }) => effects.length > SYMMY_PRODUCT_MAX_EFFECTS)
+  ) {
+    return yield* new SymmyProductPlanLimitError({ reason: SYMMY_PRODUCT_PLAN_LIMIT_REASON });
+  }
+  return Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema)({ items });
 });

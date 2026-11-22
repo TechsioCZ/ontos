@@ -11,8 +11,15 @@ const identity = price.identityKey.fields;
 const localized = SetVariantLocalizedFactsPayloadSchema.fields;
 
 /** A plan holds at most sixteen items and an item at most thirty-two effects. */
-const SYMMY_PRODUCT_BATCH_MAX_ITEMS = 16;
-const SYMMY_PRODUCT_MAX_EFFECTS = 32;
+export const SYMMY_PRODUCT_BATCH_MAX_ITEMS = 16;
+export const SYMMY_PRODUCT_MAX_EFFECTS = 32;
+export const SYMMY_PRODUCT_PLAN_LIMIT_REASON =
+  'The Product batch exceeds the enrolled route capacity of 32 owner effects per plan item or 16 plan items. Split the batch or reduce its Categories, variants, localized values or prices.';
+
+export class SymmyProductPlanLimitError extends Schema.TaggedError<SymmyProductPlanLimitError>()(
+  'SymmyProductPlanLimitError',
+  { reason: Schema.Literal(SYMMY_PRODUCT_PLAN_LIMIT_REASON) },
+) {}
 
 /** The reason and the evidence stem every Symmy product write states. The caller never supplies them. */
 export const SYMMY_PRODUCT_REASON = 'Symmy product import';
