@@ -139,9 +139,9 @@ const routeOperation = Schema.Struct({
   schemaVersion: Schema.NonEmptyString.check(Schema.isMaxLength(40), Schema.isTrimmed()),
 });
 
-/** Shell-attested finite operations for one admitted private route and exact company context. */
+/** Shell-attested finite operations for one admitted private route in its exact receiver scope (Tenant or company). */
 export const RegisteredGatewayRouteScopeSchema = Schema.Struct({
-  legalEntityId: LegalEntityIdSchema,
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   mappingVersion: Schema.optionalKey(routeIdentity),
   operations: Schema.Array(routeOperation).check(
     Schema.isMinLength(1),
@@ -463,7 +463,7 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
     return failProvenanceInvariant('A workload gateway context requires a registered system workload');
   }
   if (routeScope !== undefined && !routeScopeMatchesPrincipal(routeScope, context, actor, workload)) {
-    return failProvenanceInvariant('A registered route scope requires its exact API-key principal and company');
+    return failProvenanceInvariant('A registered route scope requires its exact API-key principal and receiver scope');
   }
   if (
     privacyDispatch !== undefined &&

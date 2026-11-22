@@ -2110,10 +2110,10 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
     readonly audience: string;
     readonly legalEntityId?: string;
   }) {
-    if (
-      input.legalEntityId === undefined &&
-      !(input.audience === 'inventory' && selectedRoute?.routeKey === 'inventoryStockBatch')
-    ) {
+    if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
+      return yield* Effect.fail(gatewayForbiddenProblem());
+    }
+    if (input.legalEntityId === undefined && input.audience !== 'inventory') {
       return yield* acquireSymmyOwnerAssertion(rawKey, request, input, admission.compositionRevision);
     }
     if (selectedRoute === undefined) {

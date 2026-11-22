@@ -16,11 +16,7 @@ import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog
 import { resolveSymmyOwnerReleaseBase } from '../symmy/owner-release-transport.ts';
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { gatewayPublishedOperationAccess } from './gateway-delegation-policy.ts';
-import {
-  issueGatewayContextAssertion,
-  issueRouteScopedGatewayContextAssertion,
-  issueSymmyGatewayContextAssertion,
-} from './gateway-issuer.ts';
+import { issueRouteScopedGatewayContextAssertion, issueSymmyGatewayContextAssertion } from './gateway-issuer.ts';
 
 const symmyAudience = 'symmy-integration';
 type Route = typeof SymmyRouteContextResponseSchema.Type;
@@ -270,11 +266,9 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   const principal = yield* validateRoutePrincipal(input.principal, facts.sourcePurpose);
   const route = yield* readSymmyRouteScope(proof);
   const inventoryTenantRead =
-    facts.sourcePurpose === 'admit' &&
-    facts.routeKey === 'inventoryStockBatch' &&
-    input.audience === 'inventory' &&
-    input.legalEntityId === undefined;
-  if (!inventoryTenantRead && input.legalEntityId !== route.legalEntityId) {
+    facts.sourcePurpose === 'admit' && facts.routeKey === 'inventoryStockBatch' && input.audience === 'inventory';
+  const receiverCompany = inventoryTenantRead ? undefined : route.legalEntityId;
+  if (input.legalEntityId !== receiverCompany) {
     return yield* delegationForbidden();
   }
   yield* validateCompany(route, principal.tenantId);
@@ -289,12 +283,7 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
       return yield* delegationForbidden();
     }
   }
-  if (inventoryTenantRead) {
-    const { legalEntityId: _sourceCompany, ...tenantPrincipal } = principal;
-    const projected: TrustedPrincipalContext = tenantPrincipal;
-    return projected;
-  }
-  return route.legalEntityId === undefined ? principal : { ...principal, legalEntityId: route.legalEntityId };
+  return receiverCompany === undefined ? principal : { ...principal, legalEntityId: receiverCompany };
 });
 
 const symmyAdmissionActions: ReadonlySet<string> = new Set([
@@ -347,20 +336,14 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
   const [principal, facts] = yield* Effect.all([projectSymmyRouteScopePrincipal(proof, input), proofFacts(proof)], {
     concurrency: 2,
   });
-  if (principal.legalEntityId === undefined) {
-    return yield* (
-      input.audience === symmyAudience
-        ? issueSymmyGatewayContextAssertion({
-            compositionRevision: facts.compositionRevision,
-            principal,
-            principalKind: 'integration',
-          })
-        : issueGatewayContextAssertion({
-            audience: input.audience,
-            compositionRevision: facts.compositionRevision,
-            principal,
-          })
-    ).pipe(Effect.mapError(delegationUnavailable));
+  // Symmy resolves its own companyless admission by route and principal. Delegation to an owner
+  // always carries the signed operation restriction, regardless of the owner's company scope.
+  if (input.audience === symmyAudience && principal.legalEntityId === undefined) {
+    return yield* issueSymmyGatewayContextAssertion({
+      compositionRevision: facts.compositionRevision,
+      principal,
+      principalKind: 'integration',
+    }).pipe(Effect.mapError(delegationUnavailable));
   }
   const route = yield* readSymmyRouteScope(proof);
   const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(delegationUnavailable));
@@ -369,7 +352,6 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     return yield* delegationForbidden();
   }
   const routeScopeInput = {
-    legalEntityId: principal.legalEntityId,
     mappingVersion: route.mappingVersion,
     operations: routeScopeOperations(destination, route, facts),
     principalId: principal.principalId,
@@ -381,6 +363,9 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     sourceRouteRevision: route.sourceRouteRevision,
     tenantId: principal.tenantId,
   };
+  if (principal.legalEntityId !== undefined) {
+    Object.assign(routeScopeInput, { legalEntityId: principal.legalEntityId });
+  }
   if (route.replayIdempotencyDigest !== undefined) {
     Object.assign(routeScopeInput, { replayIdempotencyDigest: route.replayIdempotencyDigest });
   }

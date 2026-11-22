@@ -403,6 +403,68 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
 );
 
 const foreignTenant = 'f2000000-0000-4000-8000-000000000010';
+
+it.live('ANY_PRICE_GROUP covers only selectors naming the scoped tenant at the native assessor', () =>
+  Effect.scoped(
+    Effect.gen(function* assessGroupTenant() {
+      const clients = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(clients.admin, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(clients.runtime, coreRelations);
+      yield* cleanup(admin);
+      yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
+      yield* establish(runtime, policyTerms(world, { priceGroupCoverage: { kind: 'ANY_PRICE_GROUP' } }), 'all-groups');
+      const localKey = priceKey(world, neverSeenVariant(4), {
+        priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: priceGroupRef(tenantId, groupId) },
+      });
+      const request = {
+        exactIdentityKey: localKey,
+        sourceAssertion: sourceAssertionFor(localKey, {
+          effectiveAt: '2026-11-10T00:00:00.000Z',
+          sourceAssertionId: 'f2000000-0000-4000-8000-000000000777',
+        }),
+        tenantId,
+        trustedOperationAt: instant('2026-11-20T10:00:00.000Z'),
+      };
+      const foreignRequest = {
+        ...request,
+        exactIdentityKey: {
+          ...localKey,
+          priceGroupSelector: { kind: 'PRICE_GROUP' as const, priceGroupRef: priceGroupRef(foreignTenant, groupId) },
+        },
+      };
+      expect(yield* withAuthority(runtime, scope, (authority) => authority.assess(request))).toMatchObject({
+        outcome: 'AUTHORITY_COVERED_BY_POLICY',
+      });
+      expect(yield* withAuthority(runtime, scope, (authority) => authority.assess(foreignRequest))).toEqual({
+        dependency: 'SOURCE_AUTHORITY',
+        outcome: 'AUTHORITY_UNAVAILABLE',
+      });
+
+      // The persistence port masks SQL failures. Call the same routine directly to assert the native error code.
+      const nativeAssess = (input: SQL) =>
+        runtime.transaction((tx) =>
+          Effect.andThen(
+            setScope(tx, tenantId, legalEntityId),
+            tx.execute(
+              sql`select payload from pricing.assess_external_price_source_authority_v1(
+          ${tenantId}::uuid, ${legalEntityId}::uuid, ${input})`,
+              'objects',
+            ),
+          ),
+        );
+      const valid = sql`${sql.param(request)}::jsonb`;
+      expect(yield* nativeAssess(valid)).toMatchObject([{ payload: { outcome: 'AUTHORITY_COVERED_BY_POLICY' } }]);
+      for (const invalid of [
+        sql`${sql.param(foreignRequest)}::jsonb`,
+        sql`${valid} #- '{exactIdentityKey,priceGroupSelector,priceGroupRef,tenantId}'`,
+      ]) {
+        const failure = yield* Effect.flip(nativeAssess(invalid));
+        expect(Option.getOrThrow(findPostgresFailure(failure)).code).toBe('22023');
+      }
+    }),
+  ),
+);
+
 const directPolicyInsert = (tenant = tenantId, entity = legalEntityId) => sql`
   insert into pricing.external_price_source_policies (
     tenant_id, legal_entity_id, source_authority_ref, source_authority_version, mapping_contract_ref,
