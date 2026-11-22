@@ -5,10 +5,7 @@ import { Schema } from '@modern-js/bff-effect/effect-client';
 import { RenameDisplayFilenamePayloadSchema } from '@app/core-runtime/media/rename-contract';
 import type { RenameDisplayFilenameResultSchema } from '@app/core-runtime/media/rename-contract';
 
-export {
-  RenameDisplayFilenamePayloadSchema,
-  RenameDisplayFilenameResultSchema,
-} from '@app/core-runtime/media/rename-contract';
+export { RenameDisplayFilenameResultSchema } from '@app/core-runtime/media/rename-contract';
 
 /** The JSON body of the request: the encoded form of the owner's payload. */
 export const RenameDisplayFilenameRequestSchema = Schema.toEncoded(RenameDisplayFilenamePayloadSchema);
