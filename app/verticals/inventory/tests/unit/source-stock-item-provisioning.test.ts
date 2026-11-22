@@ -389,6 +389,35 @@ const isProvisioningRejected = Schema.is(SourceStockItemProvisioningRejected);
 const isPolicyRejected = Schema.is(SourceProvisioningPolicyRejected);
 
 describe('Inventory source stock item provisioning', () => {
+  it.live('provisions maximum-length ERP keys with distinct bounded evidence and stable replay', () =>
+    Effect.gen(function* boundedItemEvidence() {
+      const state = makeOwnerState();
+      const originalInput = provisionInput({ itemKey: 'A'.repeat(300) });
+      const first = yield* state.provision('1', originalInput);
+      const otherVariant = '66666666-6666-4666-8666-666666666662';
+      yield* state.provision(
+        '2',
+        provisionInput({
+          catalogSelection: selection(otherVariant),
+          exactSelectionMeaning: { id: `catalog-variant:${otherVariant}`, kind: 'PRODUCT_VARIANT' },
+          itemKey: 'B'.repeat(300),
+        }),
+      );
+      const correlations = state.correlations.filter(({ externalKey }) => externalKey.identifierKind === 'ITEM');
+      expect(correlations.map(({ externalKey }) => externalKey.externalValue)).toEqual([
+        'A'.repeat(300),
+        'B'.repeat(300),
+      ]);
+      expect(correlations.every(({ ownerEvidenceRef }) => ownerEvidenceRef.length <= 300)).toBe(true);
+      expect(new Set(correlations.map(({ ownerEvidenceRef }) => ownerEvidenceRef)).size).toBe(2);
+      const replay = yield* state.provision('3', originalInput);
+      expect(replay.itemCorrelation.ref).toEqual(first.itemCorrelation.ref);
+      expect(state.correlations.filter(({ externalKey }) => externalKey.identifierKind === 'ITEM')).toEqual(
+        correlations,
+      );
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it('requires canonical policy references at provisioning and receipt recovery boundaries', () => {
     const nativeId = 'abcdef01-2345-4678-9abc-def012345678';
     const reference = { ...policy.policyRef, resourceId: nativeId, tenantId: nativeId };
@@ -514,7 +543,6 @@ describe('Inventory source stock item provisioning', () => {
         namespace: 'akros-erp',
       });
       expect(correlation?.effectivePeriod.from).toBe(policy.effectiveFrom);
-      expect(correlation?.ownerEvidenceRef).toBe('akros-erp:ITEM:AKROS-10001-V1');
       expect(correlation?.target.ref).toEqual(result.stockItem.ref);
       expect(state.bindings[0]?.stockItemRef).toEqual(result.stockItem.ref);
       for (const position of state.positions.values()) {
@@ -635,6 +663,20 @@ describe('Inventory source stock item provisioning', () => {
 });
 
 describe('Inventory source provisioning policy', () => {
+  it.live('defines a maximum-length ERP location key without truncation or oversized evidence', () =>
+    Effect.gen(function* boundedLocationEvidence() {
+      const state = makeOwnerState();
+      state.policies.clear();
+      const locationKey = 'L'.repeat(300);
+      const result = yield* state.define([{ ...warehouseLocation, locationKey }]);
+      expect(result.outcome).toBe('DEFINED');
+      expect(result.policy.locations.map((location) => location.locationKey)).toEqual([locationKey]);
+      const correlation = state.correlations.find(({ externalKey }) => externalKey.externalValue === locationKey);
+      assert(correlation !== undefined);
+      expect(correlation.ownerEvidenceRef.length).toBeLessThanOrEqual(300);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.live('defines the policy once, correlates each location key, and replays identical content exactly', () =>
     Effect.gen(function* definesOnce() {
       const state = makeOwnerState();
