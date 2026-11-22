@@ -90,7 +90,8 @@ export const ownerEvidence = (
     controllerRef: scope.controllerRef,
     dataCategoryRefs: scope.dataCategoryRefs,
     operation: scope.operation,
-    privacySubjectRef: 'fixture-privacy-subject',
+    // Privacy echoes its own subject: the binding it made for a bound subject, an opaque reference otherwise
+    privacySubjectRef: scope.subject.kind === 'PRIVACY_BINDING' ? scope.subject.bindingRef : 'fixture-privacy-subject',
     processingScopeRef: scope.processingScopeRef,
     purposeRef: scope.purposeRef,
     purposeVersionId: scope.purposeVersionId,

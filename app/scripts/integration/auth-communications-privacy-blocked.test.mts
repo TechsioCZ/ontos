@@ -1,39 +1,302 @@
-import { describe, it } from 'effect-rstest';
-import { Effect } from 'effect';
+import { randomUUID } from 'node:crypto';
+
+import {
+  makePreVerificationPrivacyNative,
+  preVerificationPrivacyDatabaseLive,
+} from '@app/privacy/testing/pre-verification-binding-native';
+import type { PreVerificationPrivacyNative } from '@app/privacy/testing/pre-verification-binding-native';
+import { Deferred, Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import { describe, expect, it } from 'effect-rstest';
+
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  EnrollmentActionInvocationIdSchema,
+  EnrollmentAttemptIdSchema,
+  EnrollmentTenantIdSchema,
+} from '../../verticals/commerce-customer-context/shared/enrollment-contracts.ts';
+import {
+  PORTAL_AUTH_EMAIL_FLOWS,
+  PORTAL_AUTH_RESOURCE_TYPE,
+  portalAuthCommunicationPurposeOf,
+} from '../../verticals/commerce-customer-context/shared/portal-auth-communications.ts';
+import type { PortalAuthEmailFlow } from '../../verticals/commerce-customer-context/shared/portal-auth-communications.ts';
+import { privacyPreVerificationBindingLayer } from '../../verticals/commerce-customer-context/src/portal-auth/communications/pre-verification-privacy-binding.ts';
+import { CommercePortalAuthPreVerificationPrivacyTransport } from '../../verticals/commerce-customer-context/src/portal-auth/communications/pre-verification-privacy-transport.ts';
+import { PreVerificationPrivacyBindingUnavailable } from '../../verticals/commerce-customer-context/src/portal-auth/communications/privacy-binding-unavailable.ts';
+import { actionOwnerCall, underOwnerCall } from '../../verticals/communications/src/integrations/owner-call.ts';
+import { privacyProcessingEligibilityGateOver } from '../../verticals/communications/src/integrations/privacy-eligibility-gate.ts';
+import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
+import { TEST_GATE_CHECK_TIMEOUT } from '../../verticals/communications/tests/unit/support/recipient-fixtures.ts';
+import { historyReads, textOf } from './support/auth-communications-checks.spec.mts';
+import {
+  PASSWORD,
+  headersOf,
+  makeEnrollmentGateway,
+  makeOtpRealm,
+  makePostgresRealm,
+  signUp,
+} from './support/auth-communications-realms.spec.mts';
+import {
+  FICTIONAL_COPY,
+  authWorld,
+  flowOfPurpose,
+  pendingIntentsOf,
+  step,
+} from './support/auth-communications-world.spec.mts';
+import type { AuthWorld } from './support/auth-communications-world.spec.mts';
 
 /**
- * #1406 D.8 and AC-06/AC-09: BLOCKED POSITIVE END-TO-END of each flow against the REAL Privacy owner.
+ * #1406 D.8 and AC-06/AC-09: POSITIVE END-TO-END of each flow against the REAL Privacy owner contract.
  *
- * Before the address of a Portal Auth account is verified, a supported Privacy owner path must bind the subject, the exact purpose
- * and version, the operation, the Tenant and the Legal Entity. The Privacy owner contract of this repository cannot represent
- * that binding today:
+ * Before the address of a Portal Auth account is verified, Privacy binds the subject: Auth's REAL production binding asks
+ * Privacy's public `bind-pre-verification-subject` Action with Auth's own account reference, the flow's Auth purpose and the
+ * issuance expiry only; Privacy answers with its own subject and the exact scope its policy allows. The REAL Communications
+ * Privacy-gate adapter then asks Privacy's public `pre-verification-eligibility` Read, at the decision and again at the last
+ * stoppable handoff, and reads ALLOWED / NOT_ALLOWED / INDETERMINATE from Privacy's own evidence.
  *
- * 1. `IntendedProcessingScopeSchema` (`verticals/privacy/shared/domain/privacy-processing-eligibility.ts`) needs an existing
- *    `subjectRef`; there is no Privacy operation that creates or binds a Privacy Subject for an UNVERIFIED Portal Auth account, and
- *    inventing one by e-mail match, a presumed Party or an anonymous browser context is forbidden;
- * 2. `SourceProcessingEligibilityRequestSchema` (`shared/apis/source-processing-eligibility.ts`) admits `communications.core`
- *    only for a qualified source record (`PrivacySourceRecordIdentity`) or a Party target, and Privacy has no enrolled source issuer
- *    for Portal Auth issuance records, so a Portal Auth issuance locator is not a supported context;
- * 3. no Privacy purpose, purpose version, controller, operation, processing scope or data category is defined for the three activated
- *    Auth purposes (`commerce.customer-context.portal-auth.{verify-email,reset-password,otp}`), and the source context of Privacy
- *    requires a Legal Entity while a Portal Auth realm is Tenant-wide.
- *
- * Until the Privacy owner supplies that contract, the supported behaviour is the NEGATIVE path, which the three flow suites prove:
- * Auth's only production binding fails closed, the message stops as not-sent with Privacy never asked about a guess, and no
- * Subject or Party is invented. The positive paths in those suites run against a labelled Privacy DOUBLE and prove how
- * Communications reads an answer, never that Privacy gives it.
+ * What is REAL: the Auth realm and issuance, Auth's binding over Privacy's published bind contract, Privacy's bind / withdraw /
+ * eligibility bodies over Privacy's own table in native PostgreSQL as the runtime role (row-level security on, Tenant-wide
+ * with no Legal Entity, exactly as the Portal Auth realm), Communications' adapter, intake, decision, intents and handoff step.
+ * What is NOT run: the HTTP gateway, the access gate and SpiceDB (each transport calls the owner body the governed entrypoint
+ * runs after authorization), and D1 (the production principal Auth would call Privacy under). The Privacy POLICY values and the
+ * copy are FICTIONAL: no Privacy purpose, controller, scope or legal basis has been approved for any Auth flow.
  */
-describe('BLOCKED: positive end-to-end against the real Privacy owner (#1406 D.8)', () => {
-  it.live.skip(
-    'verify-email: a Portal Auth issuance is bound by Privacy before the address is verified, then sent',
-    () => Effect.void,
+
+const decodeInvocation = Schema.decodeSync(EnrollmentActionInvocationIdSchema);
+const decodeAttempt = Schema.decodeSync(EnrollmentAttemptIdSchema);
+const decodeTenant = Schema.decodeSync(EnrollmentTenantIdSchema);
+const POLL_MS = 25;
+const RESET = 'reset-password';
+const POLL_LIMIT = 200;
+
+/** A FICTIONAL Privacy owner policy for one Auth flow in one Tenant, with no Legal Entity: test data, never a product value. */
+const fictionalPolicy = (tenantId: string, flow: PortalAuthEmailFlow) =>
+  ({
+    effectiveFrom: '2026-01-01T00:00:00.000Z',
+    legalBasisRef: 'fictional-legal-basis:contract',
+    policyRef: `fictional-policy:${flow}`,
+    revision: 'fictional-r1',
+    scope: {
+      controllerRef: 'fictional-controller',
+      dataCategoryRefs: ['fictional:contact'],
+      operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
+      processingScopeRef: { scopeId: `fictional-scope:${flow}`, scopeType: 'privacy.processing-scope' },
+      purposeRef: `fictional-purpose:${flow}`,
+      purposeVersionId: 'fictional-purpose-v1',
+      recipientRefs: ['fictional.communications'],
+    },
+    sourceModuleId: 'commerce.customer-context',
+    sourcePurposeRef: portalAuthCommunicationPurposeOf(flow),
+    sourceResourceType: PORTAL_AUTH_RESOURCE_TYPE.account,
+    tenantId,
+    validUntil: '2099-01-01T00:00:00.000Z',
+  }) as const;
+
+/**
+ * The world composed with the REAL Privacy contract. The world's Tenant exists only once the world does, so both transports
+ * wait for the Privacy seam built for that Tenant; every request either side puts to Privacy is recorded for the secret scan.
+ */
+const realPrivacyWorld = Effect.fn('PrivacyPositiveE2E.world')(function* makeWorld(withPolicies: boolean) {
+  const seam = yield* Deferred.make<PreVerificationPrivacyNative>();
+  const principalId = randomUUID();
+  const tenantRef = { current: '' };
+  const callAs = (callerAppId: string) => ({ callerAppId, principalId, tenantId: tenantRef.current });
+  const asked: unknown[] = [];
+  const bindings: string[] = [];
+  const authTransport = Layer.succeed(CommercePortalAuthPreVerificationPrivacyTransport, {
+    bind: (payload) =>
+      Deferred.await(seam).pipe(
+        Effect.tap(() => Effect.sync(() => asked.push(payload))),
+        Effect.flatMap((privacy) => privacy.bind(callAs('commerce-customer-context'), payload)),
+        Effect.tap((bound) => Effect.sync(() => bindings.push(bound.bindingRef))),
+        Effect.mapError(
+          (failure) =>
+            new PreVerificationPrivacyBindingUnavailable({
+              reason: Predicate.isTagged(failure, 'PreVerificationBindingRejected')
+                ? 'PRIVACY_REFUSED'
+                : 'PRIVACY_UNAVAILABLE',
+            }),
+        ),
+      ),
+  });
+  const world = yield* authWorld({
+    binding: privacyPreVerificationBindingLayer.pipe(Layer.provide(authTransport)),
+    mode: 'B',
+    privacyGate: privacyProcessingEligibilityGateOver({ checkTimeout: TEST_GATE_CHECK_TIMEOUT }, (question) => {
+      asked.push(question.request);
+      return question.kind === 'PRE_VERIFICATION'
+        ? Deferred.await(seam).pipe(
+            Effect.flatMap((privacy) => privacy.eligibility(callAs('communications'), question.request)),
+            Effect.mapError((cause) => ({ cause, status: 503 })),
+          )
+        : Effect.fail({ status: 503 });
+    }),
+  });
+  tenantRef.current = world.tenantId;
+  const privacy = yield* makePreVerificationPrivacyNative(
+    withPolicies ? PORTAL_AUTH_EMAIL_FLOWS.map((flow) => fictionalPolicy(world.tenantId, flow)) : [],
   );
-  it.live.skip(
-    'password reset: a Portal Auth issuance is bound by Privacy before the address is verified, then sent',
-    () => Effect.void,
+  yield* Deferred.succeed(seam, privacy);
+  return { asked, bindings, callAs, privacy, world };
+});
+
+/** The handoff step runs as the pre-handoff worker would: under the authority of an operation in progress. */
+const handoffOf = (world: AuthWorld, intentId: string) =>
+  step(world, world.messageHandoff, intentId).pipe(
+    underOwnerCall(
+      actionOwnerCall({
+        ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+          authBindingId: randomUUID(),
+          authContextRef: 'fixture:pre-handoff-worker',
+          authenticationNamespaceId: 'core.staff',
+          authMethod: 'session',
+          principalId: randomUUID(),
+          tenantId: world.tenantId,
+        }),
+        correlationId: 'fixture:pre-handoff-worker',
+      }),
+    ),
   );
-  it.live.skip(
-    'one-time code: a Portal Auth issuance is bound by Privacy before the address is verified, then sent',
-    () => Effect.void,
+
+const onlyIntentOf = (world: AuthWorld, flow: PortalAuthEmailFlow) => {
+  const [intentId] = world.submissions
+    .filter(({ request }) => flowOfPurpose(request.purpose) === flow)
+    .flatMap(({ submission }) =>
+      submission.outcome === 'DECIDED' && submission.decision.kind === 'MESSAGE_INTENTS'
+        ? submission.decision.intents.filter(({ status }) => status === 'PENDING_HANDOFF')
+        : [],
+    )
+    .map((intent) => intent.intentId);
+  return Option.match(Option.fromNullishOr(intentId), {
+    onNone: () => Effect.die(`the ${flow} request decided no pending intent`),
+    onSome: (found) => Effect.succeed(found),
+  });
+};
+
+/** Nothing either Auth or Communications put to Privacy carries the address, the password or the secret of the mail. */
+const expectNothingSecretAskedOf = (asked: readonly unknown[], secrets: readonly string[]) => {
+  const wire = JSON.stringify(asked);
+  for (const secret of secrets.filter((value) => value.length > 0)) {
+    expect(wire).not.toContain(secret);
+  }
+};
+
+const services = Layer.mergeAll(nativeServices, preVerificationPrivacyDatabaseLive);
+
+describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract (native PostgreSQL)', () => {
+  it.live('verify-email: a Portal Auth issuance is bound by Privacy before the address is verified, then sent', () =>
+    Effect.gen(function* verifyEmail() {
+      const { asked, bindings, world } = yield* realPrivacyWorld(true);
+      const realm = yield* makePostgresRealm(world, 'verify');
+      const gateway = yield* makeEnrollmentGateway(world, realm, { withReplay: true });
+      yield* gateway.create({
+        email: realm.email,
+        enrollmentAttemptId: decodeAttempt(randomUUID()),
+        name: 'Verification e-mail fixture',
+        ownerInvocationId: decodeInvocation(randomUUID()),
+        password: Redacted.make(PASSWORD),
+        tenantId: decodeTenant(randomUUID()),
+      });
+      // Privacy bound the subject before anything was decided, and the decision asked Privacy about exactly that subject
+      expect(bindings).toHaveLength(1);
+      expect(world.submissions[0]?.submission).toMatchObject({
+        decision: { kind: 'MESSAGE_INTENTS' },
+        outcome: 'DECIDED',
+      });
+      expect((yield* handoffOf(world, yield* onlyIntentOf(world, 'verify-email'))).kind).toBe('HANDED_OFF');
+      const [mail] = world.mailbox;
+      expect(mail?.subject).toContain(FICTIONAL_COPY);
+      expect(textOf(mail)).toContain('/verify-email?');
+      expect(Redacted.value(mail?.to ?? Redacted.make(''))).toBe(realm.email);
+      // the decision and the last stoppable handoff each asked Privacy's eligibility Read about the bound subject
+      expect(asked.filter((request) => Predicate.hasProperty(request, 'bindingRef')).length).toBeGreaterThanOrEqual(2);
+      expectNothingSecretAskedOf(asked, [realm.email, PASSWORD, textOf(mail)]);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  );
+
+  it.live('password reset: a Portal Auth issuance is bound by Privacy before the address is verified, then sent', () =>
+    Effect.gen(function* passwordReset() {
+      const { asked, bindings, world } = yield* realPrivacyWorld(true);
+      const realm = yield* makePostgresRealm(world, 'reset');
+      yield* signUp(realm);
+      yield* Effect.promise(
+        async () =>
+          await realm.auth.api.requestPasswordReset({ body: { email: realm.email }, headers: headersOf(realm.ip) }),
+      );
+      expect(bindings.length).toBeGreaterThan(0);
+      expect((yield* handoffOf(world, yield* onlyIntentOf(world, RESET))).kind).toBe('HANDED_OFF');
+      const mail = world.mailbox.find(({ flow }) => flow === RESET);
+      expect(mail?.subject).toContain(FICTIONAL_COPY);
+      expect(Redacted.value(mail?.to ?? Redacted.make(''))).toBe(realm.email);
+      // the decision and the last stoppable handoff each asked Privacy's eligibility Read about the bound subject
+      expect(asked.filter((request) => Predicate.hasProperty(request, 'bindingRef')).length).toBeGreaterThanOrEqual(2);
+      expectNothingSecretAskedOf(asked, [realm.email, PASSWORD, mail === undefined ? '' : textOf(mail)]);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  );
+
+  it.live('one-time code: a Portal Auth issuance is bound by Privacy before the address is verified, then sent', () =>
+    Effect.gen(function* oneTimeCode() {
+      const { asked, bindings, world } = yield* realPrivacyWorld(true);
+      const realm = yield* makeOtpRealm(world);
+      const challenge = yield* realm.pendingChallenge;
+      const before = world.submissions.length;
+      yield* Effect.promise(
+        async () => await realm.auth.api.sendTwoFactorOTP({ body: { trustDevice: false }, headers: challenge.headers }),
+      );
+      for (let attempt = 0; attempt < POLL_LIMIT && world.submissions.length <= before; attempt += 1) {
+        yield* Effect.sleep(POLL_MS);
+      }
+      expect(bindings.length).toBeGreaterThan(0);
+      expect((yield* handoffOf(world, yield* onlyIntentOf(world, 'otp'))).kind).toBe('HANDED_OFF');
+      const mail = world.mailbox.find(({ flow }) => flow === 'otp');
+      expect(mail?.subject).toContain(FICTIONAL_COPY);
+      expect(textOf(mail ?? world.mailbox[0])).toContain(realm.issued[0] ?? 'no-code');
+      // the decision and the last stoppable handoff each asked Privacy's eligibility Read about the bound subject
+      expect(asked.filter((request) => Predicate.hasProperty(request, 'bindingRef')).length).toBeGreaterThanOrEqual(2);
+      expectNothingSecretAskedOf(asked, [realm.email, realm.issued[0] ?? '']);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  );
+
+  it.live(
+    'a Privacy withdrawal after the decision stops the message at the last stoppable handoff as NOT_ALLOWED',
+    () =>
+      Effect.gen(function* withdrawn() {
+        const { bindings, callAs, privacy, world } = yield* realPrivacyWorld(true);
+        const realm = yield* makePostgresRealm(world, 'reset');
+        yield* signUp(realm);
+        yield* Effect.promise(
+          async () =>
+            await realm.auth.api.requestPasswordReset({ body: { email: realm.email }, headers: headersOf(realm.ip) }),
+        );
+        const intentId = yield* onlyIntentOf(world, RESET);
+        for (const bindingRef of new Set(bindings)) {
+          yield* privacy.withdraw(callAs('privacy'), { bindingRef, evidenceRef: 'fictional-dsr-case' });
+        }
+        expect((yield* handoffOf(world, intentId)).kind).toBe('STOPPED');
+        expect(world.mailbox.filter(({ flow }) => flow === RESET)).toHaveLength(0);
+        const reasons = (yield* (yield* historyReads(world)).list()).items.flatMap(
+          ({ headline }) => headline.reasonCodes,
+        );
+        expect(reasons).toContain('PRIVACY_NOT_ALLOWED');
+      }).pipe(Effect.scoped, Effect.provide(services)),
+  );
+
+  it.live('without a Privacy policy nothing is bound, Privacy is never asked about a guess and nothing is sent', () =>
+    Effect.gen(function* unconfigured() {
+      const { asked, bindings, world } = yield* realPrivacyWorld(false);
+      const realm = yield* makePostgresRealm(world, 'reset');
+      yield* signUp(realm);
+      yield* Effect.promise(
+        async () =>
+          await realm.auth.api.requestPasswordReset({ body: { email: realm.email }, headers: headersOf(realm.ip) }),
+      );
+      expect(bindings).toHaveLength(0);
+      // Auth asked Privacy to bind and Privacy refused; the eligibility Read was never asked without a binding
+      expect(asked.length).toBeGreaterThan(0);
+      expect(asked.every((request) => Predicate.hasProperty(request, 'source'))).toBe(true);
+      expect(pendingIntentsOf(world)).toHaveLength(0);
+      expect(world.mailbox).toHaveLength(0);
+      expect((yield* (yield* historyReads(world)).list()).items[0]?.headline.status).toBe('SUPPRESSED');
+    }).pipe(Effect.scoped, Effect.provide(services)),
   );
 });

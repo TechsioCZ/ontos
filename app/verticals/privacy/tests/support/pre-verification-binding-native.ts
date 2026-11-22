@@ -1,4 +1,5 @@
 import { trustVerifiedGatewayPrincipalContext, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { CoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { Crypto, Effect, Schema } from 'effect';
 
 import {
@@ -71,44 +72,54 @@ export const makePreVerificationPrivacyNative = Effect.fn('PrivacyPreVerificatio
 ) {
   const decodedPolicies = yield* Schema.decodeUnknownEffect(Schema.Array(PreVerificationBindingPolicySchema))(policies);
   const crypto = yield* Crypto.Crypto;
+  const database = yield* CoreDatabase;
+  /** Every call runs on the database and crypto the seam was built with, so a consumer transport needs nothing more. */
+  const owned = <Value, Failure>(program: Effect.Effect<Value, Failure, CoreDatabase | Crypto.Crypto>) =>
+    program.pipe(Effect.provideService(CoreDatabase, database), Effect.provideService(Crypto.Crypto, crypto));
   return {
     /** The bind Action body: the encoded payload in, the encoded result out, or its typed rejection. */
     bind: (call: PreVerificationCall, payload: typeof BindPreVerificationSubjectPayloadSchema.Encoded) =>
-      Effect.gen(function* bind() {
-        const decoded = yield* Schema.decodeUnknownEffect(BindPreVerificationSubjectPayloadSchema)(payload);
-        const scope = yield* scopeOf(call);
-        const result = yield* inPrivacyLedger(scope, (transaction) =>
-          bindPreVerificationSubject(decoded, scope, {
-            newBindingRef: crypto.randomUUIDv4().pipe(Effect.orDie),
-            policies: decodedPolicies,
-            repository: preVerificationBindingRepositoryFor(transaction, scope),
-          }),
-        );
-        return yield* Schema.encodeEffect(BindPreVerificationSubjectResultSchema)(result);
-      }),
+      owned(
+        Effect.gen(function* bind() {
+          const decoded = yield* Schema.decodeUnknownEffect(BindPreVerificationSubjectPayloadSchema)(payload);
+          const scope = yield* scopeOf(call);
+          const result = yield* inPrivacyLedger(scope, (transaction) =>
+            bindPreVerificationSubject(decoded, scope, {
+              newBindingRef: crypto.randomUUIDv4().pipe(Effect.orDie),
+              policies: decodedPolicies,
+              repository: preVerificationBindingRepositoryFor(transaction, scope),
+            }),
+          );
+          return yield* Schema.encodeEffect(BindPreVerificationSubjectResultSchema)(result);
+        }),
+      ),
     /** The governed Read body: the encoded request in, the encoded published answer out. */
     eligibility: (call: PreVerificationCall, request: typeof PreVerificationEligibilityRequestSchema.Encoded) =>
-      Effect.gen(function* eligibility() {
-        const decoded = yield* Schema.decodeUnknownEffect(PreVerificationEligibilityRequestSchema)(request);
-        const scope = yield* scopeOf(call);
-        const response = yield* inPrivacyLedger(scope, (transaction) =>
-          evaluatePreVerificationEligibilityRequest(decoded, scope, {
-            policies: decodedPolicies,
-            repository: preVerificationBindingRepositoryFor(transaction, scope),
-          }),
-        );
-        return yield* Schema.encodeEffect(PreVerificationEligibilityResponseSchema)(response);
-      }),
+      owned(
+        Effect.gen(function* eligibility() {
+          const decoded = yield* Schema.decodeUnknownEffect(PreVerificationEligibilityRequestSchema)(request);
+          const scope = yield* scopeOf(call);
+          const response = yield* inPrivacyLedger(scope, (transaction) =>
+            evaluatePreVerificationEligibilityRequest(decoded, scope, {
+              policies: decodedPolicies,
+              repository: preVerificationBindingRepositoryFor(transaction, scope),
+            }),
+          );
+          return yield* Schema.encodeEffect(PreVerificationEligibilityResponseSchema)(response);
+        }),
+      ),
     /** The withdraw Action body, as the acting Privacy principal of the call. */
     withdraw: (call: PreVerificationCall, payload: typeof WithdrawPreVerificationBindingPayloadSchema.Encoded) =>
-      Effect.gen(function* withdraw() {
-        const decoded = yield* Schema.decodeUnknownEffect(WithdrawPreVerificationBindingPayloadSchema)(payload);
-        const scope = yield* scopeOf(call);
-        const result = yield* inPrivacyLedger(scope, (transaction) =>
-          withdrawPreVerificationBinding(decoded, scope, preVerificationBindingRepositoryFor(transaction, scope)),
-        );
-        return yield* Schema.encodeEffect(WithdrawPreVerificationBindingResultSchema)(result);
-      }),
+      owned(
+        Effect.gen(function* withdraw() {
+          const decoded = yield* Schema.decodeUnknownEffect(WithdrawPreVerificationBindingPayloadSchema)(payload);
+          const scope = yield* scopeOf(call);
+          const result = yield* inPrivacyLedger(scope, (transaction) =>
+            withdrawPreVerificationBinding(decoded, scope, preVerificationBindingRepositoryFor(transaction, scope)),
+          );
+          return yield* Schema.encodeEffect(WithdrawPreVerificationBindingResultSchema)(result);
+        }),
+      ),
   };
 });
 

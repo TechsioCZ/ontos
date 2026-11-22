@@ -51,6 +51,7 @@ import {
   protectedHandoffLayer,
 } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/protected-handoff.ts';
 import { CommercePortalAuthTrustedScope } from '../../../verticals/commerce-customer-context/src/portal-auth/communications/trusted-scope.ts';
+import { BindPreVerificationSubjectResultSchema } from '@app/privacy/actions/bind-pre-verification-subject';
 import { approvedMessageTypes } from '../../../verticals/communications/src/domain/catalog/approved-registry.ts';
 import { SourceStateKeySchema } from '../../../verticals/communications/src/domain/catalog/vocabulary.ts';
 import type {
@@ -109,10 +110,11 @@ import { TEST_GATE_CHECK_TIMEOUT } from '../../../verticals/communications/tests
  * step and the history Reads.
  *
  * LABELLED DOUBLES (each stands at the edge of ANOTHER owner and proves how that edge is READ, never that it answers so):
- * - the Privacy gate answers ALLOWED/NOT_ALLOWED/INDETERMINATE by script. The Privacy owner has no supported path to bind the
- *   subject of an unverified Portal Auth account yet (see the #1406 report), so a positive answer here is NOT Privacy evidence;
- * - the pre-verification Privacy binding is the double of that missing path: `evidencing: true` yields a FICTIONAL binding;
- *   `false` is Auth's real production composition (no supported path, so no scope is declared);
+ * - the Privacy gate answers ALLOWED/NOT_ALLOWED/INDETERMINATE by script, so a positive answer here is NOT Privacy evidence
+ *   (the real Privacy pre-verification contract is proven in `auth-communications-privacy-blocked.test.mts`);
+ * - the pre-verification Privacy binding is a double of Privacy's bind Action: `evidencing: true` yields a FICTIONAL binding;
+ *   `false` is Auth's production composition without a transport to Privacy (D1, so no scope is declared). A suite that
+ *   proves the positive path against the REAL Privacy owner passes `binding` and `privacyGate` instead;
  * - the trusted recipient language is scripted; Auth publishes no trusted locale source yet;
  * - the Messaging Adapter (step 22) renders the pinned revision with the REAL generic renderer, asks Auth's REAL owner-slot
  *   completion for the secret slot, and then "sends" into an in-memory mailbox with a scripted provider answer;
@@ -150,11 +152,18 @@ export interface Mail {
 }
 
 export interface AuthWorldOptions {
-  /** Whether the double of the missing pre-verification Privacy path evidences a binding. Default: yes (labelled double). */
+  /**
+   * Auth's pre-verification Privacy binding, when a suite composes the REAL one (Privacy's bind Action over a transport).
+   * Default: the labelled double below, or Auth's fail-closed composition with `evidencing: false`.
+   */
+  readonly binding?: Layer.Layer<CommercePortalAuthPreVerificationPrivacyBinding>;
+  /** Whether the double of the pre-verification Privacy binding evidences a binding. Default: yes (labelled double). */
   readonly evidencing?: boolean;
   readonly languages?: readonly ('cs' | 'en')[];
   readonly ledgerProbe?: IssuanceLedgerProbe;
   readonly mode?: 'A' | 'B';
+  /** The Privacy gate, when a suite composes the REAL one (Communications' adapter over Privacy). Default: the scripted gate. */
+  readonly privacyGate?: Layer.Layer<ProcessingEligibilityGate>;
   /** Approved types overriding the production catalog (a fictional recovery limit, for example). Default: production. */
   readonly types?: typeof approvedMessageTypes;
 }
@@ -166,6 +175,29 @@ const slotOf = portalAuthOwnerRenderedSlotOf;
  * and the owner doubles, over the real Communications persistence.
  */
 const SUBMIT_OPERATION = 'submit-communication-request';
+
+/** The FICTIONAL binding the labelled double answers with, in the shape of Privacy's published bind result. */
+const fictionalPrivacyBinding = (tenantId: string) => ({
+  bindingRef: '00000000-0000-4000-8000-00000000b1d0',
+  policy: { policyRef: 'fictional-policy', revision: 'fictional-r1' },
+  scope: {
+    controllerRef: 'fictional-controller',
+    dataCategoryRefs: ['fictional:contact'],
+    operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
+    processingScopeRef: { scopeId: 'fictional-scope', scopeType: 'privacy.processing-scope' },
+    purposeRef: 'fictional-purpose',
+    purposeVersionId: 'fictional-v1',
+    recipientRefs: ['fictional.communications'],
+    subjectRef: {
+      moduleId: 'privacy.core',
+      resourceId: '00000000-0000-4000-8000-00000000b1d0',
+      resourceType: 'privacy.core.privacy-subject',
+      tenantId,
+    },
+  },
+  status: 'ACTIVE',
+  validUntil: '2099-01-01T00:00:00.000Z',
+});
 
 export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* makeWorld(options: AuthWorldOptions = {}) {
   const database = yield* makeRuntimeDatabase();
@@ -219,19 +251,18 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
       ownerSlotCompletionLayer.pipe(Layer.provide(Layer.succeed(CommercePortalAuthProtectedHandoff, handoff))),
     ),
   );
+  const doubleBinding =
+    options.evidencing === false
+      ? unsupportedPreVerificationPrivacyBindingLayer
+      : Layer.succeed(CommercePortalAuthPreVerificationPrivacyBinding, {
+          // LABELLED DOUBLE of Privacy's bind Action: a FICTIONAL binding in Privacy's answer shape, never Privacy evidence
+          bind: () =>
+            Schema.decodeUnknownEffect(BindPreVerificationSubjectResultSchema)(fictionalPrivacyBinding(tenantId)).pipe(
+              Effect.orDie,
+            ),
+        });
   const binding = yield* CommercePortalAuthPreVerificationPrivacyBinding.pipe(
-    Effect.provide(
-      options.evidencing === false
-        ? unsupportedPreVerificationPrivacyBindingLayer
-        : Layer.succeed(CommercePortalAuthPreVerificationPrivacyBinding, {
-            // LABELLED DOUBLE of the Privacy path that does not exist: a FICTIONAL binding, never Privacy evidence
-            bind: (issuance) =>
-              Effect.succeed({
-                bindingRef: `fictional-binding:${issuance.issuanceRef}`,
-                purposeVersion: 'fictional-v1',
-              }),
-          }),
-    ),
+    Effect.provide(options.binding ?? doubleBinding),
   );
 
   const language = Ref.makeUnsafe<RecipientLanguageContext>({ kind: 'not-established' });
@@ -297,47 +328,40 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     checkTimeout: TEST_GATE_CHECK_TIMEOUT,
   });
   const scopeDeclaration = Layer.succeed(ProcessingScopeDeclaration, {
-    declare: ({ binding: recipientBinding, request, type }) =>
+    declare: ({ request, type }) =>
       Effect.gen(function* declareScope() {
         const issuance = yield* handoff.issuanceOf(decodeIssuanceRef(request.occurrence.occurrenceId));
         if (Option.isNone(issuance)) {
           return yield* new ProcessingScopeUndeclared({ reason: 'NO_DECLARATION' });
         }
-        const { bindingRef, purposeVersion } = yield* binding
+        // the source declares the scope PRIVACY bound for this issuance: Privacy's subject and its policy's dimensions
+        const bound = yield* binding
           .bind(issuance.value)
           .pipe(Effect.mapError(() => new ProcessingScopeUndeclared({ reason: 'NO_DECLARATION' })));
         return decodeScope({
           catalogPurposeRef: type.privacyPurposeRefs[0],
           channel: 'email',
-          controllerRef: 'fictional-controller',
-          dataCategoryRefs: ['fictional:contact'],
-          operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
-          processingScopeRef: { scopeId: bindingRef, scopeType: 'fictional.processing-scope' },
-          purposeRef: 'fictional-purpose',
-          purposeVersionId: purposeVersion,
-          recipientRefs: ['fictional.communications'],
-          subject: {
-            kind: 'SOURCE_ASSERTED',
-            source: {
-              issuer: 'fictional:portal-auth',
-              namespace: 'fictional-issuances',
-              occurrenceId: bindingRef,
-              recordId: recipientBinding.recipientRef.resourceId,
-              recordType: 'fictional-portal-account',
-              routeRef: 'fictional:route',
-            },
-          },
+          controllerRef: bound.scope.controllerRef,
+          dataCategoryRefs: bound.scope.dataCategoryRefs,
+          operation: bound.scope.operation,
+          processingScopeRef: bound.scope.processingScopeRef,
+          purposeRef: bound.scope.purposeRef,
+          purposeVersionId: bound.scope.purposeVersionId,
+          recipientRefs: bound.scope.recipientRefs,
+          subject: { bindingRef: bound.bindingRef, kind: 'PRIVACY_BINDING' },
         });
       }),
   });
   const languageLayer = Layer.succeed(RecipientLanguageAuthority, { languageOf: () => Ref.get(language) });
-  const privacyLayer = Layer.succeed(ProcessingEligibilityGate, {
-    check: (query) => {
-      privacyQueries.push(query);
-      return (privacyAnswers.get(query.recipient.recipientRef.resourceId) ?? privacyAllowed)(query);
-    },
-    checkTimeout: TEST_GATE_CHECK_TIMEOUT,
-  });
+  const privacyLayer =
+    options.privacyGate ??
+    Layer.succeed(ProcessingEligibilityGate, {
+      check: (query) => {
+        privacyQueries.push(query);
+        return (privacyAnswers.get(query.recipient.recipientRef.resourceId) ?? privacyAllowed)(query);
+      },
+      checkTimeout: TEST_GATE_CHECK_TIMEOUT,
+    });
   const documents = documentOwnerDouble();
 
   /** The Messaging Adapter double: REAL generic rendering, REAL Auth owner-slot completion, then a scripted provider answer. */
