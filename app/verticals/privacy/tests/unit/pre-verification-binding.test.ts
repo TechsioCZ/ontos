@@ -24,6 +24,10 @@ import type {
 } from '../../shared/domain/pre-verification-binding.ts';
 import { bindPreVerificationSubjectAction } from '../../src/actions/bind-pre-verification-subject.action.ts';
 import { withdrawPreVerificationBindingAction } from '../../src/actions/withdraw-pre-verification-binding.action.ts';
+import {
+  preVerificationBindingsRead,
+  runPreVerificationBindings,
+} from '../../src/api/pre-verification-bindings.read.ts';
 import { preVerificationEligibilityRead } from '../../src/api/pre-verification-eligibility.read.ts';
 import { PreVerificationBindingRepository } from '../../src/persistence/pre-verification-binding-repository.ts';
 import {
@@ -343,6 +347,10 @@ const memoryRepository = (
         rows.set(String(record.bindingRef), record);
         return { kind: 'BOUND', record } as const;
       }),
+    findBySource: (named) =>
+      Effect.sync(() =>
+        Option.fromUndefinedOr([...rows.values()].find((row) => row.source.resourceId === named.resourceId)),
+      ),
     get: (ref) => Effect.sync(() => Option.fromUndefinedOr(rows.get(ref))),
     interventions: () => Effect.succeed(recorded),
     withdraw: () => Effect.succeed(Option.none()),
@@ -461,4 +469,39 @@ describe('#1406 D.8 governed registrations', () => {
     expect(withdrawPreVerificationBindingAction.descriptor.legalEntityScope).toBe('optional');
     expect(withdrawPreVerificationBindingAction.descriptor.accessActor).toBeUndefined();
   });
+
+  it('P2: declares the locate Read for a Privacy operator, Tenant-scoped with an optional Legal Entity', () => {
+    const { descriptor } = preVerificationBindingsRead;
+    expect(descriptor.legalEntityScope).toBe('optional');
+    expect(descriptor.accessActor).toBeUndefined();
+    expect(descriptor.accessDeclaration).toMatchObject({
+      key: 'privacy.core.pre-verification-bindings.read',
+      kind: 'read',
+      risk: 'sensitive',
+    });
+  });
+});
+
+describe('#1406 D.8 a Privacy operator locates the binding of a source account (P2)', () => {
+  it.effect('answers the binding of the named account with minimal fields, and nothing for another account', () =>
+    Effect.gen(function* locate() {
+      const withdrawn = bindingOf({ status: 'WITHDRAWN', validUntil: FAR, withdrawal });
+      const services = memoryRepository([withdrawn]);
+      const found = yield* runPreVerificationBindings({ source }, { services });
+      expect(found).toEqual({
+        evidence: { resultCount: 1 },
+        result: {
+          bindings: [
+            { bindingRef, boundAt: withdrawn.boundAt, status: 'WITHDRAWN', validUntil: FAR, withdrawnAt: asOf },
+          ],
+        },
+      });
+      expect(JSON.stringify(found)).not.toContain(source.resourceId);
+      const other = yield* runPreVerificationBindings(
+        { source: { ...source, resourceId: 'fictional-provider-subject-other' } },
+        { services },
+      );
+      expect(other).toEqual({ evidence: { resultCount: 0 }, result: { bindings: [] } });
+    }),
+  );
 });

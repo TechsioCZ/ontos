@@ -35,6 +35,10 @@ export interface PreVerificationBindingRepositoryService {
     readonly occurrenceValidUntil: string;
     readonly source: PreVerificationSourceSubject;
   }) => Effect.Effect<PreVerificationBindOutcome, PrivacyOperationPersistenceError>;
+  /** The binding of one source account in the exact scope, if Privacy holds one (a source account is bound at most once). */
+  readonly findBySource: (
+    source: PreVerificationSourceSubject,
+  ) => Effect.Effect<Option.Option<PreVerificationBindingRecord>, PrivacyOperationPersistenceError>;
   readonly get: (
     bindingRef: string,
   ) => Effect.Effect<Option.Option<PreVerificationBindingRecord>, PrivacyOperationPersistenceError>;
@@ -151,19 +155,24 @@ export const preVerificationBindingRepositoryFor = (
     },
   );
 
-  const get: PreVerificationBindingRepositoryService['get'] = Effect.fn('PrivacyPreVerificationBinding.get')(
-    function* getBinding(bindingRef) {
-      const [row] = yield* transaction
-        .select({ record: preVerificationBindings.bindingRecord })
-        .from(preVerificationBindings)
-        .where(and(inScope, eq(preVerificationBindings.bindingId, bindingRef)))
-        .limit(1)
-        .pipe(Effect.mapError(unavailable('A pre-verification binding could not be read')));
-      return row === undefined
-        ? Option.none()
-        : Option.some(yield* decodeStoredRecord(row.record).pipe(Effect.mapError(unreadable)));
-    },
-  );
+  /** Reads the one binding of the exact scope that `identity` names, without locking it. */
+  const readOne = Effect.fn('PrivacyPreVerificationBinding.readOne')(function* readOne(identity: SQL) {
+    const [row] = yield* transaction
+      .select({ record: preVerificationBindings.bindingRecord })
+      .from(preVerificationBindings)
+      .where(and(inScope, identity))
+      .limit(1)
+      .pipe(Effect.mapError(unavailable('A pre-verification binding could not be read')));
+    return row === undefined
+      ? Option.none()
+      : Option.some(yield* decodeStoredRecord(row.record).pipe(Effect.mapError(unreadable)));
+  });
+
+  const get: PreVerificationBindingRepositoryService['get'] = (bindingRef) =>
+    readOne(eq(preVerificationBindings.bindingId, bindingRef));
+
+  const findBySource: PreVerificationBindingRepositoryService['findBySource'] = (source) =>
+    readOne(eq(preVerificationBindings.sourceSubjectKey, preVerificationSourceSubjectKey(source)));
 
   const interventions: PreVerificationBindingRepositoryService['interventions'] = Effect.fn(
     'PrivacyPreVerificationBinding.interventions',
@@ -211,5 +220,5 @@ export const preVerificationBindingRepositoryFor = (
     );
   });
 
-  return PreVerificationBindingRepository.of({ bind, get, interventions, withdraw });
+  return PreVerificationBindingRepository.of({ bind, findBySource, get, interventions, withdraw });
 };

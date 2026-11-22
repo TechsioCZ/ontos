@@ -42,6 +42,8 @@ import { OrganizationProfileIcoApplicabilityApi } from './shared/apis/organizati
 import { organizationProfileIcoApplicabilityRead } from './src/api/organization-profile-ico-applicability.read.ts';
 import { OwnerInventoryApi } from './shared/apis/owner-inventory.ts';
 import { ownerInventoryRead } from './src/api/owner-inventory.read.ts';
+import { PreVerificationBindingsApi } from './shared/apis/pre-verification-bindings.ts';
+import { preVerificationBindingsRead } from './src/api/pre-verification-bindings.read.ts';
 import { PreVerificationEligibilityApi } from './shared/apis/pre-verification-eligibility.ts';
 import { preVerificationEligibilityRead } from './src/api/pre-verification-eligibility.read.ts';
 import { PrivacySubjectsApi } from './shared/apis/privacy-subjects.ts';
@@ -173,6 +175,7 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'organization-ico-applicability': OrganizationIcoApplicabilityApi,
       'organization-profile-ico-applicability': OrganizationProfileIcoApplicabilityApi,
       'owner-inventory': OwnerInventoryApi,
+      'pre-verification-bindings': PreVerificationBindingsApi,
       'pre-verification-eligibility': PreVerificationEligibilityApi,
       'privacy-subjects': PrivacySubjectsApi,
       'processing-activities': ProcessingActivitiesApi,
@@ -207,6 +210,11 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: organizationProfileIcoApplicabilityRead,
       },
       { apiKey: 'owner-inventory', operationKey: 'ownerInventory.execute', registration: ownerInventoryRead },
+      {
+        apiKey: 'pre-verification-bindings',
+        operationKey: 'preVerificationBindings.execute',
+        registration: preVerificationBindingsRead,
+      },
       {
         apiKey: 'pre-verification-eligibility',
         operationKey: 'preVerificationEligibility.execute',
@@ -505,6 +513,7 @@ export const privacyRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     organizationIcoApplicabilityRead,
     organizationProfileIcoApplicabilityRead,
     ownerInventoryRead,
+    preVerificationBindingsRead,
     preVerificationEligibilityRead,
     privacySubjectsRead,
     sourceProcessingEligibilityRead,

@@ -19463,6 +19463,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "privacy.core.pre-verification-bindings.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.pre-verification-bindings",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "privacy.core.pre-verification-eligibility.read",
             "kind": "read",
             "modes": [

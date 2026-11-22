@@ -72,6 +72,7 @@ import { organizationBusinessApplicabilityReadApiLive } from './organization-bus
 import { organizationIcoApplicabilityReadApiLive } from './organization-ico-applicability-read-server.ts';
 import { organizationProfileIcoApplicabilityReadApiLive } from './organization-profile-ico-applicability-read-server.ts';
 import { ownerInventoryReadApiLive } from './owner-inventory-read-server.ts';
+import { preVerificationBindingsReadApiLive } from './pre-verification-bindings-read-server.ts';
 import { preVerificationEligibilityReadApiLive } from './pre-verification-eligibility-read-server.ts';
 import { privacySubjectsReadApiLive } from './privacy-subjects-read-server.ts';
 import { processingActivitiesReadApiLive } from './processing-activities-read-server.ts';
@@ -327,6 +328,7 @@ export const makePrivacyApiRuntime = (
     organizationIcoApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     organizationProfileIcoApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     ownerInventoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    preVerificationBindingsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     preVerificationEligibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacySubjectsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     processingActivitiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

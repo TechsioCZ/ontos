@@ -212,6 +212,39 @@ describe('#1406 D.8 Privacy binds an unverified Portal Auth account and answers 
     }).pipe(Effect.provide(layer)),
   );
 
+  it.live('P2: a Privacy operator locates the binding of a source account in its exact scope and withdraws it', () =>
+    Effect.gen(function* located() {
+      const w = yield* world();
+      const bound = yield* w.privacy.bind(w.tenantWide('commerce-customer-context'), w.bindPayload());
+      const { source } = w.bindPayload();
+      expect(yield* w.privacy.locate(w.tenantWide('privacy'), { source })).toEqual({
+        bindings: [
+          { bindingRef: bound.bindingRef, boundAt: expect.any(String), status: 'ACTIVE', validUntil: bound.validUntil },
+        ],
+      });
+      // another Legal Entity of the Tenant, another account and another Tenant see nothing
+      expect(yield* w.privacy.locate(w.inEntity('privacy'), { source })).toEqual({ bindings: [] });
+      expect(
+        yield* w.privacy.locate(w.tenantWide('privacy'), { source: { ...source, resourceId: `${w.account}-other` } }),
+      ).toEqual({ bindings: [] });
+      const stranger = yield* freshPrivacyLedgerScope();
+      expect(
+        yield* w.privacy.locate(
+          { callerAppId: 'privacy', principalId: stranger.principalId, tenantId: stranger.tenantId },
+          { source },
+        ),
+      ).toEqual({ bindings: [] });
+      const [current] = (yield* w.privacy.locate(w.tenantWide('privacy'), { source })).bindings;
+      yield* w.privacy.withdraw(w.tenantWide('privacy'), {
+        bindingRef: current?.bindingRef ?? '',
+        evidenceRef: 'fictional-erasure-request',
+      });
+      expect(yield* w.privacy.locate(w.tenantWide('privacy'), { source })).toMatchObject({
+        bindings: [{ bindingRef: bound.bindingRef, status: 'WITHDRAWN', withdrawnAt: expect.any(String) }],
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.live('binds nothing for another caller or without a policy, and stores no address or secret', () =>
     Effect.gen(function* refused() {
       const w = yield* world();

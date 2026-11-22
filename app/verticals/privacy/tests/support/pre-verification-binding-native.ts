@@ -13,6 +13,11 @@ import {
   PreVerificationEligibilityResponseSchema,
 } from '../../shared/apis/pre-verification-eligibility.ts';
 import { PreVerificationBindingPolicySchema } from '../../shared/domain/pre-verification-binding.ts';
+import {
+  PreVerificationBindingsRequestSchema,
+  PreVerificationBindingsResponseSchema,
+} from '../../shared/apis/pre-verification-bindings.ts';
+import { runPreVerificationBindings } from '../../src/api/pre-verification-bindings.read.ts';
 import { preVerificationBindingRepositoryFor } from '../../src/persistence/pre-verification-binding-repository.ts';
 import {
   bindPreVerificationSubject,
@@ -106,6 +111,20 @@ export const makePreVerificationPrivacyNative = Effect.fn('PrivacyPreVerificatio
             }),
           );
           return yield* Schema.encodeEffect(PreVerificationEligibilityResponseSchema)(response);
+        }),
+      ),
+    /** The locate Read body (P2): the binding of one source account in the exact scope of the call. */
+    locate: (call: PreVerificationCall, request: typeof PreVerificationBindingsRequestSchema.Encoded) =>
+      owned(
+        Effect.gen(function* locate() {
+          const decoded = yield* Schema.decodeUnknownEffect(PreVerificationBindingsRequestSchema)(request);
+          const scope = yield* scopeOf(call);
+          const { result } = yield* inPrivacyLedger(scope, (transaction) =>
+            runPreVerificationBindings(decoded, {
+              services: { findBySource: preVerificationBindingRepositoryFor(transaction, scope).findBySource },
+            }),
+          );
+          return yield* Schema.encodeEffect(PreVerificationBindingsResponseSchema)(result);
         }),
       ),
     /** The withdraw Action body, as the acting Privacy principal of the call. */

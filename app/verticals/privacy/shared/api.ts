@@ -35,6 +35,7 @@ import { OrganizationBusinessApplicabilityApi } from './apis/organization-busine
 import { OrganizationIcoApplicabilityApi } from './apis/organization-ico-applicability.ts';
 import { OrganizationProfileIcoApplicabilityApi } from './apis/organization-profile-ico-applicability.ts';
 import { OwnerInventoryApi } from './apis/owner-inventory.ts';
+import { PreVerificationBindingsApi } from './apis/pre-verification-bindings.ts';
 import { PreVerificationEligibilityApi } from './apis/pre-verification-eligibility.ts';
 import { PrivacySubjectsApi } from './apis/privacy-subjects.ts';
 import { ProcessingActivitiesApi } from './apis/processing-activities.ts';
@@ -292,6 +293,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(OrganizationIcoApplicabilityApi)
   .addHttpApi(OrganizationProfileIcoApplicabilityApi)
   .addHttpApi(OwnerInventoryApi)
+  .addHttpApi(PreVerificationBindingsApi)
   .addHttpApi(PreVerificationEligibilityApi)
   .addHttpApi(PrivacySubjectsApi)
   .addHttpApi(ProcessingActivitiesApi)
