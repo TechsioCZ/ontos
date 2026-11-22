@@ -176,8 +176,9 @@ const captureShell = <A, E, R>(diagnostic: Effect.Effect<A, E, R>) =>
     }),
   );
 
-const preserveProvisioningWitnessDiagnostics = Effect.fn('InternalC14Sync.provisioningWitnessDiagnostics')(
-  function* provisioningWitnessDiagnostics(input: {
+const productJobDiagnosticStage = Schema.Literals(['provisioning-witness-not-observed', 'native-effects-not-accepted']);
+const preserveProductJobDiagnostics = Effect.fn('InternalC14Sync.productJobDiagnostics')(
+  function* productJobDiagnostics(input: {
     readonly admin: Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>['admin'];
     readonly jobId: string;
     readonly key: string;
@@ -186,10 +187,11 @@ const preserveProvisioningWitnessDiagnostics = Effect.fn('InternalC14Sync.provis
       Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>['shell'],
       'gatewayDiagnostics' | 'issuerDiagnostics' | 'requestDiagnostics'
     >;
+    readonly stage: typeof productJobDiagnosticStage.Type;
     readonly tenantId: string;
     readonly workerDiagnostic: Effect.Effect<string>;
   }) {
-    const { admin, jobId, key, ownerDiagnostics, shell, tenantId, workerDiagnostic } = input;
+    const { admin, jobId, key, ownerDiagnostics, shell, stage, tenantId, workerDiagnostic } = input;
     const fs = yield* FileSystem.FileSystem;
     // This existing artifact glob survives fixture cleanup; the path is unique to this admitted job.
     const diagnosticFile = `/tmp/commerce-org-http-symmy-c14-${jobId}-provisioning-witness.diag.log`;
@@ -197,7 +199,7 @@ const preserveProvisioningWitnessDiagnostics = Effect.fn('InternalC14Sync.provis
       ...ownerDiagnostics,
       workerDiagnostic.pipe(Effect.map((output) => `[worker]\n${output}`)),
     ]);
-    const header = JSON.stringify({ jobId, key, stage: 'provisioning-witness-not-observed', tenantId });
+    const header = JSON.stringify({ jobId, key, stage, tenantId });
     const nativeLogText = `${header}\n\n${logs.join('\n\n')}`;
     const persist = (text: string) =>
       fs.writeFileString(diagnosticFile, text).pipe(
@@ -743,12 +745,13 @@ it.live(
                 assert.isDefined(output);
                 const lostProvisioning = yield* readOwnerLostAckWitness(output, 'inventory', Duration.seconds(30)).pipe(
                   Effect.tapError(() =>
-                    preserveProvisioningWitnessDiagnostics({
+                    preserveProductJobDiagnostics({
                       admin,
                       jobId,
                       key,
                       ownerDiagnostics,
                       shell,
+                      stage: 'provisioning-witness-not-observed',
                       tenantId,
                       workerDiagnostic: worker.diagnostic,
                     }).pipe(Effect.ignoreCause),
@@ -825,6 +828,16 @@ it.live(
           yield* activeWorker.child.exitCode;
           const acceptedStatuses = new Set(['accepted_change', 'accepted_no_change', 'duplicate']);
           if (settled.some(({ outcome }) => Option.isNone(outcome) || !acceptedStatuses.has(outcome.value.status))) {
+            yield* preserveProductJobDiagnostics({
+              admin,
+              jobId,
+              key,
+              ownerDiagnostics,
+              shell,
+              stage: 'native-effects-not-accepted',
+              tenantId,
+              workerDiagnostic: activeWorker.diagnostic,
+            }).pipe(Effect.ignoreCause);
             return yield* new SymmyC14ProductFixtureUnavailable({
               message: `Registered job ${key} did not accept all ${effectCount} native effects: ${JSON.stringify(settled)}. Catalog readiness must come from the production path, never seeded SKU facts.`,
             });

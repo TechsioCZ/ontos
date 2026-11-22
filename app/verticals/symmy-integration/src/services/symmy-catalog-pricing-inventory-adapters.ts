@@ -8,7 +8,10 @@ import {
   updateProductRequestIdentity,
 } from '@app/catalog/api/native-action-request-identity';
 import { CreateProductRecoveryRequestSchema } from '@app/catalog/api/create-product-recovery';
-import { GovernVariantAxesPayloadSchema } from '@app/catalog/api/govern-variant-axes-action';
+import {
+  GovernVariantAxesActionConflictProblemSchema,
+  GovernVariantAxesPayloadSchema,
+} from '@app/catalog/api/govern-variant-axes-action';
 import { ConfirmVariantCombinationPayloadSchema } from '@app/catalog/api/confirm-variant-combination-action';
 import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
 import { SetProductUnitTargetDivisibilityPayloadSchema } from '@app/catalog/api/set-product-unit-target-divisibility-action';
@@ -2535,6 +2538,16 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
     return safeOutcome(input, 'invalid');
   }
   if (Schema.is(problemStatus)(error) && error.status === 409) {
+    if (
+      Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[16])(intent) &&
+      Schema.is(GovernVariantAxesActionConflictProblemSchema)(error)
+    ) {
+      yield* Effect.logInfo('Symmy native owner refusal', {
+        code: error.code,
+        effectId: input.effect.ref.effectId,
+        operation: contract.tag,
+      }).pipe(Effect.ignoreCause);
+    }
     return safeOutcome(input, 'conflict');
   }
   if (Schema.is(problemStatus)(error) && (error.status === 404 || error.status === 422) && isPriceRevise(intent)) {
