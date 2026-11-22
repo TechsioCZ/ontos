@@ -240,3 +240,61 @@ export const currentOf = (world: MediaE2eWorld, actor: E2eActor, refs: readonly 
       }),
     );
   });
+
+// ---------------------------------------------------------------------------------------------
+// The Core Action routes: `POST /core/actions/<action>` with the Shell's Idempotency-Key header
+// ---------------------------------------------------------------------------------------------
+
+/** One Core Action request to the production Shell, answered as its status and parsed JSON body. A null key sends none. */
+const coreActionOf = (
+  edge: ShellEdge,
+  actor: E2eActor,
+  action: string,
+  payload: typeof Schema.Json.Type,
+  idempotencyKey: string | null,
+) => {
+  const base = {
+    'content-type': 'application/json',
+    'x-correlation-id': `e2e-${action}-${idempotencyKey ?? 'keyless'}`,
+  };
+  const headers = idempotencyKey === null ? base : { ...base, 'idempotency-key': idempotencyKey };
+  return edge
+    .request({ actor, body: JSON.stringify(payload), headers, method: 'POST', path: `/core/actions/${action}` })
+    .pipe(
+      Effect.map((response) => ({
+        ...response,
+        json: response.headers.get('content-type')?.includes('json') === true ? parseJson(response.bytes) : null,
+      })),
+    );
+};
+
+/** The reservation over HTTP: the answer carries the media asset reference, whose id the bytes are then sent to. */
+export const reserveOverHttp = (
+  edge: ShellEdge,
+  actor: E2eActor,
+  bytes: Uint8Array,
+  options: Omit<ReservationOptions, 'idempotencyKey'> & { readonly idempotencyKey: string | null },
+) => coreActionOf(edge, actor, 'upload-asset', reservationPayload(bytes, options), options.idempotencyKey);
+
+/** The confirmation over HTTP: the host settles the stored object, the Action decides under the caller's capability. */
+export const confirmOverHttp = (
+  edge: ShellEdge,
+  actor: E2eActor,
+  mediaAssetId: string,
+  idempotencyKey: string | null,
+) => coreActionOf(edge, actor, 'confirm-asset', { mediaAssetRef: refOf(actor.tenantId, mediaAssetId) }, idempotencyKey);
+
+export const renameOverHttp = (
+  edge: ShellEdge,
+  actor: E2eActor,
+  mediaAssetId: string,
+  displayFilename: string,
+  idempotencyKey: string | null,
+) =>
+  coreActionOf(
+    edge,
+    actor,
+    'rename-display-filename',
+    { displayFilename, mediaAssetRef: refOf(actor.tenantId, mediaAssetId) },
+    idempotencyKey,
+  );
