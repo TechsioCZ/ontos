@@ -10,20 +10,28 @@ This page describes what is implemented. Rows that have no executed proof agains
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Actions, Reads, the byte hop, verification, the S3 adapter | `packages/core-runtime/src/media/`, `modules/actions/*asset*.action.ts`, `generated-reads/asset-*.ts` (Core owner, module id `core.media`, resource type `core.media.asset`, resource id = `mediaAssetId`) |
 | Table                                                      | `core.media_assets` (and `core.media_links`); no Core migration was added for Core Media; the storage key is derived from the row identity                                                                 |
+| HTTP byte edges and the hosted Current operation           | `apps/shell-super-app` (hand-written streaming routes and the Shell-hosted receiver)                                                                                                                       |
+
+The Shell is the only host that imports the byte surface (`@app/core-runtime/media/edge`). A deployment never imports Core Media tables or private source.
 
 ## Entrypoints and declaration keys
 
 Action keys (all `idempotency: required`) and the access declarations they carry:
 
-| Entrypoint                                         | Declaration key                      | Risk and modes                               | Carrier                                                                                               |
-| -------------------------------------------------- | ------------------------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Action `core.media.upload-asset` (reserve)         | `core.media.asset.upload`            | routine, run                                 | human or agent holds the declaration; system, integration and import use workload `core.media.ingest` |
-| Action `core.media.confirm-asset`                  | `core.media.asset.confirm`           | routine, run                                 | as above                                                                                              |
-| Action `core.media.rename-display-filename`        | `core.media.display-filename.rename` | routine, run/propose/approve, selector `all` | declaration only, no machine carrier                                                                  |
-| Action `core.media.record-asset-integrity-failure` | `core.media.asset-integrity.fail`    | routine, run                                 | workload `core.media.integrity`                                                                       |
-| Read metadata                                      | `core.media.asset-metadata.read`     | routine, selector `all`                      | declaration                                                                                           |
+| Entrypoint                                         | Declaration key                      | Risk and modes                                    | Carrier                                                                                               |
+| -------------------------------------------------- | ------------------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Action `core.media.upload-asset` (reserve)         | `core.media.asset.upload`            | routine, run                                      | human or agent holds the declaration; system, integration and import use workload `core.media.ingest` |
+| Action `core.media.confirm-asset`                  | `core.media.asset.confirm`           | routine, run                                      | as above                                                                                              |
+| Action `core.media.rename-display-filename`        | `core.media.display-filename.rename` | routine, run/propose/approve, selector `all`      | declaration only, no machine carrier                                                                  |
+| Action `core.media.record-asset-integrity-failure` | `core.media.asset-integrity.fail`    | routine, run                                      | workload `core.media.integrity`                                                                       |
+| Read metadata                                      | `core.media.asset-metadata.read`     | routine, selector `all`                           | declaration                                                                                           |
+| Read download                                      | `core.media.asset-download.read`     | sensitive, selector `all`, access kind `download` | declaration                                                                                           |
 
 The generated descriptors are in `topology/authorization-catalog.json` (`pnpm authorization:catalog:artifact:check`). The origin a caller states (`user`, `system`, `integration`, `import`) is recorded provenance and grants nothing.
+
+HTTP routes (Shell, session authentication, no payload schema for bytes):
+
+- `GET /core/media/assets/:mediaAssetId/content` (and `HEAD`, which answers from the row and reads no provider byte): the verified bytes. `Range` and every conditional header are ignored.
 
 ## Reserve, stream, confirm
 
@@ -53,19 +61,33 @@ Recovery is client or workload driven; there is no scheduler, timer, retry loop,
 - `cleanup-eligibility.ts` is a check only; nothing removes objects. The S3 adapter's only HTTP `DELETE` aborts its own unfinished multipart upload.
 - Recovery logging uses a closed vocabulary and a redacted reference, never keys, bytes, URLs or credentials.
 
+## Download edge
+
+`GET .../content` runs, on every request, the governed `core.media.asset-download.read` (authorization, module state, evidence all fresh), then opens the stored object and streams it through the verifier (`media/download.ts`).
+
+- **Verify while streaming**: the SHA-256 is computed with the platform's native `DigestStream` while streaming; the last chunk is withheld until the verdict. A mismatch or failed read after the first byte aborts the response without a clean end (`MediaDownloadAborted`); the client must treat a body that does not end cleanly as failed.
+- **Before the first byte**: `MediaNotReady` (conflict), `MediaUnavailable` (provider or doubtful framing, retryable `503`) or `MediaIntegrityFailed` (`422`).
+- **Per-request authorization**: nothing (URL, ticket, token, cache entry, decision) outlives a request. A transfer authorized at its start may finish after the Permission is revoked; the next request or a reconnect is a new decision.
+- **Headers** are an allow-list built from the row: `Cache-Control: private, no-store`, `Content-Disposition: attachment` with a sanitized name (control and bidirectional characters and separators replaced, length bounded) and an RFC 5987 UTF-8 form, exact `Content-Length`, `X-Content-Type-Options: nosniff`, a sandboxing `Content-Security-Policy`, and `Content-Type` only if the recorded value is a plain `type/subtype`. No provider header, ETag or range support is exposed.
+
 ## S3 provider configuration
 
-The adapter is provider-neutral S3 (SigV4, path or virtual-host addressing) in `media/s3-object-storage.ts`, behind the `ObjectStorage` port. Keys (names only; values come from the platform secret and configuration path, never the repository): `CORE_MEDIA_S3_ENDPOINT`, `CORE_MEDIA_S3_BUCKET`, `CORE_MEDIA_S3_REGION`, `CORE_MEDIA_S3_ADDRESSING_STYLE` (`path` or `virtual-host`), `CORE_MEDIA_S3_CONDITIONAL_CREATE` (`supported` or `unsupported`), `CORE_MEDIA_S3_ACCESS_KEY_ID`, `CORE_MEDIA_S3_SECRET_ACCESS_KEY`, and optional `CORE_MEDIA_S3_PART_SIZE_BYTES`, `CORE_MEDIA_S3_REQUEST_TIMEOUT_MS`. The endpoint must be an `https` origin (`http` only on a loopback host). Configuration that fails to parse falls back to an object store that refuses every operation. Credentials are redacted values and appear in no error or log. No retry, backoff or timeout default exists; the timeout applies only when configured.
+The adapter is provider-neutral S3 (SigV4, path or virtual-host addressing) in `media/s3-object-storage.ts`, behind the `ObjectStorage` port. Keys (names only; values come from the platform secret and configuration path, never the repository): `CORE_MEDIA_S3_ENDPOINT`, `CORE_MEDIA_S3_BUCKET`, `CORE_MEDIA_S3_REGION`, `CORE_MEDIA_S3_ADDRESSING_STYLE` (`path` or `virtual-host`), `CORE_MEDIA_S3_CONDITIONAL_CREATE` (`supported` or `unsupported`), `CORE_MEDIA_S3_ACCESS_KEY_ID`, `CORE_MEDIA_S3_SECRET_ACCESS_KEY`, and optional `CORE_MEDIA_S3_PART_SIZE_BYTES`, `CORE_MEDIA_S3_REQUEST_TIMEOUT_MS`. One further optional key sits beside them but is not part of the provider identity: `CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS` (see the digest step guard below). The endpoint must be an `https` origin (`http` only on a loopback host). Configuration that fails to parse falls back to an object store that refuses every operation. Credentials are redacted values and appear in no error or log. No retry, backoff or timeout default exists; the timeout applies only when configured.
 
 ## Measured limits (facts, not product caps)
 
 No product size limit, MIME allowlist or retry policy is defined by Core Media. Facts and their sources:
 
-| Fact                            | Value                                                                                  | Source                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| S3 multipart structure          | minimum part 5 MiB, at most 10,000 parts, all parts but the last equal                 | S3 protocol; `s3-config.ts`, `s3-object-storage.ts` |
-| Adapter memory (node, emulator) | peak growth about 114 MiB for 64 MiB and for 1 GiB objects (bounded, not proportional) | measured 2026-11-20, MinIO emulator                 |
-| Cloudflare R2 limits            | documented upstream (for example 1 write per second per key, multipart rules)          | provider documentation only; no R2 run              |
+| Fact                            | Value                                                                                                                  | Source                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| S3 multipart structure          | minimum part 5 MiB, at most 10,000 parts, all parts but the last equal                                                 | S3 protocol; `s3-config.ts`, `s3-object-storage.ts`            |
+| Adapter memory (node, emulator) | peak growth about 114 MiB for 64 MiB and for 1 GiB objects (bounded, not proportional)                                 | measured 2026-11-20, MinIO emulator                            |
+| Native digest on workerd        | 64 MiB hashed in 289 ms wall; a JavaScript hash needs about 1.4 s for the same bytes                                   | measured 2026-11-20, local workerd                             |
+| Worker CPU class (Shell)        | 200 ms; not measurable on local workerd                                                                                | NOT VERIFIED                                                   |
+| Digest step guard               | 5 seconds per digest step (one chunk write or the final close), not per object; a technical guard, not a product limit | `media/content-digest.ts`; `CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS` |
+| Cloudflare R2 limits            | documented upstream (for example 1 write per second per key, multipart rules)                                          | provider documentation only; no R2 run                         |
+
+**The digest step guard is not a maximum object size.** `DigestStepTimeout` (default 5 s, a `Context.Reference` read at the moment of each step) wraps exactly two platform calls of `ContentDigest`: `add`, one `writer.write` of one chunk, and `finish`, the `close` plus the digest read. It never spans the object: the unit test `core-media-content-digest` drives six steps of 30 ms under a 100 ms guard and none is stopped, and a step that never answers dies at the guard. Setting it needs `CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS` (a positive integer of milliseconds) provided through `mediaDigestStepTimeoutLayer`; unset keeps 5 s. A step that exceeds the guard is an unexpected defect, never proven corruption: a download whose first chunk is still waiting for its digest step closes without a complete body, and the asset stays as it was (`ready`, never `failed`), so the same request succeeds once the platform answers in time. `openVerifiedMediaStream` carries the guard of its request into the returned body, because the transport runs that body in its own context. For scale only: at the measured 64 MiB in 289 ms (about 221 MiB/s) one step would have to carry roughly 1.1 GiB to need 5 s, and the chunks a transfer hands to the digest are the transport's, not the object's. What is **not** measured and so not claimed: the longest `close` after a very large object on a deployed Worker, any object above the 1 GiB node memory run, and whether `close` waits for queued hashing proportional to the queue. If a product maximum object size is wanted it must be decided by its owner from a measurement on the real Worker and the real provider (the largest object that completes reserve, stream, confirm and a verified download within the deployed CPU and ingress limits); this page proposes no number.
 
 ## Known gaps
 
