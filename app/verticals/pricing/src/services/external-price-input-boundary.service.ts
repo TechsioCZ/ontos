@@ -19,7 +19,7 @@ import type { PreparedPriceSourceEvidence } from './price-source-provenance.serv
 
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 
-// Native Unit and Price Group UUID columns render lowercase; exact JSON grants must use the same spelling.
+// Assessments (including the projection of historical grant evidence) use native lowercase UUIDs.
 const authorityIdentityKeySchema = PriceIdentityKeySchema.check(
   Schema.makeFilter(({ priceGroupSelector, unitBasis }) =>
     unitBasis.unitRef.resourceId === unitBasis.unitRef.resourceId.toLowerCase() &&
@@ -38,13 +38,13 @@ export const priceAuthorityKeyInTenant = (key: PriceIdentityKey, tenantId: strin
  * Pricing-owned proof that a source assertion is allowed to create one exact Price fact. The
  * transport/source-system identity is deliberately absent: delivery is not business authority.
  */
-export const ExternalPriceSourceAuthorityGrantSchema = Schema.Struct({
+export const ExternalPriceSourceAuthorityGrantInputSchema = Schema.Struct({
   authority: PriceSourceAuthoritySchema,
   effectivePeriod: Schema.Struct({
     effectiveFrom: PricingInstantSchema,
     effectiveTo: Schema.optionalKey(PricingInstantSchema),
   }),
-  exactIdentityKey: authorityIdentityKeySchema,
+  exactIdentityKey: PriceIdentityKeySchema,
   family: Schema.Literal('PRICE'),
   mapping: PriceSourceMappingSchema,
   ownerModuleId: Schema.Literal('commerce.pricing'),
@@ -56,6 +56,12 @@ export const ExternalPriceSourceAuthorityGrantSchema = Schema.Struct({
     effectivePeriod.effectiveTo === undefined || effectivePeriod.effectiveFrom < effectivePeriod.effectiveTo
       ? undefined
       : 'Source Authority grant end must be after its start',
+  ),
+);
+// Enrollment preserves the caller's UUID spelling for receipt replay. A resolved grant is always canonical.
+export const ExternalPriceSourceAuthorityGrantSchema = ExternalPriceSourceAuthorityGrantInputSchema.check(
+  Schema.makeFilter(({ exactIdentityKey }) =>
+    Schema.is(authorityIdentityKeySchema)(exactIdentityKey) ? undefined : 'Expected a canonical grant identity',
   ),
 );
 export type ExternalPriceSourceAuthorityGrant = typeof ExternalPriceSourceAuthorityGrantSchema.Type;

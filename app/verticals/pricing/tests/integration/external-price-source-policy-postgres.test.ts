@@ -353,13 +353,6 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
         { ...grant, authority: { ...grant.authority, sourceAuthorityVersion: '*' } },
         { ...grant, mapping: { ...grant.mapping, mappingContractRef: '*' } },
         { ...grant, mapping: { ...grant.mapping, mappingContractVersion: '*' } },
-        { ...grant, exactIdentityKey: priceKey({ ...world, unitId: world.unitId.toUpperCase() }, neverSeenVariant(9)) },
-        {
-          ...grant,
-          exactIdentityKey: priceKey(world, neverSeenVariant(9), {
-            priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: priceGroupRef(tenantId, groupId.toUpperCase()) },
-          }),
-        },
       ];
       for (const invalid of badGrants) {
         const directStore = runtime.transaction((tx) =>
