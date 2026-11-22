@@ -68,6 +68,7 @@ import {
   Crypto,
   Deferred,
   Effect,
+  Exit,
   FileSystem,
   Layer,
   Option,
@@ -96,8 +97,14 @@ import { executeDispatchPrivacyMeasureWithAuthorization } from '../../src/api/di
 import {
   DispatchPrivacyMeasureActionAlreadyCommittedProblemSchema,
   DispatchPrivacyMeasureActionAuthenticationProblemSchema,
+  DispatchPrivacyMeasureActionCommitIndeterminateProblemSchema,
+  DispatchPrivacyMeasureActionConflictProblemSchema,
   DispatchPrivacyMeasureActionIneligibleProblemSchema,
+  DispatchPrivacyMeasureActionInternalProblemSchema,
+  DispatchPrivacyMeasureActionInvalidProblemSchema,
   DispatchPrivacyMeasureActionForbiddenProblemSchema,
+  DispatchPrivacyMeasureActionNotFoundProblemSchema,
+  DispatchPrivacyMeasureActionPreconditionProblemSchema,
   DispatchPrivacyMeasureActionUnavailableProblemSchema,
 } from '../../shared/apis/dispatch-privacy-measure-action.ts';
 
@@ -582,6 +589,44 @@ const isDispatchTransactionRefusal = (candidate: DispatchAttemptFailure | Error 
   const parsed = Schema.decodeUnknownResult(DispatchPrivacyMeasureActionUnavailableProblemSchema)(candidate);
   return Result.isSuccess(parsed) && parsed.success.code === 'action_transaction_failed';
 };
+const dispatchProblemSchema = Schema.Union([
+  DispatchPrivacyMeasureActionAlreadyCommittedProblemSchema,
+  DispatchPrivacyMeasureActionAuthenticationProblemSchema,
+  DispatchPrivacyMeasureActionCommitIndeterminateProblemSchema,
+  DispatchPrivacyMeasureActionConflictProblemSchema,
+  DispatchPrivacyMeasureActionForbiddenProblemSchema,
+  DispatchPrivacyMeasureActionIneligibleProblemSchema,
+  DispatchPrivacyMeasureActionInternalProblemSchema,
+  DispatchPrivacyMeasureActionInvalidProblemSchema,
+  DispatchPrivacyMeasureActionNotFoundProblemSchema,
+  DispatchPrivacyMeasureActionPreconditionProblemSchema,
+  DispatchPrivacyMeasureActionUnavailableProblemSchema,
+]);
+const observePublicWriter = <Value>(writer: Deferred.Deferred<Result.Result<Value, DispatchAttemptFailure>>) =>
+  Effect.gen(function* publicWriterState() {
+    const completed = yield* Deferred.poll(writer);
+    if (Option.isNone(completed)) {
+      return { kind: 'pending' as const };
+    }
+    const exit = yield* Effect.exit(completed.value);
+    if (Exit.isFailure(exit)) {
+      return { kind: 'terminated-without-public-result' as const };
+    }
+    if (Result.isSuccess(exit.value)) {
+      return { kind: 'public-success' as const };
+    }
+    const parsed = Schema.decodeUnknownResult(dispatchProblemSchema)(exit.value.failure);
+    if (Result.isFailure(parsed)) {
+      return { kind: 'unclassified-failure' as const };
+    }
+    const problem = parsed.success;
+    return {
+      code: 'code' in problem ? problem.code : null,
+      kind: 'public-failure' as const,
+      problem: problem._tag,
+      status: problem.status,
+    };
+  });
 const privilegesMatch = (actual: Readonly<Record<string, boolean>>, allowed: readonly string[]) =>
   Object.entries(actual).every(([operation, permitted]) => permitted === allowed.includes(operation)) &&
   allowed.every((operation) => actual[operation]);
@@ -877,12 +922,85 @@ const PreparedArtifacts = Context.Service<Effect.Success<typeof prepareArtifacts
 );
 const nativeFixtureServices = Layer.effect(PreparedArtifacts, prepareArtifacts).pipe(Layer.provideMerge(services));
 
-// One observation of owned native lock state; the live test body owns polling and its real-clock bound.
+const nativeLockObservationSchema = Schema.Struct({
+  locks: Schema.Array(
+    Schema.Struct({
+      blockingPids: Schema.Array(Schema.Int),
+      classid: Schema.OptionFromNullOr(Schema.String),
+      database: Schema.String,
+      granted: Schema.Boolean,
+      locktype: Schema.Literals(['advisory', 'relation']),
+      mode: Schema.String,
+      objid: Schema.OptionFromNullOr(Schema.String),
+      objsubid: Schema.OptionFromNullOr(Schema.Int),
+      pid: Schema.OptionFromNullOr(Schema.Int),
+      relation: Schema.OptionFromNullOr(Schema.String),
+      state: Schema.OptionFromNullOr(Schema.String),
+      waitEvent: Schema.OptionFromNullOr(Schema.String),
+      waitEventType: Schema.OptionFromNullOr(Schema.String),
+    }),
+  ),
+  waiting: Schema.Boolean,
+});
+// Diagnostic-only metadata stays inside the existing polling bound; failure reporting issues no extra SQL.
 const observeNativeLock = (pool: Pool, query: string) =>
   Effect.tryPromise({
     catch: () => failure('The owned native lock observation failed'),
-    try: () => pool.query<{ waiting: boolean }>(query),
-  }).pipe(Effect.map((result) => result.rows[0]?.waiting ?? false));
+    try: () =>
+      pool.query(`select observed.waiting, coalesce((
+        select jsonb_agg(metadata order by metadata.pid, metadata.locktype, metadata.mode, metadata.granted)
+        from (
+          select lock.pid, lock.database::text as database, lock.relation::text as relation,
+            lock.locktype, lock.mode, lock.granted,
+            lock.classid::text as classid, lock.objid::text as objid, lock.objsubid,
+            activity.state, activity.wait_event_type as "waitEventType", activity.wait_event as "waitEvent",
+            coalesce(pg_blocking_pids(lock.pid), array[]::int[]) as "blockingPids"
+          from pg_locks lock left join pg_stat_activity activity on activity.pid=lock.pid
+          where lock.database=(select oid from pg_database where datname=current_database())
+            and (lock.relation='privacy.privacy_measure_dispatches'::regclass or lock.locktype='advisory')
+        ) metadata
+      ), '[]'::jsonb) as locks from (${query}) observed`),
+  }).pipe(
+    Effect.flatMap((result) => Schema.decodeUnknownEffect(nativeLockObservationSchema)(result.rows[0])),
+    Effect.mapError(() => failure('The owned native lock observation failed')),
+  );
+
+const observeLockInterleaving =
+  <Value>(
+    pool: Pool,
+    writer: Deferred.Deferred<Result.Result<Value, DispatchAttemptFailure>>,
+    leaseCount: () => number,
+  ) =>
+  (
+    phase: 'writer-row-exclusive-with-shared-authority' | 'publisher-exclusive-authority-before-owner-leases',
+    query: string,
+  ) => {
+    let lockObservation: Option.Option<typeof nativeLockObservationSchema.Type> = Option.none();
+    const diagnose = (reason: 'writer-terminated' | 'timeout') =>
+      Effect.gen(function* diagnoseNativeLockFailure() {
+        yield* Effect.logError('Privacy native lock interleaving failed', {
+          leases: leaseCount(),
+          lockObservation: Option.getOrNull(lockObservation),
+          phase,
+          reason,
+          writer: yield* observePublicWriter(writer),
+        });
+        return yield* failure(`The native lock phase ${phase} failed: ${reason}`);
+      });
+    return {
+      poll: Effect.gen(function* pollNativeLock() {
+        const observation = yield* observeNativeLock(pool, query);
+        lockObservation = Option.some(observation);
+        if (yield* Deferred.isDone(writer)) {
+          return yield* diagnose('writer-terminated');
+        }
+        return observation.waiting;
+      }),
+      timeout: diagnose('timeout'),
+    };
+  };
+
+const isSuccessfulNativeQuiescence = Schema.is(Schema.Tuple([Schema.Struct({ blocked: Schema.Literal(false) })]));
 
 // Test-only scheduling seam AFTER the real native quiescence query, not a fabricated
 // quiescence result. The publisher and Privacy lease still execute their production SQL.
@@ -899,8 +1017,8 @@ const runObservedOperatorPublication = Effect.fn('PrivacyCompletionTest.nativeOp
       const [query] = args;
       const text = Schema.is(Schema.String)(query) ? query : new PgDialect().sqlToQuery(query.getSQL()).sql;
       return executor.execute(...args).pipe(
-        Effect.tap(() => {
-          if (interleaved || !text.includes('from pg_stat_activity')) {
+        Effect.tap((observation) => {
+          if (interleaved || !text.includes('from pg_stat_activity') || !isSuccessfulNativeQuiescence(observation)) {
             return Effect.void;
           }
           interleaved = true;
@@ -1851,6 +1969,68 @@ it.effect('counts only the declared dispatch transaction failure and rejects unr
   }),
 );
 
+it.effect('diagnoses public writer termination without exposing public result or failure payloads', () =>
+  Effect.gen(function* publicWriterDiagnostics() {
+    const writer = yield* Deferred.make<Result.Result<string, DispatchAttemptFailure>>();
+    expect(yield* observePublicWriter(writer)).toEqual({ kind: 'pending' });
+    yield* Deferred.succeed(
+      writer,
+      Result.fail(
+        DispatchPrivacyMeasureActionUnavailableProblemSchema.make({
+          code: 'action_transaction_failed',
+          detail: 'TEST:sensitive failure detail',
+          retryable: true,
+          status: 503,
+          title: 'TEST:sensitive title',
+          type: 'TEST:sensitive type',
+        }),
+      ),
+    );
+    expect(yield* observePublicWriter(writer)).toEqual({
+      code: 'action_transaction_failed',
+      kind: 'public-failure',
+      problem: 'DispatchPrivacyMeasureActionUnavailableProblem',
+      status: 503,
+    });
+    const authentication = yield* Deferred.make<Result.Result<string, DispatchAttemptFailure>>();
+    yield* Deferred.succeed(
+      authentication,
+      Result.fail(
+        DispatchPrivacyMeasureActionAuthenticationProblemSchema.make({
+          detail: 'TEST:sensitive authentication detail',
+          status: 401,
+          title: 'TEST:sensitive title',
+          type: 'TEST:sensitive type',
+        }),
+      ),
+    );
+    expect(yield* observePublicWriter(authentication)).toEqual({
+      code: null,
+      kind: 'public-failure',
+      problem: 'DispatchPrivacyMeasureActionAuthenticationProblem',
+      status: 401,
+    });
+    const succeeded = yield* Deferred.make<Result.Result<string, DispatchAttemptFailure>>();
+    yield* Deferred.succeed(succeeded, Result.succeed('TEST:sensitive public result'));
+    expect(yield* observePublicWriter(succeeded)).toEqual({ kind: 'public-success' });
+    const unclassified = yield* Deferred.make<Result.Result<string, DispatchAttemptFailure>>();
+    yield* Deferred.succeed(unclassified, yield* Effect.result(Schema.decodeUnknownEffect(Schema.String)(null)));
+    expect(yield* observePublicWriter(unclassified)).toEqual({ kind: 'unclassified-failure' });
+    const defective = yield* Deferred.make<Result.Result<string, DispatchAttemptFailure>>();
+    yield* Deferred.die(defective, new Error('TEST:sensitive defect'));
+    expect(yield* observePublicWriter(defective)).toEqual({ kind: 'terminated-without-public-result' });
+  }),
+);
+
+it.effect('signals publisher interleaving only after a successful native quiescence observation', () =>
+  Effect.sync(() => {
+    expect(isSuccessfulNativeQuiescence([{ blocked: false }])).toBe(true);
+    for (const observation of [[{ blocked: true }], [], [{ blocked: false }, { blocked: true }], [{}], false]) {
+      expect(isSuccessfulNativeQuiescence(observation)).toBe(false);
+    }
+  }),
+);
+
 it.effect('requires the current closed Shell readiness protocol and redacts its credential on decode', () =>
   Effect.gen(function* shellReadinessProtocol() {
     const marker = { appId: 'shell-super-app', buildMarker: 'TEST:current-shell' };
@@ -2335,27 +2515,29 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
                   }
                 }),
             );
-            // The publisher's seam only signals and parks; every real-clock bound and lock observation
-            // stays in this live test body.
-            // PostgreSQL/HTTP child processes use real clocks: virtual TestClock cannot release their locks.
-            const waitForNativeLock = Effect.fn('PrivacyCompletionTest.waitForNativeLock')(function* waitForNativeLock(
-              query: string,
-            ) {
-              while (!(yield* observeNativeLock(pool, query))) {
-                yield* Effect.sleep('20 millis');
-              }
-            });
-            const lockInterleavingReached = (query: string) =>
-              waitForNativeLock(query).pipe(
-                Effect.timeoutOrElse({
-                  duration: '5 seconds',
-                  orElse: () => Effect.fail(failure('The expected native lock interleaving was not reached')),
-                }),
-              );
             const observed = yield* Deferred.make<boolean>();
             const proceed = yield* Deferred.make<boolean>();
             let leases = 0;
             const dispatchResult = () => Effect.result(f.dispatch(f.suffix, f.handoff, credential));
+            const writer = yield* Deferred.make<Effect.Success<ReturnType<typeof dispatchResult>>>();
+            // The seam only parks after successful native quiescence. PostgreSQL/HTTP use real clocks.
+            const lockObservation = observeLockInterleaving(pool, writer, () => leases);
+            const waitForNativeLock = Effect.fn('PrivacyCompletionTest.waitForNativeLock')(function* waitForNativeLock(
+              poll: Effect.Effect<boolean, PrivacyCompletionTestFailure>,
+            ) {
+              while (!(yield* poll)) {
+                yield* Effect.sleep('20 millis');
+              }
+            });
+            const lockInterleavingReached = (phase: Parameters<typeof lockObservation>[0], query: string) => {
+              const observation = lockObservation(phase, query);
+              return waitForNativeLock(observation.poll).pipe(
+                Effect.timeoutOrElse({
+                  duration: '5 seconds',
+                  orElse: () => observation.timeout,
+                }),
+              );
+            };
             type Publication = ReturnType<typeof f.publishWithConcurrentWriter>;
             // Deferred.into preserves the publisher's failure, defect or interruption for the bounded await.
             const published = yield* Deferred.make<Effect.Success<Publication>, Effect.Error<Publication>>();
@@ -2368,9 +2550,9 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
               )
               .pipe(Deferred.into(published), Effect.forkChild);
             yield* Deferred.await(observed).pipe(Effect.timeout('40 seconds'));
-            const writer = yield* Deferred.make<Effect.Success<ReturnType<typeof dispatchResult>>>();
             yield* dispatchResult().pipe(Deferred.into(writer), Effect.forkChild);
             yield* lockInterleavingReached(
+              'writer-row-exclusive-with-shared-authority',
               `select exists(
                 select 1 from pg_locks writer join pg_locks authority using(pid)
                 where writer.database=(select oid from pg_database where datname=current_database())
@@ -2383,6 +2565,7 @@ it.layer(nativeFixtureServices, { concurrent: true, excludeTestServices: true, t
             // The writer really holds Core's shared authority lock and is waiting to insert.
             // Publication must wait for that authority BEFORE obtaining any owner SHARE lease.
             yield* lockInterleavingReached(
+              'publisher-exclusive-authority-before-owner-leases',
               `select exists(
             select 1 from pg_locks where database=(select oid from pg_database where datname=current_database())
               and locktype='advisory' and mode='ExclusiveLock' and not granted
