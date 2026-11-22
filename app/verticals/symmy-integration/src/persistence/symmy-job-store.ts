@@ -1488,17 +1488,6 @@ export const symmyJobStoreFactory = (
       const [keyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
         concurrency: 2,
       });
-      if (input.routeKey === 'inventoryStockBatch') {
-        const retired = yield* retiredStockSyncAdmission(transaction, scope, keyDigest, 'consume');
-        if (Option.isSome(retired)) {
-          yield* verifySyncReplay(retired.value.saved, intentDigest);
-          return yield* syncAdmissionReceipt(transaction, retired.value.saved, {
-            invocationId: admissionId,
-            replayed: true,
-            retiredRoute: true,
-          });
-        }
-      }
       const rows = yield* transaction
         .select()
         .from(symmyJobRoutes)
@@ -1516,6 +1505,18 @@ export const symmyJobStoreFactory = (
         )
         .limit(2)
         .pipe(Effect.mapError(unavailable));
+      // Retired history is a separate read-only authority only when no current receiving route exists.
+      if (rows.length === 0 && input.routeKey === 'inventoryStockBatch') {
+        const retired = yield* retiredStockSyncAdmission(transaction, scope, keyDigest, 'consume');
+        if (Option.isSome(retired)) {
+          yield* verifySyncReplay(retired.value.saved, intentDigest);
+          return yield* syncAdmissionReceipt(transaction, retired.value.saved, {
+            invocationId: admissionId,
+            replayed: true,
+            retiredRoute: true,
+          });
+        }
+      }
       const [route] = rows;
       if (rows.length !== 1 || route === undefined) {
         return yield* routeDenied();
@@ -1706,18 +1707,6 @@ export const symmyJobStoreFactory = (
         input.code === undefined
           ? undefined
           : yield* decodeSymmySourceSelector(input.code).pipe(Effect.mapError(routeDenied));
-      if (
-        input.routeKey === 'inventoryStockBatch' &&
-        input.code === undefined &&
-        input.replayIdempotencyKey !== undefined
-      ) {
-        const digest = yield* hash(input.replayIdempotencyKey);
-        const retired = yield* retiredStockSyncAdmission(transaction, scope, digest, 'context');
-        if (Option.isSome(retired)) {
-          const { original, route } = retired.value;
-          return yield* retainedRouteContext(route, original, digest, original);
-        }
-      }
       const selector = configuredRouteSelector(decoded, scope.tenantId);
       const rows = yield* transaction
         .select()
@@ -1733,6 +1722,19 @@ export const symmyJobStoreFactory = (
         )
         .limit(2)
         .pipe(Effect.mapError(unavailable));
+      if (
+        rows.length === 0 &&
+        input.routeKey === 'inventoryStockBatch' &&
+        input.code === undefined &&
+        input.replayIdempotencyKey !== undefined
+      ) {
+        const digest = yield* hash(input.replayIdempotencyKey);
+        const retired = yield* retiredStockSyncAdmission(transaction, scope, digest, 'context');
+        if (Option.isSome(retired)) {
+          const { original, route } = retired.value;
+          return yield* retainedRouteContext(route, original, digest, original);
+        }
+      }
       // A saved sync key resolves before fresh owner facts, even on a still-configured route.
       const [groupRow, competingGroupRoute] = rows;
       if (

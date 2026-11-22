@@ -1169,6 +1169,63 @@ it.effect(
         ),
       ).pipe(Effect.flip);
       expect(conflict).toMatchObject({ code: 'idempotency_conflict' });
+      // A current receiving enrollment, not the retired route's reassigned principal, authorizes recovery.
+      const replacementRouteId = crypto.randomUUID();
+      yield* admin
+        .update(symmyJobRoutes)
+        .set({ active: false, principalId: crypto.randomUUID() })
+        .where(eq(symmyJobRoutes.routeId, routeId));
+      yield* admin.insert(symmyJobRoutes).values({
+        active: true,
+        fixtureIds: ['INTERNAL_C14'],
+        mappingVersion: 'receiving-map-v2',
+        principalId: scope.principalId,
+        routeId: replacementRouteId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'receiving-route-v2',
+        tenantId,
+      });
+      expect(yield* context(key)).toMatchObject({
+        allowedOwnerOperations: [],
+        mappingVersion: 'receiving-map-v2',
+        replayIdempotencyDigest: keyDigest,
+        routeId: replacementRouteId,
+        routeRevision: 'receiving-route-v2',
+      });
+      const replacedConflict = () =>
+        withScopedStores(connections.runtime.connectionString, scope, (store) =>
+          store.admitSync(
+            { idempotencyKey: key, routeKey: 'inventoryStockBatch', stock: divergentRows },
+            crypto.randomUUID(),
+          ),
+        ).pipe(Effect.flip);
+      expect(yield* replacedConflict()).toMatchObject({ code: 'idempotency_conflict' });
+      expect(yield* context('fresh-key').pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(yield* context(key, makeScope(tenantId, crypto.randomUUID())).pipe(Effect.flip)).toMatchObject({
+        code: 'route_denied',
+      });
+      const competingRouteId = crypto.randomUUID();
+      yield* admin.insert(symmyJobRoutes).values({
+        active: true,
+        fixtureIds: ['INTERNAL_C14'],
+        legalEntityId: crypto.randomUUID(),
+        mappingVersion: 'competing-map',
+        principalId: scope.principalId,
+        routeId: competingRouteId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'competing-route',
+        tenantId,
+      });
+      expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      yield* admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.routeId, competingRouteId));
+      yield* admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.routeId, replacementRouteId));
+      // Without a current enrollment, the reassigned history still cannot authorize the original caller.
+      expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(yield* replacedConflict()).toMatchObject({ code: 'route_denied' });
+      yield* admin
+        .update(symmyJobRoutes)
+        .set({ active: true, principalId: scope.principalId })
+        .where(eq(symmyJobRoutes.routeId, routeId));
       yield* admin
         .update(symmySyncAdmissions)
         .set({
