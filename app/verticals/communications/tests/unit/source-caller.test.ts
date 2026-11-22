@@ -63,12 +63,15 @@ describe('The source module claimed by a Communication Request is bound to the v
     expect(callerIsClaimedSource(sessionPrincipal(), 'fixture.source')).toBe(false);
   });
 
-  it('is declared on a workload-only carrier, so Core refuses a person before the handler is ever reached', () => {
+  it('declares the request-source workload and the declaration its registered callers name, and no person passes the handler', () => {
     const { descriptor } = submitCommunicationRequestAction;
     expect(descriptor.accessWorkload?.workloads).toEqual(['communications.core.request-source']);
-    // no `accessDeclaration` beside it: a v2 grant can never admit a human or an agent on this Action (O59, O67-Q4)
-    expect(Object.hasOwn(descriptor, 'accessDeclaration')).toBe(false);
-    // The refusal itself (a human on a workload carrier -> 403 `deny.workload_only`, handler not reached) is proved by
-    // Core's own `action-access-gate.test.ts`; the Core test harness here scripts the access decision and cannot run it.
+    // the declaration a registered source worker's call names: Core admits its sealed workload context only on it (#1406 D1)
+    expect(descriptor.accessDeclaration?.key).toBe('communications.core.communication-request.submit');
+    expect(descriptor.accessDeclaration?.risk).not.toBe('routine');
+    // a person granted that declaration still names no verified source module, so the handler refuses the request
+    expect(callerIsClaimedSource(sessionPrincipal(), 'fixture.source')).toBe(false);
+    // The workload admission itself (Core's real access decision on this carrier) is proved by
+    // `tests/integration/registered-source-worker-admission.test.ts`.
   });
 });

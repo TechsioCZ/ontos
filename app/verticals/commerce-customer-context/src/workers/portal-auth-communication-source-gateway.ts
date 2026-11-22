@@ -10,7 +10,7 @@ import { GatewayHttpUrlSchema } from '../portal-auth/communications/relay-transp
 import { SubmitPortalAuthCommunicationRequestRejected } from './submit-portal-auth-communication-request-rejected.ts';
 
 const COMMUNICATIONS_AUDIENCE = 'communications';
-const SUBMIT_DECLARATION_KEY = 'communications.core.submit-communication-request';
+const SUBMIT_DECLARATION_KEY = 'communications.core.communication-request.submit';
 
 const configuration = Config.schema(GatewayHttpUrlSchema, 'ONTOS_COMMUNICATIONS_API_BASE_URL');
 
@@ -21,10 +21,10 @@ const configuration = Config.schema(GatewayHttpUrlSchema, 'ONTOS_COMMUNICATIONS_
  * request's claimed source to. The idempotency key is the request's own replay identity, so a redelivery lands on the stored
  * decision. A failure keeps only its safe kind; the request itself is secret-free by construction.
  *
- * OPEN (owner review): the module does not yet declare this registered-workload call, because the Shell admits it only when
- * the reviewed caller table names this module for `communications.core.request-source` and the Communications Action
- * publishes a declaration for that workload; until both exist the Shell refuses the assertion and the delivery stays retryable
- * (fail closed), never sent another way.
+ * The module declares this registered-workload call (`registered-workload-calls.ts`), the reviewed caller table names it for
+ * `communications.core.request-source`, and the Communications Action declares the same declaration beside that workload. A
+ * Tenant still needs an active registration of the workload; without one the Shell refuses the assertion and the delivery
+ * stays retryable (fail closed), never sent another way.
  */
 export interface PortalAuthCommunicationSourceGatewayService {
   readonly submit: (

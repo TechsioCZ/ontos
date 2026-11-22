@@ -154,6 +154,17 @@ export const handleSubmitCommunicationRequest = Effect.fn('SubmitCommunicationRe
 
 export const submitCommunicationRequestAction = defineAction(
   {
+    // The declaration a registered source worker's call names: the Shell keeps that call, and Core admits its sealed
+    // workload context, only when this Action declares it beside the workload. It grants no person anything by itself;
+    // a person granted it is still refused by the verified-caller check (see `source-caller.ts`).
+    accessDeclaration: {
+      key: 'communications.core.communication-request.submit',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'communication-request', level: 'extended' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'communications.core.submit-communication-request.access.v1',

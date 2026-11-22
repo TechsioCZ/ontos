@@ -19,8 +19,10 @@ import { Option } from 'effect';
  *   here: a source issues its request AFTER its own authoritative commit, from its own delivery, which is also what
  *   makes a rolled-back source operation unable to reach this Action (AC-07).
  *
- * A human or session principal never reaches the handler: the Action carries `accessWorkload` alone, so Core refuses it
- * at the access seam (`WORKLOAD_ONLY`). This check is the second, module-level line behind that one.
+ * The Action declares `communications.core.communication-request.submit` beside its workload, because Core admits a
+ * registered worker's sealed context only on the declaration its call names. That declaration path is disjoint from the
+ * workload path and grants no person anything by itself; a person granted it still names no verified source module, so
+ * this check refuses the request before anything is decided.
  */
 export const verifiedCallerModuleOf = (scope: OperationalScope): Option.Option<string> =>
   Option.fromNullishOr(readVerifiedGatewayWorkload(scope)?.workerModuleKey);

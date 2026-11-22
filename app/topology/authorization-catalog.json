@@ -14034,6 +14034,34 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "communications.core.communication-request.submit",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "communication-request",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.submit-communication-request",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "communications.core.language-policy.read",
             "kind": "read",
             "modes": [

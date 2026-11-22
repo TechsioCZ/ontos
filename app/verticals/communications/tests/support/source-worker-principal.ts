@@ -15,7 +15,7 @@ export const SOURCE_WORKER_JOB = 'communications-intake-tests';
 const baseWorkload = {
   admissionInvocationId: '60000000-0000-4000-8000-000000000002',
   bindingIncarnation: '60000000-0000-4000-8000-000000000003',
-  declarationKey: 'communications.core.submit-communication-request',
+  declarationKey: 'communications.core.communication-request.submit',
   entrypointKey: 'communications.core.submit-communication-request',
   jobKey: SOURCE_WORKER_JOB,
   legalEntityScope: 'optional',
@@ -30,10 +30,17 @@ const baseWorkload = {
   workloadKey: 'communications.core.request-source',
 } as const;
 
+/** What a test may change about the sealed workload: the workload and declaration it names. Default: the Action's own. */
+export interface SourceWorkerOverrides {
+  readonly declarationKey?: string;
+  readonly workloadKey?: string;
+}
+
 const decodeWorkload = Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema);
-const workerWorkload = (callerModule: string, legalEntityId?: string) => {
+const workerWorkload = (callerModule: string, legalEntityId?: string, overrides: SourceWorkerOverrides = {}) => {
   const worker = {
     ...baseWorkload,
+    ...overrides,
     claimId: 'fixture-claim',
     sourceMode: 'worker',
     workerKey: 'fixture.source-worker',
@@ -52,6 +59,7 @@ export const asSourceWorker = <Principal extends TrustedPrincipalContext>(
   callerModule: string,
   compositionRevision: string,
   legalEntityId?: string,
+  overrides?: SourceWorkerOverrides,
 ) =>
   trustVerifiedGatewayPrincipalContext(
     // a worker of one company fan-out: the tenant-local system principal plus the signed company of its workload
@@ -59,7 +67,7 @@ export const asSourceWorker = <Principal extends TrustedPrincipalContext>(
     compositionRevision,
     undefined,
     undefined,
-    workerWorkload(callerModule, legalEntityId),
+    workerWorkload(callerModule, legalEntityId, overrides),
   );
 
 /** A registered ADMISSION (an Action calling directly, not from a source's own Outbox delivery): it names no calling module. */

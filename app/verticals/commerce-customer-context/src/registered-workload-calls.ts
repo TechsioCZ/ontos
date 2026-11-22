@@ -26,6 +26,19 @@ const privacyCoreSourceProcessingEligibilityRead = 'privacy.core.source-processi
  * declaration, and a tenant still needs an active registration of that workload.
  */
 export const commerceCustomerContextRegisteredWorkloadCalls = [
+  // #1406 D1: the Portal Auth source worker submits each relayed, committed Communication Request to the public Communications
+  // Action inside its own genuine delivery (no fixture names this call yet; its receiver admission is proven by the
+  // Communications `registered-source-worker-admission` suite)
+  {
+    audience: 'communications',
+    declarationKey: 'communications.core.communication-request.submit',
+    entrypointKey: 'communications.core.submit-communication-request',
+    jobKey: 'commerce.customer-context.submit-portal-auth-communication-request',
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    workerKey: 'commerce.customer-context.submit-portal-auth-communication-request',
+    workloadKey: 'communications.core.request-source',
+  },
   // origin/main 5608aae1d: symmy-c14-customer-rules.mts — INTERNAL_C14 actual customer revisions and GET round-trip retain native targets under current Privacy
   {
     audience: 'privacy',
