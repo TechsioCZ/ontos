@@ -28,6 +28,8 @@ const DOMAIN_ERROR_KIND = '--domain-error-kind';
 const NOT_READY_KIND = 'MediaNotReady=conflict';
 const UNCERTAIN_KIND = 'MediaIngestUncertain=unavailable';
 const REQUEST_SERVICES = '--request-services';
+const HOST_LAYER = '--host-layer';
+const HOST_LAYER_NAME = 'coreMediaObjectStorageLive';
 const scopeFlags = (action: string, contractModule: string, module = CORE_MODULE): readonly string[] => [
   '--scope',
   'core',
@@ -177,6 +179,23 @@ it.effect(
           run(root, [...scopeFlags(CONFIRM_ACTION, UPLOAD_CONTRACT), DOMAIN_ERROR_KIND, 'Missing=conflict']),
         );
         expect(Exit.isFailure(refused)).toBe(true);
+      }),
+    ),
+);
+
+it.effect(
+  'Core ACTION mode provides the group with the host layer its Action needs, and refuses one the host lacks',
+  () =>
+    fixture((root) =>
+      Effect.gen(function* coreActionHostLayer() {
+        const before = yield* readAll(root, roots);
+        for (const layer of ['absentLive', 'notALayerName']) {
+          expect(Exit.isFailure(yield* Effect.exit(run(root, [...coreFlags, HOST_LAYER, layer])))).toBe(true);
+        }
+        expect(yield* readAll(root, roots)).toEqual(before);
+        yield* run(root, [...coreFlags, HOST_LAYER, HOST_LAYER_NAME]);
+        const server = yield* read(root, SERVER);
+        expect(server).toContain(`coreActionUploadAssetGroupLive.pipe(Layer.provide(${HOST_LAYER_NAME})),`);
       }),
     ),
 );

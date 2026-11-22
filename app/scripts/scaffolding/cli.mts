@@ -91,6 +91,7 @@ const DOMAIN_PROBLEM_FLAG = 'domain-problem';
 const DOMAIN_ERROR_KIND_FLAG = 'domain-error-kind';
 const CONTRACT_MODULE_FLAG = 'contract-module';
 const REQUEST_SERVICES_FLAG = 'request-services';
+const HOST_LAYER_FLAG = 'host-layer';
 const SCHEMA_MODULE_FLAG = 'schema-module';
 const RESULT_SCHEMA_FLAG = 'result-schema';
 const LEGAL_ENTITY_SCOPE_FLAG = 'legal-entity-scope';
@@ -178,6 +179,7 @@ interface ParsedScaffoldFlags {
   readonly core: boolean;
   readonly domainErrorKind: string | undefined;
   readonly domainProblem: string | undefined;
+  readonly hostLayer: string | undefined;
   readonly kind: string | undefined;
   readonly legalEntityScope: string | undefined;
   readonly module: string | undefined;
@@ -485,6 +487,7 @@ const coreActionHttpConfig = (
       action: flags.action ?? '',
       contractModule: flags.contractModule,
       domainErrorKinds: flags.domainErrorKind?.split(','),
+      hostLayer: flags.hostLayer,
       module,
       requestServices: flags.requestServices,
       scope,
@@ -502,10 +505,11 @@ const verticalActionHttpConfig = (
       flags.module !== undefined ||
       flags.contractModule !== undefined ||
       flags.domainErrorKind !== undefined ||
+      flags.hostLayer !== undefined ||
       flags.requestServices !== undefined
     ) {
       return yield* failScaffolding(
-        '--vertical is mutually exclusive with --scope, --module, --contract-module, --domain-error-kind and --request-services',
+        '--vertical is mutually exclusive with --scope, --module, --contract-module, --domain-error-kind, --request-services and --host-layer',
       );
     }
     const config = { action: flags.action ?? '', proposalOnly: flags.proposalOnly, vertical };
@@ -633,11 +637,12 @@ Options:
       CONTRACT_MODULE_FLAG,
       DOMAIN_ERROR_KIND_FLAG,
       REQUEST_SERVICES_FLAG,
+      HOST_LAYER_FLAG,
     ],
     generator: actionHttpGeneratorEntry,
     help: `Usage:
   pnpm scaffold:action-http -- --vertical <vertical> --action <action> [--proposal-only]
-  pnpm scaffold:action-http -- --scope core --module <core.module> --action <action> --contract-module <@app/core-runtime/export> [--domain-error-kind <Tag=kind>] [--request-services <./file.ts#export>]
+  pnpm scaffold:action-http -- --scope core --module <core.module> --action <action> --contract-module <@app/core-runtime/export> [--domain-error-kind <Tag=kind>] [--request-services <./file.ts#export>] [--host-layer <name>]
 
 Generate one explicit, typed public HTTP transport for an existing Action: a MicroVertical Action on its own
 API, or a Core-owned Action on the Shell host (\`POST /core/actions/<action>\`, the Shell's Idempotency-Key header).
@@ -665,6 +670,8 @@ Options:
                          decide (conflict, forbidden, ineligible, notFound or unavailable; repeatable)
   --request-services <./file.ts#export> Core only: an owner-written provider, under apps/shell-super-app/api, of the
                          request-scoped service the Action needs and no host layer can supply
+  --host-layer <name>    Core only: a <name>Live layer api/index.ts defines that the Action needs from the host at run
+                         time (for example the object store); the route's group is provided with it
   --help                 Show this help without writing
 `,
     requiredFlags: ['action'],
@@ -1204,6 +1211,7 @@ const parseFlags = (
       core,
       domainErrorKind: parsed.get(DOMAIN_ERROR_KIND_FLAG),
       domainProblem: parsed.get(DOMAIN_PROBLEM_FLAG),
+      hostLayer: parsed.get(HOST_LAYER_FLAG),
       kind: parsed.get('kind'),
       legalEntityScope: parsed.get(LEGAL_ENTITY_SCOPE_FLAG),
       module: parsed.get('module'),
@@ -1266,6 +1274,7 @@ const cliFlags = {
     Flag.atLeast(0),
     Flag.map((values) => (values.length === 0 ? Option.none<string>() : Option.some(values.join(',')))),
   ),
+  hostLayer: optionalTextFlag(HOST_LAYER_FLAG),
   kind: optionalTextFlag('kind'),
   legalEntityScope: optionalTextFlag(LEGAL_ENTITY_SCOPE_FLAG),
   module: optionalTextFlag('module'),
