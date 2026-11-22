@@ -17,7 +17,8 @@ export const S3_MINIMUM_PART_BYTES = 5 * 1024 * 1024;
 /** The largest part an S3 multipart upload accepts (an S3 protocol constant). */
 export const S3_MAXIMUM_PART_BYTES = 5 * 1024 * 1024 * 1024;
 
-const S3AddressingStyleSchema = Schema.Literals(['path', 'virtual-host']);
+const VIRTUAL_HOST = 'virtual-host';
+const S3AddressingStyleSchema = Schema.Literals(['path', VIRTUAL_HOST]);
 type S3AddressingStyle = typeof S3AddressingStyleSchema.Type;
 
 /** Whether the provider honours `If-None-Match: *` on writes. Stated by the deployment, never assumed. */
@@ -72,6 +73,8 @@ const failure = (reason: string) => new ObjectStorageConfigError({ reason });
 const failureWithCause = (reason: string, cause: unknown) => new ObjectStorageConfigError({ cause, reason });
 
 const LOOPBACK_HOST = /^(?:127\.0\.0\.1|localhost|\[::1\])$/u;
+/** An IPv4 address or a bracketed IPv6 address: a host that cannot carry the bucket as a subdomain. */
+const IP_LITERAL_HOST = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[.*\])$/u;
 const BUCKET_NAME = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u;
 const REGION_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const CREDENTIAL_TEXT = /^[!-~]{1,512}$/u;
@@ -200,7 +203,12 @@ const parseWith = Effect.fn('Config.parseS3ObjectStorageConfig')(function* parse
       failureWithCause('CORE_MEDIA_S3_ADDRESSING_STYLE must be one of: path, virtual-host', cause),
     ),
   );
-  if (addressingStyle === 'virtual-host' && raw.bucket.includes('.')) {
+  if (addressingStyle === VIRTUAL_HOST && IP_LITERAL_HOST.test(endpoint.value.hostname)) {
+    return yield* failure(
+      'CORE_MEDIA_S3_ENDPOINT must be a DNS name with virtual-host addressing: the bucket is a subdomain of it',
+    );
+  }
+  if (addressingStyle === VIRTUAL_HOST && raw.bucket.includes('.')) {
     return yield* failure('CORE_MEDIA_S3_BUCKET must not contain a dot with virtual-host addressing');
   }
   const conditionalCreate = yield* Schema.decodeUnknownEffect(S3ConditionalCreateSchema)(raw.conditionalCreate).pipe(
