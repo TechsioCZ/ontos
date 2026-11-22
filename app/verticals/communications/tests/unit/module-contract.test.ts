@@ -111,18 +111,29 @@ describe('Communications module contract', () => {
       entrypoint: { authorization: { kind: 'protected' } },
       legalEntityScope: 'forbidden',
     });
-    // the dispatch consumer declares exactly the Privacy dispatch it receives and the one report it makes
+    // the dispatch consumer declares exactly the Privacy dispatch it receives and the one report it makes, from the
+    // take-over worker and from the continuation worker of a later human-recorded confirmation, to the same Action only
     expect(communicationsManifest.originatorActions).toEqual(['privacy.core.dispatch-privacy-measure']);
+    const outcomeProvider = {
+      entrypointKey: 'privacy.core.record-owner-execution-outcome',
+      moduleId: 'privacy.core',
+      schemaVersion: '1',
+    };
     expect(communicationsManifest.requirements?.operations).toEqual([
       expect.objectContaining({
         entrypointKey: 'communications.core.receive-privacy-measure',
         key: 'communications.core.requirement.privacy-report-owner-outcome',
-        provider: {
-          entrypointKey: 'privacy.core.record-owner-execution-outcome',
-          moduleId: 'privacy.core',
-          schemaVersion: '1',
-        },
+        provider: outcomeProvider,
       }),
+      expect.objectContaining({
+        entrypointKey: 'communications.core.report-privacy-owner-outcome',
+        key: 'communications.core.requirement.privacy-report-recorded-owner-outcome',
+        provider: outcomeProvider,
+      }),
+    ]);
+    // the evidence Action's only message is the continuation of the same Privacy dispatch: identities and an attempt
+    expect(Object.keys(recordOwnerExecutionEvidenceAction.descriptor.domainEvents)).toEqual([
+      'communications.core.owner-execution-evidence-recorded.v1',
     ]);
   });
 

@@ -16,6 +16,7 @@ import { privacyOwnerCoverageRead } from './src/api/privacy-owner-coverage.read.
 import { privacyOwnerExecutionOutcomeRead } from './src/api/privacy-owner-execution-outcome.read.ts';
 import { receivePrivacyMeasureWorker } from './src/workers/receive-privacy-measure.worker.ts';
 import { recordOwnerExecutionEvidenceAction } from './src/actions/record-owner-execution-evidence.action.ts';
+import { reportPrivacyOwnerOutcomeWorker } from './src/workers/report-privacy-owner-outcome.worker.ts';
 import { setLanguagePolicyAction } from './src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from './src/actions/submit-communication-request.action.ts';
 // </generated-module-registration-imports>
@@ -64,6 +65,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
     // <generated-module-registration-workers>
     prepareMessageHandoffWorker,
     receivePrivacyMeasureWorker,
+    reportPrivacyOwnerOutcomeWorker,
     // </generated-module-registration-workers>
   ],
   reads: [

@@ -184,8 +184,18 @@ const FiniteGatewayOperationTargetSchema = Schema.Struct({
   schemaVersion: Schema.NonEmptyString.check(Schema.isMaxLength(40), Schema.isTrimmed()),
 });
 export type FiniteGatewayOperationTarget = typeof FiniteGatewayOperationTargetSchema.Type;
+/**
+ * The consumer's own follow-up of a reported outcome: an Action of the consumer that a human ran later, the consumer's own
+ * message of that Action and the consumer's own worker that carries it. Derived from the composition, never from the wire.
+ */
+const FiniteDispatchContinuationAuthoritySchema = Schema.Struct({
+  actionKey: ActionKeySchema,
+  topic: routeIdentity,
+  workerKey: WorkerKeySchema,
+});
 const FiniteDispatchAuthoritySchema = Schema.Struct({
   consumerModuleKey: WorkerModuleKeySchema,
+  continuation: Schema.optionalKey(FiniteDispatchContinuationAuthoritySchema),
   originActionKey: ActionKeySchema,
   originCapabilityKey: DeclarationKeySchema,
   producerModuleKey: WorkerModuleKeySchema,
@@ -203,6 +213,8 @@ const SealedFiniteDispatchAuthoritySchema = Schema.Struct({
 export const RegisteredGatewayPrivacyDispatchSchema = Schema.Struct({
   authority: Schema.optionalKey(FiniteDispatchAuthoritySchema),
   claimId: Schema.optionalKey(ClaimIdSchema),
+  /** Only a continuation: the consumer's own claimed delivery that carries the later human-recorded outcome. */
+  continuationDeliveryId: Schema.optionalKey(decodedStringBrand(uuid, 'PrivacyDispatchContinuationDeliveryId')),
   deliveryId: decodedStringBrand(uuid, 'PrivacyDispatchDeliveryId'),
   dispatchInvocationId: AdmissionInvocationIdSchema,
   domainEventId: decodedStringBrand(uuid, 'PrivacyDispatchDomainEventId'),
@@ -213,7 +225,7 @@ export const RegisteredGatewayPrivacyDispatchSchema = Schema.Struct({
   operation: PrivacyDispatchOperationSchema,
   principalId: PrincipalIdSchema,
   requestHash: RequestHashSchema,
-  sourceMode: Schema.Literals(['worker', 'dispatch']),
+  sourceMode: Schema.Literals(['worker', 'dispatch', 'continuation']),
   target: Schema.optionalKey(FiniteGatewayOperationTargetSchema),
   taskId: decodedStringBrand(Schema.NonEmptyString, 'PrivacyTaskId'),
   tenantId: TenantIdSchema,
@@ -221,6 +233,18 @@ export const RegisteredGatewayPrivacyDispatchSchema = Schema.Struct({
   workerModuleKey: Schema.optionalKey(WorkerModuleKeySchema),
 }).check(
   Schema.makeFilter((value) => {
+    if (value.sourceMode === 'continuation') {
+      return value.claimId !== undefined &&
+        value.workerKey !== undefined &&
+        value.workerModuleKey !== undefined &&
+        value.continuationDeliveryId !== undefined &&
+        value.operation === 'PrivacyOutcome'
+        ? undefined
+        : 'A Privacy dispatch continuation reports exactly one outcome under its current native claim';
+    }
+    if (value.continuationDeliveryId !== undefined) {
+      return 'Only a Privacy dispatch continuation names a continuation delivery';
+    }
     if (value.sourceMode === 'worker') {
       return value.claimId !== undefined && value.workerKey !== undefined && value.workerModuleKey !== undefined
         ? undefined
@@ -370,6 +394,22 @@ const freezeRegisteredGatewayWorkload = (workload: RegisteredGatewayWorkload): R
   return Object.freeze({ ...workload });
 };
 
+/** The worker a dispatch names is exactly the one its derived authority approves for its source mode. */
+const privacyDispatchWorkerMatchesAuthority = (
+  dispatch: RegisteredGatewayPrivacyDispatch,
+  authority: FiniteDispatchAuthority,
+): boolean => {
+  if (dispatch.sourceMode === 'dispatch') {
+    return true;
+  }
+  const workerKey = dispatch.sourceMode === 'continuation' ? authority.continuation?.workerKey : authority.workerKey;
+  return (
+    workerKey !== undefined &&
+    dispatch.workerKey === workerKey &&
+    dispatch.workerModuleKey === authority.consumerModuleKey
+  );
+};
+
 const privacyDispatchMatchesPrincipal = (
   dispatch: RegisteredGatewayPrivacyDispatch,
   context: TrustedPrincipalContext,
@@ -380,9 +420,7 @@ const privacyDispatchMatchesPrincipal = (
   Schema.is(RegisteredGatewayPrivacyDispatchSchema)(dispatch) &&
   dispatch.target !== undefined &&
   dispatch.authority !== undefined &&
-  (dispatch.sourceMode === 'dispatch' ||
-    (dispatch.workerKey === dispatch.authority.workerKey &&
-      dispatch.workerModuleKey === dispatch.authority.consumerModuleKey)) &&
+  privacyDispatchWorkerMatchesAuthority(dispatch, dispatch.authority) &&
   actor !== undefined &&
   workload === undefined &&
   route === undefined &&
@@ -427,7 +465,14 @@ const freezeFiniteGatewayMetadata = <
     Object.assign(snapshot, { target: Object.freeze({ ...metadata.target }) });
   }
   if (metadata.authority !== undefined) {
-    Object.assign(snapshot, { authority: Object.freeze({ ...metadata.authority }) });
+    const { continuation } = metadata.authority;
+    Object.assign(snapshot, {
+      authority: Object.freeze(
+        continuation === undefined
+          ? { ...metadata.authority }
+          : { ...metadata.authority, continuation: Object.freeze({ ...continuation }) },
+      ),
+    });
   }
   return Object.freeze(snapshot);
 };

@@ -185,16 +185,19 @@ describe('No automatic destructive mechanism (#1410 AC-05 AC-12, PRIV-COM-05/06/
     ).toEqual([]);
   });
 
-  it('registers exactly two workers, the pre-handoff worker and the Privacy handoff recorder: no expiry, retention, cleanup or disposition worker exists', () => {
+  it('registers exactly three workers, the pre-handoff worker, the Privacy handoff recorder and its outcome reporter: no expiry, retention, cleanup or disposition worker exists', () => {
     expect(outboxWorkers.map((worker) => worker.descriptor.workerKey)).toEqual([
       'communications.core.prepare-message-handoff',
       'communications.core.receive-privacy-measure',
+      'communications.core.report-privacy-owner-outcome',
     ]);
   });
 
   it('keeps the Privacy measure worker, receipt Read, evidence Action and their stores to append-only records', () => {
     const files = [
       'src/workers/receive-privacy-measure.worker.ts',
+      'src/workers/report-privacy-owner-outcome.worker.ts',
+      'shared/outbox/communications-core-owner-execution-evidence-recorded-v1.ts',
       'src/api/privacy-owner-execution-outcome.read.ts',
       'src/actions/record-owner-execution-evidence.action.ts',
       'src/services/privacy-owner-execution-receipt.service.ts',

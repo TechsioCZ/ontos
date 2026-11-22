@@ -35,6 +35,10 @@ const privacyMeasureReporterLive = Layer.effect(
         operations
           .report(handoff, attempt, context)
           .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(HttpClient.HttpClient, httpClient)),
+      reportRecorded: (continuation, context) =>
+        operations
+          .reportRecorded(continuation, context)
+          .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(HttpClient.HttpClient, httpClient)),
     });
   }),
 );

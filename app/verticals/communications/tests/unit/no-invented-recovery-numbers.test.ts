@@ -32,7 +32,10 @@ const CORE_REDRIVE_WORKER = 'src/workers/prepare-message-handoff.worker.ts';
 // The Privacy handoff worker is the one other Core worker definition: it governs redelivery of the same Privacy message to the
 // same idempotent record step (the generated defaults, no number of its own) and is never read by any recovery code.
 const CORE_HANDOFF_RECORD_WORKER = 'src/workers/receive-privacy-measure.worker.ts';
-const CORE_WORKER_DEFINITIONS = [CORE_REDRIVE_WORKER, CORE_HANDOFF_RECORD_WORKER];
+// The Privacy continuation worker likewise only redelivers the same continuation message to the same idempotent report
+// (the generated defaults, no number of its own); it reports a recorded confirmation and never recovers a message.
+const CORE_CONTINUATION_WORKER = 'src/workers/report-privacy-owner-outcome.worker.ts';
+const CORE_WORKER_DEFINITIONS = [CORE_REDRIVE_WORKER, CORE_HANDOFF_RECORD_WORKER, CORE_CONTINUATION_WORKER];
 
 const NUMERIC_LIMIT_AFTER =
   /\b(?:attempts?|retr(?:y|ies)|tries|submitted|attemptNumber|maxAttempts|limit)\w*(?:\.length)?\s*(?:>=|<=|===|!==|==|>|<)\s*\d/iu;

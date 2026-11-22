@@ -3,7 +3,7 @@
 // @ontos-action-slug record-owner-execution-evidence
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 
 import { OwnerExecutionEvidenceErrorSchema } from '../../shared/owner-execution-evidence-errors.ts';
 import {
@@ -13,9 +13,14 @@ import {
 import type { RecordOwnerExecutionEvidencePayload } from '../../shared/owner-execution-evidence.ts';
 import { OwnerExecutionEvidence, ownerExecutionEvidenceFor } from '../services/owner-execution-evidence.service.ts';
 import type { OwnerExecutionEvidenceService } from '../services/owner-execution-evidence.service.ts';
+import {
+  OutboxPayloadSchema as OwnerExecutionEvidenceRecordedPayloadSchema,
+  outboxTopic as OWNER_EXECUTION_EVIDENCE_RECORDED,
+} from '../../shared/outbox/communications-core-owner-execution-evidence-recorded-v1.ts';
+import { createRecordOwnerExecutionEvidenceCommunicationsCoreOwnerExecutionEvidenceRecordedV1OutboxMessage } from './record-owner-execution-evidence-communications-core-owner-execution-evidence-recorded-v1.outbox-message.ts';
 
 const MODULE_KEY = 'communications.core';
-const domainEvents = {} as const;
+const domainEvents = { [OWNER_EXECUTION_EVIDENCE_RECORDED]: OwnerExecutionEvidenceRecordedPayloadSchema } as const;
 interface Services {
   readonly evidence: OwnerExecutionEvidenceService;
 }
@@ -23,14 +28,33 @@ interface Services {
 /**
  * Records ONE authorized human's confirmation about a measure's execution, for exactly the recorded handoff. It is the only
  * way a measure leaves the received state, and it never executes, changes or removes anything: an owner operation is a
- * separate, separately approved act that the human confirms here afterwards.
+ * separate, separately approved act that the human confirms here afterwards. Newly stored evidence also queues ONE
+ * self-outbox message naming the original Privacy dispatch and the next receipt attempt, so the owner's continuation worker
+ * can tell Privacy to read the receipt; the message carries no outcome, and a replay queues nothing.
  */
 export const handleRecordOwnerExecutionEvidence = Effect.fn('RecordOwnerExecutionEvidenceAction.handle')(
   function* handleRecordOwnerExecutionEvidence(
     payload: RecordOwnerExecutionEvidencePayload,
     context: ActionHandlerContext<typeof domainEvents, Services>,
   ) {
-    const result = yield* context.services.evidence.record(payload, context.actionInvocationId);
+    const { continuation, result } = yield* context.services.evidence.record(payload, context.actionInvocationId);
+    if (Option.isSome(continuation)) {
+      const event = yield* context.addDomainEvent({
+        eventType: OWNER_EXECUTION_EVIDENCE_RECORDED,
+        payloadJson: continuation.value,
+        producerModuleKey: MODULE_KEY,
+        subjectModuleKey: MODULE_KEY,
+        subjectResourceId: continuation.value.measureId,
+        subjectResourceType: 'communications.core.privacy-measure-handoff',
+      });
+      yield* context.addOutboxMessage(
+        event,
+        createRecordOwnerExecutionEvidenceCommunicationsCoreOwnerExecutionEvidenceRecordedV1OutboxMessage(
+          continuation.value,
+        ),
+        { consumerModuleKey: MODULE_KEY },
+      );
+    }
     yield* context.recordDataAccess({
       accessKind: 'read',
       queryHash: 'communications.core:privacy-measure-evidence:record',
@@ -80,4 +104,9 @@ export const recordOwnerExecutionEvidenceAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { createRecordOwnerExecutionEvidenceCommunicationsCoreOwnerExecutionEvidenceRecordedV1OutboxMessage } from './record-owner-execution-evidence-communications-core-owner-execution-evidence-recorded-v1.outbox-message.ts';
+export { RecordOwnerExecutionEvidenceCommunicationsCoreOwnerExecutionEvidenceRecordedV1OutboxPayloadSchema } from './record-owner-execution-evidence-communications-core-owner-execution-evidence-recorded-v1.outbox-message.ts';
+export { RecordOwnerExecutionEvidenceCommunicationsCoreOwnerExecutionEvidenceRecordedV1OutboxProducerModuleKey } from './record-owner-execution-evidence-communications-core-owner-execution-evidence-recorded-v1.outbox-message.ts';
+export { RecordOwnerExecutionEvidenceCommunicationsCoreOwnerExecutionEvidenceRecordedV1OutboxTopic } from './record-owner-execution-evidence-communications-core-owner-execution-evidence-recorded-v1.outbox-message.ts';
+export type { RecordOwnerExecutionEvidenceCommunicationsCoreOwnerExecutionEvidenceRecordedV1OutboxPayload } from './record-owner-execution-evidence-communications-core-owner-execution-evidence-recorded-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

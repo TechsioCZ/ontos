@@ -1,8 +1,15 @@
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import {
+  readVerifiedGatewayPrivacyDispatch,
+  RegisteredGatewayPrivacyDispatchSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Redacted, Schema } from 'effect';
+import { Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
+  communicationsReceiptSubject,
   fingerprintCommunicationsOwnerHandoff,
   resolveCommunicationsOwnerExecutionReceipt,
 } from '../../src/integrations/communications-owner-execution-authority.ts';
@@ -202,3 +209,156 @@ it.effect(
       );
     }).pipe(Effect.provide(NodeCrypto.layer)),
 );
+
+type ReceiptSubject = Option.Option.Value<ReturnType<typeof communicationsReceiptSubject>>;
+const receiptAttemptOf = (operation: Extract<ReceiptSubject, { readonly _tag: 'PrivacyDispatch' }>['operation']) =>
+  Match.value(operation).pipe(
+    Match.tag('CommunicationsReceipt', (receipt) => receipt.attempt ?? null),
+    Match.orElse(() => null),
+  );
+const describeReceiptSource = (
+  dispatch: Extract<ReceiptSubject, { readonly _tag: 'PrivacyDispatch' }>,
+): Readonly<Record<string, number | string | null>> =>
+  Match.value(dispatch.source).pipe(
+    Match.tag('Dispatch', (durable) => ({
+      attempt: receiptAttemptOf(dispatch.operation),
+      dispatchInvocationId: durable.dispatchInvocationId,
+      kind: 'durable receipt read',
+      operationRequirementKey: dispatch.operationRequirementKey ?? null,
+    })),
+    Match.tag('Assertion', () => ({ kind: 'carrier continuation' })),
+    Match.orElse(() => ({ kind: 'other' })),
+  );
+/** What a receipt subject asks for, read through its own tags. */
+const describeReceiptSubject = (subject: ReceiptSubject) =>
+  Match.value(subject).pipe(
+    Match.tag('PrivacyDispatch', describeReceiptSource),
+    Match.orElse(() => ({ kind: 'other' })),
+  );
+
+it('reads the receipt of a pushed continuation through its own durable read, and continues only a take-over carrier', () => {
+  const tenantId = '76000000-0000-4000-8000-000000000001';
+  const legalEntityId = '76000000-0000-4000-8000-000000000002';
+  const principalId = '76000000-0000-4000-8000-000000000003';
+  const dispatchInvocationId = '76000000-0000-4000-8000-000000000004';
+  const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
+    ...makeMeasureExecutionFixture(tenantId).handoff,
+    ownerScope,
+    owningCapability: 'communications.core',
+  });
+  const human = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+    authBindingId: '76000000-0000-4000-8000-000000000005',
+    authContextRef: 'FICTIONAL-session',
+    authMethod: 'session',
+    legalEntityId,
+    principalId,
+    tenantId,
+  });
+  const authority = {
+    consumerModuleKey: 'communications.core',
+    originActionKey: 'privacy.core.dispatch-privacy-measure',
+    originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+    producerModuleKey: 'privacy.core',
+    subjectResourceType: 'privacy.core.privacy-measure',
+    targetAccess: 'delegated-actor',
+    topic: 'privacy.measure.dispatched',
+    workerKey: 'communications.core.receive-privacy-measure',
+  } as const;
+  const takeOver = {
+    authority,
+    claimId: 'FICTIONAL-claim',
+    deliveryId: '76000000-0000-4000-8000-000000000008',
+    dispatchInvocationId,
+    domainEventId: '76000000-0000-4000-8000-000000000009',
+    governanceLegalEntityId: legalEntityId,
+    handoffHash: 'b'.repeat(64),
+    measureId: handoff.measureId,
+    messageId: '76000000-0000-4000-8000-000000000010',
+    operation: 'PrivacyOutcome',
+    principalId,
+    requestHash: 'c'.repeat(64),
+    sourceMode: 'worker',
+    target: {
+      access: 'write',
+      appId: 'privacy',
+      declarationKey: 'privacy.core.owner-execution-outcome.record',
+      entrypointKey: 'privacy.core.record-owner-execution-outcome',
+      legalEntityScope: 'required',
+      moduleId: 'privacy.core',
+      schemaVersion: '1',
+    },
+    taskId: handoff.taskId,
+    tenantId,
+    workerKey: 'communications.core.receive-privacy-measure',
+    workerModuleKey: 'communications.core',
+  } as const;
+  const continuationOf = (
+    overrides: Partial<Record<'dispatchInvocationId' | 'measureId' | 'taskId', string>> = {},
+  ): typeof RegisteredGatewayPrivacyDispatchSchema.Encoded => ({
+    ...takeOver,
+    authority: {
+      ...authority,
+      continuation: {
+        actionKey: 'communications.core.record-owner-execution-evidence',
+        topic: 'communications.core.owner-execution-evidence-recorded.v1',
+        workerKey: 'communications.core.report-privacy-owner-outcome',
+      },
+    },
+    continuationDeliveryId: '76000000-0000-4000-8000-000000000007',
+    sourceMode: 'continuation',
+    workerKey: 'communications.core.report-privacy-owner-outcome',
+    ...overrides,
+  });
+  const sealed = (metadata: typeof RegisteredGatewayPrivacyDispatchSchema.Encoded) =>
+    readVerifiedGatewayPrivacyDispatch(
+      trustVerifiedGatewayPrincipalContext(
+        human,
+        'a'.repeat(64),
+        undefined,
+        {
+          appId: 'communications',
+          buildMarker: 'FICTIONAL-build',
+          principalId: '76000000-0000-4000-8000-000000000006',
+        },
+        undefined,
+        undefined,
+        Schema.decodeUnknownSync(RegisteredGatewayPrivacyDispatchSchema)(metadata),
+      ),
+    );
+  const context = {
+    handoff,
+    legalEntityId,
+    principalId,
+    scope: {
+      authMethod: 'session' as const,
+      correlationId: 'FICTIONAL-correlation',
+      legalEntityId,
+      principalId,
+      tenantId,
+    },
+    tenantId,
+  };
+  const originator = { actionInvocationId: dispatchInvocationId, compositionRevision: 'a'.repeat(64) };
+  const request = { attempt: 3, measureId: handoff.measureId, taskId: handoff.taskId };
+  /** Which receipt source Privacy chooses: its durable read of the dispatch, the carrier's continuation, or none. */
+  const sourceOf = (dispatch?: ReturnType<typeof sealed>) =>
+    Option.map(communicationsReceiptSubject(request, context, originator, dispatch), describeReceiptSubject);
+  const durable = Option.some({
+    attempt: 3,
+    dispatchInvocationId,
+    kind: 'durable receipt read',
+    operationRequirementKey: 'privacy.core.requirement.communications-owner-execution-outcome',
+  });
+  expect(sourceOf(sealed(continuationOf()))).toEqual(durable);
+  // a later pull with no carrier reads the same way; only the take-over carrier is continued
+  expect(sourceOf()).toEqual(durable);
+  expect(sourceOf(sealed(takeOver))).toEqual(Option.some({ kind: 'carrier continuation' }));
+  // a continuation of another dispatch, measure or task is never read for this one
+  for (const overrides of [
+    { dispatchInvocationId: '76000000-0000-4000-8000-000000000011' },
+    { measureId: 'FICTIONAL-another-measure' },
+    { taskId: 'FICTIONAL-another-task' },
+  ]) {
+    expect(Option.isNone(sourceOf(sealed(continuationOf(overrides))))).toBe(true);
+  }
+});

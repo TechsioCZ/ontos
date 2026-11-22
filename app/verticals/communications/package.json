@@ -10,11 +10,12 @@
     "./api/privacy-owner-coverage": "./shared/apis/privacy-owner-coverage.ts",
     "./api/privacy-owner-execution-outcome": "./shared/apis/privacy-owner-execution-outcome.ts",
     "./api/privacy-owner-execution-outcome/client": "./src/api/privacy-owner-execution-outcome-client.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
+    "./outbox/communications-core-message-intent-prepared-v1": "./shared/outbox/communications-core-message-intent-prepared-v1.ts",
+    "./outbox/communications-core-owner-execution-evidence-recorded-v1": "./shared/outbox/communications-core-owner-execution-evidence-recorded-v1.ts",
     "./privacy-owner/coverage": "./shared/privacy-owner/coverage.ts",
     "./privacy-owner/inventory": "./shared/privacy-owner/inventory.ts",
     "./privacy-owner/outcome": "./shared/privacy-owner/outcome.ts",
-    "./outbox/communications-core-message-intent-prepared-v1": "./shared/outbox/communications-core-message-intent-prepared-v1.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./testing/source-owner-world": "./tests/support/source-owner-world.ts"
   },
   "scripts": {

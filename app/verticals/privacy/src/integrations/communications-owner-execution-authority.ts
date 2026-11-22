@@ -108,6 +108,48 @@ export const resolveCommunicationsOwnerExecutionReceipt = Effect.fn('Privacy.Com
 );
 
 /**
+ * How Privacy asks for the receipt of one stored Communications dispatch. Without a carrier (a later pull) and under a
+ * continuation carrier (a later human-recorded confirmation the owner pushed) it is Privacy's own durable receipt read of
+ * the original dispatch: a continuation reports one outcome and is never continued, so the report never supplies the
+ * result. Under the take-over worker's carrier it continues that exact carrier. A carrier of another dispatch is none.
+ */
+export const communicationsReceiptSubject = (
+  request: OwnerExecutionOutcomeRequest,
+  context: Pick<OwnerExecutionAuthorityContext, 'handoff' | 'legalEntityId' | 'principalId' | 'scope' | 'tenantId'>,
+  originator: NonNullable<OwnerExecutionAuthorityContext['dispatchOriginator']>,
+  dispatch: ReturnType<typeof readVerifiedGatewayPrivacyDispatch>,
+): Option.Option<GatewayDelegationSubject> => {
+  if (
+    dispatch !== undefined &&
+    (dispatch.dispatchInvocationId !== originator.actionInvocationId ||
+      dispatch.measureId !== context.handoff.measureId ||
+      dispatch.taskId !== context.handoff.taskId ||
+      dispatch.tenantId !== context.tenantId ||
+      dispatch.governanceLegalEntityId !== context.legalEntityId ||
+      dispatch.principalId !== context.principalId ||
+      dispatch.operation !== 'PrivacyOutcome')
+  ) {
+    return Option.none();
+  }
+  const source =
+    dispatch === undefined || dispatch.sourceMode === 'continuation'
+      ? {
+          _tag: 'Dispatch' as const,
+          compositionRevision: originator.compositionRevision,
+          dispatchInvocationId: originator.actionInvocationId,
+          legalEntityId: context.legalEntityId,
+          tenantId: context.tenantId,
+        }
+      : { _tag: 'Assertion' as const, scope: context.scope };
+  return Option.some({
+    _tag: 'PrivacyDispatch',
+    operation: { _tag: 'CommunicationsReceipt', attempt: request.attempt },
+    operationRequirementKey: communicationsReceiptRequirement,
+    source,
+  });
+};
+
+/**
  * Communications' owner receipt through the finite dispatch capability, in front of the authority it is composed with: every
  * other owner is answered by that authority exactly as before. The finite carrier preserves the original human and
  * governance scope for current processing and durable receipt recovery.
@@ -127,46 +169,21 @@ export const CommunicationsOwnerExecutionAuthorityLive = Layer.effect(
           return yield* unavailable();
         }
         yield* requireModuleOperation(communicationsReceiptRequirement).pipe(Effect.mapError(unavailable));
-        const dispatch = readVerifiedGatewayPrivacyDispatch(context.scope);
-        let subject: GatewayDelegationSubject;
-        if (dispatch === undefined) {
-          subject = {
-            _tag: 'PrivacyDispatch',
-            operation: { _tag: 'CommunicationsReceipt', attempt: request.attempt },
-            operationRequirementKey: communicationsReceiptRequirement,
-            source: {
-              _tag: 'Dispatch',
-              compositionRevision: originator.compositionRevision,
-              dispatchInvocationId: originator.actionInvocationId,
-              legalEntityId: context.legalEntityId,
-              tenantId: context.tenantId,
-            },
-          };
-        } else {
-          if (
-            dispatch.dispatchInvocationId !== originator.actionInvocationId ||
-            dispatch.measureId !== context.handoff.measureId ||
-            dispatch.taskId !== context.handoff.taskId ||
-            dispatch.tenantId !== context.tenantId ||
-            dispatch.governanceLegalEntityId !== context.legalEntityId ||
-            dispatch.principalId !== context.principalId ||
-            dispatch.operation !== 'PrivacyOutcome'
-          ) {
-            return yield* conflict('The current Privacy dispatch carrier does not match the stored handoff');
-          }
-          subject = {
-            _tag: 'PrivacyDispatch',
-            operation: { _tag: 'CommunicationsReceipt', attempt: request.attempt },
-            operationRequirementKey: communicationsReceiptRequirement,
-            source: { _tag: 'Assertion', scope: context.scope },
-          };
+        const subject = communicationsReceiptSubject(
+          request,
+          context,
+          originator,
+          readVerifiedGatewayPrivacyDispatch(context.scope),
+        );
+        if (Option.isNone(subject)) {
+          return yield* conflict('The current Privacy dispatch carrier does not match the stored handoff');
         }
         const issued = yield* acquireDelegatedGatewayContext(
           {
             audience: 'communications',
             legalEntityScope: 'subject',
             requestCorrelation: context.scope.correlationId,
-            subject,
+            subject: subject.value,
           },
           crypto,
         ).pipe(Effect.mapError(unavailable));

@@ -1,0 +1,5580 @@
+{
+  "id": "d30895cc-f6ea-4e66-8a99-8e2c945ba863",
+  "prevIds": [
+    "0ef080f5-99fd-4063-95c4-fc338f7728dc",
+    "5fff551e-0dbd-4e07-9d32-f3cdec010eb0"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "communications",
+      "entityType": "schemas"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "attempt_retry_links",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "communication_decisions",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "communication_request_conflicts",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "communication_requests",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "delivery_attempts",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "intent_document_pins",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "intent_handoff_stops",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "intent_recovery_evaluations",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "intent_resend_links",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "message_intents",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "privacy_execution_evidence",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "privacy_measure_handoffs",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "provider_observation_conflict_resolutions",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "provider_observation_conflicts",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "provider_observations",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "template_activations",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "template_revision_invalidations",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "template_revisions",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "template_types",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "isRlsEnabled": true,
+      "name": "tenant_language_mode_versions",
+      "entityType": "tables"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "basis_kind",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "basis_observation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "linked_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "previous_attempt_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason_code",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decided_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "language_policy",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "no_message_reason",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "requiredness",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rule_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "type_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "type_revision",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "unresolved_slots",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "conflict_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "detected_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fingerprint",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fingerprint",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "identity_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "occurrence_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "occurrence_revision",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "payload",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "received_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_module",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_number",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "finished_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "prepared_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "gateway_assertion_redemptions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "gateway_assertion_redemptions",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "gateway_assertion_redemptions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "gateway_assertion_redemptions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "gateway_assertion_redemptions",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "redeemed_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "asset_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "asset_module",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "asset_type",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "classification",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "document_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "document_module",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "document_type",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "form",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "pinned_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "position",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "evaluation_seq",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": {
+        "as": "jsonb_path_exists(\"reasons\", '$[*] ? (@.proven == true)')",
+        "type": "stored"
+      },
+      "identity": null,
+      "name": "proven",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reasons",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "basis_attempt_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "code",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evaluated_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evaluation_seq",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": {
+        "as": "jsonb_path_exists(\"reasons\", '$[*] ? (@.proven == true)')",
+        "type": "stored"
+      },
+      "identity": null,
+      "name": "proven",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reasons",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "linked_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "original_intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason_code",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "resend_intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "decision_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "endpoint_pin",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "handoff_pin",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "language",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "language_decision",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "original_binding",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "policy_ref",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "processing_scope",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recipient_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recipient_module",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recipient_role",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recipient_type",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "slot_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "template_revision_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "template_revision_number",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_mode",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "type_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "type_revision",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "confirmation_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_ref",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "phase",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "results",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_digest",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "handoff_fingerprint",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "measure_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "originator_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "received_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_digest",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_decision_ref",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_decision_revision",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_content_refs",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "task_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "basis_observation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "conflict_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason_code",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "resolution_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "resolved_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "conflict_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "content_fingerprint",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observation_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observed_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provider_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": {
+        "type": "always",
+        "name": "provider_observation_conflicts_recorded_seq_seq",
+        "increment": "1",
+        "startWith": "1",
+        "minValue": "1",
+        "maxValue": "9223372036854775807",
+        "cache": 1,
+        "cycle": false
+      },
+      "name": "recorded_seq",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attempt_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "intent_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observation_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observed_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provider_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provider_ref",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": {
+        "type": "always",
+        "name": "provider_observations_recorded_seq_seq",
+        "increment": "1",
+        "startWith": "1",
+        "minValue": "1",
+        "maxValue": "9223372036854775807",
+        "cache": 1,
+        "cycle": false
+      },
+      "name": "recorded_seq",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "activated_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "activated_by_principal_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "activation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "activation_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "activation_reason",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_by_principal_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_kind",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "end_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "end_reason",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "template_type_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "invalidated_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "invalidated_by_principal_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "invalidation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "body",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "content_digest",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_principal_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "optional_placeholders",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "placeholders_used",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "required_placeholders",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "template_type_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channel",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_principal_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "language",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "message_type",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_key",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_kind",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "template_type_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "mode",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "policy_version_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "set_at",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "set_by_principal_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version_number",
+      "entityType": "columns"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "previous_attempt_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_retry_links_previous_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "gateway_assertion_redemptions",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_gateway_assertion_redemptions_expiry_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "original_intent_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_resend_links_original_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "request_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_intents_request_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "idempotency_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_privacy_evidence_handoff_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "intent_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_conflict_resolutions_intent_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "intent_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_observation_conflicts_intent_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "intent_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_observations_intent_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "template_type_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"ended_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_template_activations_open_uk",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "revision_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "communications_template_activations_revision_idx",
+      "entityType": "indexes"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "delivery_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_retry_links_attempt_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "previous_attempt_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "delivery_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_retry_links_previous_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "basis_observation_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "provider_observations",
+      "columnsTo": [
+        "tenant_id",
+        "observation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_retry_links_basis_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "request_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "communication_requests",
+      "columnsTo": [
+        "tenant_id",
+        "request_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_decisions_request_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "request_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "communication_requests",
+      "columnsTo": [
+        "tenant_id",
+        "request_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_request_conflicts_request_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "message_intents",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_attempts_intent_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "message_intents",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_document_pins_intent_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "message_intents",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_handoff_stops_intent_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "basis_attempt_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "delivery_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_recovery_evaluations_attempt_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "original_intent_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "message_intents",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_resend_links_original_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "resend_intent_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "message_intents",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_resend_links_resend_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "decision_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "communication_decisions",
+      "columnsTo": [
+        "tenant_id",
+        "decision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_intents_decision_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "privacy_measure_handoffs",
+      "columnsTo": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_privacy_evidence_handoff_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "conflict_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "provider_observation_conflicts",
+      "columnsTo": [
+        "tenant_id",
+        "conflict_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_conflict_resolutions_conflict_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "delivery_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_conflict_resolutions_attempt_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "basis_observation_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "provider_observations",
+      "columnsTo": [
+        "tenant_id",
+        "observation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_conflict_resolutions_basis_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "delivery_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_observation_conflicts_attempt_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "observation_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "provider_observations",
+      "columnsTo": [
+        "tenant_id",
+        "observation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_observation_conflicts_observation_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "delivery_attempts",
+      "columnsTo": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_observations_attempt_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "revision_id",
+        "template_type_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "template_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "revision_id",
+        "template_type_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_template_activations_revision_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "template_type_id",
+        "scope_key"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "template_types",
+      "columnsTo": [
+        "tenant_id",
+        "template_type_id",
+        "scope_key"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_template_activations_type_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "revision_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "template_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_template_revision_invalidations_revision_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "template_type_id"
+      ],
+      "schemaTo": "communications",
+      "tableTo": "template_types",
+      "columnsTo": [
+        "tenant_id",
+        "template_type_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "communications_template_revisions_type_fk",
+      "entityType": "fks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "position"
+      ],
+      "nameExplicit": true,
+      "name": "communications_document_pins_pk",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "columns": [
+        "tenant_id",
+        "evidence_ref"
+      ],
+      "nameExplicit": true,
+      "name": "communications_privacy_evidence_pk",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "columns": [
+        "tenant_id",
+        "idempotency_key"
+      ],
+      "nameExplicit": true,
+      "name": "communications_privacy_handoffs_pk",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "columns": [
+        "attempt_id"
+      ],
+      "nameExplicit": false,
+      "name": "attempt_retry_links_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "columns": [
+        "decision_id"
+      ],
+      "nameExplicit": false,
+      "name": "communication_decisions_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "columns": [
+        "conflict_id"
+      ],
+      "nameExplicit": false,
+      "name": "communication_request_conflicts_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "columns": [
+        "request_id"
+      ],
+      "nameExplicit": false,
+      "name": "communication_requests_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "columns": [
+        "attempt_id"
+      ],
+      "nameExplicit": false,
+      "name": "delivery_attempts_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "columns": [
+        "intent_id"
+      ],
+      "nameExplicit": false,
+      "name": "message_intents_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "columns": [
+        "resolution_id"
+      ],
+      "nameExplicit": false,
+      "name": "provider_observation_conflict_resolutions_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "columns": [
+        "conflict_id"
+      ],
+      "nameExplicit": false,
+      "name": "provider_observation_conflicts_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "columns": [
+        "observation_id"
+      ],
+      "nameExplicit": false,
+      "name": "provider_observations_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "columns": [
+        "activation_id"
+      ],
+      "nameExplicit": false,
+      "name": "template_activations_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "columns": [
+        "invalidation_id"
+      ],
+      "nameExplicit": false,
+      "name": "template_revision_invalidations_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "columns": [
+        "revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "template_revisions_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "columns": [
+        "template_type_id"
+      ],
+      "nameExplicit": false,
+      "name": "template_types_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "columns": [
+        "policy_version_id"
+      ],
+      "nameExplicit": false,
+      "name": "tenant_language_mode_versions_pkey",
+      "entityType": "pks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "decision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_decisions_tenant_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "request_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_decisions_request_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "request_id",
+        "fingerprint"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_request_conflicts_fingerprint_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "request_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_requests_tenant_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "identity_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_requests_identity_key_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "attempt_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_attempts_number_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "attempt_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_attempts_intent_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "gateway_assertion_redemptions",
+      "nameExplicit": true,
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_gateway_assertion_redemptions_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "evaluation_seq"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_handoff_stops_evaluation_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id",
+        "evaluation_seq"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_recovery_evaluations_seq_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "resend_intent_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_resend_links_resend_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_intents_tenant_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "intent_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_intents_key_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "conflict_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_conflict_resolutions_conflict_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "observation_id",
+        "content_fingerprint"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_observation_conflicts_content_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        "recorded_seq"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_observation_conflicts_seq_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "conflict_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_observation_conflicts_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "observation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_observations_tenant_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "attempt_id",
+        "provider_key",
+        "observation_key",
+        "kind"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_observations_provider_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "nameExplicit": true,
+      "columns": [
+        "recorded_seq"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_observations_seq_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_template_revision_invalidations_revision_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_template_revisions_tenant_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "revision_id",
+        "template_type_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_template_revisions_type_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "template_type_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_template_revisions_number_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "template_type_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_template_types_tenant_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "template_type_id",
+        "scope_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_template_types_scope_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "message_type",
+        "channel",
+        "language",
+        "scope_key"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_template_types_identity_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "version_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "communications_language_mode_versions_number_uk",
+      "entityType": "uniques"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "value": "\"attempt_id\" <> \"previous_attempt_id\"",
+      "name": "communications_retry_links_distinct_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "value": "\"reason_code\" ~ '^[A-Z][A-Z0-9_]{0,79}$'",
+      "name": "communications_retry_links_reason_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "value": "(\"basis_kind\" in ('PRIOR_NOT_ATTEMPTED', 'PRIOR_REJECTED') and \"basis_observation_id\" is null) or (\"basis_kind\" = 'RECONCILED_NON_ACCEPTANCE' and \"basis_observation_id\" is not null)",
+      "name": "communications_retry_links_basis_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "value": "\"outcome\" in ('MESSAGE_INTENTS', 'NO_MESSAGE')",
+      "name": "communications_decisions_outcome_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "value": "(\"outcome\" = 'NO_MESSAGE' and \"no_message_reason\" is not null) or (\"outcome\" = 'MESSAGE_INTENTS' and \"no_message_reason\" is null and \"type_id\" is not null and \"type_revision\" is not null)",
+      "name": "communications_decisions_shape_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "value": "\"occurrence_revision\" > 0",
+      "name": "communications_requests_revision_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "value": "\"attempt_number\" > 0",
+      "name": "communications_attempts_number_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "value": "\"state\" in ('ACCEPTED', 'INDETERMINATE', 'NOT_ATTEMPTED', 'PREPARED', 'REJECTED', 'UNAVAILABLE')",
+      "name": "communications_attempts_state_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "value": "\"position\" between 0 and 9",
+      "name": "communications_document_pins_position_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "value": "\"form\" in ('ATTACHMENT', 'LINK')",
+      "name": "communications_document_pins_form_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "value": "\"asset_module\" = 'core.media' and \"asset_type\" = 'core.media.asset' and \"revision\" = 1",
+      "name": "communications_document_pins_asset_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "value": "\"evaluation_seq\" > 0",
+      "name": "communications_handoff_stops_evaluation_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "value": "\"evaluation_seq\" > 0",
+      "name": "communications_recovery_evaluations_seq_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "value": "\"outcome\" in ('HALTED', 'STOPPED')",
+      "name": "communications_recovery_evaluations_outcome_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "value": "\"code\" ~ '^[A-Z][A-Z0-9_]{0,79}$'",
+      "name": "communications_recovery_evaluations_code_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "value": "jsonb_typeof(\"reasons\") = 'array' and ((\"outcome\" = 'HALTED' and jsonb_array_length(\"reasons\") = 0) or (\"outcome\" = 'STOPPED' and jsonb_array_length(\"reasons\") > 0))",
+      "name": "communications_recovery_evaluations_shape_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "value": "\"original_intent_id\" <> \"resend_intent_id\"",
+      "name": "communications_resend_links_distinct_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "value": "\"reason_code\" in ('PRIOR_DELIVERY_FAILED', 'RECIPIENT_NOT_RECEIVED', 'RECIPIENT_REQUESTED_COPY', 'SOURCE_APPROVED_RESEND')",
+      "name": "communications_resend_links_reason_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "value": "\"status\" in ('NOT_SENT', 'PENDING_HANDOFF', 'SUPPRESSED')",
+      "name": "communications_intents_status_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "value": "\"status\" <> 'PENDING_HANDOFF' or (\"endpoint_pin\" is not null and \"processing_scope\" is not null and \"language_decision\" is not null and \"language\" is not null and \"template_revision_id\" is not null and \"template_revision_number\" is not null and \"tenant_mode\" is not null and \"policy_ref\" is not null)",
+      "name": "communications_intents_pending_pins_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "value": "\"status\" = 'PENDING_HANDOFF' or \"reason\" is not null",
+      "name": "communications_intents_reason_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "value": "btrim(\"evidence_ref\") <> ''",
+      "name": "communications_privacy_evidence_identity_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "value": "\"phase\" in ('RECEIVED', 'IN_PROGRESS', 'COMPLETED')",
+      "name": "communications_privacy_evidence_phase_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "value": "\"scope_digest\" ~ '^[0-9a-f]{64}$'",
+      "name": "communications_privacy_evidence_scope_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "value": "btrim(\"idempotency_key\") <> '' and btrim(\"measure_id\") <> '' and btrim(\"task_id\") <> '' and btrim(\"source_decision_ref\") <> ''",
+      "name": "communications_privacy_handoffs_identity_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "value": "\"source_decision_revision\" >= 1",
+      "name": "communications_privacy_handoffs_revision_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "value": "\"handoff_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "communications_privacy_handoffs_fingerprint_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "value": "\"scope_digest\" ~ '^[0-9a-f]{64}$'",
+      "name": "communications_privacy_handoffs_scope_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "value": "jsonb_typeof(\"target_content_refs\") = 'array' and jsonb_array_length(\"target_content_refs\") > 0 and not jsonb_path_exists(\"target_content_refs\", '$[*] ? (@.type() != \"string\" || @ == \"\")')",
+      "name": "communications_privacy_handoffs_targets_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "value": "\"reason_code\" ~ '^[A-Z][A-Z0-9_]{0,79}$'",
+      "name": "communications_conflict_resolutions_reason_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "value": "\"kind\" in ('ACCEPTANCE_PROVEN', 'DELIVERY_FAILED', 'DELIVERY_PROVEN', 'NON_ACCEPTANCE_PROVEN')",
+      "name": "communications_observation_conflicts_kind_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "value": "\"observation_key\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$' and \"provider_key\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'",
+      "name": "communications_observation_conflicts_keys_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "value": "\"content_fingerprint\" ~ '^[0-9a-f]{64}$'",
+      "name": "communications_observation_conflicts_fingerprint_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "value": "\"kind\" in ('ACCEPTANCE_PROVEN', 'DELIVERY_FAILED', 'DELIVERY_PROVEN', 'NON_ACCEPTANCE_PROVEN')",
+      "name": "communications_observations_kind_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "value": "\"observation_key\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$' and \"provider_key\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$' and (\"provider_ref\" is null or \"provider_ref\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$')",
+      "name": "communications_observations_keys_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "value": "jsonb_typeof(\"evidence\") = 'object' and (\"evidence\" - array['basis', 'failureClass', 'kind']) = '{}'::jsonb and \"evidence\" ->> 'kind' = \"kind\" and (\"evidence\" ->> 'basis') in ('PROVIDER_EVENT', 'RECONCILIATION') and ((\"kind\" = 'DELIVERY_FAILED') = ((\"evidence\" ->> 'failureClass') is not null)) and (\"kind\" <> 'DELIVERY_FAILED' or (\"evidence\" ->> 'failureClass') in ('BOUNCED_PERMANENT', 'BOUNCED_TRANSIENT', 'DROPPED_BY_PROVIDER'))",
+      "name": "communications_observations_evidence_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "value": "(\"kind\" not in ('DELIVERY_PROVEN', 'DELIVERY_FAILED') or (\"evidence\" ->> 'basis') = 'PROVIDER_EVENT') and (\"kind\" <> 'NON_ACCEPTANCE_PROVEN' or (\"evidence\" ->> 'basis') = 'RECONCILIATION')",
+      "name": "communications_observations_basis_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "value": "(\"scope_key\" = 'tenant' and \"legal_entity_id\" is null) or (\"legal_entity_id\" is not null and \"scope_key\" = 'legal-entity:' || \"legal_entity_id\"::text)",
+      "name": "communications_template_activations_scope_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "value": "(\"ended_at\" is null and \"ended_kind\" is null and \"ended_by_principal_id\" is null and \"end_reason\" is null and \"end_invocation_id\" is null) or (\"ended_at\" is not null and \"ended_at\" >= \"activated_at\" and \"ended_kind\" in ('replaced', 'deactivated', 'invalidated-unsafe') and \"ended_by_principal_id\" is not null and \"end_reason\" is not null and \"end_invocation_id\" is not null)",
+      "name": "communications_template_activations_end_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "value": "\"revision_number\" > 0",
+      "name": "communications_template_revisions_number_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "value": "jsonb_typeof(\"required_placeholders\") = 'array' and jsonb_typeof(\"optional_placeholders\") = 'array' and jsonb_typeof(\"placeholders_used\") = 'array'",
+      "name": "communications_template_revisions_placeholders_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "value": "\"channel\" in ('email')",
+      "name": "communications_template_types_channel_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "value": "\"language\" in ('cs', 'en')",
+      "name": "communications_template_types_language_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "value": "(\"scope_kind\" = 'tenant' and \"legal_entity_id\" is null and \"scope_key\" = 'tenant') or (\"scope_kind\" = 'legal-entity' and \"legal_entity_id\" is not null and \"scope_key\" = 'legal-entity:' || \"legal_entity_id\"::text)",
+      "name": "communications_template_types_scope_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "value": "\"mode\" in ('A', 'B')",
+      "name": "communications_language_mode_versions_mode_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "value": "\"version_number\" > 0",
+      "name": "communications_language_mode_versions_number_ck",
+      "entityType": "checks"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"attempt_retry_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "attempt_retry_links_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"attempt_retry_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "attempt_retry_links_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"attempt_retry_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"attempt_retry_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "attempt_retry_links_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "attempt_retry_links",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"attempt_retry_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "attempt_retry_links_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communication_decisions_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"communication_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communication_decisions_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"communication_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communication_decisions_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_decisions",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_decisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communication_decisions_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_request_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communication_request_conflicts_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"communication_request_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communication_request_conflicts_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_request_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"communication_request_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communication_request_conflicts_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_request_conflicts",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_request_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communication_request_conflicts_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communication_requests_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"communication_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communication_requests_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"communication_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communication_requests_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "communication_requests",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"communication_requests\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communication_requests_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"delivery_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "delivery_attempts_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"delivery_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "delivery_attempts_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"delivery_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"delivery_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "delivery_attempts_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "delivery_attempts",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"delivery_attempts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "delivery_attempts_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_document_pins\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_document_pins_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"intent_document_pins\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_document_pins_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_document_pins\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"intent_document_pins\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_document_pins_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_document_pins",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_document_pins\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_document_pins_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_handoff_stops\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_handoff_stops_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"intent_handoff_stops\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_handoff_stops_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_handoff_stops\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"intent_handoff_stops\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_handoff_stops_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_handoff_stops",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_handoff_stops\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_handoff_stops_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_recovery_evaluations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_recovery_evaluations_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"intent_recovery_evaluations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_recovery_evaluations_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_recovery_evaluations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"intent_recovery_evaluations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_recovery_evaluations_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_recovery_evaluations",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_recovery_evaluations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_recovery_evaluations_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_resend_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_resend_links_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"intent_resend_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_resend_links_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_resend_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"intent_resend_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "intent_resend_links_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "intent_resend_links",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"intent_resend_links\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "intent_resend_links_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"message_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "message_intents_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"message_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "message_intents_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"message_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"message_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "message_intents_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "message_intents",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"message_intents\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "message_intents_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"privacy_execution_evidence\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_execution_evidence_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"privacy_execution_evidence\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "privacy_execution_evidence_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"privacy_execution_evidence\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"privacy_execution_evidence\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "privacy_execution_evidence_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"privacy_execution_evidence\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_execution_evidence_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"privacy_measure_handoffs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_measure_handoffs_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"privacy_measure_handoffs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "privacy_measure_handoffs_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"privacy_measure_handoffs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"privacy_measure_handoffs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "privacy_measure_handoffs_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "privacy_measure_handoffs",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"privacy_measure_handoffs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "privacy_measure_handoffs_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observation_conflict_resolutions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "provider_observation_conflict_resolutions_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"provider_observation_conflict_resolutions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "provider_observation_conflict_resolutions_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observation_conflict_resolutions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"provider_observation_conflict_resolutions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "provider_observation_conflict_resolutions_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflict_resolutions",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observation_conflict_resolutions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "provider_observation_conflict_resolutions_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observation_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "provider_observation_conflicts_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"provider_observation_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "provider_observation_conflicts_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observation_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"provider_observation_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "provider_observation_conflicts_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observation_conflicts",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observation_conflicts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "provider_observation_conflicts_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "provider_observations_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"provider_observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "provider_observations_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"provider_observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "provider_observations_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "provider_observations",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"provider_observations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "provider_observations_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_activations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_activations_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"template_activations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_activations_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_activations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"template_activations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_activations_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_activations",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_activations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_activations_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_revision_invalidations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_revision_invalidations_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"template_revision_invalidations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_revision_invalidations_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_revision_invalidations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"template_revision_invalidations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_revision_invalidations_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revision_invalidations",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_revision_invalidations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_revision_invalidations_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_revisions_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"template_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_revisions_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"template_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_revisions_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_revisions",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_revisions_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_types\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_types_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"template_types\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_types_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_types\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"template_types\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_template_types_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "template_types",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"template_types\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_template_types_delete",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"tenant_language_mode_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_language_mode_versions_select",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"communications\".\"tenant_language_mode_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_language_mode_versions_insert",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"tenant_language_mode_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"communications\".\"tenant_language_mode_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "communications_language_mode_versions_update",
+      "entityType": "policies"
+    },
+    {
+      "schema": "communications",
+      "table": "tenant_language_mode_versions",
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"communications\".\"tenant_language_mode_versions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "communications_language_mode_versions_delete",
+      "entityType": "policies"
+    },
+    {
+      "value": "jsonb_typeof(\"results\") = 'array' and (\"phase\" <> 'RECEIVED' or jsonb_array_length(\"results\") = 0) and not jsonb_path_exists(\"results\", '$[*] ? (@.type() != \"object\" || !exists(@.contentRef ? (@.type() == \"string\" && @ != \"\")) || !exists(@.result ? (@ == \"ANONYMIZED\" || @ == \"FAILED_AFTER_POSSIBLE_MUTATION\" || @ == \"FAILED_BEFORE_ANY_MUTATION\" || @ == \"NOT_EXECUTED\" || @ == \"RECTIFIED\" || @ == \"REMOVED\" || @ == \"RESTRICTED\")) || exists(@.keyvalue() ? (@.key != \"contentRef\" && @.key != \"reconcilesEvidenceRef\" && @.key != \"result\")) || exists(@.reconcilesEvidenceRef ? (@.type() != \"string\" || @ == \"\")))')",
+      "name": "communications_privacy_evidence_results_ck",
+      "schema": "communications",
+      "table": "privacy_execution_evidence",
+      "entityType": "checks"
+    }
+  ],
+  "renames": []
+}

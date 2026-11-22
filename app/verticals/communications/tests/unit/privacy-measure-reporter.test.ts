@@ -1,6 +1,7 @@
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
+import { PrivacyDispatchContinuationPayloadSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { FetchHttpClient } from 'effect/http';
 import { Effect, Layer, Schema } from 'effect';
@@ -73,5 +74,40 @@ it.effect('fails retryably, never silently, when the Composition does not provid
     // outside Core's execution lease the requirement cannot resolve: the delivery must fail and be retried, not complete
     const failed = yield* Effect.flip(report(attestOutboxWorkerHandlerContext(fields)));
     expect(failed).toMatchObject({ code: 'privacy_measure_report_unavailable', retryable: true });
+  }),
+);
+
+const continuationFields: OutboxWorkerHandlerContext = {
+  ...fields,
+  claimId: 'continuation-claim-1',
+  deliveryId: 'continuation-delivery-1',
+  producerModuleKey: 'communications.core',
+  topic: 'communications.core.owner-execution-evidence-recorded.v1',
+  workerKey: 'communications.core.report-privacy-owner-outcome',
+};
+const continuationPayload = Schema.decodeUnknownSync(PrivacyDispatchContinuationPayloadSchema)({
+  attempt: 2,
+  dispatchInvocationId: '00000000-0000-4000-8000-0000000000b1',
+  measureId: handoff.measureId,
+  taskId: handoff.taskId,
+});
+const reportRecorded = (context: OutboxWorkerHandlerContext) =>
+  privacyMeasureReporterService().pipe(
+    Effect.flatMap((service) => service.reportRecorded(continuationPayload, context)),
+    Effect.provide(transport),
+  );
+
+it.effect('reports a later human-recorded confirmation only from a native claimed continuation delivery', () =>
+  Effect.gen(function* continuationReport() {
+    // a caller-built context never reaches the gateway
+    expect(yield* Effect.flip(reportRecorded(continuationFields))).toMatchObject({
+      code: 'privacy_measure_context_invalid',
+      retryable: false,
+    });
+    // outside Core's execution lease the continuation requirement cannot resolve: retried, never dropped or completed
+    expect(yield* Effect.flip(reportRecorded(attestOutboxWorkerHandlerContext(continuationFields)))).toMatchObject({
+      code: 'privacy_measure_report_unavailable',
+      retryable: true,
+    });
   }),
 );

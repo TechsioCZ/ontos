@@ -276,10 +276,22 @@ export const privacyDispatchOperationContract = (
  * Derive receiver authority from the verified finite operation and its approved consumer. Never accept it from wire
  * metadata. A dispatch no approved consumer owns has no authority.
  */
+export interface PrivacyDispatchAuthorityPolicy {
+  readonly consumerModuleKey: string;
+  readonly continuation?: { readonly actionKey: string; readonly topic: string; readonly workerKey: string };
+  readonly originActionKey: string;
+  readonly originCapabilityKey: string;
+  readonly producerModuleKey: string;
+  readonly subjectResourceType: string;
+  readonly targetAccess: 'delegated-actor' | 'tenant-scope' | 'tenant-unrestricted-list';
+  readonly topic: string;
+  readonly workerKey: string;
+}
 export const privacyDispatchAuthorityPolicy = (dispatch: {
   readonly operation: PrivacyDispatchOperation;
+  readonly sourceMode?: 'continuation' | 'dispatch' | 'worker' | undefined;
   readonly workerKey?: string | undefined;
-}) =>
+}): Option.Option<PrivacyDispatchAuthorityPolicy> =>
   Option.map(Option.fromNullishOr(privacyDispatchConsumerOf(dispatch)), (consumer) => {
     const targetAccess = {
       CommunicationsReceipt: 'tenant-scope',
@@ -288,7 +300,7 @@ export const privacyDispatchAuthorityPolicy = (dispatch: {
       SymmyReceipt: 'tenant-unrestricted-list',
       SymmyRetention: 'tenant-scope',
     } as const;
-    return {
+    const authority = {
       consumerModuleKey: consumer.moduleKey,
       originActionKey: 'privacy.core.dispatch-privacy-measure',
       originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
@@ -298,6 +310,17 @@ export const privacyDispatchAuthorityPolicy = (dispatch: {
       topic: 'privacy.measure.dispatched',
       workerKey: consumer.workerKey,
     };
+    const { continuation } = consumer;
+    return dispatch.sourceMode === 'continuation' && continuation !== undefined
+      ? {
+          ...authority,
+          continuation: {
+            actionKey: continuation.actionKey,
+            topic: continuation.topic,
+            workerKey: continuation.workerKey,
+          },
+        }
+      : authority;
   });
 
 const organizationGovernanceReadContract = Object.freeze({
@@ -327,10 +350,14 @@ const matchesFiniteOperationIdentity = (
 /** The worker of an approved consumer carrying an operation that fits it, or a durable read of an approved receipt. */
 const approvedNativeSource = (dispatch: {
   readonly operation: PrivacyDispatchOperation;
-  readonly sourceMode: 'dispatch' | 'worker';
+  readonly sourceMode: 'continuation' | 'dispatch' | 'worker';
   readonly workerKey?: string | undefined;
   readonly workerModuleKey?: string | undefined;
 }): boolean => {
+  if (dispatch.sourceMode === 'continuation') {
+    const consumer = privacyDispatchConsumerOf(dispatch);
+    return consumer !== undefined && dispatch.workerModuleKey === consumer.moduleKey;
+  }
   if (dispatch.sourceMode === 'worker') {
     const consumer = privacyDispatchConsumerOfWorker(dispatch.workerKey);
     return (
@@ -570,6 +597,13 @@ export const GatewayPrivacyDispatchSourceSchema = Schema.Union([
     tenantId: TenantIdSchema,
   }),
   Schema.TaggedStruct('Assertion', { sourceAssertion: Schema.RedactedFromValue(nonEmptyString) }),
+  /** A consumer's own continuation worker, claiming its own delivery of a later human-recorded outcome. */
+  Schema.TaggedStruct('Continuation', {
+    claimId: GatewayClaimIdSchema,
+    deliveryId: GatewayDeliveryIdSchema,
+    tenantId: TenantIdSchema,
+    workerKey: GatewayWorkerKeySchema,
+  }),
 ]);
 export const GatewayPrivacyDispatchSubjectSchema = Schema.TaggedStruct('PrivacyDispatch', {
   operation: GatewayPrivacyDispatchOperationSchema,

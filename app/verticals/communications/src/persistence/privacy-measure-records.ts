@@ -34,11 +34,17 @@ export const StoredEvidenceSchema = Schema.Struct({
 
 export const StoredHandoffSchema = Schema.Struct({
   handoffFingerprint: Sha256HexSchema,
+  measureId: Schema.NonEmptyString.pipe(Schema.brand('CommunicationsPrivacyMeasureId')),
+  /** The Core-verified Privacy dispatch invocation the handoff was delivered under (a correlation id). */
+  originatorInvocationId: Schema.String.check(Schema.isUUID()).pipe(
+    Schema.brand('CommunicationsPrivacyDispatchInvocationId'),
+  ),
   receivedAt: Schema.DateTimeUtcFromString,
   scopeDigest: Sha256HexSchema,
   sourceDecisionRef: Schema.String,
   sourceDecisionRevision: Schema.Int,
   targetContentRefs: Schema.Array(Schema.String),
+  taskId: Schema.NonEmptyString.pipe(Schema.brand('CommunicationsPrivacyTaskId')),
 });
 
 export const HandoffDocumentSchema = Schema.Struct({

@@ -1,25 +1,71 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  ActiveApplicationCompositionService,
   applicationCompositionContentRevision,
   closeApplicationCompositionDurableAdmission,
   drainApplicationCompositionAuthority,
   loadDatabaseConnectionPair,
   lockApplicationCompositionPublication,
+  makeActiveApplicationCompositionService,
   OntosModuleDeploymentContractSchema,
+  OutboxRepositoryLive,
+  OutboxRuntime,
+  OutboxRuntimeLive,
   publishApplicationCompositionAuthority,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
-import type { ApplicationComposition } from '@app/core-runtime';
+import type {
+  ApplicationComposition,
+  OutboxCycleError,
+  OutboxCycleResult,
+  OutboxRuntimeService,
+  OutboxWorkerHandlerContext,
+} from '@app/core-runtime';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import {
+  defineOutboxWorkerEntry,
+  extractOutboxWorkerSubscriptions,
+  OutboxWorkerTenantScope,
+} from '@app/core-runtime/outbox/worker';
+import { communicationsRegistration } from '../../vertical.registration.ts';
+import { outboxWorkers } from '../../src/workers/index.ts';
+import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
+import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
+import {
+  createPrivacyMeasureDispatch,
+  PrivacyMeasureHandoffSchema,
+  prepareOwnerActionRequest,
+  recordOwnerExecutionOutcome,
+  validateOwnerExecutionAuthorityResult,
+} from '@app/privacy/domain/privacy-measure-handoff';
+import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import type { PrivacyDispatchContinuationPayload } from '@app/shared-contracts';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
+import {
+  DELEGATED_GATEWAY_ASSERTION_VERSION,
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  GATEWAY_ASSERTION_TTL_SECONDS,
+} from '@app/shared-contracts';
 import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { ConfigProvider, Context, DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
+import {
+  ConfigProvider,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from 'effect';
+import type { Exit } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import { Reactivity } from 'effect/reactivity';
@@ -36,11 +82,30 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { makeCommunicationsApiRuntime } from '../../api/index.ts';
 import type { LanguagePolicyRequestSchema } from '../../shared/apis/language-policy.ts';
+import { PrivacyOwnerCoverageResponseSchema } from '../../shared/apis/privacy-owner-coverage.ts';
+import type { PrivacyOwnerCoverageRequestSchema } from '../../shared/apis/privacy-owner-coverage.ts';
+import { PrivacyOwnerExecutionOutcomeResponseSchema } from '../../shared/apis/privacy-owner-execution-outcome.ts';
+import type { PrivacyOwnerExecutionOutcomeRequestSchema } from '../../shared/apis/privacy-owner-execution-outcome.ts';
+import { OutboxPayloadSchema as ContinuationPayloadSchema } from '../../shared/outbox/communications-core-owner-execution-evidence-recorded-v1.ts';
+import { RecordOwnerExecutionEvidenceResultSchema } from '../../shared/owner-execution-evidence.ts';
+import type { RecordOwnerExecutionEvidencePayloadSchema } from '../../shared/owner-execution-evidence.ts';
+import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
+import { fingerprintCommunicationsHandoff } from '../../shared/privacy-owner/measure-handoff.ts';
+import { PrepareTemplateRevisionResultSchema } from '../../shared/template-revision.ts';
+import type {
+  ActivateTemplateRevisionPayloadSchema,
+  PrepareTemplateRevisionPayloadSchema,
+} from '../../shared/template-revision.ts';
+import { PrivacyMeasureReporter } from '../../src/services/privacy-measure-reporter.ts';
+import type { PrivacyMeasureReporterService } from '../../src/services/privacy-measure-reporter.ts';
+import { handleReceivePrivacyMeasure } from '../../src/workers/receive-privacy-measure.worker.ts';
+import { reportPrivacyOwnerOutcomeWorker } from '../../src/workers/report-privacy-owner-outcome.worker.ts';
+import { decideOne, step } from '../support/history-world.ts';
+import { communicationRequest, handoffDouble, originalRecipient } from '../support/intake-fixtures.ts';
 import type { SetLanguagePolicyPayloadSchema } from '../../shared/language-policy.ts';
 import { EffectiveLanguagePolicySchema, SetLanguagePolicyResultSchema } from '../../shared/language-policy.ts';
 import type { MessageHistoryListRequestFieldsSchema } from '../../shared/message-history-read.ts';
 import { MessageHistoryListResultSchema } from '../../shared/message-history-read.ts';
-import { communicationRequest, originalRecipient } from '../support/intake-fixtures.ts';
 import { decided, intakeWorld } from '../support/intake-world.ts';
 import { makeRuntimeDatabase } from '../support/persistence.fixture.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -130,12 +195,13 @@ const publishedModule = Effect.fnUntraced(function* publishedModule(
 
 /** The active composition with the actual Communications deployment, published as the Core authority and served. */
 const publishComposition = Effect.fnUntraced(function* publishComposition() {
-  const base = yield* makeApplicationCompositionSnapshotFixture([]);
+  // Privacy is present only as an approved release, so a Privacy-delegated assertion names a real calling module.
+  const base = yield* makeApplicationCompositionSnapshotFixture(['privacy']);
   const communications = yield* publishedModule(
     new URL('../../dist/public/.well-known/ontos-module-manifest.json', import.meta.url),
     base.composition.shell.contributionAbi,
   );
-  const input = { ...base.composition, modules: [communications] };
+  const input = { ...base.composition, modules: [...base.composition.modules, communications] };
   const snapshot = yield* validateActiveApplicationCompositionSnapshot({
     composition: { ...input, revision: yield* applicationCompositionContentRevision(input) },
     observedAt: base.observedAt,
@@ -221,11 +287,22 @@ const mountRuntime = Effect.fnUntraced(function* mountRuntime(gateway: Gateway, 
 
 type Runtime = Effect.Success<ReturnType<typeof mountRuntime>>;
 
-/** A fresh Shell-shaped staff assertion (new JTI, staff namespace) for exactly this principal and company selection. */
+/** The calling module of a delegated assertion: only the Shell signs it, for an approved release of the composition. */
+interface DelegatedActor {
+  readonly appId: string;
+  readonly buildMarker: string;
+  readonly principalId: string;
+}
+
+/**
+ * A fresh Shell-shaped staff assertion (new JTI, staff namespace) for exactly this principal and company selection; with an
+ * actor it is the delegated form a calling module presents for its verified requester.
+ */
 const assertionFor = Effect.fnUntraced(function* assertionFor(
   gateway: Gateway,
   compositionRevision: string,
   principal: Principal,
+  actor?: DelegatedActor,
 ) {
   const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
   const claims = {
@@ -236,13 +313,14 @@ const assertionFor = Effect.fnUntraced(function* assertionFor(
     principalId: principal.principalId,
     tenantId: principal.tenantId,
   };
+  const external = {
+    compositionRevision,
+    principal: principal.legalEntityId === undefined ? claims : { ...claims, legalEntityId: principal.legalEntityId },
+    targetBuildMarker: ultramodernApiMarker.buildMarker,
+    ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  };
   return yield* Effect.promise(() =>
-    new SignJWT({
-      compositionRevision,
-      principal: principal.legalEntityId === undefined ? claims : { ...claims, legalEntityId: principal.legalEntityId },
-      targetBuildMarker: ultramodernApiMarker.buildMarker,
-      ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
-    })
+    new SignJWT(actor === undefined ? external : { ...external, act: actor, ver: DELEGATED_GATEWAY_ASSERTION_VERSION })
       .setProtectedHeader({ alg: 'EdDSA', kid: KEY_ID, typ: 'JWT' })
       .setIssuer(ISSUER)
       .setAudience('communications')
@@ -256,8 +334,13 @@ const assertionFor = Effect.fnUntraced(function* assertionFor(
 
 /** Exactly the public request bodies this suite sends. */
 type RequestBody =
+  | typeof ActivateTemplateRevisionPayloadSchema.Encoded
   | typeof LanguagePolicyRequestSchema.Encoded
   | typeof MessageHistoryListRequestFieldsSchema.Encoded
+  | typeof PrepareTemplateRevisionPayloadSchema.Encoded
+  | typeof PrivacyOwnerCoverageRequestSchema.Encoded
+  | typeof PrivacyOwnerExecutionOutcomeRequestSchema.Encoded
+  | typeof RecordOwnerExecutionEvidencePayloadSchema.Encoded
   | typeof SetLanguagePolicyPayloadSchema.Encoded;
 
 const ReplyBodySchema = Schema.fromJsonString(Schema.Unknown);
@@ -284,6 +367,14 @@ const post = Effect.fnUntraced(function* post(
   const text = yield* Effect.promise(() => response.text());
   return { body: yield* Schema.decodeUnknownEffect(ReplyBodySchema)(text), status: response.status };
 });
+
+/** Sends one public request as exactly this staff principal, under a fresh assertion each time. */
+const staffSender =
+  (gateway: Gateway, compositionRevision: string, runtime: Runtime) =>
+  (principal: Principal, path: string, body: RequestBody, idempotent = false) =>
+    assertionFor(gateway, compositionRevision, principal).pipe(
+      Effect.flatMap((token) => post(runtime, token, path, body, idempotent)),
+    );
 
 const services = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, Reactivity.layer);
 
@@ -373,10 +464,7 @@ describe('Communications production HTTP with the real authorization engine (Spi
           yield* submitIn('production-http-tenant');
           const gateway = yield* makeGateway();
           const runtime = yield* mountRuntime(gateway, document);
-          const send = (principal: Principal, path: string, body: RequestBody, idempotent = false) =>
-            assertionFor(gateway, revision, principal).pipe(
-              Effect.flatMap((token) => post(runtime, token, path, body, idempotent)),
-            );
+          const send = staffSender(gateway, revision, runtime);
           // The fixture's principals carry no company selection: a request in the Tenant context.
           const { manager, reader } = tenant;
 
@@ -490,5 +578,538 @@ describe('Communications production HTTP with the real authorization engine (Spi
         }),
       ).pipe(Effect.provide(services)),
     120_000,
+  );
+});
+
+const TEMPLATE = (operation: 'activate' | 'deactivate' | 'invalidate' | 'prepare') =>
+  `communications.core.template-revision.${operation}`;
+const TEMPLATE_CAPABILITIES = [
+  TEMPLATE('prepare'),
+  TEMPLATE('activate'),
+  TEMPLATE('deactivate'),
+  TEMPLATE('invalidate'),
+] as const;
+const COVERAGE_READ = 'communications.core.privacy-owner-coverage.read';
+const RECEIPT_READ = 'communications.core.privacy-owner-execution-outcome.read';
+const EVIDENCE_RECORD = 'communications.core.owner-execution-evidence.record';
+const PRIVACY_CAPABILITIES = [COVERAGE_READ, RECEIPT_READ, EVIDENCE_RECORD];
+const lookup = {
+  _tag: 'SUBJECT_REFERENCE' as const,
+  lookupRef: 'lookup-customer-1',
+  moduleId: 'fixture.party',
+  resourceId: 'customer-1',
+  resourceType: 'fixture.recipient',
+};
+
+/** FICTIONAL labelled template copy: no production wording, recipient or secret. */
+const fictionalTemplate = (messageType: string): typeof PrepareTemplateRevisionPayloadSchema.Encoded => ({
+  body: '[FICTIONAL TEST COPY] Purpose: {{purpose}}.',
+  channel: 'email',
+  language: 'cs',
+  messageType,
+  optionalPlaceholders: [],
+  reason: 'Fictional draft for the authorization tests',
+  requiredPlaceholders: ['purpose'],
+  scope: { kind: 'tenant' },
+  subject: '[FICTIONAL TEST COPY] {{purpose}}',
+});
+
+/** One RESTRICT measure Privacy dispatched to Communications over this Tenant's real own records. */
+const measureOver = (tenantId: string, targets: readonly string[]): PrivacyMeasureHandoff =>
+  Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
+    contentScopeRefs: ['communications.core.history'],
+    controllerObligationRef: null,
+    dispositionDecision: 'RESTRICT',
+    expectedEvidenceRefs: [],
+    idempotencyKey: `FICTIONAL-idempotency-${tenantId}`,
+    kind: 'RESTRICT',
+    measureId: `FICTIONAL-measure-${tenantId}`,
+    ownerScope: {
+      blockerAssessment: { assessedByRef: 'FICTIONAL-privacy-assessment', blockers: [] },
+      controllerRef: 'FICTIONAL-controller',
+      requestedScopePartRefs: [...scopePartRefs],
+      requestedScopeRef: 'FICTIONAL-requested-scope',
+      trustedLookups: [lookup],
+    },
+    owningCapability: 'communications.core',
+    preconditionRefs: [],
+    requestedAt: '2026-11-19T10:00:00.000Z',
+    requestedResult: 'restrict message metadata',
+    resourceRefs: targets,
+    right: 'ERASURE',
+    sourceDecisionRef: 'FICTIONAL-decision-1',
+    sourceDecisionRevision: 1,
+    subjectRef: 'FICTIONAL-subject-1',
+    taskId: `FICTIONAL-task-${tenantId}`,
+    tenantId,
+  });
+
+/** A Core-attested worker context of one Communications delivery: what Core's worker loop hands the handler. */
+const deliveryContext = (
+  tenantId: string,
+  fields: Pick<OutboxWorkerHandlerContext, 'producerModuleKey' | 'topic' | 'workerKey'> & {
+    readonly originatorInvocationId?: string;
+  },
+): OutboxWorkerHandlerContext =>
+  attestOutboxWorkerHandlerContext({
+    attemptNumber: 1,
+    claimId: `claim-${randomUUID()}`,
+    compositionRevision: 'a'.repeat(64),
+    consumerModuleKey: 'communications.core',
+    deliveryId: randomUUID(),
+    domainEventId: randomUUID(),
+    legalEntityScope: 'forbidden',
+    messageId: randomUUID(),
+    tenantId,
+    tenantSequenceNo: 1n,
+    ...fields,
+  });
+
+/**
+ * One match + claim/handle/settle cycle of Core's own outbox runtime under the Communications worker binding, running only
+ * the continuation worker (the binding still checks every approved Communications subscription).
+ */
+const deliverContinuationCycle = (input: {
+  readonly outbox: OutboxRuntimeService;
+  readonly reporter: PrivacyMeasureReporterService;
+  readonly snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type;
+}) =>
+  Effect.gen(function* deliverContinuationCycleEffect() {
+    const { outbox, reporter, snapshot } = input;
+    const compositionRevision = snapshot.composition.revision;
+    const claimOwner = `communications-continuation-${randomUUID()}`;
+    const registrations = [reportPrivacyOwnerOutcomeWorker];
+    const subscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
+    const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
+    const settle = (exit: Exit.Exit<OutboxCycleResult, OutboxCycleError>) => Deferred.done(completed, exit);
+    yield* outbox.matchMessages({ compositionRevision });
+    const entry = defineOutboxWorkerEntry({
+      claimOwnerPrefix: 'communications-continuation',
+      expectedDeployment: { appId: 'communications', buildMarker: ultramodernDeliveryUnit.buildMarker },
+      layer: Layer.mergeAll(
+        Layer.succeed(PrivacyMeasureReporter, reporter),
+        Layer.succeed(
+          ActiveApplicationCompositionService,
+          makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+        ),
+        Layer.succeed(OutboxRuntime, {
+          ...outbox,
+          runCycle: () =>
+            outbox
+              .runCycle({
+                claimOwner,
+                compositionRevision,
+                registrations,
+                subscriptions: extractOutboxWorkerSubscriptions(registrations),
+              })
+              .pipe(Effect.provideService(PrivacyMeasureReporter, reporter), Effect.onExit(settle)),
+        }),
+      ),
+      ownerRegistration: communicationsRegistration,
+      registrations,
+      subscriptions,
+    });
+    return yield* Deferred.await(completed).pipe(
+      Effect.raceFirst(
+        entry
+          .runLoop({ config: { claimOwner, maxDeliveries: 50, pollIntervalMs: 1000 } })
+          .pipe(Effect.andThen(Effect.never)),
+      ),
+    );
+  }).pipe(Effect.scoped);
+
+describe('Communications templates, Privacy owner Reads and the owner evidence loop with the real authorization engine', () => {
+  it.live(
+    'allows, denies, revokes and isolates every remaining operation and pushes a later human confirmation to Privacy',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* remainingOperations() {
+          const { core, document, snapshot } = yield* publishComposition();
+          const { revision } = snapshot.composition;
+          const privacyDeployment = Option.getOrThrow(
+            Option.fromNullishOr(snapshot.composition.modules.find((module) => module.deployment.appId === 'privacy')),
+          ).deployment;
+          const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+          const fixtureOf = Effect.fnUntraced(function* fixtureOf() {
+            const fixture = yield* makeLiveOperationFixture({
+              access: 'allowed',
+              authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+              compositionRevision: revision,
+              runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+            });
+            yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
+            yield* activateCommunications(core, fixture.tenantId);
+            return fixture;
+          });
+          const tenant = yield* fixtureOf();
+          const foreign = yield* fixtureOf();
+          const target = yield* environmentTestAccessTarget;
+          // The manager holds every remaining Communications capability Tenant-wide; the reader holds none of them;
+          // the foreign manager holds them all in the foreign Tenant only.
+          for (const scope of [tenant, foreign]) {
+            yield* grantTestTenantRoleAccess({
+              ...target,
+              holders: [
+                {
+                  capabilityKeys: [...TEMPLATE_CAPABILITIES, ...PRIVACY_CAPABILITIES],
+                  principalId: scope.manager.principalId,
+                },
+                { capabilityKeys: ['party.registry.party.read'], principalId: scope.reader.principalId },
+              ],
+              legalEntityIds: [scope.legalEntityId],
+              tenantId: scope.tenantId,
+            });
+          }
+          const gateway = yield* makeGateway();
+          const runtime = yield* mountRuntime(gateway, document);
+          const send = staffSender(gateway, revision, runtime);
+          // Privacy asks for its verified requester: the delegated form with Privacy as the calling module.
+          const privacyActor = {
+            appId: 'privacy',
+            buildMarker: privacyDeployment.buildMarker,
+            principalId: randomUUID(),
+          };
+          const askAsPrivacy = (principal: Principal, path: string, body: RequestBody) =>
+            assertionFor(gateway, revision, principal, privacyActor).pipe(
+              Effect.flatMap((token) => post(runtime, token, path, body, false)),
+            );
+          const { manager, reader } = tenant;
+          const { manager: foreignManager } = foreign;
+          const roles = yield* makeTestTenantRoleAccess({
+            ...target,
+            legalEntityIds: [tenant.legalEntityId],
+            principalId: reader.principalId,
+            tenantId: tenant.tenantId,
+          });
+
+          // ---- Template revisions: prepare, activate, deactivate, invalidate ----
+          const templateAction = (
+            principal: Principal,
+            operation: 'activate' | 'deactivate' | 'invalidate',
+            revisionId: string,
+          ) =>
+            send(
+              principal,
+              `/communications/actions/${operation}-template-revision`,
+              { reason: `Fictional ${operation} for the authorization tests`, revisionId },
+              true,
+            );
+          const prepare = (principal: Principal, messageType: string) =>
+            send(principal, '/communications/actions/prepare-template-revision', fictionalTemplate(messageType), true);
+          // ALLOWED: the whole lifecycle under the manager's grants
+          const prepared = yield* prepare(manager, 'fixture.authorization-notice');
+          expect(prepared.status, JSON.stringify(prepared.body)).toBe(200);
+          const { revisionId } = Schema.decodeUnknownSync(PrepareTemplateRevisionResultSchema)(prepared.body);
+          for (const operation of ['activate', 'deactivate'] as const) {
+            const allowed = yield* templateAction(manager, operation, revisionId);
+            expect(allowed.status, `${operation} ${JSON.stringify(allowed.body)}`).toBe(200);
+          }
+          // DENIED: a member without any template capability changes nothing
+          expect((yield* prepare(reader, 'fixture.authorization-notice')).status).toBe(403);
+          for (const operation of ['activate', 'deactivate', 'invalidate'] as const) {
+            expect((yield* templateAction(reader, operation, revisionId)).status).toBe(403);
+          }
+          // CROSS-TENANT: the foreign manager's grant never reaches this Tenant's revision, and a forged Tenant claim fails
+          for (const operation of ['activate', 'deactivate', 'invalidate'] as const) {
+            const crossed = yield* templateAction(foreignManager, operation, revisionId);
+            expect(crossed.status, `${operation} ${JSON.stringify(crossed.body)}`).not.toBe(200);
+          }
+          expect([401, 403]).toContain(
+            (yield* prepare({ ...foreignManager, tenantId: tenant.tenantId }, 'fixture.authorization-notice')).status,
+          );
+          const invalidated = yield* templateAction(manager, 'invalidate', revisionId);
+          expect(invalidated.status, JSON.stringify(invalidated.body)).toBe(200);
+          // GRANTED THEN REVOKED: a role of exactly the four template capabilities admits each, then none
+          const templateRole = yield* roles.capabilityRole(TEMPLATE_CAPABILITIES);
+          yield* templateRole.grant();
+          const readerPrepared = yield* prepare(reader, 'fixture.revocation-notice');
+          expect(readerPrepared.status, JSON.stringify(readerPrepared.body)).toBe(200);
+          const readerRevision = Schema.decodeUnknownSync(PrepareTemplateRevisionResultSchema)(readerPrepared.body);
+          expect((yield* templateAction(reader, 'activate', readerRevision.revisionId)).status).toBe(200);
+          expect((yield* templateAction(reader, 'deactivate', readerRevision.revisionId)).status).toBe(200);
+          yield* templateRole.revoke();
+          expect((yield* prepare(reader, 'fixture.revocation-notice')).status).toBe(403);
+          for (const operation of ['activate', 'deactivate', 'invalidate'] as const) {
+            expect((yield* templateAction(reader, operation, readerRevision.revisionId)).status).toBe(403);
+          }
+
+          // ---- The owner evidence loop over this Tenant's real own records ----
+          const world = yield* intakeWorld(yield* makeRuntimeDatabase(), { tenantId: tenant.tenantId });
+          const { intentId, requestId } = yield* decideOne(world);
+          yield* step(world, handoffDouble(), intentId);
+          const targets = [`communications.core.request:${requestId}`, `communications.core.intent:${intentId}`];
+          const handoff = measureOver(tenant.tenantId, targets);
+          const fingerprint = yield* fingerprintCommunicationsHandoff(handoff);
+          const dispatchInvocationId = randomUUID();
+          const tenantScope = {
+            run: <Failure, Requirements>(
+              context: OutboxWorkerHandlerContext,
+              observe: (scope: OutboxWorkerTenantScopeView) => Effect.Effect<void, Failure, Requirements>,
+            ) =>
+              world.database
+                .inTenant(context.tenantId, (transaction) =>
+                  observe({
+                    completionPublisher: { publish: () => Effect.die('Completion belongs to Core delivery') },
+                    readOriginalActionInvocation: () => Effect.succeed(Option.none()),
+                    readWorkloadPrincipalEligibility: () => Effect.die('Not used by this worker'),
+                    routineInvoker: transaction,
+                    tenantId: context.tenantId,
+                  }),
+                )
+                .pipe(Effect.orDie),
+          };
+          const takeOvers: number[] = [];
+          const continuations: PrivacyDispatchContinuationPayload[] = [];
+          const reporter = PrivacyMeasureReporter.of({
+            report: (_handoff, attempt) =>
+              Effect.sync(() => {
+                takeOvers.push(attempt);
+              }),
+            reportRecorded: (continuation) =>
+              Effect.sync(() => {
+                continuations.push(continuation);
+              }),
+          });
+          // 1. Communications receives the measure Privacy dispatched and reports only that it took it over
+          yield* handleReceivePrivacyMeasure(
+            { handoff },
+            deliveryContext(tenant.tenantId, {
+              originatorInvocationId: dispatchInvocationId,
+              producerModuleKey: 'privacy.core',
+              topic: 'privacy.measure.dispatched',
+              workerKey: 'communications.core.receive-privacy-measure',
+            }),
+          ).pipe(
+            Effect.provideService(OutboxWorkerTenantScope, tenantScope),
+            Effect.provideService(PrivacyMeasureReporter, reporter),
+          );
+          expect(takeOvers).toEqual([1]);
+          const receipt = Effect.fnUntraced(function* receipt(
+            principal: Principal,
+            attempt: number,
+            measure = handoff,
+          ) {
+            const reply = yield* askAsPrivacy(principal, '/reads/privacy-owner-execution-outcome', {
+              attempt,
+              handoff: Schema.encodeSync(PrivacyMeasureHandoffSchema)(measure),
+            });
+            return {
+              receipt:
+                reply.status === 200
+                  ? Schema.decodeUnknownSync(PrivacyOwnerExecutionOutcomeResponseSchema)(reply.body)
+                  : Option.none(),
+              status: reply.status,
+            };
+          });
+          // 2. Privacy reads the owner receipt: received, awaiting a human, never a result
+          const received = yield* receipt(manager, 1);
+          expect(received.status).toBe(200);
+          expect(Option.getOrThrow(received.receipt).outcome).toMatchObject({
+            reason: 'AWAITING_HUMAN_CONFIRMED_OWNER_ACTION',
+            status: 'RECEIVED',
+          });
+          const coverage = yield* askAsPrivacy(manager, '/reads/privacy-owner-coverage', {
+            scope: {
+              controllerRef: 'FICTIONAL-controller',
+              ownerCapability: 'communications.core',
+              requestedScopePartRefs: [...scopePartRefs],
+              requestedScopeRef: 'FICTIONAL-requested-scope',
+              subject: { _tag: 'RESOLVED_DATA_SUBJECT', subjectRef: 'FICTIONAL-subject-1' },
+              tenantId: tenant.tenantId,
+              trustedLookupRefs: [lookup.lookupRef],
+            },
+            trustedLookups: [lookup],
+          });
+          expect(coverage.status, JSON.stringify(coverage.body)).toBe(200);
+          const found = Schema.decodeUnknownSync(PrivacyOwnerCoverageResponseSchema)(coverage.body);
+          expect(found.coverage.coverageParts.flatMap(({ foundContentRefs }) => foundContentRefs)).toEqual(
+            expect.arrayContaining(targets),
+          );
+          // 3. A human records the owner execution evidence; nobody else can
+          const evidence = (principal: Principal, evidenceRef = 'FICTIONAL-evidence-1') =>
+            send(
+              principal,
+              '/communications/actions/record-owner-execution-evidence',
+              {
+                evidenceRef,
+                handoffFingerprint: fingerprint,
+                idempotencyKey: handoff.idempotencyKey,
+                phase: 'COMPLETED',
+                results: targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const })),
+              },
+              true,
+            );
+          const continuationMessages = core.transaction((transaction) =>
+            transaction.execute<{ readonly payload: unknown; readonly tenant: string }>(
+              sql`select m.payload_json as payload, m.tenant_id::text as tenant from core.outbox_messages m
+                   where m.topic = 'communications.core.owner-execution-evidence-recorded.v1'
+                     and m.tenant_id in (${tenant.tenantId}::uuid, ${foreign.tenantId}::uuid)`,
+              'objects',
+            ),
+          );
+          const coreRuntime = yield* makeCoreDatabase(connections.runtime);
+          const outboxServices = yield* Layer.build(
+            OutboxRuntimeLive.pipe(
+              Layer.provide(OutboxRepositoryLive),
+              Layer.provide(Layer.succeed(CoreDatabase, coreRuntime)),
+            ),
+          );
+          const outbox = Context.get(outboxServices, OutboxRuntime);
+          const deliverContinuations = () => deliverContinuationCycle({ outbox, reporter, snapshot });
+          const pendingContinuationWork = core.transaction((transaction) =>
+            transaction.execute<{ readonly work: string }>(
+              sql`select w.work_id as work from core.application_composition_durable_work w
+                   join core.outbox_messages m on w.work_id = 'outbox:' || m.outbox_message_id::text || ':communications.core'
+                  where m.tenant_id = ${tenant.tenantId}::uuid`,
+              'objects',
+            ),
+          );
+          expect((yield* evidence(reader)).status).toBe(403);
+          expect([401, 403]).toContain((yield* evidence({ ...foreignManager, tenantId: tenant.tenantId })).status);
+          // the foreign manager in its own Tenant has no such handoff: refused, and nothing continues anywhere
+          expect((yield* evidence(foreignManager)).status).not.toBe(200);
+          expect(yield* continuationMessages).toEqual([]);
+          const recorded = yield* evidence(manager);
+          expect(recorded.status, JSON.stringify(recorded.body)).toBe(200);
+          expect(Schema.decodeUnknownSync(RecordOwnerExecutionEvidenceResultSchema)(recorded.body)).toEqual({
+            destructiveActionPerformed: false,
+            evidenceRef: 'FICTIONAL-evidence-1',
+            outcome: 'RECORDED',
+          });
+          // 4. Exactly ONE continuation message, naming only the original dispatch and the next attempt: no outcome
+          const [message, ...extra] = yield* continuationMessages;
+          expect(extra).toEqual([]);
+          expect(message?.tenant).toBe(tenant.tenantId);
+          const pushed = Schema.decodeUnknownSync(ContinuationPayloadSchema, { onExcessProperty: 'error' })(
+            message?.payload,
+          );
+          expect(pushed).toEqual({
+            attempt: 2,
+            dispatchInvocationId,
+            measureId: handoff.measureId,
+            taskId: handoff.taskId,
+          });
+          // DUPLICATE: the same confirmation again is a replay; it stores and continues nothing more
+          const replayed = yield* evidence(manager);
+          expect(Schema.decodeUnknownSync(RecordOwnerExecutionEvidenceResultSchema)(replayed.body).outcome).toBe(
+            'EXISTS',
+          );
+          expect(yield* continuationMessages).toHaveLength(1);
+          // 5. Core's own outbox runtime matches the message, claims it for the continuation worker and settles it: the
+          // worker reports exactly that message to Privacy from its real claimed delivery, and no durable work remains
+          const delivered = yield* deliverContinuations();
+          expect(delivered.succeeded).toBeGreaterThanOrEqual(1);
+          expect(continuations.filter((reported) => reported.measureId === handoff.measureId)).toEqual([pushed]);
+          expect(yield* pendingContinuationWork).toEqual([]);
+          // 6. Privacy reads the receipt of the pushed attempt ITSELF, and its published state machine transitions
+          const after = Option.getOrThrow((yield* receipt(manager, pushed.attempt)).receipt);
+          expect(after.handoffFingerprint).toBe(fingerprint);
+          expect(after.outcome).toMatchObject({ attempt: 2, status: 'SUCCEEDED' });
+          const before = Option.getOrThrow(received.receipt);
+          const request = { attempt: 2, measureId: handoff.measureId, taskId: handoff.taskId };
+          const authorityOf = (outcome: typeof after.outcome) => ({
+            authorityRef: 'communications.core.api.privacy-owner-execution-outcome',
+            contentScopeRefs: handoff.contentScopeRefs,
+            evidenceRefs: outcome.evidenceRefs,
+            outcome,
+            receiptRef: outcome.outcomeId,
+            resourceRefs: handoff.resourceRefs,
+            subjectRef: handoff.subjectRef,
+            tenantId: handoff.tenantId,
+          });
+          expect(validateOwnerExecutionAuthorityResult(handoff, request, authorityOf(after.outcome))).toBeUndefined();
+          const dispatched = yield* createPrivacyMeasureDispatch(handoff, '2026-11-19T10:00:00.000Z');
+          const ownerRequest = prepareOwnerActionRequest(dispatched, 'communications.core.public-action');
+          const takenOver = yield* recordOwnerExecutionOutcome(
+            dispatched,
+            ownerRequest,
+            before.outcome,
+            '2026-11-19T10:00:01.000Z',
+          );
+          expect(takenOver.status).toBe('RECEIVED');
+          const settled = yield* recordOwnerExecutionOutcome(
+            takenOver,
+            ownerRequest,
+            after.outcome,
+            '2026-11-19T10:00:02.000Z',
+          );
+          expect(settled.status).toBe('SUCCEEDED');
+          // a receipt for another measure is a rejection, never this measure's result
+          const otherMeasure = Option.getOrThrow(
+            (yield* receipt(manager, 2, { ...handoff, measureId: 'FICTIONAL-other' })).receipt,
+          );
+          expect(otherMeasure.outcome.status).not.toBe('SUCCEEDED');
+          // CROSS-TENANT: the foreign Tenant has no such receipt; the owner says so and proves nothing
+          const foreignReceipt = yield* receipt(foreignManager, 2);
+          expect(foreignReceipt.status).toBe(200);
+          expect(Option.isNone(foreignReceipt.receipt)).toBe(true);
+          // DENIED: these Reads declare `accessActor.subject: 'identity'`, so only Privacy as the calling module may ask;
+          // a direct staff call, even with the capability, and another calling module are refused.
+          const direct = yield* send(manager, '/reads/privacy-owner-execution-outcome', {
+            attempt: 2,
+            handoff: Schema.encodeSync(PrivacyMeasureHandoffSchema)(handoff),
+          });
+          expect(direct.status).toBe(403);
+          const asCommunications = yield* assertionFor(gateway, revision, manager, {
+            appId: 'communications',
+            buildMarker: ultramodernDeliveryUnit.buildMarker,
+            principalId: privacyActor.principalId,
+          }).pipe(
+            Effect.flatMap((token) =>
+              post(
+                runtime,
+                token,
+                '/reads/privacy-owner-execution-outcome',
+                { attempt: 2, handoff: Schema.encodeSync(PrivacyMeasureHandoffSchema)(handoff) },
+                false,
+              ),
+            ),
+          );
+          expect([401, 403]).toContain(asCommunications.status);
+          const directCoverage = yield* send(manager, '/reads/privacy-owner-coverage', {
+            scope: {
+              controllerRef: 'FICTIONAL-controller',
+              ownerCapability: 'communications.core',
+              requestedScopePartRefs: [...scopePartRefs],
+              requestedScopeRef: 'FICTIONAL-requested-scope',
+              subject: { _tag: 'RESOLVED_DATA_SUBJECT', subjectRef: 'FICTIONAL-subject-1' },
+              tenantId: tenant.tenantId,
+              trustedLookupRefs: [lookup.lookupRef],
+            },
+            trustedLookups: [lookup],
+          });
+          expect(directCoverage.status).toBe(403);
+          // Under the identity subject the Privacy-delegated Read does not consult the member's own grant (pre-existing
+          // contract): a member without the receipt capability is still answered through Privacy.
+          expect((yield* receipt(reader, 2)).status).toBe(200);
+          // REVOKED: the identity itself ends, and the very next Privacy-delegated Read for it is refused
+          const setPrincipalStatus = (status: 'active' | 'disabled') =>
+            core.transaction((transaction) =>
+              transaction.execute(
+                sql`update core.principals set status = ${status} where principal_id = ${reader.principalId}::uuid`,
+                'objects',
+              ),
+            );
+          yield* setPrincipalStatus('disabled');
+          expect([401, 403]).toContain((yield* receipt(reader, 2)).status);
+          yield* setPrincipalStatus('active');
+          // The evidence Action is rights-based: a role of exactly that capability admits it, revoking it refuses it
+          const evidenceRole = yield* roles.capabilityRole([EVIDENCE_RECORD]);
+          yield* evidenceRole.grant();
+          const readerEvidence = yield* evidence(reader, 'FICTIONAL-evidence-2');
+          expect(readerEvidence.status, JSON.stringify(readerEvidence.body)).toBe(200);
+          expect(yield* continuationMessages).toHaveLength(2);
+          yield* evidenceRole.revoke();
+          expect((yield* evidence(reader, 'FICTIONAL-evidence-3')).status).toBe(403);
+          expect(yield* continuationMessages).toHaveLength(2);
+          // the second confirmation is pushed too, as the next attempt, and leaves no unfinished work behind
+          yield* deliverContinuations();
+          expect(
+            continuations.filter((reported) => reported.measureId === handoff.measureId).map(({ attempt }) => attempt),
+          ).toEqual([2, 3]);
+          expect(yield* pendingContinuationWork).toEqual([]);
+        }),
+      ).pipe(Effect.provide(services)),
+    180_000,
   );
 });

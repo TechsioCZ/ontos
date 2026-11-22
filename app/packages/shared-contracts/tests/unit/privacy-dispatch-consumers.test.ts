@@ -10,7 +10,9 @@ import {
   privacyDispatchOperationContract,
 } from '../../src/gateway-context.ts';
 import {
+  PrivacyDispatchContinuationPayloadSchema,
   privacyDispatchConsumerOf,
+  privacyDispatchConsumerOfContinuationWorker,
   privacyDispatchConsumerOfOperation,
   privacyDispatchConsumers,
   privacyDispatchOperationFitsConsumer,
@@ -18,6 +20,7 @@ import {
 
 const symmyWorker = 'integration.symmy.symmy-job-privacy-dispatch';
 const communicationsWorker = 'communications.core.receive-privacy-measure';
+const continuationWorker = 'communications.core.report-privacy-owner-outcome';
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000002';
 const principalId = '30000000-0000-4000-8000-000000000003';
@@ -92,6 +95,12 @@ it('names every approved consumer once, keyed by its module id, with distinct wo
   const communications = privacyDispatchConsumers['communications.core'];
   expect(communications).toEqual({
     appId: 'communications',
+    continuation: {
+      actionKey: 'communications.core.record-owner-execution-evidence',
+      requirementKey: 'communications.core.requirement.privacy-report-recorded-owner-outcome',
+      topic: 'communications.core.owner-execution-evidence-recorded.v1',
+      workerKey: continuationWorker,
+    },
     moduleKey: 'communications.core',
     receiptOperation: 'CommunicationsReceipt',
     receiptRequirementKey: communicationsKey,
@@ -288,3 +297,143 @@ it.effect('lets the durable receipt read name only its own consumer receipt and 
     );
   }),
 );
+
+const continuation = (overrides: Readonly<Record<string, string>> = {}) => ({
+  ...nativeEvidence,
+  claimId: 'continuation-claim',
+  continuationDeliveryId: '30000000-0000-4000-8000-000000000011',
+  operation: 'PrivacyOutcome',
+  sourceMode: 'continuation',
+  workerKey: continuationWorker,
+  workerModuleKey: 'communications.core',
+  ...overrides,
+});
+
+it('gives only Communications a continuation, whose worker is neither consumer worker and carries only an outcome', () => {
+  expect(privacyDispatchConsumerOfContinuationWorker(continuationWorker)?.moduleKey).toBe('communications.core');
+  // Symmy stays frozen: it has no continuation, so none of its workers (nor any consumer worker) is one
+  expect(privacyDispatchConsumers['integration.symmy']?.continuation).toBeUndefined();
+  for (const workerKey of [symmyWorker, communicationsWorker, 'other.worker', undefined]) {
+    expect(privacyDispatchConsumerOfContinuationWorker(workerKey)).toBeUndefined();
+  }
+  expect(
+    privacyDispatchConsumerOf({
+      operation: 'PrivacyOutcome',
+      sourceMode: 'continuation',
+      workerKey: continuationWorker,
+    })?.moduleKey,
+  ).toBe('communications.core');
+  for (const operation of ['CommunicationsReceipt', 'PrivacyEligibility', 'SymmyReceipt', 'SymmyRetention'] as const) {
+    expect(
+      privacyDispatchConsumerOf({ operation, sourceMode: 'continuation', workerKey: continuationWorker }),
+    ).toBeUndefined();
+  }
+  // a consumer worker is not a continuation, and a continuation worker is not a consumer worker
+  expect(
+    privacyDispatchConsumerOf({ operation: 'PrivacyOutcome', sourceMode: 'continuation', workerKey: symmyWorker }),
+  ).toBeUndefined();
+  expect(
+    privacyDispatchConsumerOf({
+      operation: 'PrivacyOutcome',
+      sourceMode: 'continuation',
+      workerKey: communicationsWorker,
+    }),
+  ).toBeUndefined();
+  expect(privacyDispatchConsumerOf({ operation: 'PrivacyOutcome', workerKey: continuationWorker })).toBeUndefined();
+});
+
+it('derives the continuation authority from the approved consumer and adds it only to a continuation', () => {
+  expect(
+    Option.getOrUndefined(
+      privacyDispatchAuthorityPolicy({
+        operation: 'PrivacyOutcome',
+        sourceMode: 'continuation',
+        workerKey: continuationWorker,
+      }),
+    ),
+  ).toEqual({
+    consumerModuleKey: 'communications.core',
+    continuation: {
+      actionKey: 'communications.core.record-owner-execution-evidence',
+      topic: 'communications.core.owner-execution-evidence-recorded.v1',
+      workerKey: continuationWorker,
+    },
+    originActionKey: 'privacy.core.dispatch-privacy-measure',
+    originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+    producerModuleKey: 'privacy.core',
+    subjectResourceType: 'privacy.core.privacy-measure',
+    targetAccess: 'delegated-actor',
+    topic: 'privacy.measure.dispatched',
+    workerKey: communicationsWorker,
+  });
+  expect(
+    Option.getOrUndefined(
+      privacyDispatchAuthorityPolicy({
+        operation: 'PrivacyOutcome',
+        sourceMode: 'worker',
+        workerKey: communicationsWorker,
+      }),
+    )?.continuation,
+  ).toBeUndefined();
+  expect(
+    Option.isNone(
+      privacyDispatchAuthorityPolicy({
+        operation: 'PrivacyOutcome',
+        sourceMode: 'continuation',
+        workerKey: symmyWorker,
+      }),
+    ),
+  ).toBe(true);
+});
+
+it.effect('accepts a continuation claim only as one Communications outcome report with its continuation delivery', () =>
+  Effect.gen(function* continuationClaims() {
+    expect(yield* accepted(claimsOf(continuation(), 'privacy'))).toBe(true);
+    const { continuationDeliveryId: _delivery, ...withoutDelivery } = continuation();
+    const { claimId: _claim, ...withoutClaim } = continuation();
+    for (const [privacyDispatch, aud] of [
+      // a continuation reports exactly one Privacy outcome: no receipt, eligibility or Symmy operation
+      [continuation({ operation: 'CommunicationsReceipt' }), 'communications'],
+      [continuation({ operation: 'PrivacyEligibility' }), 'privacy'],
+      [continuation({ operation: 'SymmyReceipt' }), 'symmy-integration'],
+      // only the Communications continuation worker, labelled as Communications, under its current claim
+      [continuation({ workerKey: symmyWorker }), 'privacy'],
+      [continuation({ workerKey: communicationsWorker }), 'privacy'],
+      [continuation({ workerModuleKey: 'integration.symmy' }), 'privacy'],
+      [withoutDelivery, 'privacy'],
+      [withoutClaim, 'privacy'],
+      // a worker or a durable read never names a continuation delivery
+      [
+        {
+          ...worker('PrivacyOutcome', communicationsWorker, 'communications.core'),
+          continuationDeliveryId: '30000000-0000-4000-8000-000000000011',
+        },
+        'privacy',
+      ],
+      [continuation(), 'communications'],
+    ] as const) {
+      expect(yield* accepted(claimsOf(privacyDispatch, aud))).toBe(false);
+    }
+  }),
+);
+
+it('lets a continuation payload name only the original dispatch and an attempt after the take-over report', () => {
+  const valid = { attempt: 2, dispatchInvocationId, measureId: 'FICTIONAL-measure', taskId: 'FICTIONAL-task' };
+  expect(Schema.is(PrivacyDispatchContinuationPayloadSchema)(valid)).toBe(true);
+  for (const invalid of [
+    { ...valid, attempt: 1 },
+    { ...valid, attempt: 2.5 },
+    { ...valid, dispatchInvocationId: 'not-a-uuid' },
+    { ...valid, measureId: '' },
+  ]) {
+    expect(Schema.is(PrivacyDispatchContinuationPayloadSchema)(invalid)).toBe(false);
+  }
+  expect(
+    Result.isFailure(
+      Schema.decodeUnknownResult(PrivacyDispatchContinuationPayloadSchema, { onExcessProperty: 'error' })({
+        ...valid,
+        outcome: 'SUCCEEDED',
+      }),
+    ),
+  ).toBe(true);
+});
