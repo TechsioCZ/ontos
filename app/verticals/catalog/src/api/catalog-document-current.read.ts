@@ -107,7 +107,12 @@ export const runCatalogDocumentCurrent = Effect.fn('CatalogDocumentCurrentRead.r
   return readAnswer(response, { resultCount: response.assignments.length });
 });
 
-/** Core Media (ADR-0031) is the owner of every assigned Resource Catalog can resolve today. */
+/**
+ * Core Media (ADR-0031) is the owner of every assigned Resource Catalog can resolve today. The company is `optional` so
+ * that the company a requester selected reaches this execution and, relayed as the `subject` to Core's Current read,
+ * narrows the answer to that company's own and company-less assets; with none selected the answer is tenant-wide.
+ * Catalog's own assignments carry no company: only the owner's answer does.
+ */
 export const catalogDocumentCurrentRead = defineRead(
   {
     accessDeclaration: {
@@ -123,7 +128,7 @@ export const catalogDocumentCurrentRead = defineRead(
     entrypoint: catalogDocumentCurrentEntrypoint,
     evidencePolicy: { captureMode: 'metadata_only', policyKey: `${readKey}.evidence.v1` },
     inputSchema: CatalogDocumentCurrentRequestSchema,
-    legalEntityScope: 'forbidden',
+    legalEntityScope: 'optional',
     owningModuleKey: moduleKey,
     policies: [],
     readKey: 'commerce.catalog.api.catalog-document-current',

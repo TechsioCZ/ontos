@@ -752,8 +752,9 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       },
       {
         // Core Media's Current V1, served by the Shell host (which holds the object store) for the requester Catalog
-        // relays as itself in the tenant: Catalog keeps no provider credential and no Core table.
-        callers: [{ kind: 'person', legalEntityScope: 'tenant' }],
+        // relays as itself under the company they selected, so Core narrows the answer to that company's assets (the
+        // read accepts the company for exactly this reason): Catalog keeps no provider credential and no Core table.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: 'commerce.catalog.condition.core-media-current',
         entrypointKey: catalogDocumentCurrentRead.descriptor.entrypoint.entrypointKey,
         evidence: [coreMediaCurrentEvidence],
