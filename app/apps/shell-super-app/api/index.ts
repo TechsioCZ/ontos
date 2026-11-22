@@ -116,6 +116,7 @@ import {
   logMediaRecovery,
   makeS3ObjectStorage,
   mediaAssetNotFound,
+  mediaDigestStepTimeoutLayer,
   MediaByteSource,
   MediaDownloadSource,
   MediaIntegrityRecorder,
@@ -2935,10 +2936,27 @@ const coreHostedOperationsGroupLive = HttpApiBuilder.group(ShellAuthenticationAp
 );
 
 /**
+ * The technical guard on one step of the content digest (`CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS`, never a product limit
+ * and never a bound on the whole object). A host with a malformed value still boots, like the object store below:
+ * the failure is logged and the built-in default applies.
+ */
+export const makeCoreMediaDigestStepTimeoutLive = (options: Parameters<typeof mediaDigestStepTimeoutLayer>[0] = {}) =>
+  mediaDigestStepTimeoutLayer(options).pipe(
+    Layer.catchTag('ObjectStorageConfigError', (failure) =>
+      Layer.effectDiscard(
+        Effect.logWarning('core.media.digest-step-timeout.invalid').pipe(
+          Effect.annotateLogs({ reason: failure.reason }),
+        ),
+      ),
+    ),
+  );
+const coreMediaDigestStepTimeoutLive = makeCoreMediaDigestStepTimeoutLive();
+
+/**
  * The object store of Core Media. A host without a valid S3 configuration still boots: every download then ends as
  * a retryable 503, because the unconfigured port matches no asset and reaches no provider.
  */
-const coreMediaObjectStorageLive = Layer.effect(
+const coreMediaObjectStoreLive = Layer.effect(
   ObjectStorage,
   loadS3ObjectStorageConfig().pipe(
     Effect.flatMap(makeS3ObjectStorage),
@@ -2950,6 +2968,12 @@ const coreMediaObjectStorageLive = Layer.effect(
     ),
   ),
 ).pipe(Layer.provide(Layer.mergeAll(FetchHttpClient.layer, ShellCryptoLive)));
+
+/**
+ * What every Core Media route needs from the host: the object store and, beside it, the digest step guard that the
+ * routes digesting bytes (download, byte PUT, confirm) read.
+ */
+const coreMediaObjectStorageLive = Layer.merge(coreMediaObjectStoreLive, coreMediaDigestStepTimeoutLive);
 
 /**
  * Hands proven corruption to the integrity Action under the host's bound `core.media.integrity` workload
