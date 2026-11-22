@@ -22,6 +22,32 @@ const makePrivacyDispatchLiveness = (database: Pick<CoreDatabaseExecutor, 'trans
     if (authority === undefined) {
       return Effect.succeed(false);
     }
+    const continuation = dispatch.sourceMode === 'continuation' ? authority.continuation : undefined;
+    if (
+      dispatch.sourceMode === 'continuation' &&
+      (continuation === undefined || dispatch.continuationDeliveryId === undefined)
+    ) {
+      return Effect.succeed(false);
+    }
+    // A continuation proves the original human dispatch durably and its own consumer delivery live: the consumer's own
+    // message, written by a succeeded Action a human ran, naming exactly this dispatch, claimed by this worker now.
+    const continuationLive =
+      continuation === undefined
+        ? sql`true`
+        : sql`exists(
+        select 1 from core.outbox_deliveries cd
+        join core.outbox_messages cm on cm.outbox_message_id=cd.outbox_message_id
+        join core.domain_events ce on ce.domain_event_id=cm.domain_event_id and ce.tenant_id=cm.tenant_id
+        join core.action_invocations ca on ca.action_invocation_id=ce.action_invocation_id and ca.tenant_id=cm.tenant_id
+        join core.principals cp on cp.tenant_id=ca.tenant_id and cp.principal_id=ca.principal_id
+        where cd.outbox_delivery_id=${dispatch.continuationDeliveryId ?? ''}::uuid and cm.tenant_id=${scope.tenantId}::uuid
+          and ca.action_key=${continuation.actionKey} and ca.status='succeeded' and cp.kind='human'
+          and cd.worker_key=${continuation.workerKey} and cd.consumer_module_key=${authority.consumerModuleKey}
+          and cm.producer_module_key=${authority.consumerModuleKey} and cm.topic=${continuation.topic}
+          and ce.producer_module_key=${authority.consumerModuleKey}
+          and cm.payload_json->>'dispatchInvocationId'=${dispatch.dispatchInvocationId}
+          and cm.payload_json->>'measureId'=${dispatch.measureId} and cm.payload_json->>'taskId'=${dispatch.taskId}
+          and cd.status='processing' and cd.claimed_by=${dispatch.claimId ?? ''} and cd.claim_expires_at>statement_timestamp())`;
     const query = (current: CoreTransaction) =>
       current
         .execute<{ readonly active: boolean }>(
@@ -43,7 +69,8 @@ const makePrivacyDispatchLiveness = (database: Pick<CoreDatabaseExecutor, 'trans
           and m.producer_module_key=${authority.producerModuleKey} and m.topic=${authority.topic}
           and e.producer_module_key=${authority.producerModuleKey} and e.subject_resource_type=${authority.subjectResourceType}
           and e.subject_resource_id=${dispatch.measureId}
-          and (${dispatch.sourceMode}='dispatch' or (d.status='processing' and d.claimed_by=${dispatch.claimId ?? ''} and d.claim_expires_at>statement_timestamp()))
+          and (${dispatch.sourceMode}<>'worker' or (d.status='processing' and d.claimed_by=${dispatch.claimId ?? ''} and d.claim_expires_at>statement_timestamp()))
+          and ${continuationLive}
       ) as active`,
           'objects',
         )

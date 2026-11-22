@@ -11,6 +11,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   conditionalCallAllows,
+  continuationCatalogHolds,
   isSupportedHandoff,
   originalOperationFor,
   receiptOperationAllows,
@@ -303,4 +304,59 @@ it('requires the Communications receipt requirement to name exactly the publishe
       key,
     ),
   ).toBe(false);
+});
+
+it('recognizes a continuation by the consumer itself, its own protected Action and its own worker only', () => {
+  const { continuation } = communications;
+  if (continuation === undefined) {
+    throw new Error('The Communications continuation is required by this contract test');
+  }
+  const facts = (
+    change: Partial<{ readonly access: string; readonly actionKey: string; readonly protectedAction: boolean }> = {},
+    subscription: Partial<PrivacyDispatchConsumerSubscription> = {},
+  ) => ({
+    actions: [
+      { access: 'write', actionKey: continuation.actionKey, protectedAction: true, ...change },
+      { access: 'write', actionKey: 'communications.core.set-language-policy', protectedAction: true },
+    ],
+    appId: communications.appId,
+    moduleId: communications.moduleKey,
+    subscriptions: [
+      {
+        consumerModuleKey: communications.moduleKey,
+        entrypointKey: continuation.workerKey,
+        producerModuleKey: communications.moduleKey,
+        topic: continuation.topic,
+        workerKey: continuation.workerKey,
+        ...subscription,
+      },
+    ],
+  });
+  expect(continuationCatalogHolds(facts(), communications, continuation)).toBe(true);
+  // the message must be the consumer's own, from its own write Action that a protected declaration governs
+  for (const change of [
+    { actionKey: 'communications.core.set-language-policy' },
+    { access: 'read' },
+    { protectedAction: false },
+  ]) {
+    expect(continuationCatalogHolds(facts(change), communications, continuation)).toBe(false);
+  }
+  for (const subscription of [
+    { producerModuleKey: 'privacy.core' },
+    { topic: 'privacy.measure.dispatched' },
+    { workerKey: communications.workerKey },
+    { entrypointKey: communications.workerKey },
+    { consumerModuleKey: 'integration.symmy' },
+  ]) {
+    expect(continuationCatalogHolds(facts({}, subscription), communications, continuation)).toBe(false);
+  }
+  // another deployment is never the Communications continuation, even with the same declarations
+  expect(continuationCatalogHolds({ ...facts(), appId: 'symmy-integration' }, communications, continuation)).toBe(
+    false,
+  );
+  expect(continuationCatalogHolds({ ...facts(), moduleId: 'integration.symmy' }, communications, continuation)).toBe(
+    false,
+  );
+  // Symmy has no continuation to recognize at all
+  expect(symmy.continuation).toBeUndefined();
 });

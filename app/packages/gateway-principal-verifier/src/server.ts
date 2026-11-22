@@ -356,6 +356,55 @@ const privacyDispatchSourceIsApproved = (
 const decodePublishedContract = Schema.decodeUnknownOption(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
   onExcessProperty: 'error',
 });
+/** A continuation is the consumer's own message of its own protected human Action, read by its own worker. */
+const continuationAuthorityOf = (
+  consumer: typeof OntosModuleDeploymentContractSchema.Type,
+  consumerModuleKey: string,
+  continuation: { readonly actionKey: string; readonly topic: string; readonly workerKey: string },
+) => {
+  const actions = consumer.manifest.publicSurface.actions.filter(
+    ({ actionKey }) => actionKey === continuation.actionKey,
+  );
+  const subscriptions = consumer.runtime.outboxSubscriptions.filter(
+    ({ workerKey }) => workerKey === continuation.workerKey,
+  );
+  const [action] = actions;
+  const [subscription] = subscriptions;
+  if (
+    actions.length !== 1 ||
+    subscriptions.length !== 1 ||
+    action?.accessDeclaration === undefined ||
+    action.accessWorkload !== undefined ||
+    action.entrypoint.access !== 'write' ||
+    subscription?.consumerModuleKey !== consumerModuleKey ||
+    subscription.producerModuleKey !== consumerModuleKey ||
+    subscription.entrypoint.entrypointKey !== continuation.workerKey ||
+    subscription.topic !== continuation.topic
+  ) {
+    return Option.none();
+  }
+  return Option.some({ actionKey: action.actionKey, topic: subscription.topic, workerKey: subscription.workerKey });
+};
+
+/**
+ * The derived authority of one dispatch: unchanged without a continuation, and for a continuation only with the
+ * consumer's own continuation carrier present in its deployed contract. A continuation without one has no authority.
+ */
+const withContinuationAuthority = <Authority extends object>(
+  consumer: typeof OntosModuleDeploymentContractSchema.Type,
+  authority: Authority & { readonly consumerModuleKey: string },
+  continuation: { readonly actionKey: string; readonly topic: string; readonly workerKey: string } | undefined,
+  sourceMode: RegisteredGatewayPrivacyDispatch['sourceMode'],
+) => {
+  if (continuation === undefined) {
+    return sourceMode === 'continuation' ? Option.none() : Option.some(authority);
+  }
+  return Option.map(continuationAuthorityOf(consumer, authority.consumerModuleKey, continuation), (derived) => ({
+    ...authority,
+    continuation: derived,
+  }));
+};
+
 const privacyDispatchAuthorityFromComposition = (
   composition: ApplicationComposition,
   dispatch: RegisteredGatewayPrivacyDispatch,
@@ -395,7 +444,7 @@ const privacyDispatchAuthorityFromComposition = (
   ) {
     return Option.none();
   }
-  return Option.some({
+  const authority = {
     consumerModuleKey: subscription.consumerModuleKey,
     originActionKey: action.actionKey,
     originCapabilityKey: action.accessDeclaration.key,
@@ -404,7 +453,8 @@ const privacyDispatchAuthorityFromComposition = (
     targetAccess: policy.targetAccess,
     topic: subscription.topic,
     workerKey: subscription.workerKey,
-  });
+  };
+  return withContinuationAuthority(consumer.value, authority, policy.continuation, dispatch.sourceMode);
 };
 
 const legacyMappingMatchesIssuer = (
