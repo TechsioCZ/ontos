@@ -92,7 +92,7 @@ it.effect('uses the same immutable PostgreSQL image for development, CI and data
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('discovers external pins without removing release-age or major-update approval safeguards', () =>
+it.effect('discovers external pins without release-age delays while preserving major-update approval', () =>
   Effect.gen(function* renovationPolicy() {
     const fs = yield* FileSystem.FileSystem;
     const config = yield* fs
@@ -100,7 +100,7 @@ it.effect('discovers external pins without removing release-age or major-update 
       .pipe(Effect.flatMap(Schema.decodeUnknownEffect(RenovateSchema)));
     expect(yield* fs.exists(path.join(root, '.github/renovate.json'))).toBe(false);
     expect(config.ignoreUnstable).toBe(true);
-    expect(config.minimumReleaseAge).toBe('1 day');
+    expect(config.minimumReleaseAge).toBe('0 days');
     expect(
       config.packageRules.find((rule) => rule.matchUpdateTypes?.includes('major') === true)
         ?.dependencyDashboardApproval,

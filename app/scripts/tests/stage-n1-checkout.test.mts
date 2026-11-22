@@ -128,7 +128,7 @@ const selectedProduct = (mode: string) => {
   );
 };
 const cart = document(`
-<button id="remove">Odebrat</button><a href="/cs/pokladna">Pokladna</a>
+<button id="remove" aria-label="Odebrat: Fixture">Odebrat</button><a href="/cs/pokladna">Pokladna</a>
 <script>
 const cart = JSON.parse(localStorage.getItem('n1-cart-v1:stage'));
 fetch(${json(CART_PATH)}, { method: 'POST', headers: { 'Content-Type': 'application/json' },

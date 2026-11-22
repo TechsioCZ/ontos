@@ -3,7 +3,7 @@
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "dependencyDashboard": true,
   "ignoreUnstable": true,
-  "minimumReleaseAge": "1 day",
+  "minimumReleaseAge": "0 days",
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "rangeStrategy": "bump",

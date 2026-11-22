@@ -529,8 +529,9 @@ const browserProof = ({
             recognizedRejection(response.issues);
           }
           phase = 'remove-product';
-          await page.getByRole('button', { exact: true, name: 'Odebrat' }).click();
-          await page.getByRole('button', { exact: true, name: 'Odebrat' }).waitFor({ state: 'detached' });
+          const removeButton = page.getByRole('button', { name: /^Odebrat: /u });
+          await removeButton.click();
+          await removeButton.waitFor({ state: 'detached' });
           return await choose(index + 1);
         };
         return await choose(0);

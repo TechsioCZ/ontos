@@ -56,7 +56,7 @@ runs:
       with:
         working_directory: app
         env: ${{ inputs.mise-env }}
-        minimum_release_age: 24h
+        minimum_release_age: 0s
         cache_save: ${{ github.event_name != 'merge_group' }}
 
     # The installed tree, not just the store pnpm installs it from. A store restore followed by
