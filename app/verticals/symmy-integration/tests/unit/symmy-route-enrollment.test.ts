@@ -19,6 +19,7 @@ import {
   updateProductOperation,
   variantFactsOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
+import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
 import { symmyCallInMode } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
@@ -285,10 +286,36 @@ const refusalCodes = (
   decision: ReturnType<typeof decideSymmyRouteDeactivation> | ReturnType<typeof decideSymmyRouteWrite>,
 ) => (Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : []);
 
+it('publishes the exact registered Inventory provision, receipt recovery and source-position read requirements', () => {
+  const providers = [
+    { entrypointKey: 'commerce.inventory.provision-source-stock-item', source: 'worker' },
+    { entrypointKey: 'commerce.inventory.api.source-stock-item-provisioning-receipt', source: 'worker' },
+    { entrypointKey: 'commerce.inventory.api.source-stock-position-resolution', source: 'admission' },
+  ] as const;
+  for (const { entrypointKey, source } of providers) {
+    const consumingEntrypoint =
+      source === 'worker' ? 'integration.symmy.execute-symmy-job' : 'integration.symmy.admit-symmy-sync';
+    expect(
+      symmyIntegrationManifest.requirements?.operations.filter(
+        (requirement) =>
+          requirement.entrypointKey === consumingEntrypoint &&
+          requirement.provider.entrypointKey === entrypointKey &&
+          requirement.provider.moduleId === 'commerce.inventory' &&
+          requirement.provider.schemaVersion === '1',
+      ),
+    ).toHaveLength(1);
+    expect(
+      symmyIntegrationRegisteredWorkloadCalls.filter(
+        (call) => call.entrypointKey === entrypointKey && symmyCallInMode(source === 'worker' ? 'job' : 'sync')(call),
+      ),
+    ).toHaveLength(1);
+  }
+});
+
 describe('Symmy route inventories', () => {
-  it('refuses the stock route with its own reason and names no inventory for an operator fixture route', () => {
+  it('inventories dynamic stock resolution and names no inventory for an operator fixture route', () => {
     const stock = symmyRouteInventoryOf('inventoryStockBatch');
-    expect(Option.isOption(stock) ? undefined : stock.code).toBe('stock_route_pending_inventory_setup');
+    expect(Option.isOption(stock) && Option.isSome(stock)).toBe(true);
     expect(symmyRouteInventoryOf('assortmentRulesFixtureBatch')).toEqual(Option.none());
   });
 

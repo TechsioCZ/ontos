@@ -36,6 +36,12 @@ export const variantFactsOperation = {
   schemaVersion: '1',
 } as const;
 
+export const provisionStockItemOperation = {
+  entrypointKey: 'commerce.inventory.provision-source-stock-item',
+  moduleId: 'commerce.inventory',
+  schemaVersion: '1',
+} as const;
+
 const productCreateKey = 'product-create';
 const productUpdateKey = 'product-update';
 const variantCreateKey = 'variant-create';
@@ -52,6 +58,7 @@ const present = <Value>(key: string, value: Value | undefined): Readonly<Record<
 
 /** What the route enrolls for the products: where each kind of record lives, and the price grants when it has them. */
 interface Enrollment {
+  readonly inventorySource: SymmyFixtureExecutionPlan['inventorySource'];
   readonly mappingRevision: string;
   readonly prices: Option.Option<PriceContext>;
   readonly routeScope: string;
@@ -411,6 +418,17 @@ const buildVariantItem = (
   };
 };
 
+const inventoryItemKey = (row: SymmyProductRow, variant: PlannedVariant, initial: boolean) => {
+  const { identifier } = variant.row;
+  if (identifier !== undefined && identifier.type !== 'ean') {
+    return Option.some(identifier.value);
+  }
+  if (initial && row.identifier !== undefined && row.identifier.type !== 'ean') {
+    return Option.some(row.identifier.value);
+  }
+  return Option.none<string>();
+};
+
 const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint')[]) =>
   kinds.map((kind) => ({ branchKey: kind, kind }));
 
@@ -505,6 +523,29 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       ? ['PriceHint' as const]
       : []),
   ];
+  const provisionEffects = [];
+  if (enrollment.inventorySource !== undefined) {
+    for (const [position, variant] of variants.entries()) {
+      const itemKey = inventoryItemKey(row, variant, position === 0);
+      if (Option.isNone(itemKey)) {
+        return Option.none();
+      }
+      provisionEffects.push({
+        dependsOn: [
+          parent,
+          ...variantItems.flatMap(({ created }, variantPosition) => (variantPosition === position ? created : [])),
+        ],
+        effectKey: `inventory-provision-${position}`,
+        intent: {
+          _tag: 'CatalogProductDependentEffect',
+          parent,
+          request: { _tag: 'ProvisionSourceStockItem', itemKey: itemKey.value, source: enrollment.inventorySource },
+          ...present('variantParent', variantItems[position]?.created[0]),
+        },
+        operation: provisionStockItemOperation,
+      });
+    }
+  }
   const productItem = {
     effects: [
       {
@@ -530,6 +571,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
         operation: createProductOperation,
       },
       ...updateEffect,
+      ...provisionEffects,
     ],
     itemKey: productItemKey,
     source: {
@@ -580,7 +622,16 @@ export const buildSymmyProductPlan = Effect.fn('SymmyProductPlan.build')(functio
   if (Option.isNone(source) || (priced && Option.isNone(prices))) {
     return Option.none<SymmyFixtureExecutionPlan>();
   }
+  if (
+    template.inventorySource !== undefined &&
+    (template.inventorySource.policyRef.tenantId !== tenantId ||
+      template.inventoryBackendId !== template.inventorySource.issuer.backendId ||
+      Option.isNone(enrolledItem(template, 'PRODUCT', provisionStockItemOperation)))
+  ) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
   const enrollment = {
+    inventorySource: template.inventorySource,
     mappingRevision: template.sourceMappingVersion ?? route.mappingVersion,
     prices,
     routeScope: template.sourceRouteId ?? route.routeId,

@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import type { SymmyPinnedEffect } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyFixtureExecutionPlanSchema, SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -708,4 +708,171 @@ it.effect('records the company ICO resolved onto the profile of its own item, an
     expect(Result.getOrNull(yield* record(resolved))).toBe(true);
     return yield* Effect.void;
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
+
+it.effect(
+  'pins a product-dependent Inventory provisioning command once and resumes its exact target after interruption',
+  () =>
+    Effect.gen(function* provisionResolution() {
+      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      const admin = yield* openDatabase(connections.admin.connectionString);
+      const tenantId = crypto.randomUUID();
+      const scope = makeScope(tenantId, crypto.randomUUID());
+      const inventoryRef = (kind: string) => ({
+        moduleId: 'commerce.inventory',
+        resourceId: crypto.randomUUID(),
+        resourceType: `commerce.inventory.${kind}`,
+        tenantId,
+      });
+      const policyRef = inventoryRef('source-provisioning-policy');
+      const source = {
+        customerConfigurationId: 'provisioning-fixture',
+        externalScope: 'source-scope',
+        issuer: { backendId: 'fixture-backend', backendKind: 'external_business_system' },
+        locations: [{ locationKey: 'warehouse-1', stockLocationRef: inventoryRef('stock-location') }],
+        namespace: 'fixture-namespace',
+        policyRef,
+        unitRef: {
+          moduleId: 'commerce.catalog',
+          resourceId: crypto.randomUUID(),
+          resourceType: 'commerce.catalog.product-unit',
+          tenantId,
+        },
+      };
+      const productRef = {
+        moduleId: 'commerce.catalog',
+        resourceId: crypto.randomUUID(),
+        resourceType: 'commerce.catalog.product',
+        tenantId,
+      };
+      const variantRef = {
+        moduleId: 'commerce.catalog',
+        resourceId: crypto.randomUUID(),
+        resourceType: 'commerce.catalog.variant',
+        tenantId,
+      };
+      yield* Effect.addFinalizer(() =>
+        admin
+          .delete(symmyJobEffects)
+          .where(eq(symmyJobEffects.tenantId, tenantId))
+          .pipe(
+            Effect.andThen(admin.delete(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId))),
+            Effect.andThen(admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.tenantId, tenantId))),
+            Effect.orDie,
+          ),
+      );
+      const fixturePlan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+        items: [
+          {
+            effects: [
+              {
+                effectKey: 'product-create',
+                operation: {
+                  entrypointKey: 'commerce.catalog.create-product',
+                  moduleId: 'commerce.catalog',
+                  schemaVersion: '2',
+                },
+              },
+              {
+                dependsOn: ['product-create'],
+                effectKey: 'inventory-provision',
+                operation: {
+                  entrypointKey: 'commerce.inventory.provision-source-stock-item',
+                  moduleId: 'commerce.inventory',
+                  schemaVersion: '1',
+                },
+              },
+            ],
+            itemKey: 'product-0',
+            source: { entityKind: 'PRODUCT', issuerId: 'fixture', sourceNamespace: 'fixture', sourceRecordId: 'sku' },
+          },
+        ],
+      });
+      yield* admin.insert(symmyJobRoutes).values({
+        active: true,
+        fixtureIds: ['provisioning-resolution'],
+        fixturePlan,
+        mappingVersion: 'mapping-1',
+        principalId: scope.principalId,
+        routeId: crypto.randomUUID(),
+        routeKey: 'productsBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      const scoped = <A, E>(run: (admission: AdmissionStore, execution: ExecutionStore) => Effect.Effect<A, E>) =>
+        withScopedStores(connections.runtime.connectionString, scope, run);
+      const admitted = yield* scoped((admission) =>
+        admission.admit({
+          fixtureId: 'provisioning-resolution',
+          idempotencyKey: 'provisioning-resolution',
+          routeKey: 'productsBatch',
+        }),
+      );
+      const job = Option.getOrThrow(yield* scoped((_admission, execution) => execution.load(admitted.jobId)));
+      const [parent, provision] = job.plan.items[0]?.effects ?? [];
+      assert.isDefined(parent);
+      assert.isDefined(provision);
+      const parentToken = crypto.randomUUID();
+      const parentClaim = yield* scoped((_admission, execution) =>
+        execution.claim(job.jobId, parent.ref.effectId, parentToken),
+      );
+      yield* scoped((_admission, execution) =>
+        execution.settle(
+          job.jobId,
+          parent.ref.effectId,
+          parentToken,
+          parentClaim.version,
+          Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
+            effectId: parent.ref.effectId,
+            owner: 'commerce.catalog',
+            status: 'accepted_change',
+          }),
+        ),
+      );
+      const token = crypto.randomUUID();
+      const claim = yield* scoped((_admission, execution) => execution.claim(job.jobId, provision.ref.effectId, token));
+      const dependent = {
+        _tag: 'CatalogProductDependentEffect',
+        parent: { effectKey: 'product-create', itemKey: 'product-0' },
+        request: { _tag: 'ProvisionSourceStockItem', itemKey: 'unseen-SKU', source },
+      };
+      yield* admin
+        .update(symmyJobEffects)
+        .set({ effect: pinnedWith(provision, dependent, null) })
+        .where(eq(symmyJobEffects.effectId, provision.ref.effectId));
+      const native = {
+        _tag: 'InventoryProvision',
+        payload: {
+          catalogSelection: { productRef, variantRef },
+          exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
+          itemKey: 'unseen-SKU',
+          policyRef,
+        },
+        source,
+      };
+      const resolved = pinnedWith(provision, native, policyRef);
+      const record = (effect: SymmyPinnedEffect) =>
+        scoped((_admission, execution) =>
+          execution.recordResolvedEffect(job.jobId, provision.ref.effectId, token, claim.version, effect),
+        );
+      expect(yield* record(resolved)).toBe(true);
+      // The original resolution survives a response loss; replay cannot choose another policy or native target.
+      expect(yield* record(resolved)).toBe(true);
+      const differentPolicy = inventoryRef('source-provisioning-policy');
+      expect(
+        yield* record(
+          pinnedWith(
+            provision,
+            { ...native, payload: { ...native.payload, policyRef: differentPolicy } },
+            differentPolicy,
+          ),
+        ),
+      ).toBe(false);
+      const refreshed = Option.getOrThrow(yield* scoped((_admission, execution) => execution.load(job.jobId)));
+      const saved = refreshed.effects.find(({ effect }) => effect.ref.effectId === provision.ref.effectId);
+      expect(Option.getOrUndefined(saved?.resolvedEffect ?? Option.none())).toMatchObject({
+        intent: native,
+        ref: { originalTarget: policyRef },
+      });
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
 );

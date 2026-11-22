@@ -2,6 +2,7 @@ import { defineScopedRoutine, registeredAdmissionAuthContextRef } from '@app/cor
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { readVerifiedGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
+  computeCanonicalValueHash,
   openScopedSourceExecutionFence,
   readScopedOriginalActionInvocation,
   readScopedSourceExecutionFence,
@@ -162,6 +163,24 @@ const sourceWorkloads = new Map([
   ['commerce.customer-context', 'commerce.customer-context.source-write'],
 ]);
 const sourceWorkloadFor = (moduleId: string) => sourceWorkloads.get(moduleId);
+const inventorySourceAllowed = (
+  template: SymmyFixtureExecutionPlan,
+  intent: NonNullable<SymmyPinnedEffect['intent']>,
+) => {
+  const matches = (source: NonNullable<SymmyFixtureExecutionPlan['inventorySource']>) =>
+    template.inventorySource !== undefined &&
+    computeCanonicalValueHash(source) === computeCanonicalValueHash(template.inventorySource);
+  return Match.value(intent).pipe(
+    Match.tag('CatalogProductDependentEffect', ({ request }) =>
+      Match.value(request).pipe(
+        Match.tag('ProvisionSourceStockItem', ({ source }) => matches(source)),
+        Match.orElse(() => true),
+      ),
+    ),
+    Match.tag('InventoryProvision', ({ source }) => matches(source)),
+    Match.orElse(() => true),
+  );
+};
 const inputPlanAllowed = (
   template: SymmyFixtureExecutionPlan,
   plan: SymmyFixtureExecutionPlan,
@@ -188,6 +207,7 @@ const inputPlanAllowed = (
     return effects.every(
       ({ intent, operation, originalTarget }) =>
         intent !== undefined &&
+        inventorySourceAllowed(template, intent) &&
         enrolledEffects.some(
           ({ operation: allowed }) =>
             allowed.moduleId === operation.moduleId &&
@@ -870,6 +890,7 @@ const qualifiedSelectorMatches = Effect.fn('SymmyJobStore.qualifiedSelectorMatch
 });
 interface ConfiguredRouteContext {
   readonly allowedOwnerOperations: readonly SymmyFixtureExecutionPlan['items'][number]['effects'][number]['operation'][];
+  readonly inventorySource?: SymmyFixtureExecutionPlan['inventorySource'];
   readonly issuerId: SymmyFixtureExecutionPlan['items'][number]['source']['issuerId'];
   readonly legalEntityId?: string;
   readonly mappingVersion: string;
@@ -1050,6 +1071,9 @@ const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')
     sourceNamespace: first.source.sourceNamespace,
     tenantId: scope.tenantId,
   };
+  if (plan.inventorySource !== undefined) {
+    Object.assign(result, { inventorySource: plan.inventorySource });
+  }
   if (row.routeCode !== null) {
     Object.assign(result, { resolvedCode: row.routeCode });
   }
@@ -1085,10 +1109,11 @@ const syncPlanSource = Effect.fn('SymmyJobStore.syncPlanSource')(function* syncP
   if (input.stock === undefined) {
     return Option.none<SymmyFixtureExecutionPlan>();
   }
-  // A stock row is admitted for the enrolled positions only. One row outside them rejects the whole
-  // request before any plan is pinned, so no owner call is made for any row.
+  // Every row needs a current public Inventory resolution under the one source policy.
+  // One unresolved or out-of-policy row rejects the batch before any native command is pinned.
   return yield* buildSymmyStockPlan({
     digest: hash,
+    facts: input.stockFacts,
     idempotencyKey: input.idempotencyKey,
     receivedAt: yield* DateTime.now,
     rows: input.stock,

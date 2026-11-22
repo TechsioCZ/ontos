@@ -39,6 +39,8 @@ const AssortmentStaleFactBodySchema = Schema.Union([
   Schema.Struct({ group: Schema.Struct({ currentState: Schema.Literal('ARCHIVED') }) }),
   Schema.Struct({ outcome: Schema.Literal('NOT_CURRENT') }),
 ]);
+const committedResponseLost = 'committed-response-lost';
+const originalResponseRecovered = 'original-response-recovered';
 const outputSchema = Schema.Union([
   Schema.Struct({
     path: Schema.String,
@@ -55,7 +57,7 @@ const outputSchema = Schema.Union([
   Schema.Struct({
     path: Schema.String,
     status: Schema.Int,
-    type: Schema.Literals(['committed-response-lost', 'original-response-recovered']),
+    type: Schema.Literals([committedResponseLost, originalResponseRecovered]),
   }),
   Schema.Struct({ marker: OntosDeploymentIdentitySchema, port: Schema.Int, type: Schema.Literal('ready') }),
 ]);
@@ -122,6 +124,8 @@ const serve = Effect.scoped(
     );
     const lost = yield* Ref.make(false);
     const faultMarker = yield* Config.option(Config.String('ONTOS_C14_RESPONSE_LOSS_MARKER'));
+    const provisioningLost = yield* Ref.make(false);
+    const provisioningFaultMarker = yield* Config.option(Config.String('ONTOS_C14_PROVISIONING_RESPONSE_LOSS_MARKER'));
     const faultOperation = yield* Config.schema(
       Schema.Literals([
         'catalog-create-product',
@@ -182,14 +186,41 @@ const serve = Effect.scoped(
         }
         const firstLoss = !(yield* Ref.getAndSet(lost, true));
         if (firstLoss) {
-          yield* sendOutput({ path, status: response.status, type: 'committed-response-lost' });
+          yield* sendOutput({ path, status: response.status, type: committedResponseLost });
         }
         return firstLoss || faultPath.read === null;
       },
     );
+    const provisioningFault = Effect.gen(function* provisioningFaultActive() {
+      return Option.isSome(provisioningFaultMarker) && (yield* fs.exists(provisioningFaultMarker.value));
+    });
+    const provisioningReceiptPath = '/reads/source-stock-item-provisioning-receipt';
+    const dropProvisioningResponse = Effect.fn('SymmyC14ProductOwnerChild.dropProvisioningResponse')(
+      function* dropProvisioningResponse(path: string, response: Response) {
+        if (
+          !(yield* provisioningFault) ||
+          !path.endsWith('/actions/provision-source-stock-item') ||
+          !response.ok ||
+          (yield* Ref.getAndSet(provisioningLost, true))
+        ) {
+          return false;
+        }
+        yield* sendOutput({ path, status: response.status, type: committedResponseLost });
+        return true;
+      },
+    );
+    const blocksProvisioningReceipt = (path: string) =>
+      Effect.gen(function* blockedReceipt() {
+        return (
+          path.endsWith(provisioningReceiptPath) && (yield* provisioningFault) && (yield* Ref.get(provisioningLost))
+        );
+      });
     const application = Effect.gen(function* actualOwnerRequest() {
       const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
       const path = new URL(request.url).pathname;
+      if (yield* blocksProvisioningReceipt(path)) {
+        return HttpServerResponse.empty({ status: 503 });
+      }
       const faultActive = Option.isSome(faultMarker) && (yield* fs.exists(faultMarker.value));
       // This is a test transport outage, never an owner acceptance or a replacement authorization gate. It begins
       // with the lost write: a read before it, such as the current definitions a new admission is fenced on, passes.
@@ -217,8 +248,14 @@ const serve = Effect.scoped(
           });
         }
       }
-      if (yield* dropCommittedWriteResponse(faultActive, path, response)) {
+      if (
+        (yield* dropProvisioningResponse(path, response)) ||
+        (yield* dropCommittedWriteResponse(faultActive, path, response))
+      ) {
         return HttpServerResponse.empty({ status: 503 });
+      }
+      if (path.endsWith(provisioningReceiptPath) && response.ok && (yield* Ref.get(provisioningLost))) {
+        yield* sendOutput({ path, status: response.status, type: originalResponseRecovered });
       }
       if (
         faultOperation === 'catalog-set-variant-localized-facts' &&
@@ -226,7 +263,7 @@ const serve = Effect.scoped(
         response.ok &&
         (yield* Ref.get(lost))
       ) {
-        yield* sendOutput({ path, status: response.status, type: 'original-response-recovered' });
+        yield* sendOutput({ path, status: response.status, type: originalResponseRecovered });
       }
       return HttpServerResponse.fromWeb(response);
     });

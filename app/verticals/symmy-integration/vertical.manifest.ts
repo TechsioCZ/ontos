@@ -73,6 +73,9 @@ const ownerOperationProviders = [
   {
     moduleId: 'commerce.inventory',
     requiredOperations: [
+      { entrypointKey: 'commerce.inventory.provision-source-stock-item', schemaVersion: '1' },
+      { entrypointKey: 'commerce.inventory.api.source-stock-item-provisioning-receipt', schemaVersion: '1' },
+      { entrypointKey: 'commerce.inventory.api.source-stock-position-resolution', schemaVersion: '1' },
       { entrypointKey: 'commerce.inventory.import-source-assertion', schemaVersion: '1' },
       { entrypointKey: 'commerce.inventory.api.inventory-source-import-receipt', schemaVersion: '1' },
     ],
@@ -133,6 +136,7 @@ const syncProviderEntrypoints = new Set([
   'commerce.customer-context.create-customer-group',
   'commerce.customer-context.update-customer-group',
   'commerce.customer-context.api.customer-group-definition-source',
+  'commerce.inventory.api.source-stock-position-resolution',
   'commerce.inventory.import-source-assertion',
   'commerce.inventory.api.inventory-source-import-receipt',
 ]);

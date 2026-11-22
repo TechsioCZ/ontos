@@ -8,6 +8,9 @@ import {
   updateProductRequestIdentity,
 } from '@app/catalog/api/native-action-request-identity';
 import { CreateProductRecoveryRequestSchema } from '@app/catalog/api/create-product-recovery';
+import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/actions/provision-source-stock-item';
+import type { SourceStockItemProvisioning } from '@app/inventory/source-provisioning';
+import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
 import { InventorySourceImportReceiptRequestSchema } from '@app/inventory/api/inventory-source-import-receipt';
 import { prepareImportSourceAssertionRequestIdentity } from '@app/inventory/source-import';
 import type { PriceGroupSourceCorrelation } from '@app/price-group-catalog/apis/price-group-source-associations';
@@ -41,6 +44,8 @@ import type { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import {
+  executeProvisionSourceStockItemWithAuthorization,
+  executeSourceStockItemProvisioningReceiptWithAuthorization,
   executeImportSourceAssertionWithAuthorization,
   executeInventorySourceImportReceiptWithAuthorization,
 } from '@app/inventory/api/client';
@@ -120,6 +125,19 @@ const safeOutcome = (
   owner: input.effect.ref.operation.moduleId,
   status,
 });
+
+const provisioningOutcome = (
+  input: SymmyEffectAdapterInput,
+  provisioning: SourceStockItemProvisioning,
+): SymmyExecutionOutcome =>
+  safeOutcome(
+    input,
+    [provisioning.stockItem, provisioning.binding, provisioning.itemCorrelation, ...provisioning.positions].some(
+      ({ disposition }) => disposition === 'ESTABLISHED',
+    )
+      ? 'accepted_change'
+      : 'accepted_no_change',
+  );
 
 const initialVariantBindingOutcome = (input: SymmyEffectAdapterInput, { changed }: { readonly changed?: boolean }) => {
   if (changed === undefined) {
@@ -310,6 +328,11 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
         input.inventoryBackendId !== undefined &&
         expectedTarget(payload.authorizationTargetRef) &&
         payload.items.every((item) => item.issuer.backendId === input.inventoryBackendId),
+      InventoryProvision: ({ payload, source }) =>
+        input.inventoryBackendId === source.issuer.backendId &&
+        expectedTarget(payload.policyRef) &&
+        sameRef(payload.policyRef, source.policyRef) &&
+        payload.catalogSelection.productRef.tenantId === tenantId,
       PriceDefine: ({ payload }) =>
         expectedTarget(payload.priceRef) && priceSourceMatches(input, payload.sourceAssertion),
       PriceDefineFromGroupEffect: () => false,
@@ -343,6 +366,9 @@ interface AdapterContract {
   readonly tag: IntentTag;
 }
 
+const inventoryModuleId = 'commerce.inventory';
+const inventoryProvisionActionKey = 'commerce.inventory.provision-source-stock-item';
+const inventoryProvisioningReceiptRead = 'commerce.inventory.api.source-stock-item-provisioning-receipt';
 const priceGroupAudience = 'price-group-catalog';
 const priceGroupModuleId = 'pricing.price-group-catalog';
 const catalogAudience = 'catalog';
@@ -450,9 +476,19 @@ const symmyCatalogPricingInventoryContracts: readonly AdapterContract[] = [
   },
   {
     audience: 'inventory',
+    declarationKey: 'commerce.inventory.source-stock-item.provision',
+    entrypointKey: inventoryProvisionActionKey,
+    moduleId: inventoryModuleId,
+    recoveryDeclarationKey: 'commerce.inventory.source-stock-item-provisioning-receipt.read',
+    recoveryEntrypointKey: inventoryProvisioningReceiptRead,
+    schemaVersion: '1',
+    tag: 'InventoryProvision',
+  },
+  {
+    audience: 'inventory',
     declarationKey: 'commerce.inventory.source-assertion.import',
     entrypointKey: 'commerce.inventory.import-source-assertion',
-    moduleId: 'commerce.inventory',
+    moduleId: inventoryModuleId,
     recoveryDeclarationKey: 'commerce.inventory.inventory-source-import-receipt.read',
     recoveryEntrypointKey: 'commerce.inventory.api.inventory-source-import-receipt',
     schemaVersion: '1',
@@ -678,6 +714,28 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
           )
         : Effect.fail(symmyJobWorkerInvalid()),
     ),
+    Match.tag('ProvisionSourceStockItem', ({ itemKey, source }) =>
+      target === undefined &&
+      input.canExecuteNewEffects &&
+      source.policyRef.tenantId === productRef.tenantId &&
+      input.inventoryBackendId === source.issuer.backendId
+        ? requireCreatedVariant(input, intent, product).pipe(
+            Effect.flatMap((variantRef) =>
+              Schema.decodeUnknownEffect(ProvisionSourceStockItemPayloadSchema)({
+                catalogSelection: { productRef, variantRef },
+                exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
+                itemKey,
+                policyRef: source.policyRef,
+              }),
+            ),
+            Effect.map((payload) => ({
+              intent: { _tag: 'InventoryProvision', payload, source },
+              target: source.policyRef,
+            })),
+            Effect.mapError(symmyJobWorkerInvalid),
+          )
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
     Match.tag('DefinePrice', ({ payload }) =>
       target !== undefined &&
       sameRef(target, payload.priceRef) &&
@@ -897,6 +955,7 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
         CatalogSetVariantLocalizedFacts: () => Option.some(occurrenceSource),
         CatalogUpdateProduct: () => Option.some(occurrenceSource),
         InventoryImport: () => Option.none(),
+        InventoryProvision: () => Option.none(),
         PriceDefine: () => Option.none(),
         PriceDefineFromGroupEffect: () => Option.none(),
         PriceGroupCreate: () => Option.none(),
@@ -1078,6 +1137,28 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           Match.exhaustive,
         );
       }),
+      InventoryProvision: Effect.fn('SymmyOwnerAdapters.recoverProvision')(function* recoverProvision({ payload }) {
+        const request = yield* Schema.decodeUnknownEffect(SourceStockItemProvisioningReceiptRequestSchema)({
+          actionInvocationId: invocationId,
+          input: payload,
+        }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+        const result = yield* executeSourceStockItemProvisioningReceiptWithAuthorization(
+          request,
+          credential,
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        return yield* Match.value(result).pipe(
+          Match.tag('INDETERMINATE', () => Effect.fail(symmyJobWorkerUnavailable())),
+          Match.tag('RECORDED', ({ receipt }) =>
+            receipt.actionInvocationId === invocationId &&
+            computeCanonicalValueHash(receipt.input) === computeCanonicalValueHash(payload)
+              ? Effect.succeed(provisioningOutcome(input, receipt.provisioning))
+              : Effect.fail(symmyJobWorkerUnavailable()),
+          ),
+          Match.exhaustive,
+        );
+      }),
       PriceDefine: Effect.fn('SymmyOwnerAdapters.PriceDefine')(function* PriceDefine() {
         const result = yield* executePriceSourceResultLookupWithAuthorization(
           { actionInvocationId: invocationId },
@@ -1182,6 +1263,11 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
               proposal,
             }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(InventorySourceImportReceiptRequestSchema)));
       },
+      InventoryProvision: ({ payload }) =>
+        Schema.decodeUnknownEffect(SourceStockItemProvisioningReceiptRequestSchema)({
+          actionInvocationId: invocationId,
+          input: payload,
+        }),
       PriceDefine: () => price,
       PriceDefineFromGroupEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       PriceGroupCreate: () => group,
@@ -1370,6 +1456,18 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
         }
         return projectSymmyInventoryOutcome(input, result.items[0]);
       }),
+      InventoryProvision: Effect.fn('SymmyOwnerAdapters.provision')(function* provision({ payload }) {
+        const result = yield* executeProvisionSourceStockItemWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        if (!('stockItem' in result)) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        return provisioningOutcome(input, result);
+      }),
       PriceDefine: Effect.fn('SymmyOwnerAdapters.PriceDefine')(function* PriceDefine(intent) {
         const result = yield* executeDefinePriceWithAuthorization(
           intent.payload,
@@ -1493,6 +1591,19 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
       InventoryImport: ({ payload }) =>
         prepareImportSourceAssertionRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
+        ),
+      InventoryProvision: ({ payload }) =>
+        Schema.encodeEffect(ProvisionSourceStockItemPayloadSchema)(payload).pipe(
+          Effect.map((normalizedPayload) =>
+            computeActionRequestHash({
+              actionKey: inventoryProvisionActionKey,
+              normalizedPayload,
+              owningModuleKey: inventoryModuleId,
+              principal: tenantPrincipal,
+              schemaVersion: '1',
+              target: {},
+            }),
+          ),
         ),
       PriceDefine: ({ payload }) =>
         priceLegalEntity.pipe(
@@ -1908,6 +2019,13 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   }
   if (Schema.is(problemStatus)(error) && (error.status === 401 || error.status === 403)) {
     return safeOutcome(input, 'denied');
+  }
+  if (
+    Schema.is(problemStatus)(error) &&
+    (error.status === 400 || error.status === 422) &&
+    Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[15])(intent)
+  ) {
+    return safeOutcome(input, 'invalid');
   }
   if (Schema.is(problemStatus)(error) && error.status === 409) {
     return safeOutcome(input, 'conflict');

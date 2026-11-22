@@ -8,6 +8,7 @@ import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
+import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/actions/provision-source-stock-item';
 import { ImportSourceAssertionPayloadSchema } from '@app/inventory/source-import';
 import { CreatePriceGroupPayloadSchema } from '@app/price-group-catalog/actions/create-price-group';
 import { PriceGroupOperationReceiptSchema } from '@app/price-group-catalog/apis/price-group-result-lookup';
@@ -16,6 +17,7 @@ import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
 import { RevisePricePayloadSchema } from '@app/pricing/actions/revise-price';
 import { Schema } from 'effect';
 
+import { SymmyInventorySourceSchema } from './symmy-stock-batch.ts';
 import { SymmyPriceGroupRefSchema } from './symmy-price-batch.ts';
 
 const dependencyKey = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/u));
@@ -96,6 +98,10 @@ const productDependentRequest = Schema.Union([
     }).check(
       Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
     ),
+  }),
+  Schema.TaggedStruct('ProvisionSourceStockItem', {
+    itemKey: ProvisionSourceStockItemPayloadSchema.fields.itemKey,
+    source: SymmyInventorySourceSchema,
   }),
   Schema.TaggedStruct('DefinePrice', {
     payload: Schema.Struct({
@@ -178,5 +184,9 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
     ),
   }),
   Schema.TaggedStruct('PriceGroupCreateAtCatalogHead', { payload: Schema.Struct(priceGroupAtHeadFields) }),
+  Schema.TaggedStruct('InventoryProvision', {
+    payload: ProvisionSourceStockItemPayloadSchema,
+    source: SymmyInventorySourceSchema,
+  }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

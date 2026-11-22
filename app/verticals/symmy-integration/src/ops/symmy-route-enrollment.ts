@@ -5,7 +5,7 @@
  * runtime role can only read it. This module decides what one enrollment of one route for one Tenant and company may
  * write, and why it refuses otherwise:
  *
- * - every route kind has an operation inventory except the stock route, which waits on its Inventory backend;
+ * - every route kind has an operation inventory; the stock route requires its one-time Inventory policy;
  * - the configuration names owner operations only (never an executable intent), each one in the route's inventory
  *   (what the route's admission plan and executor call and what its Shell dispatch reads), with every required one;
  * - a route that reads or writes one company's data names that company, and a customers route enrolls at least one
@@ -20,6 +20,7 @@
  * The owner operations come from the plan builders that call them, so a builder and its route inventory never name two
  * versions of one operation.
  */
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Option, Schema } from 'effect';
@@ -48,11 +49,13 @@ import {
 import { reviseOperation } from '../persistence/symmy-price-batch-plan.ts';
 import { groupOperation, priceOperation } from '../persistence/symmy-price-list-plan.ts';
 import {
+  provisionStockItemOperation,
   createProductOperation,
   createVariantOperation,
   updateProductOperation,
   variantFactsOperation,
 } from '../persistence/symmy-product-plan.ts';
+import { stockOperation } from '../persistence/symmy-stock-plan.ts';
 import { SymmyRouteEnrollmentRefused } from './symmy-route-enrollment-refused.ts';
 import type { SymmyRouteEnrollmentRefusal, SymmyRouteEnrollmentRefusalCode } from './symmy-route-enrollment-refused.ts';
 
@@ -232,6 +235,17 @@ const customerGroupOperation = (entrypointKey: string): SymmyOwnerOperation => (
  */
 const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInventory>([
   [
+    'inventoryStockBatch',
+    {
+      admission: 'sync',
+      operations: [
+        executor(stockOperation, { entityKind: 'STOCK', required: true }),
+        shellRead('commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution', true),
+      ],
+      uniformEntityKind: true,
+    },
+  ],
+  [
     'adminCustomers',
     {
       admission: 'read',
@@ -372,6 +386,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       operations: [
         executor(createProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts], required: true }),
         executor(updateProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
+        executor(provisionStockItemOperation, { entityKind: 'PRODUCT' }),
         executor(createVariantOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(variantFactsOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(priceOperation, { entityKind: 'PRICE' }),
@@ -391,15 +406,8 @@ export const symmyOperationName = ({ entrypointKey, schemaVersion }: SymmyRouteC
 /** The inventory of the route, or the typed reason it cannot be enrolled. */
 export const symmyRouteInventoryOf = (
   routeKey: SymmyEnrollmentRouteKey,
-): Option.Option<SymmyRouteInventory> | SymmyRouteEnrollmentRefusal => {
-  if (routeKey === 'inventoryStockBatch') {
-    return refusal(
-      'stock_route_pending_inventory_setup',
-      'The stock route is enrolled by its own slice once its Inventory backend and positions are set up',
-    );
-  }
-  return Option.fromUndefinedOr(symmyRouteInventories.get(routeKey));
-};
+): Option.Option<SymmyRouteInventory> | SymmyRouteEnrollmentRefusal =>
+  Option.fromUndefinedOr(symmyRouteInventories.get(routeKey));
 
 /** The operations a configuration enrolls, with the entity kind of the item naming each. */
 const enrolledOperations = (configuration: SymmyFixtureExecutionPlan) =>
@@ -461,6 +469,25 @@ const selectorRefusals = (request: SymmyRouteEnrollmentRequest, inventory: Symmy
   ];
 };
 
+const inventoryPolicyRefusals = (
+  request: SymmyRouteEnrollmentRequest,
+  enrolled: ReturnType<typeof enrolledOperations>,
+) => {
+  const { configuration } = request;
+  return refuseWhen(
+    (request.routeKey === 'inventoryStockBatch' && configuration.inventorySource === undefined) ||
+      ((configuration.inventorySource !== undefined || configuration.inventoryBackendId !== undefined) &&
+        (configuration.inventorySource === undefined ||
+          configuration.inventorySource.policyRef.tenantId !== request.tenantId ||
+          configuration.inventorySource.issuer.backendId !== configuration.inventoryBackendId)) ||
+      (request.routeKey === 'productsBatch' &&
+        (configuration.inventorySource !== undefined) !==
+          enrolled.some(({ operation }) => sameOperation(operation, provisionStockItemOperation))),
+    'configuration_field_not_allowed',
+    'Product provisioning and stock resolution name one tenant-local Inventory policy and its exact selected backend',
+  );
+};
+
 /** What the request itself must satisfy, before any state is read. */
 export const symmyRouteRequestRefusals = (
   request: SymmyRouteEnrollmentRequest,
@@ -477,10 +504,13 @@ export const symmyRouteRequestRefusals = (
       'A route names the owner operations it may use, never an executable intent',
     ),
     ...refuseWhen(
-      configuration.stockScope !== undefined || configuration.inventoryBackendId !== undefined,
+      (configuration.inventorySource !== undefined || configuration.inventoryBackendId !== undefined) &&
+        request.routeKey !== 'inventoryStockBatch' &&
+        request.routeKey !== 'productsBatch',
       'configuration_field_not_allowed',
-      `${request.routeKey} enrolls no stock positions or Inventory backend`,
+      `${request.routeKey} enrolls no Inventory source policy`,
     ),
+    ...inventoryPolicyRefusals(request, enrolled),
     ...selectorRefusals(request, inventory),
     ...enrolled.flatMap(({ entityKind, operation }) => {
       const listed = inventory.operations.find((candidate) => sameOperation(candidate, operation));
@@ -581,7 +611,12 @@ const familyFields = {
 export const symmySourceFamilyPeers = (routeKey: SymmyEnrollmentRouteKey): readonly SymmyEnrollmentRouteKey[] => {
   const family = symmyRouteInventories.get(routeKey)?.family;
   return [...symmyRouteInventories.entries()].flatMap(([key, inventory]) =>
-    family !== undefined && inventory.family === family && key !== routeKey ? [key] : [],
+    key !== routeKey &&
+    ((family !== undefined && inventory.family === family) ||
+      (routeKey === 'productsBatch' && key === 'inventoryStockBatch') ||
+      (routeKey === 'inventoryStockBatch' && key === 'productsBatch'))
+      ? [key]
+      : [],
   );
 };
 
@@ -636,6 +671,9 @@ export const symmyFamilyRefusals = (
   }
   const own = logicalSourceIdentity(request);
   return peers.flatMap((peer) => {
+    if (symmyRouteInventories.get(peer.routeKey)?.family !== family) {
+      return [];
+    }
     const other = logicalSourceIdentity(peer);
     const differing = familyFields[family].filter((field) => own[field] !== other[field]);
     return refuseWhen(
@@ -1008,6 +1046,19 @@ export const symmyRelatedRouteRefusals = (
           !readable.some((peer) => peer.routeId === routeId),
           'source_identity_differs_from_counterpart',
           `Route ${routeId} (${routeKey}) of the same source has no readable configuration`,
+        ),
+      ),
+      ...readable.flatMap((peer) =>
+        refuseWhen(
+          (request.routeKey === 'productsBatch' || request.routeKey === 'inventoryStockBatch') &&
+            (peer.routeKey === 'productsBatch' || peer.routeKey === 'inventoryStockBatch') &&
+            (request.configuration.inventorySource !== undefined || peer.configuration.inventorySource !== undefined) &&
+            (request.configuration.inventorySource === undefined ||
+              peer.configuration.inventorySource === undefined ||
+              computeCanonicalValueHash(request.configuration.inventorySource) !==
+                computeCanonicalValueHash(peer.configuration.inventorySource)),
+          'source_identity_differs_from_counterpart',
+          `Route ${peer.routeId} must name the same integration-wide Inventory source policy`,
         ),
       ),
       ...symmyFamilyRefusals({ ...request, legalEntityId: request.legalEntityId ?? null }, readable),

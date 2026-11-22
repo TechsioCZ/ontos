@@ -19,6 +19,7 @@ import {
   SymmyInternalPlanPayloadSchema,
 } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
+import { readSymmyStockBatchFacts } from './stock-batch-facts.ts';
 import { readSymmyCustomerGroupDefinitionFacts } from './customer-group-batch-facts.ts';
 import { readSymmyPriceBatchFacts } from './price-batch-facts.ts';
 import { readSymmyProductPriceGroupFacts } from './product-batch-facts.ts';
@@ -159,7 +160,7 @@ const acquireScopedRouteContext = Effect.fn('SymmyGovernedDispatch.acquireScoped
 });
 
 /**
- * What a synchronous admission carries besides its key and route. The stock route sends only its rows. The group route
+ * What a synchronous admission carries besides its key and route. Stock and group routes send their rows and fresh public owner facts. The group route
  * sends its groups and, for a new admission, what the owner holds for each code, which the owner admission fences its
  * plan on. The owner resolves a key that already has a saved group admission to that admission first, even on a route
  * still configured, and such a context enrolls no read: the groups go alone, and the owner answers from that admission
@@ -172,7 +173,16 @@ const syncAdmissionSource = Effect.fn('SymmyGovernedDispatch.syncAdmissionSource
   newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
 ) {
   if ('stock' in request) {
-    return { stock: request.stock };
+    if (route.replayIdempotencyDigest !== undefined) {
+      return { stock: request.stock };
+    }
+    return {
+      stock: request.stock,
+      stockFacts: yield* readSymmyStockBatchFacts(
+        { admission, routeScope: route, rows: request.stock },
+        newRequestIdentifier,
+      ),
+    };
   }
   if (route.replayIdempotencyDigest !== undefined) {
     return { customerGroups: request.customerGroups };

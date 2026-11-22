@@ -556,6 +556,17 @@ it('keeps startup phases and private human setup commands closed to bounded data
   const tenant = Schema.decodeUnknownResult(ShellNativeTenantSetupGatewayCommandSchema, { onExcessProperty: 'error' });
   const request = { audience: 'catalog', compositionRevision: 'a'.repeat(64) };
   expect(Result.isSuccess(tenant({ _tag: 'tenant-setup-gateway', request }))).toBe(true);
+  expect(
+    Result.isSuccess(tenant({ _tag: 'tenant-setup-gateway', request: { ...request, audience: 'inventory' } })),
+  ).toBe(true);
+  expect(
+    Result.isFailure(
+      tenant({
+        _tag: 'tenant-setup-gateway',
+        request: { ...request, audience: 'inventory', legalEntityId: '22222222-2222-4222-8222-222222222222' },
+      }),
+    ),
+  ).toBe(true);
   expect(Result.isFailure(tenant({ _tag: 'tenant-setup-gateway', request: { ...request, audience: 'privacy' } }))).toBe(
     true,
   );

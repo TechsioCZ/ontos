@@ -1,3 +1,5 @@
+import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
+import { SourceStockItemProvisioningSchema } from '@app/inventory/source-provisioning';
 import { CreateProductRecoveryForbiddenProblemSchema } from '@app/catalog/api/create-product-recovery';
 import { CreateProductActionAlreadyCommittedProblemSchema } from '@app/catalog/api/create-product-action';
 import { PriceGroupResultLookupResponseSchema } from '@app/price-group-catalog/apis/price-group-result-lookup';
@@ -8,7 +10,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Effect, Exit, Match, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
   SymmyCatalogPricingInventoryIntentSchema,
@@ -607,6 +609,79 @@ const pricingOwnerMock = (
     : undefined;
 };
 
+const provisionRef = (resourceType: string, resourceId: string) => ({
+  moduleId: 'commerce.inventory',
+  resourceId,
+  resourceType: `commerce.inventory.${resourceType}`,
+  tenantId,
+});
+const provisioningSource = {
+  customerConfigurationId: 'source-configuration',
+  externalScope: 'source-scope',
+  issuer: { backendId: 'native-backend-A', backendKind: 'external_business_system' },
+  locations: [
+    {
+      locationKey: 'warehouse-1',
+      stockLocationRef: provisionRef('stock-location', '10000000-0000-4000-8000-000000000061'),
+    },
+  ],
+  namespace: 'source-inventory',
+  policyRef: provisionRef('source-provisioning-policy', '10000000-0000-4000-8000-000000000062'),
+  unitRef,
+};
+const provisioningResult = Schema.decodeUnknownSync(SourceStockItemProvisioningSchema)({
+  binding: {
+    disposition: 'ESTABLISHED',
+    ref: provisionRef('catalog-to-stock-binding', '10000000-0000-4000-8000-000000000063'),
+  },
+  itemCorrelation: {
+    disposition: 'ESTABLISHED',
+    ref: provisionRef('external-stock-correlation', '10000000-0000-4000-8000-000000000064'),
+  },
+  itemKey: 'unseen-SKU',
+  policyRef: provisioningSource.policyRef,
+  positions: [
+    {
+      disposition: 'ESTABLISHED',
+      locationKey: 'warehouse-1',
+      positionRef: provisionRef('stock-position', '10000000-0000-4000-8000-000000000065'),
+      stockLocationRef: provisioningSource.locations[0]?.stockLocationRef,
+    },
+  ],
+  stockItem: { disposition: 'ESTABLISHED', ref: provisionRef('stock-item', '10000000-0000-4000-8000-000000000066') },
+});
+const inventoryProvisioningMock = (request: Request) => {
+  if (request.url.includes('/actions/provision-source-stock-item')) {
+    return Option.some({
+      event: 'owner-write',
+      response: Promise.resolve(
+        Response.json(Schema.encodeSync(SourceStockItemProvisioningSchema)(provisioningResult)),
+      ),
+    });
+  }
+  if (request.url.includes('/reads/source-stock-item-provisioning-receipt')) {
+    return Option.some({
+      event: 'owner-recovery',
+      response: request
+        .clone()
+        .json()
+        .then(Schema.decodeUnknownSync(SourceStockItemProvisioningReceiptRequestSchema))
+        .then((query) =>
+          Response.json({
+            _tag: 'RECORDED',
+            receipt: {
+              actionInvocationId: invocationId,
+              input: Schema.encodeSync(SourceStockItemProvisioningReceiptRequestSchema)(query).input,
+              provisioning: Schema.encodeSync(SourceStockItemProvisioningSchema)(provisioningResult),
+              recordedAt: '2026-11-07T10:00:02.000Z',
+            },
+          }),
+        ),
+    });
+  }
+  return Option.none();
+};
+
 const harness = (
   replay: boolean,
   selectedEffect = effect,
@@ -668,7 +743,9 @@ const harness = (
         }),
       );
     }
-    const pricingMock = pricingOwnerMock(request, { definitionGroup, reviseProblem });
+    const pricingMock = Option.getOrElse(inventoryProvisioningMock(request), () =>
+      pricingOwnerMock(request, { definitionGroup, reviseProblem }),
+    );
     if (pricingMock !== undefined) {
       events.push(pricingMock.event);
       return Promise.resolve(pricingMock.response);
@@ -2139,6 +2216,120 @@ describe('Symmy commands on the Product the same job creates', () => {
       const refused = yield* resolutionOf(withTarget, [parentState]);
       expect(Exit.isFailure(refused.exit)).toBe(true);
       expect(refused.h.resolvedEffects).toHaveLength(0);
+    }),
+  );
+});
+
+const provisionOperation = {
+  entrypointKey: 'commerce.inventory.provision-source-stock-item',
+  moduleId: 'commerce.inventory',
+  schemaVersion: '1',
+};
+const provisionEffectOf = () =>
+  dependentEffect(
+    {
+      _tag: 'ProvisionSourceStockItem',
+      itemKey: 'unseen-SKU',
+      source: provisioningSource,
+    },
+    provisionOperation,
+  );
+
+describe('Symmy committed Catalog selection provisions Inventory through its public owner Action', () => {
+  it.effect(
+    'pins the receipt-selected Product and Variant, never the planned UUIDs, before the native provisioning call',
+    () => {
+      const h = harness(false, provisionEffectOf());
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          const outcome = yield* adapter.execute({
+            ...h.input,
+            dependencies: [parentState],
+            inventoryBackendId: 'native-backend-A',
+          });
+          expect(outcome.status).toBe('accepted_change');
+          const [resolved] = h.resolvedEffects;
+          expect(resolved?.ref.originalTarget).toEqual(provisioningSource.policyRef);
+          expect(Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[15])(resolved?.intent)).toBe(true);
+          expect(resolved?.intent).toMatchObject({
+            payload: {
+              catalogSelection: { productRef, variantRef },
+              exactSelectionMeaning: { id: `catalog-variant:${variantId}`, kind: 'PRODUCT_VARIANT' },
+              itemKey: 'unseen-SKU',
+              policyRef: provisioningSource.policyRef,
+            },
+          });
+          expect(h.events.indexOf('resolved-target')).toBeLessThan(h.events.indexOf('owner-write'));
+          const gateways = yield* gatewayRequestsFor(h.requests);
+          expect(gateways[0]).toMatchObject({ audience: 'inventory' });
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    'recovers an interrupted committed provisioning from the exact receipt without another write or target resolution',
+    () => {
+      const h = harness(false, provisionEffectOf());
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          const first = yield* Effect.exit(
+            adapter.execute({
+              ...h.input,
+              dependencies: [parentState],
+              inventoryBackendId: 'native-backend-A',
+              recordInvocationId: () => Effect.fail(symmyJobWorkerUnavailable()),
+            }),
+          );
+          expect(Exit.isFailure(first)).toBe(true);
+          const [resolved] = h.resolvedEffects;
+          assert.isDefined(resolved);
+          const native = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[15])(
+            resolved.intent,
+          );
+          const requestHash = yield* prepareSymmyCatalogPricingInventoryRequestHash(native, {
+            principalId: executorId,
+            tenantId,
+          });
+          const recovered = yield* adapter.recover({
+            ...h.input,
+            effect: resolved,
+            inventoryBackendId: 'native-backend-A',
+            originalAuthContextRef: authContextRef,
+            originalExecutorPrincipalId: executorId,
+            originalInvocationId: invocationId,
+            originalRequestHash: requestHash,
+          });
+          expect(recovered.status).toBe('settled');
+          expect(
+            h.requests.filter((request) => request.url.includes('/actions/provision-source-stock-item')),
+          ).toHaveLength(1);
+          expect(
+            h.requests.filter((request) => request.url.includes('/reads/source-stock-item-provisioning-receipt')),
+          ).toHaveLength(1);
+          expect(h.resolvedEffects).toHaveLength(1);
+        }),
+      );
+    },
+  );
+
+  it.effect('refuses a missing Catalog commit or a foreign selected backend before Inventory sees a call', () =>
+    Effect.gen(function* test() {
+      for (const dependencies of [[], [parentState]]) {
+        const h = harness(false, provisionEffectOf());
+        yield* h.provide(
+          Effect.gen(function* refusal() {
+            const adapter = yield* h.adapter;
+            const exit = yield* Effect.exit(
+              adapter.execute({ ...h.input, dependencies, inventoryBackendId: 'foreign-backend' }),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(h.requests).toHaveLength(0);
+          }),
+        );
+      }
     }),
   );
 });

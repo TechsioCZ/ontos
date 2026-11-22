@@ -32,6 +32,7 @@ export const SymmyRouteContextRequestSchema = Schema.Struct({
 export type SymmyRouteContextRequest = typeof SymmyRouteContextRequestSchema.Type;
 export const SymmyRouteContextResponseSchema = Schema.Struct({
   allowedOwnerOperations: Schema.Array(SymmyRouteContextSchema.fields.allowedOwnerOperations.value),
+  inventorySource: SymmyFixtureExecutionPlanSchema.fields.inventorySource,
   issuerId: SymmyRouteContextSchema.fields.issuerId,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   mappingVersion: SymmyRouteContextSchema.fields.mappingVersion,

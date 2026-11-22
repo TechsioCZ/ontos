@@ -205,25 +205,38 @@ export const readSymmyRouteScope = Effect.fn('SymmyRouteScope.read')(function* r
 type InstalledContract = ShellInstalledCatalog['contracts'][number];
 /**
  * The one owner read an admission route makes before it admits: the customer groups route reads Commerce's
- * definition of each group code it names, which fences the plan. No other admission route reaches an owner read.
+ * definition of each group code it names, or Inventory’s current position of a stock key pair. Other admission routes reach no owner read.
  */
-const admissionDefinitionRead = {
-  entrypointKey: 'commerce.customer-context.api.customer-group-definition-source',
-  moduleId: 'commerce.customer-context',
-  routeKey: 'customerGroupsBatch',
-  schemaVersion: '1',
-} as const;
+const admissionOwnerReads = [
+  {
+    entrypointKey: 'commerce.customer-context.api.customer-group-definition-source',
+    moduleId: 'commerce.customer-context',
+    requiresCompany: true,
+    routeKey: 'customerGroupsBatch',
+    schemaVersion: '1',
+  },
+  {
+    entrypointKey: 'commerce.inventory.api.source-stock-position-resolution',
+    moduleId: 'commerce.inventory',
+    requiresCompany: false,
+    routeKey: 'inventoryStockBatch',
+    schemaVersion: '1',
+  },
+] as const;
 /**
  * The owner reads of the destination that an assertion for this route proof may name. A read proof names every
- * enrolled, published read. An admission proof names at most the one definition read, once however many enrollment
- * items name it, only for a route enrolled for a company, since an assertion without one carries no route scope, and
+ * enrolled, published read. An admission proof names only its exact configured pre-admission read, once however many enrollment
+ * items name it, requiring a company only for Commerce’s company-scoped definition read, and
  * only where the destination publishes it as a current read.
  */
 const ownerReadOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
   if (facts.sourcePurpose === 'admit') {
-    const { entrypointKey, moduleId, routeKey, schemaVersion } = admissionDefinitionRead;
-    return facts.routeKey === routeKey &&
-      route.legalEntityId !== undefined &&
+    const read = admissionOwnerReads.find(({ routeKey }) => routeKey === facts.routeKey);
+    if (read === undefined) {
+      return [];
+    }
+    const { entrypointKey, moduleId, requiresCompany, schemaVersion } = read;
+    return (!requiresCompany || route.legalEntityId !== undefined) &&
       destination.manifest.module.id === moduleId &&
       route.allowedOwnerOperations.some(
         (operation) =>
@@ -256,7 +269,12 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   }
   const principal = yield* validateRoutePrincipal(input.principal, facts.sourcePurpose);
   const route = yield* readSymmyRouteScope(proof);
-  if (input.legalEntityId !== route.legalEntityId) {
+  const inventoryTenantRead =
+    facts.sourcePurpose === 'admit' &&
+    facts.routeKey === 'inventoryStockBatch' &&
+    input.audience === 'inventory' &&
+    input.legalEntityId === undefined;
+  if (!inventoryTenantRead && input.legalEntityId !== route.legalEntityId) {
     return yield* delegationForbidden();
   }
   yield* validateCompany(route, principal.tenantId);
@@ -270,6 +288,11 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
     if (destination === undefined || ownerReadOperations(destination, route, facts).length === 0) {
       return yield* delegationForbidden();
     }
+  }
+  if (inventoryTenantRead) {
+    const { legalEntityId: _sourceCompany, ...tenantPrincipal } = principal;
+    const projected: TrustedPrincipalContext = tenantPrincipal;
+    return projected;
   }
   return route.legalEntityId === undefined ? principal : { ...principal, legalEntityId: route.legalEntityId };
 });

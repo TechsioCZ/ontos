@@ -20,6 +20,12 @@ const groupWrite = `${groupModule}.source-write`;
 const groupRead = `${groupModule}.source-read`;
 const inventoryWrite = 'commerce.inventory.source-write';
 const inventoryRead = 'commerce.inventory.source-read';
+const productWorkloads = [
+  'integration.symmy-poll',
+  'commerce.catalog.symmy-product-import',
+  'commerce.catalog.symmy-product-read',
+  'commerce.inventory.source-provision',
+] as const;
 
 type OwnedSyncDatabase = Effect.Success<ReturnType<typeof makeIsolatedNativeDatabaseFixture>>;
 
@@ -60,8 +66,14 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
     yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
   }
   for (const [principalId, workloadKeys] of [
-    [integration.principalId, ['integration.symmy-admit', groupWrite, groupRead, inventoryWrite, inventoryRead]],
-    [systemPrincipalId, [internalSyncJobKey, groupWrite, groupRead, inventoryWrite, inventoryRead]],
+    [
+      integration.principalId,
+      ['integration.symmy-admit', groupWrite, groupRead, inventoryWrite, inventoryRead, ...productWorkloads],
+    ],
+    [
+      systemPrincipalId,
+      [internalSyncJobKey, groupWrite, groupRead, inventoryWrite, inventoryRead, ...productWorkloads],
+    ],
   ] as const) {
     for (const workloadKey of workloadKeys) {
       yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
