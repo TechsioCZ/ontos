@@ -173,7 +173,7 @@ const ensureCorrelation = Effect.fn('SourceProvisioning.ensureCorrelation')(func
     input: {
       effectiveFrom: request.effectiveFrom,
       externalKey,
-      ownerEvidenceRef: `${request.qualification.issuer.backendId}:${request.identifierKind}:${request.value}`,
+      ownerEvidenceRef: `inventory-source:${computeCanonicalValueHash(externalKey)}`,
       target: request.target,
     },
   });
