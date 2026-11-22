@@ -30,7 +30,6 @@ import {
   Schema,
 } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { TestClock } from 'effect/testing';
 import { assert, expect, it } from 'effect-rstest';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -716,7 +715,15 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
     expect(receipt.receipt.provisioning.positions.map(({ positionRef }) => positionRef)).toEqual(
       first.positions.map(({ positionRef }) => positionRef),
     );
-    const endCorrelation = (identifierKind: 'ITEM' | 'LOCATION', externalValue: string) =>
+    const endCorrelation = ({
+      endedAt,
+      externalValue,
+      identifierKind,
+    }: {
+      readonly endedAt: string;
+      readonly externalValue: string;
+      readonly identifierKind: 'ITEM' | 'LOCATION';
+    }) =>
       fixture
         .prepareOwner((transaction, scope) =>
           Effect.gen(function* revokeCorrelation() {
@@ -730,7 +737,6 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
               namespace: 'erp-stock',
               tenantId,
             });
-            const endedAt = DateTime.formatIso(yield* DateTime.now.pipe(TestClock.withLive));
             const [current] = yield* persistence.findEffective(key, endedAt);
             assert(current !== undefined);
             yield* persistence.endCurrent({ current, endedAt });
@@ -738,11 +744,19 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
         )
         .pipe(Effect.provide(ownerRuntimeLayer));
     // Historical correlations still cover policy.effectiveFrom. A current-time lookup must not return them.
-    yield* endCorrelation('ITEM', 'SKU-1');
+    yield* endCorrelation({
+      endedAt: DateTime.formatIso(yield* DateTime.now),
+      externalValue: 'SKU-1',
+      identifierKind: 'ITEM',
+    });
     const revokedItemResolution = yield* resolve('WH-OUTLET');
     assert(Schema.is(SourceStockPositionResolutionResponseSchema.members[1])(revokedItemResolution));
     expect(revokedItemResolution.reason).toBe('ITEM_NOT_PROVISIONED');
-    yield* endCorrelation('LOCATION', 'WH-OUTLET');
+    yield* endCorrelation({
+      endedAt: DateTime.formatIso(yield* DateTime.now),
+      externalValue: 'WH-OUTLET',
+      identifierKind: 'LOCATION',
+    });
     const revokedLocationResolution = yield* resolve('WH-OUTLET');
     assert(Schema.is(SourceStockPositionResolutionResponseSchema.members[1])(revokedLocationResolution));
     expect(revokedLocationResolution.reason).toBe('LOCATION_NOT_ALLOWED');
