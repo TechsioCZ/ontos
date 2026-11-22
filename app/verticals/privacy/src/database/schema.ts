@@ -64,6 +64,11 @@ export const PRIVACY_TABLE_INVENTORY = [
 export const privacySchema = pgSchema(PRIVACY_SCHEMA_NAME);
 /** Pre-tenant ingress replay evidence. This stores no token, identity or business payload. */
 export const PRIVACY_INGRESS_TABLE_INVENTORY = ['gateway_assertion_redemptions'] as const;
+/**
+ * Governed tables of the Tenant scope whose Legal Entity is OPTIONAL and exact (#1406 D.8): a row of no Legal Entity
+ * belongs to a Tenant-wide realm and is visible only to a Tenant-wide operation. Every other governed table requires one.
+ */
+export const PRIVACY_TENANT_SCOPED_TABLE_INVENTORY = ['pre_verification_bindings'] as const;
 export const gatewayAssertionRedemptions = privacySchema.table(
   'gateway_assertion_redemptions',
   {

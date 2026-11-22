@@ -565,6 +565,7 @@ const fixtureRuntimeInventory = [
       'dsr_delivery_access',
       'dsr_owner_tasks',
       'external_obligations',
+      'pre_verification_bindings',
       'privacy_measure_dispatches',
       'privacy_subjects',
       'processing_activities',
