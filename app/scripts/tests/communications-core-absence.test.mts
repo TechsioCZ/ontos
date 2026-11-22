@@ -109,9 +109,23 @@ const PUBLISHED_OWNER_COVERAGE_SUBPATHS = [
 ] as const;
 const COMMUNICATIONS_SPECIFIER = /['"`]@app\/communications(?<subpath>(?:\/[A-Za-z0-9_./-]*)?)['"`]/gu;
 
-/** Workspace packages that depend on the private deployment package without being the reviewed Privacy relationship. */
+/**
+ * The second reviewed relationship (#1406 D1, pending owner review): Commerce Customer Context's own Portal Auth source worker
+ * submits each committed Portal Auth request to the public `submit-communication-request` Action through its published,
+ * generated client. That client is the only Communications subpath the package names, and only the source worker's gateway
+ * names it: Communications admits a request only from the source module's own Outbox Worker.
+ */
+const REVIEWED_SOURCE_WORKER_DEPENDENT = 'verticals/commerce-customer-context';
+const PUBLISHED_SUBMIT_REQUEST_CLIENT = '/api/submit-communication-request-action/client';
+const SOURCE_WORKER_GATEWAY = `${REVIEWED_SOURCE_WORKER_DEPENDENT}/src/workers/portal-auth-communication-source-gateway.ts`;
+const REVIEWED_COMMUNICATIONS_DEPENDENTS = [
+  REVIEWED_COMMUNICATIONS_DEPENDENT,
+  REVIEWED_SOURCE_WORKER_DEPENDENT,
+] as const;
+
+/** Workspace packages that depend on the private deployment package without being a reviewed relationship. */
 const unreviewedCommunicationsDependents = (dependents: readonly string[]) =>
-  dependents.filter((directory) => directory !== REVIEWED_COMMUNICATIONS_DEPENDENT);
+  dependents.filter((directory) => !REVIEWED_COMMUNICATIONS_DEPENDENTS.some((reviewed) => reviewed === directory));
 /** Subpaths of `@app/communications` a source names (empty for the bare package) that are not in the allowed set. */
 const unpublishedCommunicationsSubpaths = (source: string, allowed: readonly string[]) =>
   [...source.matchAll(COMMUNICATIONS_SPECIFIER)]
@@ -128,8 +142,9 @@ it('lets no other workspace package depend on the private Communications deploym
     (directory) =>
       directory !== 'verticals/communications' && declaredDependencies(directory).has(COMMUNICATIONS_PACKAGE),
   );
-  // The deployment package is private to its owner. Source owners import only the schema-only contract package, and
-  // the single reviewed exception is the Privacy owner inventory's published Owner Coverage descriptor.
+  // The deployment package is private to its owner. Source owners import only the schema-only contract package; the
+  // reviewed exceptions are Privacy's published Owner Coverage descriptors and the Portal Auth source worker's published
+  // submit client.
   expect(unreviewedCommunicationsDependents(dependents)).toEqual([]);
 });
 
@@ -152,15 +167,51 @@ it('limits the reviewed Privacy dependency to the published Owner Coverage contr
   ).toEqual([]);
 });
 
-it('still rejects any other dependent and any import beyond the published Owner Coverage contract', () => {
-  expect(unreviewedCommunicationsDependents([REVIEWED_COMMUNICATIONS_DEPENDENT])).toEqual([]);
+it('limits the reviewed Portal Auth source worker dependency to the published submit client', () => {
+  // Every Communications subpath the package names, in production code and tests alike, is the published submit client.
+  expect(unpublishedCommunicationsUses(REVIEWED_SOURCE_WORKER_DEPENDENT, [PUBLISHED_SUBMIT_REQUEST_CLIENT])).toEqual(
+    [],
+  );
+  // Only the source worker's gateway names it; no API, page, Action or relay code of the package reaches Communications.
+  expect(importsOf(REVIEWED_SOURCE_WORKER_DEPENDENT, COMMUNICATIONS_PACKAGE)).toEqual([SOURCE_WORKER_GATEWAY]);
+});
+
+it('still rejects any other dependent and any import beyond the reviewed published subpaths', () => {
+  expect(unreviewedCommunicationsDependents(REVIEWED_COMMUNICATIONS_DEPENDENTS)).toEqual([]);
   expect(
     unreviewedCommunicationsDependents([
-      'verticals/commerce-customer-context',
+      'verticals/commerce-order',
+      REVIEWED_SOURCE_WORKER_DEPENDENT,
       REVIEWED_COMMUNICATIONS_DEPENDENT,
+      'verticals/commerce-cart',
       SHELL_DIRECTORY,
     ]),
-  ).toEqual(['verticals/commerce-customer-context', SHELL_DIRECTORY]);
+  ).toEqual(['verticals/commerce-order', 'verticals/commerce-cart', SHELL_DIRECTORY]);
+  const sourceWorkerAllowed = [PUBLISHED_SUBMIT_REQUEST_CLIENT];
+  expect(
+    unpublishedCommunicationsSubpaths(
+      "import { executeSubmitCommunicationRequestWithAuthorization } from '@app/communications/api/submit-communication-request-action/client';",
+      sourceWorkerAllowed,
+    ),
+  ).toEqual([]);
+  expect(
+    unpublishedCommunicationsSubpaths(
+      [
+        "import { Api } from '@app/communications/api/submit-communication-request-action';",
+        "import { client } from '@app/communications/api/client';",
+        "import { receipt } from '@app/communications/api/privacy-owner-execution-outcome/client';",
+        "import { entry } from '@app/communications/outbox-worker-host';",
+        'await import("@app/communications")',
+      ].join('\n'),
+      sourceWorkerAllowed,
+    ),
+  ).toEqual([
+    '/api/submit-communication-request-action',
+    '/api/client',
+    '/api/privacy-owner-execution-outcome/client',
+    '/outbox-worker-host',
+    '',
+  ]);
   const allowed = [PUBLISHED_OWNER_COVERAGE_DESCRIPTOR];
   expect(
     unpublishedCommunicationsSubpaths(
