@@ -19,6 +19,7 @@ import { CreateInventoryReservationActionApi } from './apis/create-inventory-res
 import { CreateStockLocationActionApi } from './apis/create-stock-location-action.ts';
 import { CurrentRelevantStockPositionSetApi } from './apis/current-relevant-stock-position-set.ts';
 import { CurrentStockEvidenceForAvailabilityApi } from './apis/current-stock-evidence-for-availability.ts';
+import { DefineSourceProvisioningPolicyActionApi } from './apis/define-source-provisioning-policy-action.ts';
 import { EndCatalogToStockBindingActionApi } from './apis/end-catalog-to-stock-binding-action.ts';
 import { EndExternalStockCorrelationActionApi } from './apis/end-external-stock-correlation-action.ts';
 import { EndStockSharingEligibilityActionApi } from './apis/end-stock-sharing-eligibility-action.ts';
@@ -34,12 +35,15 @@ import { InventoryReconciliationEvidenceApi } from './apis/inventory-reconciliat
 import { InventoryReservationDetailApi } from './apis/inventory-reservation-detail.ts';
 import { InventorySourceConflictDetailApi } from './apis/inventory-source-conflict-detail.ts';
 import { InventorySourceImportReceiptApi } from './apis/inventory-source-import-receipt.ts';
+import { ProvisionSourceStockItemActionApi } from './apis/provision-source-stock-item-action.ts';
 import { RecoverInventoryEffectActionApi } from './apis/recover-inventory-effect-action.ts';
 import { RegisterStockItemActionApi } from './apis/register-stock-item-action.ts';
 import { ReleaseInventoryReservationActionApi } from './apis/release-inventory-reservation-action.ts';
 import { ReservationConfirmationVerificationApi } from './apis/reservation-confirmation-verification.ts';
 import { ResolveInventorySourceConflictActionApi } from './apis/resolve-inventory-source-conflict-action.ts';
 import { SelectInventoryBackendActionApi } from './apis/select-inventory-backend-action.ts';
+import { SourceStockItemProvisioningReceiptApi } from './apis/source-stock-item-provisioning-receipt.ts';
+import { SourceStockPositionResolutionApi } from './apis/source-stock-position-resolution.ts';
 import { StockIssueActionApi } from './apis/stock-issue-action.ts';
 import { StockReceiptActionApi } from './apis/stock-receipt-action.ts';
 import { StockSharingEligibilityResolutionApi } from './apis/stock-sharing-eligibility-resolution.ts';
@@ -80,6 +84,7 @@ type InventoryApiGroups = GroupsOf<
   | typeof CreateStockLocationActionApi
   | typeof CurrentRelevantStockPositionSetApi
   | typeof CurrentStockEvidenceForAvailabilityApi
+  | typeof DefineSourceProvisioningPolicyActionApi
   | typeof EndCatalogToStockBindingActionApi
   | typeof EndExternalStockCorrelationActionApi
   | typeof EndStockSharingEligibilityActionApi
@@ -95,12 +100,15 @@ type InventoryApiGroups = GroupsOf<
   | typeof InventoryReservationDetailApi
   | typeof InventorySourceConflictDetailApi
   | typeof InventorySourceImportReceiptApi
+  | typeof ProvisionSourceStockItemActionApi
   | typeof RecoverInventoryEffectActionApi
   | typeof RegisterStockItemActionApi
   | typeof ReleaseInventoryReservationActionApi
   | typeof ReservationConfirmationVerificationApi
   | typeof ResolveInventorySourceConflictActionApi
   | typeof SelectInventoryBackendActionApi
+  | typeof SourceStockItemProvisioningReceiptApi
+  | typeof SourceStockPositionResolutionApi
   | typeof StockIssueActionApi
   | typeof StockReceiptActionApi
   | typeof StockSharingEligibilityResolutionApi
@@ -122,6 +130,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(CreateStockLocationActionApi)
   .addHttpApi(CurrentRelevantStockPositionSetApi)
   .addHttpApi(CurrentStockEvidenceForAvailabilityApi)
+  .addHttpApi(DefineSourceProvisioningPolicyActionApi)
   .addHttpApi(EndCatalogToStockBindingActionApi)
   .addHttpApi(EndExternalStockCorrelationActionApi)
   .addHttpApi(EndStockSharingEligibilityActionApi)
@@ -137,12 +146,15 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(InventoryReservationDetailApi)
   .addHttpApi(InventorySourceConflictDetailApi)
   .addHttpApi(InventorySourceImportReceiptApi)
+  .addHttpApi(ProvisionSourceStockItemActionApi)
   .addHttpApi(RecoverInventoryEffectActionApi)
   .addHttpApi(RegisterStockItemActionApi)
   .addHttpApi(ReleaseInventoryReservationActionApi)
   .addHttpApi(ReservationConfirmationVerificationApi)
   .addHttpApi(ResolveInventorySourceConflictActionApi)
   .addHttpApi(SelectInventoryBackendActionApi)
+  .addHttpApi(SourceStockItemProvisioningReceiptApi)
+  .addHttpApi(SourceStockPositionResolutionApi)
   .addHttpApi(StockIssueActionApi)
   .addHttpApi(StockReceiptActionApi)
   .addHttpApi(StockSharingEligibilityResolutionApi)

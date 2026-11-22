@@ -63,6 +63,7 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.assortment.symmy-fixture-currentness',
   'commerce.inventory.source-write',
   'commerce.inventory.source-read',
+  'commerce.inventory.source-provision',
   'commerce.pricing.source-write',
   'commerce.pricing.source-read',
   'pricing.price-group-catalog.source-write',

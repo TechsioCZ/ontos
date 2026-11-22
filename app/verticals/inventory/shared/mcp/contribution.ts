@@ -39,6 +39,12 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
         en: 'Create a stock location',
       },
     },
+    'define-source-provisioning-policy': {
+      title: {
+        cs: 'Nastavit zakládání položek z externího skladu',
+        en: 'Define a source provisioning policy',
+      },
+    },
     'end-catalog-to-stock-binding': {
       destructive: true,
       title: {
@@ -91,6 +97,8 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
         en: 'Import an inventory source assertion',
       },
     },
+    // Enrolled source-workload integration Action; never a general agent tool.
+    'provision-source-stock-item': OntosMcpHidden,
     'recover-inventory-effect': 'hidden',
     'register-stock-item': {
       title: {
@@ -178,6 +186,9 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'inventory-source-import-receipt': OntosMcpHidden,
     'reservation-confirmation-verification': 'hidden',
+    // Owner-to-owner or enrolled source-workload integration reads; never general agent tools.
+    'source-stock-item-provisioning-receipt': OntosMcpHidden,
+    'source-stock-position-resolution': OntosMcpHidden,
     'stock-sharing-eligibility-resolution': 'hidden',
   },
 });

@@ -15,6 +15,7 @@ import { createInventoryReservationAction } from './src/actions/create-inventory
 import { createStockLocationAction } from './src/actions/create-stock-location.action.ts';
 import { currentRelevantStockPositionSetRead } from './src/api/current-relevant-stock-position-set.read.ts';
 import { currentStockEvidenceForAvailabilityRead } from './src/api/current-stock-evidence-for-availability.read.ts';
+import { defineSourceProvisioningPolicyAction } from './src/actions/define-source-provisioning-policy.action.ts';
 import { endCatalogToStockBindingAction } from './src/actions/end-catalog-to-stock-binding.action.ts';
 import { endExternalStockCorrelationAction } from './src/actions/end-external-stock-correlation.action.ts';
 import { endStockSharingEligibilityAction } from './src/actions/end-stock-sharing-eligibility.action.ts';
@@ -34,12 +35,15 @@ import { inventoryEffectOutcomeRead } from './src/api/inventory-effect-outcome.r
 import { inventoryReconciliationEvidenceRead } from './src/api/inventory-reconciliation-evidence.read.ts';
 import { inventoryReservationDetailRead } from './src/api/inventory-reservation-detail.read.ts';
 import { inventorySourceImportReceiptRead } from './src/api/inventory-source-import-receipt.read.ts';
+import { provisionSourceStockItemAction } from './src/actions/provision-source-stock-item.action.ts';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
 import { registerStockItemAction } from './src/actions/register-stock-item.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
 import { reservationConfirmationVerificationRead } from './src/api/reservation-confirmation-verification.read.ts';
 import { resolveInventorySourceConflictAction } from './src/actions/resolve-inventory-source-conflict.action.ts';
 import { selectInventoryBackendAction } from './src/actions/select-inventory-backend.action.ts';
+import { sourceStockItemProvisioningReceiptRead } from './src/api/source-stock-item-provisioning-receipt.read.ts';
+import { sourceStockPositionResolutionRead } from './src/api/source-stock-position-resolution.read.ts';
 import { stockIssueAction } from './src/actions/stock-issue.action.ts';
 import { stockReceiptAction } from './src/actions/stock-receipt.action.ts';
 import { stockSharingEligibilityResolutionRead } from './src/api/stock-sharing-eligibility-resolution.read.ts';
@@ -55,6 +59,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     correctStockPositionAction,
     createInventoryReservationAction,
     createStockLocationAction,
+    defineSourceProvisioningPolicyAction,
     endCatalogToStockBindingAction,
     endExternalStockCorrelationAction,
     endStockSharingEligibilityAction,
@@ -64,6 +69,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     establishStockPositionAction,
     establishStockSharingEligibilityAction,
     importSourceAssertionAction,
+    provisionSourceStockItemAction,
     recoverInventoryEffectAction,
     registerStockItemAction,
     releaseInventoryReservationAction,
@@ -90,6 +96,9 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
       'inventory-source-import-receipt': () => import('./src/api/inventory-source-import-receipt-client.ts'),
       'reservation-confirmation-verification': () =>
         import('./src/api/reservation-confirmation-verification-client.ts'),
+      'source-stock-item-provisioning-receipt': () =>
+        import('./src/api/source-stock-item-provisioning-receipt-client.ts'),
+      'source-stock-position-resolution': () => import('./src/api/source-stock-position-resolution-client.ts'),
       'stock-sharing-eligibility-resolution': () => import('./src/api/stock-sharing-eligibility-resolution-client.ts'),
       // </generated-module-registration-apis>
     },
@@ -132,6 +141,8 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     inventoryReservationDetailRead,
     inventorySourceImportReceiptRead,
     reservationConfirmationVerificationRead,
+    sourceStockItemProvisioningReceiptRead,
+    sourceStockPositionResolutionRead,
     stockSharingEligibilityResolutionRead,
     // </generated-module-registration-reads>
   ],

@@ -41,6 +41,11 @@ import {
 import { inventorySourceConflictRevisions } from '../persistence/inventory-source-conflict-table.ts';
 import { inventorySourceImportLedger } from '../persistence/inventory-source-import-ledger-table.ts';
 import {
+  inventorySourceProvisioningPolicies,
+  inventorySourceProvisioningPolicyLocations,
+  inventorySourceStockItemProvisionings,
+} from '../persistence/source-provisioning-table.ts';
+import {
   inventoryStockCorrectionOpenReconciliations,
   inventoryStockCorrections,
 } from '../persistence/stock-correction-table.ts';
@@ -97,6 +102,11 @@ export {
 export { inventorySourceConflictRevisions } from '../persistence/inventory-source-conflict-table.ts';
 export { inventorySourceImportLedger } from '../persistence/inventory-source-import-ledger-table.ts';
 export {
+  inventorySourceProvisioningPolicies,
+  inventorySourceProvisioningPolicyLocations,
+  inventorySourceStockItemProvisionings,
+} from '../persistence/source-provisioning-table.ts';
+export {
   inventoryStockCorrectionOpenReconciliations,
   inventoryStockCorrections,
 } from '../persistence/stock-correction-table.ts';
@@ -139,6 +149,9 @@ export const INVENTORY_TABLE_INVENTORY = [
   'source_assertions',
   'source_conflict_revisions',
   'source_import_ledger',
+  'source_provisioning_policies',
+  'source_provisioning_policy_locations',
+  'source_stock_item_provisionings',
   'stock_correction_open_reconciliations',
   'stock_correction_source_evidence',
   'stock_correction_source_evidence_coverage',
@@ -180,6 +193,9 @@ export const INVENTORY_TABLES: readonly PgTable[] = [
   inventorySourceAssertions,
   inventorySourceConflictRevisions,
   inventorySourceImportLedger,
+  inventorySourceProvisioningPolicies,
+  inventorySourceProvisioningPolicyLocations,
+  inventorySourceStockItemProvisionings,
   inventoryStockCorrectionOpenReconciliations,
   inventoryStockCorrections,
   inventoryStockCorrectionSourceEvidence,
@@ -234,6 +250,12 @@ const inventoryDatabaseSchemaEvidence = {
   inventoryStockCorrectionSourceEvidenceCoverage,
 } as const;
 
+const inventoryDatabaseSchemaProvisioning = {
+  inventorySourceProvisioningPolicies,
+  inventorySourceProvisioningPolicyLocations,
+  inventorySourceStockItemProvisionings,
+} as const;
+
 const inventoryDatabaseSchemaStock = {
   inventoryGatewayAssertionRedemptions,
   inventoryStockCorrectionSourceEvidenceCurrent,
@@ -248,10 +270,12 @@ const inventoryDatabaseSchemaStock = {
 const inventoryDatabaseSchema: typeof inventoryDatabaseSchemaIdentity &
   typeof inventoryDatabaseSchemaReservations &
   typeof inventoryDatabaseSchemaEvidence &
+  typeof inventoryDatabaseSchemaProvisioning &
   typeof inventoryDatabaseSchemaStock = {
   ...inventoryDatabaseSchemaIdentity,
   ...inventoryDatabaseSchemaReservations,
   ...inventoryDatabaseSchemaEvidence,
+  ...inventoryDatabaseSchemaProvisioning,
   ...inventoryDatabaseSchemaStock,
 };
 

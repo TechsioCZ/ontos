@@ -37,6 +37,7 @@ import { createInventoryReservationAction } from './src/actions/create-inventory
 import { createStockLocationAction } from './src/actions/create-stock-location.action.ts';
 import { CurrentRelevantStockPositionSetApi } from './shared/apis/current-relevant-stock-position-set.ts';
 import { CurrentStockEvidenceForAvailabilityApi } from './shared/apis/current-stock-evidence-for-availability.ts';
+import { defineSourceProvisioningPolicyAction } from './src/actions/define-source-provisioning-policy.action.ts';
 import { endCatalogToStockBindingAction } from './src/actions/end-catalog-to-stock-binding.action.ts';
 import { endExternalStockCorrelationAction } from './src/actions/end-external-stock-correlation.action.ts';
 import { endStockSharingEligibilityAction } from './src/actions/end-stock-sharing-eligibility.action.ts';
@@ -59,6 +60,7 @@ import { InventorySourceConflictDetailApi } from './shared/apis/inventory-source
 import { inventorySourceConflictResourceDescriptor } from './shared/resources/inventory-source-conflict.ts';
 import { InventorySourceImportReceiptApi } from './shared/apis/inventory-source-import-receipt.ts';
 import { inventorySourceImportReceiptRead } from './src/api/inventory-source-import-receipt.read.ts';
+import { provisionSourceStockItemAction } from './src/actions/provision-source-stock-item.action.ts';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
 import { registerStockItemAction } from './src/actions/register-stock-item.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
@@ -66,6 +68,11 @@ import { reservationConfirmationResourceDescriptor } from './shared/resources/re
 import { ReservationConfirmationVerificationApi } from './shared/apis/reservation-confirmation-verification.ts';
 import { resolveInventorySourceConflictAction } from './src/actions/resolve-inventory-source-conflict.action.ts';
 import { selectInventoryBackendAction } from './src/actions/select-inventory-backend.action.ts';
+import { sourceProvisioningPolicyResourceDescriptor } from './shared/resources/source-provisioning-policy.ts';
+import { SourceStockItemProvisioningReceiptApi } from './shared/apis/source-stock-item-provisioning-receipt.ts';
+import { sourceStockItemProvisioningReceiptRead } from './src/api/source-stock-item-provisioning-receipt.read.ts';
+import { SourceStockPositionResolutionApi } from './shared/apis/source-stock-position-resolution.ts';
+import { sourceStockPositionResolutionRead } from './src/api/source-stock-position-resolution.read.ts';
 import { stockIssueAction } from './src/actions/stock-issue.action.ts';
 import { stockItemResourceDescriptor } from './shared/resources/stock-item.ts';
 import { stockLocationResourceDescriptor } from './shared/resources/stock-location.ts';
@@ -114,6 +121,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       correctStockPositionAction,
       createInventoryReservationAction,
       createStockLocationAction,
+      defineSourceProvisioningPolicyAction,
       endCatalogToStockBindingAction,
       endExternalStockCorrelationAction,
       endStockSharingEligibilityAction,
@@ -123,6 +131,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       establishStockPositionAction,
       establishStockSharingEligibilityAction,
       importSourceAssertionAction,
+      provisionSourceStockItemAction,
       recoverInventoryEffectAction,
       registerStockItemAction,
       releaseInventoryReservationAction,
@@ -146,6 +155,8 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       'inventory-source-conflict-detail': InventorySourceConflictDetailApi,
       'inventory-source-import-receipt': InventorySourceImportReceiptApi,
       'reservation-confirmation-verification': ReservationConfirmationVerificationApi,
+      'source-stock-item-provisioning-receipt': SourceStockItemProvisioningReceiptApi,
+      'source-stock-position-resolution': SourceStockPositionResolutionApi,
       'stock-sharing-eligibility-resolution': StockSharingEligibilityResolutionApi,
       // </generated-module-manifest-apis>
     },
@@ -184,6 +195,16 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
         operationKey: 'inventorySourceImportReceipt.execute',
         registration: inventorySourceImportReceiptRead,
       },
+      {
+        apiKey: 'source-stock-item-provisioning-receipt',
+        operationKey: 'sourceStockItemProvisioningReceipt.execute',
+        registration: sourceStockItemProvisioningReceiptRead,
+      },
+      {
+        apiKey: 'source-stock-position-resolution',
+        operationKey: 'sourceStockPositionResolution.execute',
+        registration: sourceStockPositionResolutionRead,
+      },
       // </generated-module-manifest-operation-contracts>
     ],
     reports: [
@@ -200,6 +221,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       inventoryReservationResourceDescriptor,
       inventorySourceConflictResourceDescriptor,
       reservationConfirmationResourceDescriptor,
+      sourceProvisioningPolicyResourceDescriptor,
       stockItemResourceDescriptor,
       stockLocationResourceDescriptor,
       stockPositionResourceDescriptor,
