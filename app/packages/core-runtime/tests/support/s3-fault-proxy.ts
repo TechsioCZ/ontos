@@ -207,6 +207,12 @@ const close = ({ server }: { readonly server: Server }) =>
     });
   });
 
+const PROXYABLE_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
 /** Starts the proxy in front of `upstream` for the lifetime of the surrounding scope (any free port unless one is named). */
 export const startS3FaultProxy = (upstream: URL, port = 0) =>
-  Effect.acquireRelease(listen(upstream, port), close).pipe(Effect.map(({ proxy }) => proxy));
+  PROXYABLE_HOSTS.has(upstream.hostname)
+    ? Effect.acquireRelease(listen(upstream, port), close).pipe(Effect.map(({ proxy }) => proxy))
+    : Effect.die(
+        new Error('The fault proxy forwards in plain HTTP and only to a loopback upstream, never to a real endpoint'),
+      );

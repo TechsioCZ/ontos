@@ -61,6 +61,8 @@ import { DateTime, Effect, Option, Predicate, Redacted } from 'effect';
  *    ETag mismatches in CompleteMultipartUpload, the order of parts there, an empty part list, a part number outside
  *    1..10,000, Range reads, ListParts, ListObjectsV2, copy operations, the 7-day expiry of unfinished uploads;
  *  - whether a Content-Length-less request other than PutObject/UploadPart is refused with 411;
+ *  - the status of DeleteObject and AbortMultipartUpload (the mock answers 204 as S3 does; the pages only mark them implemented)
+ *    and DeleteObject of a key that does not exist (the mock succeeds with 204);
  *  - the error ordering between NoSuchBucket and AccessDenied for a bucket the token cannot see (the mock reports
  *    NoSuchBucket for a bucket that does not exist and AccessDenied for an existing one outside the token's scope);
  *  - the message texts of every error, and the response headers other than ETag, Content-Length and Content-Type.
@@ -665,7 +667,7 @@ interface Route {
 const hasOnly = (call: Call, ...expected: readonly string[]) =>
   call.names.length === expected.length && expected.every((name) => call.names.includes(name));
 
-/** Everything the documentation states and the adapter or its tests use. Any other request is `unverified`. */
+/** Every request the adapter or its tests use that the documentation names as implemented. Any other request is `unverified`. */
 const ROUTES: readonly Route[] = [
   {
     applies: (call) => call.target.key === '' && call.method === 'GET' && hasOnly(call, 'uploads'),

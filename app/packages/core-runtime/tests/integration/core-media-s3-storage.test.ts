@@ -28,6 +28,7 @@ import {
   S3ProviderUnderTest,
   pointAt,
   recordKey,
+  s3FaultInjectableConfig,
   s3ProviderConfig,
   s3Providers,
   spaceSameKeyWrites,
@@ -130,7 +131,7 @@ const withProxy = <Value, Failure, Requirement>(
   ctx: { readonly skip: () => void },
   use: (proxy: S3FaultProxy) => Effect.Effect<Value, Failure, Requirement>,
 ): Effect.Effect<Value, Failure, Requirement | Scope.Scope | S3ProviderUnderTest> =>
-  s3ProviderConfig(ctx).pipe(Effect.flatMap((base) => Effect.flatMap(startS3FaultProxy(base.endpoint), use)));
+  s3FaultInjectableConfig(ctx).pipe(Effect.flatMap((base) => Effect.flatMap(startS3FaultProxy(base.endpoint), use)));
 
 for (const provider of s3Providers) {
   it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, provider.layer), { excludeTestServices: true })(
@@ -368,7 +369,10 @@ for (const provider of s3Providers) {
       emulatorIt('maps a missing bucket on a write to an unavailable failure, not a missing object', (ctx) =>
         Effect.gen(function* missingBucket() {
           const base = yield* s3ProviderConfig(ctx);
-          const storage = yield* storageFor({ ...base, bucket: `absent-${(yield* nextUuid).slice(0, 8)}` });
+          const storage = yield* storageFor({
+            ...base,
+            bucket: `${base.bucket}-absent-${(yield* nextUuid).slice(0, 4)}`,
+          });
           const bytes = encoder.encode('x');
           const failure = yield* failureOf(
             storage.put({ body: Stream.make(bytes), contentType: 'text/plain', key: yield* freshKey }),
