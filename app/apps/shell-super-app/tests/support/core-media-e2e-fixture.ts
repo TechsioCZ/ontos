@@ -2,7 +2,13 @@ import type { Server } from 'node:http';
 
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { DatabaseConfig, parseDatabaseConfig, parseDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  DatabaseConfig,
+  makeSystemPrincipalContextResolver,
+  parseDatabaseConfig,
+  parseDatabaseConnectionPair,
+  registerSystemWorkload,
+} from '@app/core-runtime';
 import type { DatabaseConnectionPair } from '@app/core-runtime';
 import { AccessDecisionLive } from '@app/core-runtime/access/enforcement';
 import { TenantAccessBootstrapLive } from '@app/core-runtime/access/bootstrap';
@@ -465,6 +471,13 @@ const mountShell = (
 export interface MediaE2eWorld {
   readonly actions: ActionRuntimeService;
   readonly admin: PgClient.PgClient;
+  /**
+   * Fixture only (throwaway database): enrols ONE `system` principal in this world's tenant and binds it to exactly the
+   * named workload key, the way an operator's stage `workloads` entry does. It holds no role and no grant of any kind.
+   */
+  readonly bindSystemWorkload: (
+    workloadKey: string,
+  ) => Effect.Effect<{ readonly principal: TrustedPrincipalContext; readonly principalId: string }>;
   /** The revision of the active Application Composition every request of this world runs under. */
   readonly compositionRevision: string;
   readonly databases: DatabaseConnectionPair;
@@ -691,6 +704,38 @@ const recordMembers = (
     yield* Context.get(graph.context, AccessMembershipStore).recordMemberships(ownerScope, { memberships });
   }).pipe(Effect.orDie);
 
+/** A `system` principal of the tenant with one active binding for one workload key, written as the operator's install would. */
+const bindSystemWorkloadOf = (
+  admin: PgClient.PgClient,
+  resolver: ReturnType<typeof makeSystemPrincipalContextResolver>,
+  tenantId: string,
+) =>
+  Effect.fn('MediaE2e.bindSystemWorkload')(function* bindSystemWorkload(workloadKey: string) {
+    const crypto = yield* Crypto.Crypto;
+    const [principalId, bindingId, incarnation] = yield* Effect.all([
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+      crypto.randomUUIDv4(),
+    ]);
+    yield* admin.unsafe(
+      `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
+           values ($1::uuid, $2::uuid, 'system', $3, 'active')`,
+      [principalId, tenantId, `E2E workload ${workloadKey}`],
+    );
+    yield* admin.unsafe(
+      `insert into core.access_workload_bindings (binding_id, tenant_id, principal_id, workload_key, incarnation, status)
+           values ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid, 'active')`,
+      [bindingId, tenantId, principalId, workloadKey, incarnation],
+    );
+    // The trusted context only Core's own resolver can construct, exactly what the Shell host obtains at run time.
+    const principal = yield* resolver.resolveEnrolled({
+      registration: registerSystemWorkload({ jobKey: workloadKey }),
+      runReference: 'e2e',
+      tenantId,
+    });
+    return { principal, principalId };
+  }, Effect.orDie);
+
 /** CONTROLLED FAULT INJECTION: the stored bytes of one asset are replaced at the emulator, outside every Core path. */
 const replaceStored = (storage: OpenedStorage, tenantId: string) =>
   Effect.fn('MediaE2e.replaceStoredObject')(
@@ -811,6 +856,12 @@ export const withMediaE2eWorld = <Value, Failure>(
       return yield* run({
         actions: runtimes.actions,
         admin,
+        bindSystemWorkload: (workloadKey) =>
+          bindSystemWorkloadOf(
+            admin,
+            makeSystemPrincipalContextResolver({ executor: Context.get(adminContext, CoreDatabase).executor }),
+            tenantId,
+          )(workloadKey).pipe(Effect.provideService(Crypto.Crypto, crypto)),
         compositionRevision: composition.composition.revision,
         databases,
         faultInjection,

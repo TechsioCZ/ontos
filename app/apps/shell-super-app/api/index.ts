@@ -61,6 +61,9 @@ import {
   SupportRecoveryPrincipalContextResolverLive,
   TenantModuleStateServiceLive,
   ActionRuntime,
+  registerSystemWorkload,
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
   assetCurrentRead,
   assetMetadataRead,
   renameDisplayFilenameAction,
@@ -2975,53 +2978,57 @@ const coreMediaObjectStoreLive = Layer.effect(
  */
 const coreMediaObjectStorageLive = Layer.merge(coreMediaObjectStoreLive, coreMediaDigestStepTimeoutLive);
 
+/** The one workload that may record proven corruption: it carries no other capability (ADR-0030, `accessWorkload`). */
+const coreMediaIntegrityWorkload = registerSystemWorkload({ jobKey: 'core.media.integrity' });
+
 /**
- * Hands proven corruption to the integrity Action under the host's bound `core.media.integrity` workload
- * principal. The finding travels as the Action's request-scoped proof service, never as a payload field. A failed
- * recording changes nothing the client saw; the next verification finds the same corruption and records it again.
+ * Hands proven corruption to the integrity Action as the tenant's enrolled `core.media.integrity` workload principal:
+ * the single active `system` principal the operator bound to that key in the asset's tenant (never the reader, who may
+ * hold no write capability). The finding travels as the Action's request-scoped proof service, never as a payload
+ * field. A tenant with no (or an ambiguous) enrolment, or a failed recording, changes nothing the client saw and is
+ * logged as unrecorded; the next verification finds the same corruption and records it again.
  */
-export const makeCoreMediaIntegrityRecorderLive = (principal: TrustedPrincipalContext) =>
-  Layer.effect(
-    MediaIntegrityRecorder,
-    Effect.gen(function* makeCoreMediaIntegrityRecorder() {
-      const actions = yield* ActionRuntime;
-      return {
-        record: (finding, mediaAssetRef) =>
-          actions
-            .runAction({
-              ...integrityRecordRequest(finding, mediaAssetRef),
-              principal,
-              registration: recordAssetIntegrityFailureAction,
-            })
-            .pipe(
-              Effect.provideService(ProvenMediaIntegrityFinding, finding),
-              Effect.asVoid,
-              Effect.matchEffect({
-                onFailure: (error) =>
-                  logMediaRecovery({
-                    category: 'unresolved',
-                    operation: 'integrity',
-                    ref: mediaRecoveryRef(finding.storageKey),
-                  }).pipe(
-                    Effect.andThen(Effect.logWarning('core.media.integrity.unrecorded')),
-                    Effect.annotateLogs({ failure: error._tag }),
-                  ),
-                onSuccess: () => Effect.void,
-              }),
+const coreMediaIntegrityRecorderLive = Layer.effect(
+  MediaIntegrityRecorder,
+  Effect.gen(function* makeCoreMediaIntegrityRecorder() {
+    const actions = yield* ActionRuntime;
+    const resolver = yield* SystemPrincipalContextResolver;
+    return {
+      record: (finding, mediaAssetRef) => {
+        const request = integrityRecordRequest(finding, mediaAssetRef);
+        return resolver
+          .resolveEnrolled({
+            registration: coreMediaIntegrityWorkload,
+            runReference: request.transport.correlationId,
+            tenantId: mediaAssetRef.tenantId,
+          })
+          .pipe(
+            Effect.flatMap((principal) =>
+              actions.runAction({ ...request, principal, registration: recordAssetIntegrityFailureAction }),
             ),
-      };
-    }),
-  );
+            Effect.provideService(ProvenMediaIntegrityFinding, finding),
+            Effect.asVoid,
+            Effect.matchEffect({
+              onFailure: (error) =>
+                logMediaRecovery({
+                  category: 'unresolved',
+                  operation: 'integrity',
+                  ref: mediaRecoveryRef(finding.storageKey),
+                }).pipe(
+                  Effect.andThen(Effect.logWarning('core.media.integrity.unrecorded')),
+                  Effect.annotateLogs({ failure: error._tag }),
+                ),
+              onSuccess: () => Effect.void,
+            }),
+          );
+      },
+    };
+  }),
+).pipe(Layer.provide(SystemPrincipalContextResolverLive));
 
-/** No integrity workload principal is configured on a host that does not compose one: nothing is recorded. */
-const coreMediaIntegrityRecorderUnconfiguredLive = Layer.succeed(MediaIntegrityRecorder, {
-  record: (finding) =>
-    logMediaRecovery({ category: 'unresolved', operation: 'integrity', ref: mediaRecoveryRef(finding.storageKey) }),
-});
-
-/** The download route with its composed dependencies: the object store and the (unconfigured) integrity recorder. */
+/** The download route with its composed dependencies: the object store and the integrity recorder. */
 const coreMediaDownloadHandlersLive = coreMediaDownloadGroupLive.pipe(
-  Layer.provide(Layer.mergeAll(coreMediaObjectStorageLive, coreMediaIntegrityRecorderUnconfiguredLive)),
+  Layer.provide(Layer.mergeAll(coreMediaObjectStorageLive, coreMediaIntegrityRecorderLive)),
 );
 /** The upload route with its composed dependency: the object store. The confirm Action runs under the caller. */
 const coreMediaUploadHandlersLive = coreMediaUploadGroupLive.pipe(Layer.provide(coreMediaObjectStorageLive));
