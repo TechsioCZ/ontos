@@ -531,6 +531,42 @@ describe('Inventory source stock item provisioning', () => {
     expect(() => encode(foreignTenant)).toThrow();
   });
 
+  it('gives reordered Define policy locations the same native request identity', () => {
+    const input = Schema.decodeUnknownSync(DefineSourceProvisioningPolicyPayloadSchema)({
+      customerConfigurationId,
+      externalScope: 'akros',
+      locations: [outletLocation, warehouseLocation],
+      namespace: 'akros-erp',
+      ownerConfigurationRef,
+      unitRef: unitRef(),
+    });
+    const reversed = { ...input, locations: EffectArray.reverse(input.locations) };
+    const { actionKey, owningModuleKey, payloadSchema, schemaVersion } =
+      defineSourceProvisioningPolicyAction.descriptor;
+    const principal = { principalId: '11111111-1111-4111-8111-111111111113', tenantId };
+    const hash = (payload: typeof input) =>
+      computeActionRequestHash({
+        actionKey,
+        normalizedPayload: Schema.encodeSync(DefineSourceProvisioningPolicyPayloadSchema)(payload),
+        owningModuleKey,
+        principal,
+        schemaVersion,
+        target: {},
+      });
+    expect(hash(reversed)).toBe(hash(input));
+    expect(Schema.decodeUnknownSync(payloadSchema)(reversed)).toEqual(input);
+    expect(Schema.encodeSync(DefineSourceProvisioningPolicyPayloadSchema)(reversed)).toEqual(input);
+    expect(reversed.locations).toEqual(EffectArray.reverse(input.locations));
+    expect(
+      hash(
+        Schema.decodeUnknownSync(DefineSourceProvisioningPolicyPayloadSchema)({
+          ...input,
+          locations: [outletLocation, { ...warehouseLocation, stockLocationRef: locationRef(otherUnitId) }],
+        }),
+      ),
+    ).not.toBe(hash(input));
+  });
+
   it('publishes the exact canonical owner request identity without changing receipt input order', () => {
     const principal = { principalId: '11111111-1111-4111-8111-111111111113', tenantId };
     const { actionKey, owningModuleKey, payloadSchema, schemaVersion } = provisionSourceStockItemAction.descriptor;

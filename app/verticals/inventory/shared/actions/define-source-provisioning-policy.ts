@@ -1,7 +1,8 @@
 import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
-import { Schema } from 'effect';
+import { Order, Schema, SchemaGetter } from 'effect';
 
 import { SourceProvisioningLocationsSchema, SourceProvisioningPolicySchema } from '../domain/source-provisioning.ts';
+import type { SourceProvisioningLocation } from '../domain/source-provisioning.ts';
 import { SourceProvisioningPolicyRejected } from '../domain/source-provisioning-policy-rejected.ts';
 import { SourceProvisioningUnavailable } from '../domain/source-provisioning-unavailable.ts';
 import { CustomerConfigurationIdSchema } from '../inventory-launch-scope.ts';
@@ -9,6 +10,9 @@ import { InventoryBackendConfigurationRefSchema } from '../resources/inventory-b
 
 const boundedText = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300));
 const canonicalUuid = Schema.String.check(Schema.isUUID(), Schema.isPattern(/^[0-9a-f-]+$/u));
+const canonicalLocations = SchemaGetter.transform((locations: readonly SourceProvisioningLocation[]) =>
+  locations.toSorted((left, right) => Order.String(left.locationKey, right.locationKey)),
+);
 
 /**
  * The one provisioning policy of the selected external Inventory Backend of a Customer Configuration. The issuer
@@ -17,7 +21,9 @@ const canonicalUuid = Schema.String.check(Schema.isUUID(), Schema.isPattern(/^[0
 export const DefineSourceProvisioningPolicyPayloadSchema = Schema.Struct({
   customerConfigurationId: CustomerConfigurationIdSchema,
   externalScope: boundedText,
-  locations: SourceProvisioningLocationsSchema,
+  locations: SourceProvisioningLocationsSchema.pipe(
+    Schema.decode({ decode: canonicalLocations, encode: canonicalLocations }),
+  ),
   namespace: boundedText,
   ownerConfigurationRef: InventoryBackendConfigurationRefSchema,
   unitRef: ProductUnitRefSchema,
