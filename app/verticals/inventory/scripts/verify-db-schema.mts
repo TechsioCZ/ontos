@@ -246,6 +246,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     });
   }
   const [provisioning] = yield* database.executor.execute<{
+    readonly declared_locations_constraint_valid: boolean;
     readonly foreign_key_count: number;
     readonly functions_hardened: boolean;
     readonly private_functions_executable: boolean;
@@ -257,15 +258,38 @@ const verification = Effect.gen(function* verifyDatabase() {
       join pg_catalog.pg_class c on c.oid = t.tgrelid
       join pg_catalog.pg_namespace n on n.oid = c.relnamespace
       where n.nspname = ${INVENTORY_SCHEMA_NAME} and not t.tgisinternal and t.tgenabled = 'O'
-      and ((t.tgtype = 7 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.scopeFunction}))
+      and c.relname in (${sql.join(
+        inventorySourceProvisioningDatabaseContract.tables.map((name) => sql`${name}`),
+        sql`, `,
+      )})
+      and ((t.tgtype = 7 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.scopeFunction})
+          and t.tgname = 'inventory_' || c.relname || '_scope_trg')
         or (t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.manifestFunction})
+          and t.tgname = 'inventory_' || c.relname || '_manifest_trg'
           and ((t.tgtype = 5 and c.relname = 'source_provisioning_policies')
             or (t.tgtype = 7 and c.relname in ('source_provisioning_policy_locations', 'source_stock_item_provisionings'))))
-        or (t.tgtype = 27 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.immutableFunction})))
+        or (t.tgtype = 27 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.immutableFunction})
+          and t.tgname = 'inventory_' || c.relname || '_no_mutation_trg'))
       and t.tgname in (${sql.join(
         inventorySourceProvisioningDatabaseContract.triggers.map((name) => sql`${name}`),
         sql`, `,
       )})) as trigger_count,
+    exists(select 1 from pg_catalog.pg_constraint k
+      cross join lateral (
+        select coalesce(string_agg(case when left(token.parts[1], 1) = '''' then token.parts[1]
+          else regexp_replace(lower(token.parts[1]), '[()[:space:]]', '', 'g') end,
+          '' order by token.ordinal), '') as normalized
+        from regexp_matches(pg_get_expr(k.conbin, k.conrelid), $$'(?:[^']|'')*'|[^']+$$, 'g')
+          with ordinality as token(parts, ordinal)
+      ) expression
+      where k.conrelid = 'inventory.source_provisioning_policies'::regclass
+        and k.conname = 'inventory_source_provisioning_declared_locations_ck'
+        and k.contype = 'c' and k.convalidated
+        and expression.normalized in (
+          $$jsonb_typeofdeclared_locations='array'::textandjsonb_array_lengthdeclared_locations>=1andjsonb_array_lengthdeclared_locations<=50$$,
+          $$jsonb_typeofdeclared_locations='array'::textandjsonb_array_lengthdeclared_locationsbetween1and50$$
+        )
+      ) as declared_locations_constraint_valid,
     (select count(*)::integer from pg_catalog.pg_constraint k
       join pg_catalog.pg_class c on c.oid = k.conrelid
       join pg_catalog.pg_namespace n on n.oid = c.relnamespace
@@ -294,6 +318,7 @@ const verification = Effect.gen(function* verifyDatabase() {
   );
   if (
     provisioning === undefined ||
+    !provisioning.declared_locations_constraint_valid ||
     provisioning.trigger_count !== inventorySourceProvisioningDatabaseContract.triggers.length ||
     provisioning.foreign_key_count !== 5 ||
     provisioning.unique_index_count !== 4 ||
