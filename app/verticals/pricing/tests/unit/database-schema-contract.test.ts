@@ -15,6 +15,8 @@ import {
   currencySupportScheduleHeads,
   currencySupportScheduleRevisions,
   currencySupportValueRevisions,
+  externalPriceSourcePolicies,
+  externalPriceSourcePolicyEnds,
   feeSetHeads,
   feeSetRevisions,
   feeSetRoots,
@@ -266,6 +268,20 @@ describe('Pricing Drizzle migration history contract', () => {
       snapshotIds.add(snapshot.id);
       previousSnapshotId = snapshot.id;
     }
+  });
+});
+
+describe('standing Price source policy history', () => {
+  it('ties the unique end to its immutable parent in both scope dimensions', () => {
+    const policies = getTableConfig(externalPriceSourcePolicies);
+    const ends = getTableConfig(externalPriceSourcePolicyEnds);
+    const scopeAndPolicy = ['tenant_id', 'legal_entity_id', 'policy_id'];
+    expect(ends.primaryKeys.map(({ columns }) => columns.map(({ name }) => name))).toEqual([scopeAndPolicy]);
+    const [parent] = ends.foreignKeys.map((key) => key.reference());
+    expect(parent?.foreignTable).toBe(externalPriceSourcePolicies);
+    expect(parent?.columns.map(({ name }) => name)).toEqual(scopeAndPolicy);
+    expect(parent?.foreignColumns.map(({ name }) => name)).toEqual(scopeAndPolicy);
+    expect(policies.enableRLS && ends.enableRLS).toBe(true);
   });
 });
 

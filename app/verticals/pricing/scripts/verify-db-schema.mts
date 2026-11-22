@@ -87,6 +87,8 @@ interface InfrastructureRow {
   readonly runtime_support_helper_count: number;
   readonly runtime_unplanned_routine_count: number;
   readonly runtime_update_count: number;
+  readonly standing_policy_access_valid: boolean;
+  readonly standing_policy_insert_guard_count: number;
   readonly unsafe_runtime_table_privilege_count: number;
 }
 
@@ -170,7 +172,9 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.quantity_tier_routine_count === 5,
     row.quantity_tier_routine_public_execute_count === 0,
     row.quantity_tier_table_count === 9,
-    row.routine_count === 137,
+    row.standing_policy_access_valid,
+    row.standing_policy_insert_guard_count === 2,
+    row.routine_count === 138,
     row.runtime_compatibility_membership_count === 0,
     row.runtime_support_helper_count === 2,
     row.routine_public_execute_count === 0,
@@ -365,6 +369,34 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
               join pg_catalog.pg_namespace as namespace on namespace.oid = journal.relnamespace
              where namespace.nspname = 'drizzle'
                and journal.relname = '__drizzle_migrations_pricing') as journal_count,
+           (select count(*) = 8 and count(distinct (p.polrelid, p.polcmd)) = 8 and bool_and(
+               p.polpermissive and p.polroles = array['ontos_runtime'::regrole::oid]
+               and case p.polcmd
+                 when 'r' then p.polwithcheck is null and expr.scoped
+                 when 'a' then p.polqual is null and expr.scoped
+                 when 'w' then pg_get_expr(p.polqual, p.polrelid) = 'false'
+                   and pg_get_expr(p.polwithcheck, p.polrelid) = 'false'
+                 when 'd' then pg_get_expr(p.polqual, p.polrelid) = 'false' and p.polwithcheck is null
+                 else false end is true)
+              from pg_catalog.pg_policy as p
+              cross join lateral (select regexp_replace(lower(pg_get_expr(
+                  case p.polcmd when 'r' then p.polqual else p.polwithcheck end, p.polrelid
+                )), '[()[:space:]]', '', 'g') =
+                  regexp_replace($$tenant_id = nullif(current_setting('ontos.tenant_id'::text, true), ''::text)::uuid
+                    and legal_entity_id = nullif(current_setting('ontos.legal_entity_id'::text, true), ''::text)::uuid$$,
+                    '[()[:space:]]', '', 'g')
+                as scoped) as expr
+             where p.polrelid in ('pricing.external_price_source_policies'::regclass,
+               'pricing.external_price_source_policy_ends'::regclass)) as standing_policy_access_valid,
+           (select count(*)::integer from pg_catalog.pg_trigger as t
+              join pg_catalog.pg_proc as f on f.oid = t.tgfoid
+             where (t.tgrelid, t.tgname) in (
+               ('pricing.external_price_source_policies'::regclass, 'pricing_guard_policy_insert'),
+               ('pricing.external_price_source_policy_ends'::regclass, 'pricing_guard_end_insert'))
+               and not t.tgisinternal and t.tgenabled in ('O', 'A') and t.tgtype = 7 and t.tgqual is null
+               and f.oid = 'pricing.guard_external_price_source_policy_insert_v1()'::regprocedure
+               and not f.prosecdef and f.provolatile = 'v' and f.proconfig = array['search_path=pg_catalog, pg_temp']
+               and not has_function_privilege('ontos_runtime', f.oid, 'EXECUTE')) as standing_policy_insert_guard_count,
            (select count(*)::integer
               from pg_catalog.pg_policy as policy
               join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
