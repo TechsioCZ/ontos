@@ -147,6 +147,8 @@ export interface R2BehaviourMock {
     readonly keys: (bucket: string) => readonly string[];
     /** An out-of-band write (as an operator or a second writer would do), never through the S3 API checks. */
     readonly put: (bucket: string, key: string, bytes: Uint8Array) => void;
+    /** An unfinished multipart upload, as a crashed writer would leave one. Returns its upload id. */
+    readonly startUpload: (bucket: string, key: string) => string;
     readonly uploads: (bucket: string) => readonly string[];
   };
   readonly bucket: string;
@@ -768,6 +770,11 @@ const adminOf = (context: Context): R2BehaviourMock['admin'] => ({
       etag: quoted(md5(bytes)),
       modifiedMillis: context.now(),
     });
+  },
+  startUpload: (bucket, key) => {
+    const uploadId = nodeCrypto.randomBytes(24).toString('base64url');
+    context.state.uploads.set(uploadId, { bucket, contentType: DEFAULT_CONTENT_TYPE, key, parts: new Map() });
+    return uploadId;
   },
   uploads: (bucket) =>
     [...context.state.uploads.values()].filter((upload) => upload.bucket === bucket).map((upload) => upload.key),

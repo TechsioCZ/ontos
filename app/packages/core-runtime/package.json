@@ -116,6 +116,7 @@
     "db:verify": "node scripts/verify-db-schema.mts",
     "test:unit": "rstest --project unit",
     "test:integration": "rstest --project integration",
+    "test:s3-provider": "rstest --project integration tests/integration/core-media-s3-storage.test.ts tests/integration/core-media-recovery-s3.test.ts tests/integration/core-media-r2-behaviour-mock.test.ts tests/integration/core-media-s3-run-cleanup.test.ts",
     "action:test:unit": "rstest --project unit tests/unit/action-",
     "action:test:integration": "rstest --project integration tests/integration/action-",
     "outbox:test:unit": "rstest --project unit tests/unit/outbox-",
