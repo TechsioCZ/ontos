@@ -168,18 +168,22 @@ const decodePolicyEndOutcome = decodeOne(
   'Pricing external Price source policy end returned an invalid outcome',
 );
 
+const identityMatchesScope = (
+  identity: ExternalPriceSourceAuthorityAssessmentRequest['exactIdentityKey'],
+  scope: OperationalScope,
+) =>
+  identity.catalogSelection.productRef.tenantId === scope.tenantId &&
+  identity.catalogSelection.variantRef.tenantId === scope.tenantId &&
+  identity.unitBasis.unitRef.tenantId === scope.tenantId &&
+  identity.commercialScope.sellingLegalEntityId === scope.legalEntityId &&
+  (identity.priceGroupSelector.kind === 'NO_GROUP' ||
+    identity.priceGroupSelector.priceGroupRef.tenantId === scope.tenantId);
+
 const requestMatchesScope = (request: ExternalPriceSourceAuthorityAssessmentRequest, scope: OperationalScope) =>
-  request.tenantId === scope.tenantId &&
-  request.exactIdentityKey.catalogSelection.productRef.tenantId === scope.tenantId &&
-  request.exactIdentityKey.catalogSelection.variantRef.tenantId === scope.tenantId &&
-  request.exactIdentityKey.unitBasis.unitRef.tenantId === scope.tenantId &&
-  request.exactIdentityKey.commercialScope.sellingLegalEntityId === scope.legalEntityId;
+  request.tenantId === scope.tenantId && identityMatchesScope(request.exactIdentityKey, scope);
 
 const grantMatchesScope = (grant: ExternalPriceSourceAuthorityGrant, scope: OperationalScope) =>
-  grant.exactIdentityKey.catalogSelection.productRef.tenantId === scope.tenantId &&
-  grant.exactIdentityKey.catalogSelection.variantRef.tenantId === scope.tenantId &&
-  grant.exactIdentityKey.unitBasis.unitRef.tenantId === scope.tenantId &&
-  grant.exactIdentityKey.commercialScope.sellingLegalEntityId === scope.legalEntityId;
+  identityMatchesScope(grant.exactIdentityKey, scope);
 
 const policyMatchesScope = (policy: ExternalPriceSourcePolicyRecord, scope: OperationalScope) =>
   policy.unitBasis.unitRef.tenantId === scope.tenantId &&
