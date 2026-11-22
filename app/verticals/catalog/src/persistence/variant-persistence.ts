@@ -81,6 +81,7 @@ export interface ConfirmVariantCombinationPersistenceInput extends ChangeEvidenc
  * An unavailable basis is raised as {@link VariantCurrentBasisUnavailable}, never as success.
  */
 export const ConfirmedVariantCombinationSchema = Schema.TaggedStruct('confirmed', {
+  changed: Schema.Boolean,
   combinationAxisRevision: Schema.Int,
   combinationKey: VariantCombinationKeySchema,
   revision: Schema.Int,
@@ -695,6 +696,7 @@ export const variantPersistenceForScope = (
     ) {
       return {
         _tag: 'confirmed',
+        changed: false,
         combinationAxisRevision: current.axisRevision,
         combinationKey,
         revision: row.currentRevision,
@@ -733,6 +735,7 @@ export const variantPersistenceForScope = (
     yield* revision(written, input, 'LIFECYCLE');
     return {
       _tag: 'confirmed',
+      changed: true,
       combinationAxisRevision: written.combinationAxisRevision ?? current.axisRevision,
       combinationKey: written.combinationKey ?? combinationKey,
       revision: written.currentRevision,

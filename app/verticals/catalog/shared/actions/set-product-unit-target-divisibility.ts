@@ -37,5 +37,8 @@ export const SetProductUnitTargetDivisibilityPayloadSchema = Schema.Struct({
   }),
 });
 export type SetProductUnitTargetDivisibilityPayload = typeof SetProductUnitTargetDivisibilityPayloadSchema.Type;
-export const SetProductUnitTargetDivisibilityResultSchema = ProductUnitMutationResultSchema;
+export const SetProductUnitTargetDivisibilityResultSchema = Schema.Struct({
+  ...ProductUnitMutationResultSchema.fields,
+  changed: Schema.Boolean,
+});
 export type SetProductUnitTargetDivisibilityResult = typeof SetProductUnitTargetDivisibilityResultSchema.Type;

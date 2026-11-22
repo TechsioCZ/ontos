@@ -33,6 +33,7 @@ import {
   productVariants,
   variantUnitDivisibility,
 } from '../../src/database/schema.ts';
+import type { productVariantRevisions, variantUnitDivisibilityRevisions } from '../../src/database/schema.ts';
 import { catalogActionResultSnapshotForScope } from '../../src/persistence/catalog-action-result-snapshot.ts';
 import { catalogPersistenceForScope } from '../../src/persistence/catalog-persistence.ts';
 import { catalogSourceProductIntentMatches } from '../../src/persistence/catalog-source-product-intent.ts';
@@ -171,8 +172,37 @@ const selectedRows = (table: PgTable, rows: Map<PgTable, readonly object[]>, sna
     ),
 });
 
+type FixtureWrite =
+  | typeof productVariantRevisions.$inferInsert
+  | typeof productVariants.$inferInsert
+  | typeof variantUnitDivisibility.$inferInsert
+  | typeof variantUnitDivisibilityRevisions.$inferInsert;
+const writeFixture = (allowWrites: boolean, writes: { readonly table: PgTable; readonly value: FixtureWrite }[]) => {
+  const record = (table: PgTable, value: FixtureWrite) => {
+    if (!allowWrites) {
+      throw new Error('Unexpected business mutation');
+    }
+    writes.push({ table, value });
+  };
+  const insert = (table: PgTable) => ({
+    values: (value: FixtureWrite) => {
+      record(table, value);
+      return Effect.succeed([]);
+    },
+  });
+  const returning = (table: PgTable, value: FixtureWrite) => () => {
+    record(table, value);
+    return Effect.succeed([{ ...variant, ...value }]);
+  };
+  const update = (table: PgTable) => ({
+    set: (value: FixtureWrite) => ({ where: () => ({ returning: returning(table, value) }) }),
+  });
+  return { insert, update };
+};
+
 const readyFixture = Effect.fn('sourceReadiness.readyFixture')(function* readyFixture(
   overrides = new Map<PgTable, readonly object[]>(),
+  allowWrites = false,
 ) {
   const source = yield* sourceProductIntentFixture({ principalId, productId, tenantId, variantId });
   const rows = new Map<PgTable, readonly object[]>([
@@ -188,9 +218,13 @@ const readyFixture = Effect.fn('sourceReadiness.readyFixture')(function* readyFi
     ...overrides,
   ]);
   const snapshots: Snapshot[] = [];
+  const writes: { readonly table: PgTable; readonly value: FixtureWrite }[] = [];
+  const business = writeFixture(allowWrites, writes);
   const transaction = {
-    insert: (table: PgTable) => snapshotInsert(table, snapshots),
+    insert: (table: PgTable) =>
+      table === catalogResultSnapshots ? snapshotInsert(table, snapshots) : business.insert(table),
     select: () => ({ from: (table: PgTable) => selectedRows(table, rows, snapshots) }),
+    update: business.update,
   };
   // @ts-expect-error The seam implements only exercised, read-only Drizzle chains and result snapshot inserts.
   const axisService = variantAxisPersistenceForScope(transaction, scope);
@@ -319,10 +353,39 @@ const readyFixture = Effect.fn('sourceReadiness.readyFixture')(function* readyFi
   const matches = (sourceProduct = source.sourceProduct) =>
     // @ts-expect-error Focused Drizzle source-intent read seam.
     catalogSourceProductIntentMatches(transaction, scope, { productRef, sourceProduct, variantRef });
-  return { commands, matches, receipt, rows, snapshots, source };
+  return { commands, matches, receipt, rows, snapshots, source, writes };
 });
 
 describe('exact source Product readiness adoption', () => {
+  it.effect('reports fresh ordinary Variant confirmation and divisibility writes as changes', () =>
+    Effect.gen(function* freshDecisions() {
+      const draft = {
+        ...variant,
+        combinationAxisRevision: null,
+        combinationKey: null,
+        currentRevision: 1,
+        lifecycleState: 'WORK_IN_PROGRESS',
+      };
+      const variantFixture = yield* readyFixture(new Map([[productVariants, [draft]]]), true);
+      expect(
+        Match.value(yield* variantFixture.commands(false).confirm).pipe(
+          Match.tag('confirmed', ({ changed }) => changed),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      expect(variantFixture.writes.length).toBeGreaterThan(0);
+
+      const unitFixture = yield* readyFixture(new Map([[variantUnitDivisibility, []]]), true);
+      expect(
+        Match.value(yield* unitFixture.commands(false).unit).pipe(
+          Match.tag('divisibility_set', ({ changed }) => changed),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      expect(unitFixture.writes.length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.effect('adopts all six identical owner decisions and retains six independent recoverable Action receipts', () =>
     Effect.gen(function* adoptsReadyProduct() {
       const fixture = yield* readyFixture();
@@ -356,17 +419,20 @@ describe('exact source Product readiness adoption', () => {
       const untyped = yield* commands.untyped;
       expect(governed).toEqual({ axisRevision: 1, changed: false });
       expect(confirmed.revision).toBe(2);
+      expect(confirmed).toMatchObject({ changed: false });
       expect(localized).toEqual({ changed: false, revision: 1 });
       expect(activated).toMatchObject({
         changed: false,
         product: { lifecycle: 'ACTIVE', revision: 2 },
       });
       expect(unit.targetDivisibility).toMatchObject({ divisible: false, revision: 1 });
-      expect(untyped).toEqual({ decisionRevision: 1, decisionState: 'CONFIRMED', productRef });
+      expect(unit).toMatchObject({ changed: false });
+      expect(untyped).toEqual({ changed: false, decisionRevision: 1, decisionState: 'CONFIRMED', productRef });
       yield* fixture.receipt(GovernVariantAxesResultSchema, { ...governed, productRef }, 'govern-variant-axes', 1);
       yield* fixture.receipt(
         ConfirmVariantCombinationResultSchema,
         {
+          changed: confirmed.changed,
           combinationAxisRevision: confirmed.combinationAxisRevision,
           combinationKey: confirmed.combinationKey,
           variant: confirmed.variant,
@@ -390,6 +456,7 @@ describe('exact source Product readiness adoption', () => {
       yield* fixture.receipt(
         SetProductUnitTargetDivisibilityResultSchema,
         {
+          changed: unit.changed,
           ruleRevision: unit.ruleRevision,
           targetDivisibility: unit.targetDivisibility,
           unit: unit.unit,

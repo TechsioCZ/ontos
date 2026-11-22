@@ -688,13 +688,18 @@ const inventoryProvisioningMock = (request: Request) => {
   return Option.none();
 };
 
-const readinessMock = (request: Request) =>
-  request.url.includes('/actions/govern-variant-axes') || request.url.includes('/reads/govern-variant-axes-recovery')
+const readinessMock = (request: Request, selected?: { readonly action: string; readonly response: object }) => {
+  if (selected !== undefined && request.url.includes(selected.action)) {
+    return Option.some({ event: 'owner-readiness', response: Promise.resolve(Response.json(selected.response)) });
+  }
+  return request.url.includes('/actions/govern-variant-axes') ||
+    request.url.includes('/reads/govern-variant-axes-recovery')
     ? Option.some({
         event: 'owner-readiness',
         response: Promise.resolve(Response.json({ axisRevision: 1, changed: true, productRef })),
       })
     : Option.none();
+};
 
 const harness = (
   replay: boolean,
@@ -710,6 +715,7 @@ const harness = (
   variantBindingReceipt?: { readonly changed?: boolean },
   definitionGroup = priceGroupA,
   reviseProblem?: ReviseProblem,
+  readinessWire?: { readonly action: string; readonly response: object },
 ) => {
   const requests: Request[] = [];
   const events: string[] = [];
@@ -757,7 +763,7 @@ const harness = (
         }),
       );
     }
-    const pricingMock = readinessMock(request).pipe(
+    const pricingMock = readinessMock(request, readinessWire).pipe(
       Option.orElse(() => inventoryProvisioningMock(request)),
       Option.getOrElse(() => pricingOwnerMock(request, { definitionGroup, reviseProblem })),
     );
@@ -2591,7 +2597,153 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
   );
 });
 
+const readinessState = (effectKey: string, receipt: typeof Schema.Json.Type) => ({
+  ...parentState,
+  effect: Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({ ...effect, effectKey }),
+  ownerReceipt: Option.some(Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema)(receipt)),
+});
+
 describe('Symmy Product readiness', () => {
+  it.effect('preserves owner change disposition on dispatch and lost-ack recovery for each readiness decision', () =>
+    Effect.gen(function* ownerDispositions() {
+      const parent = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: variantRef,
+            productRef,
+            productRevision: 1,
+            variantRevision: 1,
+          }),
+        ),
+      };
+      const dependencies = [
+        parent,
+        readinessState('readiness-axes', { _tag: 'ReadinessAxes', axisRevision: 1 }),
+        readinessState('readiness-confirm', { _tag: 'ReadinessVariant', variantRevision: 2 }),
+        readinessState('readiness-activate', { _tag: 'ReadinessProduct', productRevision: 2 }),
+      ];
+      for (const changed of [true, false]) {
+        const cases = [
+          {
+            action: 'confirm-variant-combination',
+            response: {
+              changed,
+              combinationAxisRevision: 1,
+              combinationKey: 'a'.repeat(64),
+              variant: result.product.variants[0],
+              variantRevision: 2,
+            },
+            step: 'CONFIRM',
+          },
+          {
+            action: 'set-product-unit-target-divisibility',
+            response: {
+              changed,
+              ruleRevision: { revision: 1, rounding: 'UP', step: '1', unit: unitRef },
+              unit: unitRef,
+            },
+            step: 'UNIT',
+          },
+          {
+            action: 'decide-product-type-unnecessary',
+            response: { changed, decisionRevision: 1, decisionState: 'CONFIRMED', productRef },
+            step: 'UNTYPED',
+          },
+        ] as const;
+        for (const { action, response, step } of cases) {
+          const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+            ...dependentEffect(
+              {
+                _tag: 'CatalogReadiness',
+                divisible: false,
+                evidenceRefs: ['symmy-product:source'],
+                kind: 'AXIS_FREE_UNTYPED',
+                locale: 'cs-CZ',
+                name: 'Real source name',
+                step,
+                unitRef,
+              },
+              { entrypointKey: `commerce.catalog.${action}`, moduleId: 'commerce.catalog', schemaVersion: '1' },
+            ),
+            dependsOn: [
+              productParent,
+              ...['readiness-axes', 'readiness-confirm', 'readiness-activate'].map((effectKey) => ({
+                effectKey,
+                itemKey: productParent.itemKey,
+              })),
+            ],
+            itemId: '10000000-0000-4000-8000-000000000071',
+            ref: {
+              ...effect.ref,
+              effectId: '10000000-0000-4000-8000-000000000072',
+              operation: {
+                entrypointKey: `commerce.catalog.${action}`,
+                moduleId: 'commerce.catalog',
+                schemaVersion: '1',
+              },
+            },
+          });
+          const h = harness(
+            false,
+            original,
+            productId,
+            priceGroupA,
+            false,
+            undefined,
+            undefined,
+            undefined,
+            priceGroupA,
+            undefined,
+            {
+              action,
+              response,
+            },
+          );
+          yield* h.provide(
+            Effect.gen(function* testDisposition() {
+              const adapter = yield* h.adapter;
+              const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+                items: [
+                  {
+                    effects: [
+                      effect,
+                      ...['readiness-axes', 'readiness-confirm', 'readiness-activate'].map((effectKey, index) => ({
+                        ...effect,
+                        effectKey,
+                        ref: { ...effect.ref, effectId: `10000000-0000-4000-8000-00000000008${index}` },
+                      })),
+                    ],
+                    itemId: effect.itemId,
+                    itemKey: productParent.itemKey,
+                  },
+                  { effects: [original], itemId: original.itemId, itemKey: 'provision-item' },
+                ],
+              });
+              const outcome = yield* adapter.execute({ ...h.input, acceptedPlan, dependencies });
+              expect(outcome.status).toBe(changed ? 'accepted_change' : 'accepted_no_change');
+              const [resolved] = h.resolvedEffects;
+              assert.isDefined(resolved);
+              const proof = yield* originalProof({ ...h.input, acceptedPlan, dependencies, effect: resolved });
+              const recovered = yield* adapter.recover({
+                ...proof,
+                canExecuteNewEffects: false,
+                originalInvocationId: invocationId,
+              });
+              expect(recovered).toMatchObject({
+                outcome: { status: changed ? 'accepted_change' : 'accepted_no_change' },
+                status: 'settled',
+              });
+              expect(h.events.filter((event) => event === 'owner-readiness')).toHaveLength(2);
+            }),
+          );
+        }
+      }
+    }),
+  );
+
   it.effect('uses owner revisions to materialize every remaining readiness command', () =>
     Effect.gen(function* ownerRevisions() {
       const parent = {
@@ -2607,14 +2759,9 @@ describe('Symmy Product readiness', () => {
           }),
         ),
       };
-      const state = (effectKey: string, receipt: typeof Schema.Json.Type) => ({
-        ...parentState,
-        effect: Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({ ...effect, effectKey }),
-        ownerReceipt: Option.some(Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema)(receipt)),
-      });
-      const axes = state('readiness-axes', { _tag: 'ReadinessAxes', axisRevision: 3 });
-      const confirmed = state('readiness-confirm', { _tag: 'ReadinessVariant', variantRevision: 8 });
-      const activated = state('readiness-activate', { _tag: 'ReadinessProduct', productRevision: 5 });
+      const axes = readinessState('readiness-axes', { _tag: 'ReadinessAxes', axisRevision: 3 });
+      const confirmed = readinessState('readiness-confirm', { _tag: 'ReadinessVariant', variantRevision: 8 });
+      const activated = readinessState('readiness-activate', { _tag: 'ReadinessProduct', productRevision: 5 });
       const cases = [
         ['CONFIRM', 'confirm-variant-combination', { expectedAxisRevision: 3, expectedVariantRevision: 7 }],
         [

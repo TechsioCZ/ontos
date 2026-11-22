@@ -1416,7 +1416,7 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           return yield* symmyJobWorkerUnavailable();
         }
         yield* input.recordOwnerReceipt({ _tag: 'ReadinessVariant', variantRevision: result.variantRevision });
-        return safeOutcome(input, 'accepted_change');
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessName: Effect.fn('SymmyOwnerAdapters.recoverReadinessName')(function* recoverName() {
         const result = yield* executeSetProductLocalizedFactsRecoveryWithAuthorization(
@@ -1428,22 +1428,22 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
         return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessUnit: Effect.fn('SymmyOwnerAdapters.recoverReadinessUnit')(function* recoverUnit() {
-        yield* executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization(
+        const result = yield* executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization(
           catalogRequest,
           credential,
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        return safeOutcome(input, 'accepted_change');
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessUntyped: Effect.fn('SymmyOwnerAdapters.recoverReadinessUntyped')(function* recoverUntyped() {
-        yield* executeDecideProductTypeUnnecessaryRecoveryWithAuthorization(
+        const result = yield* executeDecideProductTypeUnnecessaryRecoveryWithAuthorization(
           catalogRequest,
           credential,
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        return safeOutcome(input, 'accepted_change');
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.recoverVariantLocalizedFacts')(
         function* recoverVariantLocalizedFacts() {
@@ -1796,7 +1796,7 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           return yield* symmyJobWorkerUnavailable();
         }
         yield* input.recordOwnerReceipt({ _tag: 'ReadinessVariant', variantRevision: result.variantRevision });
-        return safeOutcome(input, 'accepted_change');
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessName: Effect.fn('SymmyOwnerAdapters.readinessName')(function* name({ payload }) {
         const result = yield* executeSetProductLocalizedFactsWithAuthorization(
@@ -1816,7 +1816,9 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           requestCorrelation,
           options,
         );
-        return 'unit' in result ? safeOutcome(input, 'accepted_change') : safeOutcome(input, 'unresolved');
+        return 'unit' in result
+          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
+          : safeOutcome(input, 'unresolved');
       }),
       CatalogReadinessUntyped: Effect.fn('SymmyOwnerAdapters.readinessUntyped')(function* untyped({ payload }) {
         const result = yield* executeDecideProductTypeUnnecessaryWithAuthorization(
@@ -1825,7 +1827,9 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           requestCorrelation,
           options,
         );
-        return 'decisionRevision' in result ? safeOutcome(input, 'accepted_change') : safeOutcome(input, 'unresolved');
+        return 'decisionRevision' in result
+          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
+          : safeOutcome(input, 'unresolved');
       }),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.setVariantLocalizedFacts')(
         function* setVariantLocalizedFacts({ payload }) {

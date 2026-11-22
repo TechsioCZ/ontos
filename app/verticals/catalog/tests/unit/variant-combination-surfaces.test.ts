@@ -236,6 +236,7 @@ describe('Confirm Variant combination Action surface (#440)', () => {
       const variant = { lifecycle: 'ACTIVE' as const, productRef, variantId, variantRef };
       const outcome = decodeConfirmOutcome({
         _tag: 'confirmed',
+        changed: true,
         combinationAxisRevision: 1,
         combinationKey: 'a'.repeat(64),
         revision: 2,
@@ -246,6 +247,7 @@ describe('Confirm Variant combination Action surface (#440)', () => {
         yield* confirmContext(() => Effect.succeed(outcome)),
       );
       expect(result).toEqual({
+        changed: true,
         combinationAxisRevision: 1,
         combinationKey: 'a'.repeat(64),
         variant,

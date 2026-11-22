@@ -47,10 +47,7 @@ import {
   DefineSourceProvisioningPolicyPayloadSchema,
   DefineSourceProvisioningPolicyResultSchema,
 } from '../../shared/actions/define-source-provisioning-policy.ts';
-import {
-  ProvisionSourceStockItemPayloadSchema,
-  ProvisionSourceStockItemResultSchema,
-} from '../../shared/actions/provision-source-stock-item.ts';
+import { ProvisionSourceStockItemResultSchema } from '../../shared/actions/provision-source-stock-item.ts';
 import { SelectInventoryBackendPayloadSchema } from '../../shared/actions/select-inventory-backend.ts';
 import { inventoryApi } from '../../shared/api.ts';
 import {
@@ -73,7 +70,10 @@ import {
   makeExternalStockCorrelationLifecycle,
 } from '../../shared/domain/external-stock-correlation.ts';
 import { SourceStockItemProvisioningReceiptResponseSchema } from '../../shared/apis/source-stock-item-provisioning-receipt.ts';
-import { SourceStockItemProvisioningInvocationIdSchema } from '../../shared/domain/source-provisioning.ts';
+import {
+  ProvisionSourceStockItemPayloadSchema,
+  SourceStockItemProvisioningInvocationIdSchema,
+} from '../../shared/domain/source-provisioning.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { createStockLocationAction } from '../../src/actions/create-stock-location.action.ts';
 import { defineSourceProvisioningPolicyAction } from '../../src/actions/define-source-provisioning-policy.action.ts';

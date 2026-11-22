@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug set-product-unit-target-divisibility
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import {
@@ -20,7 +20,7 @@ import { captureCatalogActionResult } from '../persistence/catalog-action-result
 import {
   mapProductUnitPersistenceError,
   productUnitPersistenceServiceFactory,
-  resolveProductUnitMutation,
+  resolveProductUnitMutationFailure,
 } from './product-unit-action-support.ts';
 
 export type { SetProductUnitTargetDivisibilityPayload } from '../../shared/actions/set-product-unit-target-divisibility.ts';
@@ -43,7 +43,12 @@ export const handleSetProductUnitTargetDivisibility = Effect.fn('SetProductUnitT
         principalId: context.scope.principalId,
       })
       .pipe(Effect.mapError(mapProductUnitPersistenceError));
-    const result = yield* resolveProductUnitMutation(outcome);
+    const result = yield* Match.value(outcome).pipe(
+      Match.tag('divisibility_set', ({ changed, ruleRevision, targetDivisibility, unit }) =>
+        Effect.succeed({ changed, ruleRevision, targetDivisibility, unit }),
+      ),
+      Match.orElse(resolveProductUnitMutationFailure),
+    );
     yield* context.recordAuditEvidence({ evidenceRefs: payload.evidenceRefs, reason: payload.reason });
     return result;
   },

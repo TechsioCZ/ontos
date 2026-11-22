@@ -28,6 +28,7 @@ export const ConfirmVariantCombinationPayloadSchema = Schema.Struct({
 export type ConfirmVariantCombinationPayload = typeof ConfirmVariantCombinationPayloadSchema.Type;
 
 export const ConfirmVariantCombinationResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
   combinationAxisRevision: CatalogRevisionNumberSchema,
   combinationKey: VariantCombinationKeySchema,
   variant: ProductVariantSchema,

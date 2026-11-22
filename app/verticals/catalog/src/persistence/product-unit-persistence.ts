@@ -61,6 +61,7 @@ const ProductUnitMutationOutcomeSchema = Schema.Union([
     unit: ProductUnitRefSchema,
   }),
   Schema.TaggedStruct('divisibility_set', {
+    changed: Schema.Boolean,
     ruleRevision: ProductUnitRuleRevisionSchema,
     targetDivisibility: ProductUnitTargetDivisibilitySchema,
     unit: ProductUnitRefSchema,
@@ -83,7 +84,10 @@ export interface ProductUnitPersistence {
   ) => Effect.Effect<ProductUnitMutationOutcome, ProductUnitPersistenceUnavailable>;
   readonly setTargetDivisibility: (
     input: Input<SetProductUnitTargetDivisibilityPayload>,
-  ) => Effect.Effect<ProductUnitMutationOutcome, ProductUnitPersistenceUnavailable>;
+  ) => Effect.Effect<
+    Extract<ProductUnitMutationOutcome, { readonly _tag: 'divisibility_set' | 'invalid' | 'not_found' | 'stale' }>,
+    ProductUnitPersistenceUnavailable
+  >;
 }
 
 /** Supplied by an owner-local Current-basis service; request metadata never proves Current. */
@@ -129,7 +133,7 @@ const targetCurrentConflict = (
   current: { readonly currentRevision: number; readonly unitId: string } | undefined,
   expectedCurrentRevision: number | undefined,
   unitId: string,
-): ProductUnitMutationOutcome | undefined => {
+): Extract<ProductUnitMutationOutcome, { readonly _tag: 'invalid' | 'stale' }> | undefined => {
   if (current === undefined && expectedCurrentRevision !== undefined) {
     return { _tag: 'stale', actualRevision: 0 };
   }
@@ -142,13 +146,11 @@ const targetCurrentConflict = (
   return undefined;
 };
 
-const makeResult = Effect.fn('ProductUnitPersistence.makeResult')(function* makeResult(input: {
+const unitResult = Effect.fn('ProductUnitPersistence.unitResult')(function* unitResult(input: {
   readonly row: UnitRow;
   readonly rule: UnitRule;
-  readonly tag: 'created' | 'revised' | 'retired' | 'divisibility_set';
-  readonly targetDivisibility?: typeof ProductUnitTargetDivisibilitySchema.Type;
 }) {
-  const { row, rule, tag, targetDivisibility } = input;
+  const { row, rule } = input;
   const unit = yield* Schema.decodeEffect(ProductUnitRefSchema)({
     moduleId: 'commerce.catalog',
     resourceId: row.unitId,
@@ -161,14 +163,14 @@ const makeResult = Effect.fn('ProductUnitPersistence.makeResult')(function* make
     step: rule.step,
     unit,
   });
-  if (tag === 'divisibility_set') {
-    if (targetDivisibility === undefined) {
-      return yield* unavailable();
-    }
-    return { _tag: tag, ruleRevision, targetDivisibility, unit };
-  }
-  return { _tag: tag, ruleRevision, unit };
+  return { ruleRevision, unit };
 }, Effect.mapError(unavailable));
+
+const makeResult = (input: {
+  readonly row: UnitRow;
+  readonly rule: UnitRule;
+  readonly tag: 'created' | 'revised' | 'retired';
+}) => unitResult(input).pipe(Effect.map((result) => ({ ...result, _tag: input.tag })));
 
 const sameSourceDivisibility = (input: {
   readonly current:
@@ -187,6 +189,7 @@ const sameSourceDivisibility = (input: {
 
 const targetDivisibilityResult = Effect.fn('ProductUnitPersistence.targetDivisibilityResult')(
   function* targetDivisibilityResult(input: {
+    readonly changed: boolean;
     readonly payload: SetProductUnitTargetDivisibilityPayload;
     readonly revision: number;
     readonly rule: UnitRule;
@@ -200,12 +203,11 @@ const targetDivisibilityResult = Effect.fn('ProductUnitPersistence.targetDivisib
       tenantId: input.payload.target.tenantId,
       unit: input.payload.target.unit,
     }).pipe(Effect.mapError(unavailable));
-    return yield* makeResult({
+    const result = yield* unitResult({
       row: input.unit,
       rule: input.rule,
-      tag: 'divisibility_set',
-      targetDivisibility,
     });
+    return { ...result, _tag: 'divisibility_set' as const, changed: input.changed, targetDivisibility };
   },
 );
 
@@ -524,7 +526,13 @@ export const productUnitPersistenceForScope = (
       .pipe(Effect.mapError(unavailable));
     const resultRule = { revision: rule.revision, rounding: currentRounding, step: rule.step };
     if (sameSourceDivisibility({ current, payload: input.payload, sourceMatches, unitId: unit.unitId })) {
-      return yield* targetDivisibilityResult({ payload: input.payload, revision: 1, rule: resultRule, unit });
+      return yield* targetDivisibilityResult({
+        changed: false,
+        payload: input.payload,
+        revision: 1,
+        rule: resultRule,
+        unit,
+      });
     }
     const conflict = targetCurrentConflict(current, expectedCurrentRevision, unit.unitId);
     if (conflict !== undefined) {
@@ -534,7 +542,7 @@ export const productUnitPersistenceForScope = (
     if (!(yield* writeTargetRevision({ action: input, current, revision, unit }))) {
       return { _tag: 'stale', actualRevision: current?.currentRevision ?? 0 };
     }
-    return yield* targetDivisibilityResult({ payload: input.payload, revision, rule: resultRule, unit });
+    return yield* targetDivisibilityResult({ changed: true, payload: input.payload, revision, rule: resultRule, unit });
   });
   return { create, retire, revise, setTargetDivisibility };
 };
