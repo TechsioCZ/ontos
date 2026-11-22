@@ -228,6 +228,36 @@ const preserveProductJobDiagnostics = Effect.fn('InternalC14Sync.productJobDiagn
     const logText = `${nativeLogText}\n\n[shell]\n${JSON.stringify(shellLogs, null, 2)}`;
     yield* persist(logText);
     yield* Effect.logError('Provisioning witness failure Shell diagnostics', { diagnosticFile, jobId, shellLogs });
+    const priceResults = yield* admin`
+      select e.effect_id, e.state, e.outcome->>'status' as effect_status,
+        e.owner_invocation_id, i.status as owner_invocation_status,
+        i.committed_reply_json->>'kind' as owner_reply_kind,
+        i.committed_reply_json#>>'{encoded,outcome}' as owner_native_outcome,
+        case when i.committed_reply_json->>'kind'='result'
+          then i.committed_reply_json#>>'{encoded,reason}' end as owner_native_reason,
+        i.committed_reply_json#>>'{encoded,dependency}' as owner_native_dependency,
+        i.committed_reply_json#>>'{encoded,code}' as owner_native_failure_code
+      from symmy_integration.job_effects e
+      left join core.action_invocations i
+        on i.tenant_id=e.tenant_id and i.action_invocation_id=e.owner_invocation_id
+      where e.tenant_id=${tenantId} and e.job_id=${jobId} and e.effect_key='price-define'
+      order by e.effect_id
+    `.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Json))),
+      Effect.timeout(Duration.seconds(5)),
+      Effect.matchCause({
+        onFailure: (cause) => ({ diagnosticQueryFailure: Cause.pretty(cause) }),
+        onSuccess: (rows) => ({ priceResults: rows }),
+      }),
+    );
+    // Keep the payload-free native codes ahead of the full effects, which can exceed the log renderer's limit.
+    const priceLogText = `${logText}\n\n[native-price-results]\n${JSON.stringify(priceResults, null, 2)}`;
+    yield* persist(priceLogText);
+    yield* Effect.logError('Provisioning witness failure native Price results', {
+      diagnosticFile,
+      jobId,
+      priceResults,
+    });
     const effects = yield* admin`
       select e.effect_id, e.effect_key, e.state, e.version, e.owner_invocation_id,
         e.owner_executor_principal_id, e.outcome, e.owner_receipt, e.effect, e.resolved_effect,
@@ -247,7 +277,7 @@ const preserveProductJobDiagnostics = Effect.fn('InternalC14Sync.productJobDiagn
       }),
     );
     const effectsText = JSON.stringify(effects, null, 2);
-    yield* persist(`${logText}\n\n[current-effects-after-witness-failure]\n${effectsText}\n`);
+    yield* persist(`${priceLogText}\n\n[current-effects-after-witness-failure]\n${effectsText}\n`);
     yield* Effect.logError('Provisioning witness failure current effects', {
       diagnosticFile,
       effects: effectsText,

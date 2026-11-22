@@ -1989,6 +1989,15 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           options,
         );
         const currentInvocationId = yield* recordCurrentNativeInvocation(input, contract);
+        if ('outcome' in result && result.outcome !== 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED') {
+          yield* Effect.logInfo('Symmy native Price definition assessment', {
+            effectId: input.effect.ref.effectId,
+            invocationId: currentInvocationId,
+            operation: contract.tag,
+            outcome: result.outcome,
+            ...('reason' in result ? { reason: result.reason } : { dependency: result.dependency }),
+          }).pipe(Effect.ignoreCause);
+        }
         return yield* Match.value(result).pipe(
           Match.when(
             { outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED' },

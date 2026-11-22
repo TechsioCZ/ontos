@@ -1328,7 +1328,7 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
-  it.effect('distinguishes invalid, held and unavailable native assessments from uncertain commits', () =>
+  it.effect('reports payload-free native Price assessment codes without changing settlement or retrying', () =>
     Effect.gen(function* test() {
       const inputs = [
         {
@@ -1339,6 +1339,14 @@ describe('Symmy native public owner adapter transport', () => {
             sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
           },
         },
+        ...['CANONICAL_CONFLICT_HELD', 'DUPLICATE_CORRELATION_HELD'].map((reason) => ({
+          expected: 'unresolved',
+          wire: {
+            outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+            reason,
+            sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
+          },
+        })),
         {
           expected: 'unavailable',
           wire: {
@@ -1355,22 +1363,67 @@ describe('Symmy native public owner adapter transport', () => {
       ];
       for (const input of inputs) {
         const assessment = yield* Schema.decodeUnknownEffect(DefinePriceResultSchema)(input.wire);
+        if (assessment.outcome === 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED') {
+          assert.fail('Expected a nonaccepted native Price assessment');
+        }
         const encoded = yield* Schema.encodeEffect(DefinePriceResultSchema)(assessment);
         const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupA, false, {
           assessment: encoded,
           receipt: unavailablePriceReceipt,
         });
+        const entries: unknown[] = [];
         const outcome = yield* h.provide(
           Effect.gen(function* attempt() {
             const adapter = yield* h.adapter;
             return yield* adapter.execute({ ...h.input, legalEntityId });
-          }),
+          }).pipe(Effect.provide(preDispatchLogs(entries))),
         );
         expect(outcome.status).toBe(input.expected);
+        const detail = 'reason' in assessment ? { reason: assessment.reason } : { dependency: assessment.dependency };
+        expect(entries).toContainEqual({
+          ...detail,
+          effectId,
+          invocationId,
+          operation: 'PriceDefine',
+          outcome: assessment.outcome,
+        });
+        expect(JSON.stringify(entries)).not.toContain('monetaryAmount');
+        expect(JSON.stringify(entries)).not.toContain('sourceAssertion');
+        expect(JSON.stringify(entries)).not.toContain('assertion-');
+        expect(h.requests.filter((request) => request.url.includes('/actions/define-price'))).toHaveLength(1);
         expect(h.events).not.toContain('owner-price-recovery');
       }
     }),
   );
+  it.effect('keeps a native held Price unresolved without retrying when its diagnostic logger throws', () => {
+    const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupA, false, {
+      assessment: Schema.encodeSync(DefinePriceResultSchema)(
+        Schema.decodeUnknownSync(DefinePriceResultSchema)({
+          outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+          reason: 'DUPLICATE_CORRELATION_HELD',
+          sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
+        }),
+      ),
+      receipt: unavailablePriceReceipt,
+    });
+    return h.provide(
+      Effect.gen(function* brokenPriceDiagnostic() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.requests.filter((request) => request.url.includes('/actions/define-price'))).toHaveLength(1);
+        expect(h.events).not.toContain('owner-price-recovery');
+      }).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              throw new Error('diagnostic-capture-failed');
+            }),
+          ]),
+        ),
+      ),
+    );
+  });
   it.effect('rejects an unconfigured native Price source-system pair before any owner request', () => {
     const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupA, false, {
       assessment: canonicalPriceAssessment,
