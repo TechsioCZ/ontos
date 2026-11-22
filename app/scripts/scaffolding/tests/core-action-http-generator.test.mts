@@ -195,7 +195,15 @@ it.effect(
         expect(yield* readAll(root, roots)).toEqual(before);
         yield* run(root, [...coreFlags, HOST_LAYER, HOST_LAYER_NAME]);
         const server = yield* read(root, SERVER);
-        expect(server).toContain(`coreActionUploadAssetGroupLive.pipe(Layer.provide(${HOST_LAYER_NAME})),`);
+        // The provided group is a module-level layer, as the byte edge's own is, and the route list names that one.
+        expect(server).toMatch(
+          new RegExp(
+            `const coreActionUploadAssetHandlersLive = coreActionUploadAssetGroupLive\\.pipe\\(\\s*Layer\\.provide\\(${HOST_LAYER_NAME}\\),?\\s*\\);`,
+            'u',
+          ),
+        );
+        expect(server).toMatch(/^\s+coreActionUploadAssetHandlersLive,$/mu);
+        expect(server).not.toMatch(/^\s+coreActionUploadAssetGroupLive,$/mu);
       }),
     ),
 );
