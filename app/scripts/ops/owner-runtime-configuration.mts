@@ -166,11 +166,13 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
       // that base, and a deployment that never enables the relay reads neither.
       zeropsOnly(CUSTOMER_CONTEXT_UNIT, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
       zeropsOnly(COMMUNICATIONS_UNIT, 'ONTOS_COMMUNICATIONS_API_BASE_URL'),
+      // The same source worker binds the pre-verification Privacy subject first, and the Privacy measure worker calls Privacy.
+      zeropsOnly(PRIVACY_UNIT, 'ONTOS_PRIVACY_API_BASE_URL'),
       shellGateway,
     ],
     // COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY is the one managed API key of the Portal Auth realm's trusted Tenant
     // for the relay workload (one key per Tenant). It is optional: without it the relay is not enabled and nothing else
-    // changes; once it is set, the relay requires the Shell, own-API and Communications bases too.
+    // changes; once it is set, the relay requires the Shell, own-API, Communications and Privacy bases too.
     credentialVariables: ['COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY'],
     moduleCredentialHolders: SERVICE_AND_WORKER,
     moduleCredentialVariable: moduleCredentialVariable(CUSTOMER_CONTEXT_UNIT),

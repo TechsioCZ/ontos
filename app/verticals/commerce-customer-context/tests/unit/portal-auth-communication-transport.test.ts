@@ -40,6 +40,7 @@ import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communicat
 import { PortalAuthTrustedScopeUnavailable } from '../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import { portalAuthCommunicationRequest, storedRequestOf } from '../../src/portal-auth/communications/request.ts';
 import { PortalAuthCommunicationSourceGateway } from '../../src/workers/portal-auth-communication-source-gateway.ts';
+import { PortalAuthPreVerificationPrivacyGateway } from '../../src/workers/portal-auth-pre-verification-privacy-gateway.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from '../../src/workers/submit-portal-auth-communication-request-rejected.ts';
 import { handleSubmitPortalAuthCommunicationRequest } from '../../src/workers/submit-portal-auth-communication-request.worker.ts';
 import { makeCommunicationStoreDouble } from '../support/portal-auth-communication-store.double.ts';
@@ -126,17 +127,29 @@ const deliveryOf = (overrides: Partial<OutboxWorkerHandlerContext> = {}): Outbox
   ...overrides,
 });
 
+/** The worker's two gateways as doubles: the Privacy bind and the Communications submission, in the order they were called. */
 const gatewayDouble = (
   answer: () => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected> = () => Effect.void,
+  privacyAnswer: () => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected> = () => Effect.void,
 ) => {
   const calls: { readonly context: OutboxWorkerHandlerContext; readonly request: CommunicationRequestEncoded }[] = [];
-  const layer = Layer.succeed(PortalAuthCommunicationSourceGateway, {
-    submit: (request, context) => {
-      calls.push({ context, request });
-      return answer();
-    },
-  });
-  return { calls, layer };
+  const order: string[] = [];
+  const layer = Layer.merge(
+    Layer.succeed(PortalAuthCommunicationSourceGateway, {
+      submit: (request, context) => {
+        calls.push({ context, request });
+        order.push(`submit:${request.occurrence.occurrenceId}`);
+        return answer();
+      },
+    }),
+    Layer.succeed(PortalAuthPreVerificationPrivacyGateway, {
+      bind: (request) => {
+        order.push(`bind:${request.occurrence.occurrenceId}`);
+        return privacyAnswer();
+      },
+    }),
+  );
+  return { calls, layer, order };
 };
 
 describe('The Portal Auth relay Action (#1406 D1)', () => {
@@ -184,6 +197,36 @@ describe('The Portal Auth source worker (#1406 D1)', () => {
       yield* run;
       expect(gateway.calls.map((call) => call.request)).toStrictEqual([request, request]);
       expect(gateway.calls[0]?.context.workerKey).toBe(WORKER_KEY);
+      // the pre-verification Privacy subject is bound first, on the same delivery, every time
+      expect(gateway.order).toStrictEqual([
+        'bind:pa-transport-4',
+        'submit:pa-transport-4',
+        'bind:pa-transport-4',
+        'submit:pa-transport-4',
+      ]);
+    }),
+  );
+
+  it.effect('an unreachable Privacy stays retryable and submits nothing, so Communications never decides unbound', () =>
+    Effect.gen(function* privacyOutage() {
+      const request = yield* requestOf('pa-transport-privacy');
+      const gateway = gatewayDouble(
+        () => Effect.void,
+        () =>
+          Effect.fail(
+            new SubmitPortalAuthCommunicationRequestRejected({
+              code: 'PRIVACY_UNAVAILABLE',
+              reason: 'fictional Privacy outage',
+              retryable: true,
+            }),
+          ),
+      );
+      const failure = yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(
+        Effect.provide(gateway.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ code: 'PRIVACY_UNAVAILABLE', retryable: true });
+      expect(gateway.order).toStrictEqual(['bind:pa-transport-privacy']);
     }),
   );
 
@@ -211,7 +254,7 @@ describe('The Portal Auth source worker (#1406 D1)', () => {
           Effect.flip,
         ),
       ).toMatchObject({ code: 'WORKER_CONTEXT_INVALID' });
-      expect(gateway.calls).toHaveLength(0);
+      expect(gateway.order).toHaveLength(0);
     }),
   );
 
@@ -417,6 +460,7 @@ const configurationOf = (origin: string) => ({
   COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key',
   ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: origin,
   ONTOS_COMMUNICATIONS_API_BASE_URL: `${origin}/communications-api`,
+  ONTOS_PRIVACY_API_BASE_URL: `${origin}/privacy-api`,
   ONTOS_SHELL_GATEWAY_BASE_URL: `${origin}/shell-super-app-api`,
 });
 const admittedComposition = Effect.map(

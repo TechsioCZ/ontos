@@ -3,7 +3,7 @@ import { Config, Effect, Option, Redacted, Schema } from 'effect';
 /**
  * The deployment configuration the Portal Auth communication relay needs once a worker host enabled it (#1406 D1). The relay is
  * enabled by the realm's own configuration plus the relay credential (`request-relay.ts#portalAuthCommunicationRelayAdopted`);
- * from then on all four values are required and an incomplete set fails closed: the relay does not start, nothing is relayed and
+ * from then on all its values are required and an incomplete set fails closed: the relay does not start, nothing is relayed and
  * the typed error names the missing keys, never a value. A deployment that does not enable the relay (no Portal Auth realm, no
  * Communications) reads none of them.
  *
@@ -12,12 +12,14 @@ import { Config, Effect, Option, Redacted, Schema } from 'effect';
  *   relay presents it only for requests of that Tenant (`relay-transport.ts`);
  * - `ONTOS_SHELL_GATEWAY_BASE_URL`: the Shell gateway that turns the key into a fresh audience-scoped assertion;
  * - `ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL`: this module's own API, whose relay Action queues the request;
- * - `ONTOS_COMMUNICATIONS_API_BASE_URL`: the Communications API the module's source worker submits the request to.
+ * - `ONTOS_COMMUNICATIONS_API_BASE_URL`: the Communications API the module's source worker submits the request to;
+ * - `ONTOS_PRIVACY_API_BASE_URL`: the Privacy API the same source worker binds the pre-verification subject at, first.
  */
 export const PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES = {
   apiKey: 'COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY',
   communicationsBaseUrl: 'ONTOS_COMMUNICATIONS_API_BASE_URL',
   ownerBaseUrl: 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL',
+  privacyBaseUrl: 'ONTOS_PRIVACY_API_BASE_URL',
   shellBaseUrl: 'ONTOS_SHELL_GATEWAY_BASE_URL',
 } as const;
 
@@ -44,6 +46,7 @@ export interface PortalAuthCommunicationRelayConfiguration {
   readonly apiKey: Redacted.Redacted;
   readonly communicationsBaseUrl: URL;
   readonly ownerBaseUrl: URL;
+  readonly privacyBaseUrl: URL;
   readonly shellBaseUrl: URL;
 }
 
@@ -54,17 +57,18 @@ export const relayCredential: Effect.Effect<Option.Option<Redacted.Redacted>> = 
 
 const gatewayUrl = (key: string) => Config.schema(GatewayHttpUrlSchema, key).pipe(Effect.option);
 
-/** All four values, or the names of every key that is unset, blank or malformed. */
+/** All its values, or the names of every key that is unset, blank or malformed. */
 export const portalAuthCommunicationRelayConfiguration: Effect.Effect<
   PortalAuthCommunicationRelayConfiguration,
   PortalAuthCommunicationRelayConfigurationError
 > = Effect.gen(function* readPortalAuthCommunicationRelayConfiguration() {
   const keys = PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES;
-  const [apiKey, communicationsBaseUrl, ownerBaseUrl, shellBaseUrl] = yield* Effect.all(
+  const [apiKey, communicationsBaseUrl, ownerBaseUrl, privacyBaseUrl, shellBaseUrl] = yield* Effect.all(
     [
       relayCredential,
       gatewayUrl(keys.communicationsBaseUrl),
       gatewayUrl(keys.ownerBaseUrl),
+      gatewayUrl(keys.privacyBaseUrl),
       gatewayUrl(keys.shellBaseUrl),
     ],
     { concurrency: 1 },
@@ -73,12 +77,14 @@ export const portalAuthCommunicationRelayConfiguration: Effect.Effect<
     Option.isSome(apiKey) &&
     Option.isSome(communicationsBaseUrl) &&
     Option.isSome(ownerBaseUrl) &&
+    Option.isSome(privacyBaseUrl) &&
     Option.isSome(shellBaseUrl)
   ) {
     return {
       apiKey: apiKey.value,
       communicationsBaseUrl: communicationsBaseUrl.value,
       ownerBaseUrl: ownerBaseUrl.value,
+      privacyBaseUrl: privacyBaseUrl.value,
       shellBaseUrl: shellBaseUrl.value,
     };
   }
@@ -86,6 +92,7 @@ export const portalAuthCommunicationRelayConfiguration: Effect.Effect<
     [keys.apiKey, Option.isSome(apiKey)],
     [keys.communicationsBaseUrl, Option.isSome(communicationsBaseUrl)],
     [keys.ownerBaseUrl, Option.isSome(ownerBaseUrl)],
+    [keys.privacyBaseUrl, Option.isSome(privacyBaseUrl)],
     [keys.shellBaseUrl, Option.isSome(shellBaseUrl)],
   ] as const;
   return yield* new PortalAuthCommunicationRelayConfigurationError({

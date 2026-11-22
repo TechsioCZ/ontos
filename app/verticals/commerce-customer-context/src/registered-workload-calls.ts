@@ -4,6 +4,7 @@ const commerceCustomerContextOrganizationIcoFactsRead = 'commerce.customer-conte
 const commerceCustomerContextSourceRead = 'commerce.customer-context.source-read';
 const commerceCustomerContextSourceWrite = 'commerce.customer-context.source-write';
 const integrationSymmyExecuteSymmyJob = 'integration.symmy.execute-symmy-job';
+const portalAuthSourceWorker = 'commerce.customer-context.submit-portal-auth-communication-request';
 const partyRegistry = 'party-registry';
 const partyRegistryApiCounterpartyOrganizationIcoFacts = 'party.registry.api.counterparty-organization-ico-facts';
 const partyRegistryApiSourcePersonAdmission = 'party.registry.api.source-person-admission';
@@ -33,11 +34,23 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     audience: 'communications',
     declarationKey: 'communications.core.communication-request.submit',
     entrypointKey: 'communications.core.submit-communication-request',
-    jobKey: 'commerce.customer-context.submit-portal-auth-communication-request',
+    jobKey: portalAuthSourceWorker,
     legalEntityScope: 'optional',
     schemaVersion: '1',
-    workerKey: 'commerce.customer-context.submit-portal-auth-communication-request',
+    workerKey: portalAuthSourceWorker,
     workloadKey: 'communications.core.request-source',
+  },
+  // #1406: the same source worker first binds the pre-verification Privacy subject of the relayed issuance through the public
+  // Privacy Action, inside the same delivery, so the binding exists before Communications decides the request
+  {
+    audience: 'privacy',
+    declarationKey: 'privacy.core.pre-verification-subject.bind',
+    entrypointKey: 'privacy.core.bind-pre-verification-subject',
+    jobKey: portalAuthSourceWorker,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    workerKey: portalAuthSourceWorker,
+    workloadKey: 'privacy.core.pre-verification-subject-source',
   },
   // origin/main 5608aae1d: symmy-c14-customer-rules.mts — INTERNAL_C14 actual customer revisions and GET round-trip retain native targets under current Privacy
   {

@@ -49,6 +49,14 @@ export const bindPreVerificationSubjectAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'privacy.core.bind-pre-verification-subject.access.v1',
     },
+    // The source owner's registered Outbox Worker binds the subject inside its own genuine delivery, after the source
+    // committed the issuance (#1406): Core admits its sealed workload context only on the declaration its call names,
+    // beside this workload. It grants no person anything by itself.
+    accessWorkload: {
+      reason:
+        'Only the registered source owner worker may bind the Privacy subject of an account it has not verified yet',
+      workloads: ['privacy.core.pre-verification-subject-source'],
+    },
     actionKey: 'privacy.core.bind-pre-verification-subject',
     auditEvidenceSchema: PrivacyActionAuditEvidenceSchema,
     auditProfile: 'standard',

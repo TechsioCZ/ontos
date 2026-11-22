@@ -14,6 +14,8 @@ import type { PrivacyMeasureOwnerGateway } from '../workers/privacy-measure-owne
 import { PrivacyMeasureOwnerGatewayLive } from '../workers/privacy-measure-owner-gateway.ts';
 import type { PortalAuthCommunicationSourceGateway } from '../workers/portal-auth-communication-source-gateway.ts';
 import { PortalAuthCommunicationSourceGatewayLive } from '../workers/portal-auth-communication-source-gateway.ts';
+import type { PortalAuthPreVerificationPrivacyGateway } from '../workers/portal-auth-pre-verification-privacy-gateway.ts';
+import { PortalAuthPreVerificationPrivacyGatewayLive } from '../workers/portal-auth-pre-verification-privacy-gateway.ts';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
@@ -27,6 +29,7 @@ type OutboxWorkerOwnerServices =
   | OutboxRuntime
   | OutboxWorkerLegalEntityScopeFanout
   | PortalAuthCommunicationSourceGateway
+  | PortalAuthPreVerificationPrivacyGateway
   | PrivacyMeasureOwnerGateway
   | ReconcilePartyMergePersistence;
 export type { OutboxWorkerOwnerServices };
@@ -41,6 +44,7 @@ export const outboxWorkerLayer: Layer.Layer<
   OutboxWorkerInfrastructureLive,
   PrivacyMeasureOwnerGatewayLive,
   PortalAuthCommunicationSourceGatewayLive,
+  PortalAuthPreVerificationPrivacyGatewayLive,
   outboxWorkerHandlerLayer,
   OutboxWorkerLegalEntityScopeFanoutLive,
 );

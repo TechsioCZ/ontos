@@ -257,6 +257,7 @@ zerops:
         ONTOS_COMMUNICATIONS_API_BASE_URL: 'http://communications:4120/communications-api'
         ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4101'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -1377,6 +1378,7 @@ zerops:
         ONTOS_COMMUNICATIONS_API_BASE_URL: 'http://communications:4120/communications-api'
         ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT}
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRIVACY_API_BASE_URL: 'http://privacy:4113/privacy-api'
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4101'
         OUTBOX_WORKER_HEALTH_PORT: '4101'

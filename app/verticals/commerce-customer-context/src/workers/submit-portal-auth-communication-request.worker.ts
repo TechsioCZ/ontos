@@ -15,6 +15,7 @@ import {
 import type { OutboxPayload } from '@app/commerce-customer-context/outbox/commerce-customer-context-portal-auth-communication-requested-v1';
 
 import { PortalAuthCommunicationSourceGateway } from './portal-auth-communication-source-gateway.ts';
+import { PortalAuthPreVerificationPrivacyGateway } from './portal-auth-pre-verification-privacy-gateway.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from './submit-portal-auth-communication-request-rejected.ts';
 
 const OWNER = 'commerce.customer-context';
@@ -63,7 +64,10 @@ const deferWhileUsable = Effect.fn('SubmitPortalAuthCommunicationRequestWorker.d
   return yield* new OutboxWorkerDeferred({ wakeAtMs });
 });
 
-/** Submits one committed Portal Auth request to the public Communications Action, at least once (#1406 D1). */
+/**
+ * Binds the pre-verification Privacy subject of one committed Portal Auth request and submits the request to the public
+ * Communications Action, at least once (#1406 D1, D.8).
+ */
 export const handleSubmitPortalAuthCommunicationRequest = Effect.fn(
   'SubmitPortalAuthCommunicationRequestWorker.handle',
 )(function* handle(payload: OutboxPayload, context: OutboxWorkerHandlerContext) {
@@ -75,7 +79,10 @@ export const handleSubmitPortalAuthCommunicationRequest = Effect.fn(
     });
   }
   const gateway = yield* PortalAuthCommunicationSourceGateway;
-  return yield* gateway.submit(payload.request, context).pipe(
+  const privacy = yield* PortalAuthPreVerificationPrivacyGateway;
+  // the pre-verification Privacy subject is bound first, on the same delivery, so it exists when Communications decides
+  return yield* privacy.bind(payload.request, context).pipe(
+    Effect.andThen(() => gateway.submit(payload.request, context)),
     Effect.catchIf(
       (rejected) => rejected.retryable && context.attemptNumber >= RETRY_POLICY.maxAttempts,
       (rejected) => deferWhileUsable(payload, rejected),

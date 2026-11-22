@@ -46,6 +46,8 @@ import { relayPortalAuthCommunicationRequestAction } from '../../src/actions/rel
 import type { PortalAuthIssuance } from '../../src/portal-auth/communications/issuance.ts';
 import { portalAuthCommunicationRequest } from '../../src/portal-auth/communications/request.ts';
 import { PortalAuthCommunicationSourceGatewayLive } from '../../src/workers/portal-auth-communication-source-gateway.ts';
+import { PortalAuthPreVerificationPrivacyGatewayLive } from '../../src/workers/portal-auth-pre-verification-privacy-gateway.ts';
+import { preVerificationBindPayloadOf } from '../../src/portal-auth/communications/pre-verification-privacy-binding.ts';
 import { submitPortalAuthCommunicationRequestWorker } from '../../src/workers/submit-portal-auth-communication-request.worker.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
@@ -71,6 +73,7 @@ const MODULE = 'commerce.customer-context';
 const TOPIC = 'commerce.customer-context.portal-auth-communication-requested.v1';
 const WORKER_KEY = 'commerce.customer-context.submit-portal-auth-communication-request';
 const SUBMIT_PATH = '/communications/actions/submit-communication-request';
+const BIND_PATH = '/privacy/actions/bind-pre-verification-subject';
 const DELEGATION_PATH = '/shell-super-app-api/auth/delegated/gateway-context';
 const SHELL_PREFIX = '/shell-super-app-api';
 
@@ -91,6 +94,7 @@ interface Received {
 }
 
 const JsonSchema = Schema.fromJsonString(Schema.Unknown);
+const CommunicationsAudienceSchema = Schema.Struct({ audience: Schema.Literal('communications') });
 const ClaimedSubjectSchema = Schema.Struct({
   subject: Schema.Struct({ claimId: Schema.String.pipe(Schema.brand('OutboxClaimId')) }),
 });
@@ -99,7 +103,11 @@ const ClaimedSubjectSchema = Schema.Struct({
  * The Shell and Communications as ONE loopback HTTP peer (labelled): the Shell issues a FICTIONAL delegated token for the
  * admitted release, and Communications answers 503 while `outage` says so, then one FICTIONAL stored decision.
  */
-const servePeers = Effect.fnUntraced(function* servePeers(compositionRevision: string, outage: Ref.Ref<number>) {
+const servePeers = Effect.fnUntraced(function* servePeers(
+  compositionRevision: string,
+  outage: Ref.Ref<number>,
+  tenantId: string,
+) {
   const received = yield* Ref.make<readonly Received[]>([]);
   const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* server.serve(
@@ -123,6 +131,30 @@ const servePeers = Effect.fnUntraced(function* servePeers(compositionRevision: s
             // a fixed far-future expiry (2099-01-01): the peer's token never depends on this live test's clock
             expiresAt: 4_070_908_800,
             token: 'fictional-delegated-workload-token',
+          });
+        }
+        if (path.endsWith(BIND_PATH)) {
+          // a FICTIONAL binding in the shape of Privacy's published bind result, never Privacy evidence
+          return yield* HttpServerResponse.json({
+            bindingRef: '00000000-0000-4000-8000-00000000b1d0',
+            policy: { policyRef: 'fictional-policy', revision: 'fictional-r1' },
+            scope: {
+              controllerRef: 'fictional-controller',
+              dataCategoryRefs: ['fictional:contact'],
+              operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
+              processingScopeRef: { scopeId: 'fictional-scope', scopeType: 'privacy.processing-scope' },
+              purposeRef: 'fictional-purpose',
+              purposeVersionId: 'fictional-v1',
+              recipientRefs: ['fictional.communications'],
+              subjectRef: {
+                moduleId: 'privacy.core',
+                resourceId: '00000000-0000-4000-8000-00000000b1d0',
+                resourceType: 'privacy.core.privacy-subject',
+                tenantId,
+              },
+            },
+            status: 'ACTIVE',
+            validUntil: '2099-01-01T00:00:00.000Z',
           });
         }
         if (path.endsWith(SUBMIT_PATH)) {
@@ -289,16 +321,20 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
       .pipe(Effect.result);
   };
   const outage = yield* Ref.make(input.outageCalls);
-  const peers = yield* servePeers(revision, outage);
+  const peers = yield* servePeers(revision, outage, tenantId);
   // the worker host's configuration: read when the gateway layer is built AND when each delegation is acquired
   const configuration = ConfigProvider.layer(
     ConfigProvider.fromUnknown({
       ONTOS_COMMUNICATIONS_API_BASE_URL: peers.origin,
       ONTOS_GATEWAY_MODULE_API_KEY: 'fictional-module-api-key',
+      ONTOS_PRIVACY_API_BASE_URL: peers.origin,
       ONTOS_SHELL_GATEWAY_BASE_URL: `${peers.origin}${SHELL_PREFIX}`,
     }),
   );
-  const gateway = PortalAuthCommunicationSourceGatewayLive.pipe(Layer.provideMerge(configuration));
+  const gateway = Layer.merge(
+    PortalAuthCommunicationSourceGatewayLive,
+    PortalAuthPreVerificationPrivacyGatewayLive,
+  ).pipe(Layer.provideMerge(configuration));
   const outbox = makeOutboxRuntime(makeOutboxRepository(database, crypto));
   const registrations = [submitPortalAuthCommunicationRequestWorker];
   const realClock = yield* Clock.Clock;
@@ -399,8 +435,38 @@ it.live(
         expect(settled.attempts).toBeLessThanOrEqual(5);
         const received = yield* Ref.get(world.peers.received);
         const submissions = received.filter(({ path }) => path.endsWith(SUBMIT_PATH));
-        const delegations = received.filter(({ path }) => path === DELEGATION_PATH);
+        const binds = received.filter(({ path }) => path.endsWith(BIND_PATH));
+        const delegations = received.filter(
+          ({ body, path }) => path === DELEGATION_PATH && Schema.is(CommunicationsAudienceSchema)(body),
+        );
+        const privacyDelegations = received.filter(
+          ({ body, path }) => path === DELEGATION_PATH && !Schema.is(CommunicationsAudienceSchema)(body),
+        );
         expect(submissions).toHaveLength(8);
+        // #1406: every attempt first bound the pre-verification Privacy subject on the same delivery, through Privacy's public
+        // Action with a fresh registered-workload assertion of the bind declaration, and only then submitted the request
+        expect(binds).toHaveLength(8);
+        for (const bind of binds) {
+          expect(bind.body).toStrictEqual(preVerificationBindPayloadOf(world.issuance));
+          expect(bind.idempotencyKey).toBe(`portal-auth.pre-verification-bind.${world.issuance.issuanceRef}`);
+          expect(bind.authorization).toBe('Bearer fictional-delegated-workload-token');
+        }
+        expect(received.findIndex(({ path }) => path.endsWith(BIND_PATH))).toBeLessThan(
+          received.findIndex(({ path }) => path.endsWith(SUBMIT_PATH)),
+        );
+        expect(privacyDelegations).toHaveLength(8);
+        for (const delegation of privacyDelegations) {
+          expect(delegation.body).toMatchObject({
+            audience: 'privacy',
+            legalEntityScope: 'subject',
+            subject: {
+              _tag: 'RegisteredWorkload',
+              declarationKey: 'privacy.core.pre-verification-subject.bind',
+              deliveryId: settled.deliveryId,
+              workerKey: WORKER_KEY,
+            },
+          });
+        }
         // every attempt submitted the SAME request under the SAME idempotency key with the fresh delegated token
         for (const submission of submissions) {
           expect(submission.body).toStrictEqual(world.request);

@@ -1,4 +1,4 @@
-import { DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -10,6 +10,7 @@ import type { PortalAuthIssuance } from '../../src/portal-auth/communications/is
 import {
   CommercePortalAuthPreVerificationPrivacyBinding,
   preVerificationBindPayloadOf,
+  preVerificationBindPayloadOfRequest,
   privacyPreVerificationBindingLayer,
   unsupportedPreVerificationPrivacyBindingLayer,
 } from '../../src/portal-auth/communications/pre-verification-privacy-binding.ts';
@@ -19,6 +20,7 @@ import {
 } from '../../src/portal-auth/communications/pre-verification-privacy-transport.ts';
 import type { PreVerificationPrivacyTransportService } from '../../src/portal-auth/communications/pre-verification-privacy-transport.ts';
 import { PreVerificationPrivacyBindingUnavailable } from '../../src/portal-auth/communications/privacy-binding-unavailable.ts';
+import { portalAuthCommunicationRequest } from '../../src/portal-auth/communications/request.ts';
 
 /**
  * #1406 D.8 — Auth's production binding asks Privacy's public bind Action with Auth's own account reference only. The
@@ -139,6 +141,39 @@ describe("#1406 D.8 only Privacy's own answer is a binding", () => {
         }).pipe(Effect.provide(unsupportedPreVerificationPrivacyBindingLayer)),
       );
       expect(unsupported).toEqual(unavailableFor('NO_SUPPORTED_PRIVACY_PATH'));
+    }),
+  );
+});
+
+describe('#1406 the bind request as the source worker derives it from the relayed Communication Request', () => {
+  for (const flow of PORTAL_AUTH_EMAIL_FLOWS) {
+    it.effect(`[${flow}] is exactly the bind request of the issuance, and carries no address or secret`, () =>
+      Effect.gen(function* derived() {
+        const issuance = issuanceOf(flow);
+        const request = yield* portalAuthCommunicationRequest(issuance, {
+          tenantId: '40000000-0000-4000-8000-000000000001',
+        });
+        const payload = preVerificationBindPayloadOfRequest(request);
+        expect(payload).toStrictEqual(Option.some(preVerificationBindPayloadOf(issuance)));
+        expect(JSON.stringify(payload)).not.toContain(ADDRESS);
+        expect(JSON.stringify(payload)).not.toContain(SECRET);
+      }),
+    );
+  }
+
+  it.effect('has nothing to bind for a request naming no Portal Auth account', () =>
+    Effect.gen(function* nothingToBind() {
+      const request = yield* portalAuthCommunicationRequest(issuanceOf('otp'), {
+        tenantId: '40000000-0000-4000-8000-000000000001',
+      });
+      const [recipient] = request.originalRecipients;
+      const foreignRecipient = {
+        ...request,
+        originalRecipients: [
+          { ...recipient, recipientRef: { ...recipient.recipientRef, moduleId: 'fictional.other-source' } },
+        ],
+      } as const;
+      expect(preVerificationBindPayloadOfRequest(foreignRecipient)).toStrictEqual(Option.none());
     }),
   );
 });
