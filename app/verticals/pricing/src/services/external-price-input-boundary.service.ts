@@ -159,7 +159,9 @@ const unavailable = (
 const requestKeyBelongsToTenant = (request: ExternalPriceInputBoundaryRequest): boolean =>
   request.identityKey.catalogSelection.productRef.tenantId === request.tenantId &&
   request.identityKey.catalogSelection.variantRef.tenantId === request.tenantId &&
-  request.identityKey.unitBasis.unitRef.tenantId === request.tenantId;
+  request.identityKey.unitBasis.unitRef.tenantId === request.tenantId &&
+  (request.identityKey.priceGroupSelector.kind === 'NO_GROUP' ||
+    request.identityKey.priceGroupSelector.priceGroupRef.tenantId === request.tenantId);
 
 const effectivePeriodAdmits = (
   effectivePeriod: ExternalPriceSourceAuthorityGrant['effectivePeriod'],
