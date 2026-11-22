@@ -78,7 +78,7 @@ const product = (extra: Fields = {}, variants: readonly Json[] = [variant()]) =>
 });
 const rowsOf = (...rows: readonly Json[]) => Schema.decodeUnknownSync(SymmyProductRowsSchema)(rows);
 const texts = (count: number): readonly Json[] =>
-  Array.from({ length: count }, (_, index) => ({ locale: `l${index}`, name: 'Chair' }));
+  Array.from({ length: count }, (_, index) => ({ locale: `en-x-l${index}`, name: 'Chair' }));
 
 const digest = (value: string) => Effect.succeed(createHash('sha256').update(value).digest('hex'));
 const build = (
@@ -161,14 +161,16 @@ it.effect('plans readiness only for explicit ACTIVE under an enrolled axis-free 
       return yield* Effect.die('Expected an ACTIVE plan');
     }
     const { effects } = itemOf(active.value, 'product-0');
-    expect(effects.map(({ effectKey }) => effectKey)).toEqual([
-      'product-create',
-      'readiness-axes',
-      'readiness-confirm',
-      'readiness-name',
-      'readiness-activate',
-      'readiness-unit',
-      'readiness-untyped',
+    expect(
+      effects.map(({ effectKey, operation: selectedOperation }) => [effectKey, selectedOperation.entrypointKey]),
+    ).toEqual([
+      ['product-create', 'commerce.catalog.create-product'],
+      ['readiness-axes', 'commerce.catalog.govern-variant-axes'],
+      ['readiness-confirm', 'commerce.catalog.confirm-variant-combination'],
+      ['readiness-name', 'commerce.catalog.set-product-localized-facts'],
+      ['readiness-activate', 'commerce.catalog.update-product'],
+      ['readiness-unit', 'commerce.catalog.set-product-unit-target-divisibility'],
+      ['readiness-untyped', 'commerce.catalog.decide-product-type-unnecessary'],
     ]);
     expect(effectOf(active.value, 'product-0', 'readiness-name').intent).toMatchObject({
       request: { kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', name: 'Chair', step: 'NAME' },
@@ -184,6 +186,66 @@ it.effect('plans readiness only for explicit ACTIVE under an enrolled axis-free 
     }
     expect(itemOf(draft.value, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
     return yield* Effect.void;
+  }),
+);
+
+it('rejects noncanonical readiness locales at route enrollment', () => {
+  for (const locale of ['x', 'cs-cz', ' cs-CZ', 'cs-CZ ']) {
+    expect(() =>
+      decodeTemplate({
+        ...templateInput(),
+        catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale, unitRef },
+      }),
+    ).toThrow();
+  }
+  expect(
+    decodeTemplate({
+      ...templateInput(),
+      catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
+    }).catalogReadiness?.locale,
+  ).toBe('cs-CZ');
+});
+
+it.effect('keeps eligible SKU work when another ACTIVE row cannot satisfy the readiness policy', () =>
+  Effect.gen(function* mixedReadiness() {
+    const readyTemplate = decodeTemplate({
+      ...templateInput(priceDefaults),
+      catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
+      items: [
+        enroll('PRODUCT', 'enrolled-product', createProduct, ...readinessOperations),
+        enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts),
+        enroll('PRICE', 'enrolled-price', priceDefine),
+      ],
+    });
+    for (const ineligible of [
+      product({ lifecycle: 'ACTIVE', unsupported: ['AttributeHint'] }, [variant({ prices: [price()] })]),
+      product({ lifecycle: 'ACTIVE', unsupported: ['ClassificationHint'] }, [variant({ prices: [price()] })]),
+      product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] }), variant({ prices: [price()] })]),
+    ]) {
+      const plan = Option.getOrThrow(
+        yield* build(rowsOf(ineligible, product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] })])), {
+          template: readyTemplate,
+        }),
+      );
+      expect(itemOf(plan, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
+      expect(itemOf(plan, 'product-0').unsupportedBranches).toEqual(
+        expect.arrayContaining([
+          { branchKey: 'PriceHint', kind: 'PriceHint' },
+          {
+            branchKey: ineligible.unsupported[0] ?? 'ClassificationHint',
+            kind: ineligible.unsupported[0] ?? 'ClassificationHint',
+          },
+        ]),
+      );
+      expect(itemKeys(plan).some((key) => key.startsWith('product-0-variant-') && key.includes('-price-'))).toBe(false);
+      expect(effectOf(plan, 'product-1', 'readiness-untyped').operation.entrypointKey).toBe(
+        'commerce.catalog.decide-product-type-unnecessary',
+      );
+      expect(itemOf(plan, 'product-1-variant-0-price-0').effects[0]?.dependsOn).toContainEqual({
+        effectKey: 'readiness-untyped',
+        itemKey: 'product-1',
+      });
+    }
   }),
 );
 const variantCreateOf = (effect: Effect_) =>

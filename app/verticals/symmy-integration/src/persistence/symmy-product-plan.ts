@@ -446,6 +446,13 @@ const inventoryItemKey = (row: SymmyProductRow, variant: PlannedVariant, initial
 const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint' | 'StockProvisioningHint')[]) =>
   kinds.map((kind) => ({ branchKey: kind, kind }));
 
+const readinessIneligibleFor = (row: SymmyProductRow, policy: Enrollment['catalogReadiness']) =>
+  row.lifecycle === 'ACTIVE' &&
+  policy !== undefined &&
+  (row.variants.length !== 1 ||
+    row.unsupported.includes('AttributeHint') ||
+    row.unsupported.includes('ClassificationHint'));
+
 /** One product: its item, the items of its variants and prices, and the unsupported groups it names. */
 const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduct<Failure>(
   facts: ProductFacts<Failure>,
@@ -477,16 +484,9 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const variantItems = variants.map((variant, position) =>
     buildVariantItem({ ...facts, enrollment, evidenceRefs, parent, position, productRecord, variant }),
   );
-  const updates = row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED';
-  const ready = row.lifecycle === 'ACTIVE' ? enrollment.catalogReadiness : undefined;
-  if (
-    ready !== undefined &&
-    (variants.length !== 1 ||
-      row.unsupported.includes('AttributeHint') ||
-      row.unsupported.includes('ClassificationHint'))
-  ) {
-    return Option.none();
-  }
+  const readinessIneligible = readinessIneligibleFor(row, enrollment.catalogReadiness);
+  const updates = !readinessIneligible && (row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
+  const ready = row.lifecycle === 'ACTIVE' && !readinessIneligible ? enrollment.catalogReadiness : undefined;
   const readinessSteps = ['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED'] as const;
   const readinessEffects =
     ready === undefined
@@ -531,7 +531,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
     ...(ready === undefined && updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
     ...(ready === undefined ? [] : [{ effectKey: 'readiness-untyped', itemKey: productItemKey }]),
   ];
-  const priceItems = prices.pipe(
+  const priceItems = (readinessIneligible ? Option.none<PriceContext>() : prices).pipe(
     Option.match({
       onNone: () => Effect.succeed([]),
       onSome: (context) =>
@@ -563,7 +563,10 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const planned = yield* priceItems;
   const written = planned.length - planned.filter(Option.isNone).length;
   const unsupported = [
-    ...row.unsupported,
+    ...new Set([
+      ...row.unsupported,
+      ...(readinessIneligible && variants.length > 1 ? ['ClassificationHint' as const] : []),
+    ]),
     ...(written < variants.reduce((total, { row: variantRow }) => total + variantRow.prices.length, 0)
       ? ['PriceHint' as const]
       : []),

@@ -2603,7 +2603,131 @@ const readinessState = (effectKey: string, receipt: typeof Schema.Json.Type) => 
   ownerReceipt: Option.some(Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema)(receipt)),
 });
 
+const readinessCreatePlan = () => {
+  const readiness = dependentEffect(
+    {
+      _tag: 'CatalogReadiness',
+      divisible: false,
+      evidenceRefs: ['symmy-product:source'],
+      kind: 'AXIS_FREE_UNTYPED',
+      locale: 'cs-CZ',
+      name: 'Internal Product',
+      step: 'AXES',
+      unitRef,
+    },
+    {
+      entrypointKey: 'commerce.catalog.govern-variant-axes',
+      moduleId: 'commerce.catalog',
+      schemaVersion: '1',
+    },
+  );
+  return provisionPlan(
+    Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...readiness,
+      itemId: '10000000-0000-4000-8000-000000000071',
+      ref: { ...readiness.ref, effectId: '10000000-0000-4000-8000-000000000072' },
+    }),
+  );
+};
+
 describe('Symmy Product readiness', () => {
+  it.effect('settles old create snapshots without original revision evidence as unresolved, not ready', () =>
+    Effect.gen(function* absentOriginalRevision() {
+      const acceptedPlan = readinessCreatePlan();
+      for (const replay of [false, true]) {
+        const h = harness(replay);
+        yield* h.provide(
+          Effect.gen(function* test() {
+            const adapter = yield* h.adapter;
+            const outcome = yield* adapter.execute({ ...h.input, acceptedPlan });
+            expect(outcome.status).toBe('unresolved');
+            expect(h.receipts).toEqual([]);
+            const recovered = yield* adapter.recover({ ...(yield* originalProof(h.input)), acceptedPlan });
+            expect(recovered).toMatchObject({ outcome: { status: 'unresolved' }, status: 'settled' });
+            expect(h.receipts).toEqual([]);
+            expect(h.events).not.toContain('owner-readiness');
+          }),
+        );
+      }
+    }),
+  );
+
+  it.effect('retains the authoritative original revisions on create dispatch and recovery', () => {
+    const h = harness(
+      false,
+      effect,
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      undefined,
+      { action: 'create-product', response: { ...result, initialVariantRevision: 7 } },
+    );
+    const acceptedPlan = readinessCreatePlan();
+    return h.provide(
+      Effect.gen(function* originalRevisions() {
+        const adapter = yield* h.adapter;
+        expect((yield* adapter.execute({ ...h.input, acceptedPlan })).status).toBe('accepted_change');
+        const recovered = yield* adapter.recover({ ...(yield* originalProof(h.input)), acceptedPlan });
+        expect(recovered).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
+        const expectedReceipt = {
+          _tag: 'ProductCreated',
+          actionInvocationId: invocationId,
+          initialVariantRef: variantRef,
+          productRef,
+          productRevision: 1,
+          variantRevision: 7,
+        };
+        expect(h.receipts).toEqual([expectedReceipt, expectedReceipt]);
+      }),
+    );
+  });
+
+  it.effect('does not require readiness revision evidence for an independent sibling Product', () => {
+    const sibling = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...effect,
+      itemId: '10000000-0000-4000-8000-000000000073',
+      ref: { ...effect.ref, effectId: '10000000-0000-4000-8000-000000000074' },
+    });
+    const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+      items: [
+        ...readinessCreatePlan().items,
+        { effects: [sibling], itemId: sibling.itemId, itemKey: 'sibling-product' },
+      ],
+    });
+    const h = harness(false, sibling);
+    return h.provide(
+      Effect.gen(function* independentSibling() {
+        const adapter = yield* h.adapter;
+        expect((yield* adapter.execute({ ...h.input, acceptedPlan })).status).toBe('accepted_change');
+        expect(h.receipts).toEqual([
+          { _tag: 'ProductCreated', actionInvocationId: invocationId, initialVariantRef: variantRef, productRef },
+        ]);
+      }),
+    );
+  });
+
+  it.effect('does not dispatch readiness from a legacy parent receipt without original revisions', () => {
+    const acceptedPlan = readinessCreatePlan();
+    const readiness = acceptedPlan.items
+      .flatMap(({ effects }) => effects)
+      .find(({ ref }) => ref.operation.entrypointKey === 'commerce.catalog.govern-variant-axes');
+    assert.isDefined(readiness);
+    const h = harness(false, readiness);
+    return h.provide(
+      Effect.gen(function* noLegacyCitation() {
+        const adapter = yield* h.adapter;
+        const exit = yield* Effect.exit(adapter.execute({ ...h.input, acceptedPlan, dependencies: [parentState] }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.requests).toEqual([]);
+        expect(h.resolvedEffects).toEqual([]);
+      }),
+    );
+  });
+
   it.effect('preserves owner change disposition on dispatch and lost-ack recovery for each readiness decision', () =>
     Effect.gen(function* ownerDispositions() {
       const parent = {
