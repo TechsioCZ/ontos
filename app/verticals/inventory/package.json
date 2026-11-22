@@ -4,9 +4,9 @@
   "private": true,
   "exports": {
     "./actions/define-source-provisioning-policy": "./shared/actions/define-source-provisioning-policy.ts",
-    "./actions/provision-source-stock-item": "./shared/actions/provision-source-stock-item.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/inventory-client.ts",
+    "./api/provision-source-stock-item-action": "./shared/apis/provision-source-stock-item-action.ts",
     "./api/source-stock-item-provisioning-receipt": "./shared/apis/source-stock-item-provisioning-receipt.ts",
     "./api/source-stock-position-resolution": "./shared/apis/source-stock-position-resolution.ts",
     "./backend-configuration": "./shared/domain/inventory-backend-configuration.ts",
