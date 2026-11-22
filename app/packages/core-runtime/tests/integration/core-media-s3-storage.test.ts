@@ -144,13 +144,39 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
           key,
         });
         expect(stat.byteSize).toBe(bytes.byteLength);
-        // An unversioned bucket reports no version: the adapter never turns an ETag into one.
-        expect(stat.versionRef).toBeUndefined();
-        expect(yield* storage.stat(key)).toStrictEqual({ byteSize: bytes.byteLength });
+        // An unversioned bucket reports no version id: the pin is the ETag of the stored object.
+        expect(stat.versionRef).toMatch(/^etag:"[0-9a-f]{32}"$/u);
+        expect(yield* storage.stat(key)).toStrictEqual({ byteSize: bytes.byteLength, versionRef: stat.versionRef });
         const opened = yield* storage.get(key);
         expect(opened.stat.byteSize).toBe(bytes.byteLength);
         expect((yield* tallyOf(opened.body)).contentSha256).toBe(digestOf(bytes));
       }),
+    );
+
+    emulatorIt(
+      'pins two same-length objects with different bytes differently, and the read and the stat alike',
+      (ctx) =>
+        Effect.gen(function* pinsDifferentBytes() {
+          const base = yield* emulatorConfig(ctx);
+          const storage = yield* storageFor(base);
+          const first = encoder.encode('the first body of one governed asset');
+          const other = encoder.encode('the other body of one governed asset');
+          expect(other.byteLength).toBe(first.byteLength);
+          const pins = [];
+          for (const bytes of [first, other]) {
+            const key = yield* freshKey;
+            const written = yield* storage.put({ body: Stream.make(bytes), contentType: 'image/png', key });
+            const opened = yield* storage.get(key);
+            yield* Stream.runDrain(opened.body);
+            const statted = yield* storage.stat(key);
+            expect(opened.stat.versionRef).toBe(statted.versionRef);
+            expect(written.versionRef).toBe(statted.versionRef);
+            pins.push(statted.versionRef);
+          }
+          expect(pins[0]).toBeDefined();
+          expect(pins[1]).toBeDefined();
+          expect(pins[0]).not.toBe(pins[1]);
+        }),
     );
 
     emulatorIt('sees an unfinished multipart upload (positive control for the abort assertions)', (ctx) =>

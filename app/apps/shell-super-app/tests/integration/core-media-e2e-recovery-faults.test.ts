@@ -79,6 +79,10 @@ const integrityInvocationCount = (world: MediaE2eWorld) =>
       Effect.orDie,
     );
 
+/** What Current answers for one asset, as the kinds of its entries. */
+const currentKindsOf = (world: MediaE2eWorld, asker: E2eActor, ref: ReturnType<typeof refOf>) =>
+  currentOf(world, asker, [ref]).pipe(Effect.map(({ entries }) => entries.map(({ kind }) => kind)));
+
 /** One ready asset of the uploader, and the reader that may download it. */
 const readyAsset = Effect.fn('CoreMediaE2e.readyRecoveryAsset')(function* readyAsset(
   world: MediaE2eWorld,
@@ -242,6 +246,45 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect((yield* currentOf(world, asker, [ref])).entries.map(({ kind }) => kind)).toEqual([
                 'CURRENT_UNVERIFIED',
               ]);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'a same-length substitution that nobody downloaded is not AVAILABLE Current: the pin recorded at confirm no longer matches the stored object, and Current changes nothing (CONTROLLED FAULT INJECTION: out-of-band replacement at the emulator)',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* substitutedBeforeAnyDownload() {
+              const uploader = person(world, 'uploader');
+              const asker = person(world, 'currentOnly');
+              yield* world.grant(uploader, uploaderCapabilities);
+              yield* world.grant(asker, [MEDIA_CAPABILITIES.current]);
+              const edge = yield* world.shell;
+              const original = patternBytes(786_433);
+              const id = yield* readyAsset(world, edge, original, 'swap-1');
+              const ref = refOf(world.tenantId, id);
+              const before = yield* rowOf(world, id);
+              // The confirm step recorded the provider's pin of the object whose digest it verified.
+              expect(before?.storage_object_version_ref ?? '').toMatch(/^etag:/u);
+              const kinds = () => currentKindsOf(world, asker, ref);
+              expect(yield* kinds()).toEqual(['AVAILABLE']);
+
+              // The same bytes written again are the same stored content: the pin matches, so no false alarm.
+              yield* world.replaceStoredObject(id, original);
+              expect(yield* kinds()).toEqual(['AVAILABLE']);
+
+              // Same size, other bytes, never downloaded: the pin is the only thing a stat can compare.
+              const substituted = original.map((byte, index) => (index === 786_000 ? (byte + 1) % 256 : byte));
+              yield* world.replaceStoredObject(id, substituted);
+              expect(yield* kinds()).toEqual(['CURRENT_UNVERIFIED']);
+
+              // Current only withholds the vouching: it proves nothing and records nothing.
+              const after = yield* rowOf(world, id);
+              expect(after?.processing_status).toBe('ready');
+              expect(after?.storage_object_version_ref).toBe(before?.storage_object_version_ref);
+              expect(yield* integrityInvocationCount(world)).toBe(0);
             }),
           ),
         ),

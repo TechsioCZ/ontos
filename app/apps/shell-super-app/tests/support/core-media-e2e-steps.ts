@@ -114,13 +114,15 @@ export interface AssetRow {
   readonly processing_status: string;
   readonly sealed_at: Date | null;
   readonly storage_key: string;
+  readonly storage_object_version_ref: string | null;
 }
 
 /** The recorded row, read by the harness's own privileged connection: an observation, never a request. */
 export const rowsOf = (world: MediaE2eWorld) =>
   world.admin
     .unsafe<AssetRow>(
-      `select media_asset_id, processing_status, byte_size::text as byte_size, content_sha256, sealed_at, storage_key
+      `select media_asset_id, processing_status, byte_size::text as byte_size, content_sha256, sealed_at, storage_key,
+              storage_object_version_ref
          from core.media_assets where tenant_id = $1 order by created_at, media_asset_id`,
       [world.tenantId],
     )

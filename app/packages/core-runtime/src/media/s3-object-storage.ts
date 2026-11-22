@@ -36,7 +36,12 @@ import type { MediaStorageKey } from './storage-key.ts';
  *   exists only when the deployment configures one (recovery is the caller's, through the Action identity);
  * - ask the provider to verify a whole-object SHA-256: it is not part of the supported request set, so a
  *   request for it fails with `ObjectStorageChecksumUnsupported` and read-back verification decides;
- * - report an ETag as a version: `versionRef` is the provider's `x-amz-version-id` and nothing else.
+ * - report an ETag as a version or a revision. `versionRef` is the provider's `x-amz-version-id`; only where the
+ *   provider has none (an unversioned bucket, Cloudflare R2, MinIO) it is the technical pin `etag:<ETag>`, so a
+ *   stat can tell that the stored object is no longer the one whose digest was verified. The pin is integrity
+ *   evidence, never a revision, and it is as strong as the provider's ETag: a content hash (MD5, or the MD5 of
+ *   the part MD5s) gives a different pin for different bytes of any length; an ETag that is not derived from the
+ *   content (some encrypted or compatible stores) gives no such guarantee.
  *
  * Bytes are sent in parts of one bounded size. An object that fits one part is one `PutObject`, anything larger
  * is a multipart upload, so memory is bounded by about three parts (the one being sent, the next one and the
@@ -92,7 +97,12 @@ const headerOf = (response: HttpClientResponse.HttpClientResponse, name: string)
 
 const versionRefOf = (response: HttpClientResponse.HttpClientResponse): string | undefined => {
   const version = headerOf(response, 'x-amz-version-id');
-  return version !== undefined && version !== 'null' && SAFE_VERSION.test(version) ? version : undefined;
+  if (version !== undefined && version !== 'null' && SAFE_VERSION.test(version)) {
+    return version;
+  }
+  // No version id: the ETag is the only thing that changes when the object under the key is written again.
+  const etag = headerOf(response, 'etag');
+  return etag !== undefined && SAFE_VERSION.test(etag) ? `etag:${etag}` : undefined;
 };
 
 const statOf = (byteSize: number, versionRef: string | undefined): ObjectStat =>
