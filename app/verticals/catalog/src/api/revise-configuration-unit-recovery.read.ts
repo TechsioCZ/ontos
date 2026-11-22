@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.revise-configuration-unit', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ReviseConfigurationUnitResultSchema),
-      encode: Schema.encodeEffect(ReviseConfigurationUnitResultSchema),
     },
   );
 

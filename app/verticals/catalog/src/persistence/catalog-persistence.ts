@@ -535,7 +535,6 @@ export const catalogPersistenceForScope = (
         { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-product', schemaVersion },
         {
           decode: Schema.decodeUnknownEffect(CreateProductResultSchema),
-          encode: Schema.encodeEffect(CreateProductResultSchema),
         },
       ),
     );
@@ -548,7 +547,6 @@ export const catalogPersistenceForScope = (
       { actionInvocationId: invocationId, actionKey: 'commerce.catalog.update-product', schemaVersion: 1 },
       {
         decode: Schema.decodeUnknownEffect(UpdateProductResultSchema),
-        encode: Schema.encodeEffect(UpdateProductResultSchema),
       },
     );
 

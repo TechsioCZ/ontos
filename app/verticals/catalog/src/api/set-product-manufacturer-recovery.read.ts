@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.set-product-manufacturer', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(SetProductManufacturerResultSchema),
-      encode: Schema.encodeEffect(SetProductManufacturerResultSchema),
     },
   );
 

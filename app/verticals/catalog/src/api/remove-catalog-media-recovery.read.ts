@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.remove-catalog-media', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RemoveCatalogMediaResultSchema),
-      encode: Schema.encodeEffect(RemoveCatalogMediaResultSchema),
     },
   );
 

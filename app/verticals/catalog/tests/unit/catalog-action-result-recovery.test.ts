@@ -9,7 +9,7 @@ import {
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { catalogResultSnapshots } from '../../src/database/schema.ts';
@@ -27,6 +27,8 @@ import { DecideProductTypeUnnecessaryRecoveryResponseSchema } from '../../shared
 import { confirmVariantCombinationRecoveryRead } from '../../src/api/confirm-variant-combination-recovery.read.ts';
 import { setProductUnitTargetDivisibilityRecoveryRead } from '../../src/api/set-product-unit-target-divisibility-recovery.read.ts';
 import { decideProductTypeUnnecessaryRecoveryRead } from '../../src/api/decide-product-type-unnecessary-recovery.read.ts';
+import { BindInitialVariantSourceResultSchema } from '../../shared/actions/bind-initial-variant-source.ts';
+import { catalogInitialVariantSourceRecoveryForScope } from '../../src/persistence/catalog-source-correlation.ts';
 /* oxlint-disable anti-slop/no-object-parameters, sonarjs/no-nested-functions -- Typed codec and scoped transaction mock require these shapes. owner: Catalog #478; expires: 2027-03-31. */
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -48,7 +50,6 @@ const scope = {
 const codec = {
   decode: (value: object) =>
     Schema.decodeUnknownEffect(Schema.Struct({ productId: Schema.String.pipe(Schema.brand('ProductId')) }))(value),
-  encode: (value: { readonly productId: string }) => Effect.succeed(value),
 };
 const productRef = {
   moduleId: 'commerce.catalog',
@@ -121,14 +122,18 @@ const snapshot = (overrides: Partial<typeof catalogResultSnapshots.$inferSelect>
   tenantId,
   ...overrides,
 });
-const recover = (tx: ReturnType<typeof transaction>, service: ActionRuntimeService, expected = identity) =>
-  recoverCatalogActionResult(
-    // @ts-expect-error Focused mock implements only the snapshot select chain.
-    tx.tx,
-    scope,
-    expected,
-    codec,
-  ).pipe(Effect.provideService(ActionRuntime, service));
+const scopedTransaction = (fixture: ReturnType<typeof transaction>): Parameters<typeof recoverCatalogActionResult>[0] =>
+  // @ts-expect-error Focused mock implements only the snapshot select chain.
+  fixture.tx;
+const recover = (
+  tx: ReturnType<typeof transaction>,
+  service: ActionRuntimeService,
+  expected = identity,
+  decoder = codec,
+) =>
+  recoverCatalogActionResult(scopedTransaction(tx), scope, expected, decoder).pipe(
+    Effect.provideService(ActionRuntime, service),
+  );
 
 describe('Catalog Action result recovery', () => {
   it.effect('uses the current snapshot version and only falls back when it is unavailable', () =>
@@ -261,6 +266,86 @@ describe('Catalog Action result recovery', () => {
           status: 'unavailable',
         });
       }),
+  );
+
+  it.effect('rejects non-object and non-JSON stored results before invoking the owner decoder', () =>
+    Effect.gen(function* corruptJsonBoundary() {
+      let decodes = 0;
+      const decoder = {
+        decode: (value: object) => {
+          decodes += 1;
+          return codec.decode(value);
+        },
+      };
+      for (const encodedResult of [
+        null,
+        [],
+        [{ productId: 'original' }],
+        'corrupt',
+        42,
+        true,
+        ...[undefined, Number.NaN, [Number.POSITIVE_INFINITY], () => 'not JSON'].map((invalid) => ({
+          invalid,
+          productId: 'original',
+        })),
+      ]) {
+        const tx = transaction(snapshot({ encodedResult }));
+        const result = yield* recover(
+          tx,
+          runtime(() => Effect.fail(committed)),
+          identity,
+          decoder,
+        );
+        expect(result).toEqual({ status: 'unavailable' });
+      }
+      expect(decodes).toBe(0);
+    }),
+  );
+
+  it.effect('retains concrete JSON object receipts, including valid nested JSON values', () =>
+    Effect.gen(function* validJsonBoundary() {
+      const encodedResult = {
+        productId: 'original',
+        storageMetadata: { values: [null, true, false, 0, 'text', { revision: 1 }] },
+      };
+      const before = JSON.stringify(encodedResult);
+      expect(
+        yield* recover(
+          transaction(snapshot({ encodedResult })),
+          runtime(() => Effect.fail(committed)),
+        ),
+      ).toEqual({ result: { productId: 'original' }, status: 'committed' });
+      expect(JSON.stringify(encodedResult)).toBe(before);
+    }),
+  );
+
+  it.effect('infers the concrete initial Variant binding result through the decoder-only recovery factory', () =>
+    Effect.gen(function* bindingResultInference() {
+      const original = {
+        changed: true,
+        originalCreateInvocationId: identity.actionInvocationId,
+        productId: productRef.resourceId,
+        variantId: variantRef.resourceId,
+      };
+      const tx = transaction(
+        snapshot({ actionKey: 'commerce.catalog.bind-initial-variant-source', encodedResult: original }),
+      );
+      const service = catalogInitialVariantSourceRecoveryForScope(scopedTransaction(tx), scope);
+      const outcome = yield* service.recover(identity.actionInvocationId).pipe(
+        Effect.provideService(
+          ActionRuntime,
+          runtime(() => Effect.fail(committed)),
+        ),
+      );
+      const encoded = yield* Match.value(outcome).pipe(
+        Match.when({ status: 'committed' }, ({ result }) =>
+          Schema.encodeEffect(BindInitialVariantSourceResultSchema)(result),
+        ),
+        Match.orElse(() => Effect.die('Expected the committed binding receipt')),
+      );
+      expect(encoded).toEqual(original);
+      expect(tx.reads).toBe(1);
+    }),
   );
 });
 

@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.retire-variant', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RetireVariantResultSchema),
-      encode: Schema.encodeEffect(RetireVariantResultSchema),
     },
   );
 

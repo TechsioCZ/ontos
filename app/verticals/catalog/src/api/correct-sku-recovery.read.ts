@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.correct-sku', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CorrectSkuResultSchema),
-      encode: Schema.encodeEffect(CorrectSkuResultSchema),
     },
   );
 

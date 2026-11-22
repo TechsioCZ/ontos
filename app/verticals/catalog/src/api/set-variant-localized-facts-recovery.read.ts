@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.set-variant-localized-facts', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(SetVariantLocalizedFactsResultSchema),
-      encode: Schema.encodeEffect(SetVariantLocalizedFactsResultSchema),
     },
   );
 

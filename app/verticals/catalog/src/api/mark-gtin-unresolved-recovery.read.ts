@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.mark-gtin-unresolved', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(MarkGtinUnresolvedResultSchema),
-      encode: Schema.encodeEffect(MarkGtinUnresolvedResultSchema),
     },
   );
 

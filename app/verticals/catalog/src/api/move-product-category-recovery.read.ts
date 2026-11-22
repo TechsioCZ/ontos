@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.move-product-category', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(MoveProductCategoryResultSchema),
-      encode: Schema.encodeEffect(MoveProductCategoryResultSchema),
     },
   );
 

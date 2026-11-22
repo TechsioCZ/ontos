@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.activate-package-option', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ActivatePackageOptionResultSchema),
-      encode: Schema.encodeEffect(ActivatePackageOptionResultSchema),
     },
   );
 

@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.publish-product-configuration', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(PublishProductConfigurationResultSchema),
-      encode: Schema.encodeEffect(PublishProductConfigurationResultSchema),
     },
   );
 

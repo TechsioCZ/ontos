@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.revise-set-composition', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ReviseSetCompositionResultSchema),
-      encode: Schema.encodeEffect(ReviseSetCompositionResultSchema),
     },
   );
 

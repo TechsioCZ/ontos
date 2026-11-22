@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.rename-attribute-definition', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RenameAttributeDefinitionResultSchema),
-      encode: Schema.encodeEffect(RenameAttributeDefinitionResultSchema),
     },
   );
 

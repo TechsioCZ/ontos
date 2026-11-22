@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.rename-sku', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RenameSkuResultSchema),
-      encode: Schema.encodeEffect(RenameSkuResultSchema),
     },
   );
 

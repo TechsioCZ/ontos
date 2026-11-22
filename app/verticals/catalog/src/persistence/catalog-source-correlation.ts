@@ -375,7 +375,6 @@ export const catalogInitialVariantSourceRecoveryForScope = (
       { actionInvocationId, actionKey: 'commerce.catalog.bind-initial-variant-source', schemaVersion: 1 },
       {
         decode: Schema.decodeUnknownEffect(BindInitialVariantSourceResultSchema),
-        encode: Schema.encodeEffect(BindInitialVariantSourceResultSchema),
       },
     ),
 });

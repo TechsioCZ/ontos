@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-product-type', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CreateProductTypeResultSchema),
-      encode: Schema.encodeEffect(CreateProductTypeResultSchema),
     },
   );
 

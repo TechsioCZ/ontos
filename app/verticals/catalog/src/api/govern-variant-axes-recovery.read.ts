@@ -37,7 +37,6 @@ const recoverResult = (
 ) => {
   const codec = {
     decode: Schema.decodeUnknownEffect(GovernVariantAxesResultSchema),
-    encode: Schema.encodeEffect(GovernVariantAxesResultSchema),
   };
   return recoverCatalogActionResultVersions([1], () =>
     recoverCatalogActionResult(
