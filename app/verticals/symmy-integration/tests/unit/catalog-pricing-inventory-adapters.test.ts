@@ -1,5 +1,6 @@
 import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
 import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { extractVerticalRuntimeSafeDescriptors } from '@app/core-runtime';
 import { executeProvisionSourceStockItemWithAuthorization } from '@app/inventory/api/client';
 import {
   ProvisionSourceStockItemInputSchema,
@@ -29,6 +30,8 @@ import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
 
+import { catalogBackendRegistration } from '../../../catalog/vertical.runtime-declaration.ts';
+import { inventoryRegistration } from '../../../inventory/vertical.registration.ts';
 import {
   SymmyCatalogPricingInventoryIntentSchema,
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -977,6 +980,30 @@ const gatewayRequestsFor = Effect.fn('CpiAdapterFixture.gatewayRequests')(functi
 });
 
 describe('Symmy native public owner adapter transport', () => {
+  it.effect('requires every selected Catalog and Inventory command to publish its exact provider contract', () =>
+    makeSymmyCatalogPricingInventoryAdapters.pipe(
+      Effect.tap((adapters) =>
+        Effect.sync(() => {
+          const providers = [catalogBackendRegistration, inventoryRegistration].map(
+            extractVerticalRuntimeSafeDescriptors,
+          );
+          for (const { operation } of adapters) {
+            const provider = providers.find(({ moduleId }) => moduleId === operation.moduleId);
+            if (provider !== undefined) {
+              expect(provider.operationContracts).toContainEqual(
+                expect.objectContaining({
+                  entrypoint: expect.objectContaining({ entrypointKey: operation.entrypointKey }),
+                  schemaVersion: operation.schemaVersion,
+                }),
+              );
+            }
+          }
+        }),
+      ),
+      Effect.provide(NodeCrypto.layer),
+    ),
+  );
+
   it.effect('identifies owner request persistence failure without replacing or logging the original cause', () => {
     const h = harness(false);
     const entries: unknown[] = [];
