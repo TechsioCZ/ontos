@@ -98,7 +98,7 @@ export const resolveCoreDomainProblems = (
 };
 
 /** The browser-safe wire contract: the owner's own schemas, re-published, plus the encoded request shape. */
-export const renderCoreActionContract = (module: string, action: string, contractModule: string): string => {
+const renderCoreActionContract = (module: string, action: string, contractModule: string): string => {
   const type = toPascalCase(action);
   return `${HEADER}
 // @ontos-core-action-http-owner ${module}
@@ -107,7 +107,7 @@ import { Schema } from '@modern-js/bff-effect/effect-client';
 import { ${type}PayloadSchema } from '${contractModule}';
 import type { ${type}ResultSchema } from '${contractModule}';
 
-export { ${type}PayloadSchema, ${type}ResultSchema } from '${contractModule}';
+export { ${type}ResultSchema } from '${contractModule}';
 
 /** The JSON body of the request: the encoded form of the owner's payload. */
 export const ${type}RequestSchema = Schema.toEncoded(${type}PayloadSchema);
@@ -118,7 +118,7 @@ export type ${type}Result = typeof ${type}ResultSchema.Type;
 `;
 };
 
-export const renderCoreActionApiGroup = (action: string): string => {
+const renderCoreActionApiGroup = (action: string): string => {
   const type = toPascalCase(action);
   return `  .add(
     HttpApiGroup.make('coreAction${type}').add(
@@ -150,7 +150,7 @@ ${handlers}
     : identityProblem(error);`;
 };
 
-export const renderCoreActionServerGroup = (
+const renderCoreActionServerGroup = (
   action: string,
   problems: readonly CoreActionHttpDomainProblem[],
   providerExport?: string,
@@ -198,7 +198,7 @@ const coreAction${type}GroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 
 );`;
 };
 
-export const renderCoreActionClientOperation = (action: string): string => {
+const renderCoreActionClientOperation = (action: string): string => {
   const type = toPascalCase(action);
   return `export const execute${type} = (
   payload: ${type}Payload,
@@ -307,7 +307,7 @@ const validateContractModule = Effect.fn('CoreActionHttpScaffold.validateContrac
 const patchRoot = (path: string, slots: readonly (readonly [string, string, string])[], coreImport?: string) =>
   readAndPatch(path, slots, coreImport, 'core-action');
 
-export const planCoreActionHttpScaffold = Effect.fn('CoreActionHttpScaffold.plan')(function* planCoreActionHttpScaffold(
+const planCoreActionHttpScaffold = Effect.fn('CoreActionHttpScaffold.plan')(function* planCoreActionHttpScaffold(
   workspaceRoot: string,
   config: CoreActionHttpScaffoldConfig,
 ) {

@@ -5,7 +5,7 @@ import { Schema } from '@modern-js/bff-effect/effect-client';
 import { ConfirmAssetPayloadSchema } from '@app/core-runtime/media/upload-contract';
 import type { ConfirmAssetResultSchema } from '@app/core-runtime/media/upload-contract';
 
-export { ConfirmAssetPayloadSchema, ConfirmAssetResultSchema } from '@app/core-runtime/media/upload-contract';
+export { ConfirmAssetResultSchema } from '@app/core-runtime/media/upload-contract';
 
 /** The JSON body of the request: the encoded form of the owner's payload. */
 export const ConfirmAssetRequestSchema = Schema.toEncoded(ConfirmAssetPayloadSchema);
