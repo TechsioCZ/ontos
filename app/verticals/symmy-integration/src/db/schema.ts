@@ -142,18 +142,19 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
       'symmy_job_routes_fixture_ids_ck',
       sql`cardinality(${table.fixtureIds}) between 1 and 32 and array_position(${table.fixtureIds}, null) is null`,
     ),
-    // Only the stock route enrolls positions, and an enrolled stock route names at least one.
+    // Historical inactive enrollments remain readable; active routes cannot enroll per-SKU Positions.
     check(
-      'symmy_job_routes_stock_scope_ck',
-      sql`(
-        ${table.routeKey} = 'inventoryStockBatch'
-        and (
-          ${table.fixturePlan} is null
-          or (jsonb_typeof(${table.fixturePlan} -> 'stockScope') = 'array' and jsonb_array_length(${table.fixturePlan} -> 'stockScope') between 1 and 10000)
-        )
-      ) or (
-        ${table.routeKey} <> 'inventoryStockBatch' and (${table.fixturePlan} is null or not (${table.fixturePlan} ? 'stockScope'))
-      )`,
+      'symmy_job_routes_inventory_source_ck',
+      sql`(not ${table.active} or ${table.fixturePlan} is null or (
+        not (${table.fixturePlan} ? 'stockScope')
+        and (${table.routeKey} <> 'inventoryStockBatch' or ${table.fixturePlan} ? 'inventorySource')
+        and (not (${table.fixturePlan} ? 'inventorySource') or (
+          ${table.routeKey} in ('productsBatch', 'inventoryStockBatch')
+          and jsonb_typeof(${table.fixturePlan} -> 'inventorySource') = 'object'
+          and ${table.fixturePlan} #>> '{inventorySource,policyRef,tenantId}' = ${table.tenantId}::text
+          and ${table.fixturePlan} #>> '{inventorySource,issuer,backendId}' = ${table.fixturePlan} ->> 'inventoryBackendId'
+        ))
+      )) is true`,
     ),
     // Only the routes that write prices enroll the grant refs of a price assertion, and then with both of its parts.
     check(

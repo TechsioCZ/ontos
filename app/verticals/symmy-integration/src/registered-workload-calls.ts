@@ -74,6 +74,42 @@ const pricingPriceGroupCatalogSourceWrite = 'pricing.price-group-catalog.source-
  * declaration, and a tenant still needs an active registration of that workload.
  */
 export const symmyIntegrationRegisteredWorkloadCalls = [
+  {
+    audience: 'inventory',
+    declarationKey: 'commerce.inventory.source-stock-position-resolution.read',
+    entrypointKey: 'commerce.inventory.api.source-stock-position-resolution',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    sourceActionKey: integrationSymmyAdmitSymmySync,
+    workloadKey: 'commerce.inventory.source-read',
+  },
+
+  {
+    audience: 'inventory',
+    declarationKey: 'commerce.inventory.source-stock-item.provision',
+    entrypointKey: 'commerce.inventory.provision-source-stock-item',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: 'commerce.inventory.source-provision',
+  },
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: 'inventory',
+    declarationKey: 'commerce.inventory.source-stock-item-provisioning-receipt.read',
+    entrypointKey: 'commerce.inventory.api.source-stock-item-provisioning-receipt',
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'forbidden',
+    recoveryOf: {
+      actionKey: 'commerce.inventory.provision-source-stock-item',
+      jobKey: integrationSymmyExecuteSymmyJob,
+    },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: 'commerce.inventory.source-provision',
+  },
   // origin/main 5608aae1d: symmy-c14-customer-rules.mts — INTERNAL_C14 actual customer revisions and GET round-trip retain native targets under current Privacy; organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
     audience: partyRegistry,

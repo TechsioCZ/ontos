@@ -1,12 +1,18 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import type { SourceStockPositionResolutionResponse } from '@app/inventory/api/source-stock-position-resolution';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { symmyStockScopeKey } from '../../shared/domain/symmy-stock-batch.ts';
-import type { SymmyStockRow, SymmyStockRows, SymmyStockScopeEntry } from '../../shared/domain/symmy-stock-batch.ts';
+import type {
+  SymmyStockRow,
+  SymmyStockRows,
+  SymmyInventorySource,
+  SymmyStockPositionFacts,
+} from '../../shared/domain/symmy-stock-batch.ts';
 import { uuidFromDigest } from './derived-identity.ts';
 
-const stockOperation = {
+export const stockOperation = {
   entrypointKey: 'commerce.inventory.import-source-assertion',
   moduleId: 'commerce.inventory',
   schemaVersion: '1',
@@ -15,16 +21,18 @@ const stockOperation = {
 interface SymmyStockItemInput<Failure> {
   /** A stable hex digest. Replays of one Idempotency-Key must reproduce every derived identity. */
   readonly digest: (value: string) => Effect.Effect<string, Failure>;
-  readonly entry: SymmyStockScopeEntry;
+  readonly entry: SymmyInventorySource;
   readonly idempotencyKey: string;
   readonly index: number;
   readonly receivedAt: DateTime.Utc;
+  readonly resolution: Extract<SourceStockPositionResolutionResponse, { readonly _tag: 'RESOLVED' }>;
   readonly row: SymmyStockRow;
   readonly source: SymmyFixtureExecutionPlan['items'][number]['source'];
 }
 
 export interface SymmyStockPlanInput<Failure> {
   readonly digest: SymmyStockItemInput<Failure>['digest'];
+  readonly facts: SymmyStockPositionFacts | undefined;
   readonly idempotencyKey: string;
   /** The instant of the first admission. A replay never reaches this builder, it reads the saved plan. */
   readonly receivedAt: DateTime.Utc;
@@ -35,7 +43,7 @@ export interface SymmyStockPlanInput<Failure> {
 const buildStockItem = Effect.fn('SymmyStockPlan.item')(function* buildStockItem<Failure>(
   input: SymmyStockItemInput<Failure>,
 ) {
-  const { digest, entry, idempotencyKey, index, receivedAt, row, source } = input;
+  const { digest, entry, idempotencyKey, index, receivedAt, resolution, row, source } = input;
   const [assertion, occurrence, record, evidence] = yield* Effect.all(
     [
       digest(`assertion\u0000${idempotencyKey}\u0000${index}`),
@@ -47,10 +55,10 @@ const buildStockItem = Effect.fn('SymmyStockPlan.item')(function* buildStockItem
   );
   const key = {
     customerConfigurationId: entry.customerConfigurationId,
-    externalScope: entry.scope,
-    issuer: { backendId: entry.issuerBackendId, backendKind: 'external_business_system' },
+    externalScope: entry.externalScope,
+    issuer: entry.issuer,
     namespace: entry.namespace,
-    tenantId: entry.positionRef.tenantId,
+    tenantId: entry.policyRef.tenantId,
   };
   return {
     effects: [
@@ -59,7 +67,7 @@ const buildStockItem = Effect.fn('SymmyStockPlan.item')(function* buildStockItem
         intent: {
           _tag: 'InventoryImport',
           payload: {
-            authorizationTargetRef: entry.positionRef,
+            authorizationTargetRef: resolution.positionRef,
             items: [
               {
                 assertionId: uuidFromDigest(assertion),
@@ -67,12 +75,12 @@ const buildStockItem = Effect.fn('SymmyStockPlan.item')(function* buildStockItem
                 coverage: [],
                 customerConfigurationId: entry.customerConfigurationId,
                 factMeaning: 'ABSOLUTE_PHYSICAL_ON_HAND',
-                issuer: key.issuer,
+                issuer: entry.issuer,
                 itemExternalKey: { ...key, externalValue: row.itemKey, identifierKind: 'ITEM' },
                 locationExternalKey: { ...key, externalValue: row.locationKey, identifierKind: 'LOCATION' },
                 orderingEvidence: { _tag: 'SOURCE_REVISION', revision: row.revision },
                 ownerEvidenceRef: `symmy-stock:${evidence}`,
-                positionRef: entry.positionRef,
+                positionRef: resolution.positionRef,
                 quantity: row.quantity,
                 receivedAt: DateTime.formatIso(receivedAt),
                 sourceReference: row.sourceReference,
@@ -81,7 +89,7 @@ const buildStockItem = Effect.fn('SymmyStockPlan.item')(function* buildStockItem
           },
         },
         operation: stockOperation,
-        originalTarget: entry.positionRef,
+        originalTarget: resolution.positionRef,
       },
     ],
     itemKey: `stock-${index}`,
@@ -96,31 +104,59 @@ const buildStockItem = Effect.fn('SymmyStockPlan.item')(function* buildStockItem
 });
 
 /**
- * Maps the public stock rows to one internal stock effect per row. A row that names a position the route
- * is not enrolled for, or that the owner could not accept for the enrolled scope, yields no plan at all, so
+ * Maps the public stock rows to one internal stock effect per row. Only the fixed location and unit are enrolled. ITEM keys are
+ * resolved through Inventory’s public port before admission, after product provisioning. An out-of-policy row yields no plan, so
  * nothing is admitted and no owner call is made for any row of the request.
  */
 export const buildSymmyStockPlan = Effect.fn('SymmyStockPlan.build')(function* buildSymmyStockPlan<Failure>(
   input: SymmyStockPlanInput<Failure>,
 ) {
-  const { digest, idempotencyKey, receivedAt, rows, template } = input;
+  const { digest, facts, idempotencyKey, receivedAt, rows, template } = input;
   const [{ source }] = template.items;
-  const { inventoryBackendId, stockScope } = template;
-  const selectedBackendId: string | undefined = inventoryBackendId;
-  if (selectedBackendId === undefined || stockScope === undefined) {
+  const { inventoryBackendId, inventorySource } = template;
+  if (facts === undefined || inventorySource === undefined || inventoryBackendId !== inventorySource.issuer.backendId) {
     return Option.none<SymmyFixtureExecutionPlan>();
   }
-  const enrolled = new Map(stockScope.map((entry) => [symmyStockScopeKey(entry), entry]));
   const entries = rows.flatMap((row) => {
-    const entry = enrolled.get(symmyStockScopeKey(row));
-    return entry?.issuerBackendId === selectedBackendId ? [{ entry, row }] : [];
+    const matches = facts.filter(
+      ({ request }) =>
+        request.itemKey === row.itemKey &&
+        request.locationKey === row.locationKey &&
+        request.customerConfigurationId === inventorySource.customerConfigurationId &&
+        request.externalScope === inventorySource.externalScope &&
+        request.namespace === inventorySource.namespace &&
+        request.issuer.backendId === inventorySource.issuer.backendId &&
+        request.issuer.backendKind === inventorySource.issuer.backendKind,
+    );
+    const [fact] = matches;
+    const { unitRef } = row.quantity;
+    const location = inventorySource.locations.find(({ locationKey }) => locationKey === row.locationKey);
+    if (matches.length !== 1 || fact === undefined || location === undefined) {
+      return [];
+    }
+    return Match.value(fact.resolution).pipe(
+      Match.tag('UNRESOLVED', () => []),
+      Match.tag('RESOLVED', (resolution) =>
+        unitRef.tenantId === inventorySource.policyRef.tenantId &&
+        unitRef.resourceId === inventorySource.unitRef.resourceId &&
+        resolution.positionRef.tenantId === inventorySource.policyRef.tenantId &&
+        resolution.policyRef.tenantId === inventorySource.policyRef.tenantId &&
+        resolution.policyRef.resourceId === inventorySource.policyRef.resourceId &&
+        resolution.stockLocationRef.resourceId === location.stockLocationRef.resourceId &&
+        resolution.stockLocationRef.tenantId === location.stockLocationRef.tenantId
+          ? [{ entry: inventorySource, resolution, row }]
+          : [],
+      ),
+      Match.exhaustive,
+    );
   });
   if (entries.length !== rows.length) {
     return Option.none<SymmyFixtureExecutionPlan>();
   }
   const items = yield* Effect.forEach(
     entries,
-    ({ entry, row }, index) => buildStockItem({ digest, entry, idempotencyKey, index, receivedAt, row, source }),
+    ({ entry, resolution, row }, index) =>
+      buildStockItem({ digest, entry, idempotencyKey, index, receivedAt, resolution, row, source }),
     { concurrency: 1 },
   );
   return Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema)({ items });

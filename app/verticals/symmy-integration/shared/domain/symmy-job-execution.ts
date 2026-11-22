@@ -22,7 +22,7 @@ import {
 
 import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.ts';
 import { SymmyPriceSourceSchema } from './symmy-price-list-batch.ts';
-import { SymmyStockScopeSchema } from './symmy-stock-batch.ts';
+import { SymmyInventorySourceSchema } from './symmy-stock-batch.ts';
 
 export const SymmyOwnerIntentSchema = Schema.Union([
   SymmyCatalogPricingInventoryIntentSchema,
@@ -164,11 +164,7 @@ const executionPlanItem = Schema.Struct({
 });
 
 const executionPlanDefinition = Schema.Struct({
-  inventoryBackendId: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed()).pipe(
-      Schema.brand('SymmyInventoryBackendId'),
-    ),
-  ),
+  inventoryBackendId: Schema.optionalKey(SymmyInventorySourceSchema.fields.issuer.fields.backendId),
   items: Schema.NonEmptyArray(executionPlanItem).check(Schema.isMaxLength(16)),
   pricingSourceSystem: Schema.optionalKey(
     DefinePricePayloadSchema.fields.sourceAssertion.fields.sourceRecord.fields.sourceSystem,
@@ -197,8 +193,8 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
   ).check(Schema.isMaxLength(16)),
   /** Only the price list routes: the grant refs a price assertion names. Prices are never enrolled themselves. */
   priceSource: Schema.optionalKey(SymmyPriceSourceSchema),
-  /** Only the stock route: the positions it is enrolled for. The row values are never enrolled. */
-  stockScope: Schema.optionalKey(SymmyStockScopeSchema),
+  /** One integration-wide Inventory policy, shared by product completion and stock resolution. */
+  inventorySource: Schema.optionalKey(SymmyInventorySourceSchema),
 }).check(validPlanGraph);
 
 /** Explicit normalized internal business inputs; real Symmy wire acceptance is separate. */

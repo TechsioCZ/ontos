@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { executeCreateProductUnitWithAuthorization } from '@app/catalog/api/client';
+import { executeSourceStockPositionResolutionWithAuthorization } from '@app/inventory/api/client';
+import {
+  SourceStockPositionResolutionRequestSchema,
+  SourceStockPositionResolutionResponseSchema,
+} from '@app/inventory/api/source-stock-position-resolution';
+import { SymmyCustomerGroupRowSchema, SymmyStockRowSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import {
   CustomerGroupSourceAuthorityFixtureUnavailable,
@@ -10,17 +16,27 @@ import { grantTestTenantRoleAccess, liveFixtureSpiceDb } from '@app/core-runtime
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { cancelOwnedSyncAdmissionFenceNative } from '@app/core-runtime/testing/source-execution-fence-native';
 import { makeOwnedSystemWriterWorkloadControlNative } from '@app/core-runtime/testing/workload-binding-native';
-import {
-  C14InventorySourceImportSetupUnavailable,
-  prepareC14InventorySourceImportNative,
-} from '@app/inventory/testing/c14-source-import-native';
+import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
-import { GatewayForbiddenProblemSchema, GatewayUnavailableProblemSchema } from '@app/shared-contracts';
+import { GatewayUnavailableProblemSchema } from '@app/shared-contracts';
 import { makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { SymmyCustomerGroupRowSchema, SymmyStockRowSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
-import { Config, DateTime, Duration, Effect, Fiber, FileSystem, Layer, Option, Queue, Redacted, Schema } from 'effect';
+import {
+  Config,
+  DateTime,
+  Duration,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Queue,
+  Redacted,
+  Schedule,
+  Schema,
+  Stream,
+} from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -29,7 +45,9 @@ import { prepareInternalSyncAuthority } from './support/symmy-c14-sync-authority
 import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 import {
   deriveInternalStockAssertionId,
+  internalStockItemKeys,
   makeInternalStockEnrollment,
+  makeInternalStockProductEnrollment,
   makeInternalStockRow,
   makeInternalStockSetup,
 } from './support/symmy-c14-sync-stock-facts.mts';
@@ -38,9 +56,11 @@ import { startInternalSyncRetryTransport } from './support/symmy-c14-sync-retry-
 import {
   SymmyC14ProductFixtureUnavailable,
   buildProductOwner,
+  buildProductWorker,
   nativePortList,
   productComposition,
   startProductOwner,
+  startProductWorker,
 } from './support/symmy-c14-product-runtime.mts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -115,7 +135,11 @@ const lostAckWitnessSchema = Schema.Struct({
   status: Schema.Literal(200),
   type: Schema.Literal('committed-response-lost'),
 });
-const readOwnerLostAckWitness = (output: Queue.Queue<string>, owner: string) =>
+const readOwnerLostAckWitness = (
+  output: Queue.Queue<string>,
+  owner: string,
+  wait: Duration.Input = Duration.seconds(5),
+) =>
   Effect.gen(function* readNativeLostAckWitness() {
     for (;;) {
       const witness = Schema.decodeUnknownOption(Schema.fromJsonString(lostAckWitnessSchema))(
@@ -127,7 +151,7 @@ const readOwnerLostAckWitness = (output: Queue.Queue<string>, owner: string) =>
     }
   }).pipe(
     Effect.timeoutOrElse({
-      duration: Duration.seconds(5),
+      duration: wait,
       orElse: () =>
         new SymmyC14ProductFixtureUnavailable({
           message: `The actual ${owner} receiver emitted no committed ACK-loss witness`,
@@ -136,7 +160,7 @@ const readOwnerLostAckWitness = (output: Queue.Queue<string>, owner: string) =>
   );
 
 it.live(
-  'INTERNAL_C14 actual synchronous Group and Stock routes persist native effects and recover exact receipts without jobs',
+  'INTERNAL_C14 products provision unseen stock through the registered worker; synchronous Group and Stock routes recover native receipts',
   () =>
     Effect.scoped(
       Effect.gen(function* actualSyncConformance() {
@@ -175,7 +199,16 @@ it.live(
         yield* grantTestTenantRoleAccess({
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           holders: [
-            { capabilityKeys: ['commerce.catalog.product-unit.create'], principalId: integration.issuerPrincipalId },
+            {
+              capabilityKeys: [
+                'commerce.catalog.product-unit.create',
+                'commerce.inventory.backend-configuration.select',
+                'commerce.inventory.stock-location.create',
+                'commerce.inventory.source-provisioning-policy.define',
+                'commerce.inventory.source-stock-position-resolution.read',
+              ],
+              principalId: integration.issuerPrincipalId,
+            },
           ],
           legalEntityIds: [legalEntityId],
           spiceDb: yield* liveFixtureSpiceDb(spiceEnvironment),
@@ -199,6 +232,7 @@ it.live(
         });
         const groupRouteId = randomUUID();
         const stockRouteId = randomUUID();
+        const productRouteId = randomUUID();
         const groupLogicalRouteId = randomUUID();
         const stockLogicalRouteId = randomUUID();
         const groupRecordId = 'INTERNAL_C14_SYNC_GROUP';
@@ -244,6 +278,7 @@ it.live(
         yield* seedCustomerGroupSourceAuthority(groupSetupRequest);
         const groupPolicy = { policyId: 'INTERNAL_C14_GROUP_SYNC_RETENTION', revision: '1' };
         const stockPolicy = { policyId: 'INTERNAL_C14_STOCK_SYNC_RETENTION', revision: '1' };
+        const productPolicy = { policyId: 'INTERNAL_C14_STOCK_PRODUCT_RETENTION', revision: '1' };
         // The route enrolls the group create and update and the definition read that fences each row on the owner.
         const groupConfiguration = {
           items: [
@@ -279,6 +314,14 @@ it.live(
           values(${groupRouteId},${tenantId},${integration.principalId},${legalEntityId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(groupConfiguration))}::jsonb,${internalSyncSource.mappingVersion},'customerGroupsBatch',${internalSyncSource.routeRevision},${yield* json(groupPolicy)}::jsonb)`;
         const lifecycle = yield* json([
           {
+            ...productPolicy,
+            governanceLegalEntityId: legalEntityId,
+            retentionMs: 900_000,
+            routeId: productRouteId,
+            targetLegalEntityId: null,
+            tenantId,
+          },
+          {
             ...groupPolicy,
             governanceLegalEntityId: legalEntityId,
             retentionMs: 900_000,
@@ -300,6 +343,7 @@ it.live(
         const faultDirectory = yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_SYNC_ACK_' });
         const groupFaultMarker = `${faultDirectory}/group-committed-response-loss`;
         const stockFaultMarker = `${faultDirectory}/stock-committed-response-loss`;
+        const provisioningFaultMarker = `${faultDirectory}/provisioning-committed-response-loss`;
         yield* fs.writeFileString(groupFaultMarker, 'INTERNAL_C14 transport outage after native Group commit');
         const faultByOwner = new Map([
           [
@@ -312,6 +356,7 @@ it.live(
           [
             'inventory',
             {
+              ONTOS_C14_PROVISIONING_RESPONSE_LOSS_MARKER: provisioningFaultMarker,
               ONTOS_C14_RESPONSE_LOSS_MARKER: stockFaultMarker,
               ONTOS_C14_RESPONSE_LOSS_OPERATION: 'inventory-import',
             },
@@ -330,7 +375,11 @@ it.live(
           const running = yield* startProductOwner({
             artifacts: yield* buildProductOwner(contract),
             contract,
-            environment: { ...ownerEnvironment, ...faultByOwner.get(appId) },
+            environment: {
+              ...ownerEnvironment,
+              ...faultByOwner.get(appId),
+              ONTOS_C14_PROVISIONING_RESPONSE_LOSS_MARKER: provisioningFaultMarker,
+            },
             port,
             prefix,
           });
@@ -495,37 +544,24 @@ it.live(
             message: 'The native Unit setup returned a proposal instead of a committed Unit',
           });
         }
-        const observedAt = yield* DateTime.now;
-        const selectedAt = DateTime.formatIso(DateTime.subtract(observedAt, { seconds: 5 }));
-        const setup = yield* makeInternalStockSetup({ selectedAt, tenantId, unitRef: unitResult.unit });
-        const stockSetupRequest = {
-          operatorPrincipalId: integration.issuerPrincipalId,
-          operatorProviderUserId: shell.providerUserId,
-          ownedDatabase: isolated,
-          runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
-          setup,
+        const setup = yield* makeInternalStockSetup({
+          apiBaseUrl: `${backends.inventory}inventory-api`,
+          compositionRevision: snapshot.composition.revision,
+          shell,
           tenantId,
-        };
-        const wrongOperator = yield* prepareC14InventorySourceImportNative({
-          ...stockSetupRequest,
-          operatorProviderUserId: randomUUID(),
-        }).pipe(Effect.flip);
-        expect(Schema.is(C14InventorySourceImportSetupUnavailable)(wrongOperator)).toBe(true);
-        const wrongRuntime = yield* prepareC14InventorySourceImportNative({
-          ...stockSetupRequest,
-          runtimeConnectionString: Redacted.make(isolated.connections.admin.connectionString),
-        }).pipe(Effect.flip);
-        expect(Schema.is(C14InventorySourceImportSetupUnavailable)(wrongRuntime)).toBe(true);
-        yield* prepareC14InventorySourceImportNative(stockSetupRequest);
+          unitRef: unitResult.unit,
+        });
+        const observedAt = yield* DateTime.now;
         const stockRow = (input: {
           readonly amount: string;
+          readonly itemKey?: string;
           readonly revision: string;
           readonly sourceReference: string;
         }) =>
           makeInternalStockRow({
             ...input,
             businessObservedAt: DateTime.formatIso(observedAt),
-            setup,
+            itemKey: input.itemKey ?? internalStockItemKeys[0],
             unitRef: unitResult.unit,
           });
         const stockRevision2 = stockRow({
@@ -536,6 +572,146 @@ it.live(
         const stockEnrollment = yield* makeInternalStockEnrollment({ setup, sourceRouteId: stockLogicalRouteId });
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${stockRouteId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(stockEnrollment))}::jsonb,${internalSyncSource.mappingVersion},'inventoryStockBatch',${internalSyncSource.routeRevision},${yield* json(stockPolicy)}::jsonb)`;
+        const productEnrollment = yield* makeInternalStockProductEnrollment({
+          setup,
+          sourceRouteId: stockLogicalRouteId,
+        });
+        yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
+          values(${productRouteId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(productEnrollment))}::jsonb,${internalSyncSource.mappingVersion},'productsBatch',${internalSyncSource.routeRevision},${yield* json(productPolicy)}::jsonb)`;
+        const early = yield* postStockRaw(stockBody([stockRevision2]), 'INTERNAL_C14_EARLY_STOCK');
+        expect(early.status).toBe(503);
+        expect(JSON.stringify(stockEnrollment)).not.toContain(internalStockItemKeys[0]);
+        expect(JSON.stringify(stockEnrollment)).not.toContain(internalStockItemKeys[1]);
+        const products = {
+          products: internalStockItemKeys.map((itemKey) => ({
+            identifier: { type: 'sku', value: itemKey },
+            name: itemKey,
+            variants: [{ identifier: { type: 'sku', value: itemKey } }],
+          })),
+        };
+        const jobReceipt = Schema.Struct({
+          jobId: SymmyJobStatusResponseSchema.members[0].fields.jobId,
+          status: Schema.Literal('queued'),
+        });
+        const symmyContract = contracts.find(({ deployment }) => deployment.appId === 'symmy-integration');
+        assert.isDefined(symmyContract);
+        const workerArtifact = yield* buildProductWorker(symmyContract);
+        const runProducts = Effect.fn('InternalC14Stock.provisionProducts')(function* runProducts(
+          key: string,
+          interrupted: boolean,
+        ) {
+          const accepted = yield* client.post(`${shell.baseUrl}/api/symmy/v1/products/batch`, {
+            body: yield* HttpBody.json(products),
+            headers: { ...headers, 'idempotency-key': key },
+          });
+          expect(accepted.status).toBe(202);
+          const { jobId } = yield* accepted.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(jobReceipt)));
+          const worker = yield* startProductWorker(workerArtifact, {
+            ...ownerEnvironment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
+          });
+          const activeWorker = yield* interrupted
+            ? Effect.gen(function* restartAfterLostAck() {
+                const output = ownerOutput.get('inventory');
+                assert.isDefined(output);
+                const lostProvisioning = yield* readOwnerLostAckWitness(output, 'inventory', Duration.seconds(30));
+                expect(lostProvisioning.path.endsWith('/actions/provision-source-stock-item')).toBe(true);
+                yield* worker.child.kill();
+                yield* worker.child.exitCode.pipe(Effect.timeout(Duration.seconds(20)));
+                yield* fs.remove(provisioningFaultMarker);
+                const restarted = yield* startProductWorker(workerArtifact, {
+                  ...ownerEnvironment,
+                  ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
+                });
+                const recovery = yield* Stream.fromQueue(output).pipe(
+                  Stream.filterMap((line) =>
+                    Schema.decodeUnknownResult(
+                      Schema.fromJsonString(
+                        Schema.Struct({
+                          path: Schema.String,
+                          status: Schema.Literal(200),
+                          type: Schema.Literal('original-response-recovered'),
+                        }),
+                      ),
+                    )(line),
+                  ),
+                  Stream.runHead,
+                  Effect.timeout(Duration.seconds(60)),
+                );
+                expect(Option.getOrThrow(recovery).path.endsWith('/reads/source-stock-item-provisioning-receipt')).toBe(
+                  true,
+                );
+                return restarted;
+              })
+            : Effect.succeed(worker);
+          const settled = admin`select count(*)::integer as count from symmy_integration.job_effects
+            where tenant_id=${tenantId} and job_id=${jobId} and state='settled' and outcome->>'status' in ('accepted_change','accepted_no_change','duplicate')`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+            Effect.flatMap(([result]) =>
+              result?.count === 4
+                ? Effect.void
+                : Effect.fail(
+                    new SymmyC14ProductFixtureUnavailable({
+                      message: 'The actual product/provision worker has not settled both new SKUs',
+                    }),
+                  ),
+            ),
+          );
+          yield* settled.pipe(
+            Effect.retry({ schedule: Schedule.spaced(Duration.millis(200)), times: 300 }),
+            Effect.tapError(() => worker.diagnostic.pipe(Effect.flatMap(Effect.logError))),
+          );
+          yield* activeWorker.child.kill();
+          yield* activeWorker.child.exitCode;
+          return jobId;
+        });
+        yield* fs.writeFileString(
+          provisioningFaultMarker,
+          'Drop one actual committed provisioning ACK and block its receipt until restart',
+        );
+        yield* runProducts('INTERNAL_C14_NEW_STOCK_PRODUCTS', true);
+        const provisioningCount =
+          admin`select count(*)::integer as count from inventory.stock_items where tenant_id=${tenantId}`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+            Effect.map(([result]) => result?.count),
+          );
+        expect(yield* provisioningCount).toBe(2);
+        yield* runProducts('INTERNAL_C14_REPLAY_STOCK_PRODUCTS', false);
+        expect(yield* provisioningCount).toBe(2);
+        const [positions] =
+          yield* admin`select count(*)::integer as count from inventory.stock_positions where tenant_id=${tenantId}`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+          );
+        assert.isDefined(positions);
+        expect(positions.count).toBe(2);
+        const [correlations] =
+          yield* admin`select count(*)::integer as count from inventory.external_stock_correlations where tenant_id=${tenantId} and identifier_kind='ITEM'`.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+          );
+        assert.isDefined(correlations);
+        expect(correlations.count).toBe(2);
+        const [provisioned] = yield* admin`select count(*)::integer as count from core.action_invocations
+          where tenant_id=${tenantId} and action_key='commerce.inventory.provision-source-stock-item' and principal_id=${systemPrincipalId} and status='succeeded'`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+        );
+        expect(provisioned?.count).toBe(4);
+        const resolutionContext = yield* shell.issueFixtureSetupGateway({ audience: 'inventory' });
+        const resolution = yield* executeSourceStockPositionResolutionWithAuthorization(
+          yield* Schema.decodeUnknownEffect(SourceStockPositionResolutionRequestSchema)({
+            customerConfigurationId: setup.policy.customerConfigurationId,
+            externalScope: setup.policy.externalScope,
+            issuer: setup.policy.issuer,
+            itemKey: internalStockItemKeys[0],
+            locationKey: stockRevision2.locationKey,
+            namespace: setup.policy.namespace,
+          }),
+          `Bearer ${resolutionContext.token}`,
+          randomUUID(),
+          { baseUrl: `${backends.inventory}inventory-api`, compositionRevision: snapshot.composition.revision },
+        );
+        const { positionRef } = yield* Schema.decodeUnknownEffect(
+          SourceStockPositionResolutionResponseSchema.members[0],
+        )(resolution);
         const importCalls = admin`select count(*)::integer as count from core.action_invocations
             where tenant_id=${tenantId} and action_key='commerce.inventory.import-source-assertion'`.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
@@ -546,13 +722,35 @@ it.live(
           stockBody([stockRevision2, { ...stockRevision2, itemKey: 'INTERNAL_C14_UNENROLLED_ITEM' }]),
           'INTERNAL_C14_STOCK_UNENROLLED_ROW',
         );
-        expect(substituted.status).toBe(403);
-        yield* substituted.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(GatewayForbiddenProblemSchema)));
+        expect(substituted.status).toBe(503);
+        yield* substituted.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema)));
         const unenrolledLocation = yield* postStockRaw(
           stockBody([{ ...stockRevision2, locationKey: 'INTERNAL_C14_UNENROLLED_LOCATION' }]),
           'INTERNAL_C14_STOCK_UNENROLLED_LOCATION',
         );
-        expect(unenrolledLocation.status).toBe(403);
+        expect(unenrolledLocation.status).toBe(503);
+        yield* Effect.forEach(
+          [
+            {
+              ...stockRevision2,
+              quantity: {
+                ...stockRevision2.quantity,
+                unitRef: { ...stockRevision2.quantity.unitRef, resourceId: randomUUID() },
+              },
+            },
+            {
+              ...stockRevision2,
+              quantity: {
+                ...stockRevision2.quantity,
+                unitRef: { ...stockRevision2.quantity.unitRef, tenantId: randomUUID() },
+              },
+            },
+          ],
+          Effect.fn('InternalC14Stock.refuseForeignUnit')(function* refuseForeignUnit(row) {
+            expect((yield* postStockRaw(stockBody([row]), randomUUID())).status).toBe(503);
+          }),
+          { concurrency: 1 },
+        );
         expect(yield* importCalls).toBe(0);
         // Acceptance 6 and 5: the key is required, and the retired internal bodies are invalid on the public route.
         expect((yield* postStockRaw(stockBody([stockRevision2]))).status).toBe(428);
@@ -596,7 +794,7 @@ it.live(
         if (stockResult.items[0].outcome !== 'accepted') {
           const diagnostics = yield* Effect.all(ownerDiagnostics);
           const nativeStatuses =
-            yield* admin`select status,outcome_json ->> 'reason' as reason from inventory.source_import_ledger where tenant_id=${tenantId} and position_id=${setup.stockPosition.ref.resourceId}`.pipe(
+            yield* admin`select status,outcome_json ->> 'reason' as reason from inventory.source_import_ledger where tenant_id=${tenantId} and position_id=${positionRef.resourceId}`.pipe(
               Effect.flatMap(
                 Schema.decodeUnknownEffect(
                   Schema.Array(
@@ -675,8 +873,8 @@ it.live(
             a.assertion_id::text as persisted_assertion_id, a.quantity_amount as persisted_amount
             from inventory.source_import_ledger l left join inventory.source_assertions a
               on a.tenant_id=l.tenant_id and a.assertion_id=l.assertion_id
-            where l.tenant_id=${tenantId} and l.position_id=${setup.stockPosition.ref.resourceId}
-              and l.customer_configuration_id=${setup.configuration.customerConfigurationId}`.pipe(
+            where l.tenant_id=${tenantId} and l.position_id=${positionRef.resourceId}
+              and l.customer_configuration_id=${setup.policy.customerConfigurationId}`.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(stockLedgerSchema))),
         );
         expect(stockLedger).toHaveLength(2);
@@ -715,6 +913,16 @@ it.live(
         assert.isDefined(receivedAtFact);
         expect(receivedAtFact.admitted_at).toBe(receivedAtFact.imported_at);
         expect(Date.parse(receivedAtFact.admitted_at)).toBeGreaterThanOrEqual(DateTime.toEpochMillis(observedAt));
+        const secondSkuStock = yield* submitStock('INTERNAL_C14_SECOND_UNSEEN_STOCK', [
+          stockRow({
+            amount: '7',
+            itemKey: internalStockItemKeys[1],
+            revision: '1',
+            sourceReference: 'INTERNAL_C14_SECOND_UNSEEN_STOCK',
+          }),
+        ]);
+        expect(secondSkuStock.items[0]).toMatchObject({ itemKey: internalStockItemKeys[1], outcome: 'accepted' });
+        expect(secondSkuStock.items[0].effects[0].status).toBe('accepted_change');
         const meaningConflict = yield* submit('INTERNAL_C14_GROUP_CHANGED_MEANING', [
           {
             ...renamedRow,
@@ -792,7 +1000,7 @@ it.live(
         yield* admin`update symmy_integration.job_routes set lifecycle_policy=${yield* json(groupPolicy)}::jsonb where tenant_id=${tenantId} and route_id=${groupRouteId}`;
         expect(yield* groupAdmissions).toBe(admittedGroups);
         const [jobs] =
-          yield* admin`select count(*)::integer as count from symmy_integration.import_jobs where tenant_id=${tenantId}`.pipe(
+          yield* admin`select count(*)::integer as count from symmy_integration.import_jobs where tenant_id=${tenantId} and route_key <> 'productsBatch'`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
           );
         expect(jobs?.count).toBe(0);
@@ -853,7 +1061,7 @@ it.live(
           yield* admin`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and action_key='commerce.inventory.import-source-assertion' and status='succeeded'`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
           );
-        expect(importsBeforeCancellation?.count).toBe(3);
+        expect(importsBeforeCancellation?.count).toBe(4);
         yield* stockWriter.revoke();
         yield* retryTransport.activate(fixedNativeHeader);
         expect(yield* submitStock(stockRevision2Key, [stockRevision2])).toEqual(stockResult);

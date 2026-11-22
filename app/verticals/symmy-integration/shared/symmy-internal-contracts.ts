@@ -12,8 +12,12 @@ export {
   decodeSymmySellerVatDeclarationSource,
   mapSymmySellerVatDeclaration,
 } from './domain/symmy-seller-vat-declaration-mapping.ts';
-export { SymmyStockRowSchema, SymmyStockRowsSchema } from './domain/symmy-stock-batch.ts';
-export type { SymmyStockRows } from './domain/symmy-stock-batch.ts';
+export {
+  SymmyStockRowSchema,
+  SymmyStockRowsSchema,
+  SymmyStockPositionFactsSchema,
+} from './domain/symmy-stock-batch.ts';
+export type { SymmyStockRows, SymmyStockPositionFacts } from './domain/symmy-stock-batch.ts';
 export { SymmyPriceListCodeSchema, SymmyPriceListRowsSchema } from './domain/symmy-price-list-batch.ts';
 export type { SymmyPriceListRows } from './domain/symmy-price-list-batch.ts';
 export { SymmyPriceBatchSchema } from './domain/symmy-price-batch.ts';

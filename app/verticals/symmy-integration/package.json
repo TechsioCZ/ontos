@@ -25,6 +25,7 @@
     "./outbox/integration-symmy-job-admitted-v1": "./shared/outbox/integration-symmy-job-admitted-v1.ts",
     "./resources/import-job": "./shared/resources/import-job.ts",
     "./resources/sync-admission": "./shared/resources/sync-admission.ts",
+    "./symmy-stock-position-facts": "./shared/symmy-stock-position-facts.ts",
     "./symmy-internal-contracts": "./shared/symmy-internal-contracts.ts",
     "./symmy-source-selector": "./shared/domain/symmy-source-selector.ts",
     "./testing/accepted-effect-native": "./tests/support/accepted-effect-native.fixture.ts"

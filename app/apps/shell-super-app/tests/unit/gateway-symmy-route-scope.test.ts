@@ -116,6 +116,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
       audiences: new Map([
         ['commerce-customer-context', 'native-route-build'],
         ['symmy-integration', 'native-route-build'],
+        ['inventory', 'native-route-build'],
       ]),
       revision: options.catalog?.composition.revision ?? compositionRevision,
     }),
@@ -512,4 +513,93 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
       expect(refused).toMatchObject({ code: 'forbidden' });
     }
   }),
+);
+
+it.effect(
+  'admits only the enrolled current Inventory position read and projects its authority to Tenant, even from a company route',
+  () =>
+    Effect.gen(function* inventoryReadProjection() {
+      const moduleId = 'commerce.inventory';
+      const entrypointKey = 'commerce.inventory.api.source-stock-position-resolution';
+      const base = makeModuleContractFixture({ appId: 'inventory', moduleId });
+      const snapshot = yield* makeCompositionSnapshot([
+        {
+          ...base,
+          manifest: {
+            ...base.manifest,
+            publicSurface: {
+              ...base.manifest.publicSurface,
+              api: [{ key: 'commerce.inventory.api.reads', operationKeys: ['position.execute'] }],
+              operationContracts: [
+                {
+                  apiKey: 'commerce.inventory.api.reads',
+                  entrypoint: defineTenantModuleEntrypoint({
+                    access: 'read',
+                    authorization: { kind: 'protected' },
+                    entrypointKey,
+                    moduleKey: moduleId,
+                    role: 'api',
+                  }),
+                  operationKey: 'position.execute',
+                  schemaVersion: '1',
+                },
+              ],
+            },
+          },
+        },
+      ]);
+      const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+      const installed = { ...catalog, composition: snapshot.composition };
+      yield* Effect.forEach(
+        [true, false],
+        (companyless) =>
+          Effect.gen(function* tenantAndCompany() {
+            const current = yield* fixture({
+              allowedOwnerOperations: [{ entrypointKey, moduleId, schemaVersion: '1' }],
+              catalog: installed,
+              companyless,
+            });
+            const projected = yield* Effect.gen(function* projectRead() {
+              const proof = yield* acquireSymmyRouteScopeProof({
+                ...request,
+                compositionRevision: snapshot.composition.revision,
+                routeRequest: { routeKey: 'inventoryStockBatch' },
+                sourcePurpose: 'admit',
+              });
+              return yield* projectSymmyRouteScopePrincipal(proof, { audience: 'inventory', principal });
+            }).pipe(Effect.provide(current.layer));
+            expect(projected.legalEntityId).toBeUndefined();
+            expect(projected.tenantId).toBe(principal.tenantId);
+          }),
+        { concurrency: 1 },
+      );
+      yield* Effect.forEach(
+        ['customersBatch', 'inventoryStockBatch'] as const,
+        (routeKey) =>
+          Effect.gen(function* deniedRead() {
+            const current = yield* fixture({
+              allowedOwnerOperations: [
+                {
+                  entrypointKey: 'commerce.inventory.api.inventory-source-import-receipt',
+                  moduleId,
+                  schemaVersion: '1',
+                },
+              ],
+              catalog: installed,
+              companyless: true,
+            });
+            const failure = yield* Effect.gen(function* readWithoutEnrollment() {
+              const proof = yield* acquireSymmyRouteScopeProof({
+                ...request,
+                compositionRevision: snapshot.composition.revision,
+                routeRequest: { routeKey },
+                sourcePurpose: 'admit',
+              });
+              return yield* projectSymmyRouteScopePrincipal(proof, { audience: 'inventory', principal });
+            }).pipe(Effect.provide(current.layer), Effect.flip);
+            expect(failure).toMatchObject({ code: 'forbidden' });
+          }),
+        { concurrency: 1 },
+      );
+    }),
 );

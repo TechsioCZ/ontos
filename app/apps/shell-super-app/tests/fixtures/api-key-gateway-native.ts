@@ -149,7 +149,7 @@ export const ShellNativeSessionGatewayResponseSchema = Schema.TaggedStruct(sessi
   gateway: GatewayContextResponseSchema,
 });
 export const ShellNativeTenantSetupGatewayRequestSchema = Schema.Struct({
-  audience: Schema.Literals(['catalog', 'pricing']),
+  audience: Schema.Literals(['catalog', 'inventory', 'pricing']),
 });
 export const ShellNativeSetupGatewayRequestSchema = Schema.Union([
   ShellNativeTenantSetupGatewayRequestSchema,
