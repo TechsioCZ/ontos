@@ -60,6 +60,13 @@ const sameSet = (a: readonly string[], b: readonly string[]) => {
  *   binding, compared so that an answer an adapter correlated with another message, subject, purpose or channel is refused.
  * A decision for another scope is never applied, in either direction.
  */
+/**
+ * A subject Privacy itself bound is the one locator Privacy CAN echo: its own subject reference must be that binding.
+ * The other locators carry no Privacy identity, so for them only the declared binding below is compared.
+ */
+const subjectEchoMatches = (scope: ProcessingScope, privacySubjectRef: string) =>
+  scope.subject.kind !== 'PRIVACY_BINDING' || scope.subject.bindingRef === privacySubjectRef;
+
 const evidenceCoversScope = (evidence: EligibilityEvidence, scope: ProcessingScope) => {
   const echoed = evidence.evaluatedScope;
   const declared = evidence.declaredScope;
@@ -72,6 +79,7 @@ const evidenceCoversScope = (evidence: EligibilityEvidence, scope: ProcessingSco
     echoed.processingScopeRef.scopeType === scope.processingScopeRef.scopeType &&
     sameSet(echoed.dataCategoryRefs, scope.dataCategoryRefs) &&
     sameSet(echoed.recipientRefs, scope.recipientRefs) &&
+    subjectEchoMatches(scope, echoed.privacySubjectRef) &&
     subjectLocatorKey(declared.subject) === subjectLocatorKey(scope.subject) &&
     declared.catalogPurposeRef === scope.catalogPurposeRef &&
     declared.channel === scope.channel

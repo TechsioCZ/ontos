@@ -19,11 +19,14 @@ export const PrivacyPurposeVersionIdSchema = Ref.pipe(Schema.brand('Communicatio
 const SourceOccurrenceRefSchema = Ref.pipe(Schema.brand('CommunicationsSourceOccurrenceRef'));
 const SourceRecordRefSchema = Ref.pipe(Schema.brand('CommunicationsSourceRecordRef'));
 export const PrivacySubjectResourceIdSchema = Ref.pipe(Schema.brand('CommunicationsPrivacySubjectResourceId'));
+/** Privacy's own identity of a subject it bound before the address was verified; opaque to Communications. */
+export const PrivacyBindingRefSchema = Ref.pipe(Schema.brand('CommunicationsPrivacyBindingRef'));
 
 /**
- * How the subject is LOCATED, never who the subject is: an owner-qualified source record (an Auth occurrence before the
- * address is verified, for example) or the Party the source already holds. A locator is not proof of identity or of
- * a right to process; Privacy alone decides whether it names a supported context.
+ * How the subject is LOCATED, never who the subject is: an owner-qualified source record, the Party the source already
+ * holds, or the subject Privacy itself bound for a source account whose address is not verified yet (#1406 D.8, a Portal
+ * Auth issuance, for example). A locator is not proof of identity or of a right to process; Privacy alone decides whether
+ * it names a supported context.
  */
 export const SubjectLocatorSchema = Schema.Union([
   Schema.Struct({
@@ -38,6 +41,7 @@ export const SubjectLocatorSchema = Schema.Union([
     }),
   }),
   Schema.Struct({ kind: Schema.Literal('PARTY_TARGET'), partyRef: CommunicationResourceRefSchema }),
+  Schema.Struct({ bindingRef: PrivacyBindingRefSchema, kind: Schema.Literal('PRIVACY_BINDING') }),
 ]);
 
 export type SubjectLocator = typeof SubjectLocatorSchema.Type;
@@ -72,6 +76,9 @@ const lengthPrefixed = (parts: readonly string[]): string =>
 const subjectParts = (subject: SubjectLocator): readonly string[] => {
   if (subject.kind === 'PARTY_TARGET') {
     return [subject.kind, subject.partyRef.moduleId, subject.partyRef.resourceType, subject.partyRef.resourceId];
+  }
+  if (subject.kind === 'PRIVACY_BINDING') {
+    return [subject.kind, subject.bindingRef];
   }
   // The source record fields are ordered by name, so the key never depends on how the record was assembled.
   return [
