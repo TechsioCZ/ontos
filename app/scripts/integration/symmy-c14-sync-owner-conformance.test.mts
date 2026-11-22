@@ -1008,7 +1008,12 @@ it.live(
         assert.isDefined(categoryCount);
         expect(categoryCount.count).toBe(1);
         expect(yield* configuredRoutes).toEqual(initialRoutes);
-        const originalPrices = yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId });
+        const pricedCatalog = {
+          authority,
+          expectedCatalogProducts: internalStockItemKeys.length,
+          sourceRouteId: stockLogicalRouteId,
+        };
+        const originalPrices = yield* assertInternalSyncPrices(pricedCatalog);
         const provisioningCount =
           admin`select count(*)::integer as count from inventory.stock_items where tenant_id=${tenantId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
@@ -1109,9 +1114,7 @@ it.live(
         );
         expect(new Set(adoptionInvocations).size).toBe(12);
         expect(adoptionInvocations.some((invocationId) => originalReadinessInvocations.has(invocationId))).toBe(false);
-        expect(yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId })).toEqual(
-          originalPrices,
-        );
+        expect(yield* assertInternalSyncPrices(pricedCatalog)).toEqual(originalPrices);
         expect(yield* configuredRoutes).toEqual(initialRoutes);
         expect(yield* provisioningCount).toBe(2);
         const [positions] =
@@ -1439,9 +1442,7 @@ it.live(
           { amount: '12', item_key: internalStockItemKeys[0] },
           { amount: '7', item_key: internalStockItemKeys[1] },
         ]);
-        expect(yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId })).toEqual(
-          originalPrices,
-        );
+        expect(yield* assertInternalSyncPrices(pricedCatalog)).toEqual(originalPrices);
         const meaningConflict = yield* submit('INTERNAL_C14_GROUP_CHANGED_MEANING', [
           {
             ...renamedRow,
@@ -1648,9 +1649,7 @@ it.live(
           );
         expect(importsAfterCancellation).toEqual(importsBeforeCancellation);
         // Later Group conflicts, revocation and cancellation must not alter any Price or create another list.
-        expect(yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId })).toEqual(
-          originalPrices,
-        );
+        expect(yield* assertInternalSyncPrices(pricedCatalog)).toEqual(originalPrices);
         // The original category-free input is not a success case. Restore only the independently revoked
         // Inventory writer so the negative control reaches Pricing instead of failing admission early.
         yield* stockWriter.rebind();
@@ -1714,9 +1713,13 @@ it.live(
         );
         assert.isDefined(negativeReceipts);
         expect(negativeReceipts.count).toBe(0);
-        expect(yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId })).toEqual(
-          originalPrices,
-        );
+        // The negative control creates its Catalog product/variant, but must add no Price or Price receipt.
+        expect(
+          yield* assertInternalSyncPrices({
+            ...pricedCatalog,
+            expectedCatalogProducts: internalStockItemKeys.length + 1,
+          }),
+        ).toEqual(originalPrices);
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),
