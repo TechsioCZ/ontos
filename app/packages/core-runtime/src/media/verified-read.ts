@@ -1,7 +1,7 @@
 import { Effect, Option, Schema, Stream } from 'effect';
 
 import { actionErrorSchema } from '../actions/error-schema.ts';
-import { ContentDigest } from './content-digest.ts';
+import { ContentDigest, DigestStepTimeout } from './content-digest.ts';
 import { ObjectStorage, ObjectStorageObjectMissing } from './object-storage.ts';
 import type { ObjectStat, ObjectStorageFailure } from './object-storage.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -294,9 +294,14 @@ export const openVerifiedMediaStream = Effect.fn('MediaVerifiedRead.openStream')
   asset: MediaVerifiableAsset,
 ) {
   const storage = yield* ObjectStorage;
+  // The transport runs the body in its own context, so what the body reads from the host travels with it.
+  const digestStepTimeout = yield* Effect.service(DigestStepTimeout);
   const opened = yield* openRecordedObject(asset, { refuseStatMismatch: true });
   return {
-    body: verifiedBody(opened).pipe(Stream.provideService(ObjectStorage, storage)),
+    body: verifiedBody(opened).pipe(
+      Stream.provideService(ObjectStorage, storage),
+      Stream.provideService(DigestStepTimeout, digestStepTimeout),
+    ),
     byteSize: opened.recorded.byteSize,
     contentSha256: opened.recorded.contentSha256,
   } satisfies OpenedVerifiedMediaStream;
