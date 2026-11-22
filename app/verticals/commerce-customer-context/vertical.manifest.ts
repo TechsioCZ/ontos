@@ -170,6 +170,7 @@ import { reactivateCustomerGroupAction } from './src/actions/reactivate-customer
 import { reactivateCustomerProfileAction } from './src/actions/reactivate-customer-profile.action.ts';
 import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
+import { relayPortalAuthCommunicationRequestAction } from './src/actions/relay-portal-auth-communication-request.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
 import { removeCustomerPaymentTermAction } from './src/actions/remove-customer-payment-term.action.ts';
@@ -332,6 +333,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       reactivateCustomerProfileAction,
       recordPortalEnrollmentOutcomeAction,
       recoverRetailPortalProfileBindingAction,
+      relayPortalAuthCommunicationRequestAction,
       removeCounterpartyPriceGroupAction,
       removeCustomerGroupAction,
       removeCustomerPaymentTermAction,

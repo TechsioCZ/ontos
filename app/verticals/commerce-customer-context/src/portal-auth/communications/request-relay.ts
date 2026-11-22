@@ -1,7 +1,7 @@
 import { Crypto, DateTime, Duration, Effect, Layer, Option, Result, Schedule, Schema } from 'effect';
 
 import { CommercePortalAuthCommunicationRequestSubmitter } from './communication-request-submitter.ts';
-import type { PortalAuthSubmission } from './communication-request-submitter.ts';
+import type { PortalAuthTransportAnswer } from './communication-request-submitter.ts';
 import type { PortalAuthCommunicationUnavailable } from './communication-unavailable.ts';
 import { CommercePortalAuthCommunicationStore } from './communication-store.ts';
 import type { ClaimedCommunicationRequest } from './communication-store.ts';
@@ -43,12 +43,22 @@ export interface RelayTickResult {
   readonly expired: number;
   /** Rows whose lease was taken over before this relay could record their outcome. */
   readonly lost: number;
+  /** Rows the production transport queued for the module's source worker (decided later by Communications). */
+  readonly relayed: number;
   readonly released: number;
   /** Rows whose outcome the store could not record now: they stay leased until the lease expires, then are relayed again. */
   readonly unrecorded: number;
 }
 
-const RowResultSchema = Schema.Literals(['CONFLICT', 'DECIDED', 'EXPIRED', 'LOST', 'RELEASED', 'UNRECORDED']);
+const RowResultSchema = Schema.Literals([
+  'CONFLICT',
+  'DECIDED',
+  'EXPIRED',
+  'LOST',
+  'RELAYED',
+  'RELEASED',
+  'UNRECORDED',
+]);
 type RowResult = typeof RowResultSchema.Type;
 
 /** Identities Communications owns; Auth only keeps them to tell which stored decision a row ended with. */
@@ -79,19 +89,31 @@ const StoredOutcomeSchema = Schema.Union([
     outcome: Schema.Literal('CONFLICT'),
     requestId: CommunicationsRefSchema,
   }),
+  Schema.Struct({ outcome: Schema.Literal('RELAYED') }),
 ]);
 /** The safe summary a relayed row keeps: identities and closed codes, exactly as Communications answered them. */
-const encodeOutcome = (submission: PortalAuthSubmission) =>
+const encodeOutcome = (submission: PortalAuthTransportAnswer) =>
   Schema.decodeUnknownEffect(StoredOutcomeSchema)(submission).pipe(
     Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(StoredOutcomeSchema))),
   );
 
 /** Whether any message can still leave for this decision: a stop is final and is never repaired by reissuing. */
-const leavesNoMessage = (submission: PortalAuthSubmission): boolean => {
+const leavesNoMessage = (submission: PortalAuthTransportAnswer): boolean => {
+  if (submission.outcome === 'RELAYED') {
+    // not decided yet: the issuance keeps its protected value until it is settled, superseded or expires
+    return false;
+  }
   if (submission.outcome === 'CONFLICT' || submission.decision.kind === 'NO_MESSAGE') {
     return true;
   }
   return !submission.decision.intents.some(({ status }) => status === 'PENDING_HANDOFF');
+};
+
+const stateOf = (submission: PortalAuthTransportAnswer) => {
+  if (submission.outcome === 'DECIDED') {
+    return 'DECIDED' as const;
+  }
+  return submission.outcome;
 };
 
 const retryDelayMillis = (options: RelayOptions, attempts: number) =>
@@ -138,7 +160,7 @@ const relayRow = Effect.fn('PortalAuthCommunicationRelay.relayRow')(function* re
   }
   const submission = submitted.success;
   const outcome = yield* encodeOutcome(submission).pipe(Effect.option);
-  const state = submission.outcome === 'CONFLICT' ? 'CONFLICT' : 'DECIDED';
+  const state = stateOf(submission);
   return yield* store
     .complete({ forget: leavesNoMessage(submission), issuanceRef, leaseOwner, now, outcome, state })
     .pipe(Effect.map((completed) => ended(completed, state)));
@@ -181,6 +203,7 @@ export const relayCommunicationRequests = Effect.fn('PortalAuthCommunicationRela
     decided: count(results, 'DECIDED'),
     expired: count(results, 'EXPIRED'),
     lost: count(results, 'LOST'),
+    relayed: count(results, 'RELAYED'),
     released: count(results, 'RELEASED'),
     unrecorded: count(results, 'UNRECORDED'),
   };

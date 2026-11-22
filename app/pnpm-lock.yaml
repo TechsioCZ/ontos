@@ -1515,6 +1515,9 @@ importers:
       '@app/commerce-order-contracts':
         specifier: workspace:*
         version: link:../../packages/commerce-order-contracts
+      '@app/communications':
+        specifier: workspace:*
+        version: link:../communications
       '@app/communications-contracts':
         specifier: workspace:*
         version: link:../../packages/communications-contracts

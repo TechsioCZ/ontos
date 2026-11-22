@@ -112,6 +112,7 @@ import { ReactivateCustomerGroupActionApi } from './apis/reactivate-customer-gro
 import { ReactivateCustomerProfileActionApi } from './apis/reactivate-customer-profile-action.ts';
 import { RecordPortalEnrollmentOutcomeActionApi } from './apis/record-portal-enrollment-outcome-action.ts';
 import { RecoverRetailPortalProfileBindingActionApi } from './apis/recover-retail-portal-profile-binding-action.ts';
+import { RelayPortalAuthCommunicationRequestActionApi } from './apis/relay-portal-auth-communication-request-action.ts';
 import { RemoveCounterpartyPriceGroupActionApi } from './apis/remove-counterparty-price-group-action.ts';
 import { RemoveCustomerGroupActionApi } from './apis/remove-customer-group-action.ts';
 import { RemoveCustomerPaymentTermActionApi } from './apis/remove-customer-payment-term-action.ts';
@@ -293,6 +294,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof ReactivateCustomerProfileActionApi
   | typeof RecordPortalEnrollmentOutcomeActionApi
   | typeof RecoverRetailPortalProfileBindingActionApi
+  | typeof RelayPortalAuthCommunicationRequestActionApi
   | typeof RemoveCounterpartyPriceGroupActionApi
   | typeof RemoveCustomerGroupActionApi
   | typeof RemoveCustomerPaymentTermActionApi
@@ -442,6 +444,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(ReactivateCustomerProfileActionApi)
   .addHttpApi(RecordPortalEnrollmentOutcomeActionApi)
   .addHttpApi(RecoverRetailPortalProfileBindingActionApi)
+  .addHttpApi(RelayPortalAuthCommunicationRequestActionApi)
   .addHttpApi(RemoveCounterpartyPriceGroupActionApi)
   .addHttpApi(RemoveCustomerGroupActionApi)
   .addHttpApi(RemoveCustomerPaymentTermActionApi)

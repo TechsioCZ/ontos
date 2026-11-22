@@ -273,6 +273,7 @@ import { reactivateCustomerGroupActionApiLive } from './reactivate-customer-grou
 import { reactivateCustomerProfileActionApiLive } from './reactivate-customer-profile-action-server.ts';
 import { recordPortalEnrollmentOutcomeActionApiLive } from './record-portal-enrollment-outcome-action-server.ts';
 import { recoverRetailPortalProfileBindingActionApiLive } from './recover-retail-portal-profile-binding-action-server.ts';
+import { relayPortalAuthCommunicationRequestActionApiLive } from './relay-portal-auth-communication-request-action-server.ts';
 import { removeCounterpartyPriceGroupActionApiLive } from './remove-counterparty-price-group-action-server.ts';
 import { removeCustomerGroupActionApiLive } from './remove-customer-group-action-server.ts';
 import { removeCustomerPaymentTermActionApiLive } from './remove-customer-payment-term-action-server.ts';
@@ -1233,6 +1234,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     reactivateCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     recordPortalEnrollmentOutcomeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     recoverRetailPortalProfileBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    relayPortalAuthCommunicationRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     removeCounterpartyPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     removeCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     removeCustomerPaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -12,6 +12,8 @@ import { reconcilePartyMergePersistenceForTransaction } from '../persistence/pro
 import { ReconcilePartyMergePersistence } from '../workers/reconcile-party-merge.worker.ts';
 import type { PrivacyMeasureOwnerGateway } from '../workers/privacy-measure-owner-gateway.ts';
 import { PrivacyMeasureOwnerGatewayLive } from '../workers/privacy-measure-owner-gateway.ts';
+import type { PortalAuthCommunicationSourceGateway } from '../workers/portal-auth-communication-source-gateway.ts';
+import { PortalAuthCommunicationSourceGatewayLive } from '../workers/portal-auth-communication-source-gateway.ts';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
@@ -24,6 +26,7 @@ const outboxWorkerHandlerLayer = Layer.mergeAll(
 type OutboxWorkerOwnerServices =
   | OutboxRuntime
   | OutboxWorkerLegalEntityScopeFanout
+  | PortalAuthCommunicationSourceGateway
   | PrivacyMeasureOwnerGateway
   | ReconcilePartyMergePersistence;
 export type { OutboxWorkerOwnerServices };
@@ -37,6 +40,7 @@ export const outboxWorkerLayer: Layer.Layer<
 > = Layer.mergeAll(
   OutboxWorkerInfrastructureLive,
   PrivacyMeasureOwnerGatewayLive,
+  PortalAuthCommunicationSourceGatewayLive,
   outboxWorkerHandlerLayer,
   OutboxWorkerLegalEntityScopeFanoutLive,
 );

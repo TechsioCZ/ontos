@@ -5,6 +5,8 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/communications-client.ts",
+    "./api/submit-communication-request-action": "./shared/apis/submit-communication-request-action.ts",
+    "./api/submit-communication-request-action/client": "./src/api/submit-communication-request-action-client.ts",
     "./api/privacy-owner-coverage": "./shared/apis/privacy-owner-coverage.ts",
     "./api/privacy-owner-execution-outcome": "./shared/apis/privacy-owner-execution-outcome.ts",
     "./api/privacy-owner-execution-outcome/client": "./src/api/privacy-owner-execution-outcome-client.ts",
