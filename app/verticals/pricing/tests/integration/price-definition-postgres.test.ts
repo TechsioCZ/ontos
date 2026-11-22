@@ -46,6 +46,9 @@ import type {
   ProductPriceBulkTargetIntent,
 } from '../../src/services/product-price-bulk-command.port.ts';
 import { productPriceBulkActionInvocationIdFor } from '../../src/services/product-price-bulk-command.port.ts';
+import { applyPriceRevision } from '../../src/actions/revise-price.action.ts';
+import { externalPriceSourceAuthorityForScope } from '../../src/persistence/external-price-source-authority-persistence.ts';
+import { makeExternalPriceInputBoundary } from '../../src/services/external-price-input-boundary.service.ts';
 
 const tenantId = 'e7550000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7550000-0000-4000-8000-000000000002';
@@ -2249,6 +2252,165 @@ it.live('starts a value-only revision at the effective time its source asserts, 
         outcome: 'REVISED',
         revision: { effectivePeriod: { effectiveFrom: '2026-09-27T13:00:00.000Z' } },
       });
+    }),
+  ),
+);
+
+it.live('revises a stored uppercase native identity through the real Action and PostgreSQL without another Price', () =>
+  Effect.scoped(
+    Effect.gen(function* reviseHistoricalNativeIdentity() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      const cleanup = admin
+        .execute(sql`delete from pricing.external_price_source_authority_grants where tenant_id = ${tenantId}::uuid`)
+        .pipe(Effect.andThen(cleanupPricingFacts(admin)));
+      yield* cleanup;
+      yield* Effect.addFinalizer(() => cleanup.pipe(Effect.orDie));
+
+      const canonicalKey: PriceIdentityKey = {
+        ...identityKey,
+        priceGroupSelector: {
+          kind: 'PRICE_GROUP',
+          priceGroupRef: {
+            moduleId: 'pricing.price-group-catalog',
+            resourceId: 'e7560000-0000-4000-8000-00000000008a',
+            resourceType: 'pricing.price-group-catalog.price-group',
+            tenantId,
+          },
+        },
+      };
+      const historicalKey: PriceIdentityKey = {
+        ...canonicalKey,
+        priceGroupSelector: {
+          kind: 'PRICE_GROUP',
+          priceGroupRef: {
+            moduleId: 'pricing.price-group-catalog',
+            resourceId: 'E7560000-0000-4000-8000-00000000008A',
+            resourceType: 'pricing.price-group-catalog.price-group',
+            tenantId,
+          },
+        },
+        unitBasis: {
+          ...canonicalKey.unitBasis,
+          unitRef: {
+            ...canonicalKey.unitBasis.unitRef,
+            resourceId: canonicalKey.unitBasis.unitRef.resourceId.toUpperCase(),
+          },
+        },
+      };
+      const historicalPriceId = 'e7560000-0000-4000-8000-000000000080';
+      const initial = command('e7560000-0000-4000-8000-000000000081', historicalPriceId, {
+        identityKey: historicalKey,
+      });
+      const at = '2026-09-27T12:00:00.000Z';
+      yield* runtime.transaction((transaction) =>
+        Effect.gen(function* reviseWithNativeServices() {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id', ${tenantId}, true),
+                       set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+          );
+          const ownerTransaction = yield* installOperationalScope(transaction, scope);
+          const persistence = yield* pricePersistenceForScope(ownerTransaction, scope);
+          const authority = yield* externalPriceSourceAuthorityForScope(ownerTransaction, scope);
+          // Seed the historical owner storage shape, not a rewritten or case-folded schedule.
+          const created = yield* persistence.define(initial);
+          expect(created).toMatchObject({ definition: { identityKey: historicalKey }, outcome: 'CREATED' });
+          const schedule = yield* persistence.readSchedule(initial.priceRef, instant(at));
+          if (schedule.outcome !== 'PRICE_SCHEDULE_CURRENT' || schedule.schedule.current === undefined) {
+            return yield* Effect.die('Expected the historical uppercase Price to be Current');
+          }
+          const { current } = schedule.schedule;
+          expect(current.definition.identityKey).toEqual(historicalKey);
+          const revision: ValueOnlyRevision = {
+            actingPrincipalId: principalId,
+            actionInvocationId: 'e7560000-0000-4000-8000-000000000082',
+            effectiveFrom: at,
+            expectedCurrent: {
+              effectivePeriod: current.effectivePeriod,
+              priceRef: initial.priceRef,
+              revision: current.definition.revision.revision,
+              revisionId: current.definition.revision.revisionId,
+              scheduleRevision: schedule.schedule.scheduleRevision,
+            },
+            intent: 'VALUE_ONLY_CURRENT',
+            monetaryAmount: { amount: '200', currencyCode: 'CZK' },
+            priceRef: initial.priceRef,
+            reason: 'Revise the historical Price without rewriting its native identities.',
+            trustedOperationAt: instant(at),
+          };
+          const evidence = revisionSourceEvidence(
+            revision,
+            initial.sourceEvidence.sourceAssertion.sourceAssertionId,
+            at,
+            historicalKey.unitBasis,
+          );
+          expect(
+            yield* authority.store({
+              authority: evidence.sourceAssertion.sourceAuthority,
+              effectivePeriod: { effectiveFrom: initial.effectiveFrom },
+              exactIdentityKey: canonicalKey,
+              family: 'PRICE',
+              mapping: evidence.sourceAssertion.mapping,
+              ownerModuleId: 'commerce.pricing',
+              schemaVersion: '1',
+              verificationRef: 'historical-price-native-revision',
+              verifiedAt: initial.effectiveFrom,
+            }),
+          ).toEqual({ outcome: 'STORED' });
+          const revised = yield* applyPriceRevision(
+            {
+              effectiveFrom: at,
+              expectedCurrent: revision.expectedCurrent,
+              intent: revision.intent,
+              monetaryAmount: revision.monetaryAmount,
+              priceRef: revision.priceRef,
+              reason: revision.reason,
+              sourceAssertion: evidence.sourceAssertion,
+            },
+            {
+              actingPrincipalId: principalId,
+              actionInvocationId: revision.actionInvocationId,
+              legalEntityId,
+              requestCorrelationId: 'historical-price-native-revision',
+              tenantId,
+              trustedOperationAt: revision.trustedOperationAt,
+            },
+            {
+              assessExternalPriceInput: makeExternalPriceInputBoundary(authority).assess,
+              readSchedule: persistence.readSchedule,
+              revise: persistence.revise,
+            },
+          );
+          expect(revised).toMatchObject({
+            outcome: 'PRICE_REVISION_CREATED',
+            revision: {
+              definition: {
+                identityKey: historicalKey,
+                priceRef: initial.priceRef,
+                revision: { monetaryAmount: { amount: '200.000000000' }, revision: 2 },
+              },
+            },
+          });
+          expect(yield* persistence.lookupResult({ actionInvocationId: revision.actionInvocationId })).toMatchObject({
+            outcome: 'PRICE_ACTION_RESULT_FOUND',
+            result: {
+              outcome: 'REVISED',
+              provenance: { evidence: { sourceAssertion: evidence.sourceAssertion } },
+              revision: revised.revision,
+            },
+          });
+          return yield* Effect.void;
+        }),
+      );
+      expect(
+        yield* admin.execute<{ readonly priceCount: number; readonly revisionCount: number }>(
+          sql`select
+            (select count(*)::integer from pricing.prices where tenant_id = ${tenantId}::uuid) as "priceCount",
+            (select count(*)::integer from pricing.price_revisions where tenant_id = ${tenantId}::uuid) as "revisionCount"`,
+          'objects',
+        ),
+      ).toEqual([{ priceCount: 1, revisionCount: 2 }]);
     }),
   ),
 );
