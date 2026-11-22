@@ -95,6 +95,7 @@ export const handleGovernVariantAxes = Effect.fn('GovernVariantAxesAction.handle
     principalId: context.scope.principalId,
     productRef: payload.productRef,
     reason: payload.reason,
+    sourceProduct: payload.sourceProduct,
   });
   yield* context.recordDataAccess({
     accessKind: 'read',
@@ -152,6 +153,10 @@ export const governVariantAxesAction = defineAction(
       selectors: [],
     },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.catalog.govern-variant-axes.access.v1' },
+    accessWorkload: {
+      reason: 'Govern source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-import'],
+    },
     actionKey,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',

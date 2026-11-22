@@ -17,6 +17,7 @@ import {
   createProductOperation,
   createVariantOperation,
   updateProductOperation,
+  readinessOperations,
   variantFactsOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
 import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
@@ -576,6 +577,26 @@ describe('Symmy route request refusals', () => {
     expect(Result.isSuccess(decodeReference(reference))).toBe(true);
     expect(Result.isFailure(decodeReference({ ...reference, routeRevision: encoded.routeRevision }))).toBe(true);
   });
+});
+
+it('requires every readiness action and a tenant-local Unit when the Product route enrolls readiness', () => {
+  const catalogReadiness = { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef } as const;
+  const incomplete = withConfiguration('productsBatch', { catalogReadiness });
+  expect(codes(incomplete)).toContain('configuration_field_not_allowed');
+  const complete = withConfiguration('productsBatch', {
+    catalogReadiness,
+    items: [
+      item('PRODUCT', [createProduct, ...readinessOperations]),
+      item('VARIANT', [createVariant]),
+      item('PRICE', [definePrice]),
+    ],
+  });
+  expect(codes(complete)).toEqual([]);
+  const foreign = withConfiguration('productsBatch', {
+    catalogReadiness: { ...catalogReadiness, unitRef: { ...unitRef, tenantId: otherLegalEntityId } },
+    items: [item('PRODUCT', [createProduct, ...readinessOperations]), item('PRICE', [definePrice])],
+  });
+  expect(codes(foreign)).toContain('configuration_field_not_allowed');
 });
 
 describe('Symmy route state refusals', () => {

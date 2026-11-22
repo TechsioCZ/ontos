@@ -19,7 +19,7 @@ import {
 } from '../../shared/domain/product.ts';
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import { CreateProductResultSchema } from '../../shared/actions/create-product.ts';
-import type { CreateProductResult } from '../../shared/actions/create-product.ts';
+import type { CreateProductPayload, CreateProductResult } from '../../shared/actions/create-product.ts';
 import { UpdateProductResultSchema } from '../../shared/actions/update-product.ts';
 import type { UpdateProductResult } from '../../shared/actions/update-product.ts';
 import { ProductRevisionReferenceSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
@@ -32,6 +32,7 @@ import {
 import type { CatalogActionRecovery } from '../api/catalog-action-result-recovery.ts';
 import { CatalogPersistenceConflict, CatalogPersistenceUnavailable } from './errors.ts';
 import { catalogSelectionEvidenceForScope } from './catalog-selection-evidence-service.ts';
+import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 import {
   productLifecycleEvents,
   productLocalizedFacts,
@@ -64,6 +65,7 @@ interface UpdateProductPersistenceInput {
   readonly principalId: string;
   readonly productId: string;
   readonly reason: string;
+  readonly sourceProduct?: CreateProductPayload | undefined;
   readonly targetLifecycle: ProductLifecycle | undefined;
   readonly tenantId: string;
 }
@@ -516,6 +518,7 @@ export const catalogPersistenceForScope = (
       variants: [initialVariant],
     };
     const result = yield* Schema.decodeEffect(CreateProductResultSchema)({
+      initialVariantRevision: 1,
       product,
       variantId: variant.variantId,
     }).pipe(Effect.mapError(unavailable));
@@ -626,12 +629,43 @@ export const catalogPersistenceForScope = (
 
   // oxlint-disable-next-line complexity -- Lifecycle and optimistic-concurrency branches are the complete Product update state machine. expires: 2027-03-31.
   const update: CatalogPersistence['update'] = Effect.fn('CatalogPersistence.update')(function* update(input) {
+    if (input.sourceProduct !== undefined) {
+      yield* transaction
+        .select({ productId: products.productId })
+        .from(products)
+        .where(and(eq(products.tenantId, tenantId), eq(products.productId, input.productId)))
+        .for('update')
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
+    }
     const current = yield* loadProduct(transaction, tenantId, input.productId, selectionEvidence);
     if (Option.isNone(current)) {
       return { _tag: 'not_found' as const };
     }
     const existing = current.value;
-    if (existing.revision !== input.expectedRevision) {
+    const [initialVariant] = existing.variants;
+    const sourceMatches = yield* catalogSourceProductIntentMatches(transaction, scope, {
+      productRef: existing.productRef,
+      sourceProduct: input.sourceProduct,
+      ...(initialVariant === undefined ? {} : { variantRef: initialVariant.variantRef }),
+    });
+    if (input.sourceProduct !== undefined && !sourceMatches) {
+      return { _tag: 'revision_conflict' as const, actualRevision: existing.revision };
+    }
+    const adoptingSourceActivation =
+      sourceMatches &&
+      input.expectedRevision === 1 &&
+      existing.revision === 2 &&
+      input.targetLifecycle === 'ACTIVE' &&
+      existing.lifecycle === 'ACTIVE' &&
+      input.activateVariantId === undefined &&
+      input.name === undefined &&
+      input.description === undefined &&
+      existing.name === input.sourceProduct?.name &&
+      existing.description === input.sourceProduct?.description &&
+      existing.variants.length === 1 &&
+      initialVariant?.lifecycle === 'ACTIVE';
+    if (existing.revision !== input.expectedRevision && !adoptingSourceActivation) {
       return { _tag: 'revision_conflict' as const, actualRevision: existing.revision };
     }
     if (existing.lifecycle === 'RETIRED') {

@@ -1,4 +1,6 @@
 import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
+import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
+import { SetProductUnitTargetDivisibilityPayloadSchema } from '@app/catalog/api/set-product-unit-target-divisibility-action';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
@@ -196,6 +198,15 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
   priceSource: Schema.optionalKey(SymmyPriceSourceSchema),
   /** One integration-wide Inventory policy, shared by product completion and stock resolution. */
   inventorySource: Schema.optionalKey(SymmyInventorySourceSchema),
+  /** Explicit operator authority for source-requested ACTIVE, axis-free, untyped Products. */
+  catalogReadiness: Schema.optionalKey(
+    Schema.Struct({
+      divisible: SetProductUnitTargetDivisibilityPayloadSchema.fields.divisible,
+      kind: Schema.Literal('AXIS_FREE_UNTYPED'),
+      locale: SetProductLocalizedFactsPayloadSchema.fields.locale,
+      unitRef: SetProductUnitTargetDivisibilityPayloadSchema.fields.target.fields.unit,
+    }),
+  ),
 }).check(validPlanGraph);
 
 /** Explicit normalized internal business inputs; real Symmy wire acceptance is separate. */

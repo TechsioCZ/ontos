@@ -9,7 +9,7 @@ import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-ex
 import { SymmyProductRowsSchema, symmyProductPlanSize } from '../../shared/domain/symmy-product-batch.ts';
 import type { SymmyProductPriceGroupFacts } from '../../shared/domain/symmy-product-batch.ts';
 import { symmyRequestItemKey } from '../../src/persistence/symmy-job-execution-store.ts';
-import { buildSymmyProductPlan } from '../../src/persistence/symmy-product-plan.ts';
+import { buildSymmyProductPlan, readinessOperations } from '../../src/persistence/symmy-product-plan.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -140,6 +140,52 @@ const priceRequestOf = (effect: Effect_) =>
     ),
   );
 const requestTagOf = (effect: Effect_) => dependentOf(effect)?.request._tag;
+
+it.effect('plans readiness only for explicit ACTIVE under an enrolled axis-free untyped policy', () =>
+  Effect.gen(function* readinessPlan() {
+    const source = templateInput(priceDefaults);
+    const readyTemplate = decodeTemplate({
+      ...source,
+      catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
+      items: [
+        enroll('PRODUCT', 'enrolled-product', createProduct, ...readinessOperations),
+        enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts),
+        enroll('PRICE', 'enrolled-price', priceDefine),
+      ],
+    });
+    const active = yield* build(rowsOf(product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] })])), {
+      template: readyTemplate,
+    });
+    expect(Option.isSome(active)).toBe(true);
+    if (Option.isNone(active)) {
+      return yield* Effect.die('Expected an ACTIVE plan');
+    }
+    const { effects } = itemOf(active.value, 'product-0');
+    expect(effects.map(({ effectKey }) => effectKey)).toEqual([
+      'product-create',
+      'readiness-axes',
+      'readiness-confirm',
+      'readiness-name',
+      'readiness-activate',
+      'readiness-unit',
+      'readiness-untyped',
+    ]);
+    expect(effectOf(active.value, 'product-0', 'readiness-name').intent).toMatchObject({
+      request: { kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', name: 'Chair', step: 'NAME' },
+    });
+    expect(itemOf(active.value, 'product-0-variant-0-price-0').effects[0]?.dependsOn).toContainEqual({
+      effectKey: 'readiness-untyped',
+      itemKey: 'product-0',
+    });
+    const draft = yield* build(rowsOf(product()), { template: readyTemplate });
+    expect(Option.isSome(draft)).toBe(true);
+    if (Option.isNone(draft)) {
+      return yield* Effect.die('Expected a DRAFT plan');
+    }
+    expect(itemOf(draft.value, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
+    return yield* Effect.void;
+  }),
+);
 const variantCreateOf = (effect: Effect_) =>
   Option.getOrUndefined(
     Match.value(effect.intent).pipe(

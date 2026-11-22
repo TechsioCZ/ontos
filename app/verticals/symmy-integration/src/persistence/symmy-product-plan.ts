@@ -35,6 +35,19 @@ export const variantFactsOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
+const readinessOperation = (entrypointKey: string) => ({
+  entrypointKey: `commerce.catalog.${entrypointKey}`,
+  moduleId: catalogModule,
+  schemaVersion: '1',
+});
+export const readinessOperations = [
+  readinessOperation('govern-variant-axes'),
+  readinessOperation('confirm-variant-combination'),
+  readinessOperation('set-product-localized-facts'),
+  updateProductOperation,
+  readinessOperation('set-product-unit-target-divisibility'),
+  readinessOperation('decide-product-type-unnecessary'),
+] as const;
 
 export const provisionStockItemOperation = {
   entrypointKey: 'commerce.inventory.provision-source-stock-item',
@@ -58,6 +71,7 @@ const present = <Value>(key: string, value: Value | undefined): Readonly<Record<
 
 /** What the route enrolls for the products: where each kind of record lives, and the price grants when it has them. */
 interface Enrollment {
+  readonly catalogReadiness: SymmyFixtureExecutionPlan['catalogReadiness'];
   readonly inventorySource: SymmyFixtureExecutionPlan['inventorySource'];
   readonly mappingRevision: string;
   readonly prices: Option.Option<PriceContext>;
@@ -464,27 +478,58 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
     buildVariantItem({ ...facts, enrollment, evidenceRefs, parent, position, productRecord, variant }),
   );
   const updates = row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED';
-  const updateEffect = updates
-    ? [
-        {
-          dependsOn: [productCreateKey, ...variantItems.flatMap(({ created }) => created)],
-          effectKey: productUpdateKey,
+  const ready = row.lifecycle === 'ACTIVE' ? enrollment.catalogReadiness : undefined;
+  if (
+    ready !== undefined &&
+    (variants.length !== 1 ||
+      row.unsupported.includes('AttributeHint') ||
+      row.unsupported.includes('ClassificationHint'))
+  ) {
+    return Option.none();
+  }
+  const readinessSteps = ['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED'] as const;
+  const readinessEffects =
+    ready === undefined
+      ? []
+      : readinessSteps.map((step, position) => ({
+          dependsOn: [
+            parent,
+            ...readinessSteps.slice(0, position).map((previous) => ({
+              effectKey: `readiness-${previous.toLowerCase()}`,
+              itemKey: productItemKey,
+            })),
+          ],
+          effectKey: `readiness-${step.toLowerCase()}`,
           intent: {
             _tag: 'CatalogProductDependentEffect',
             parent,
-            request: {
-              _tag: 'UpdateProduct',
-              payload: { expectedRevision: 1, reason: SYMMY_PRODUCT_REASON, targetLifecycle: row.lifecycle },
-            },
+            request: { _tag: 'CatalogReadiness', ...ready, evidenceRefs, name: row.name, step },
           },
-          operation: updateProductOperation,
-        },
-      ]
-    : [];
+          operation: readinessOperations[position],
+        }));
+  const updateEffect =
+    updates && ready === undefined
+      ? [
+          {
+            dependsOn: [productCreateKey, ...variantItems.flatMap(({ created }) => created)],
+            effectKey: productUpdateKey,
+            intent: {
+              _tag: 'CatalogProductDependentEffect',
+              parent,
+              request: {
+                _tag: 'UpdateProduct',
+                payload: { expectedRevision: 1, reason: SYMMY_PRODUCT_REASON, targetLifecycle: row.lifecycle },
+              },
+            },
+            operation: updateProductOperation,
+          },
+        ]
+      : [];
   const priceDependencies = (variantPosition: number) => [
     parent,
     ...variantItems.flatMap(({ created }, position) => (position === variantPosition ? created : [])),
-    ...(updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
+    ...(ready === undefined && updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
+    ...(ready === undefined ? [] : [{ effectKey: 'readiness-untyped', itemKey: productItemKey }]),
   ];
   const priceItems = prices.pipe(
     Option.match({
@@ -573,6 +618,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
         operation: createProductOperation,
       },
       ...updateEffect,
+      ...readinessEffects,
       ...provisionEffects,
     ],
     itemKey: productItemKey,
@@ -637,7 +683,16 @@ export const buildSymmyProductPlan = Effect.fn('SymmyProductPlan.build')(functio
   ) {
     return Option.none<SymmyFixtureExecutionPlan>();
   }
+  if (
+    template.catalogReadiness !== undefined &&
+    (template.catalogReadiness.unitRef.tenantId !== tenantId ||
+      (rows.some(({ lifecycle }) => lifecycle === 'ACTIVE') &&
+        readinessOperations.some((operation) => Option.isNone(enrolledItem(template, 'PRODUCT', operation)))))
+  ) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
   const enrollment = {
+    catalogReadiness: template.catalogReadiness,
     inventorySource: template.inventorySource,
     mappingRevision: template.sourceMappingVersion ?? route.mappingVersion,
     prices,

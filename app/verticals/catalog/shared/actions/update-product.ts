@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
 import {
   ProductLifecycleSchema,
@@ -14,6 +15,7 @@ export const UpdateProductPayloadSchema = Schema.Struct({
   expectedRevision: ProductRevisionSchema,
   productRef: ProductRefSchema,
   reason: ProductReasonSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
   targetLifecycle: Schema.optionalKey(ProductLifecycleSchema),
 });
 export type UpdateProductPayload = typeof UpdateProductPayloadSchema.Type;

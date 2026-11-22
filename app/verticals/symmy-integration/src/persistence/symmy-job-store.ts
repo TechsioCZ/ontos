@@ -174,6 +174,13 @@ const inventorySourceAllowed = (
     Match.tag('CatalogProductDependentEffect', ({ request }) =>
       Match.value(request).pipe(
         Match.tag('ProvisionSourceStockItem', ({ source }) => matches(source)),
+        Match.tag(
+          'CatalogReadiness',
+          ({ divisible, kind, locale, unitRef }) =>
+            template.catalogReadiness !== undefined &&
+            computeCanonicalValueHash({ divisible, kind, locale, unitRef }) ===
+              computeCanonicalValueHash(template.catalogReadiness),
+        ),
         Match.orElse(() => true),
       ),
     ),

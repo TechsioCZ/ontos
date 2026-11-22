@@ -17,6 +17,7 @@ import {
 import { effectiveAttributeValueReadsForScope } from './effective-attribute-value-reads.ts';
 import type { AttributeValueSetValidityBasis } from './effective-attribute-value-reads.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
+import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
@@ -56,6 +57,35 @@ const unavailable = (cause: unknown): CatalogPersistenceUnavailable => {
 const sameTokens = (actual: readonly string[], expected: readonly string[]): boolean =>
   actual.length === expected.length && actual.every((token, index) => token === expected[index]);
 
+interface InventoryRevisionTokens {
+  readonly valueRevisionTokens: readonly string[];
+  readonly variantRevisionTokens: readonly string[];
+}
+const sameInventoryTokens = (actual: InventoryRevisionTokens, expected: InventoryRevisionTokens) =>
+  sameTokens(actual.valueRevisionTokens, expected.valueRevisionTokens) &&
+  sameTokens(actual.variantRevisionTokens, expected.variantRevisionTokens);
+
+const sameSourceDecision = (input: {
+  readonly axisRevision: number;
+  readonly payload: DecideProductTypeUnnecessaryPayload;
+  readonly previous: typeof productTypeUntypedDecisions.$inferSelect | undefined;
+  readonly principalId: string;
+  readonly productRevision: number;
+  readonly sourceMatches: boolean;
+  readonly valueRevisionTokens: readonly string[];
+  readonly variantRevisionTokens: readonly string[];
+}) =>
+  input.sourceMatches &&
+  input.payload.expectedDecisionRevision === 0 &&
+  input.previous?.decisionRevision === 1 &&
+  input.previous.actingPrincipalId === input.principalId &&
+  input.previous.decisionState === input.payload.decisionState &&
+  input.previous.productRevision === input.productRevision &&
+  input.previous.axisRevision === input.axisRevision &&
+  input.previous.structuredAttributesRequired === input.payload.structuredAttributesRequired &&
+  input.previous.variantAxesRequired === input.payload.variantAxesRequired &&
+  sameInventoryTokens(input.previous, input);
+
 const inventoryBelongsToProduct = (
   inventory: AttributeValueSetValidityBasis,
   variants: readonly (typeof productVariants.$inferSelect)[],
@@ -79,6 +109,14 @@ const currentVariantInventoryIsConsistent = (
     inventory.entries.every((entry) => entry.variantId === null || ids.has(entry.variantId))
   );
 };
+
+const conflictsWithUntypedDecision = (
+  payload: DecideProductTypeUnnecessaryPayload,
+  axes: readonly (typeof productVariantAxes.$inferSelect)[],
+  inventory: AttributeValueSetValidityBasis,
+) =>
+  payload.decisionState === 'CONFIRMED' &&
+  (axes.length !== 0 || inventory.entries.some((entry) => entry.currentState === 'SET'));
 
 /** Core supplies the transaction and trusted scope; the Product lock serializes the decision basis. */
 export const productTypeUntypedDecisionPersistenceForScope = Effect.fn('productTypeUntypedDecisionPersistenceForScope')(
@@ -106,8 +144,15 @@ export const productTypeUntypedDecisionPersistenceForScope = Effect.fn('productT
         if (product === undefined || product.tenantId !== scope.tenantId || product.productId !== productId) {
           return yield* rejected('Product is not Current in the trusted Tenant');
         }
-        if (product.currentRevision !== payload.expectedProductRevision) {
-          return yield* rejected('Product revision is stale');
+        const sourceMatches = yield* catalogSourceProductIntentMatches(transaction, scope, {
+          productRef,
+          sourceProduct: payload.sourceProduct,
+        });
+        if (
+          product.currentRevision !== payload.expectedProductRevision ||
+          (payload.sourceProduct !== undefined && !sourceMatches)
+        ) {
+          return yield* rejected('Product revision is stale or source creation intent does not match');
         }
         const [assignment, decisions, axisEvents, axes, variants, inventory] = yield* Effect.all(
           [
@@ -170,7 +215,6 @@ export const productTypeUntypedDecisionPersistenceForScope = Effect.fn('productT
         const decisionRevision = previous?.decisionRevision ?? 0;
         const axisRevision = axisEvents[0]?.axisRevision ?? 0;
         if (
-          decisionRevision !== payload.expectedDecisionRevision ||
           axisRevision !== payload.expectedAxisRevision ||
           !inventoryBelongsToProduct(inventory, variants, axes, scope.tenantId, productId)
         ) {
@@ -191,16 +235,35 @@ export const productTypeUntypedDecisionPersistenceForScope = Effect.fn('productT
             .map((entry) => `${entry.variantId}:${entry.sourceRevisionToken}`),
         ].toSorted();
         if (
-          !sameTokens(valueRevisionTokens, payload.expectedValueRevisionTokens) ||
-          !sameTokens(variantRevisionTokens, payload.expectedVariantRevisionTokens)
+          !sameInventoryTokens(
+            { valueRevisionTokens, variantRevisionTokens },
+            {
+              valueRevisionTokens: payload.expectedValueRevisionTokens,
+              variantRevisionTokens: payload.expectedVariantRevisionTokens,
+            },
+          )
         ) {
           return yield* rejected('Current Product or Variant inventory revisions are stale');
         }
-        if (
-          payload.decisionState === 'CONFIRMED' &&
-          (axes.length !== 0 || inventory.entries.some((entry) => entry.currentState === 'SET'))
-        ) {
+        if (conflictsWithUntypedDecision(payload, axes, inventory)) {
           return yield* rejected('Structured attributes or Variant Axes still exist');
+        }
+        if (
+          sameSourceDecision({
+            axisRevision,
+            payload,
+            previous,
+            principalId: scope.principalId,
+            productRevision: product.currentRevision,
+            sourceMatches,
+            valueRevisionTokens,
+            variantRevisionTokens,
+          })
+        ) {
+          return { decisionRevision, decisionState: payload.decisionState, productRef };
+        }
+        if (decisionRevision !== payload.expectedDecisionRevision) {
+          return yield* rejected('Current decision basis is stale');
         }
         const nextRevision = decisionRevision + 1;
         yield* transaction

@@ -6,6 +6,7 @@ import type { Crypto } from 'effect';
 
 import { CreateVariantResultSchema } from '../../shared/actions/create-variant.ts';
 import type { CreateVariantResult } from '../../shared/actions/create-variant.ts';
+import type { CreateProductPayload } from '../../shared/actions/create-product.ts';
 import { ProductVariantSchema } from '../../shared/domain/product.ts';
 import type { ProductVariant } from '../../shared/domain/product.ts';
 import { VariantCombinationKeySchema } from '../../shared/domain/variant-axes.ts';
@@ -22,6 +23,7 @@ import type { VariantUseChangeConflict } from '../../shared/domain/variant-use-c
 import type { VariantUseChangePersistence } from './variant-use-change-persistence.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
 import { axisFreeCombinationKey } from './variant-current-basis.ts';
+import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 import {
   VariantAxisBasisUnavailable,
   effectiveValueItemKeyHash,
@@ -69,6 +71,7 @@ export interface ConfirmVariantCombinationPersistenceInput extends ChangeEvidenc
   readonly expectedAxisRevision: number;
   readonly expectedVariantRevision: number;
   readonly productRef: ProductRef;
+  readonly sourceProduct?: CreateProductPayload | undefined;
   readonly variantRef: VariantRef;
 }
 
@@ -609,7 +612,20 @@ export const variantPersistenceForScope = (
     if (row === undefined || row.productId !== parent.productId || row.tenantId !== tenantId) {
       return { _tag: 'not_found' };
     }
-    if (row.currentRevision !== input.expectedVariantRevision) {
+    const sourceMatches = yield* catalogSourceProductIntentMatches(transaction, scope, {
+      productRef: input.productRef,
+      sourceProduct: input.sourceProduct,
+      variantRef: input.variantRef,
+    });
+    if (input.sourceProduct !== undefined && !sourceMatches) {
+      return { _tag: 'invalid_change' };
+    }
+    const adoptingSourceCombination =
+      sourceMatches &&
+      input.expectedVariantRevision === 1 &&
+      row.currentRevision === 2 &&
+      input.expectedAxisRevision === 1;
+    if (row.currentRevision !== input.expectedVariantRevision && !adoptingSourceCombination) {
       return { _tag: 'revision_conflict', actualRevision: row.currentRevision };
     }
     // Confirmation is not reactivation: retired forms must pass the separate Current-use assessment.
@@ -628,6 +644,9 @@ export const variantPersistenceForScope = (
         actualAxisRevision: current.axisRevision,
         expectedAxisRevision: input.expectedAxisRevision,
       };
+    }
+    if (adoptingSourceCombination && current.axes.length !== 0) {
+      return { _tag: 'revision_conflict', actualRevision: row.currentRevision };
     }
 
     let combinationKey: string;
@@ -681,6 +700,9 @@ export const variantPersistenceForScope = (
         revision: row.currentRevision,
         variant: variant(row),
       };
+    }
+    if (adoptingSourceCombination) {
+      return { _tag: 'revision_conflict', actualRevision: row.currentRevision };
     }
 
     const updated = yield* transaction

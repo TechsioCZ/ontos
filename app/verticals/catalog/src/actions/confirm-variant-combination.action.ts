@@ -69,6 +69,7 @@ export const handleConfirmVariantCombination = Effect.fn('ConfirmVariantCombinat
       principalId: context.scope.principalId,
       productRef: payload.productRef,
       reason: payload.reason,
+      sourceProduct: payload.sourceProduct,
       variantRef: payload.variantRef,
     });
     const confirmed = yield* Match.value(outcome).pipe(
@@ -105,6 +106,7 @@ export const handleConfirmVariantCombination = Effect.fn('ConfirmVariantCombinat
       combinationAxisRevision: confirmed.combinationAxisRevision,
       combinationKey: confirmed.combinationKey,
       variant: confirmed.variant,
+      variantRevision: confirmed.revision,
     }).pipe(
       Effect.mapError((cause) => {
         const failure = new CatalogPersistenceUnavailable({
@@ -142,6 +144,10 @@ export const confirmVariantCombinationAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.confirm-variant-combination.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Govern source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-import'],
     },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,

@@ -65,6 +65,10 @@ export const setProductUnitTargetDivisibilityAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.set-product-unit-target-divisibility.access.v1',
     },
+    accessWorkload: {
+      reason: 'Govern source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-import'],
+    },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductUnitAuditEvidenceSchema,
     auditProfile: 'standard',

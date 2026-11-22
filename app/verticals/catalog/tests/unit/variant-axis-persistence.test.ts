@@ -7,6 +7,7 @@ import {
   attributeDefinitions,
   attributeValueItems,
   attributeValueSets,
+  catalogSourceCorrelations,
   productTypeAssignments,
   productTypeRevisionAttributes,
   productAttributeApplicability,
@@ -29,6 +30,8 @@ import {
 } from '../../src/persistence/variant-axis-persistence.ts';
 import type { GovernVariantAxesInput } from '../../src/persistence/variant-axis-persistence.ts';
 import { axisFreeCombinationKey } from '../../src/persistence/variant-current-basis.ts';
+import { GovernVariantAxesPayloadSchema } from '../../shared/actions/govern-variant-axes.ts';
+import { sourceProductIntentFixture } from '../support/source-product-intent.fixture.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const productId = '22222222-2222-4222-8222-222222222222';
@@ -76,6 +79,7 @@ const variantRef = {
 
 type AxisTable =
   | typeof products
+  | typeof catalogSourceCorrelations
   | typeof productVariantAxisEvents
   | typeof productVariants
   | typeof productVariantAxes
@@ -796,6 +800,138 @@ describe('Variant Axis governed write', () => {
     productRef,
     reason: 'Distinguishes the physical forms',
   } satisfies GovernVariantAxesInput;
+
+  it.effect('records an explicitly initialized empty axis basis only for a new Product', () =>
+    Effect.gen(function* initializesEmptyBasis() {
+      const payload = Schema.decodeUnknownSync(GovernVariantAxesPayloadSchema)({
+        axes: [],
+        classification: {
+          evidenceRefs: ['catalog:source-axis-free'],
+          kind: 'AXIS_INITIALIZATION',
+          reason: 'The source explicitly declares an axis-free Product',
+        },
+        expectedAxisRevision: 0,
+        productRef,
+        reason: 'The source explicitly declares an axis-free Product',
+      });
+      const writes: object[] = [];
+      const persistence = variantAxisPersistenceForScope(
+        // @ts-expect-error Focused Drizzle transaction mock.
+        transactionWith(
+          new Map<AxisTable, readonly object[]>([
+            [productVariantAxisEvents, []],
+            [productVariantAxes, []],
+            [productTypeAssignments, []],
+            [productVariants, []],
+          ]),
+          writes,
+        ),
+        scope,
+      );
+      if (payload.classification === undefined) {
+        return yield* Effect.die('Expected initialization classification');
+      }
+      const result = yield* persistence.govern({
+        ...input,
+        axes: [],
+        change: payload.classification,
+        expectedAxisRevision: payload.expectedAxisRevision,
+        reason: payload.reason,
+      });
+      expect(result).toEqual({ axisRevision: 1, changed: true });
+      expect(writes).toContainEqual({
+        insert: productVariantAxisEvents,
+        values: expect.objectContaining({ attributeDefinitionIds: [], axisRevision: 1 }),
+      });
+      return yield* Effect.void;
+    }),
+  );
+
+  it.effect('refuses axis initialization on an existing basis or with proposed axes', () =>
+    Effect.gen(function* rejectsInvalidInitialization() {
+      const decoded = Schema.decodeUnknownSync(GovernVariantAxesPayloadSchema)({
+        axes: [],
+        classification: {
+          evidenceRefs: ['catalog:source-axis-free'],
+          kind: 'AXIS_INITIALIZATION',
+          reason: 'The source explicitly declares an axis-free Product',
+        },
+        expectedAxisRevision: 0,
+        productRef,
+        reason: 'The source explicitly declares an axis-free Product',
+      });
+      if (decoded.classification === undefined) {
+        return yield* Effect.die('Expected initialization classification');
+      }
+      const writes: object[] = [];
+      const persistence = variantAxisPersistenceForScope(
+        // @ts-expect-error Focused Drizzle transaction mock.
+        transactionWith(undefined, writes),
+        scope,
+      );
+      const result = yield* persistence
+        .govern({ ...input, axes: [], change: decoded.classification, reason: decoded.reason })
+        .pipe(Effect.flip);
+      expect(result).toMatchObject({ conflict: 'INVALID_INPUT' });
+      const empty = variantAxisPersistenceForScope(
+        // @ts-expect-error Focused Drizzle transaction mock.
+        transactionWith(
+          new Map<AxisTable, readonly object[]>([
+            [productVariantAxisEvents, []],
+            [productVariantAxes, []],
+          ]),
+          writes,
+        ),
+        scope,
+      );
+      const proposed = yield* empty
+        .govern({ ...input, change: decoded.classification, expectedAxisRevision: 0, reason: decoded.reason })
+        .pipe(Effect.flip);
+      expect(proposed).toMatchObject({ conflict: 'INVALID_INPUT' });
+      expect(writes).toEqual([]);
+      return yield* Effect.void;
+    }),
+  );
+
+  it.effect('adopts the exact source-owned empty initialization under a new batch without another axis write', () =>
+    Effect.gen(function* adoptsSourceInitialization() {
+      const source = yield* sourceProductIntentFixture({ ...scope, productId, variantId });
+      const writes: object[] = [];
+      const persistence = variantAxisPersistenceForScope(
+        // @ts-expect-error Focused Drizzle transaction mock.
+        transactionWith(
+          new Map<AxisTable, readonly object[]>([
+            [catalogSourceCorrelations, [source.correlation]],
+            [
+              productVariantAxisEvents,
+              [
+                {
+                  actingPrincipalId: scope.principalId,
+                  attributeDefinitionIds: [],
+                  attributeDefinitionRevisions: [],
+                  axisRevision: 1,
+                  productId,
+                  tenantId,
+                },
+              ],
+            ],
+            [productVariantAxes, []],
+          ]),
+          writes,
+        ),
+        scope,
+      );
+      const result = yield* persistence.govern({
+        ...input,
+        axes: [],
+        change: { ...input.change, kind: 'AXIS_INITIALIZATION' },
+        expectedAxisRevision: 0,
+        sourceProduct: source.sourceProduct,
+      });
+      expect(result).toEqual({ axisRevision: 1, changed: false });
+      expect(writes).toEqual([]);
+    }),
+  );
 
   it.effect('requires compare-and-swap before writing', () =>
     Effect.gen(function* staleWrite() {

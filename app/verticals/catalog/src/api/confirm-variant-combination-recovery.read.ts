@@ -84,6 +84,10 @@ export const confirmVariantCombinationRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Recover source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: confirmVariantCombinationRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

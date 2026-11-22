@@ -114,13 +114,21 @@ const enrollment = (input: {
   const operations = input.product
     ? [
         operation('commerce.catalog.create-product', 'commerce.catalog', '2'),
+        ...[
+          'govern-variant-axes',
+          'confirm-variant-combination',
+          'set-product-localized-facts',
+          'update-product',
+          'set-product-unit-target-divisibility',
+          'decide-product-type-unnecessary',
+        ].map((key) => operation(`commerce.catalog.${key}`, 'commerce.catalog')),
         operation('commerce.inventory.provision-source-stock-item'),
       ]
     : [
         operation('commerce.inventory.import-source-assertion'),
         operation('commerce.inventory.api.source-stock-position-resolution'),
       ];
-  return Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
+  const configuration = {
     inventoryBackendId: internalStockBackendId,
     inventorySource: input.setup.policy,
     items: [
@@ -136,7 +144,20 @@ const enrollment = (input: {
       },
     ],
     sourceRouteId: input.sourceRouteId,
-  }).pipe(Effect.flatMap(Schema.encodeEffect(SymmyRouteExecutionConfigurationSchema)));
+  };
+  if (input.product) {
+    Object.assign(configuration, {
+      catalogReadiness: {
+        divisible: false,
+        kind: 'AXIS_FREE_UNTYPED',
+        locale: 'en',
+        unitRef: input.setup.policy.unitRef,
+      },
+    });
+  }
+  return Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)(configuration).pipe(
+    Effect.flatMap(Schema.encodeEffect(SymmyRouteExecutionConfigurationSchema)),
+  );
 };
 
 /** Both routes pin the same integration-wide policy, never the SKUs they will later receive. */
@@ -145,9 +166,46 @@ export const makeInternalStockEnrollment = (input: {
   readonly sourceRouteId: string;
 }) => enrollment({ ...input, product: false });
 export const makeInternalStockProductEnrollment = (input: {
+  readonly pricing: Pick<typeof SymmyRouteExecutionConfigurationSchema.Encoded, 'priceSource' | 'pricingSourceSystem'>;
   readonly setup: InternalStockSetup;
   readonly sourceRouteId: string;
-}) => enrollment({ ...input, product: true });
+}) =>
+  enrollment({ ...input, product: true }).pipe(
+    Effect.flatMap((product) =>
+      Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
+        ...product,
+        ...input.pricing,
+        items: [
+          ...product.items,
+          {
+            effects: [
+              {
+                effectKey: 'price-authority',
+                operation: operation('commerce.pricing.define-price', 'commerce.pricing', '2'),
+              },
+              {
+                effectKey: 'list-source-read',
+                operation: operation(
+                  'pricing.price-group-catalog.api.price-group-source-associations',
+                  'pricing.price-group-catalog',
+                ),
+              },
+            ],
+            itemKey: 'price-enrollment',
+            source: {
+              entityKind: 'PRICE',
+              issuerId: internalSyncSource.issuerId,
+              sourceNamespace: internalSyncSource.namespace,
+              sourceRecordId: 'INTERNAL_C14_SOURCE_ENROLLMENT',
+            },
+          },
+        ],
+        sourceMappingVersion: internalSyncSource.mappingVersion,
+        sourceRouteRevision: internalSyncSource.routeRevision,
+      }),
+    ),
+    Effect.flatMap(Schema.encodeEffect(SymmyRouteExecutionConfigurationSchema)),
+  );
 
 export const makeInternalStockRow = (input: {
   readonly amount: string;
