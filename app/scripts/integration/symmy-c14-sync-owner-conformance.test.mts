@@ -16,8 +16,6 @@ import { cancelOwnedSyncAdmissionFenceNative } from '@app/core-runtime/testing/s
 import { makeOwnedSystemWriterWorkloadControlNative } from '@app/core-runtime/testing/workload-binding-native';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { SymmyEffectOutcomeSchema, SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
-import { GatewayUnavailableProblemSchema } from '@app/shared-contracts';
-import { makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
 import {
@@ -61,6 +59,10 @@ import {
 } from './support/symmy-c14-sync-stock-facts.mts';
 import { installInternalC14StockDispatchBarrier } from './support/symmy-c14-stock-dispatch-barrier.mts';
 import { startInternalSyncRetryTransport } from './support/symmy-c14-sync-retry-transport.mts';
+import {
+  decodeInternalSyncProblem,
+  syncNegativeResponseSchemas,
+} from './support/symmy-c14-sync-response-contracts.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
   buildProductOwner,
@@ -120,10 +122,6 @@ const fixturePurpose = 'implementation-1096-registered-workload-gateway';
 const countSchema = Schema.Struct({ count: Schema.Int });
 const admissionRowSchema = Schema.Struct({ admission_id: Schema.String.check(Schema.isUUID()) });
 const invocationRowSchema = Schema.Struct({ action_invocation_id: Schema.String.check(Schema.isUUID()) });
-const syncUnavailableProblemSchema = Schema.Union([
-  GatewayUnavailableProblemSchema,
-  makeRetryableProblemDetailsSchema('SymmyUnavailableProblem', 503),
-]);
 const nativeGroupSchema = Schema.Struct({
   customer_group_id: Schema.String.check(Schema.isUUID()),
   revision: Schema.Int,
@@ -648,7 +646,14 @@ it.live(
         });
         expect(deniedGroupWrite.status).toBe(503);
         yield* deniedGroupWrite.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema, { onExcessProperty: 'error' })),
+          Effect.flatMap((body) =>
+            decodeInternalSyncProblem({
+              body,
+              phase: 'group-revoked-writer',
+              schema: syncNegativeResponseSchemas.unavailable,
+              status: deniedGroupWrite.status,
+            }),
+          ),
         );
         const reboundGroupWriter = yield* groupWriter.rebind();
         expect(reboundGroupWriter.bindingId).not.toBe(groupWriter.originalBinding.bindingId);
@@ -730,6 +735,23 @@ it.live(
           values(${productRouteId},${tenantId},${integration.principalId},${legalEntityId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(productEnrollment))}::jsonb,${internalSyncSource.mappingVersion},'productsBatch',${internalSyncSource.routeRevision},${yield* json(productPolicy)}::jsonb)`;
         const early = yield* postStockRaw(stockBody([stockRevision2]), 'INTERNAL_C14_EARLY_STOCK');
         expect(early.status).toBe(503);
+        const earlyProblem = yield* early.json.pipe(
+          Effect.flatMap((body) =>
+            decodeInternalSyncProblem({
+              body,
+              phase: 'stock-before-provisioning',
+              schema: syncNegativeResponseSchemas.stockDependency,
+              status: early.status,
+            }),
+          ),
+        );
+        expect(earlyProblem).toMatchObject({
+          itemKey: stockRevision2.itemKey,
+          locationKey: stockRevision2.locationKey,
+          reason: 'ITEM_NOT_PROVISIONED',
+          retryable: true,
+          status: 503,
+        });
         expect(JSON.stringify(stockEnrollment)).not.toContain(internalStockItemKeys[0]);
         expect(JSON.stringify(stockEnrollment)).not.toContain(internalStockItemKeys[1]);
         expect(JSON.stringify(productEnrollment)).not.toContain(internalStockItemKeys[0]);
@@ -1137,13 +1159,39 @@ it.live(
           'INTERNAL_C14_STOCK_UNENROLLED_ROW',
         );
         expect(substituted.status).toBe(503);
-        yield* substituted.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema)));
+        const substitutedProblem = yield* substituted.json.pipe(
+          Effect.flatMap((body) =>
+            decodeInternalSyncProblem({
+              body,
+              phase: 'stock-unprovisioned-row',
+              schema: syncNegativeResponseSchemas.stockDependency,
+              status: substituted.status,
+            }),
+          ),
+        );
+        expect(substitutedProblem).toMatchObject({
+          itemKey: 'INTERNAL_C14_UNENROLLED_ITEM',
+          locationKey: stockRevision2.locationKey,
+          reason: 'ITEM_NOT_PROVISIONED',
+          retryable: true,
+          status: 503,
+        });
         const unenrolledLocation = yield* postStockRaw(
           stockBody([{ ...stockRevision2, locationKey: 'INTERNAL_C14_UNENROLLED_LOCATION' }]),
           'INTERNAL_C14_STOCK_UNENROLLED_LOCATION',
         );
         expect(unenrolledLocation.status).toBe(422);
-        expect(yield* unenrolledLocation.json).toMatchObject({
+        const locationProblem = yield* unenrolledLocation.json.pipe(
+          Effect.flatMap((body) =>
+            decodeInternalSyncProblem({
+              body,
+              phase: 'stock-unenrolled-location',
+              schema: syncNegativeResponseSchemas.stockInput,
+              status: unenrolledLocation.status,
+            }),
+          ),
+        );
+        expect(locationProblem).toMatchObject({
           itemKey: stockRevision2.itemKey,
           locationKey: 'INTERNAL_C14_UNENROLLED_LOCATION',
           reason: 'LOCATION_NOT_ENROLLED',
@@ -1170,11 +1218,39 @@ it.live(
             const refused = yield* postStockRaw(stockBody([row]), randomUUID());
             expect(refused.status).toBe(index === 0 ? 422 : 503);
             if (index === 0) {
-              expect(yield* refused.json).toMatchObject({
+              const unitProblem = yield* refused.json.pipe(
+                Effect.flatMap((body) =>
+                  decodeInternalSyncProblem({
+                    body,
+                    phase: 'stock-unenrolled-unit',
+                    schema: syncNegativeResponseSchemas.stockInput,
+                    status: refused.status,
+                  }),
+                ),
+              );
+              expect(unitProblem).toMatchObject({
                 itemKey: row.itemKey,
                 locationKey: row.locationKey,
                 reason: 'UNIT_NOT_ENROLLED',
                 status: 422,
+              });
+            } else {
+              const tenantProblem = yield* refused.json.pipe(
+                Effect.flatMap((body) =>
+                  decodeInternalSyncProblem({
+                    body,
+                    phase: 'stock-foreign-unit-tenant',
+                    schema: syncNegativeResponseSchemas.stockSourceUnavailable,
+                    status: refused.status,
+                  }),
+                ),
+              );
+              expect(tenantProblem).toMatchObject({
+                itemKey: row.itemKey,
+                locationKey: row.locationKey,
+                reason: 'TENANT_SCOPE_MISMATCH',
+                retryable: true,
+                status: 503,
               });
             }
           }),
@@ -1437,7 +1513,17 @@ it.live(
           // The owner refuses the admission as ineligible, which the Shell answers as unavailable, as for a revoked writer.
           expect(unretained.status).toBe(503);
           yield* unretained.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema, { onExcessProperty: 'error' })),
+            Effect.flatMap((body) =>
+              decodeInternalSyncProblem({
+                body,
+                phase:
+                  idempotencyKey === 'INTERNAL_C14_GROUP_WITHOUT_POLICY'
+                    ? 'group-without-lifecycle-policy'
+                    : 'group-unconfigured-lifecycle-policy',
+                schema: syncNegativeResponseSchemas.unavailable,
+                status: unretained.status,
+              }),
+            ),
           );
         }
         yield* admin`update symmy_integration.job_routes set lifecycle_policy=${yield* json(groupPolicy)}::jsonb where tenant_id=${tenantId} and route_id=${groupRouteId}`;
@@ -1512,7 +1598,14 @@ it.live(
         const deniedStockWrite = yield* postStockRaw(stockBody(staleRows), 'INTERNAL_C14_STOCK_REVOKED_WRITER');
         expect(deniedStockWrite.status).toBe(503);
         yield* deniedStockWrite.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema, { onExcessProperty: 'error' })),
+          Effect.flatMap((body) =>
+            decodeInternalSyncProblem({
+              body,
+              phase: 'stock-revoked-writer',
+              schema: syncNegativeResponseSchemas.unavailable,
+              status: deniedStockWrite.status,
+            }),
+          ),
         );
         // The replacement route retains read access to the logical key after the backend and plan are withdrawn.
         yield* admin`update symmy_integration.job_routes set active=false, principal_id=${integration.issuerPrincipalId}
@@ -1540,7 +1633,14 @@ it.live(
         const cancelledReplay = yield* postStockRaw(stockBody([stockRevision2]), stockRevision2Key);
         expect(cancelledReplay.status).toBe(503);
         yield* cancelledReplay.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(syncUnavailableProblemSchema, { onExcessProperty: 'error' })),
+          Effect.flatMap((body) =>
+            decodeInternalSyncProblem({
+              body,
+              phase: 'stock-cancelled-replay',
+              schema: syncNegativeResponseSchemas.unavailable,
+              status: cancelledReplay.status,
+            }),
+          ),
         );
         const [importsAfterCancellation] =
           yield* admin`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and action_key='commerce.inventory.import-source-assertion' and status='succeeded'`.pipe(
