@@ -15,19 +15,20 @@ This page describes what is implemented. Rows that have no executed proof agains
 
 Action keys (all `idempotency: required`) and the access declarations they carry:
 
-| Entrypoint                                         | Declaration key                      | Risk and modes                                                 | Carrier                                                                                               |
-| -------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Action `core.media.upload-asset` (reserve)         | `core.media.asset.upload`            | routine, run                                                   | human or agent holds the declaration; system, integration and import use workload `core.media.ingest` |
-| Action `core.media.confirm-asset`                  | `core.media.asset.confirm`           | routine, run                                                   | as above                                                                                              |
-| Action `core.media.rename-display-filename`        | `core.media.display-filename.rename` | routine, run/propose/approve, selector `all`                   | declaration only, no machine carrier                                                                  |
-| Read metadata                                      | `core.media.asset-metadata.read`     | routine, selector `all`                                        | declaration                                                                                           |
+| Entrypoint                                  | Declaration key                      | Risk and modes                               | Carrier                                                                                               |
+| ------------------------------------------- | ------------------------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Action `core.media.upload-asset` (reserve)  | `core.media.asset.upload`            | routine, run                                 | human or agent holds the declaration; system, integration and import use workload `core.media.ingest` |
+| Action `core.media.confirm-asset`           | `core.media.asset.confirm`           | routine, run                                 | as above                                                                                              |
+| Action `core.media.rename-display-filename` | `core.media.display-filename.rename` | routine, run/propose/approve, selector `all` | declaration only, no machine carrier                                                                  |
+| Read metadata                               | `core.media.asset-metadata.read`     | routine, selector `all`                      | declaration                                                                                           |
 
 The generated descriptors are in `topology/authorization-catalog.json` (`pnpm authorization:catalog:artifact:check`). The origin a caller states (`user`, `system`, `integration`, `import`) is recorded provenance and grants nothing.
 
 ## Reserve, stream, confirm
 
 1. **Reserve** (`core.media.upload-asset`): creates the `core.media_assets` row in `uploaded` under the Action Invocation's own id. The row fixes the declared size, SHA-256, MIME type, display name and origin; the asset id exists from here but is usable only at `ready`. The storage key is a pure function of `(tenantId, mediaAssetId)` under a fixed domain prefix (`core-media/v1/` plus a hex digest): independent of any file name and never a URL or revision.
-3. **Confirm** (`core.media.confirm-asset`): seals the row (`ready`, with the actual size and SHA-256) after the stored object is read back and verified against the reserved identity (`StoredMediaObjectVerification`). Only this Action seals the row. A retry after an uncertain end completes the original asset, never a second one.
+2. **Confirm** (`core.media.confirm-asset`): seals the row (`ready`, with the actual size and SHA-256) after the stored object is read back and verified against the reserved identity (`StoredMediaObjectVerification`). Only this Action seals the row. A retry after an uncertain end completes the original asset, never a second one.
 
 Each stored object is addressed by its derived key only; the key, provider id, version reference and any URL never reach a response, log or error. A new upload is always a new Media Asset id.
+
 ## Known gaps
