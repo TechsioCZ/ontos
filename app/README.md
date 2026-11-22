@@ -21,6 +21,7 @@ Read this guide, then only the rows that govern the task.
 | Shared Party identity and operational boundaries      | [Party Registry](docs/architecture/PARTY_REGISTRY.md)                                                               |
 | Entities versus value objects                         | [Value Objects](docs/architecture/VALUE_OBJECTS.md)                                                                 |
 | Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                              |
+| Core Media files, byte transfer and Current V1        | [Core Media](docs/architecture/CORE_MEDIA.md)                                                                       |
 | Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                  |
 | ARES provider lookup and Party application            | [ARES reference](docs/integrations/ares.md) and [Party Registry](docs/architecture/PARTY_REGISTRY.md)               |
 
