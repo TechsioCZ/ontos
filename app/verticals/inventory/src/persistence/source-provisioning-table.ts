@@ -1,4 +1,3 @@
-/* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical owner contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { check, foreignKey, index, jsonb, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
@@ -16,17 +15,17 @@ import { inventoryStockLocations } from './stock-location-table.ts';
 export const inventorySourceProvisioningPolicies = inventorySchema.table.withRLS(
   'source_provisioning_policies',
   {
+    customerConfigurationId: text('customer_configuration_id').notNull(),
+    definedAt: timestamp('defined_at', { withTimezone: true }).defaultNow().notNull(),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
+    externalScope: text('external_scope').notNull(),
+    issuerBackendId: text('issuer_backend_id').notNull(),
+    issuerBackendKind: text('issuer_backend_kind').notNull(),
+    namespace: text('namespace').notNull(),
+    ownerConfigurationId: uuid('owner_configuration_id').notNull(),
     policyId: uuid('policy_id').primaryKey(),
     tenantId: uuid('tenant_id').notNull(),
-    customerConfigurationId: text('customer_configuration_id').notNull(),
-    ownerConfigurationId: uuid('owner_configuration_id').notNull(),
-    issuerBackendKind: text('issuer_backend_kind').notNull(),
-    issuerBackendId: text('issuer_backend_id').notNull(),
-    namespace: text('namespace').notNull(),
-    externalScope: text('external_scope').notNull(),
     unitResourceId: uuid('unit_resource_id').notNull(),
-    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
-    definedAt: timestamp('defined_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex('inventory_source_provisioning_policies_scope_id_uk').on(table.tenantId, table.policyId),
@@ -56,10 +55,10 @@ export const inventorySourceProvisioningPolicies = inventorySchema.table.withRLS
 export const inventorySourceProvisioningPolicyLocations = inventorySchema.table.withRLS(
   'source_provisioning_policy_locations',
   {
-    tenantId: uuid('tenant_id').notNull(),
-    policyId: uuid('policy_id').notNull(),
     locationKey: text('location_key').notNull(),
+    policyId: uuid('policy_id').notNull(),
     stockLocationId: uuid('stock_location_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
   },
   (table) => [
     primaryKey({
@@ -93,14 +92,14 @@ export const inventorySourceProvisioningPolicyLocations = inventorySchema.table.
 export const inventorySourceStockItemProvisionings = inventorySchema.table.withRLS(
   'source_stock_item_provisionings',
   {
-    tenantId: uuid('tenant_id').notNull(),
     actionInvocationId: uuid('action_invocation_id').notNull(),
-    policyId: uuid('policy_id').notNull(),
-    itemKey: text('item_key').notNull(),
-    stockItemId: uuid('stock_item_id').notNull(),
     inputJson: jsonb('input_json').$type<ProvisionSourceStockItemInput>().notNull(),
+    itemKey: text('item_key').notNull(),
+    policyId: uuid('policy_id').notNull(),
     provisioningJson: jsonb('provisioning_json').$type<SourceStockItemProvisioning>().notNull(),
     recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+    stockItemId: uuid('stock_item_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
   },
   (table) => [
     primaryKey({
