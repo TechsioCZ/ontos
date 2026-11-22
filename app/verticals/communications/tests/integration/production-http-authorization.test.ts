@@ -37,25 +37,28 @@ import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import {
   createPrivacyMeasureDispatch,
+  OwnerExecutionOutcomeRequestSchema,
   PrivacyMeasureHandoffSchema,
   prepareOwnerActionRequest,
   recordOwnerExecutionOutcome,
   validateOwnerExecutionAuthorityResult,
 } from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import type { PrivacyDispatchContinuationPayload } from '@app/shared-contracts';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
+  GatewayDelegatedContextRequestSchema,
+  privacyDispatchConsumers,
 } from '@app/shared-contracts';
 import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import {
   ConfigProvider,
   Context,
+  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -63,10 +66,11 @@ import {
   Layer,
   Option,
   Redacted,
+  Ref,
   Schema,
 } from 'effect';
 import type { Exit } from 'effect';
-import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import { Reactivity } from 'effect/reactivity';
 import { describe, expect, it } from 'effect-rstest';
@@ -96,7 +100,7 @@ import type {
   ActivateTemplateRevisionPayloadSchema,
   PrepareTemplateRevisionPayloadSchema,
 } from '../../shared/template-revision.ts';
-import { PrivacyMeasureReporter } from '../../src/services/privacy-measure-reporter.ts';
+import { PrivacyMeasureReporter, privacyMeasureReporterService } from '../../src/services/privacy-measure-reporter.ts';
 import type { PrivacyMeasureReporterService } from '../../src/services/privacy-measure-reporter.ts';
 import { handleReceivePrivacyMeasure } from '../../src/workers/receive-privacy-measure.worker.ts';
 import { reportPrivacyOwnerOutcomeWorker } from '../../src/workers/report-privacy-owner-outcome.worker.ts';
@@ -164,44 +168,73 @@ const ContractDocumentSchema = Schema.fromJsonString(OntosModuleDeploymentContra
 const publishedModule = Effect.fnUntraced(function* publishedModule(
   manifestPath: URL,
   requiredShellAbi: ApplicationComposition['modules'][number]['requiredShellAbi'],
+  pinToThisRuntime: boolean,
 ) {
   const filesystem = yield* FileSystem.FileSystem;
   const generated = yield* Schema.decodeUnknownEffect(ContractDocumentSchema)(
     yield* filesystem.readFileString(manifestPath.pathname),
   );
-  const contract = {
-    ...generated,
-    deployment: { ...generated.deployment, buildMarker: ultramodernDeliveryUnit.buildMarker },
-  };
+  // only the release under test runs here; another module keeps the deployment its generated contract names
+  const contract = pinToThisRuntime
+    ? { ...generated, deployment: { ...generated.deployment, buildMarker: ultramodernDeliveryUnit.buildMarker } }
+    : generated;
   const document = yield* Schema.encodeEffect(ContractDocumentSchema)(contract);
+  // the composition entry is derived from the contract's own public surface, exactly as Core's published fixture does
+  const { components, shellContributions } = contract.manifest.publicSurface;
+  const [component] = components;
+  const origin = `https://${contract.deployment.appId}.native-tests.example`;
   return {
-    allowedContributions: [],
-    backend: { baseUrl: `https://${contract.deployment.appId}.native-tests.example/`, transport: 'node-http' },
-    contract: {
-      sha256: digest(document),
-      url: `https://${contract.deployment.appId}.native-tests.example/.well-known/ontos-module-manifest.json`,
-    },
+    allowedContributions: Object.values(shellContributions).flatMap((items) =>
+      items.map(({ contributionKey }) => contributionKey),
+    ),
+    backend: { baseUrl: `${origin}/`, transport: 'node-http' },
+    contract: { sha256: digest(document), url: `${origin}/.well-known/ontos-module-manifest.json` },
     contractDocument: document,
-    dependencies: [],
+    dependencies: (contract.manifest.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId).toSorted(),
     deployment: contract.deployment,
-    federation: { execution: 'server' },
+    federation:
+      component === undefined
+        ? { execution: 'server' }
+        : {
+            execution: 'browser',
+            exposes: components.map(({ expose }) => expose),
+            manifest: {
+              sha256: digest(`${contract.deployment.buildMarker}-manifest`),
+              url: `${origin}/releases/${contract.deployment.buildMarker}/mf-manifest.json`,
+            },
+            remoteName: component.mfBoundaryId,
+          },
     moduleId: contract.manifest.module.id,
     publicContract: { id: contract.manifest.module.id, sha256: digest(document), version: contract.schemaVersion },
-    requiredCoreCapabilities: [],
+    requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
     requiredShellAbi,
     sharedSingletons: [],
   } satisfies ApplicationComposition['modules'][number];
 });
 
-/** The active composition with the actual Communications deployment, published as the Core authority and served. */
+/**
+ * The active composition with the actual Communications deployment and Privacy's actual published contract (both generated
+ * by this package's `test:integration` script), published as the Core authority and served. Privacy is an approved release
+ * only (no Privacy process runs here), so a Privacy-delegated assertion names a real calling module and Communications'
+ * conditional requirement to report to Privacy resolves against Privacy's genuine `record-owner-execution-outcome` contract.
+ */
 const publishComposition = Effect.fnUntraced(function* publishComposition() {
-  // Privacy is present only as an approved release, so a Privacy-delegated assertion names a real calling module.
-  const base = yield* makeApplicationCompositionSnapshotFixture(['privacy']);
+  const base = yield* makeApplicationCompositionSnapshotFixture([]);
+  const { contributionAbi } = base.composition.shell;
+  const privacy = yield* publishedModule(
+    new URL('../../../privacy/dist/public/.well-known/ontos-module-manifest.json', import.meta.url),
+    contributionAbi,
+    false,
+  );
   const communications = yield* publishedModule(
     new URL('../../dist/public/.well-known/ontos-module-manifest.json', import.meta.url),
-    base.composition.shell.contributionAbi,
+    contributionAbi,
+    true,
   );
-  const input = { ...base.composition, modules: [...base.composition.modules, communications] };
+  const modules = [...base.composition.modules, privacy, communications];
+  // the receiving Shell offers every Core capability the composed contracts require (Privacy's dependency contracts)
+  const coreCapabilities = [...new Set(modules.flatMap(({ requiredCoreCapabilities }) => requiredCoreCapabilities))];
+  const input = { ...base.composition, modules, shell: { ...base.composition.shell, coreCapabilities } };
   const snapshot = yield* validateActiveApplicationCompositionSnapshot({
     composition: { ...input, revision: yield* applicationCompositionContentRevision(input) },
     observedAt: base.observedAt,
@@ -665,17 +698,101 @@ const deliveryContext = (
     ...fields,
   });
 
+const SHELL_PREFIX = '/shell-super-app-api';
+const DELEGATION_PATH = `${SHELL_PREFIX}/auth/delegated/gateway-context`;
+const OUTCOME_ACTION_PATH = '/actions/record-owner-execution-outcome';
+const ReceivedJsonSchema = Schema.fromJsonString(Schema.Unknown);
+const OutcomeReportBodySchema = Schema.Struct({ request: OwnerExecutionOutcomeRequestSchema });
+/** Only the Tenant a delegated request's source names, to tell this suite's pushes from any other delivery's. */
+const decodeDelegatedSourceTenant = Schema.decodeUnknownOption(
+  Schema.Struct({
+    subject: Schema.Struct({ source: Schema.Struct({ tenantId: Schema.String.pipe(Schema.brand('PushedTenantId')) }) }),
+  }),
+);
+
+/** One request the loopback Shell/Privacy peer of the push received, with the transport headers that matter. */
+interface PeerRequest {
+  readonly authorization: string | undefined;
+  readonly body: unknown;
+  readonly idempotencyKey: string | undefined;
+  readonly path: string;
+}
+
+/**
+ * LABELLED loopback peer for the receipt push: the Shell's delegated-context issuance (it records the exact delegated
+ * request the REAL reporter sends and answers a FICTIONAL token for the admitted release) and Privacy's
+ * `record-owner-execution-outcome` Action (it answers with the receipt Privacy reads ITSELF for the requested attempt, from
+ * the real Communications HTTP runtime). Neither the Shell's admission nor Privacy's persistence runs here.
+ */
+const servePushPeer = Effect.fnUntraced(function* servePushPeer(
+  readReceipt: (attempt: number) => Effect.Effect<unknown>,
+) {
+  const received = yield* Ref.make<readonly PeerRequest[]>([]);
+  const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+  yield* server.serve(
+    HttpServerRequest.HttpServerRequest.use((request) =>
+      Effect.gen(function* answer() {
+        const path = new URL(request.url, 'http://peer.test').pathname;
+        const body = Schema.decodeUnknownOption(ReceivedJsonSchema)(yield* request.text).pipe(Option.getOrUndefined);
+        const { authorization } = request.headers;
+        yield* Ref.update(received, (all) => [
+          ...all,
+          { authorization, body, idempotencyKey: request.headers['idempotency-key'], path },
+        ]);
+        if (path === DELEGATION_PATH) {
+          const delegated = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)(body);
+          return yield* HttpServerResponse.json({
+            apiBaseUrl: '/privacy-api',
+            compositionRevision: delegated.compositionRevision,
+            // a fixed far-future expiry (2099-01-01): the token never depends on this live test's clock
+            expiresAt: 4_070_908_800,
+            token: 'fictional-privacy-dispatch-continuation-token',
+          });
+        }
+        if (path.endsWith(OUTCOME_ACTION_PATH)) {
+          const report = yield* Schema.decodeUnknownEffect(OutcomeReportBodySchema)(body);
+          return yield* HttpServerResponse.json(yield* readReceipt(report.request.attempt));
+        }
+        return HttpServerResponse.empty({ status: 404 });
+      }).pipe(Effect.orDie),
+    ),
+  );
+  if (!NetAddress.isInetAddress(server.address)) {
+    return yield* Effect.die('The push peer must bind one loopback TCP server');
+  }
+  return { origin: `http://127.0.0.1:${server.address.port}`, received };
+});
+
+/** The REAL reporter, bound to this process's Crypto and HTTP client exactly as the worker host binds it. */
+const realPrivacyReporter = Effect.gen(function* bindRealPrivacyReporter() {
+  const crypto = yield* Crypto.Crypto;
+  const httpClient = Context.get(yield* Layer.build(FetchHttpClient.layer), HttpClient.HttpClient);
+  const operations = yield* privacyMeasureReporterService();
+  return PrivacyMeasureReporter.of({
+    report: (handoff, attempt, context) =>
+      operations
+        .report(handoff, attempt, context)
+        .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(HttpClient.HttpClient, httpClient)),
+    reportRecorded: (continuation, context) =>
+      operations
+        .reportRecorded(continuation, context)
+        .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(HttpClient.HttpClient, httpClient)),
+  });
+});
+
 /**
  * One match + claim/handle/settle cycle of Core's own outbox runtime under the Communications worker binding, running only
  * the continuation worker (the binding still checks every approved Communications subscription).
  */
 const deliverContinuationCycle = (input: {
+  /** The worker host's configuration: the Shell gateway origin and the module credential the reporter reads per call. */
+  readonly configuration: ConfigProvider.ConfigProvider;
   readonly outbox: OutboxRuntimeService;
   readonly reporter: PrivacyMeasureReporterService;
   readonly snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type;
 }) =>
   Effect.gen(function* deliverContinuationCycleEffect() {
-    const { outbox, reporter, snapshot } = input;
+    const { configuration, outbox, reporter, snapshot } = input;
     const compositionRevision = snapshot.composition.revision;
     const claimOwner = `communications-continuation-${randomUUID()}`;
     const registrations = [reportPrivacyOwnerOutcomeWorker];
@@ -702,7 +819,11 @@ const deliverContinuationCycle = (input: {
                 registrations,
                 subscriptions: extractOutboxWorkerSubscriptions(registrations),
               })
-              .pipe(Effect.provideService(PrivacyMeasureReporter, reporter), Effect.onExit(settle)),
+              .pipe(
+                Effect.provideService(PrivacyMeasureReporter, reporter),
+                Effect.provideService(ConfigProvider.ConfigProvider, configuration),
+                Effect.onExit(settle),
+              ),
         }),
       ),
       ownerRegistration: communicationsRegistration,
@@ -858,17 +979,15 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
                 )
                 .pipe(Effect.orDie),
           };
+          // LABELLED: the take-over report of step 1 runs outside a Core delivery here, so it is recorded by a double; the
+          // later push (step 5) runs the REAL reporter inside Core's own claimed continuation delivery
           const takeOvers: number[] = [];
-          const continuations: PrivacyDispatchContinuationPayload[] = [];
           const reporter = PrivacyMeasureReporter.of({
             report: (_handoff, attempt) =>
               Effect.sync(() => {
                 takeOvers.push(attempt);
               }),
-            reportRecorded: (continuation) =>
-              Effect.sync(() => {
-                continuations.push(continuation);
-              }),
+            reportRecorded: () => Effect.die('the continuation push runs the real reporter'),
           });
           // 1. Communications receives the measure Privacy dispatched and reports only that it took it over
           yield* handleReceivePrivacyMeasure(
@@ -955,7 +1074,61 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
             ),
           );
           const outbox = Context.get(outboxServices, OutboxRuntime);
-          const deliverContinuations = () => deliverContinuationCycle({ outbox, reporter, snapshot });
+          const peer = yield* servePushPeer((attempt) =>
+            receipt(manager, attempt).pipe(
+              Effect.flatMap(({ receipt: answered }) => Effect.fromOption(answered)),
+              Effect.map(({ outcome }) => outcome),
+              Effect.orDie,
+            ),
+          );
+          const pushConfiguration = ConfigProvider.fromUnknown({
+            ONTOS_GATEWAY_MODULE_API_KEY: 'fictional-communications-module-api-key',
+            ONTOS_SHELL_GATEWAY_BASE_URL: `${peer.origin}${SHELL_PREFIX}`,
+          });
+          const deliverContinuations = Effect.fnUntraced(function* deliverContinuations() {
+            return yield* deliverContinuationCycle({
+              configuration: pushConfiguration,
+              outbox,
+              reporter: yield* realPrivacyReporter,
+              snapshot,
+            });
+          });
+          const continuation = Option.getOrThrow(
+            Option.fromNullishOr(privacyDispatchConsumers['communications.core']?.continuation),
+          );
+          const continuationDeliveries = core.transaction((transaction) =>
+            transaction.execute<{ readonly delivery: string }>(
+              sql`select d.outbox_delivery_id::text as delivery from core.outbox_deliveries d
+                   join core.outbox_messages m on m.outbox_message_id = d.outbox_message_id
+                  where m.tenant_id = ${tenant.tenantId}::uuid and d.worker_key = ${continuation.workerKey}
+                  order by m.created_at`,
+              'objects',
+            ),
+          );
+          /**
+           * The outcome reports the REAL reporter sent to Privacy for THIS Tenant's measure, and the delegated requests that
+           * carried them. Core's cycle claims every due continuation delivery of the database, so another suite's leftover
+           * delivery may reach the peer too; it is never this Tenant's.
+           */
+          const pushedReports = Ref.get(peer.received).pipe(
+            Effect.map((all) => ({
+              delegations: all
+                .filter(
+                  ({ body, path }) =>
+                    path === DELEGATION_PATH &&
+                    Option.exists(
+                      decodeDelegatedSourceTenant(body),
+                      ({ subject }) => subject.source.tenantId === tenant.tenantId,
+                    ),
+                )
+                .map(({ body }) => Schema.decodeUnknownSync(GatewayDelegatedContextRequestSchema)(body)),
+              reports: all.filter(
+                ({ body, path }) =>
+                  path.endsWith(OUTCOME_ACTION_PATH) &&
+                  Schema.decodeUnknownSync(OutcomeReportBodySchema)(body).request.measureId === handoff.measureId,
+              ),
+            })),
+          );
           const pendingContinuationWork = core.transaction((transaction) =>
             transaction.execute<{ readonly work: string }>(
               sql`select w.work_id as work from core.application_composition_durable_work w
@@ -999,8 +1172,35 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           // worker reports exactly that message to Privacy from its real claimed delivery, and no durable work remains
           const delivered = yield* deliverContinuations();
           expect(delivered.succeeded).toBeGreaterThanOrEqual(1);
-          expect(continuations.filter((reported) => reported.measureId === handoff.measureId)).toEqual([pushed]);
           expect(yield* pendingContinuationWork).toEqual([]);
+          // the REAL reporter asked the Shell for exactly ONE outcome report of the original dispatch, carried by this very
+          // Core continuation delivery, in the subject shape the Shell's continuation admission is proven to admit (the
+          // published consumer contract both sides read): a reporter/admission mismatch fails here
+          const [deliveryRow] = yield* continuationDeliveries;
+          const firstPush = yield* pushedReports;
+          expect(firstPush.delegations).toHaveLength(1);
+          expect(firstPush.delegations[0]).toMatchObject({
+            audience: 'privacy',
+            compositionRevision: revision,
+            legalEntityScope: 'subject',
+            subject: {
+              _tag: 'PrivacyDispatch',
+              operation: { _tag: 'PrivacyOutcome', attempt: pushed.attempt },
+              operationRequirementKey: continuation.requirementKey,
+              source: {
+                _tag: 'Continuation',
+                deliveryId: deliveryRow?.delivery,
+                tenantId: tenant.tenantId,
+                workerKey: continuation.workerKey,
+              },
+            },
+          });
+          // and Privacy was asked, under that delegated token, for the pushed attempt of the measure, and nothing else
+          expect(firstPush.reports).toHaveLength(1);
+          expect(firstPush.reports[0]?.authorization).toBe('Bearer fictional-privacy-dispatch-continuation-token');
+          expect(Schema.decodeUnknownSync(OutcomeReportBodySchema)(firstPush.reports[0]?.body)).toEqual({
+            request: { attempt: pushed.attempt, measureId: pushed.measureId, taskId: pushed.taskId },
+          });
           // 6. Privacy reads the receipt of the pushed attempt ITSELF, and its published state machine transitions
           const after = Option.getOrThrow((yield* receipt(manager, pushed.attempt)).receipt);
           expect(after.handoffFingerprint).toBe(fingerprint);
@@ -1104,9 +1304,13 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           expect(yield* continuationMessages).toHaveLength(2);
           // the second confirmation is pushed too, as the next attempt, and leaves no unfinished work behind
           yield* deliverContinuations();
+          const secondPush = yield* pushedReports;
           expect(
-            continuations.filter((reported) => reported.measureId === handoff.measureId).map(({ attempt }) => attempt),
+            secondPush.reports.map(
+              ({ body }) => Schema.decodeUnknownSync(OutcomeReportBodySchema)(body).request.attempt,
+            ),
           ).toEqual([2, 3]);
+          expect(secondPush.delegations).toHaveLength(2);
           expect(yield* pendingContinuationWork).toEqual([]);
         }),
       ).pipe(Effect.provide(services)),
