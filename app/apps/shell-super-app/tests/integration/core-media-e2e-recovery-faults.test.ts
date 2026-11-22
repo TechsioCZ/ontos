@@ -18,6 +18,7 @@ import {
   failureCodeOf,
   failureTagOf,
   metadataOf,
+  needed,
   patternBytes,
   putBytes,
   refOf,
@@ -64,6 +65,19 @@ const readToEnd = (response: Response) =>
       try: async () => new Uint8Array(await response.arrayBuffer()),
     }),
   );
+
+/** How many times the integrity Action has been invoked in the world's tenant (an observation, never a request). */
+const integrityInvocationCount = (world: MediaE2eWorld) =>
+  world.admin
+    .unsafe<{ readonly count: string }>(
+      `select count(*)::text as count from core.action_invocations
+         where tenant_id = $1 and action_key = 'core.media.record-asset-integrity-failure'`,
+      [world.tenantId],
+    )
+    .pipe(
+      Effect.map((rows) => Number(rows[0]?.count ?? '0')),
+      Effect.orDie,
+    );
 
 /** One ready asset of the uploader, and the reader that may download it. */
 const readyAsset = Effect.fn('CoreMediaE2e.readyRecoveryAsset')(function* readyAsset(
@@ -272,6 +286,46 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 ),
               ).toBe('ReadPermissionDenied');
               expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'an ambiguous enrolment, or one that exists only in another tenant, records nothing: the asset stays ready and nothing was run',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* enrolmentThatIsNotExactlyOne() {
+              const uploader = person(world, 'uploader');
+              const reader = person(world, 'downloader');
+              yield* world.grant(uploader, uploaderCapabilities);
+              yield* world.grant(reader, readerCapabilities);
+              const edge = yield* world.shell;
+              const original = patternBytes(70_001);
+              const id = yield* readyAsset(world, edge, original, 'corrupt-enrolment');
+              yield* world.replaceStoredObject(
+                id,
+                patternBytes(70_001).map((byte, index) => (index === 70_000 ? (byte + 1) % 256 : byte)),
+              );
+              const invocationsBefore = yield* integrityInvocationCount(world);
+              const corruptDownload = () =>
+                edge
+                  .open({ actor: reader, method: 'GET', path: `/core/media/assets/${id}/content` })
+                  .pipe(Effect.flatMap(readToEnd));
+
+              // Bound only in the foreign tenant: this tenant has no enrolment, so the finding is not recorded.
+              const foreignOwner = yield* needed(world.foreign.get('owner'), 'foreign owner');
+              yield* world.enrolSystemWorkload('core.media.integrity', foreignOwner.tenantId);
+              expect(Exit.isFailure(yield* corruptDownload())).toBe(true);
+              expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
+
+              // Two enrolments in this tenant are ambiguous, and an ambiguous workload is never guessed.
+              yield* world.enrolSystemWorkload('core.media.integrity', world.tenantId);
+              yield* world.enrolSystemWorkload('core.media.integrity', world.tenantId);
+              expect(Exit.isFailure(yield* corruptDownload())).toBe(true);
+              expect((yield* rowOf(world, id))?.processing_status).toBe('ready');
+              expect(yield* integrityInvocationCount(world)).toBe(invocationsBefore);
             }),
           ),
         ),
