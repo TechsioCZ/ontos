@@ -38,6 +38,20 @@ const groupId = 'f1000000-0000-4000-8000-000000000021';
 const operationAt = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-20T10:00:00.000Z'));
 
 describe('Standing source policy native identifier boundary', () => {
+  it('rejects wildcard authority and mapping references that canonical Price assertions cannot store', () => {
+    const terms = policyTerms(world);
+    const payload = { intent: 'ESTABLISH', policy: terms, reason: 'Source authority', verificationRef: 'verified' };
+    expect(Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)(payload)).toBe(true);
+    for (const policy of [
+      { ...terms, authority: { ...terms.authority, sourceAuthorityRef: '*' } },
+      { ...terms, authority: { ...terms.authority, sourceAuthorityVersion: '*' } },
+      { ...terms, mapping: { ...terms.mapping, mappingContractRef: '*' } },
+      { ...terms, mapping: { ...terms.mapping, mappingContractVersion: '*' } },
+    ]) {
+      expect(Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)({ ...payload, policy })).toBe(false);
+    }
+  });
+
   it('rejects an uppercase END identifier before it can become a persistence-unavailable error', () => {
     const payload = {
       effectiveTo: '2026-11-21T00:00:00.000Z',
@@ -216,6 +230,17 @@ describe('Standing external Price source policy at the external Price input boun
       'MAPPING_MISMATCH',
     );
     expect(policyCoversRequest(anyGroup, requestFor(otherGroupKey, undefined, priceListMapping))).toBe('MATCH');
+    const foreignGroupRequest = {
+      ...requestFor(otherGroupKey, undefined, priceListMapping),
+      identityKey: {
+        ...otherGroupKey,
+        priceGroupSelector: {
+          kind: 'PRICE_GROUP' as const,
+          priceGroupRef: priceGroupRef('f1000000-0000-4000-8000-000000000099', groupId),
+        },
+      },
+    };
+    expect(policyCoversRequest(anyGroup, foreignGroupRequest)).toBe('MAPPING_MISMATCH');
     expect(policyCoversRequest(anyGroup, requestFor(priceKey(world, newVariant), undefined, priceListMapping))).toBe(
       'MAPPING_MISMATCH',
     );

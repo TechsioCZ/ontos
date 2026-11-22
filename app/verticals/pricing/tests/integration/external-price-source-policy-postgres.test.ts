@@ -8,6 +8,7 @@ import { expect, it } from 'effect-rstest';
 
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
+import { exactTenantCompanyScopePredicateSql } from '../../src/database/exact-scope-predicate.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -70,7 +71,6 @@ const withAuthority = <Value, Failure>(
 ) =>
   database.transaction((transaction: PricingTransaction) =>
     Effect.gen(function* scopedAuthority() {
-      yield* setScope(transaction, selectedScope.tenantId, selectedScope.legalEntityId ?? '');
       const ownerTransaction = yield* installOperationalScope(transaction, selectedScope);
       const authority = yield* externalPriceSourceAuthorityForScope(ownerTransaction, selectedScope);
       return yield* operation(authority);
@@ -465,13 +465,32 @@ it.live('ANY_PRICE_GROUP covers only selectors naming the scoped tenant at the n
   ),
 );
 
-const directPolicyInsert = (tenant = tenantId, entity = legalEntityId) => sql`
+const directPolicyInsert = (
+  tenant = tenantId,
+  entity = legalEntityId,
+  {
+    effectiveFrom = '2099-01-01T00:00:00Z',
+    effectiveTo = '2100-01-01T00:00:00Z',
+    mappingContractRef = 'erp-products-price',
+    mappingContractVersion = 'v1',
+    sourceAuthorityRef = 'erp-prices',
+    sourceAuthorityVersion = 'v1',
+  }: {
+    readonly effectiveFrom?: string;
+    readonly effectiveTo?: string | null;
+    readonly mappingContractRef?: string;
+    readonly mappingContractVersion?: string;
+    readonly sourceAuthorityRef?: string;
+    readonly sourceAuthorityVersion?: string;
+  } = {},
+) => sql`
   insert into pricing.external_price_source_policies (
     tenant_id, legal_entity_id, source_authority_ref, source_authority_version, mapping_contract_ref,
     mapping_contract_version, channel_id, market_id, currency_code, unit_id, unit_quantity, price_group_coverage,
     effective_from, effective_to, verification_ref, verified_at
-  ) values (${tenant}, ${entity}, 'erp-prices', 'v1', 'erp-products-price', 'v1', 'B2C', 'akros-cz', 'CZK',
-    ${world.unitId}, 1, 'NO_GROUP', '2099-01-01T00:00:00Z', '2100-01-01T00:00:00Z', 'direct', now()) returning policy_id`;
+  ) values (${tenant}, ${entity}, ${sourceAuthorityRef}, ${sourceAuthorityVersion}, ${mappingContractRef},
+    ${mappingContractVersion}, 'B2C', 'akros-cz', 'CZK', ${world.unitId}, 1, 'NO_GROUP',
+    ${effectiveFrom}::timestamptz, ${effectiveTo}::timestamptz, 'direct', now()) returning policy_id`;
 
 const insertEnd = (policyId: string, effectiveTo: SQL, tenant = tenantId, entity = legalEntityId) => sql`
   insert into pricing.external_price_source_policy_ends
@@ -493,6 +512,35 @@ it.live('scoped SQL cannot rewrite policy history or store a second overlapping 
           const failure = yield* Effect.flip(scopedSql(statement));
           expect(Option.getOrThrow(findPostgresFailure(failure))).toMatchObject({ code });
         });
+
+      const scopePredicate =
+        "tenant_id = nullif(current_setting('ontos.tenant_id'::text, true), ''::text)::uuid and legal_entity_id = nullif(current_setting('ontos.legal_entity_id'::text, true), ''::text)::uuid";
+      const predicates = yield* scopedSql(sql`select
+        ${sql.raw(exactTenantCompanyScopePredicateSql('candidate.expression'))} as valid
+        from (values (1, ${scopePredicate}), (2, ${scopePredicate.replace(' and ', '\nAND   ')}),
+          (3, ${scopePredicate.replace('ontos.tenant_id', 'ontos.tenant_ id')}),
+          (4, ${scopePredicate.replace('ontos.tenant_id', 'Ontos.tenant_id')}),
+          (5, ${scopePredicate.replace('ontos.legal_entity_id', 'ontos.legal_ entity_id')}))
+          as candidate(position, expression) order by candidate.position`);
+      expect(predicates).toEqual([
+        { valid: true },
+        { valid: true },
+        { valid: false },
+        { valid: false },
+        { valid: false },
+      ]);
+
+      for (const invalid of [
+        { effectiveFrom: '-infinity', effectiveTo: null },
+        { effectiveFrom: 'infinity', effectiveTo: null },
+        { effectiveTo: 'infinity' },
+        { sourceAuthorityRef: '*' },
+        { sourceAuthorityVersion: '*' },
+        { mappingContractRef: '*' },
+        { mappingContractVersion: '*' },
+      ]) {
+        yield* failsWith(directPolicyInsert(tenantId, legalEntityId, invalid), '23514');
+      }
 
       const staleSnapshotWrite = runtime.transaction(
         (tx) => Effect.andThen(setScope(tx, tenantId, legalEntityId), tx.execute(directPolicyInsert())),

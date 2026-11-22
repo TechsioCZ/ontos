@@ -1,0 +1,2 @@
+ALTER TABLE "pricing"."external_price_source_policies" ADD CONSTRAINT "pricing_external_price_policies_finite_ck" CHECK (isfinite("effective_from") and ("effective_to" is null or isfinite("effective_to")) and isfinite("verified_at") and isfinite("recorded_at"));--> statement-breakpoint
+ALTER TABLE "pricing"."external_price_source_policies" ADD CONSTRAINT "pricing_external_price_policies_exact_refs_ck" CHECK ("source_authority_ref" <> '*' and "source_authority_version" <> '*' and "mapping_contract_ref" <> '*' and "mapping_contract_version" <> '*');

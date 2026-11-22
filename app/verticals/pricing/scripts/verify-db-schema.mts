@@ -9,6 +9,7 @@ import {
   PRICING_RUNTIME_TABLE_GRANTS,
 } from '../../../scripts/postgres/runtime-role-grants.mts';
 import { PRICING_SCHEMA_NAME, PRICING_TABLE_INVENTORY } from '../src/database/schema.ts';
+import { exactTenantCompanyScopePredicateSql } from '../src/database/exact-scope-predicate.ts';
 
 class PricingSchemaVerificationError extends Schema.TaggedError<PricingSchemaVerificationError>()(
   'PricingSchemaVerificationError',
@@ -379,12 +380,9 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                  when 'd' then pg_get_expr(p.polqual, p.polrelid) = 'false' and p.polwithcheck is null
                  else false end is true)
               from pg_catalog.pg_policy as p
-              cross join lateral (select regexp_replace(lower(pg_get_expr(
-                  case p.polcmd when 'r' then p.polqual else p.polwithcheck end, p.polrelid
-                )), '[()[:space:]]', '', 'g') =
-                  regexp_replace($$tenant_id = nullif(current_setting('ontos.tenant_id'::text, true), ''::text)::uuid
-                    and legal_entity_id = nullif(current_setting('ontos.legal_entity_id'::text, true), ''::text)::uuid$$,
-                    '[()[:space:]]', '', 'g')
+              cross join lateral (select ${exactTenantCompanyScopePredicateSql(
+                "pg_get_expr(case p.polcmd when 'r' then p.polqual else p.polwithcheck end, p.polrelid)",
+              )}
                 as scoped) as expr
              where p.polrelid in ('pricing.external_price_source_policies'::regclass,
                'pricing.external_price_source_policy_ends'::regclass)) as standing_policy_access_valid,

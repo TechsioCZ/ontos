@@ -1222,6 +1222,14 @@ export const externalPriceSourcePolicies = pricingSchema.table.withRLS(
       sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`,
     ),
     check(
+      'pricing_external_price_policies_finite_ck',
+      sql`isfinite(${table.effectiveFrom}) and (${table.effectiveTo} is null or isfinite(${table.effectiveTo})) and isfinite(${table.verifiedAt}) and isfinite(${table.recordedAt})`,
+    ),
+    check(
+      'pricing_external_price_policies_exact_refs_ck',
+      sql`${table.sourceAuthorityRef} <> '*' and ${table.sourceAuthorityVersion} <> '*' and ${table.mappingContractRef} <> '*' and ${table.mappingContractVersion} <> '*'`,
+    ),
+    check(
       'pricing_external_price_policies_text_ck',
       sql`${table.sourceAuthorityRef} = btrim(${table.sourceAuthorityRef}) and length(${table.sourceAuthorityRef}) between 1 and 300 and ${table.sourceAuthorityVersion} = btrim(${table.sourceAuthorityVersion}) and length(${table.sourceAuthorityVersion}) between 1 and 300 and ${table.mappingContractRef} = btrim(${table.mappingContractRef}) and length(${table.mappingContractRef}) between 1 and 300 and ${table.mappingContractVersion} = btrim(${table.mappingContractVersion}) and length(${table.mappingContractVersion}) between 1 and 300 and ${table.verificationRef} = btrim(${table.verificationRef}) and length(${table.verificationRef}) between 1 and 300`,
     ),
