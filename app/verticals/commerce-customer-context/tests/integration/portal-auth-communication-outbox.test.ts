@@ -7,7 +7,7 @@ import { describe, expect, it } from 'effect-rstest';
 import type { Scope } from 'effect';
 import { randomUUID } from 'node:crypto';
 
-import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
+import { CommercePortalAuthConfig, parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow } from '../../shared/portal-auth-communications.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
@@ -21,7 +21,7 @@ import {
   protectedHandoffLayer,
 } from '../../src/portal-auth/communications/protected-handoff.ts';
 import type { ProtectedHandoffService } from '../../src/portal-auth/communications/protected-handoff.ts';
-import { protectedValueSealerLayer } from '../../src/portal-auth/communications/protected-value.ts';
+import { CommercePortalAuthProtectedValueSealerLive } from '../../src/portal-auth/communications/protected-value.ts';
 import { relayCommunicationRequests } from '../../src/portal-auth/communications/request-relay.ts';
 import type { RelayOptions } from '../../src/portal-auth/communications/request-relay.ts';
 import { portalAuthCommunicationRequest, requestOfStored } from '../../src/portal-auth/communications/request.ts';
@@ -76,7 +76,10 @@ const openProcess = Effect.fn('PortalAuthOutboxIntegration.openProcess')(functio
         Layer.provide(
           Layer.merge(
             Layer.succeed(CommercePortalAuthCommunicationStore, store),
-            protectedValueSealerLayer(Redacted.make(REALM_SECRET)).pipe(Layer.provide(NodeCrypto.layer)),
+            // the deployment's own sealer: the realm secret of its configuration
+            CommercePortalAuthProtectedValueSealerLive.pipe(
+              Layer.provide(Layer.merge(Layer.succeed(CommercePortalAuthConfig, configuration), NodeCrypto.layer)),
+            ),
           ),
         ),
       ),

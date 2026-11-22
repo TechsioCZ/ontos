@@ -2,7 +2,13 @@ import type { CommunicationRequestEncoded } from '@app/communications-contracts/
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { getActionHandler } from '@app/core-runtime/testing/actions';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import {
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionUnavailableError,
+  makeActiveApplicationCompositionService,
+} from '@app/core-runtime';
+import { ConfigProvider, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -13,8 +19,14 @@ import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communicat
 import { relayPortalAuthCommunicationRequestAction } from '../../src/actions/relay-portal-auth-communication-request.action.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
 import { CommercePortalAuthCommunicationStore } from '../../src/portal-auth/communications/communication-store.ts';
+import { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
 import type { PortalAuthIssuance } from '../../src/portal-auth/communications/issuance.ts';
-import { relayCommunicationRequests } from '../../src/portal-auth/communications/request-relay.ts';
+import {
+  PortalAuthCommunicationRelayLive,
+  relayCommunicationRequests,
+} from '../../src/portal-auth/communications/request-relay.ts';
+import { PortalAuthRelayTransportLive } from '../../src/portal-auth/communications/relay-transport.ts';
+import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communications/trusted-scope.ts';
 import { portalAuthCommunicationRequest, storedRequestOf } from '../../src/portal-auth/communications/request.ts';
 import { PortalAuthCommunicationSourceGateway } from '../../src/workers/portal-auth-communication-source-gateway.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from '../../src/workers/submit-portal-auth-communication-request-rejected.ts';
@@ -258,5 +270,93 @@ describe('The relay over the production transport (#1406 D1)', () => {
         ).toBe(true);
         expect(submitted).toStrictEqual([request]);
       }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
+describe('The relay loop and the production relay transport (#1406 D1)', () => {
+  it.effect(
+    'the relay loop submits a committed row of the trusted Tenant within its interval, and none of another Tenant',
+    () =>
+      Effect.gen(function* loop() {
+        yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+        const store = makeCommunicationStoreDouble();
+        for (const [name, tenantId] of [
+          ['pa-loop-own', TENANT],
+          ['pa-loop-foreign', OTHER_TENANT],
+        ] as const) {
+          yield* store.service.record({
+            issuance: issuance(name),
+            now: ISSUED_AT,
+            request: yield* storedRequestOf(yield* requestOf(name, tenantId)),
+            sealedValue: 'v1.sealed',
+            supersede: false,
+            tenantId,
+          });
+        }
+        const submitted: string[] = [];
+        yield* Effect.scoped(
+          Effect.gen(function* running() {
+            yield* Layer.build(
+              PortalAuthCommunicationRelayLive.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    Layer.succeed(CommercePortalAuthCommunicationStore, store.service),
+                    Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, {
+                      submit: (sent) => {
+                        submitted.push(sent.occurrence.occurrenceId);
+                        return Effect.succeed({ outcome: 'RELAYED' } as const);
+                      },
+                    }),
+                    Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId: TENANT }) }),
+                    NodeCrypto.layer,
+                  ),
+                ),
+              ),
+            );
+            yield* TestClock.adjust('2 seconds');
+          }),
+        );
+        expect(submitted).toStrictEqual(['pa-loop-own']);
+        expect((yield* Ref.get(store.outbox)).get('pa-loop-foreign')?.state).toBe('PENDING');
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  const unavailableComposition = Layer.succeed(
+    ActiveApplicationCompositionService,
+    makeActiveApplicationCompositionService(
+      Effect.fail(
+        new ActiveApplicationCompositionUnavailableError({ cause: 'fictional', reason: 'Fictional authority' }),
+      ),
+    ),
+  );
+  const transportWith = (configuration: Record<string, string>) =>
+    CommercePortalAuthCommunicationRequestSubmitter.pipe(
+      Effect.provide(
+        PortalAuthRelayTransportLive.pipe(
+          Layer.provide(
+            Layer.merge(unavailableComposition, ConfigProvider.layer(ConfigProvider.fromUnknown(configuration))),
+          ),
+        ),
+      ),
+    );
+
+  it.effect(
+    'the production transport fails closed, and sends nothing, without its configuration or an admitted composition',
+    () =>
+      Effect.gen(function* failClosed() {
+        const request = yield* requestOf('pa-transport-9');
+        const unconfigured = yield* transportWith({});
+        const configured = yield* transportWith({
+          COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key',
+          ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: 'https://commerce.example.test',
+          ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test',
+        });
+        for (const transport of [unconfigured, configured]) {
+          const failure = yield* Effect.flip(transport.submit(request));
+          expect(Schema.is(PortalAuthCommunicationUnavailable)(failure)).toBe(true);
+          expect(failure).toMatchObject({ operation: 'relay-portal-auth-communication-request' });
+          expect(JSON.stringify(failure)).not.toContain('fictional-relay-key');
+        }
+      }),
   );
 });
