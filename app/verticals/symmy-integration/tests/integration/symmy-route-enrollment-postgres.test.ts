@@ -561,7 +561,7 @@ it.effect('refuses an integration principal without an active API-key binding, i
 );
 
 it.effect(
-  'deactivates a stored route of a kind it cannot enroll, without its inventory or the composition, naming what it strands',
+  'deactivates a stored stock route without enrollment configuration or composition, naming what it strands',
   () =>
     Effect.gen(function* deactivateStock() {
       const { admin, integrationId, legalEntityId, tenantId } = yield* makeFixture();
@@ -583,7 +583,7 @@ it.effect(
         routeKey: 'inventoryStockBatch',
         tenantId,
       };
-      // An enrollment of the stock route names what it would enroll.
+      // This incomplete enrollment omits the Inventory policy, resolution read, and lifecycle policy.
       const enrollment = {
         ...reference,
         configuration: {
@@ -657,9 +657,11 @@ it.effect(
         route_key: 'inventoryStockBatch',
         route_revision: 'route-v1',
       });
-      // Anything but a deactivation of it is refused, as the command has no inventory of the stock route.
+      // Fresh enrollment still requires the stock route's full supported configuration.
       expect((yield* refusals(command(enroll, 'dry-run', enrollment))).map(({ code }) => code)).toEqual([
-        'stock_route_pending_inventory_setup',
+        'configuration_field_not_allowed',
+        'required_operation_missing',
+        'lifecycle_policy_required',
       ]);
     }).pipe(Effect.scoped, Effect.provide(services)),
   30_000,
