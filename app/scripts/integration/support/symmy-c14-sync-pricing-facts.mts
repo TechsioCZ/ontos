@@ -243,6 +243,7 @@ export const makeInternalSyncProducts = (
 /** Native persisted amounts and source association, not a successful HTTP envelope or a captured exact grant. */
 export const assertInternalSyncPrices = Effect.fn('InternalC14Sync.persistedPrices')(function* persisted(input: {
   readonly authority: Authority;
+  readonly expectedCatalogProducts: number;
   readonly sourceRouteId: string;
 }) {
   const { admin, legalEntityId, systemPrincipalId, tenantId } = input.authority;
@@ -328,9 +329,9 @@ export const assertInternalSyncPrices = Effect.fn('InternalC14Sync.persistedPric
     inventory_policies: 1,
     lists: 1,
     policies: 2,
-    products: 2,
+    products: input.expectedCatalogProducts,
     revisions: 4,
-    variants: 2,
+    variants: input.expectedCatalogProducts,
   });
   const coverages = yield* admin`select price_group_coverage from pricing.external_price_source_policies
     where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} order by price_group_coverage`;
