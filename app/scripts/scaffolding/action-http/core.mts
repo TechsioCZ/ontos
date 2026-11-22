@@ -31,6 +31,7 @@ const markers = {
   clientOperations: 'core-action-client-operations',
   serverApiGroups: 'core-action-server-api-groups',
   serverGroups: 'core-action-server-groups',
+  serverHandlers: 'core-action-server-handlers',
   serverImports: 'core-action-server-imports',
   serverLayers: 'core-action-server-layers',
   sharedGroups: 'core-action-api-groups',
@@ -428,10 +429,17 @@ export const planCoreActionHttpScaffold = Effect.fn('CoreActionHttpScaffold.plan
         [
           markers.serverLayers,
           action,
-          hostLayer === undefined
-            ? `coreAction${type}GroupLive,`
-            : `coreAction${type}GroupLive.pipe(Layer.provide(${hostLayer})),`,
+          hostLayer === undefined ? `coreAction${type}GroupLive,` : `coreAction${type}HandlersLive,`,
         ],
+        ...(hostLayer === undefined
+          ? []
+          : [
+              [
+                markers.serverHandlers,
+                action,
+                `const coreAction${type}HandlersLive = coreAction${type}GroupLive.pipe(Layer.provide(${hostLayer}));`,
+              ] as const,
+            ]),
       ],
       `${value}Action`,
     ),
