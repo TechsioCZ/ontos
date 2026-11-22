@@ -32,3 +32,5 @@ The generated descriptors are in `topology/authorization-catalog.json` (`pnpm au
 Each stored object is addressed by its derived key only; the key, provider id, version reference and any URL never reach a response, log or error. A new upload is always a new Media Asset id.
 
 ## Known gaps
+
+- **Existing environments do not receive the capabilities** because the published authorization release is pinned and no code publishes a later one; a fresh database does. This is out of scope for D20 and is raised as its own issue (draft: `release-adoption-issue-draft.md` in the plan folder, not filed).
