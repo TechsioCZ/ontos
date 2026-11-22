@@ -36,6 +36,8 @@ const ownerOperationProviders = [
   {
     moduleId: 'commerce.catalog',
     requiredOperations: [
+      { entrypointKey: 'commerce.catalog.add-product-category-assignment', schemaVersion: '1' },
+      { entrypointKey: 'commerce.catalog.api.add-product-category-assignment-recovery', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.create-product', schemaVersion: '2' },
       { entrypointKey: 'commerce.catalog.govern-variant-axes', schemaVersion: '1' },
       { entrypointKey: 'commerce.catalog.api.govern-variant-axes-recovery', schemaVersion: '1' },
