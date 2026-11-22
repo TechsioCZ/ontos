@@ -14,6 +14,7 @@ import { SymmyEffectOutcomeSchema, SymmyOwnerEffectRefSchema } from '@app/shared
 import { assert, expect } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 
+import { createProductAction } from '../../../verticals/catalog/src/actions/create-product.action.ts';
 import type { prepareInternalSyncAuthority } from './symmy-c14-sync-authority.mts';
 import { internalSyncSource } from './symmy-c14-sync-plans.mts';
 
@@ -126,7 +127,7 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
         and original.action_invocation_id::text=parent.owner_receipt->>'actionInvocationId'
         and original.action_key='commerce.catalog.create-product'
         and original.acting_principal_id=e.owner_executor_principal_id
-        and original.schema_version=1
+        and original.schema_version=${Number(createProductAction.descriptor.schemaVersion)}
       left join catalog.catalog_result_snapshots s on s.tenant_id=e.tenant_id
         and s.action_invocation_id=e.owner_invocation_id
       left join core.action_invocations i on i.tenant_id=e.tenant_id
