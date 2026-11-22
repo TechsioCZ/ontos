@@ -2479,6 +2479,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   const run = step?.run ?? 'exit 1';
   // The hook sees the selected files, and a file it fixes fails the gate.
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
+  expect(run).toContain('--no-stage-fixed');
   // A sweep goes through the hook as well: one `pnpm lint` over every file held every type program at once
   // and lost its runner.
   expect(run).not.toMatch(/pnpm lint$/mu);
