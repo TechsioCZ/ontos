@@ -234,6 +234,11 @@ import { createProductRecoveryRead } from './src/api/create-product-recovery.rea
 import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
 import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
+import { governVariantAxesRecoveryRead } from './src/api/govern-variant-axes-recovery.read.ts';
+import { confirmVariantCombinationRecoveryRead } from './src/api/confirm-variant-combination-recovery.read.ts';
+import { setProductLocalizedFactsRecoveryRead } from './src/api/set-product-localized-facts-recovery.read.ts';
+import { setProductUnitTargetDivisibilityRecoveryRead } from './src/api/set-product-unit-target-divisibility-recovery.read.ts';
+import { decideProductTypeUnnecessaryRecoveryRead } from './src/api/decide-product-type-unnecessary-recovery.read.ts';
 import { CreateProductActionApi } from './shared/apis/create-product-action.ts';
 import { CreateVariantActionApi } from './shared/apis/create-variant-action.ts';
 import { UpdateProductActionApi } from './shared/apis/update-product-action.ts';
@@ -580,6 +585,31 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: bindInitialVariantSourceRecoveryRead,
       },
       {
+        apiKey: 'govern-variant-axes-recovery',
+        operationKey: 'governVariantAxesRecovery.execute',
+        registration: governVariantAxesRecoveryRead,
+      },
+      {
+        apiKey: 'confirm-variant-combination-recovery',
+        operationKey: 'confirmVariantCombinationRecovery.execute',
+        registration: confirmVariantCombinationRecoveryRead,
+      },
+      {
+        apiKey: 'set-product-localized-facts-recovery',
+        operationKey: 'setProductLocalizedFactsRecovery.execute',
+        registration: setProductLocalizedFactsRecoveryRead,
+      },
+      {
+        apiKey: 'set-product-unit-target-divisibility-recovery',
+        operationKey: 'setProductUnitTargetDivisibilityRecovery.execute',
+        registration: setProductUnitTargetDivisibilityRecoveryRead,
+      },
+      {
+        apiKey: 'decide-product-type-unnecessary-recovery',
+        operationKey: 'decideProductTypeUnnecessaryRecovery.execute',
+        registration: decideProductTypeUnnecessaryRecoveryRead,
+      },
+      {
         apiKey: 'catalog-source-product-page',
         operationKey: 'catalogSourceProductPage.execute',
         registration: catalogSourceProductPageRead,
@@ -696,6 +726,11 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,
+    governVariantAxesRecoveryRead,
+    confirmVariantCombinationRecoveryRead,
+    setProductLocalizedFactsRecoveryRead,
+    setProductUnitTargetDivisibilityRecoveryRead,
+    decideProductTypeUnnecessaryRecoveryRead,
     catalogSourceProductPageRead,
     catalogSourceProductsRead,
     // </generated-module-registration-reads>
