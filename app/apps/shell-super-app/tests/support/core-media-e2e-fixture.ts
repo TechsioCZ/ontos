@@ -481,6 +481,10 @@ export interface MediaE2eWorld {
   /** The revision of the active Application Composition every request of this world runs under. */
   readonly compositionRevision: string;
   readonly databases: DatabaseConnectionPair;
+  readonly enrolSystemWorkload: (
+    workloadKey: string,
+    tenantId: string,
+  ) => Effect.Effect<{ readonly principalId: string }>;
   /**
    * CONTROLLED FAULT INJECTION: the relays between the Shell and the emulator (`faults`, forwarding until a rule is
    * set) and between the Shell and the engine (`engine`, `setDown(true)` partitions it). Absent when the run did not
@@ -705,12 +709,8 @@ const recordMembers = (
   }).pipe(Effect.orDie);
 
 /** A `system` principal of the tenant with one active binding for one workload key, written as the operator's install would. */
-const bindSystemWorkloadOf = (
-  admin: PgClient.PgClient,
-  resolver: ReturnType<typeof makeSystemPrincipalContextResolver>,
-  tenantId: string,
-) =>
-  Effect.fn('MediaE2e.bindSystemWorkload')(function* bindSystemWorkload(workloadKey: string) {
+const enrolSystemWorkloadOf = (admin: PgClient.PgClient) =>
+  Effect.fn('MediaE2e.enrolSystemWorkload')(function* enrolSystemWorkload(workloadKey: string, tenantId: string) {
     const crypto = yield* Crypto.Crypto;
     const [principalId, bindingId, incarnation] = yield* Effect.all([
       crypto.randomUUIDv4(),
@@ -727,7 +727,17 @@ const bindSystemWorkloadOf = (
            values ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid, 'active')`,
       [bindingId, tenantId, principalId, workloadKey, incarnation],
     );
-    // The trusted context only Core's own resolver can construct, exactly what the Shell host obtains at run time.
+    return { principalId };
+  }, Effect.orDie);
+
+/** Enrols the one principal, then obtains the trusted context only Core's own resolver can construct (as the Shell host does). */
+const bindSystemWorkloadOf = (
+  admin: PgClient.PgClient,
+  resolver: ReturnType<typeof makeSystemPrincipalContextResolver>,
+  tenantId: string,
+) =>
+  Effect.fn('MediaE2e.bindSystemWorkload')(function* bindSystemWorkload(workloadKey: string) {
+    const { principalId } = yield* enrolSystemWorkloadOf(admin)(workloadKey, tenantId);
     const principal = yield* resolver.resolveEnrolled({
       registration: registerSystemWorkload({ jobKey: workloadKey }),
       runReference: 'e2e',
@@ -864,6 +874,10 @@ export const withMediaE2eWorld = <Value, Failure>(
           )(workloadKey).pipe(Effect.provideService(Crypto.Crypto, crypto)),
         compositionRevision: composition.composition.revision,
         databases,
+        enrolSystemWorkload: (workloadKey, enrolledTenantId) =>
+          enrolSystemWorkloadOf(admin)(workloadKey, enrolledTenantId).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+          ),
         faultInjection,
         foreign: foreignRoster.actors,
         grant: commands.grant,
