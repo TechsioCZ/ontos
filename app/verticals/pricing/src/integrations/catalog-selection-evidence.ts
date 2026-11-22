@@ -114,6 +114,17 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
               ? cause
               : unavailable('Catalog selection assessment is unavailable', cause),
           ),
+          Effect.tap((response) =>
+            'status' in response.evidence && response.evidence.status === 'VALID' && response.missingRoles.length === 0
+              ? Effect.void
+              : Effect.logInfo('Pricing Catalog selection did not validate', {
+                  missingRoles: response.missingRoles,
+                  outcome: 'status' in response.evidence ? response.evidence.status : response.evidence.kind,
+                  productId: selection.productRef.resourceId,
+                  requestCorrelation: dependencies.context.requestCorrelation,
+                  variantId: selection.variantRef.resourceId,
+                }).pipe(Effect.ignoreCause),
+          ),
           Effect.flatMap((response) => {
             if (!assessmentMatchesRequest(response.evidence, selection)) {
               return Effect.fail(unavailable('Catalog returned an assessment for a different selection or purpose'));
