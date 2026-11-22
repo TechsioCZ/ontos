@@ -7,6 +7,7 @@ import {
   DefineSourceProvisioningPolicyActionApi,
   DefineSourceProvisioningPolicyPayloadSchema,
 } from '../../shared/apis/define-source-provisioning-policy-action.ts';
+import type { ResolveSourceProvisioningPolicyCommitRequest } from '../../shared/apis/define-source-provisioning-policy-action.ts';
 import type { DefineSourceProvisioningPolicyPayload } from '../../shared/actions/define-source-provisioning-policy.ts';
 import { operationGateway } from './action-gateway.ts';
 
@@ -74,6 +75,41 @@ export const executeDefineSourceProvisioningPolicy = (
     (credential, { apiBaseUrl, compositionRevision }) =>
       executeDefineSourceProvisioningPolicyWithAuthorization(payload, credential, requestCorrelation, {
         ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
+    options.gateway,
+  );
+
+export type ResolveSourceProvisioningPolicyCommitOptions = Pick<
+  DefineSourceProvisioningPolicyActionClientOptions,
+  'baseUrl' | 'compositionRevision' | 'gateway'
+>;
+
+export const resolveSourceProvisioningPolicyCommitWithAuthorization = (
+  payload: ResolveSourceProvisioningPolicyCommitRequest,
+  credential: Redacted.Redacted,
+  requestCorrelation: string,
+  options: ResolveSourceProvisioningPolicyCommitOptions = {},
+) =>
+  makeGovernedEffectBffClient(
+    {
+      api: DefineSourceProvisioningPolicyActionApi,
+      credential,
+      defaultApiPrefix: '/inventory-api',
+      requestCorrelation,
+    },
+    options,
+  ).pipe(Effect.flatMap((client) => client.defineSourceProvisioningPolicyCommit.resolveCommit({ payload })));
+
+export const resolveSourceProvisioningPolicyCommit = (
+  payload: ResolveSourceProvisioningPolicyCommitRequest,
+  requestCorrelation: string,
+  options: ResolveSourceProvisioningPolicyCommitOptions = {},
+) =>
+  operationGateway.invoke(
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      resolveSourceProvisioningPolicyCommitWithAuthorization(payload, Redacted.make(credential), requestCorrelation, {
         baseUrl: apiBaseUrl,
         compositionRevision,
       }),

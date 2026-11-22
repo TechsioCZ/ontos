@@ -42,6 +42,17 @@ const problemStatus = {
 } as const;
 
 export const defineSourceProvisioningPolicyActionProblem = {
+  alreadyCommitted: (invocationId: string) =>
+    DefineSourceProvisioningPolicyActionAlreadyCommittedProblemSchema.make({
+      code: 'action_already_committed',
+      detail: 'This Action is already committed. Refresh governed reads.',
+      invocationId,
+      resolution: 'REFRESH_GOVERNED_READS',
+      retryCommand: false,
+      status: problemStatus.conflict,
+      title: 'Action already committed',
+      type: 'https://ontos.dev/problems/action-already-committed',
+    }),
   authentication: (): ProblemOf<'DefineSourceProvisioningPolicyActionAuthenticationProblem'> =>
     DefineSourceProvisioningPolicyActionAuthenticationProblemSchema.make({
       detail: 'A valid audience-scoped Bearer assertion is required.',
@@ -70,6 +81,17 @@ export const defineSourceProvisioningPolicyActionProblem = {
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
+    }),
+  indeterminate: (invocationId: string) =>
+    DefineSourceProvisioningPolicyActionCommitIndeterminateProblemSchema.make({
+      detail:
+        'The Action commit is uncertain. Call resolveSourceProvisioningPolicyCommit with this invocationId before retrying.',
+      invocationId,
+      resolution: 'RESOLVE_COMMIT',
+      retryCommand: false,
+      status: problemStatus.unavailable,
+      title: 'Action commit uncertain',
+      type: 'https://ontos.dev/problems/action-commit-indeterminate',
     }),
   ineligible: (
     code: ProblemOf<'DefineSourceProvisioningPolicyActionIneligibleProblem'>['code'],
@@ -145,27 +167,10 @@ const mapCoreProblem = (error: ActionCoreError): DefineSourceProvisioningPolicyA
   Match.value(error).pipe(
     Match.tags({
       ActionAlreadyCommitted: (failure) =>
-        DefineSourceProvisioningPolicyActionAlreadyCommittedProblemSchema.make({
-          code: failure.code,
-          detail: 'This Action is already committed. Refresh governed reads.',
-          invocationId: failure.invocationId,
-          resolution: 'REFRESH_GOVERNED_READS',
-          retryCommand: false,
-          status: problemStatus.conflict,
-          title: 'Action already committed',
-          type: 'https://ontos.dev/problems/action-already-committed',
-        }),
+        defineSourceProvisioningPolicyActionProblem.alreadyCommitted(failure.invocationId),
       ActionCollectorError: defineSourceProvisioningPolicyActionProblem.internal,
       ActionCommitIndeterminate: (failure) =>
-        DefineSourceProvisioningPolicyActionCommitIndeterminateProblemSchema.make({
-          detail: 'The Action commit is uncertain. Resolve this invocation before another attempt.',
-          invocationId: failure.invocationId,
-          resolution: 'RESOLVE_COMMIT',
-          retryCommand: false,
-          status: problemStatus.unavailable,
-          title: 'Action commit uncertain',
-          type: 'https://ontos.dev/problems/action-commit-indeterminate',
-        }),
+        defineSourceProvisioningPolicyActionProblem.indeterminate(failure.invocationId),
       ActionHandlerExecutionError: defineSourceProvisioningPolicyActionProblem.internal,
       ActionIdempotencyKeyRequired: defineSourceProvisioningPolicyActionProblem.precondition,
       ActionInvocationNotFound: (failure) => defineSourceProvisioningPolicyActionProblem.notFound(failure.code),

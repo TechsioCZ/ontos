@@ -2,6 +2,7 @@
 // @ontos-action-http-owner commerce.inventory
 // @ontos-action-http-slug define-source-provisioning-policy
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { ActionInvocationIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
@@ -76,12 +77,13 @@ export const DefineSourceProvisioningPolicyActionUnavailableProblemSchema = make
     ]),
   },
 );
+const invocationId = Schema.toEncoded(ActionInvocationIdSchema);
 export const DefineSourceProvisioningPolicyActionAlreadyCommittedProblemSchema = makeProblemDetailsSchema(
   'DefineSourceProvisioningPolicyActionAlreadyCommittedProblem',
   409,
   {
     code: Schema.Literal('action_already_committed'),
-    invocationId: Schema.String,
+    invocationId,
     resolution: Schema.Literal('REFRESH_GOVERNED_READS'),
     retryCommand: Schema.Literal(false),
   },
@@ -90,7 +92,7 @@ export const DefineSourceProvisioningPolicyActionCommitIndeterminateProblemSchem
   'DefineSourceProvisioningPolicyActionCommitIndeterminateProblem',
   503,
   {
-    invocationId: Schema.String,
+    invocationId,
     resolution: Schema.Literal('RESOLVE_COMMIT'),
     retryCommand: Schema.Literal(false),
   },
@@ -99,6 +101,18 @@ export const DefineSourceProvisioningPolicyActionInternalProblemSchema = makePro
   'DefineSourceProvisioningPolicyActionInternalProblem',
   500,
 );
+
+export const ResolveSourceProvisioningPolicyCommitRequestSchema = Schema.Struct({
+  invocationId,
+});
+export type ResolveSourceProvisioningPolicyCommitRequest =
+  typeof ResolveSourceProvisioningPolicyCommitRequestSchema.Type;
+
+/** Core released the invocation lock without a committed result. Retry only the original command and key. */
+export const SourceProvisioningPolicyCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
+  invocationId,
+  retryCommand: Schema.Literal(true),
+});
 
 export type DefineSourceProvisioningPolicyActionProblem =
   | typeof DefineSourceProvisioningPolicyActionInvalidProblemSchema.Type
@@ -157,6 +171,27 @@ export const defineSourceProvisioningPolicyActionGroupDefinition = HttpApiGroup.
   )
   .middleware(DefineSourceProvisioningPolicyActionSchemaErrorMiddleware);
 
+export const defineSourceProvisioningPolicyCommitGroupDefinition = HttpApiGroup.make(
+  'defineSourceProvisioningPolicyCommit',
+)
+  .add(
+    HttpApiEndpoint.post('resolveCommit', '/inventory/actions/define-source-provisioning-policy/resolve-commit', {
+      error: [
+        DefineSourceProvisioningPolicyActionInvalidProblemSchema,
+        DefineSourceProvisioningPolicyActionAuthenticationProblemSchema,
+        DefineSourceProvisioningPolicyActionForbiddenProblemSchema,
+        DefineSourceProvisioningPolicyActionNotFoundProblemSchema,
+        DefineSourceProvisioningPolicyActionConflictProblemSchema,
+        DefineSourceProvisioningPolicyActionAlreadyCommittedProblemSchema,
+        DefineSourceProvisioningPolicyActionCommitIndeterminateProblemSchema,
+        DefineSourceProvisioningPolicyActionUnavailableProblemSchema,
+      ],
+      payload: ResolveSourceProvisioningPolicyCommitRequestSchema,
+      success: SourceProvisioningPolicyCommitOpenSchema,
+    }),
+  )
+  .middleware(DefineSourceProvisioningPolicyActionSchemaErrorMiddleware);
+
 export type DefineSourceProvisioningPolicyActionGroupContract = HttpApiGroup.HttpApiGroup<
   'defineSourceProvisioningPolicyAction',
   HttpApiGroup.Endpoints<typeof defineSourceProvisioningPolicyActionGroupDefinition>
@@ -165,6 +200,14 @@ export type DefineSourceProvisioningPolicyActionGroupContract = HttpApiGroup.Htt
 const DefineSourceProvisioningPolicyActionGroup: DefineSourceProvisioningPolicyActionGroupContract =
   defineSourceProvisioningPolicyActionGroupDefinition;
 
+export type DefineSourceProvisioningPolicyCommitGroupContract = HttpApiGroup.HttpApiGroup<
+  'defineSourceProvisioningPolicyCommit',
+  HttpApiGroup.Endpoints<typeof defineSourceProvisioningPolicyCommitGroupDefinition>
+>;
+const DefineSourceProvisioningPolicyCommitGroup: DefineSourceProvisioningPolicyCommitGroupContract =
+  defineSourceProvisioningPolicyCommitGroupDefinition;
+
 export const DefineSourceProvisioningPolicyActionApi = HttpApi.make('DefineSourceProvisioningPolicyActionApi').add(
   DefineSourceProvisioningPolicyActionGroup,
+  DefineSourceProvisioningPolicyCommitGroup,
 );
