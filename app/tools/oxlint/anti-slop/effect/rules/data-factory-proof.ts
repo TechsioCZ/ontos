@@ -2430,14 +2430,20 @@ class DataFactoryProof {
         // A bounded validator may turn native parse rejection into data. Prove both terminal
         // arms; never treat a failed proof as a caught exception or carry validation across it.
         const baselineValidation = new Set(this.validatedInputs);
+        const baselineStates = new Map(this.arrayStates);
         const branches: Value[] = [];
         const attempted = this.block(node.block.body, model, new Map(env), branches);
+        const tryWroteState = this.arrayStates.size !== baselineStates.size ||
+          [...this.arrayStates].some(([owner, next]) => baselineStates.get(owner) !== next);
+        // A native call can throw before a later write. Its catch cannot inherit that write.
+        this.arrayStates.clear();
+        for (const [owner, state] of baselineStates) this.arrayStates.set(owner, state);
         this.validatedInputs.clear();
         for (const token of baselineValidation) this.validatedInputs.add(token);
         const caught = this.block(node.handler.body.body, model, new Map(env), branches);
         this.validatedInputs.clear();
         for (const token of baselineValidation) this.validatedInputs.add(token);
-        if (attempted !== 'returns' || caught !== 'returns' || !branches.every(isClosedData)) return 'bad';
+        if (tryWroteState || attempted !== 'returns' || caught !== 'returns' || !branches.every(isClosedData)) return 'bad';
         returns.push(...branches);
         return 'returns';
       } else if (node.type === 'IfStatement') {
