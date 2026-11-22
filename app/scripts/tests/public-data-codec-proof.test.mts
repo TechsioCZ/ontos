@@ -622,6 +622,21 @@ const localeCodecProofs = (source: string): readonly boolean[] => {
 it('proves a closed string locale validator with terminal pure try/catch returns', () => {
   expect(localeCodecProofs(localeCodecSource('return true;'))).toEqual([true, true]);
   expect(localeCodecProofs(localeCodecSource(canonicalLocaleValidator))).toEqual([true, true]);
+  expect(
+    localeCodecProofs(
+      localeCodecSource("try { return Intl.getCanonicalLocales(locale)[0] === 'en-US'; } catch { return false; }"),
+    ),
+  ).toEqual([true, true]);
+});
+
+it('rejects a catch proof that relies on an exceptionally skipped try write', () => {
+  const validator = `const state = { phase: 'before' };
+try {
+  return Intl.getCanonicalLocales(locale)[0] === (state.phase = 'after');
+} catch {
+  return state.phase === 'after' ? false : fetch(locale);
+}`;
+  expect(localeCodecProofs(localeCodecSource(validator))).toEqual([false, false]);
 });
 
 it('rejects side effects and unproved exception flow in locale validators', () => {
