@@ -17,6 +17,7 @@ import type {
   OntosModuleDeploymentContract,
 } from '@app/core-runtime';
 import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { providesRequiredOperationContracts } from '../../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import { NodeHttpServer } from '@effect/platform-node';
 import {
   Array as EffectArray,
@@ -131,6 +132,21 @@ const derivePublishedContract = Effect.fn('SymmyC14ProductFixture.publishedContr
 const C14PolicyFixtureOwnerSchema = Schema.Literals(['assortment', 'tax']);
 export type C14PolicyFixtureOwner = typeof C14PolicyFixtureOwnerSchema.Type;
 
+/** Cross-owner proof reads only the allowlisted published deployment DTOs, never another owner's runtime. */
+export const symmyOwnerProviderContractProof = (contracts: readonly OntosModuleDeploymentContract[]) => {
+  const consumer = contracts.find(({ manifest }) => manifest.module.id === 'integration.symmy');
+  const requirements = (consumer?.manifest.requirements?.operations ?? []).filter(
+    ({ entrypointKey, provider }) =>
+      entrypointKey === 'integration.symmy.execute-symmy-job' &&
+      (provider.moduleId === 'commerce.catalog' || provider.moduleId === 'commerce.inventory'),
+  );
+  const missing = requirements.filter(({ provider }) => {
+    const owner = contracts.find(({ manifest }) => manifest.module.id === provider.moduleId);
+    return !providesRequiredOperationContracts(owner?.manifest.publicSurface.operationContracts, [provider]);
+  });
+  return { checked: requirements.length, missing: missing.map(({ provider }) => provider.entrypointKey) };
+};
+
 export const productComposition = Effect.fn('SymmyC14ProductFixture.composition')(function* productComposition(
   backends: Readonly<Record<string, string>>,
   fixtureOwners: readonly C14PolicyFixtureOwner[] = [],
@@ -152,6 +168,12 @@ export const productComposition = Effect.fn('SymmyC14ProductFixture.composition'
     derivePublishedContract,
     { concurrency: 3 },
   );
+  const providerProof = symmyOwnerProviderContractProof(contracts);
+  if (providerProof.checked === 0 || providerProof.missing.length !== 0) {
+    return yield* unavailable(
+      `Published Symmy owner operation contracts are incomplete: checked ${providerProof.checked}; missing ${providerProof.missing.join(', ')}`,
+    );
+  }
   const fs = yield* FileSystem.FileSystem;
   const runtimeDocument = yield* fs.readFileString(
     `${c14AppRoot}/apps/shell-super-app/dist/public/.well-known/ontos-shell-runtime.json`,

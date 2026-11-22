@@ -1,5 +1,6 @@
 import {
   TrustedPrincipalContextSchema,
+  ScopedRoutineInvocationError,
   defineAction,
   defineTenantModuleEntrypoint,
   findPostgresFailure,
@@ -1024,8 +1025,14 @@ it.effect(
           differentPolicy,
         ),
       ).pipe(Effect.flip);
-      expect(Option.getOrThrow(findPostgresFailure(policyTampering, ({ code }) => code === '22023'))).toMatchObject({
-        code: '22023',
+      const routineFailure = yield* Schema.decodeUnknownEffect(
+        Schema.Struct({ cause: Schema.toType(ScopedRoutineInvocationError) }),
+      )(policyTampering);
+      expect(routineFailure.cause).toMatchObject({
+        code: 'scoped_routine_invocation_failed',
+        ownerModuleKey: 'integration.symmy',
+        postgresCode: Option.some('22023'),
+        routineKey: 'symmy-job.record-resolved-effect',
       });
       const refreshed = Option.getOrThrow(yield* scoped((_admission, execution) => execution.load(job.jobId)));
       const saved = refreshed.effects.find(({ effect }) => effect.ref.effectId === provision.ref.effectId);

@@ -1,6 +1,5 @@
 import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
 import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
-import { extractVerticalRuntimeSafeDescriptors } from '@app/core-runtime';
 import { executeProvisionSourceStockItemWithAuthorization } from '@app/inventory/api/client';
 import {
   ProvisionSourceStockItemInputSchema,
@@ -9,6 +8,7 @@ import {
 } from '@app/inventory/source-provisioning';
 import { CreateProductRecoveryForbiddenProblemSchema } from '@app/catalog/api/create-product-recovery';
 import { CreateProductActionAlreadyCommittedProblemSchema } from '@app/catalog/api/create-product-action';
+import { GovernVariantAxesActionConflictProblemSchema } from '@app/catalog/api/govern-variant-axes-action';
 import { PriceGroupResultLookupResponseSchema } from '@app/price-group-catalog/apis/price-group-result-lookup';
 import { DefinePriceResultSchema } from '@app/pricing/actions/define-price';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
@@ -30,8 +30,6 @@ import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
 
-import { catalogBackendRegistration } from '../../../catalog/vertical.runtime-declaration.ts';
-import { inventoryRegistration } from '../../../inventory/vertical.registration.ts';
 import {
   SymmyCatalogPricingInventoryIntentSchema,
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -980,30 +978,6 @@ const gatewayRequestsFor = Effect.fn('CpiAdapterFixture.gatewayRequests')(functi
 });
 
 describe('Symmy native public owner adapter transport', () => {
-  it.effect('requires every selected Catalog and Inventory command to publish its exact provider contract', () =>
-    makeSymmyCatalogPricingInventoryAdapters.pipe(
-      Effect.tap((adapters) =>
-        Effect.sync(() => {
-          const providers = [catalogBackendRegistration, inventoryRegistration].map(
-            extractVerticalRuntimeSafeDescriptors,
-          );
-          for (const { operation } of adapters) {
-            const provider = providers.find(({ moduleId }) => moduleId === operation.moduleId);
-            if (provider !== undefined) {
-              expect(provider.operationContracts).toContainEqual(
-                expect.objectContaining({
-                  entrypoint: expect.objectContaining({ entrypointKey: operation.entrypointKey }),
-                  schemaVersion: operation.schemaVersion,
-                }),
-              );
-            }
-          }
-        }),
-      ),
-      Effect.provide(NodeCrypto.layer),
-    ),
-  );
-
   it.effect('identifies owner request persistence failure without replacing or logging the original cause', () => {
     const h = harness(false);
     const entries: unknown[] = [];
@@ -2837,6 +2811,65 @@ const readinessCreatePlan = () => {
 };
 
 describe('Symmy Product readiness', () => {
+  for (const code of GovernVariantAxesActionConflictProblemSchema.fields.code.literals) {
+    it.effect(`preserves the native axes conflict and records only its finite code: ${code}`, () => {
+      const acceptedPlan = readinessCreatePlan();
+      const selected = acceptedPlan.items
+        .flatMap(({ effects }) => effects)
+        .find(({ ref }) => ref.operation.entrypointKey === 'commerce.catalog.govern-variant-axes');
+      assert.isDefined(selected);
+      const h = harness(false, selected);
+      const entries: unknown[] = [];
+      const parent = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: variantRef,
+            productRef,
+            productRevision: 1,
+            variantRevision: 1,
+          }),
+        ),
+      };
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        if (!request.url.endsWith('/actions/govern-variant-axes')) {
+          return h.fetch(request);
+        }
+        const problem = GovernVariantAxesActionConflictProblemSchema.make({
+          code,
+          detail: 'private-owner-detail',
+          status: 409,
+          title: 'Conflict',
+          type: 'https://ontos.dev/problems/conflict',
+        });
+        return Promise.resolve(
+          Response.json(Schema.encodeSync(GovernVariantAxesActionConflictProblemSchema)(problem), {
+            headers: { 'content-type': 'application/problem+json' },
+            status: 409,
+          }),
+        );
+      };
+      return h.provide(
+        Effect.gen(function* nativeAxesConflict() {
+          const adapter = yield* h.adapter;
+          expect((yield* adapter.execute({ ...h.input, acceptedPlan, dependencies: [parent] })).status).toBe(
+            'conflict',
+          );
+          expect(entries).toContainEqual({
+            code,
+            effectId: selected.ref.effectId,
+            operation: 'CatalogReadinessAxes',
+          });
+          expect(JSON.stringify(entries)).not.toContain('private-owner-detail');
+          expect(h.receipts).toEqual([]);
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.provide(preDispatchLogs(entries))),
+      );
+    });
+  }
+
   it.effect('settles old create snapshots without original revision evidence as unresolved, not ready', () =>
     Effect.gen(function* absentOriginalRevision() {
       const acceptedPlan = readinessCreatePlan();
