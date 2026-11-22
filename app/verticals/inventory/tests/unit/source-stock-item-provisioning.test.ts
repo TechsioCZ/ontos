@@ -386,6 +386,44 @@ const isProvisioningRejected = Schema.is(SourceStockItemProvisioningRejected);
 const isPolicyRejected = Schema.is(SourceProvisioningPolicyRejected);
 
 describe('Inventory source stock item provisioning', () => {
+  it('rejects noncanonical native policy identifiers without changing case-sensitive ERP keys', () => {
+    const nativeId = 'abcdef01-2345-4678-9abc-def012345678';
+    const payload = {
+      customerConfigurationId,
+      externalScope: 'Akros',
+      locations: [
+        {
+          locationKey: 'Akros-Warehouse',
+          stockLocationRef: { ...locationRef(nativeId), tenantId: nativeId },
+        },
+      ],
+      namespace: 'Akros-ERP',
+      ownerConfigurationRef: { ...ownerConfigurationRef, resourceId: nativeId, tenantId: nativeId },
+      unitRef: { ...unitRef(nativeId), tenantId: nativeId },
+    };
+    expect(Schema.decodeUnknownSync(DefineSourceProvisioningPolicyPayloadSchema)(payload)).toEqual(payload);
+    const uppercaseId = nativeId.toUpperCase();
+    for (const field of ['resourceId', 'tenantId'] as const) {
+      for (const reference of ['ownerConfigurationRef', 'unitRef'] as const) {
+        expect(
+          Schema.is(DefineSourceProvisioningPolicyPayloadSchema)({
+            ...payload,
+            [reference]: { ...payload[reference], [field]: uppercaseId },
+          }),
+        ).toBe(false);
+      }
+      expect(
+        Schema.is(DefineSourceProvisioningPolicyPayloadSchema)({
+          ...payload,
+          locations: payload.locations.map((location) => ({
+            ...location,
+            stockLocationRef: { ...location.stockLocationRef, [field]: uppercaseId },
+          })),
+        }),
+      ).toBe(false);
+    }
+  });
+
   it('validates the shared Tenant authority and backend selection without coercing incompatible brands', () => {
     const now = '2026-11-22T10:00:00.000Z';
     expect(sourceProvisioningPolicyHasCurrentOwner(policy, configuration(), now)).toBe(true);

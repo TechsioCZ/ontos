@@ -8,6 +8,7 @@ import { CustomerConfigurationIdSchema } from '../inventory-launch-scope.ts';
 import { InventoryBackendConfigurationRefSchema } from '../resources/inventory-backend-configuration.ts';
 
 const boundedText = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300));
+const canonicalUuid = Schema.String.check(Schema.isUUID(), Schema.isPattern(/^[0-9a-f-]+$/u));
 
 /**
  * The one provisioning policy of the selected external Inventory Backend of a Customer Configuration. The issuer
@@ -20,7 +21,15 @@ export const DefineSourceProvisioningPolicyPayloadSchema = Schema.Struct({
   namespace: boundedText,
   ownerConfigurationRef: InventoryBackendConfigurationRefSchema,
   unitRef: ProductUnitRefSchema,
-});
+}).check(
+  Schema.makeFilter(({ locations, ownerConfigurationRef, unitRef }) =>
+    [ownerConfigurationRef, unitRef, ...locations.map(({ stockLocationRef }) => stockLocationRef)].every(
+      ({ resourceId, tenantId }) => Schema.is(canonicalUuid)(resourceId) && Schema.is(canonicalUuid)(tenantId),
+    )
+      ? undefined
+      : 'Source provisioning policy native identifiers must be canonical lowercase UUIDs',
+  ),
+);
 export type DefineSourceProvisioningPolicyPayload = typeof DefineSourceProvisioningPolicyPayloadSchema.Type;
 
 export const DefineSourceProvisioningPolicyResultSchema = Schema.Struct({
