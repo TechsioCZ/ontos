@@ -62,24 +62,28 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Catalog Core Me
       const start = declaration.indexOf("key: 'commerce.catalog.requirement.core-media-current'");
       expect(start).toBeGreaterThan(0);
       const block = declaration.slice(Math.max(0, start - 400), start + 300);
-      expect(block).toContain("callers: [{ kind: 'person', legalEntityScope: 'tenant' }]");
+      expect(block).toContain("callers: [{ kind: 'person', legalEntityScope: 'subject' }]");
       expect(block).not.toMatch(/registered|workload/u);
     }),
   );
 
   suite.effect(
-    'relays the requester tenant-wide because the Catalog read itself accepts no company: the residual is recorded',
+    'relays the requester under their selected company: the read accepts a company and the requirement carries it',
     () =>
-      Effect.gen(function* tenantWideRelay() {
-        // The platform refuses a company on a `forbidden` read (OperationContextInvalid), so the requester's selected
-        // company never exists in this read's execution and a `subject` relay would have nothing to carry. A company
-        // narrowing of Current needs this read to accept a company first (a Catalog contract change); until then the
-        // availability, never the metadata or bytes, of a company-owned asset is visible to every holder of the
-        // Current capability through a ref Catalog holds (handoff decision 7, CORE_MEDIA.md). Change both or neither.
+      Effect.gen(function* companyNarrowedRelay() {
+        // The platform refuses a company on a `forbidden` read (OperationContextInvalid), so a `forbidden` read could
+        // never hold the company a `subject` relay carries; and a `tenant` relay strips the company the read has, so
+        // Core's own narrowing (a selected company sees its own and company-less assets only) never applies and every
+        // holder of Current learns the availability of a company-owned asset behind a ref Catalog holds. Both halves
+        // are therefore one change: the read is `optional` and the requirement relays the `subject`. Change both or
+        // neither (handoff decision 7, CORE_MEDIA.md).
         const read = codeOf(yield* readApp('src/api/catalog-document-current.read.ts'));
-        expect(read).toContain("legalEntityScope: 'forbidden'");
+        expect(read).toContain("legalEntityScope: 'optional'");
+        expect(read).not.toContain("legalEntityScope: 'forbidden'");
         const declaration = codeOf(yield* readApp('vertical.runtime-declaration.ts'));
-        expect(declaration).toContain("callers: [{ kind: 'person', legalEntityScope: 'tenant' }]");
+        expect(declaration).toContain("callers: [{ kind: 'person', legalEntityScope: 'subject' }]");
+        const start = declaration.indexOf("key: 'commerce.catalog.requirement.core-media-current'");
+        expect(declaration.slice(Math.max(0, start - 400), start)).not.toContain("legalEntityScope: 'tenant'");
       }),
   );
 

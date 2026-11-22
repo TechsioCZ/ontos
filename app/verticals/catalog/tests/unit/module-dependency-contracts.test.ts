@@ -95,10 +95,11 @@ describe('Catalog owner-authored dependency contracts', () => {
       },
     ]);
     // Core Media's Current V1 is the other Core requirement: served by the Shell host for the relayed requester, so it
-    // declares the requester (person) as its only caller and Catalog needs no provider credential or Core table.
+    // declares the requester (person) as its only caller and Catalog needs no provider credential or Core table. The
+    // requester is relayed as the `subject`, with the company they selected, so Core narrows Current to that company.
     expect(operations.filter(({ provider }) => provider.moduleId === 'core.media')).toEqual([
       {
-        callers: [{ kind: 'person', legalEntityScope: 'tenant' }],
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
         condition: 'commerce.catalog.condition.core-media-current',
         entrypointKey: 'commerce.catalog.api.catalog-document-current',
         evidence: ['commerce.catalog.evidence.core-media.asset-current'],
