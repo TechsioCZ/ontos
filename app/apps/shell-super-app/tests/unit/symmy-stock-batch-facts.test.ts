@@ -6,7 +6,7 @@ import {
 } from '@app/inventory/api/source-stock-position-resolution';
 import type { SourceStockPositionResolutionResponse } from '@app/inventory/api/source-stock-position-resolution';
 import { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
-import { SymmyStockRowsSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import { SymmyStockPositionFactsSchema, SymmyStockRowsSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
@@ -93,7 +93,7 @@ const resolved = (itemKey: string) =>
   });
 const syncPayloadSchema = Schema.Struct({
   stock: SymmyStockRowsSchema,
-  stockFacts: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  stockFacts: Schema.optionalKey(SymmyStockPositionFactsSchema),
 });
 const assertion = (audience: string) => ({
   apiBaseUrl: `/shell-super-app-api/module-api/${audience}/release/${audience}-api`,
@@ -203,7 +203,19 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
       const payload = yield* Effect.promise(() => request.clone().json()).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(syncPayloadSchema)),
       );
-      expect(payload.stockFacts).toHaveLength(2);
+      expect(payload.stockFacts).toEqual(
+        rows.map((stockRow) => ({
+          request: {
+            customerConfigurationId: source.customerConfigurationId,
+            externalScope: source.externalScope,
+            issuer: source.issuer,
+            itemKey: stockRow.itemKey,
+            locationKey: stockRow.locationKey,
+            namespace: source.namespace,
+          },
+          resolution: resolved(stockRow.itemKey),
+        })),
+      );
       expect(payload.stock).toEqual(rows);
       // The admitting route has a company; Inventory still receives only Tenant authority.
       expect(h.acquisitions).toEqual([{ audience: 'inventory' }, { audience: 'inventory' }]);

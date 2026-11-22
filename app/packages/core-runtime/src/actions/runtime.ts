@@ -312,6 +312,8 @@ export interface ActionReplay {
 }
 
 export interface ResolveActionCommitInput {
+  /** Owner-specific resolution must pin its Action, not just a principal's invocation identifier. */
+  readonly expectedActionKey?: unknown;
   readonly invocationId: unknown;
   readonly principal: unknown;
 }
@@ -3226,6 +3228,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         }
         const resolved = yield* Effect.option(
           repository.resolveInvocation(invocationScopeExecutor(original.scope), {
+            expectedActionKey: input.registration.descriptor.actionKey,
             invocationId: original.invocationId,
             principal: original.principal,
           }),
@@ -3415,6 +3418,22 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ),
         );
     const invocationId = yield* validateInvocationId(input.invocationId);
+    const expectedActionKey =
+      input.expectedActionKey === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownEffect(Schema.NonEmptyString.check(Schema.isTrimmed()))(
+            input.expectedActionKey,
+          ).pipe(
+            Effect.mapError((cause) =>
+              attachFailureCause(
+                new ActionPayloadValidationError({
+                  code: 'action_payload_invalid',
+                  reason: 'The expected Action key is invalid',
+                }),
+                cause,
+              ),
+            ),
+          );
     if (recovery !== undefined && invocationId !== recovery.originalActionInvocationId) {
       return yield* new ActionInvocationNotFound({
         code: 'action_invocation_not_found',
@@ -3425,6 +3444,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       .resolveInvocation(
         invocationScopeExecutor(preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' })),
         {
+          expectedActionKey,
           invocationId,
           principal,
         },

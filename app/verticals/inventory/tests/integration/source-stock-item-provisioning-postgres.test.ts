@@ -325,7 +325,23 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
       );
     });
 
-    // An unknown Stock Location is refused, and nothing is stored for the backend.
+    const policyAndLocationRows = () =>
+      fixture
+        .prepareOwner((transaction) =>
+          Effect.all({
+            correlations: transaction
+              .select()
+              .from(inventoryExternalStockCorrelations)
+              .orderBy(inventoryExternalStockCorrelations.correlationId),
+            policies: transaction
+              .select()
+              .from(inventorySourceProvisioningPolicies)
+              .orderBy(inventorySourceProvisioningPolicies.policyId),
+          }),
+        )
+        .pipe(Effect.provide(ownerRuntimeLayer));
+    const beforeUnknownLocation = yield* policyAndLocationRows();
+    // Check rollback before another definition could adopt a leaked LOCATION correlation.
     const unknownLocation = yield* definePolicy([
       { locationKey: 'WH-MAIN', stockLocationRef: warehouse.ref },
       {
@@ -335,6 +351,7 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
     ]).pipe(Effect.flip);
     assert(Schema.is(DefineSourceProvisioningPolicyActionIneligibleProblemSchema)(unknownLocation));
     expect(unknownLocation.reason).toBe('STOCK_LOCATION_NOT_FOUND');
+    expect(yield* policyAndLocationRows()).toEqual(beforeUnknownLocation);
 
     // The one-time policy: two allowed locations with their ERP keys.
     const locations = [
@@ -597,6 +614,18 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
       ),
     ).toBe(true);
     expect(yield* observe()).toEqual(baseline);
+    const emptyPositionsInvocationId = yield* nextId;
+    const emptyPositions = yield* fixture
+      .prepareOwner((transaction) =>
+        transaction.insert(inventorySourceStockItemProvisionings).values({
+          ...receiptRow,
+          actionInvocationId: emptyPositionsInvocationId,
+          provisioningJson: { ...receiptRow.provisioningJson, positions: [] },
+        }),
+      )
+      .pipe(Effect.provide(ownerRuntimeLayer), Effect.flip);
+    expect(Option.isSome(findPostgresFailure(emptyPositions, ({ code }) => code === '23514'))).toBe(true);
+    expect(yield* observe()).toEqual(baseline);
     const conflictingMeaning = yield* Schema.decodeUnknownEffect(ProvisionSourceStockItemPayloadSchema)({
       ...input,
       catalogSelection: {
@@ -657,10 +686,12 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
     expect(rejectedRace.failure.conflictRef).toEqual(raceWinner.success.itemCorrelation.ref);
     const afterDivergentRace = yield* observe();
     expect(afterDivergentRace.receipts).toHaveLength(beforeDivergentRace.receipts.length + 1);
-    // At most the previously-unseen meaning won; the losing candidate leaves no Item or Positions.
-    expect(afterDivergentRace.items.length - beforeDivergentRace.items.length).toBeLessThanOrEqual(1);
-    expect(afterDivergentRace.positions.length - beforeDivergentRace.positions.length).toBeLessThanOrEqual(
-      locations.length,
+    // Only artifacts established by the winner may be added; the losing candidate leaves none.
+    expect(afterDivergentRace.items.length - beforeDivergentRace.items.length).toBe(
+      raceWinner.success.stockItem.disposition === 'ESTABLISHED' ? 1 : 0,
+    );
+    expect(afterDivergentRace.positions.length - beforeDivergentRace.positions.length).toBe(
+      raceWinner.success.positions.filter(({ disposition }) => disposition === 'ESTABLISHED').length,
     );
 
     // Trust comes from the operation, never from either payload's Tenant or a claimed allowed location.

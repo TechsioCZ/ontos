@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Array as EffectArray, Effect, Option, Schema, Struct } from 'effect';
+import { Array as EffectArray, DateTime, Duration, Effect, Option, Schema, Struct } from 'effect';
+import { TestClock } from 'effect/testing';
 import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
@@ -755,6 +756,7 @@ describe('Inventory source provisioning policy', () => {
     Effect.gen(function* definesOnce() {
       const state = makeOwnerState();
       state.policies.clear();
+      state.correlations.length = 0;
       const defined = yield* state.define([warehouseLocation, outletLocation]);
       expect(defined.outcome).toBe('DEFINED');
       expect(defined.policy).toMatchObject({ effectiveFrom: '2026-11-20T08:00:00.000Z', issuer });
@@ -821,6 +823,45 @@ const isRecorded = Schema.is(SourceStockItemProvisioningReceiptResponseSchema.me
 const isIndeterminate = Schema.is(SourceStockItemProvisioningReceiptResponseSchema.members[1]);
 
 describe('Inventory source Stock Position resolution and provisioning receipt', () => {
+  it.effect('never combines LOCATION and ITEM authority from opposite sides of an effective boundary', () =>
+    Effect.gen(function* singleResolutionInstant() {
+      const boundary = '2026-11-22T10:00:00.000Z';
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(boundary)) - 1);
+      const state = makeOwnerState();
+      yield* state.provision('1');
+      const item = state.correlations.find(({ externalKey }) => externalKey.identifierKind === 'ITEM');
+      assert.isDefined(item);
+      const services: SourceStockPositionResolutionServices = {
+        findItemCorrelations: (_request, asOf?: string) =>
+          Effect.gen(function* itemAtInstant() {
+            const instant = asOf ?? DateTime.formatIso(yield* DateTime.now);
+            return instant >= boundary ? [item] : [];
+          }),
+        findPolicy: () => Effect.succeedSome(policy),
+        findPosition: () => Effect.succeed(Option.fromNullishOr(state.positions.values().next().value)),
+        isLocationAllowed: (_policy, _key, asOf?: string) =>
+          Effect.gen(function* locationAtInstant() {
+            const instant = asOf ?? DateTime.formatIso(yield* DateTime.now);
+            yield* TestClock.adjust(Duration.millis(2));
+            return instant < boundary;
+          }),
+      };
+      const response = yield* sourceStockPositionResolutionHandler(
+        Schema.decodeUnknownSync(SourceStockPositionResolutionRequestSchema)({
+          customerConfigurationId,
+          externalScope: policy.externalScope,
+          issuer,
+          itemKey: 'AKROS-10001-V1',
+          locationKey: warehouseLocation.locationKey,
+          namespace: policy.namespace,
+        }),
+        { services },
+      );
+      assert(isUnresolved(response.result));
+      expect(response.result.reason).toBe('ITEM_NOT_PROVISIONED');
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.live('resolves the exact provisioned Position and names every miss', () =>
     Effect.gen(function* resolves() {
       const state = makeOwnerState();
