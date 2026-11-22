@@ -85,7 +85,7 @@ const databaseUrl = (connection: string, name: string) => {
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant storage upgrade', (suite) => {
   suite.effect(
-    'upgrades immutable mixed-case grants without merging receipts or falling back to standing authority',
+    'upgrades immutable grants and legacy policy references without rewriting history or weakening new writes',
     () =>
       Effect.scoped(
         Effect.gen(function* upgrade() {
@@ -135,15 +135,46 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
               runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(policy)})`,
             ),
           ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
+          const historicPolicy = {
+            ...policy,
+            commercialScope: { ...policy.commercialScope, marketId: 'legacy-verification' },
+            verificationRef: 'historic-proof\t',
+          };
+          expect(
+            yield* scoped(
+              runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(historicPolicy)})`,
+            ),
+          ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
+          const policyRows = scoped(
+            runtime`select to_jsonb(p) as row from pricing.external_price_source_policies p order by policy_id`,
+          );
+          const policiesBefore = yield* policyRows;
+          expect(policiesBefore).toHaveLength(2);
           const before = yield* historyRows;
           expect(before).toHaveLength(7);
           yield* migrate(admin, forward);
           expect(yield* historyRows).toEqual(before);
+          expect(yield* policyRows).toEqual(policiesBefore);
           expect(
             yield* admin`select convalidated from pg_catalog.pg_constraint
               where conrelid='pricing.external_price_source_authority_grants'::regclass
                 and conname='pricing_external_price_authority_exact_refs_ck'`,
           ).toEqual([{ convalidated: false }]);
+          expect(
+            yield* admin`select convalidated from pg_catalog.pg_constraint
+              where conrelid='pricing.external_price_source_policies'::regclass
+                and conname='pricing_external_price_policies_verification_ref_ck'`,
+          ).toEqual([{ convalidated: false }]);
+          const invalidNewPolicy = {
+            ...historicPolicy,
+            commercialScope: { ...historicPolicy.commercialScope, marketId: 'new-verification' },
+          };
+          const rejectedPolicy = yield* Effect.flip(
+            scoped(
+              runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(invalidNewPolicy)})`,
+            ),
+          );
+          expect(Option.getOrThrow(findPostgresFailure(rejectedPolicy)).code).toBe('23514');
           for (const historic of historicWildcards) {
             const denied = yield* Effect.flip(store({ ...historic, exactIdentityKey: key(25) }));
             expect(Option.getOrThrow(findPostgresFailure(denied)).code).toBe('23514');
@@ -179,6 +210,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           expect(yield* store(grant(key(11), 'changed verification'))).toEqual(conflict);
           expect(yield* store(grant(key(12, true), 'first receipt'))).toEqual(conflict);
           expect(yield* historyRows).toEqual(before);
+          expect(yield* policyRows).toEqual(policiesBefore);
           expect(yield* store(grant(key(14, true)))).toEqual([{ payload: { outcome: 'STORED' } }]);
           expect(yield* store(grant(key(14)))).toEqual([{ payload: { outcome: 'REUSED' } }]);
           expect(
