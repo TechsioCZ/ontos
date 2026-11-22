@@ -279,8 +279,13 @@ for (const provider of s3Providers) {
             key,
           });
           expect(stat.byteSize).toBe(size);
-          expect((yield* storage.stat(key)).byteSize).toBe(size);
-          expect(yield* tallyOf((yield* storage.get(key)).body)).toStrictEqual(expected);
+          const statted = yield* storage.stat(key);
+          expect(statted.byteSize).toBe(size);
+          const opened = yield* storage.get(key);
+          expect(yield* tallyOf(opened.body)).toStrictEqual(expected);
+          // A multipart ETag (the hash of the part hashes, with its part count) is one pin for the read and the stat.
+          expect(statted.versionRef).toMatch(/^etag:"[0-9a-f]{32}-[0-9]+"$/u);
+          expect(opened.stat.versionRef).toBe(statted.versionRef);
         }),
       );
 

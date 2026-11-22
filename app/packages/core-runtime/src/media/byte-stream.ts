@@ -118,7 +118,8 @@ const reservedContentStream = <BodyError>(
  *
  * Two cases stay provider-dependent: a put that races a sealed `ready` after this hop read the row as
  * `uploaded`, and a same-size overwrite between the verification and the ready commit when the provider reports
- * no `versionRef`. A provider that writes create-only (the S3 adapter does when the deployment states the
+ * no `versionRef` (the S3 adapter pins the ETag where there is no version id, so Current then answers
+ * unverified for the swapped object). A provider that writes create-only (the S3 adapter does when the deployment states the
  * provider honours `If-None-Match: *`) refuses to replace an existing object with `ObjectStorageObjectExists`,
  * which this hop reports as an uncertain ingest; a provider without it keeps the race open.
  */
