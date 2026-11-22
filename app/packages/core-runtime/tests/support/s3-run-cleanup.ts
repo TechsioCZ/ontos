@@ -1,5 +1,6 @@
 import { Clock, DateTime, Effect } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
+import type { HttpClientError } from 'effect/http';
 
 import type { S3ObjectStorageConfigValue } from '../../src/media/s3-config.ts';
 import { EMPTY_PAYLOAD_SHA256, signS3Request } from '../../src/media/s3-signing.ts';
@@ -83,7 +84,9 @@ const recordedUploads = Effect.fn('S3RunCleanup.uploads')(function* recordedUplo
 const accepted = (status: number) => (status >= 200 && status < 300) || status === 404;
 
 /** Whether the provider accepted one request; a request that did not complete is a refusal, never an error. */
-const attempt = (request: Effect.Effect<{ readonly status: number }, unknown, HttpClient.HttpClient>) =>
+const attempt = (
+  request: Effect.Effect<{ readonly status: number }, HttpClientError.HttpClientError, HttpClient.HttpClient>,
+) =>
   request.pipe(
     Effect.map((response) => accepted(response.status)),
     Effect.orElseSucceed(() => false),

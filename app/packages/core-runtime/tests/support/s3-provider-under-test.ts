@@ -1,6 +1,6 @@
 import { Config, Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 
 import {
   ObjectStorageConfigError,
@@ -56,7 +56,7 @@ export interface S3ProviderState {
 }
 
 export class S3ProviderUnderTest extends Context.Service<S3ProviderUnderTest, S3ProviderState>()(
-  '@app/core-runtime/tests/S3ProviderUnderTest',
+  '@app/core-runtime/tests/support/s3-provider-under-test/S3ProviderUnderTest',
 ) {}
 
 export interface S3ProviderDescriptor {
@@ -89,10 +89,11 @@ const optionalSetting = (name: 'CORE_MEDIA_S3_ALLOW_REMOTE' | 'CORE_MEDIA_S3_TES
 const withRunCleanup = (config: S3ObjectStorageConfigValue) =>
   Effect.gen(function* runCleanup() {
     const created = new Set<string>();
+    const client = yield* HttpClient.HttpClient;
     yield* Effect.addFinalizer(() =>
       cleanupRecordedKeys(config, [...created]).pipe(
         Effect.flatMap((report) => Effect.logInfo(`S3 run cleanup: ${JSON.stringify(report)}`)),
-        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(HttpClient.HttpClient, client),
       ),
     );
     return (key: string) =>
@@ -177,8 +178,8 @@ const startMock = (row: MockRow) =>
     } satisfies S3ProviderState;
   });
 
-const providerLayer = <Failure>(state: Effect.Effect<S3ProviderState, Failure, Scope.Scope>) =>
-  Layer.effect(S3ProviderUnderTest, state.pipe(Effect.orDie));
+const providerLayer = <Failure>(state: Effect.Effect<S3ProviderState, Failure, Scope.Scope | HttpClient.HttpClient>) =>
+  Layer.effect(S3ProviderUnderTest, state.pipe(Effect.orDie)).pipe(Layer.provide(FetchHttpClient.layer));
 
 export const s3Providers: readonly S3ProviderDescriptor[] = [
   {
