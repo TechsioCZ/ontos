@@ -83,7 +83,7 @@ const pinnedWith = (effect: SymmyPinnedEffect, intent: Schema.Json, originalTarg
 type ExecutionStore = ReturnType<typeof symmyJobExecutionStore>;
 type AdmissionStore = Effect.Success<ReturnType<typeof symmyJobStoreFactory>>;
 
-const retiredReceiptProbeKey = 'integration.symmy.test-retired-stock-receipt';
+const retiredReceiptProbeKey = 'integration.symmy.stock-receipt.probe';
 const retiredReceiptProbe = defineAction(
   {
     accessDeclaration: {

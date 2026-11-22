@@ -120,22 +120,25 @@ describe('localized facts private reads', () => {
       ]);
       // @ts-expect-error Focused mock implements only queried Drizzle chains.
       const reads = localizedFactsReadsForScope(mockLocaleTransaction(rows), scope);
-      for (const locale of ['cs-cz', 'cs-CZ']) {
+      for (const { locale, productName, variantName } of [
+        { locale: 'cs-cz', productName: 'Původní název', variantName: 'Původní varianta' },
+        { locale: 'cs-CZ', productName: fact.name, variantName: 'Varianta' },
+      ]) {
         expect(yield* reads.currentProduct(productRef, locale)).toMatchObject({
           kind: 'PRESENT',
           locale,
-          name: locale === 'cs-cz' ? 'Původní název' : fact.name,
+          name: productName,
           provenance: { actionInvocationId: revision.actionInvocationId },
           revision: 3,
         });
         expect(yield* reads.currentVariant(productRef, variantRef, locale)).toMatchObject({
           kind: 'PRESENT',
           locale,
-          name: locale === 'cs-cz' ? 'Původní varianta' : 'Varianta',
+          name: variantName,
           revision: 3,
         });
         expect(yield* reads.productHistory(productRef, locale)).toMatchObject([
-          { historical: true, locale, name: locale === 'cs-cz' ? 'Původní název' : fact.name, revision: 3 },
+          { historical: true, locale, name: productName, revision: 3 },
         ]);
       }
     }),
