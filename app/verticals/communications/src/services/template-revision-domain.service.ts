@@ -77,7 +77,7 @@ const businessTimeOf = Effect.fn('TemplateRevision.businessTime')(function* busi
 });
 
 /** Meaning fingerprint of one revision text: identifies it without storing or exposing the text again. */
-const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')(function* contentDigest(
+export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')(function* contentDigest(
   subject: string,
   body: string,
 ) {
