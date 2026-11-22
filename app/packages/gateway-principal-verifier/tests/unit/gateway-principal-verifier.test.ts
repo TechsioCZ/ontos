@@ -942,7 +942,7 @@ it.effect(
     ),
 );
 
-const registeredRouteScope: RegisteredGatewayRouteScope = {
+const registeredRouteScope = {
   legalEntityId: '70000000-0000-4000-8000-000000000001',
   operations: [{ entrypointKey: 'party.registry.api.route-context', schemaVersion: '1' }],
   principalId: principal.principalId,
@@ -952,7 +952,7 @@ const registeredRouteScope: RegisteredGatewayRouteScope = {
   sourceRouteId: '70000000-0000-4000-8000-000000000003',
   sourceRouteRevision: 'source-1',
   tenantId: principal.tenantId,
-};
+} satisfies RegisteredGatewayRouteScope;
 const registeredRoutePrincipal = {
   authBindingId: principal.authBindingId,
   authContextRef: 'better-auth-api-key:registered-route-key',
@@ -1009,7 +1009,9 @@ it.effect('rejects mismatched, non-finite, or non-API-key route scopes and rejec
       appId: 'party-registry',
       buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
     });
+    const { legalEntityId: _company, ...tenantRouteScope } = registeredRouteScope;
     const invalidScopes: readonly unknown[] = [
+      tenantRouteScope,
       { ...registeredRouteScope, tenantId: '70000000-0000-4000-8000-000000000004' },
       { ...registeredRouteScope, principalId: '70000000-0000-4000-8000-000000000004' },
       { ...registeredRouteScope, legalEntityId: '70000000-0000-4000-8000-000000000004' },
