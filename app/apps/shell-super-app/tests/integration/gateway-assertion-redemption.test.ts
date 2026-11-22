@@ -73,10 +73,12 @@ it.live('refuses an expired assertion and cleans only fully expired evidence', (
       const database = yield* makeAuthDatabase({ connectionString: connections.runtime.connectionString });
       const staleJti = randomUUID();
       const liveJti = randomUUID();
+      const forgottenJti = randomUUID();
+      const freshJti = randomUUID();
       yield* Effect.addFinalizer(() =>
         database.executor
           .delete(gatewayAssertionRedemptions)
-          .where(inArray(gatewayAssertionRedemptions.jti, [staleJti, liveJti]))
+          .where(inArray(gatewayAssertionRedemptions.jti, [staleJti, liveJti, forgottenJti, freshJti]))
           .pipe(Effect.orDie),
       );
       const redemption = makeShellGatewayAssertionRedemption(database.executor);
@@ -97,6 +99,17 @@ it.live('refuses an expired assertion and cleans only fully expired evidence', (
         redemption.consume({ audience, expiresAtEpochSeconds: now - 1, issuer, jti: liveJti }),
       );
       expect(Predicate.isTagged(again, 'GatewayAssertionReplayError')).toBe(true);
+      // Evidence that expired beyond the skew window is removed by the next redemption; the still-retained row is not.
+      const longGone = new Date((now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS - 60) * 1000);
+      yield* database.executor
+        .insert(gatewayAssertionRedemptions)
+        .values({ audience, expiresAt: longGone, issuer, jti: forgottenJti });
+      yield* redemption.consume({ audience, expiresAtEpochSeconds: now + 300, issuer, jti: freshJti });
+      const remaining = yield* database.executor
+        .select({ jti: gatewayAssertionRedemptions.jti })
+        .from(gatewayAssertionRedemptions)
+        .where(inArray(gatewayAssertionRedemptions.jti, [liveJti, forgottenJti, freshJti]));
+      expect(remaining.map((row) => row.jti).toSorted()).toEqual([liveJti, freshJti].toSorted());
     }),
   ),
 );
