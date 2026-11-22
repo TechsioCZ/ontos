@@ -435,12 +435,19 @@ it.live('ANY_PRICE_GROUP covers only selectors naming the scoped tenant at the n
       expect(yield* withAuthority(runtime, scope, (authority) => authority.assess(request))).toMatchObject({
         outcome: 'AUTHORITY_COVERED_BY_POLICY',
       });
-      expect(yield* withAuthority(runtime, scope, (authority) => authority.assess(foreignRequest))).toEqual({
-        dependency: 'SOURCE_AUTHORITY',
-        outcome: 'AUTHORITY_UNAVAILABLE',
-      });
+      yield* withAuthority(runtime, scope, (authority) =>
+        Effect.gen(function* rejectForeignWithoutAbortingTransaction() {
+          expect(yield* authority.assess(foreignRequest)).toEqual({
+            outcome: 'AUTHORITY_REJECTED',
+            reason: 'MAPPING',
+          });
+          expect(yield* authority.assess(request)).toMatchObject({
+            outcome: 'AUTHORITY_COVERED_BY_POLICY',
+          });
+        }),
+      );
 
-      // The persistence port masks SQL failures. Call the same routine directly to assert the native error code.
+      // The persistence boundary rejects invalid scope before SQL; direct callers still meet the storage guard.
       const nativeAssess = (input: SQL) =>
         runtime.transaction((tx) =>
           Effect.andThen(
