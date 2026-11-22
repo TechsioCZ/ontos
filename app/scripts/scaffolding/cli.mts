@@ -642,7 +642,7 @@ Options:
     generator: actionHttpGeneratorEntry,
     help: `Usage:
   pnpm scaffold:action-http -- --vertical <vertical> --action <action> [--proposal-only]
-  pnpm scaffold:action-http -- --scope core --module <core.module> --action <action> --contract-module <@app/core-runtime/export> [--domain-error-kind <Tag=kind>] [--request-services <./file.ts#export>] [--host-layer <name>]
+  pnpm scaffold:action-http -- --scope core --module <core.module> --action <action> --contract-module <@app/core-runtime/export> [--domain-error-kind <Tag=kind>] [--request-services <./file.ts#export | name>] [--host-layer <name>]
 
 Generate one explicit, typed public HTTP transport for an existing Action: a MicroVertical Action on its own
 API, or a Core-owned Action on the Shell host (\`POST /core/actions/<action>\`, the Shell's Idempotency-Key header).
@@ -668,8 +668,9 @@ Options:
   --result-schema <name> Result schema export (requires --schema-module)
   --domain-error-kind <Tag=kind> Core only: state the problem kind of a domain error the name heuristic cannot
                          decide (conflict, forbidden, ineligible, notFound or unavailable; repeatable)
-  --request-services <./file.ts#export> Core only: an owner-written provider, under apps/shell-super-app/api, of the
-                         request-scoped service the Action needs and no host layer can supply
+  --request-services <./file.ts#export | name> Core only: an owner-written provider of the request-scoped service the
+                         Action needs and no host layer can supply: an export of a module under apps/shell-super-app/api,
+                         or a name api/index.ts defines (it must run where the host provides services)
   --host-layer <name>    Core only: a <name>Live layer api/index.ts defines that the Action needs from the host at run
                          time (for example the object store); the route's group is provided with it
   --help                 Show this help without writing

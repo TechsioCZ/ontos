@@ -29,6 +29,7 @@ const NOT_READY_KIND = 'MediaNotReady=conflict';
 const UNCERTAIN_KIND = 'MediaIngestUncertain=unavailable';
 const REQUEST_SERVICES = '--request-services';
 const HOST_LAYER = '--host-layer';
+const SAVED_REPLY = "savedReply: 'answer',";
 const HOST_LAYER_NAME = 'coreMediaObjectStorageLive';
 const scopeFlags = (action: string, contractModule: string, module = CORE_MODULE): readonly string[] => [
   '--scope',
@@ -54,10 +55,14 @@ const confirmFlags = [
  * insertion slots, so every test judges a fresh generation against the real surrounding code.
  */
 const withoutCoreActionEntries = (source: string): string =>
-  source.replaceAll(
-    /(?<start>\/\/ @ontos-codesmith-core-action-[a-z-]+:start)[\s\S]*?(?<end>\n\s*\/\/ @ontos-codesmith-core-action-[a-z-]+:end)/gu,
-    '$<start>$<end>',
-  );
+  source
+    // The canonical Core runtime import names these two Actions after a generation; a fresh one does not.
+    .replace('\n  renameDisplayFilenameAction,', '')
+    .replace('\n  uploadAssetAction,', '')
+    .replaceAll(
+      /(?<start>\/\/ @ontos-codesmith-core-action-[a-z-]+:start)[\s\S]*?(?<end>\n\s*\/\/ @ontos-codesmith-core-action-[a-z-]+:end)/gu,
+      '$<start>$<end>',
+    );
 
 const fixture = <A, E, R>(runFixture: (root: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
@@ -117,7 +122,7 @@ it.effect(
         expect(server).toMatch(/HttpApiBuilder\.group\(\s+ShellAuthenticationApi,\s+'coreActionUploadAsset'/u);
         expect(server).toContain('const idempotencyKey = yield* requiredIdempotencyKey(headers);');
         expect(server).toContain('registration: uploadAssetAction,');
-        expect(server).toContain("savedReply: 'answer',");
+        expect(server).toContain(SAVED_REPLY);
         expect(server).toContain('transport: { correlationId, idempotencyKey },');
         expect(server).toContain('MediaUnavailable: shellCapabilityUnavailableProblem,');
         expect(server).toContain('coreActionUploadAssetGroupLive,');
@@ -232,26 +237,36 @@ it.effect('Core ACTION mode calls an owner-written provider of the request-scope
   ),
 );
 
+/** The message a refused generation ends with, so a test names the very rule that refused it. */
+const refusalOf = (root: string, flags: readonly string[]) =>
+  run(root, flags).pipe(
+    Effect.flip,
+    Effect.map((error) => error.message),
+  );
+
 it.effect(
   'Core ACTION mode refuses a contract that is not the registration, a foreign owner and a missing action',
   () =>
     fixture((root) =>
       Effect.gen(function* refuseCoreActionDrift() {
         const before = yield* readAll(root, roots);
-        const attempts: readonly (readonly string[])[] = [
+        const attempts: readonly (readonly [flags: readonly string[], message: RegExp])[] = [
           // the rename contract does not carry the upload Action's schemas
-          scopeFlags(ACTION, RENAME_CONTRACT),
+          [
+            scopeFlags(ACTION, RENAME_CONTRACT),
+            /not the Action registration's own payload and result schemas|must export/u,
+          ],
           // a specifier that is not a published Core runtime export
-          scopeFlags(ACTION, '@app/core-runtime/nope'),
-          scopeFlags(ACTION, '../../escape'),
+          [scopeFlags(ACTION, '@app/core-runtime/nope'), /not a published source export/u],
+          [scopeFlags(ACTION, '../../escape'), /published @app\/core-runtime\/<export> specifier/u],
           // another module than the Action's owner
-          scopeFlags(ACTION, UPLOAD_CONTRACT, 'core.identity'),
+          [scopeFlags(ACTION, UPLOAD_CONTRACT, 'core.identity'), /missing \/\/ @ontos-action-owner core\.identity/u],
           // an Action that does not exist, and traversal in the action name
-          scopeFlags('no-such-action', UPLOAD_CONTRACT),
-          scopeFlags('../escape', UPLOAD_CONTRACT),
+          [scopeFlags('no-such-action', UPLOAD_CONTRACT), /failed to read Core Action source/u],
+          [scopeFlags('../escape', UPLOAD_CONTRACT), /canonical lower-kebab-case/u],
         ];
-        for (const flags of attempts) {
-          expect(Exit.isFailure(yield* Effect.exit(run(root, flags)))).toBe(true);
+        for (const [flags, message] of attempts) {
+          expect(yield* refusalOf(root, flags)).toMatch(message);
         }
         expect(yield* readAll(root, roots)).toEqual(before);
         const created = yield* Effect.exit(Effect.tryPromise(() => access(path.join(root, CONTRACT))));
@@ -260,25 +275,47 @@ it.effect(
     ),
 );
 
-it.effect('Core ACTION mode rejects incompatible flags and a developer-edited contract without partial writes', () =>
+it.effect('Core ACTION mode rejects incompatible flags before it reads or writes anything', () =>
   fixture((root) =>
     Effect.gen(function* rejectIncompatibleFlags() {
+      const before = yield* readAll(root, roots);
+      const rejected: readonly (readonly [flags: readonly string[], message: RegExp])[] = [
+        [[...coreFlags, '--vertical', 'catalog'], /--vertical is mutually exclusive/u],
+        [['--scope', 'core', '--action', ACTION], /--module is required/u],
+        [['--scope', 'core', '--module', CORE_MODULE, '--action', ACTION], /--contract-module is required/u],
+        [[...coreFlags, '--proposal-only'], /takes no --proposal-only/u],
+        [['--scope', 'microvertical', '--module', CORE_MODULE, '--action', ACTION], /--scope must be core/u],
+      ];
+      for (const [flags, message] of rejected) {
+        expect(yield* refusalOf(root, flags)).toMatch(message);
+      }
+      expect(yield* readAll(root, roots)).toEqual(before);
+    }),
+  ),
+);
+
+it.effect('Core ACTION mode refuses a developer-edited contract and a hand-edited entry without partial writes', () =>
+  fixture((root) =>
+    Effect.gen(function* rejectDrift() {
       yield* run(root);
       const contractPath = path.join(root, CONTRACT);
       yield* Effect.promise(() => writeFile(contractPath, '// developer contract\n'));
       const before = yield* readAll(root, roots);
-      const rejected: readonly (readonly string[])[] = [
-        coreFlags,
-        [...coreFlags, '--vertical', 'catalog'],
-        ['--scope', 'core', '--action', ACTION],
-        ['--scope', 'core', '--module', CORE_MODULE, '--action', ACTION],
-        [...coreFlags, '--proposal-only'],
-      ];
-      for (const flags of rejected) {
-        expect(Exit.isFailure(yield* Effect.exit(run(root, flags)))).toBe(true);
-      }
+      expect(yield* refusalOf(root, coreFlags)).toMatch(/overwrite|existing|developer|drift/iu);
       expect(yield* readAll(root, roots)).toEqual(before);
       expect(yield* Effect.promise(() => readFile(contractPath, 'utf-8'))).toBe('// developer contract\n');
+
+      // An entry a developer edited inside its slot is drift, not something the generator silently rewrites.
+      yield* Effect.promise(() => rm(contractPath));
+      const serverPath = path.join(root, SERVER);
+      const server = yield* read(root, SERVER);
+      expect(server).toContain(SAVED_REPLY);
+      yield* Effect.promise(() =>
+        writeFile(serverPath, server.replace("savedReply: 'answer',", 'savedReply: undefined,')),
+      );
+      const edited = yield* readAll(root, roots);
+      expect(yield* refusalOf(root, coreFlags)).toMatch(/slot drift/u);
+      expect(yield* readAll(root, roots)).toEqual(edited);
     }),
   ),
 );
@@ -295,7 +332,7 @@ it.effect('Core ACTION mode refuses a root that lacks its insertion slot without
         ),
       );
       const before = yield* readAll(root, roots);
-      expect(Exit.isFailure(yield* Effect.exit(run(root)))).toBe(true);
+      expect(yield* refusalOf(root, coreFlags)).toMatch(/missing or duplicate Core insertion slot/u);
       expect(yield* readAll(root, roots)).toEqual(before);
     }),
   ),

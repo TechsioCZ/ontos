@@ -392,7 +392,7 @@ const planCoreActionHttpScaffold = Effect.fn('CoreActionHttpScaffold.plan')(func
     contractPath,
     renderCoreActionContract(module, action, config.contractModule),
   );
-  const canonicalImport = `// ${value}Action uses the canonical @app/core-runtime import`;
+  const canonicalImport = `// ${value}Action is imported once by the host root`;
   const providerImport = Option.match(requestServices, {
     onNone: () => canonicalImport,
     onSome: ({ export: exported, module: providerModule }) =>
