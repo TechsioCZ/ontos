@@ -65,6 +65,7 @@ import {
   makeDsrObligationNative,
   makePrivacyDsrCompositionSnapshot,
   privacyDsrOwnerRuntimeLive,
+  privacyModuleCallRouteLive,
 } from '../support/dsr-obligation-native.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { executeDsrCasesWithAuthorization } from '../../src/api/dsr-cases-client.ts';
@@ -412,6 +413,7 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
       ),
       Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, gateway, resolver, accessLayer)),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(privacyModuleCallRouteLive),
     );
   }
   const runtime = makePrivacyApiRuntime(readRuntime, Layer.succeedContext(native.context), redemption);

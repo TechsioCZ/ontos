@@ -303,6 +303,21 @@ export const makePrivacyDsrCompositionSnapshot = Effect.fn('DsrTests.makePrivacy
   },
 );
 
+/**
+ * The owner-inventory Read calls the Communications coverage Read, so every Privacy Read runtime needs the production module
+ * route (no cache, no redirect) exactly as the production assembly composes it.
+ */
+export const privacyModuleCallRouteLive = ModuleCallRouteLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeCrypto.layer,
+      FetchHttpClient.layer.pipe(
+        Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+      ),
+    ),
+  ),
+);
+
 /** Existing production constructors with the same real database and grants supplied by the caller. */
 export const privacyDsrOwnerRuntimeLive = (snapshot: ActiveApplicationCompositionSnapshot) =>
   Layer.unwrap(
@@ -321,21 +336,9 @@ export const privacyDsrOwnerRuntimeLive = (snapshot: ActiveApplicationCompositio
       const gate = ModuleStateGateLive.pipe(Layer.provide(state));
       const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
       const scope = OperationalScopeResolverLive.pipe(Layer.provide(access));
-      // The owner-inventory Read calls the Communications coverage Read, so the production module route (no cache, no
-      // redirect) is part of the owner runtime here exactly as in the production assembly.
-      const moduleCallRoute = ModuleCallRouteLive.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            NodeCrypto.layer,
-            FetchHttpClient.layer.pipe(
-              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
-            ),
-          ),
-        ),
-      );
       return Layer.mergeAll(
         makeActionRuntimeLive(expectedDeployment, privacyRegistration),
-        makeReadRuntimeLive(expectedDeployment, privacyRegistration).pipe(Layer.provide(moduleCallRoute)),
+        makeReadRuntimeLive(expectedDeployment, privacyRegistration).pipe(Layer.provide(privacyModuleCallRouteLive)),
       ).pipe(
         Layer.provide(
           Layer.mergeAll(
