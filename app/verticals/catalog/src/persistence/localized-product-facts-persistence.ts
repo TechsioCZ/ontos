@@ -6,6 +6,8 @@ import { DateTime, Effect, Equal, Schema } from 'effect';
 
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
+import type { CreateProductPayload } from '../../shared/actions/create-product.ts';
+import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 import {
   productLocalizedFactRevisions,
   productLocalizedFacts,
@@ -29,7 +31,10 @@ interface Change {
   readonly reason: string;
   readonly value: { readonly kind: 'REMOVE' } | { readonly facts: Facts; readonly kind: 'SET' };
 }
-export type ProductLocalizedChange = Change & { readonly productRef: ProductRef };
+export type ProductLocalizedChange = Change & {
+  readonly productRef: ProductRef;
+  readonly sourceProduct?: CreateProductPayload | undefined;
+};
 export type VariantLocalizedChange = Change & { readonly productRef: ProductRef; readonly variantRef: VariantRef };
 export type LocalizedFactOutcome =
   | { readonly kind: 'CHANGED' | 'REPLAYED'; readonly revision: number }
@@ -213,6 +218,13 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
     if (owner === undefined) {
       return { kind: 'NOT_FOUND' };
     }
+    const sourceMatches = yield* catalogSourceProductIntentMatches(transaction, scope, {
+      productRef: input.productRef,
+      sourceProduct: input.sourceProduct,
+    }).pipe(Effect.mapError(unavailable));
+    if (input.sourceProduct !== undefined && (!sourceMatches || owner.lifecycleState === 'RETIRED')) {
+      return { kind: 'INVALID' };
+    }
     const [prior] = yield* transaction
       .select()
       .from(productLocalizedFactRevisions)
@@ -246,6 +258,16 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
       .limit(1)
       .pipe(Effect.mapError(unavailable));
     const actualRevision = current?.currentRevision ?? 0;
+    if (
+      sourceMatches &&
+      input.expectedRevision === 0 &&
+      actualRevision === 1 &&
+      current?.state === value.state &&
+      current.name === value.name &&
+      current.description === value.description
+    ) {
+      return { kind: 'REPLAYED', revision: actualRevision };
+    }
     if (actualRevision !== input.expectedRevision) {
       return { kind: 'STALE', actualRevision };
     }

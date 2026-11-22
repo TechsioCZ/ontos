@@ -682,6 +682,14 @@ const inventoryProvisioningMock = (request: Request) => {
   return Option.none();
 };
 
+const readinessMock = (request: Request) =>
+  request.url.includes('/actions/govern-variant-axes') || request.url.includes('/reads/govern-variant-axes-recovery')
+    ? Option.some({
+        event: 'owner-readiness',
+        response: Promise.resolve(Response.json({ axisRevision: 1, changed: true, productRef })),
+      })
+    : Option.none();
+
 const harness = (
   replay: boolean,
   selectedEffect = effect,
@@ -743,8 +751,9 @@ const harness = (
         }),
       );
     }
-    const pricingMock = Option.getOrElse(inventoryProvisioningMock(request), () =>
-      pricingOwnerMock(request, { definitionGroup, reviseProblem }),
+    const pricingMock = readinessMock(request).pipe(
+      Option.orElse(() => inventoryProvisioningMock(request)),
+      Option.getOrElse(() => pricingOwnerMock(request, { definitionGroup, reviseProblem })),
     );
     if (pricingMock !== undefined) {
       events.push(pricingMock.event);
@@ -2509,4 +2518,219 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
       }
     }),
   );
+});
+
+describe('Symmy Product readiness', () => {
+  it.effect('uses owner revisions to materialize every remaining readiness command', () =>
+    Effect.gen(function* ownerRevisions() {
+      const parent = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: variantRef,
+            productRef,
+            productRevision: 4,
+            variantRevision: 7,
+          }),
+        ),
+      };
+      const state = (effectKey: string, receipt: typeof Schema.Json.Type) => ({
+        ...parentState,
+        effect: Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({ ...effect, effectKey }),
+        ownerReceipt: Option.some(Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema)(receipt)),
+      });
+      const axes = state('readiness-axes', { _tag: 'ReadinessAxes', axisRevision: 3 });
+      const confirmed = state('readiness-confirm', { _tag: 'ReadinessVariant', variantRevision: 8 });
+      const activated = state('readiness-activate', { _tag: 'ReadinessProduct', productRevision: 5 });
+      const cases = [
+        ['CONFIRM', 'confirm-variant-combination', { expectedAxisRevision: 3, expectedVariantRevision: 7 }],
+        [
+          'NAME',
+          'set-product-localized-facts',
+          { expectedRevision: 0, facts: { name: 'Real source name' }, locale: 'cs-CZ' },
+        ],
+        ['ACTIVATE', 'update-product', { expectedRevision: 4, targetLifecycle: 'ACTIVE' }],
+        [
+          'UNIT',
+          'set-product-unit-target-divisibility',
+          {
+            divisible: false,
+            expectedSources: {
+              product: { resourceRef: productRef, revision: 5 },
+              variant: { resourceRef: variantRef, revision: 8 },
+            },
+            target: {
+              targetId: variantRef.resourceId,
+              targetType: 'commerce.catalog.variant',
+              tenantId,
+              unit: unitRef,
+            },
+          },
+        ],
+        [
+          'UNTYPED',
+          'decide-product-type-unnecessary',
+          {
+            decisionState: 'CONFIRMED',
+            expectedAxisRevision: 3,
+            expectedDecisionRevision: 0,
+            expectedProductRevision: 5,
+            expectedValueRevisionTokens: [],
+            expectedVariantRevisionTokens: [`${variantRef.resourceId}:8`],
+            structuredAttributesRequired: false,
+            variantAxesRequired: false,
+          },
+        ],
+      ] as const;
+      for (const [step, action, expected] of cases) {
+        const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+          ...effect,
+          dependsOn: [
+            productParent,
+            ...['readiness-axes', 'readiness-confirm', 'readiness-activate'].map((effectKey) => ({
+              effectKey,
+              itemKey: productParent.itemKey,
+            })),
+          ],
+          intent: {
+            _tag: 'CatalogProductDependentEffect',
+            parent: productParent,
+            request: {
+              _tag: 'CatalogReadiness',
+              divisible: false,
+              evidenceRefs: ['symmy-product:source'],
+              kind: 'AXIS_FREE_UNTYPED',
+              locale: 'cs-CZ',
+              name: 'Real source name',
+              step,
+              unitRef,
+            },
+          },
+          ref: {
+            ...effect.ref,
+            operation: {
+              entrypointKey: `commerce.catalog.${action}`,
+              moduleId: 'commerce.catalog',
+              schemaVersion: '1',
+            },
+          },
+        });
+        const h = harness(false, original);
+        yield* h.provide(
+          Effect.gen(function* test() {
+            const adapter = yield* h.adapter;
+            const exit = yield* Effect.exit(
+              adapter.execute({
+                ...h.input,
+                dependencies: [parent, axes, confirmed, activated],
+                recordResolvedEffect: (resolved) =>
+                  Effect.sync(() => h.resolvedEffects.push(resolved)).pipe(
+                    Effect.andThen(Effect.fail(symmyJobWorkerUnavailable())),
+                  ),
+              }),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(h.resolvedEffects).toHaveLength(1);
+            expect(h.resolvedEffects[0]?.intent).toMatchObject({
+              payload: { ...expected, sourceProduct: { name: 'Internal Product', sourceCorrelation } },
+            });
+            expect(h.requests).toHaveLength(0);
+          }),
+        );
+      }
+    }),
+  );
+
+  it.effect('pins the explicitly enrolled empty-axis action and refuses a tampered recovery', () => {
+    const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...dependentEffect(
+        {
+          _tag: 'CatalogReadiness',
+          divisible: false,
+          evidenceRefs: ['symmy-product:source'],
+          kind: 'AXIS_FREE_UNTYPED',
+          locale: 'cs-CZ',
+          name: 'Real source name',
+          step: 'AXES',
+          unitRef,
+        },
+        {
+          entrypointKey: 'commerce.catalog.govern-variant-axes',
+          moduleId: 'commerce.catalog',
+          schemaVersion: '1',
+        },
+      ),
+      itemId: '10000000-0000-4000-8000-000000000071',
+      ref: {
+        ...effect.ref,
+        effectId: '10000000-0000-4000-8000-000000000072',
+        operation: {
+          entrypointKey: 'commerce.catalog.govern-variant-axes',
+          moduleId: 'commerce.catalog',
+          schemaVersion: '1',
+        },
+      },
+    });
+    const h = harness(false, original);
+    const acceptedPlan = provisionPlan(original);
+    const parent = {
+      ...parentState,
+      ownerReceipt: Option.some(
+        Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+          _tag: 'ProductCreated',
+          actionInvocationId: invocationId,
+          initialVariantRef: variantRef,
+          productRef,
+          productRevision: 1,
+          variantRevision: 1,
+        }),
+      ),
+    };
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, acceptedPlan, dependencies: [parent] });
+        expect(outcome.status).toBe('accepted_change');
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        expect(Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[16])(resolved.intent)).toBe(true);
+        expect(resolved.intent).toMatchObject({
+          payload: { axes: [], classification: { kind: 'AXIS_INITIALIZATION' }, expectedAxisRevision: 0, productRef },
+        });
+        expect(
+          h.receipts.some(
+            (receipt) =>
+              Schema.is(SymmyCatalogPricingInventoryReceiptSchema.members[3])(receipt) && receipt.axisRevision === 1,
+          ),
+        ).toBe(true);
+        const native = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[16])(resolved.intent);
+        const requestHash = yield* prepareSymmyCatalogPricingInventoryRequestHash(native, {
+          principalId: executorId,
+          tenantId,
+        });
+        const recovered = yield* adapter.recover({
+          ...h.input,
+          acceptedPlan,
+          dependencies: [parent],
+          effect: resolved,
+          originalAuthContextRef: authContextRef,
+          originalExecutorPrincipalId: executorId,
+          originalInvocationId: invocationId,
+          originalRequestHash: requestHash,
+        });
+        expect(recovered.status).toBe('settled');
+        const changed = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+          ...resolved,
+          intent: { ...native, payload: { ...native.payload, expectedAxisRevision: 1 } },
+        });
+        const exit = yield* Effect.exit(
+          adapter.execute({ ...h.input, acceptedPlan, dependencies: [parent], effect: changed }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.events.filter((event) => event === 'owner-readiness')).toHaveLength(2);
+      }),
+    );
+  });
 });

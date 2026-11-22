@@ -4,7 +4,17 @@ import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-acti
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
 import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
 import { UpdateProductPayloadSchema } from '@app/catalog/api/update-product-action';
-import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
+import { GovernVariantAxesPayloadSchema } from '@app/catalog/api/govern-variant-axes-action';
+import { ConfirmVariantCombinationPayloadSchema } from '@app/catalog/api/confirm-variant-combination-action';
+import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
+import { SetProductUnitTargetDivisibilityPayloadSchema } from '@app/catalog/api/set-product-unit-target-divisibility-action';
+import { DecideProductTypeUnnecessaryPayloadSchema } from '@app/catalog/api/decide-product-type-unnecessary-action';
+import {
+  ProductActionInvocationIdSchema,
+  ProductEvidenceReferenceSchema,
+  ProductNameSchema,
+  ProductRevisionSchema,
+} from '@app/catalog/domain/product';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
@@ -103,6 +113,15 @@ const productDependentRequest = Schema.Union([
     itemKey: ProvisionSourceStockItemPayloadSchema.fields.itemKey,
     source: SymmyInventorySourceSchema,
   }),
+  Schema.TaggedStruct('CatalogReadiness', {
+    divisible: SetProductUnitTargetDivisibilityPayloadSchema.fields.divisible,
+    evidenceRefs: Schema.NonEmptyArray(ProductEvidenceReferenceSchema),
+    kind: Schema.Literal('AXIS_FREE_UNTYPED'),
+    locale: SetProductLocalizedFactsPayloadSchema.fields.locale,
+    name: ProductNameSchema,
+    step: Schema.Literals(['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED']),
+    unitRef: SetProductUnitTargetDivisibilityPayloadSchema.fields.target.fields.unit,
+  }),
   Schema.TaggedStruct('DefinePrice', {
     payload: Schema.Struct({
       ...DefinePricePayloadSchema.fields,
@@ -121,6 +140,8 @@ export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
     actionInvocationId: ProductActionInvocationIdSchema,
     initialVariantRef: VariantRefSchema,
     productRef: ProductRefSchema,
+    productRevision: Schema.optionalKey(ProductRevisionSchema),
+    variantRevision: Schema.optionalKey(ProductRevisionSchema),
   }).check(
     Schema.makeFilter(
       ({ initialVariantRef, productRef }) =>
@@ -134,6 +155,9 @@ export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
     businessOriginalInvocationId: PriceGroupOperationReceiptSchema.fields.actionInvocationId,
     priceGroupRef: PriceGroupOperationReceiptSchema.fields.priceGroupRef,
   }),
+  Schema.TaggedStruct('ReadinessAxes', { axisRevision: ProductRevisionSchema }),
+  Schema.TaggedStruct('ReadinessVariant', { variantRevision: ProductRevisionSchema }),
+  Schema.TaggedStruct('ReadinessProduct', { productRevision: ProductRevisionSchema }),
 ]);
 export type SymmyCatalogPricingInventoryReceipt = typeof SymmyCatalogPricingInventoryReceiptSchema.Type;
 
@@ -188,5 +212,10 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
     payload: ProvisionSourceStockItemPayloadSchema,
     source: SymmyInventorySourceSchema,
   }),
+  Schema.TaggedStruct('CatalogReadinessAxes', { payload: GovernVariantAxesPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessConfirm', { payload: ConfirmVariantCombinationPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessName', { payload: SetProductLocalizedFactsPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessUnit', { payload: SetProductUnitTargetDivisibilityPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessUntyped', { payload: DecideProductTypeUnnecessaryPayloadSchema }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

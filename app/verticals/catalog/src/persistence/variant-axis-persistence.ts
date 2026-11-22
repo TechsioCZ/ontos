@@ -7,6 +7,7 @@ import { Hex } from 'effect/encoding';
 
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
+import type { CreateProductPayload } from '../../shared/actions/create-product.ts';
 import {
   AttributeDefinitionSchema,
   AttributeValueSchema,
@@ -44,6 +45,7 @@ import {
 import { CatalogPersistenceUnavailable } from './errors.ts';
 import { effectiveAttributeValueReadsForScope } from './effective-attribute-value-reads.ts';
 import { VariantAxisWriteConflict } from './variant-axis-write-conflict.ts';
+import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 
 export { VariantAxisWriteConflict } from './variant-axis-write-conflict.ts';
 
@@ -72,6 +74,7 @@ export interface GovernVariantAxesInput {
   readonly principalId: string;
   readonly productRef: ProductRef;
   readonly reason: string;
+  readonly sourceProduct?: CreateProductPayload | undefined;
 }
 
 interface CurrentVariantAxis {
@@ -356,7 +359,9 @@ const invalidGovernInput = (input: GovernVariantAxesInput, tenantId: string): bo
       !Number.isSafeInteger(axis.expectedAllowanceRevision) ||
       axis.expectedAllowanceRevision < 0,
   ) ||
-  (input.change.kind !== 'AXIS_ADDITION' && input.change.kind !== 'AXIS_REMOVAL') ||
+  (input.change.kind !== 'AXIS_ADDITION' &&
+    input.change.kind !== 'AXIS_REMOVAL' &&
+    input.change.kind !== 'AXIS_INITIALIZATION') ||
   input.change.reason !== input.reason;
 
 const validAllowedValuesEvidence = (input: GovernVariantAllowedValuesInput): boolean =>
@@ -985,6 +990,13 @@ export const variantAxisPersistenceForScope = (
     if (product.lifecycleState === 'RETIRED') {
       return yield* conflict('INVALID_INPUT', 'Retired Product cannot change Variant axes');
     }
+    const sourceMatches = yield* catalogSourceProductIntentMatches(transaction, scope, {
+      productRef: input.productRef,
+      sourceProduct: input.sourceProduct,
+    });
+    if (input.sourceProduct !== undefined && !sourceMatches) {
+      return yield* conflict('INVALID_INPUT', 'Source Product creation intent does not match');
+    }
     const [latest] = yield* transaction
       .select()
       .from(productVariantAxisEvents)
@@ -993,9 +1005,6 @@ export const variantAxisPersistenceForScope = (
       .limit(1)
       .pipe(Effect.mapError(unavailable));
     const currentRevision = latest?.axisRevision ?? 0;
-    if (currentRevision !== input.expectedAxisRevision) {
-      return yield* conflict('REVISION', 'Product Variant Axis revision changed');
-    }
     const current = yield* transaction
       .select()
       .from(productVariantAxes)
@@ -1004,6 +1013,26 @@ export const variantAxisPersistenceForScope = (
       .pipe(Effect.mapError(unavailable));
     if (malformedAxisSnapshot(latest, current, tenantId, productId)) {
       return yield* conflict('REVISION', 'Current axis snapshot is inconsistent');
+    }
+    if (
+      sourceMatches &&
+      input.change.kind === 'AXIS_INITIALIZATION' &&
+      input.expectedAxisRevision === 0 &&
+      currentRevision === 1 &&
+      latest?.actingPrincipalId === scope.principalId &&
+      input.axes.length === 0 &&
+      current.length === 0
+    ) {
+      return { axisRevision: currentRevision, changed: false };
+    }
+    if (currentRevision !== input.expectedAxisRevision) {
+      return yield* conflict('REVISION', 'Product Variant Axis revision changed');
+    }
+    if (
+      input.change.kind === 'AXIS_INITIALIZATION' &&
+      (latest !== undefined || current.length !== 0 || input.axes.length !== 0)
+    ) {
+      return yield* conflict('INVALID_INPUT', 'Axis-free initialization requires an uninitialized empty basis');
     }
     const unchanged =
       current.length === input.axes.length &&

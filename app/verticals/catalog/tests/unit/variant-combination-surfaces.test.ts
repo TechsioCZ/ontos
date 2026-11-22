@@ -249,6 +249,7 @@ describe('Confirm Variant combination Action surface (#440)', () => {
         combinationAxisRevision: 1,
         combinationKey: 'a'.repeat(64),
         variant,
+        variantRevision: 2,
       });
     }),
   );

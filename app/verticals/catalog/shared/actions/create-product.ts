@@ -46,6 +46,7 @@ export type CreateProductPayload = typeof CreateProductPayloadSchema.Type;
 export const CreateProductResultSchema = Schema.Struct({
   businessOriginalCreateInvocationId: Schema.optionalKey(ProductActionInvocationIdSchema),
   classification: Schema.optionalKey(CompletedProductCreationClassificationSchema),
+  initialVariantRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   product: ProductSchema,
   variantId: ProductUuidSchema,
 });

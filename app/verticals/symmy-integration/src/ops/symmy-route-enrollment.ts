@@ -50,6 +50,7 @@ import { reviseOperation } from '../persistence/symmy-price-batch-plan.ts';
 import { groupOperation, priceOperation } from '../persistence/symmy-price-list-plan.ts';
 import {
   provisionStockItemOperation,
+  readinessOperations,
   createProductOperation,
   createVariantOperation,
   updateProductOperation,
@@ -386,6 +387,11 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       operations: [
         executor(createProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts], required: true }),
         executor(updateProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
+        ...readinessOperations.flatMap((operation) =>
+          operation.entrypointKey === updateProductOperation.entrypointKey
+            ? []
+            : [executor(operation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] })],
+        ),
         executor(provisionStockItemOperation, { entityKind: 'PRODUCT' }),
         executor(createVariantOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
         executor(variantFactsOperation, { entityKind: 'VARIANT', reads: [catalogSourceProducts] }),
@@ -511,6 +517,20 @@ export const symmyRouteRequestRefusals = (
       `${request.routeKey} enrolls no Inventory source policy`,
     ),
     ...inventoryPolicyRefusals(request, enrolled),
+    ...refuseWhen(
+      configuration.catalogReadiness !== undefined &&
+        (request.routeKey !== 'productsBatch' ||
+          configuration.catalogReadiness.unitRef.tenantId !== request.tenantId ||
+          readinessOperations.some(
+            (operation) =>
+              !enrolled.some((entry) => entry.entityKind === 'PRODUCT' && sameOperation(entry.operation, operation)),
+          ) ||
+          (configuration.inventorySource !== undefined &&
+            computeCanonicalValueHash(configuration.catalogReadiness.unitRef) !==
+              computeCanonicalValueHash(configuration.inventorySource.unitRef))),
+      'configuration_field_not_allowed',
+      'Catalog readiness is a Product route policy with the tenant-local Inventory Unit',
+    ),
     ...selectorRefusals(request, inventory),
     ...enrolled.flatMap(({ entityKind, operation }) => {
       const listed = inventory.operations.find((candidate) => sameOperation(candidate, operation));

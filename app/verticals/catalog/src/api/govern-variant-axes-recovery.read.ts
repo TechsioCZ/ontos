@@ -88,6 +88,10 @@ export const governVariantAxesRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Recover source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: governVariantAxesRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

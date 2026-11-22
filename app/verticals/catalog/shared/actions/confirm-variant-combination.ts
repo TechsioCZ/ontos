@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
 import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductEvidenceReferenceSchema, ProductReasonSchema, ProductVariantSchema } from '../domain/product.ts';
@@ -17,6 +18,7 @@ export const ConfirmVariantCombinationPayloadSchema = Schema.Struct({
   expectedVariantRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   productRef: ProductRefSchema,
   reason: ProductReasonSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
   variantRef: VariantRefSchema,
 }).check(
   Schema.makeFilter(({ productRef, variantRef }) =>
@@ -29,5 +31,6 @@ export const ConfirmVariantCombinationResultSchema = Schema.Struct({
   combinationAxisRevision: CatalogRevisionNumberSchema,
   combinationKey: VariantCombinationKeySchema,
   variant: ProductVariantSchema,
+  variantRevision: Schema.optionalKey(CatalogRevisionNumberSchema),
 });
 export type ConfirmVariantCombinationResult = typeof ConfirmVariantCombinationResultSchema.Type;

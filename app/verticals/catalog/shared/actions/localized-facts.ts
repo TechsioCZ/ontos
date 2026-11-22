@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
 import { ProductEvidenceReferenceSchema, ProductReasonSchema } from '../domain/product.ts';
 import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
@@ -27,6 +28,7 @@ export const SetProductLocalizedFactsPayloadSchema = Schema.Struct({
   ...ChangeFields,
   facts: FactsSchema,
   productRef: ProductRefSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
 });
 export type SetProductLocalizedFactsPayload = typeof SetProductLocalizedFactsPayloadSchema.Type;
 export const RemoveProductLocalizedFactsPayloadSchema = Schema.Struct({

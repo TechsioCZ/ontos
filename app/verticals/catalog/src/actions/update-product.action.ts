@@ -58,6 +58,7 @@ export const handleUpdateProduct = Effect.fn('UpdateProductAction.execute')(func
     principalId: context.scope.principalId,
     productId: payload.productRef.resourceId,
     reason: payload.reason,
+    sourceProduct: payload.sourceProduct,
     targetLifecycle: payload.targetLifecycle,
     tenantId: context.scope.tenantId,
   });
