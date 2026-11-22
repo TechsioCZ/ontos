@@ -35,11 +35,13 @@ export const intakeWorld = Effect.fn('CommunicationIntakeTest.world')(function* 
   database: RuntimeDatabase,
   options: {
     readonly recipients?: readonly string[];
+    /** An existing Tenant (e.g. of a live Core fixture); a fresh one by default. */
+    readonly tenantId?: string;
     readonly types?: readonly ReturnType<typeof fixtureType>[];
     readonly withTemplates?: boolean;
   } = {},
 ) {
-  const tenantId = yield* nextId;
+  const tenantId = options.tenantId ?? (yield* nextId);
   const recipients = options.recipients ?? ['customer-1'];
   if (options.withTemplates !== false) {
     yield* database.withPorts(tenantId, (templates) => seedLanguages(templates, ['cs', 'en'], templateBase));

@@ -27,7 +27,7 @@ import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositio
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { NodeCrypto } from '@effect/platform-node';
-import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
+import { ConfigProvider, Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { CommunicationsDatabaseLive, CommunicationsPgClientLive } from '../src/database/client.ts';
@@ -196,18 +196,27 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
-export default assembleEffectBffRuntime({
-  api: communicationsApi,
-  handlers: governedReadApiHandlersLive.pipe(
-    GovernedReadLayer.provide(
-      CommunicationsDatabaseLive.pipe(
-        GovernedReadLayer.provide(CommunicationsPgClientLive),
-        GovernedReadLayer.provide(Reactivity.layer),
+/**
+ * The production HTTP assembly. Production reads the process configuration; a native acceptance test passes its own
+ * configuration provider (database, SpiceDB, gateway keys, composition source), so it exercises exactly these production
+ * layers, gateway verification, assertion redemption and access decision included.
+ */
+export const makeCommunicationsApiRuntime = (configuration?: ConfigProvider.ConfigProvider) =>
+  assembleEffectBffRuntime({
+    api: communicationsApi,
+    handlers: governedReadApiHandlersLive.pipe(
+      GovernedReadLayer.provide(
+        CommunicationsDatabaseLive.pipe(
+          GovernedReadLayer.provide(CommunicationsPgClientLive),
+          GovernedReadLayer.provide(Reactivity.layer),
+        ),
       ),
+      GovernedReadLayer.provide(runtimeObservabilityLive),
+      GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+      GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
+      GovernedReadLayer.provide(configuration === undefined ? Layer.empty : ConfigProvider.layer(configuration)),
+      GovernedReadLayer.orDie,
     ),
-    GovernedReadLayer.provide(runtimeObservabilityLive),
-    GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-    GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
-    GovernedReadLayer.orDie,
-  ),
-});
+  });
+
+export default makeCommunicationsApiRuntime();
