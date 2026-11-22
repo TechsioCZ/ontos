@@ -175,8 +175,8 @@ const relayRow = Effect.fn('PortalAuthCommunicationRelay.relayRow')(function* re
 const count = (results: readonly RowResult[], result: RowResult) => results.filter((value) => value === result).length;
 
 /**
- * One relay tick: clear the protected values of expired issuances, claim the due rows and relay each. It has no failure
- * channel: an unreadable store or an unavailable intake leaves the rows due for a later tick.
+ * One relay tick: claim the due rows and relay each. It has no failure channel: an unreadable store or an unavailable intake
+ * leaves the rows due for a later tick.
  */
 export const relayCommunicationRequests = Effect.fn('PortalAuthCommunicationRelay.tick')(function* relayTick(
   options: RelayOptions,
@@ -187,7 +187,6 @@ export const relayCommunicationRequests = Effect.fn('PortalAuthCommunicationRela
 > {
   const store = yield* CommercePortalAuthCommunicationStore;
   const now = yield* DateTime.now;
-  yield* store.forgetExpired(now).pipe(Effect.ignore);
   const claimed = yield* store
     .claimDue({
       leaseMillis: options.leaseMillis,
@@ -213,6 +212,21 @@ export const relayCommunicationRequests = Effect.fn('PortalAuthCommunicationRela
     released: count(results, 'RELEASED'),
     unrecorded: count(results, 'UNRECORDED'),
   };
+});
+
+/**
+ * Clears the protected value of every expired issuance, whatever the relay may do: it needs neither the realm's trusted scope
+ * nor an approved release, because clearing a value nothing may use any more is never a send. An unreadable store leaves the
+ * values for the next tick; a sweep that cleared something is logged with its count only.
+ */
+export const sweepExpiredProtectedValues = Effect.gen(function* sweepExpiredProtectedValuesEffect() {
+  const store = yield* CommercePortalAuthCommunicationStore;
+  const cleared = yield* store.forgetExpired(yield* DateTime.now).pipe(Effect.orElseSucceed(() => 0));
+  if (cleared > 0) {
+    yield* Effect.annotateLogs(Effect.logInfo('The Portal Auth protected values of expired issuances were cleared'), {
+      cleared,
+    });
+  }
 });
 
 const RELAY_INTERVAL = Duration.seconds(1);
@@ -250,9 +264,10 @@ export const relayReleaseApproved = (
 /**
  * The relay loop for the lifetime of the layer's scope, under a lease owner unique to this process, for the Tenant of the
  * realm's trusted scope. It is the scoped maintenance loop of this module's Outbox Worker entry (the sweep of the Auth-local
- * outbox belongs to the worker host, never to a request-serving API process). A tick relays only while `admitted` says the
- * approved release is this build, logging one refusal per change; a realm without a trusted scope relays nothing (fail
- * closed). A tick that moved something is logged with counts only, never a request.
+ * outbox belongs to the worker host, never to a request-serving API process). Every tick first clears the protected values of
+ * expired issuances (`sweepExpiredProtectedValues`), admitted or not. A tick relays only while `admitted` says the approved
+ * release is this build, logging one refusal per change; a realm without a trusted scope relays nothing (fail closed). A tick
+ * that moved something is logged with counts only, never a request.
  */
 export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boolean>) =>
   Layer.effectDiscard(
@@ -274,7 +289,8 @@ export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boo
       const refused = Effect.logWarning(
         'The Portal Auth communication relay awaits an approved commerce.customer-context release',
       );
-      const tick = admitted.pipe(
+      const tick = sweepExpiredProtectedValues.pipe(
+        Effect.andThen(admitted),
         Effect.flatMap((admission) =>
           Ref.getAndSet(wasAdmitted, admission).pipe(
             Effect.flatMap((previously) => {

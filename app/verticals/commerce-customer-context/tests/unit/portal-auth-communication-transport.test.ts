@@ -28,6 +28,7 @@ import {
 } from '../../src/portal-auth/communications/request-relay.ts';
 import { PortalAuthRelayTransportLive } from '../../src/portal-auth/communications/relay-transport.ts';
 import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communications/trusted-scope.ts';
+import { PortalAuthTrustedScopeUnavailable } from '../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import { portalAuthCommunicationRequest, storedRequestOf } from '../../src/portal-auth/communications/request.ts';
 import { PortalAuthCommunicationSourceGateway } from '../../src/workers/portal-auth-communication-source-gateway.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from '../../src/workers/submit-portal-auth-communication-request-rejected.ts';
@@ -407,6 +408,55 @@ describe('The relay loop and the production relay transport (#1406 D1)', () => {
         );
         expect(submitted).toStrictEqual(['pa-loop-own']);
         expect((yield* Ref.get(store.outbox)).get('pa-loop-foreign')?.state).toBe('PENDING');
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    'A4: an expired issuance loses its protected value on every tick, without an approved release or a trusted scope, and nothing is sent',
+    () =>
+      Effect.gen(function* sweep() {
+        yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+        const store = makeCommunicationStoreDouble();
+        yield* store.service.record({
+          issuance: issuance('pa-sweep-expired'),
+          now: ISSUED_AT,
+          request: yield* storedRequestOf(yield* requestOf('pa-sweep-expired')),
+          sealedValue: 'v1.sealed',
+          supersede: false,
+          tenantId: TENANT,
+        });
+        const submitted: string[] = [];
+        yield* Effect.scoped(
+          Effect.gen(function* running() {
+            yield* Layer.build(
+              // the release is not approved and the realm has no trusted scope: the relay itself does nothing
+              makePortalAuthCommunicationRelayLive(Effect.succeed(false)).pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    Layer.succeed(CommercePortalAuthCommunicationStore, store.service),
+                    Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, {
+                      submit: (sent) => {
+                        submitted.push(sent.occurrence.occurrenceId);
+                        return Effect.succeed({ outcome: 'RELAYED' } as const);
+                      },
+                    }),
+                    Layer.succeed(CommercePortalAuthTrustedScope, {
+                      current: Effect.fail(new PortalAuthTrustedScopeUnavailable({ reason: 'NOT_CONFIGURED' })),
+                    }),
+                    NodeCrypto.layer,
+                  ),
+                ),
+              ),
+            );
+            // past the issuance's expiry (30 minutes), then two relay intervals
+            yield* TestClock.adjust('31 minutes');
+            yield* TestClock.adjust('2 seconds');
+          }),
+        );
+        const stored = (yield* Ref.get(store.issuances)).get('pa-sweep-expired');
+        expect(Option.isNone(stored?.sealedValue ?? Option.some('missing'))).toBe(true);
+        expect(submitted).toStrictEqual([]);
+        expect((yield* Ref.get(store.outbox)).get('pa-sweep-expired')?.state).toBe('PENDING');
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
