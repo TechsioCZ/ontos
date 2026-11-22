@@ -3,20 +3,11 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { ProductNameSchema, ProductSchema } from '../domain/product.ts';
-import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
+import { StoredCatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const ProductDetailRequestSchema = Schema.Struct({
-  locale: CatalogLocaleSchema.check(
-    Schema.isMaxLength(64),
-    Schema.makeFilter((locale) => {
-      try {
-        return Intl.getCanonicalLocales(locale)[0] === locale ? undefined : 'Expected a canonical locale';
-      } catch {
-        return 'Expected a canonical locale';
-      }
-    }),
-  ),
+  locale: StoredCatalogLocaleSchema,
   productRef: ProductRefSchema,
 });
 export type ProductDetailRequest = typeof ProductDetailRequestSchema.Type;
@@ -24,10 +15,10 @@ const ProductDetailLocalizedSchema = Schema.Union([
   Schema.Struct({
     description: Schema.optionalKey(Schema.String),
     kind: Schema.Literal('PRESENT'),
-    locale: CatalogLocaleSchema,
+    locale: StoredCatalogLocaleSchema,
     name: ProductNameSchema,
   }),
-  Schema.Struct({ kind: Schema.Literal('MISSING_TRANSLATION'), requestedLocale: CatalogLocaleSchema }),
+  Schema.Struct({ kind: Schema.Literal('MISSING_TRANSLATION'), requestedLocale: StoredCatalogLocaleSchema }),
 ]);
 export const ProductDetailResponseSchema = Schema.Struct({
   localized: ProductDetailLocalizedSchema,

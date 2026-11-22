@@ -7,7 +7,7 @@ import { DateTime, Effect, Equal, Schema } from 'effect';
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import type { CreateProductPayload } from '../../shared/actions/create-product.ts';
-import { CatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
+import { StoredCatalogLocaleSchema, CatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
 import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 import {
   productLocalizedFactRevisions,
@@ -68,6 +68,7 @@ const unavailable = (cause?: unknown) => {
 };
 const uuid = (value: string) => Schema.is(Schema.String.check(Schema.isUUID()))(value);
 const canonicalLocale = Schema.is(CatalogLocaleSchema);
+const storedLocale = Schema.is(StoredCatalogLocaleSchema);
 const validText = (value: string | undefined, limit: number) =>
   value === undefined || (value.length > 0 && value.length <= limit && value === value.trim());
 const validChange = (input: Change) => {
@@ -145,7 +146,7 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
       eq(variantLocalizedFacts.locale, locale),
     );
   const readProduct = Effect.fn('LocalizedFacts.readProduct')(function* readProduct(ref: ProductRef, locale: string) {
-    if (!validProduct(ref, tenantId) || !canonicalLocale(locale)) {
+    if (!validProduct(ref, tenantId) || !storedLocale(locale)) {
       return { kind: 'MISSING_TRANSLATION', locale, revision: 0 } as const;
     }
     const [owner] = yield* transaction
@@ -168,7 +169,7 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
     variantRef: VariantRef,
     locale: string,
   ) {
-    if (!validProduct(productRef, tenantId) || !validVariant(variantRef, tenantId) || !canonicalLocale(locale)) {
+    if (!validProduct(productRef, tenantId) || !validVariant(variantRef, tenantId) || !storedLocale(locale)) {
       return { kind: 'MISSING_TRANSLATION', locale, revision: 0 } as const;
     }
     const [owner] = yield* transaction

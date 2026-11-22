@@ -12,6 +12,12 @@ import {
   CatalogOperationOutcomeSchema,
 } from '../../shared/api.ts';
 import { ProductDetailRequestSchema, ProductDetailResponseSchema } from '../../shared/apis/product-detail.ts';
+import {
+  RemoveProductLocalizedFactsPayloadSchema,
+  RemoveVariantLocalizedFactsPayloadSchema,
+  SetProductLocalizedFactsPayloadSchema,
+  SetVariantLocalizedFactsPayloadSchema,
+} from '../../shared/actions/localized-facts.ts';
 import { CategoryRevisionConflict } from '../../shared/actions/create-product-category.ts';
 import { mapAddProductCategoryAssignmentActionProblem } from '../../api/add-product-category-assignment-action-problems.ts';
 import { mapCreateProductCategoryActionProblem } from '../../api/create-product-category-action-problems.ts';
@@ -30,6 +36,35 @@ import { ProductCategoryHistoryResponseSchema } from '../../shared/apis/product-
 import { productDetailRead, readProductDetail } from '../../src/api/product-detail.read.ts';
 import { productHistoryRead } from '../../src/api/product-history.read.ts';
 import type { CatalogPersistence } from '../../src/persistence/catalog-persistence.ts';
+
+it('decodes exact stored locale keys at the public Product detail query boundary', () => {
+  const productRef = {
+    moduleId: 'commerce.catalog',
+    resourceId: '22222222-2222-4222-8222-222222222222',
+    resourceType: 'commerce.catalog.product',
+    tenantId: '11111111-1111-4111-8111-111111111111',
+  } as const;
+  for (const locale of ['cs-cz', 'cs-CZ']) {
+    expect(Schema.decodeUnknownSync(ProductDetailRequestSchema)({ locale, productRef }).locale).toBe(locale);
+  }
+  for (const locale of ['x', ' cs-cz', 'cs-cz ', 'a'.repeat(65)]) {
+    expect(() => Schema.decodeUnknownSync(ProductDetailRequestSchema)({ locale, productRef })).toThrow();
+  }
+});
+
+it('keeps new localized Action locale input canonical while Reads use exact stored keys', () => {
+  for (const payload of [
+    SetProductLocalizedFactsPayloadSchema,
+    SetVariantLocalizedFactsPayloadSchema,
+    RemoveProductLocalizedFactsPayloadSchema,
+    RemoveVariantLocalizedFactsPayloadSchema,
+  ]) {
+    expect(Schema.decodeUnknownSync(payload.fields.locale)('cs-CZ')).toBe('cs-CZ');
+    for (const locale of ['cs-cz', 'x']) {
+      expect(() => Schema.decodeUnknownSync(payload.fields.locale)(locale)).toThrow();
+    }
+  }
+});
 
 it('publishes governed Product detail and historical-read APIs behind the Catalog BFF prefix', () => {
   expect(catalogApiContract).toEqual({
@@ -304,9 +339,23 @@ it.effect(
       });
       expect(descriptionOnly.localized).toEqual({ kind: 'MISSING_TRANSLATION', requestedLocale: 'de-DE' });
       expect(Schema.is(ProductDetailRequestSchema)({ locale: 'de-DE', productRef })).toBe(true);
-      expect(Schema.is(ProductDetailRequestSchema)({ locale: 'de-de', productRef })).toBe(false);
       expect(Schema.is(ProductDetailResponseSchema)(present)).toBe(true);
       expect(Schema.is(ProductDetailResponseSchema)(missing)).toBe(true);
+      const legacyPresent = {
+        ...present,
+        localized: { kind: 'PRESENT' as const, locale: 'cs-cz', name: 'Původní název' },
+      };
+      const legacyMissing = {
+        ...missing,
+        localized: { kind: 'MISSING_TRANSLATION' as const, requestedLocale: 'cs-cz' },
+      };
+      for (const response of [legacyPresent, legacyMissing]) {
+        const encoded = Schema.encodeSync(ProductDetailResponseSchema)(response);
+        expect(Schema.decodeUnknownSync(ProductDetailResponseSchema)(encoded).localized).toEqual(response.localized);
+      }
+      expect(Schema.decodeUnknownSync(ProductDetailRequestSchema)({ locale: 'de-de', productRef }).locale).toBe(
+        'de-de',
+      );
     }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 

@@ -11,7 +11,7 @@ import {
   ProductReasonSchema,
   ProductRevisionSchema,
 } from '../domain/product.ts';
-import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
+import { StoredCatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
 import {
   CatalogRevisionLookupResultSchema,
   ProductRevisionReferenceSchema,
@@ -19,18 +19,7 @@ import {
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const ProductHistoryRequestSchema = Schema.Struct({
-  locale: Schema.optionalKey(
-    CatalogLocaleSchema.check(
-      Schema.isMaxLength(64),
-      Schema.makeFilter((locale) => {
-        try {
-          return Intl.getCanonicalLocales(locale)[0] === locale ? undefined : 'Expected a canonical locale';
-        } catch {
-          return 'Expected a canonical locale';
-        }
-      }),
-    ),
-  ),
+  locale: Schema.optionalKey(StoredCatalogLocaleSchema),
   productRef: ProductRefSchema,
   revisionReference: Schema.optionalKey(ProductRevisionReferenceSchema),
 });
@@ -40,7 +29,7 @@ export const ProductHistoricalLocalizedRevisionSchema = Schema.Struct({
   evidenceRefs: Schema.Array(ProductEvidenceReferenceSchema),
   historical: Schema.Literal(true),
   kind: Schema.Literals(['SET', 'REMOVED']),
-  locale: CatalogLocaleSchema,
+  locale: StoredCatalogLocaleSchema,
   name: Schema.optionalKey(ProductNameSchema),
   reason: ProductReasonSchema,
   recordedAt: ProductInstantSchema,
