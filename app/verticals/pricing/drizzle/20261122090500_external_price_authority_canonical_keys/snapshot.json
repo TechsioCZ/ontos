@@ -14490,13 +14490,6 @@
       "table": "external_price_source_authority_grants"
     },
     {
-      "value": "((\"exact_identity_key\"#>>'{unitBasis,unitRef,resourceId}') collate \"C\" ~ '^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$' and case \"exact_identity_key\"#>>'{priceGroupSelector,kind}' when 'NO_GROUP' then true when 'PRICE_GROUP' then (\"exact_identity_key\"#>>'{priceGroupSelector,priceGroupRef,resourceId}') collate \"C\" ~ '^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$' else false end) is true",
-      "name": "pricing_external_price_authority_resource_ids_ck",
-      "entityType": "checks",
-      "schema": "pricing",
-      "table": "external_price_source_authority_grants"
-    },
-    {
       "value": "\"source_authority_ref\" = btrim(\"source_authority_ref\") and length(\"source_authority_ref\") between 1 and 300 and \"source_authority_version\" = btrim(\"source_authority_version\") and length(\"source_authority_version\") between 1 and 100 and \"mapping_contract_ref\" = btrim(\"mapping_contract_ref\") and length(\"mapping_contract_ref\") between 1 and 300 and \"mapping_contract_version\" = btrim(\"mapping_contract_version\") and length(\"mapping_contract_version\") between 1 and 100 and \"verification_ref\" = btrim(\"verification_ref\") and length(\"verification_ref\") between 1 and 300",
       "name": "pricing_external_price_authority_text_ck",
       "entityType": "checks",

@@ -13,6 +13,7 @@ import type {
   ExternalPriceSourcePolicyRecord,
 } from '../../shared/domain/external-price-source-policy.ts';
 import {
+  ExternalPriceSourceAuthorityGrantInputSchema,
   ExternalPriceSourceAuthorityGrantSchema,
   priceAuthorityKeyInTenant,
 } from '../services/external-price-input-boundary.service.ts';
@@ -215,7 +216,7 @@ export const externalPriceSourceAuthorityForScope = (
             Effect.flatMap(decodePolicyEndOutcome),
           ),
     store: Effect.fn('ExternalPriceSourceAuthority.store')(function* store(input) {
-      const grant = yield* Schema.decodeUnknownEffect(ExternalPriceSourceAuthorityGrantSchema)(input).pipe(
+      const grant = yield* Schema.decodeUnknownEffect(ExternalPriceSourceAuthorityGrantInputSchema)(input).pipe(
         Effect.mapError(unavailable),
       );
       if (

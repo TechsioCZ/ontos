@@ -12,6 +12,8 @@ import {
 import { decodeExternalPriceSourceAuthorityAssessment } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import type { ExternalPriceSourceAuthorityPersistence } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import {
+  ExternalPriceSourceAuthorityGrantInputSchema,
+  ExternalPriceSourceAuthorityGrantSchema,
   makeExternalPriceInputBoundary,
   policyCoversRequest,
 } from '../../src/services/external-price-input-boundary.service.ts';
@@ -168,6 +170,15 @@ const boundaryCovering = (policy: ExternalPriceSourcePolicy) =>
   });
 
 describe('Standing external Price source policy at the external Price input boundary', () => {
+  it('accepts the original UUID spelling on a grant-store replay', () => {
+    const exactIdentityKey = priceKey({ ...world, unitId: world.unitId.toUpperCase() }, newVariant, {
+      priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: priceGroupRef(world.tenantId, groupId.toUpperCase()) },
+    });
+    const grant = { ...storedPolicy(), exactIdentityKey };
+    expect(Schema.is(ExternalPriceSourceAuthorityGrantInputSchema)(grant)).toBe(true);
+    expect(Schema.is(ExternalPriceSourceAuthorityGrantSchema)(grant)).toBe(false);
+  });
+
   it.effect('rejects noncanonical Unit and Price Group IDs before consulting exact or standing authority', () =>
     Effect.gen(function* rejectNoncanonicalIdentity() {
       const boundary = makeExternalPriceInputBoundary({ assess: () => Effect.die('invalid key reached authority') });
