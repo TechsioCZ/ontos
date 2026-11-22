@@ -41,6 +41,7 @@
     "./resources/inventory-reservation": "./shared/resources/inventory-reservation.ts",
     "./resources/inventory-source-conflict": "./shared/resources/inventory-source-conflict.ts",
     "./resources/reservation-confirmation": "./shared/resources/reservation-confirmation.ts",
+    "./resources/source-provisioning-policy": "./shared/resources/source-provisioning-policy.ts",
     "./resources/stock-item": "./shared/resources/stock-item.ts",
     "./resources/stock-location": "./shared/resources/stock-location.ts",
     "./resources/stock-position": "./shared/resources/stock-position.ts",

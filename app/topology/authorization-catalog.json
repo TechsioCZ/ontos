@@ -11094,6 +11094,114 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.inventory.source-provisioning-policy.define",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.define-source-provisioning-policy",
+            "moduleKey": "commerce.inventory",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.inventory.source-stock-item-provisioning-receipt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.source-stock-item-provisioning-receipt",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.inventory.source-stock-item.provision",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.provision-source-stock-item",
+            "moduleKey": "commerce.inventory",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.inventory.source-stock-position-resolution.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.source-stock-position-resolution",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.inventory.stock-item.register",
             "kind": "action",
             "modes": [
