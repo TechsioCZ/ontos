@@ -14,7 +14,7 @@ export { confirmAssetRequest, ingestMediaBytes, parseContentLength, uploadRespon
 export { StoredMediaObjectVerification } from './verification.ts';
 export { confirmAssetAction } from '../modules/actions/confirm-asset.action.ts';
 export { assetDownloadRead } from '../generated-reads/asset-download.ts';
-export { isMediaFailure } from './errors.ts';
+export { isMediaFailure, mediaAssetNotFound, mediaUnavailable } from './errors.ts';
 export type { MediaFailure } from './errors.ts';
 export { MediaDownloadSource } from './download-contract.ts';
 export { streamConfirmedBytes } from './download.ts';

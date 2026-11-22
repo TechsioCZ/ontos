@@ -28,6 +28,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
+  ActionTransportMetadata,
   ActiveApplicationCompositionServiceContract,
   DatabaseConnectionPair,
   ContextAccess,
@@ -62,6 +63,8 @@ import {
   ActionRuntime,
   assetCurrentRead,
   assetMetadataRead,
+  renameDisplayFilenameAction,
+  uploadAssetAction,
 } from '@app/core-runtime';
 import {
   AccessDecisionLive,
@@ -104,6 +107,7 @@ import {
   assetDownloadRead,
   confirmAssetAction,
   confirmAssetRequest,
+  confirmReservedUpload,
   downloadResponseHeaders,
   ingestMediaBytes,
   integrityRecordRequest,
@@ -111,10 +115,12 @@ import {
   loadS3ObjectStorageConfig,
   logMediaRecovery,
   makeS3ObjectStorage,
+  mediaAssetNotFound,
   MediaByteSource,
   MediaDownloadSource,
   MediaIntegrityRecorder,
   mediaRecoveryRef,
+  mediaUnavailable,
   ObjectStorage,
   parseContentLength,
   ProvenMediaIntegrityFinding,
@@ -125,6 +131,7 @@ import {
   uploadResponseHeaders,
 } from '@app/core-runtime/media/edge';
 import type { MediaByteSourceOffer, MediaFailure, MediaVerifiableAssetOffer } from '@app/core-runtime/media/edge';
+import type { ConfirmAssetResult } from '../shared/core-actions/confirm-asset.ts';
 import { AccessChangesCommandsLive } from '@app/core-runtime/access/changes/commands';
 import { AccessProjectionCompiler } from '@app/core-runtime/access/intent/projection-compiler';
 import {
@@ -264,6 +271,18 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 // @ontos-core-read asset-metadata
 // assetMetadataRead uses the canonical @app/core-runtime import
 // @ontos-codesmith-core-read-server-imports:end
+
+// @ontos-codesmith-core-action-server-imports:start
+
+// @ontos-core-action rename-display-filename
+// renameDisplayFilenameAction uses the canonical @app/core-runtime import
+
+// @ontos-core-action confirm-asset
+// confirmAssetAction uses the canonical @app/core-runtime import
+
+// @ontos-core-action upload-asset
+// uploadAssetAction uses the canonical @app/core-runtime import
+// @ontos-codesmith-core-action-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfig, AuthConfigLive } from './auth/config.ts';
@@ -2482,6 +2501,232 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
 );
 // @ontos-codesmith-core-read-server-groups:end
 
+/** The caller as a tenant-wide principal: the byte-source Read is company-free, the ingest applies the company itself. */
+const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
+
+/**
+ * The request-scoped evidence of the Core Media confirm route. The confirm Action decides on a verification of the
+ * stored object, and only the host can produce one: a payload field could be forged by any caller. So the host reads
+ * the reserved row through the same `authenticated_principal` byte-source Read the byte edge uses (the row and the
+ * reserving principal authorize the read-back; the confirm capability is still decided by the Action), lets the Core
+ * settle the upload against the stored object, and hands the Action the verification it asked for. A sealed asset is
+ * answered from its row: neither the provider nor the Action is asked again.
+ */
+const settleReservedUpload = Effect.fn('shell.coreMedia.settleReservedUpload')(function* settleReservedUpload<
+  Failure extends { readonly _tag: string },
+  Requirements,
+>(
+  context: {
+    readonly payload: { readonly mediaAssetRef: { readonly resourceId: string } };
+    readonly principal: TrustedPrincipalContext;
+    readonly transport: ActionTransportMetadata;
+  },
+  run: Effect.Effect<ConfirmAssetResult, Failure, Requirements>,
+) {
+  const { payload, principal, transport } = context;
+  // The tenant is the authenticated principal's, never the request's: another tenant's id is "not found".
+  const mediaAssetRef = {
+    moduleId: 'core.media',
+    resourceId: payload.mediaAssetRef.resourceId,
+    resourceType: 'core.media.asset',
+    tenantId: principal.tenantId,
+  } as const;
+  const reads = yield* ReadRuntime;
+  let offered = Option.none<MediaByteSourceOffer>();
+  yield* reads
+    .runRead({
+      input: { mediaAssetRef },
+      principal: withoutSelectedLegalEntity(principal),
+      registration: assetByteSourceRead,
+      transport,
+    })
+    .pipe(
+      Effect.provideService(MediaByteSource, {
+        offer: (asset) =>
+          Effect.sync(() => {
+            offered = Option.some(asset);
+          }),
+      }),
+      Effect.mapError((error) =>
+        Predicate.isTagged(error, 'ReadHandlerNotFound')
+          ? mediaAssetNotFound()
+          : mediaUnavailable('The reserved asset could not be read'),
+      ),
+    );
+  // The Read offered the reserved row after its decision; it is used only now that the Read completed.
+  if (Option.isNone(offered)) {
+    return yield* mediaUnavailable('The reserved asset could not be read');
+  }
+  return yield* confirmReservedUpload<Failure, Exclude<Requirements, StoredMediaObjectVerification>>({
+    asset: offered.value,
+    confirm: (verification) => run.pipe(Effect.provideService(StoredMediaObjectVerification, verification)),
+    mediaAssetRef,
+    principalId: principal.principalId,
+    selectedLegalEntityId: principal.legalEntityId,
+  });
+});
+const provideConfirmAssetEvidence =
+  (context: Parameters<typeof settleReservedUpload>[0]) =>
+  <Failure extends { readonly _tag: string }, Requirements>(
+    run: Effect.Effect<ConfirmAssetResult, Failure, Requirements>,
+  ) =>
+    settleReservedUpload(context, run);
+
+// @ontos-codesmith-core-action-server-groups:start
+
+// @ontos-core-action rename-display-filename
+const coreActionRenameDisplayFilenameProblem = (
+  error: ActionCoreError | typeof renameDisplayFilenameAction.descriptor.domainErrorSchema.Type,
+): IdentityProblem =>
+  Schema.is(renameDisplayFilenameAction.descriptor.domainErrorSchema)(error)
+    ? Match.value(error).pipe(
+        Match.tags({
+          MediaAssetNotFound: shellTargetNotFoundProblem,
+          MediaUnavailable: shellCapabilityUnavailableProblem,
+        }),
+        Match.exhaustive,
+      )
+    : identityProblem(error);
+
+const coreActionRenameDisplayFilenameGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreActionRenameDisplayFilename',
+  (handlers) =>
+    handlers.handle('executeRenameDisplayFilename', ({ headers, payload, request }) =>
+      Effect.gen(function* executeRenameDisplayFilenameCoreAction() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const idempotencyKey = yield* requiredIdempotencyKey(headers);
+        const correlationId = correlationFromRequest(request);
+        const runtime = yield* ActionRuntime;
+        return yield* runtime
+          .runAction({
+            payload,
+            principal: resolved.principal,
+            registration: renameDisplayFilenameAction,
+            savedReply: 'answer',
+            transport: { correlationId, idempotencyKey },
+          })
+          .pipe(Effect.catch((error) => pipe(error, coreActionRenameDisplayFilenameProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+
+// @ontos-core-action confirm-asset
+const coreActionConfirmAssetProblem = (
+  error: ActionCoreError | typeof confirmAssetAction.descriptor.domainErrorSchema.Type,
+): IdentityProblem =>
+  Schema.is(confirmAssetAction.descriptor.domainErrorSchema)(error)
+    ? Match.value(error).pipe(
+        Match.tags({
+          MediaAssetNotFound: shellTargetNotFoundProblem,
+          MediaContentConflict: shellPolicyConflictProblem,
+          MediaIngestUncertain: shellCapabilityUnavailableProblem,
+          MediaIntegrityFailed: shellPolicyUnprocessableProblem,
+          MediaNotReady: shellPolicyConflictProblem,
+          MediaUnavailable: shellCapabilityUnavailableProblem,
+        }),
+        Match.exhaustive,
+      )
+    : identityProblem(error);
+
+const coreActionConfirmAssetGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreActionConfirmAsset',
+  (handlers) =>
+    handlers.handle('executeConfirmAsset', ({ headers, payload, request }) =>
+      Effect.gen(function* executeConfirmAssetCoreAction() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const idempotencyKey = yield* requiredIdempotencyKey(headers);
+        const correlationId = correlationFromRequest(request);
+        const runtime = yield* ActionRuntime;
+        return yield* provideConfirmAssetEvidence({
+          payload,
+          principal: resolved.principal,
+          transport: { correlationId },
+        })(
+          runtime.runAction({
+            payload,
+            principal: resolved.principal,
+            registration: confirmAssetAction,
+            savedReply: 'answer',
+            transport: { correlationId, idempotencyKey },
+          }),
+        ).pipe(Effect.catch((error) => pipe(error, coreActionConfirmAssetProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+
+// @ontos-core-action upload-asset
+const coreActionUploadAssetProblem = (
+  error: ActionCoreError | typeof uploadAssetAction.descriptor.domainErrorSchema.Type,
+): IdentityProblem =>
+  Schema.is(uploadAssetAction.descriptor.domainErrorSchema)(error)
+    ? Match.value(error).pipe(
+        Match.tags({
+          MediaForbidden: shellTargetForbiddenProblem,
+          MediaUnavailable: shellCapabilityUnavailableProblem,
+        }),
+        Match.exhaustive,
+      )
+    : identityProblem(error);
+
+const coreActionUploadAssetGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreActionUploadAsset',
+  (handlers) =>
+    handlers.handle('executeUploadAsset', ({ headers, payload, request }) =>
+      Effect.gen(function* executeUploadAssetCoreAction() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const idempotencyKey = yield* requiredIdempotencyKey(headers);
+        const correlationId = correlationFromRequest(request);
+        const runtime = yield* ActionRuntime;
+        return yield* runtime
+          .runAction({
+            payload,
+            principal: resolved.principal,
+            registration: uploadAssetAction,
+            savedReply: 'answer',
+            transport: { correlationId, idempotencyKey },
+          })
+          .pipe(Effect.catch((error) => pipe(error, coreActionUploadAssetProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+// @ontos-codesmith-core-action-server-groups:end
+
 /**
  * Core Media byte delivery (#1443 download, #1436 transfer). Each request is its own decision: it authenticates,
  * runs the governed `download` Core Read (authorization, module state, evidence, all fresh), and only an allowed
@@ -2584,9 +2829,6 @@ const mediaUploadProblem = (error: IdentityRuntimeError | MediaFailure): MediaUp
 const privateUploadResponse = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeaders(response, uploadResponseHeaders)),
 );
-
-/** The caller as a tenant-wide principal: the byte-source Read is company-free, the ingest applies the company itself. */
-const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
 
 /**
  * Core Media byte ingress (#1433 upload, #1430): the middle leg of reserve, stream, confirm. It authenticates the
@@ -3239,6 +3481,18 @@ export const makeShellAuthenticationApiRuntime = (
     // @ontos-core-read asset-metadata
     coreReadAssetMetadataGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
+
+    // @ontos-codesmith-core-action-server-layers:start
+
+    // @ontos-core-action rename-display-filename
+    coreActionRenameDisplayFilenameGroupLive,
+
+    // @ontos-core-action confirm-asset
+    coreActionConfirmAssetGroupLive,
+
+    // @ontos-core-action upload-asset
+    coreActionUploadAssetGroupLive,
+    // @ontos-codesmith-core-action-server-layers:end
     coreMediaDownloadHandlersLive,
     coreMediaUploadHandlersLive,
     coreHostedOperationsHandlersLive,
