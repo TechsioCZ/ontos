@@ -54,7 +54,10 @@ import {
 } from '../../shared/actions/provision-source-stock-item.ts';
 import { SelectInventoryBackendPayloadSchema } from '../../shared/actions/select-inventory-backend.ts';
 import { inventoryApi } from '../../shared/api.ts';
-import { DefineSourceProvisioningPolicyActionIneligibleProblemSchema } from '../../shared/apis/define-source-provisioning-policy-action.ts';
+import {
+  DefineSourceProvisioningPolicyActionIneligibleProblemSchema,
+  DefineSourceProvisioningPolicyActionInvalidProblemSchema,
+} from '../../shared/apis/define-source-provisioning-policy-action.ts';
 import {
   ProvisionSourceStockItemActionForbiddenProblemSchema,
   ProvisionSourceStockItemActionConflictProblemSchema,
@@ -335,6 +338,31 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
       { locationKey: 'WH-MAIN', stockLocationRef: warehouse.ref },
       { locationKey: 'WH-OUTLET', stockLocationRef: outlet.ref },
     ];
+    // PostgreSQL lowercases UUIDs: reject noncanonical input before it can create a non-replayable policy.
+    for (const attempt of [1, 2]) {
+      const request = new Request('https://inventory.ontos.test/inventory/actions/define-source-provisioning-policy', {
+        body: JSON.stringify({
+          customerConfigurationId,
+          externalScope: 'erp-company:main',
+          locations,
+          namespace: 'erp-stock',
+          ownerConfigurationRef,
+          unitRef: { ...unitRef, resourceId: CATALOG_PRODUCT_UNIT_ID.toUpperCase() },
+        }),
+        headers: {
+          authorization: yield* authorization(),
+          'content-type': 'application/json',
+          'idempotency-key': yield* nextId,
+          'x-correlation-id': yield* nextId,
+        },
+        method: 'POST',
+      });
+      const response = yield* Effect.promise(() => nativeFetch(request));
+      expect({ attempt, status: response.status }).toEqual({ attempt, status: 400 });
+      yield* Schema.decodeUnknownEffect(DefineSourceProvisioningPolicyActionInvalidProblemSchema)(
+        yield* Effect.promise(() => response.json()),
+      );
+    }
     const policyRace = yield* Effect.all([definePolicy(locations), definePolicy(locations)], { concurrency: 2 });
     expect(
       EffectArray.sort(
