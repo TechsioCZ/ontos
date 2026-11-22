@@ -72,6 +72,7 @@ const EXPECTED_IMMUTABLE_TRIGGERS = [
   'notice_versions:privacy_notice_versions_immutable',
   'owner_contributions:privacy_owner_contributions_immutable',
   'owner_execution_outcomes:privacy_owner_execution_outcomes_immutable',
+  'pre_verification_bindings:privacy_pre_verification_bindings_no_reopen',
   'privacy_representations:privacy_representations_immutable',
   'processing_activity_lifecycle_events:privacy_processing_activity_lifecycle_immutable',
   'processing_interventions:privacy_processing_interventions_immutable',

@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Layer, Schema, Struct } from 'effect';
+import { eq } from 'drizzle-orm';
+import { Crypto, DateTime, Effect, Exit, Layer, Schema, Struct } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PrivacyProcessingInterventionSchema } from '../../shared/domain/privacy-processing-eligibility.ts';
@@ -242,6 +243,43 @@ describe('#1406 D.8 Privacy binds an unverified Portal Auth account and answers 
       expect(yield* w.privacy.locate(w.tenantWide('privacy'), { source })).toMatchObject({
         bindings: [{ bindingRef: bound.bindingRef, status: 'WITHDRAWN', withdrawnAt: expect.any(String) }],
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live('P3: the database refuses to reopen a withdrawn binding, whoever writes the row', () =>
+    Effect.gen(function* noReopen() {
+      const w = yield* world();
+      const bound = yield* w.privacy.bind(w.tenantWide('commerce-customer-context'), w.bindPayload());
+      yield* w.privacy.withdraw(w.tenantWide('privacy'), {
+        bindingRef: bound.bindingRef,
+        evidenceRef: 'fictional-objection',
+      });
+      const tenantWide = Struct.omit(w.ledger, ['legalEntityId']);
+      const reopened = yield* Effect.exit(
+        inPrivacyLedger(tenantWide, (transaction) =>
+          transaction
+            .update(preVerificationBindings)
+            .set({ status: 'ACTIVE' })
+            .where(eq(preVerificationBindings.bindingId, bound.bindingRef)),
+        ),
+      );
+      expect(Exit.isFailure(reopened)).toBe(true);
+      expect(JSON.stringify(reopened)).toContain('privacy_pre_verification_bindings_no_reopen_ck');
+      // any other update of a withdrawn row keeps it withdrawn and is allowed
+      const touchedAt = DateTime.toDateUtc(yield* DateTime.now);
+      yield* inPrivacyLedger(tenantWide, (transaction) =>
+        transaction
+          .update(preVerificationBindings)
+          .set({ updatedAt: touchedAt })
+          .where(eq(preVerificationBindings.bindingId, bound.bindingRef)),
+      );
+      const rows = yield* inPrivacyLedger(tenantWide, (transaction) =>
+        transaction
+          .select({ status: preVerificationBindings.status })
+          .from(preVerificationBindings)
+          .where(eq(preVerificationBindings.bindingId, bound.bindingRef)),
+      );
+      expect(rows).toEqual([{ status: 'WITHDRAWN' }]);
     }).pipe(Effect.provide(layer)),
   );
 
