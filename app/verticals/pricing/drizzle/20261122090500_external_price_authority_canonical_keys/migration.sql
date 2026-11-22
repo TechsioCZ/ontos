@@ -295,6 +295,8 @@ BEGIN
     OR v_identity #>> '{catalogSelection,variantRef,resourceType}' IS DISTINCT FROM 'commerce.catalog.variant'
     OR v_identity #>> '{unitBasis,unitRef,moduleId}' IS DISTINCT FROM 'commerce.catalog'
     OR v_identity #>> '{unitBasis,unitRef,resourceType}' IS DISTINCT FROM 'commerce.catalog.product-unit'
+    OR v_identity #>> '{unitBasis,quantity}' IS NULL
+    OR v_identity #>> '{unitBasis,quantity}' !~ '^(0|[1-9][0-9]{0,28})(\.[0-9]{1,9})?$'
     OR p_input #> '{effectivePeriod,effectiveTo}' = 'null'::jsonb
   THEN
     RAISE EXCEPTION 'Pricing external Price Source Authority grant is invalid' USING ERRCODE = '22023';
@@ -336,7 +338,8 @@ BEGIN
   END IF;
 
   -- Preserve historical receipt identity, including its quantity spelling. Newly enrolled
-  -- grants use canonical UUIDs; the old unique constraint still arbitrates concurrent inserts.
+  -- grants use canonical UUIDs and numeric quantities, so the existing exact-key unique
+  -- constraint also arbitrates concurrent first enrollments with equivalent spellings.
   v_identity := pg_catalog.jsonb_set(v_identity, '{unitBasis,unitRef,resourceId}',
     pg_catalog.to_jsonb(pg_catalog.translate(v_identity #>> '{unitBasis,unitRef,resourceId}', 'ABCDEF', 'abcdef')), false);
   IF v_identity #>> '{priceGroupSelector,kind}' = 'PRICE_GROUP' THEN
@@ -349,6 +352,8 @@ BEGIN
       AND v_identity #>> '{priceGroupSelector,priceGroupRef,tenantId}' = p_tenant_id::text ELSE false END) IS NOT TRUE THEN
     RAISE EXCEPTION 'Invalid Pricing grant resource identity' USING ERRCODE = '22023';
   END IF;
+  v_identity := pg_catalog.jsonb_set(v_identity, '{unitBasis,quantity}',
+    pg_catalog.to_jsonb(pg_catalog.trim_scale((v_identity #>> '{unitBasis,quantity}')::numeric)::text), false);
 
   -- An exact historical replay must still resolve its own receipt. Without that spelling,
   -- reuse only if *all* corresponding receipts agree with the submitted verification data.
@@ -366,7 +371,13 @@ BEGIN
    WHERE authority.tenant_id = p_tenant_id AND authority.legal_entity_id = p_legal_entity_id
      AND authority.source_authority_ref = v_source_authority_ref AND authority.source_authority_version = v_source_authority_version
      AND authority.mapping_contract_ref = v_mapping_contract_ref AND authority.mapping_contract_version = v_mapping_contract_version
-     AND authority.effective_from = v_effective_from AND projected.key = v_identity;
+     AND authority.effective_from = v_effective_from
+     AND CASE WHEN authority.exact_identity_key #>> '{unitBasis,quantity}' ~ '^(0|[1-9][0-9]{0,28})(\.[0-9]{1,9})?$'
+           THEN (projected.key #- '{unitBasis,quantity}') = (v_identity #- '{unitBasis,quantity}')
+             AND (authority.exact_identity_key #>> '{unitBasis,quantity}')::numeric =
+                 (v_identity #>> '{unitBasis,quantity}')::numeric
+           ELSE false
+         END;
   IF v_same_terms IS NOT NULL THEN
     RETURN QUERY SELECT CASE WHEN v_same_terms THEN jsonb_build_object('outcome', 'REUSED')
       ELSE jsonb_build_object('outcome', 'CONFLICT', 'reason', 'GRANT_IDENTITY_ALREADY_BOUND') END;

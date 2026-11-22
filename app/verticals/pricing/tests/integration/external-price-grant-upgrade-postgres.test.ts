@@ -71,6 +71,10 @@ const key = (n: number, upperUnit = false, upperGroup = false) =>
       },
     },
   );
+const quantityKey = (n: number, quantity: string): PriceIdentityKey => ({
+  ...key(n),
+  unitBasis: { ...key(n).unitBasis, quantity },
+});
 const effectiveAt = '2026-11-10T00:00:00.000Z';
 const evidence = {
   effectivePeriod: { effectiveFrom: effectiveAt, effectiveTo: '2026-11-11T00:00:00.000Z' },
@@ -124,7 +128,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
             );
           const store = (input: ReturnType<typeof grant>) =>
             scoped(
-              runtime`select payload from pricing.store_external_price_source_authority_grant_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
+              runtime<{
+                readonly payload: { readonly outcome: 'STORED' | 'REUSED' | 'CONFLICT' };
+              }>`select payload from pricing.store_external_price_source_authority_grant_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
             );
           const historyRows = scoped(
             runtime`select to_jsonb(g) as row from pricing.external_price_source_authority_grants g order by grant_id`,
@@ -132,6 +138,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           const upper = grant(key(11, true, true));
           const pairUpper = grant(key(12, true, true), 'first receipt');
           const pairLower = grant(key(12), 'second receipt');
+          const historicQuantity = grant(quantityKey(41, '1.000000000'));
+          const quantityPair = [
+            grant(key(42), 'integer receipt'),
+            grant(quantityKey(42, '1.000000000'), 'decimal receipt'),
+          ];
           const oneEligiblePairs = [
             [grant(key(31, true, true)), { ...grant(key(31)), verifiedAt: '2026-11-10T00:00:00.001Z' }],
             [
@@ -173,7 +184,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
             { ...grant(key(23)), mapping: { ...productMapping, mappingContractRef: '*' } },
             { ...grant(key(24)), mapping: { ...productMapping, mappingContractVersion: '*' } },
           ];
-          for (const stored of [upper, pairUpper, pairLower, ...oneEligiblePairs.flat(), ...historicWildcards]) {
+          for (const stored of [
+            upper,
+            pairUpper,
+            pairLower,
+            historicQuantity,
+            ...quantityPair,
+            ...oneEligiblePairs.flat(),
+            ...historicWildcards,
+          ]) {
             expect(yield* store(stored)).toEqual([{ payload: { outcome: 'STORED' } }]);
           }
           const policy = { ...evidence, ...policyTerms(world, { priceGroupCoverage: { kind: 'ANY_PRICE_GROUP' } }) };
@@ -212,7 +231,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           const policiesBefore = yield* policyRows;
           expect(policiesBefore).toHaveLength(2);
           const before = yield* historyRows;
-          expect(before).toHaveLength(19);
+          expect(before).toHaveLength(22);
           yield* migrate(admin, forward);
           expect(yield* historyRows).toEqual(before);
           expect(yield* policyRows).toEqual(policiesBefore);
@@ -262,6 +281,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           ]);
           const held = [{ payload: { outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' } }];
           expect(yield* assess(key(12))).toEqual(held);
+          expect(yield* assess(key(41))).toEqual([
+            { payload: { grant: historicQuantity, outcome: 'AUTHORITY_GRANTED' } },
+          ]);
+          for (const quantity of ['1', '1.0', '1.000000000']) {
+            expect(yield* assess(quantityKey(42, quantity))).toEqual(held);
+          }
           for (const variant of [31, 32, 33, 34, 35, 36]) {
             expect(yield* assess(key(variant))).toEqual(held);
           }
@@ -306,12 +331,26 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
               });
             }
           }
-          for (const retry of [upper, grant(key(11)), pairUpper, pairLower, ...oneEligiblePairs.flat()]) {
+          for (const retry of [
+            upper,
+            grant(key(11)),
+            pairUpper,
+            pairLower,
+            historicQuantity,
+            grant(key(41)),
+            ...quantityPair,
+            ...oneEligiblePairs.flat(),
+          ]) {
             expect(yield* store(retry)).toEqual([{ payload: { outcome: 'REUSED' } }]);
           }
           const conflict = [{ payload: { outcome: 'CONFLICT', reason: 'GRANT_IDENTITY_ALREADY_BOUND' } }];
           expect(yield* store(grant(key(11), 'changed verification'))).toEqual(conflict);
           expect(yield* store(grant(key(12, true), 'first receipt'))).toEqual(conflict);
+          expect(yield* store(grant(key(41), 'changed verification'))).toEqual(conflict);
+          for (const retry of quantityPair) {
+            expect(yield* store({ ...retry, verificationRef: 'changed verification' })).toEqual(conflict);
+            expect(yield* store({ ...retry, exactIdentityKey: quantityKey(42, '1.0') })).toEqual(conflict);
+          }
           expect(yield* historyRows).toEqual(before);
           expect(yield* policyRows).toEqual(policiesBefore);
           expect(yield* endRows).toEqual(endsBefore);
@@ -325,6 +364,56 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           expect(yield* assess(key(14))).toEqual([
             { payload: { grant: grant(key(14)), outcome: 'AUTHORITY_GRANTED' } },
           ]);
+          // Both arrival orders must converge before a second immutable receipt is created.
+          for (const [variant, firstQuantity, secondQuantity] of [
+            [15, '1', '1.000000000'],
+            [16, '1.000000000', '1'],
+          ] as const) {
+            expect(yield* store(grant(quantityKey(variant, firstQuantity)))).toEqual([
+              { payload: { outcome: 'STORED' } },
+            ]);
+            expect(yield* store(grant(quantityKey(variant, secondQuantity)))).toEqual([
+              { payload: { outcome: 'REUSED' } },
+            ]);
+            expect(yield* store(grant(quantityKey(variant, secondQuantity), 'changed verification'))).toEqual(conflict);
+          }
+          const concurrent = yield* Effect.all([store(grant(key(17))), store(grant(quantityKey(17, '1.000000000')))], {
+            concurrency: 2,
+          });
+          expect(
+            concurrent
+              .flat()
+              .map((row) => row.payload.outcome)
+              .toSorted(),
+          ).toEqual(['REUSED', 'STORED']);
+          for (const variant of [15, 16, 17]) {
+            expect(
+              yield* scoped(
+                runtime`select exact_identity_key as key from pricing.external_price_source_authority_grants where exact_identity_key #>> '{catalogSelection,variantRef,resourceId}' = ${key(variant).catalogSelection.variantRef.resourceId}`,
+              ),
+            ).toEqual([{ key: key(variant) }]);
+            for (const quantity of ['1', '1.000000000']) {
+              const exactIdentityKey = quantityKey(variant, quantity);
+              const rows = yield* assess(exactIdentityKey);
+              expect(rows).toEqual([{ payload: { grant: grant(key(variant)), outcome: 'AUTHORITY_GRANTED' } }]);
+              const assessment = yield* decodeExternalPriceSourceAuthorityAssessment(rows);
+              const admission = yield* makeExternalPriceInputBoundary({
+                assess: () => Effect.succeed(assessment),
+              }).assess({
+                actingPrincipalId: world.tenantId,
+                effectiveFrom: effectiveAt,
+                identityKey: exactIdentityKey,
+                monetaryAmount: { amount: '199.90', currencyCode: 'CZK' },
+                sourceAssertion: sourceAssertionFor(exactIdentityKey, {
+                  effectiveAt,
+                  sourceAssertionId: 'ab000000-0000-4000-8000-000000000008',
+                }),
+                tenantId: world.tenantId,
+                trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
+              });
+              expect(admission.outcome).toBe('READY_FOR_CANONICAL_WRITE');
+            }
+          }
         }),
       ),
   );
