@@ -709,6 +709,24 @@ it.live(
             Effect.timeout(Duration.seconds(60)),
             Effect.tapError(() => activeWorker.diagnostic.pipe(Effect.flatMap(Effect.logError))),
           );
+          yield* admin`
+            select d.status from core.outbox_deliveries d
+            join core.outbox_messages m on m.outbox_message_id=d.outbox_message_id
+            join core.domain_events e on e.domain_event_id=m.domain_event_id and e.tenant_id=m.tenant_id
+            join symmy_integration.import_jobs j
+              on j.admission_invocation_id=e.action_invocation_id and j.tenant_id=e.tenant_id
+            where j.tenant_id=${tenantId} and j.job_id=${jobId}
+              and d.worker_key='integration.symmy.execute-symmy-job'
+              and d.consumer_module_key='integration.symmy' and m.producer_module_key='integration.symmy'
+          `.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ status: Schema.String })))),
+            Effect.repeat({
+              schedule: Schedule.spaced(Duration.millis(200)),
+              until: (rows) => rows.length === 1 && rows[0]?.status === 'done',
+            }),
+            Effect.timeout(Duration.seconds(60)),
+            Effect.tapError(() => activeWorker.diagnostic.pipe(Effect.flatMap(Effect.logError))),
+          );
           yield* activeWorker.child.kill();
           yield* activeWorker.child.exitCode;
           const acceptedStatuses = new Set(['accepted_change', 'accepted_no_change', 'duplicate']);

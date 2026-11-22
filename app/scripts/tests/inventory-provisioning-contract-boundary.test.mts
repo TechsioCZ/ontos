@@ -2,12 +2,46 @@ import { mkdir, readFile, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Cause, Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { parseSync } from 'oxc-parser';
 
 import {
   checkModuleEntrypointBoundaries,
   makeActualCatalogSelectionFixture,
   write,
 } from './module-entrypoint-boundary-fixtures.mts';
+
+const selectedCodecImport = (source: string) => {
+  const selected = parseSync('codec-import.ts', source).program.body.find(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.importKind !== 'type' &&
+      statement.source.value === '@app/inventory/source-provisioning' &&
+      statement.specifiers.some(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === 'ProvisionSourceStockItemPayloadSchema',
+      ),
+  );
+  return selected === undefined ? undefined : source.slice(selected.start, selected.end);
+};
+
+for (const declaration of [
+  "import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/source-provisioning';",
+  "import {\n  ProvisionSourceStockItemPayloadSchema,\n} from '@app/inventory/source-provisioning';",
+  "import { ProvisionSourceStockItemPayloadSchema as Payload } from '@app/inventory/source-provisioning';",
+]) {
+  it(`selects the public codec import independently of layout and local name: ${declaration}`, () => {
+    expect(selectedCodecImport(declaration)).toBe(declaration);
+  });
+}
+
+it('does not select an identically named codec from a private module', () => {
+  expect(
+    selectedCodecImport("import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/src/private-codec';"),
+  ).toBeUndefined();
+});
 
 it.live('publishes the real Inventory request codec selected by Symmy across the owner boundary', () =>
   Effect.gen(function* publicProvisioningContract() {
@@ -54,7 +88,7 @@ it.live('publishes the real Inventory request codec selected by Symmy across the
         'utf-8',
       ),
     );
-    const selectedImport = /import \{ ProvisionSourceStockItemPayloadSchema \} from '[^']+';/u.exec(intents)?.[0];
+    const selectedImport = selectedCodecImport(intents);
     expect(selectedImport).toBeDefined();
     yield* write(root, consumer, selectedImport ?? '');
     const accepted = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
