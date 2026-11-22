@@ -6,6 +6,7 @@ import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-co
 import { Config, Context, Crypto, Effect, Layer, Schema } from 'effect';
 
 import { withSafeCause } from '../../api/portal-auth/provider/safe-failure.ts';
+import type { PortalAuthSubmission } from '../portal-auth/communications/communication-request-submitter.ts';
 import {
   GatewayHttpUrlSchema,
   PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES,
@@ -33,10 +34,11 @@ const configuration = Config.schema(
  * stays retryable (fail closed), never sent another way.
  */
 export interface PortalAuthCommunicationSourceGatewayService {
+  /** Communications' stored decision of the request (or the conflict it recorded), as its public Action answered it. */
   readonly submit: (
     request: CommunicationRequestEncoded,
     context: OutboxWorkerHandlerContext,
-  ) => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected>;
+  ) => Effect.Effect<PortalAuthSubmission, SubmitPortalAuthCommunicationRequestRejected>;
 }
 
 export class PortalAuthCommunicationSourceGateway extends Context.Service<
@@ -71,11 +73,16 @@ const makeGateway = (baseUrl: URL, crypto: Crypto.Crypto): PortalAuthCommunicati
       crypto,
     ).pipe(Effect.mapError(unavailable));
     const payload = yield* decodeRequest(request).pipe(Effect.mapError(unavailable));
-    yield* executeSubmitCommunicationRequestWithAuthorization(payload, issued.authorization, requestCorrelation, {
-      baseUrl,
-      compositionRevision: context.compositionRevision,
-      idempotencyKey: request.idempotency.key,
-    }).pipe(Effect.mapError(unavailable));
+    return yield* executeSubmitCommunicationRequestWithAuthorization(
+      payload,
+      issued.authorization,
+      requestCorrelation,
+      {
+        baseUrl,
+        compositionRevision: context.compositionRevision,
+        idempotencyKey: request.idempotency.key,
+      },
+    ).pipe(Effect.mapError(unavailable));
   }),
 });
 

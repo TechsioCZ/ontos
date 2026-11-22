@@ -100,13 +100,13 @@ const StoredOutcomeSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('RELAYED') }),
 ]);
 /** The safe summary a relayed row keeps: identities and closed codes, exactly as Communications answered them. */
-const encodeOutcome = (submission: PortalAuthTransportAnswer) =>
+export const encodeOutcome = (submission: PortalAuthTransportAnswer) =>
   Schema.decodeUnknownEffect(StoredOutcomeSchema)(submission).pipe(
     Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(StoredOutcomeSchema))),
   );
 
 /** Whether any message can still leave for this decision: a stop is final and is never repaired by reissuing. */
-const leavesNoMessage = (submission: PortalAuthTransportAnswer): boolean => {
+export const leavesNoMessage = (submission: PortalAuthTransportAnswer): boolean => {
   if (submission.outcome === 'RELAYED') {
     // not decided yet: the issuance keeps its protected value until it is settled, superseded or expires
     return false;

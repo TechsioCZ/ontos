@@ -22,6 +22,8 @@ import type { DomainEventContractMap } from '../../../../packages/core-runtime/s
 import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
 import { relayPortalAuthCommunicationRequestAction } from '../../src/actions/relay-portal-auth-communication-request.action.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import type { PortalAuthSubmission } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import { CommercePortalAuthCommunicationDecisionReporter } from '../../src/portal-auth/communications/decision-report.ts';
 import { CommercePortalAuthCommunicationStore } from '../../src/portal-auth/communications/communication-store.ts';
 import { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
 import type { PortalAuthIssuance } from '../../src/portal-auth/communications/issuance.ts';
@@ -127,14 +129,36 @@ const deliveryOf = (overrides: Partial<OutboxWorkerHandlerContext> = {}): Outbox
   ...overrides,
 });
 
-/** The worker's two gateways as doubles: the Privacy bind and the Communications submission, in the order they were called. */
+/** A FICTIONAL stored decision that leaves no message, in the shape of Communications' published answer. */
+const NO_MESSAGE_DECISION = {
+  decision: { kind: 'NO_MESSAGE', reason: 'FICTIONAL_NO_TYPE' },
+  decisionId: '5d000000-0000-4000-8000-0000000000c1',
+  outcome: 'DECIDED',
+  replayed: false,
+  requestId: '5d000000-0000-4000-8000-0000000000c2',
+} as const satisfies PortalAuthSubmission;
+
+/**
+ * The worker's collaborators as doubles: the Privacy bind, the Communications submission and the decision callback to Auth, in
+ * the order they were called.
+ */
 const gatewayDouble = (
-  answer: () => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected> = () => Effect.void,
+  answer: () => Effect.Effect<PortalAuthSubmission, SubmitPortalAuthCommunicationRequestRejected> = () =>
+    Effect.succeed(NO_MESSAGE_DECISION),
   privacyAnswer: () => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected> = () => Effect.void,
+  reportAnswer: () => Effect.Effect<void, PortalAuthCommunicationUnavailable> = () => Effect.void,
 ) => {
   const calls: { readonly context: OutboxWorkerHandlerContext; readonly request: CommunicationRequestEncoded }[] = [];
   const order: string[] = [];
-  const layer = Layer.merge(
+  const reported: PortalAuthSubmission[] = [];
+  const layer = Layer.mergeAll(
+    Layer.succeed(CommercePortalAuthCommunicationDecisionReporter, {
+      decided: (request, submission) => {
+        order.push(`report:${request.occurrence.occurrenceId}`);
+        reported.push(submission);
+        return reportAnswer();
+      },
+    }),
     Layer.succeed(PortalAuthCommunicationSourceGateway, {
       submit: (request, context) => {
         calls.push({ context, request });
@@ -149,7 +173,7 @@ const gatewayDouble = (
       },
     }),
   );
-  return { calls, layer, order };
+  return { calls, layer, order, reported };
 };
 
 describe('The Portal Auth relay Action (#1406 D1)', () => {
@@ -201,9 +225,13 @@ describe('The Portal Auth source worker (#1406 D1)', () => {
       expect(gateway.order).toStrictEqual([
         'bind:pa-transport-4',
         'submit:pa-transport-4',
+        'report:pa-transport-4',
         'bind:pa-transport-4',
         'submit:pa-transport-4',
+        'report:pa-transport-4',
       ]);
+      // D4: the stored decision itself went back to Auth both times (a replay-safe, idempotent report)
+      expect(gateway.reported).toStrictEqual([NO_MESSAGE_DECISION, NO_MESSAGE_DECISION]);
     }),
   );
 
@@ -211,7 +239,7 @@ describe('The Portal Auth source worker (#1406 D1)', () => {
     Effect.gen(function* privacyOutage() {
       const request = yield* requestOf('pa-transport-privacy');
       const gateway = gatewayDouble(
-        () => Effect.void,
+        () => Effect.succeed(NO_MESSAGE_DECISION),
         () =>
           Effect.fail(
             new SubmitPortalAuthCommunicationRequestRejected({
@@ -362,6 +390,38 @@ describe('The Portal Auth source worker past its ordinary retry budget (#1406 D1
       ).pipe(Effect.provide(gateway.layer), Effect.flip);
       expect(Schema.is(SubmitPortalAuthCommunicationRequestRejected)(refused)).toBe(true);
       expect(refused).toMatchObject({ code: 'WORKER_CONTEXT_INVALID', retryable: false });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
+/** Auth's own store cannot record the decision now. */
+const storeDown = () => Effect.fail(new PortalAuthCommunicationUnavailable({ operation: 'request-decision' }));
+
+describe('The Portal Auth source worker reports the decision back to Auth (#1406 D4)', () => {
+  it.effect('an unreachable Auth store keeps a usable issuance retryable, so the same decision is reported again', () =>
+    Effect.gen(function* usable() {
+      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+      const request = yield* requestOf('pa-transport-report-1');
+      const gateway = gatewayDouble(undefined, undefined, storeDown);
+      const failure = yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(
+        Effect.provide(gateway.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ code: 'AUTH_STORE_UNAVAILABLE', retryable: true });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect('past the issuance expiry the delivery is acknowledged: the sweep already cleared the value', () =>
+    Effect.gen(function* expired() {
+      yield* TestClock.setTime(DateTime.add(ISSUED_AT, { minutes: 31 }).epochMilliseconds);
+      const request = yield* requestOf('pa-transport-report-2');
+      const gateway = gatewayDouble(undefined, undefined, storeDown);
+      yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(Effect.provide(gateway.layer));
+      expect(gateway.order).toStrictEqual([
+        'bind:pa-transport-report-2',
+        'submit:pa-transport-report-2',
+        'report:pa-transport-report-2',
+      ]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });

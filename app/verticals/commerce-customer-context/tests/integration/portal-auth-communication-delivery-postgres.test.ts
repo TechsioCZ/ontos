@@ -47,6 +47,8 @@ import type { PortalAuthIssuance } from '../../src/portal-auth/communications/is
 import { portalAuthCommunicationRequest } from '../../src/portal-auth/communications/request.ts';
 import { PortalAuthCommunicationSourceGatewayLive } from '../../src/workers/portal-auth-communication-source-gateway.ts';
 import { PortalAuthPreVerificationPrivacyGatewayLive } from '../../src/workers/portal-auth-pre-verification-privacy-gateway.ts';
+import type { PortalAuthSubmission } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import { CommercePortalAuthCommunicationDecisionReporter } from '../../src/portal-auth/communications/decision-report.ts';
 import { preVerificationBindPayloadOf } from '../../src/portal-auth/communications/pre-verification-privacy-binding.ts';
 import { submitPortalAuthCommunicationRequestWorker } from '../../src/workers/submit-portal-auth-communication-request.worker.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
@@ -331,9 +333,15 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
       ONTOS_SHELL_GATEWAY_BASE_URL: `${peers.origin}${SHELL_PREFIX}`,
     }),
   );
-  const gateway = Layer.merge(
+  // LABELLED double of the completion callback to Auth's store (its store write is proven by the outbox suite)
+  const reported = yield* Ref.make<readonly PortalAuthSubmission[]>([]);
+  const reporter = Layer.succeed(CommercePortalAuthCommunicationDecisionReporter, {
+    decided: (_request, submission) => Ref.update(reported, (all) => [...all, submission]),
+  });
+  const gateway = Layer.mergeAll(
     PortalAuthCommunicationSourceGatewayLive,
     PortalAuthPreVerificationPrivacyGatewayLive,
+    reporter,
   ).pipe(Layer.provideMerge(configuration));
   const outbox = makeOutboxRuntime(makeOutboxRepository(database, crypto));
   const registrations = [submitPortalAuthCommunicationRequestWorker];
@@ -376,6 +384,7 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
     peers,
     relayAs,
     relayPrincipalId,
+    reported,
     request,
     revision,
     startedAt: DateTime.toDateUtc(issuedAt),
@@ -443,6 +452,10 @@ it.live(
           ({ body, path }) => path === DELEGATION_PATH && !Schema.is(CommunicationsAudienceSchema)(body),
         );
         expect(submissions).toHaveLength(8);
+        // D4: only the answered attempt reported Communications' stored decision back to Auth, exactly once
+        expect(yield* Ref.get(world.reported)).toMatchObject([
+          { decision: { kind: 'NO_MESSAGE', reason: 'FICTIONAL_STORED_DECISION' }, outcome: 'DECIDED' },
+        ]);
         // #1406: every attempt first bound the pre-verification Privacy subject on the same delivery, through Privacy's public
         // Action with a fresh registered-workload assertion of the bind declaration, and only then submitted the request
         expect(binds).toHaveLength(8);

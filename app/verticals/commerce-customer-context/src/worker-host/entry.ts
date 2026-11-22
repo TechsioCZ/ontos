@@ -13,6 +13,10 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
 import { CommercePortalAuthConfigLive } from '../../api/portal-auth/provider/config.ts';
+import {
+  communicationDecisionReporterLayer,
+  unreportedCommunicationDecisionLayer,
+} from '../portal-auth/communications/decision-report.ts';
 import { portalAuthCommunicationRelayConfiguration } from '../portal-auth/communications/relay-configuration.ts';
 import { PortalAuthRelayTransportLive } from '../portal-auth/communications/relay-transport.ts';
 import {
@@ -45,19 +49,20 @@ const relayNotStarted = (annotations: Readonly<Record<string, string>>) =>
  * The realm's trusted Tenant is the deployment's reviewed `COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID`; while it is unset or
  * malformed the relay relays nothing and reports the typed configuration error (fail closed).
  */
+/** Auth's own store over its own pool: what the relay and the decision callback both write. */
+const portalAuthCommunicationStoreLive = CommercePortalAuthCommunicationStoreLive.pipe(
+  Layer.provide(CommercePortalAuthDatabaseLive),
+  Layer.provide(CommercePortalAuthConfigLive),
+);
 const portalAuthCommunicationRelayLive = Layer.unwrap(
   // an enabled relay requires its whole configuration before anything else is built
   portalAuthCommunicationRelayConfiguration.pipe(
     Effect.as(
       PortalAuthCommunicationRelayLive.pipe(
         Layer.provide(
-          Layer.merge(
-            CommercePortalAuthCommunicationStoreLive.pipe(
-              Layer.provide(CommercePortalAuthDatabaseLive),
-              Layer.provide(CommercePortalAuthConfigLive),
-            ),
-            PortalAuthRelayTransportLive,
-          ).pipe(Layer.provideMerge(configuredTrustedScopeLayer)),
+          Layer.merge(portalAuthCommunicationStoreLive, PortalAuthRelayTransportLive).pipe(
+            Layer.provideMerge(configuredTrustedScopeLayer),
+          ),
         ),
       ),
     ),
@@ -74,11 +79,24 @@ const portalAuthCommunicationRelayLive = Layer.unwrap(
     (failure) => relayNotStarted({ reason: failure._tag }),
   ),
 );
-/** Composed only for a host that adopted the relay; any other host gets nothing. */
+/**
+ * The source worker's completion callback (#1406 D4) over the same Auth store. A store that cannot start reports nothing: the
+ * relay logs why, and every protected value is still cleared at its expiry.
+ */
+const portalAuthCommunicationDecisionReporterLive = communicationDecisionReporterLayer.pipe(
+  Layer.provide(portalAuthCommunicationStoreLive),
+  Layer.catchTag(
+    ['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError'],
+    () => unreportedCommunicationDecisionLayer,
+  ),
+);
+/** Composed only for a host that adopted the relay; any other host gets no loop and a callback that reports nothing. */
 const portalAuthCommunicationRelayDriverLive = Layer.unwrap(
   portalAuthCommunicationRelayAdoption.pipe(
     Effect.map((adoption) =>
-      portalAuthCommunicationRelayAdopted(adoption) ? portalAuthCommunicationRelayLive : Layer.empty,
+      portalAuthCommunicationRelayAdopted(adoption)
+        ? Layer.merge(portalAuthCommunicationRelayLive, portalAuthCommunicationDecisionReporterLive)
+        : unreportedCommunicationDecisionLayer,
     ),
   ),
 );

@@ -11,7 +11,10 @@ import { CommercePortalAuthConfig, parseCommercePortalAuthConfig } from '../../a
 import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow } from '../../shared/portal-auth-communications.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
-import type { PortalAuthSubmission } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import type {
+  PortalAuthSubmission,
+  PortalAuthTransportAnswer,
+} from '../../src/portal-auth/communications/communication-request-submitter.ts';
 import { CommercePortalAuthCommunicationStore } from '../../src/portal-auth/communications/communication-store.ts';
 import type { PortalAuthCommunicationStoreService } from '../../src/portal-auth/communications/communication-store.ts';
 import { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
@@ -22,6 +25,10 @@ import {
 } from '../../src/portal-auth/communications/protected-handoff.ts';
 import type { ProtectedHandoffService } from '../../src/portal-auth/communications/protected-handoff.ts';
 import { CommercePortalAuthProtectedValueSealerLive } from '../../src/portal-auth/communications/protected-value.ts';
+import {
+  CommercePortalAuthCommunicationDecisionReporter,
+  communicationDecisionReporterLayer,
+} from '../../src/portal-auth/communications/decision-report.ts';
 import { relayCommunicationRequests } from '../../src/portal-auth/communications/request-relay.ts';
 import type { RelayOptions } from '../../src/portal-auth/communications/request-relay.ts';
 import { portalAuthCommunicationRequest, requestOfStored } from '../../src/portal-auth/communications/request.ts';
@@ -175,7 +182,7 @@ const intakeDouble = Effect.gen(function* makeIntake() {
 
 type Submit = (
   request: CommunicationRequestEncoded,
-) => Effect.Effect<PortalAuthSubmission, PortalAuthCommunicationUnavailable>;
+) => Effect.Effect<PortalAuthTransportAnswer, PortalAuthCommunicationUnavailable>;
 
 const relayOver = (store: PortalAuthCommunicationStoreService, submit: Submit, leaseOwner: string) => {
   const options: RelayOptions = {
@@ -421,6 +428,65 @@ describe('The Portal Auth communication outbox on PostgreSQL (#1406 D1, D2)', ()
             .where(eq(communicationIssuance.issuanceRef, `${prefix}x3`));
           expect(yield* second.handoff.currentness(decodeRef(`${prefix}x3`))).toBe('NOT_RESUMABLE');
           expect(yield* second.handoff.currentness(decodeRef(`${prefix}x2`))).toBe('CURRENT');
+        }).pipe(Effect.scoped),
+      ),
+  );
+
+  it.live(
+    'D4: the reported decision of a relayed request ends its row and erases the sealed value when no message can leave',
+    () =>
+      atNow(
+        Effect.gen(function* reported() {
+          const { first, prefix } = yield* scopedRun();
+          yield* hold(first.handoff, heldOf(prefix, 'quiet'));
+          yield* hold(first.handoff, heldOf(prefix, 'loud'));
+          // the production transport hands both rows on undecided
+          expect(
+            yield* relayOver(first.store, () => Effect.succeed({ outcome: 'RELAYED' } as const), 'relay-a'),
+          ).toMatchObject({ claimed: 2, relayed: 2 });
+          const reporter = yield* CommercePortalAuthCommunicationDecisionReporter.pipe(
+            Effect.provide(
+              communicationDecisionReporterLayer.pipe(
+                Layer.provide(Layer.succeed(CommercePortalAuthCommunicationStore, first.store)),
+              ),
+            ),
+          );
+          const requestOf = (name: string) =>
+            portalAuthCommunicationRequest(heldOf(prefix, name).issuance, { tenantId: TENANT });
+          const noMessage: PortalAuthSubmission = {
+            decision: { kind: 'NO_MESSAGE', reason: 'FICTIONAL_NO_TYPE' },
+            decisionId: `decision-${prefix}quiet`,
+            outcome: 'DECIDED',
+            replayed: false,
+            requestId: `request-${prefix}quiet`,
+          };
+          // reported twice, as a redelivery would: the second report changes nothing
+          yield* reporter.decided(yield* requestOf('quiet'), noMessage);
+          yield* reporter.decided(yield* requestOf('quiet'), { ...noMessage, replayed: true });
+          yield* reporter.decided(yield* requestOf('loud'), {
+            decision: {
+              intents: [{ intentId: `intent-${prefix}loud`, status: 'PENDING_HANDOFF' }],
+              kind: 'MESSAGE_INTENTS',
+            },
+            decisionId: `decision-${prefix}loud`,
+            outcome: 'DECIDED',
+            replayed: false,
+            requestId: `request-${prefix}loud`,
+          });
+          const rows = new Map((yield* outboxRowsOf(first.database, prefix)).map((row) => [row.issuanceRef, row]));
+          const issuances = new Map(
+            (yield* issuanceRowsOf(first.database, prefix)).map((row) => [row.issuanceRef, row]),
+          );
+          expect(rows.get(`${prefix}quiet`)).toMatchObject({ leaseOwner: null, state: 'DECIDED' });
+          expect(rows.get(`${prefix}quiet`)?.outcome).toContain('"replayed":false');
+          expect(issuances.get(`${prefix}quiet`)?.protectedValue).toBeNull();
+          // a message still on its way keeps its sealed value for the owner slot
+          expect(rows.get(`${prefix}loud`)?.state).toBe('DECIDED');
+          expect(issuances.get(`${prefix}loud`)?.protectedValue).not.toBeNull();
+          for (const row of rows.values()) {
+            expect(JSON.stringify(row)).not.toContain(ADDRESS);
+            expect(JSON.stringify(row)).not.toContain('fictional-');
+          }
         }).pipe(Effect.scoped),
       ),
   );

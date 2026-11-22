@@ -33,6 +33,9 @@ export interface ClaimedCommunicationRequest {
 export const CommunicationRequestCompletionSchema = Schema.Literals(['CONFLICT', 'DECIDED', 'EXPIRED', 'RELAYED']);
 export type CommunicationRequestCompletion = typeof CommunicationRequestCompletionSchema.Type;
 
+/** How Communications itself ended a request the relay handed on, as the module's source worker reports it back. */
+export type CommunicationRequestDecision = Extract<CommunicationRequestCompletion, 'CONFLICT' | 'DECIDED'>;
+
 export interface PortalAuthCommunicationStoreService {
   /**
    * Takes up to `limit` PENDING rows of the Tenant that are due and not under a live lease, oldest first, skipping rows another
@@ -77,6 +80,19 @@ export interface PortalAuthCommunicationStoreService {
     readonly supersede: boolean;
     readonly tenantId: string;
   }) => Effect.Effect<void, PortalAuthCommunicationUnavailable>;
+  /**
+   * Records how Communications ended a request the relay handed on, as the module's source worker reports it back (D4): a row
+   * that has not ended yet (pending, under any lease, or relayed) ends with the safe outcome summary, and the issuance's
+   * protected value is cleared when `forget`, every time. Answers whether the row changed: a repeated report changes nothing
+   * and an ended row keeps its first outcome.
+   */
+  readonly recordDecision: (input: {
+    readonly forget: boolean;
+    readonly issuanceRef: PortalAuthIssuanceRef;
+    readonly now: DateTime.Utc;
+    readonly outcome: Option.Option<string>;
+    readonly state: CommunicationRequestDecision;
+  }) => Effect.Effect<boolean, PortalAuthCommunicationUnavailable>;
   /** Returns a row the caller still leases to the due set at `availableAt`, recording a closed failure code. */
   readonly release: (input: {
     readonly availableAt: DateTime.Utc;

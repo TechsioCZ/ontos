@@ -197,6 +197,34 @@ export const makeCommunicationStoreDouble = (): CommunicationStoreDouble => {
       return true;
     });
 
+  const recordDecision: PortalAuthCommunicationStoreService['recordDecision'] = ({
+    forget,
+    issuanceRef,
+    outcome,
+    state,
+  }) =>
+    Effect.gen(function* recordDecisionRow() {
+      const row = Option.fromNullishOr((yield* Ref.get(outbox)).get(issuanceRef)).pipe(
+        Option.filter((candidate) => candidate.state === 'PENDING' || candidate.state === 'RELAYED'),
+      );
+      if (Option.isSome(row)) {
+        yield* Ref.update(outbox, (rows) =>
+          withRow(rows, {
+            ...row.value,
+            lastFailure: Option.none(),
+            leaseExpiresAt: Option.none(),
+            leaseOwner: Option.none(),
+            outcome,
+            state,
+          }),
+        );
+      }
+      if (forget) {
+        yield* updateIssuance(issuanceRef, cleared);
+      }
+      return Option.isSome(row);
+    });
+
   const service: PortalAuthCommunicationStoreService = {
     claimDue,
     complete,
@@ -209,6 +237,7 @@ export const makeCommunicationStoreDouble = (): CommunicationStoreDouble => {
         return [expired.length, new Map([...all, ...replaced])] as const;
       }),
     record,
+    recordDecision,
     release,
     settle: ({ issuanceRef, state }) => updateIssuance(issuanceRef, (stored) => settled(stored, state)),
   };
