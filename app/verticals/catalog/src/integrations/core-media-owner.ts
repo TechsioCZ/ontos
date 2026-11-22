@@ -2,8 +2,9 @@ import type { coreOperations } from '@app/core-runtime/sdk/core';
 import type { CallOutcome, OperationInput, OperationOutput } from '@app/core-runtime/sdk';
 import { Data, Effect, Match, Schema } from 'effect';
 
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+
 import { sameCatalogDocumentResourceRef } from '../../shared/domain/catalog-media-assignment.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
 import type {
   CatalogDocumentAvailability,
   CatalogDocumentResourceRef,
