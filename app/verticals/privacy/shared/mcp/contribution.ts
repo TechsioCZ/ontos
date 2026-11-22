@@ -148,6 +148,8 @@ const privacyMcpContributionWith = (
       // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
       'organization-profile-ico-applicability': OntosMcpHidden,
       'owner-inventory': { title: { cs: 'Přehled vlastníků osobních údajů', en: 'Personal data owner inventory' } },
+      // A Privacy operator's locate Read of a pre-verification binding; no product approval for an agent tool exists yet.
+      'pre-verification-bindings': OntosMcpHidden,
       // Owner-to-owner Communications read of a pre-verification subject's eligibility; never a general agent tool.
       'pre-verification-eligibility': OntosMcpHidden,
       'privacy-subjects': { title: { cs: 'Subjekty údajů', en: 'Data subjects' } },
