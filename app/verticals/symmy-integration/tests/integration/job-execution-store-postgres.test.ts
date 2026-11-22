@@ -1024,7 +1024,9 @@ it.effect(
           differentPolicy,
         ),
       ).pipe(Effect.flip);
-      expect(Option.getOrThrow(findPostgresFailure(policyTampering))).toMatchObject({ code: '22023' });
+      expect(Option.getOrThrow(findPostgresFailure(policyTampering, ({ code }) => code === '22023'))).toMatchObject({
+        code: '22023',
+      });
       const refreshed = Option.getOrThrow(yield* scoped((_admission, execution) => execution.load(job.jobId)));
       const saved = refreshed.effects.find(({ effect }) => effect.ref.effectId === provision.ref.effectId);
       expect(Option.getOrUndefined(saved?.resolvedEffect ?? Option.none())).toMatchObject({

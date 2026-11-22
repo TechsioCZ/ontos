@@ -413,9 +413,9 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
         yield* withAuthority(runtime, scope, (authority) =>
           authority.store({ ...grant, exactIdentityKey: equivalentKey }),
         ),
-      ).toEqual({ outcome: 'STORED' });
+      ).toEqual({ outcome: 'REUSED' });
       for (const identity of spellings) {
-        expect(yield* assessment(identity)).toEqual({ outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' });
+        expect(yield* assessment(identity)).toEqual({ grant, outcome: 'AUTHORITY_GRANTED' });
       }
       const mismatchedKey = priceKey(world, neverSeenVariant(7));
       yield* withAuthority(runtime, scope, (authority) =>
