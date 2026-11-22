@@ -1,8 +1,9 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { findPostgresFailure, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
+import type { SQL } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -58,6 +59,10 @@ const scopeFor = (selectedLegalEntityId: string): OperationalScope => ({
 const scope = scopeFor(legalEntityId);
 const otherScope = scopeFor(otherLegalEntityId);
 
+const setScope = (transaction: PricingTransaction, tenant: string, entity: string) =>
+  transaction.execute(sql`select set_config('ontos.tenant_id', ${tenant}, true),
+    set_config('ontos.legal_entity_id', ${entity}, true)`);
+
 const withAuthority = <Value, Failure>(
   database: PricingTestDatabase,
   selectedScope: OperationalScope,
@@ -65,11 +70,7 @@ const withAuthority = <Value, Failure>(
 ) =>
   database.transaction((transaction: PricingTransaction) =>
     Effect.gen(function* scopedAuthority() {
-      yield* transaction.execute(
-        sql`select set_config('ontos.tenant_id', ${selectedScope.tenantId}, true),
-                   set_config('ontos.legal_entity_id', ${selectedScope.legalEntityId ?? ''}, true)`,
-        'objects',
-      );
+      yield* setScope(transaction, selectedScope.tenantId, selectedScope.legalEntityId ?? '');
       const ownerTransaction = yield* installOperationalScope(transaction, selectedScope);
       const authority = yield* externalPriceSourceAuthorityForScope(ownerTransaction, selectedScope);
       return yield* operation(authority);
@@ -247,10 +248,14 @@ it.live('a standing source policy accepts never-seen variants, denies keys outsi
         outcome: 'STORED',
       });
 
-      // Ending the base policy: an end in the past is refused, then it ends from 2026-11-25.
+      // Schedule a future cutoff; even a later retry of the exact historical decision is idempotent.
       const basePolicyId =
         basePolicy.intent === 'ESTABLISH' ? basePolicy.policyId : yield* Effect.die('expected an established policy');
-      const end = (effectiveTo: string, verificationRef = 'akros-erp-base-prices-end') =>
+      const end = (
+        effectiveTo: string,
+        operationAt = '2026-11-20T10:00:00.000Z',
+        verificationRef = 'akros-erp-base-prices-end',
+      ) =>
         manage(
           runtime,
           {
@@ -260,28 +265,33 @@ it.live('a standing source policy accepts never-seen variants, denies keys outsi
             reason: 'The ERP stops being the base Price source.',
             verificationRef,
           },
-          '2026-11-20T10:00:00.000Z',
+          operationAt,
         );
       expect(yield* end('2026-11-19T00:00:00.000Z').pipe(Effect.flip)).toMatchObject({
         code: 'external_price_source_policy_end_outside_period',
       });
-      expect(yield* end('2026-11-25T00:00:00.000Z')).toEqual({
-        effectiveTo: '2026-11-25T00:00:00.000Z',
+      expect(yield* end('2099-11-25T00:00:00.000Z')).toEqual({
+        effectiveTo: '2099-11-25T00:00:00.000Z',
         intent: 'END',
         outcome: 'ENDED',
         policyId: basePolicyId,
       });
-      expect((yield* end('2026-11-25T00:00:00.000Z')).outcome).toBe('REUSED');
-      expect(yield* end('2026-11-26T00:00:00.000Z').pipe(Effect.flip)).toMatchObject({
+      expect((yield* end('2099-11-25T00:00:00.000Z', '2099-11-26T00:00:00.000Z')).outcome).toBe('REUSED');
+      expect(
+        yield* end('2099-11-25T00:00:00.000Z', '2099-11-26T00:00:00.000Z', 'different-ref').pipe(Effect.flip),
+      ).toMatchObject({
+        code: 'external_price_source_policy_already_ended',
+      });
+      expect(yield* end('2099-11-26T00:00:00.000Z').pipe(Effect.flip)).toMatchObject({
         code: 'external_price_source_policy_already_ended',
       });
 
       // The ended policy denies from its end; before it the same key stays accepted.
-      expect(yield* assessPrice(runtime, baseKey, '2026-11-25T00:00:00.000Z')).toMatchObject({
+      expect(yield* assessPrice(runtime, baseKey, '2099-11-25T00:00:00.000Z')).toMatchObject({
         outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
         reason: 'SOURCE_AUTHORITY_UNRESOLVED',
       });
-      expect((yield* assessPrice(runtime, baseKey, '2026-11-24T23:59:59.999Z')).outcome).toBe(
+      expect((yield* assessPrice(runtime, baseKey, '2099-11-24T23:59:59.999Z')).outcome).toBe(
         'READY_FOR_CANONICAL_WRITE',
       );
       // A successor may start where the ended policy stops.
@@ -290,7 +300,7 @@ it.live('a standing source policy accepts never-seen variants, denies keys outsi
           runtime,
           policyTerms(world, {
             authority: { ...erpAuthority, sourceAuthorityVersion: 'v2' },
-            effectivePeriod: { effectiveFrom: '2026-11-25T00:00:00.000Z' },
+            effectivePeriod: { effectiveFrom: '2099-11-25T00:00:00.000Z' },
           }),
           'akros-erp-base-prices-v2',
         ),
@@ -300,10 +310,7 @@ it.live('a standing source policy accepts never-seen variants, denies keys outsi
       const counts = yield* Effect.forEach([scope, otherScope], (selectedScope) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* scopedCount() {
-            yield* transaction.execute(
-              sql`select set_config('ontos.tenant_id', ${selectedScope.tenantId}, true),
-                         set_config('ontos.legal_entity_id', ${selectedScope.legalEntityId ?? ''}, true)`,
-            );
+            yield* setScope(transaction, selectedScope.tenantId, selectedScope.legalEntityId ?? '');
             return yield* transaction.execute<{ readonly count: number }>(
               sql`select count(*)::integer as count from pricing.external_price_source_policies`,
               'objects',
@@ -329,7 +336,7 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
       yield* establish(runtime, policyTerms(world), 'akros-erp-base-prices');
       const grant = {
         authority: erpAuthority,
-        effectivePeriod: { effectiveFrom: '2026-11-01T00:00:00.000Z' },
+        effectivePeriod: { effectiveFrom: '2026-11-10T00:00:00.000Z', effectiveTo: '2026-11-15T00:00:00.000Z' },
         exactIdentityKey: key,
         family: 'PRICE' as const,
         mapping: policyTerms(world).mapping,
@@ -341,23 +348,160 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
       expect(yield* withAuthority(runtime, scope, (authority) => authority.store(grant))).toEqual({
         outcome: 'STORED',
       });
-      const assessment = (selectedKey: PriceIdentityKey) =>
+      const assessment = (selectedKey: PriceIdentityKey, effectiveAt = grant.effectivePeriod.effectiveFrom) =>
         withAuthority(runtime, scope, (authority) =>
           authority.assess({
             exactIdentityKey: selectedKey,
             sourceAssertion: sourceAssertionFor(selectedKey, {
-              effectiveAt: '2026-11-10T00:00:00.000Z',
+              effectiveAt,
               sourceAssertionId: 'f2000000-0000-4000-8000-000000000999',
             }),
             tenantId,
             trustedOperationAt: instant('2026-11-20T10:00:00.000Z'),
           }),
         );
-      expect(yield* assessment(key)).toEqual({ grant, outcome: 'AUTHORITY_GRANTED' });
+      const equivalentKey = priceKey(world, neverSeenVariant(9), {
+        unitBasis: { ...key.unitBasis, quantity: '1.000000000' },
+      });
+      for (const identity of [key, equivalentKey]) {
+        expect(yield* assessment(identity)).toEqual({ grant, outcome: 'AUTHORITY_GRANTED' });
+        expect(yield* assessment(identity, '2026-11-14T23:59:59.999Z')).toEqual({
+          grant,
+          outcome: 'AUTHORITY_GRANTED',
+        });
+        for (const outside of ['2026-11-09T23:59:59.999Z', grant.effectivePeriod.effectiveTo]) {
+          expect(yield* assessment(identity, outside)).toEqual({
+            outcome: 'AUTHORITY_UNRESOLVED',
+            reason: 'AUTHORITY',
+          });
+        }
+      }
+      const mismatchedKey = priceKey(world, neverSeenVariant(7));
+      yield* withAuthority(runtime, scope, (authority) =>
+        authority.store({
+          ...grant,
+          exactIdentityKey: mismatchedKey,
+          mapping: priceListMapping,
+        }),
+      );
+      expect(yield* assessment(mismatchedKey)).toEqual({ outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' });
+      const unverifiedKey = priceKey(world, neverSeenVariant(6));
+      yield* withAuthority(runtime, scope, (authority) =>
+        authority.store({
+          ...grant,
+          exactIdentityKey: unverifiedKey,
+          verifiedAt: '2026-11-20T10:00:00.001Z',
+        }),
+      );
+      expect(yield* assessment(unverifiedKey)).toEqual({ outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' });
       expect(yield* assessment(priceKey(world, neverSeenVariant(8)))).toMatchObject({
         outcome: 'AUTHORITY_COVERED_BY_POLICY',
         policy: { unitBasis: { quantity: '1.000000000' }, verificationRef: 'akros-erp-base-prices' },
       });
+    }),
+  ),
+);
+
+const foreignTenant = 'f2000000-0000-4000-8000-000000000010';
+const directPolicyInsert = (tenant = tenantId, entity = legalEntityId) => sql`
+  insert into pricing.external_price_source_policies (
+    tenant_id, legal_entity_id, source_authority_ref, source_authority_version, mapping_contract_ref,
+    mapping_contract_version, channel_id, market_id, currency_code, unit_id, unit_quantity, price_group_coverage,
+    effective_from, effective_to, verification_ref, verified_at
+  ) values (${tenant}, ${entity}, 'erp-prices', 'v1', 'erp-products-price', 'v1', 'B2C', 'akros-cz', 'CZK',
+    ${world.unitId}, 1, 'NO_GROUP', '2099-01-01T00:00:00Z', '2100-01-01T00:00:00Z', 'direct', now()) returning policy_id`;
+
+const insertEnd = (policyId: string, effectiveTo: SQL, tenant = tenantId, entity = legalEntityId) => sql`
+  insert into pricing.external_price_source_policy_ends
+    (tenant_id, legal_entity_id, policy_id, effective_to, verification_ref, ended_at, recorded_at)
+  values (${tenant}, ${entity}, ${policyId}, ${effectiveTo}, 'direct-end', '2000-01-01T00:00:00Z', '2000-01-01T00:00:00Z')`;
+
+it.live('scoped SQL cannot rewrite policy history or store a second overlapping policy', () =>
+  Effect.scoped(
+    Effect.gen(function* storageGuards() {
+      const clients = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(clients.admin, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(clients.runtime, coreRelations);
+      yield* cleanup(admin);
+      yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
+      const scopedSql = (statement: SQL, tenant = tenantId, entity = legalEntityId) =>
+        runtime.transaction((tx) => Effect.andThen(setScope(tx, tenant, entity), tx.execute(statement, 'objects')));
+      const failsWith = (statement: SQL, code: string) =>
+        Effect.gen(function* checkDenial() {
+          const failure = yield* Effect.flip(scopedSql(statement));
+          expect(Option.getOrThrow(findPostgresFailure(failure))).toMatchObject({ code });
+        });
+
+      const staleSnapshotWrite = runtime.transaction(
+        (tx) => Effect.andThen(setScope(tx, tenantId, legalEntityId), tx.execute(directPolicyInsert())),
+        { isolationLevel: 'repeatable read' },
+      );
+      expect(Option.getOrThrow(findPostgresFailure(yield* Effect.flip(staleSnapshotWrite)))).toMatchObject({
+        code: '25000',
+      });
+
+      // Independent runtime transactions contend on the same scope. Exactly one can append a row.
+      const attempt = scopedSql(directPolicyInsert()).pipe(
+        Effect.match({
+          onFailure: (error) => Option.getOrThrow(findPostgresFailure(error)).code,
+          onSuccess: () => 'STORED',
+        }),
+      );
+      expect((yield* Effect.all([attempt, attempt], { concurrency: 2 })).toSorted()).toEqual(['23P01', 'STORED']);
+      const parent = yield* establish(
+        runtime,
+        policyTerms(world, {
+          effectivePeriod: { effectiveFrom: '2099-01-01T00:00:00.000Z', effectiveTo: '2100-01-01T00:00:00.000Z' },
+        }),
+        'direct',
+      );
+      expect(parent.outcome).toBe('REUSED');
+
+      for (const boundary of [sql`'2099-01-01T00:00:00Z'`, sql`'2100-01-01T00:00:00Z'`, sql`'2100-01-02T00:00:00Z'`]) {
+        yield* failsWith(insertEnd(parent.policyId, boundary), 'P1001');
+      }
+      // A forged past clock inside the parent period is independently invalid.
+      const storeActive = establish(
+        runtime,
+        policyTerms(world, {
+          effectivePeriod: { effectiveFrom: '2000-01-01T00:00:00.000Z', effectiveTo: '2099-01-01T00:00:00.000Z' },
+        }),
+        'active',
+      );
+      const [active, retry] = yield* Effect.all([storeActive, storeActive], { concurrency: 2 });
+      expect([active.outcome, retry.outcome].toSorted()).toEqual(['REUSED', 'STORED']);
+      expect(retry.policyId).toBe(active.policyId);
+      yield* failsWith(insertEnd(active.policyId, sql`clock_timestamp() - interval '1 second'`), 'P1001');
+      const validEnd = sql`'2099-06-01T00:00:00Z'`;
+      yield* scopedSql(insertEnd(parent.policyId, validEnd));
+      expect(
+        yield* scopedSql(sql`select ended_at = recorded_at and ended_at > '2000-01-01T00:00:00Z' as trusted
+        from pricing.external_price_source_policy_ends`),
+      ).toEqual([{ trusted: true }]);
+      const historyTables = [
+        sql`pricing.external_price_source_policies`,
+        sql`pricing.external_price_source_policy_ends`,
+      ];
+      for (const [tenant, entity] of [
+        [foreignTenant, legalEntityId],
+        [tenantId, otherLegalEntityId],
+      ] as const) {
+        yield* failsWith(directPolicyInsert(tenant, entity), '42501');
+        yield* failsWith(insertEnd(parent.policyId, validEnd, tenant, entity), '42501');
+        for (const table of historyTables) {
+          expect(yield* scopedSql(sql`select policy_id from ${table}`, tenant, entity)).toEqual([]);
+        }
+      }
+      for (const table of historyTables) {
+        yield* failsWith(
+          sql`update ${table} set verification_ref = 'rewrite' where policy_id = ${parent.policyId}`,
+          '42501',
+        );
+        yield* failsWith(sql`delete from ${table} where policy_id = ${parent.policyId}`, '42501');
+      }
+      expect(yield* scopedSql(sql`select count(*)::int as count from pricing.external_price_source_policies`)).toEqual([
+        { count: 2 },
+      ]);
     }),
   ),
 );
