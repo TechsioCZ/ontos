@@ -62,6 +62,7 @@ import {
   ProvisionSourceStockItemActionForbiddenProblemSchema,
   ProvisionSourceStockItemActionConflictProblemSchema,
   ProvisionSourceStockItemActionIneligibleProblemSchema,
+  ProvisionSourceStockItemActionInvalidProblemSchema,
   ProvisionSourceStockItemActionCommitIndeterminateProblemSchema,
 } from '../../shared/apis/provision-source-stock-item-action.ts';
 import {
@@ -397,6 +398,27 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
       itemKey: 'SKU-1',
       policyRef: defined.policy.policyRef,
     });
+    const noncanonicalPolicyRequest = new Request(
+      'https://inventory.ontos.test/inventory/actions/provision-source-stock-item',
+      {
+        body: JSON.stringify({
+          ...input,
+          policyRef: { ...input.policyRef, resourceId: 'ABCDEF01-2345-4678-9ABC-DEF012345678' },
+        }),
+        headers: {
+          authorization: yield* authorization(),
+          'content-type': 'application/json',
+          'idempotency-key': yield* nextId,
+          'x-correlation-id': yield* nextId,
+        },
+        method: 'POST',
+      },
+    );
+    const invalidPolicy = yield* Effect.promise(() => nativeFetch(noncanonicalPolicyRequest));
+    expect(invalidPolicy.status).toBe(400);
+    yield* Schema.decodeUnknownEffect(ProvisionSourceStockItemActionInvalidProblemSchema)(
+      yield* Effect.promise(() => invalidPolicy.json()),
+    );
     const provision = Effect.fn('SourceProvisioningTest.provision')(function* provision(
       candidate = input,
       key?: string,

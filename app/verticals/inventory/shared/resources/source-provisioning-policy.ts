@@ -6,7 +6,7 @@ import { Schema } from 'effect';
 
 import { InventoryBackendConfigurationRefSchema } from './inventory-backend-configuration.ts';
 
-const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
+const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed(), Schema.isPattern(/^[0-9a-f-]+$/u));
 
 export const SourceProvisioningPolicyIdSchema = checkedUuid.pipe(Schema.brand('InventorySourceProvisioningPolicyId'));
 
@@ -14,7 +14,7 @@ export const SourceProvisioningPolicyRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.inventory'),
   resourceId: SourceProvisioningPolicyIdSchema,
   resourceType: Schema.Literal('commerce.inventory.source-provisioning-policy'),
-  tenantId: InventoryBackendConfigurationRefSchema.fields.tenantId,
+  tenantId: InventoryBackendConfigurationRefSchema.fields.tenantId.check(Schema.isPattern(/^[0-9a-f-]+$/u)),
 });
 export type SourceProvisioningPolicyRef = typeof SourceProvisioningPolicyRefSchema.Type;
 
