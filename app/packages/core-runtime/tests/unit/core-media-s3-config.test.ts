@@ -1,7 +1,13 @@
-import { Cause, Effect, Exit, Option, Redacted, Schema } from 'effect';
+import { Cause, Duration, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { ObjectStorageConfigError, parseS3ObjectStorageConfig } from '../../src/media/s3-config.ts';
+import { DigestStepTimeout } from '../../src/media/content-digest.ts';
+import {
+  ObjectStorageConfigError,
+  mediaDigestStepTimeoutLayer,
+  parseMediaDigestStepTimeout,
+  parseS3ObjectStorageConfig,
+} from '../../src/media/s3-config.ts';
 import type { S3ObjectStorageEnvironment } from '../../src/media/s3-config.ts';
 
 const complete: S3ObjectStorageEnvironment = {
@@ -171,4 +177,43 @@ it.effect('derives a stable provider identity and a safe fingerprint that no cre
     expect(base.providerId).toMatch(/^s3:[0-9a-f]{16}$/u);
     expect(base.fingerprint).toMatch(/^[0-9a-f]{16}$/u);
   }),
+);
+
+it.effect('leaves the digest step guard unset by default and reads an explicit one in milliseconds', () =>
+  Effect.gen(function* digestGuard() {
+    expect(yield* parseMediaDigestStepTimeout(complete)).toStrictEqual(Option.none());
+    expect(yield* parseMediaDigestStepTimeout({ ...complete, CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS: '' })).toStrictEqual(
+      Option.none(),
+    );
+    const configured = yield* parseMediaDigestStepTimeout({ CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS: '12000' });
+    expect(configured.pipe(Option.map((timeout) => Duration.toMillis(timeout)))).toStrictEqual(Option.some(12_000));
+    for (const bad of ['0', '-5', '5s', '1.5']) {
+      const exit = yield* Effect.exit(parseMediaDigestStepTimeout({ CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS: bad }));
+      expect(Exit.isFailure(exit), bad).toBe(true);
+    }
+  }),
+);
+
+it.layer(
+  mediaDigestStepTimeoutLayer({
+    environment: { CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS: '7000' },
+    envPath: '/nonexistent/core-media-digest.env',
+  }),
+)('a configured digest step guard', (suite) => {
+  suite.effect('is what the digest reads', () =>
+    Effect.gen(function* configured() {
+      expect(Duration.toMillis(yield* Effect.service(DigestStepTimeout))).toBe(7000);
+    }),
+  );
+});
+
+it.layer(mediaDigestStepTimeoutLayer({ environment: {}, envPath: '/nonexistent/core-media-digest.env' }))(
+  'an unset digest step guard',
+  (suite) => {
+    suite.effect('leaves the five second default', () =>
+      Effect.gen(function* unset() {
+        expect(Duration.toMillis(yield* Effect.service(DigestStepTimeout))).toBe(5000);
+      }),
+    );
+  },
 );

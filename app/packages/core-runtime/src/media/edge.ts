@@ -12,7 +12,8 @@ export { MediaIntegrityRecorder, integrityRecordRequest } from './integrity-reco
 export { ProvenMediaIntegrityFinding } from './integrity-contract.ts';
 export { logMediaRecovery, mediaRecoveryRef } from './recovery-log.ts';
 export { ObjectStorage, unconfiguredObjectStorage } from './object-storage.ts';
-export { loadS3ObjectStorageConfig } from './s3-config.ts';
+export { loadS3ObjectStorageConfig, mediaDigestStepTimeoutLayer } from './s3-config.ts';
+export { DigestStepTimeout } from './content-digest.ts';
 export { makeS3ObjectStorage } from './s3-object-storage.ts';
 export { recordAssetIntegrityFailureAction } from '../modules/actions/record-asset-integrity-failure.action.ts';
 export type { MediaVerifiableAsset as MediaVerifiableAssetOffer } from './verified-read.ts';

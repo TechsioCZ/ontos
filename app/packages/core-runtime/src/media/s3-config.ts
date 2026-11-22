@@ -1,10 +1,11 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Config, ConfigProvider, Data, Effect, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Data, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
+import { DigestStepTimeout } from './content-digest.ts';
 
 /*
  * The configuration of the S3-compatible object store behind Core Media. Every value comes from the environment
@@ -28,6 +29,7 @@ type S3ConditionalCreateMode = typeof S3ConditionalCreateSchema.Type;
 export type S3ObjectStorageEnvironment = Readonly<
   Partial<
     Record<
+      | 'CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS'
       | 'CORE_MEDIA_S3_ACCESS_KEY_ID'
       | 'CORE_MEDIA_S3_ADDRESSING_STYLE'
       | 'CORE_MEDIA_S3_BUCKET'
@@ -263,3 +265,51 @@ export const loadS3ObjectStorageConfig = (
     Effect.flatMap((fileProvider) => parseWith(ConfigProvider.orElse(environmentProvider, fileProvider))),
   );
 };
+
+/*
+ * The technical guard on ONE step of the platform's content digest (a chunk write, or the final close). Optional and
+ * unset by default, which keeps the built-in five seconds. It is parsed on its own, next to the object store settings,
+ * because it is not part of the provider identity: tuning it never changes where an asset is stored. It is never a
+ * product limit and never a bound on the whole object (see `DigestStepTimeout`).
+ */
+const parseDigestStepTimeout = Effect.fn('Config.parseMediaDigestStepTimeout')(function* parseDigestStepTimeout(
+  provider: ConfigProvider.ConfigProvider,
+) {
+  const raw = yield* optional(provider, 'CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS');
+  const millis = yield* positiveInteger('CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS', raw);
+  return millis.pipe(Option.map((value) => Duration.millis(value)));
+});
+
+/** Parses the digest step guard from an explicit environment: none when unset, a failure when malformed. */
+export const parseMediaDigestStepTimeout = (
+  environment: S3ObjectStorageEnvironment,
+): Effect.Effect<Option.Option<Duration.Duration>, ObjectStorageConfigError> =>
+  parseDigestStepTimeout(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
+
+/**
+ * The digest step guard a host provides beside the object store, read from the process environment and the
+ * application's root environment file like every other `CORE_MEDIA_*` key. Unset leaves the built-in five seconds.
+ */
+export const mediaDigestStepTimeoutLayer = (
+  options: { readonly environment?: S3ObjectStorageEnvironment; readonly envPath?: string } = {},
+): Layer.Layer<never, ObjectStorageConfigError> =>
+  Layer.unwrap(
+    loadDotEnvProvider(options.envPath ?? APP_ENV_PATH, failureWithCause).pipe(
+      Effect.flatMap((fileProvider) =>
+        parseDigestStepTimeout(
+          ConfigProvider.orElse(
+            options.environment === undefined
+              ? ConfigProvider.fromEnv({ preserveEmptyStrings: true })
+              : ConfigProvider.fromUnknown(options.environment, { preserveEmptyStrings: true }),
+            fileProvider,
+          ),
+        ),
+      ),
+      Effect.map(
+        Option.match({
+          onNone: () => Layer.empty,
+          onSome: (timeout) => Layer.succeed(DigestStepTimeout, timeout),
+        }),
+      ),
+    ),
+  );

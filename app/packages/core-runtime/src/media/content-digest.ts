@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Duration, Effect, Predicate, Schema, Stream } from 'effect';
+import { Context, Duration, Effect, Predicate, Schema, Stream } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import { MediaByteSizeSchema, MediaContentSha256Schema } from './public-contract.ts';
@@ -23,11 +23,21 @@ interface ContentIdentity {
 
 /**
  * The runtime's `crypto.DigestStream`: a writable stream whose `digest` settles after it is closed. It runs on local
- * CPU against an in-memory hash state, so the only bound it needs is a technical guard against a stuck platform call
- * (the same 5 seconds the release identity hashing uses); it is not a product limit and no object size is capped by it.
+ * CPU against an in-memory hash state.
  */
 export type NativeDigestStreamConstructor = new (algorithm: 'SHA-256') => WritableStream<Uint8Array>;
-const DIGEST_STEP_GUARD = Duration.seconds(5);
+
+/**
+ * The technical guard against a stuck platform call, applied to ONE digest step: a single chunk write, or the final
+ * close and digest read. It is never a bound on the whole object, so it is not a product limit and it caps no object
+ * size: a 5 second step at the measured native rate (a 64 MiB object digested in 289 ms on workerd) would take a
+ * chunk of well over a gibibyte, and the chunks a transfer passes are the transport's, not the object's. The default
+ * mirrors the release identity hashing; a deployment may set another through `CORE_MEDIA_DIGEST_STEP_TIMEOUT_MS`.
+ */
+export const DigestStepTimeout = Context.Reference<Duration.Duration>(
+  '@app/core-runtime/media/content-digest/DigestStepTimeout',
+  { defaultValue: () => Duration.seconds(5) },
+);
 
 /** A constructor is the only thing the platform offers under the name `DigestStream`. */
 const DigestStreamConstructorSchema = Schema.declare((candidate): candidate is NativeDigestStreamConstructor =>
@@ -53,10 +63,7 @@ const identityOf = (byteSize: number, digest: Uint8Array): ContentIdentity => ({
 });
 
 /** A platform step that must not hang: a stuck one is a defect of the platform, never of the object. */
-const digestStepTimeout = Effect.timeoutOrElse({
-  duration: DIGEST_STEP_GUARD,
-  orElse: () => Effect.die('The platform digest did not answer'),
-});
+const stuckDigestStep = () => Effect.die('The platform digest did not answer');
 
 /**
  * The size and SHA-256 of the chunks added to it, in order. `add` is called once per chunk and `finish` after the
@@ -92,7 +99,11 @@ export class ContentDigest {
         this.#pure.update(chunk);
       });
     }
-    return Effect.promise(native.writer.write.bind(native.writer, chunk)).pipe(digestStepTimeout);
+    return Effect.flatMap(Effect.service(DigestStepTimeout), (guard) =>
+      Effect.promise(native.writer.write.bind(native.writer, chunk)).pipe(
+        Effect.timeoutOrElse({ duration: guard, orElse: stuckDigestStep }),
+      ),
+    );
   }
 
   finish(): Effect.Effect<ContentIdentity> {
@@ -110,17 +121,19 @@ export class ContentDigest {
     // The digest of the platform stream settles only once it is closed.
     const { stream, writer } = native;
     const digest: unknown = Predicate.hasProperty(stream, 'digest') ? stream.digest : undefined;
-    return Effect.promise(writer.close.bind(writer)).pipe(
-      Effect.andThen(Effect.promise(Promise.resolve.bind(Promise, digest))),
-      Effect.flatMap(Schema.decodeUnknownEffect(ArrayBufferSchema)),
-      Effect.map((bytes) => identityOf(this.#byteSize, new Uint8Array(bytes))),
-      Effect.tap((identity) =>
-        Effect.sync(() => {
-          this.#identity = identity;
-        }),
+    return Effect.flatMap(Effect.service(DigestStepTimeout), (guard) =>
+      Effect.promise(writer.close.bind(writer)).pipe(
+        Effect.andThen(Effect.promise(Promise.resolve.bind(Promise, digest))),
+        Effect.flatMap(Schema.decodeUnknownEffect(ArrayBufferSchema)),
+        Effect.map((bytes) => identityOf(this.#byteSize, new Uint8Array(bytes))),
+        Effect.tap((identity) =>
+          Effect.sync(() => {
+            this.#identity = identity;
+          }),
+        ),
+        Effect.orDie,
+        Effect.timeoutOrElse({ duration: guard, orElse: stuckDigestStep }),
       ),
-      Effect.orDie,
-      digestStepTimeout,
     );
   }
 }

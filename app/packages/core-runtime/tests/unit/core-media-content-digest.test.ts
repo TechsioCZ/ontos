@@ -1,9 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Effect } from 'effect';
+import { Duration, Effect, Exit, Fiber } from 'effect';
+import { TestClock } from 'effect/testing';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
-import { ContentDigest } from '../../src/media/content-digest.ts';
+import { ContentDigest, DigestStepTimeout } from '../../src/media/content-digest.ts';
 
 /*
  * The content digest has two implementations that must agree byte for byte: the pure SHA-256 used on Node and the
@@ -18,6 +19,9 @@ const expected = Hex.encode(sha256(whole));
 
 /** What the stand-in recorded about the order of the platform calls. */
 const calls: string[] = [];
+/** A write waits for the next gate queued here, when a test wants to control how long one step takes. */
+const writeGates: PromiseWithResolvers<undefined>[] = [];
+const settled: undefined = globalThis.undefined;
 
 /** A native digest stream stand-in: ordered writes, `digest` settles only after `close`. */
 class StandInDigestStream extends WritableStream<Uint8Array> {
@@ -36,6 +40,7 @@ class StandInDigestStream extends WritableStream<Uint8Array> {
       write: (chunk) => {
         calls.push(`write ${chunk.byteLength}`);
         hash.update(chunk);
+        return writeGates.shift()?.promise;
       },
     });
     this.digest = gate.promise;
@@ -74,4 +79,42 @@ it.effect('digests an empty object', () =>
     const digest = new ContentDigest({ digestStream: StandInDigestStream });
     expect(yield* digest.finish()).toEqual({ byteSize: 0, contentSha256: Hex.encode(sha256(new Uint8Array(0))) });
   }),
+);
+
+/*
+ * `digestStepTimeout` is a technical guard against a stuck platform call, measured per STEP (one chunk write, or the
+ * final close and digest), never over the whole object: an object of any size passes as long as each step answers.
+ */
+
+it.effect('keeps the default step guard at five seconds', () =>
+  Effect.gen(function* defaultGuard() {
+    expect(Duration.toMillis(yield* Effect.service(DigestStepTimeout))).toBe(5000);
+  }),
+);
+
+it.effect('bounds each step, not the object: many slow steps pass a guard shorter than their sum', () =>
+  Effect.gen(function* perStep() {
+    const digest = new ContentDigest({ digestStream: StandInDigestStream });
+    // Six writes that each take 30 ms of virtual time: 180 ms in all, well past the 100 ms guard, none stopped.
+    for (let step = 0; step < 6; step += 1) {
+      const gate = Promise.withResolvers<undefined>();
+      writeGates.push(gate);
+      const added = yield* Effect.forkChild(digest.add(new Uint8Array(4)));
+      yield* TestClock.adjust(Duration.millis(30));
+      gate.resolve(settled);
+      yield* Fiber.join(added);
+    }
+    expect(digest.byteSize).toBe(24);
+  }).pipe(Effect.provideService(DigestStepTimeout, Duration.millis(100))),
+);
+
+it.effect('dies on a step that does not answer within the configured guard', () =>
+  Effect.gen(function* stuck() {
+    const digest = new ContentDigest({ digestStream: StandInDigestStream });
+    writeGates.push(Promise.withResolvers<undefined>());
+    const added = yield* Effect.forkChild(digest.add(new Uint8Array(4)));
+    yield* TestClock.adjust(Duration.millis(40));
+    const exit = yield* Fiber.await(added);
+    expect(Exit.hasDies(exit)).toBe(true);
+  }).pipe(Effect.provideService(DigestStepTimeout, Duration.millis(40))),
 );
