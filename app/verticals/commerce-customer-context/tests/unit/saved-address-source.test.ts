@@ -96,6 +96,41 @@ it('requires an actual qualified address identity and exact explicit purpose', (
     }),
   ).toBe(false);
 });
+it('states a source address as Commerce-only and never cites a Party Contact Point', () => {
+  const partyBacked = {
+    contactPointRef: {
+      moduleId: 'party.registry',
+      resourceId: 'aa000000-0000-4000-8000-000000000007',
+      resourceType: 'party.registry.party-contact-point',
+      tenantId,
+    },
+    kind: 'PARTY_BACKED',
+    partyRef: {
+      moduleId: 'party.registry',
+      resourceId: 'aa000000-0000-4000-8000-000000000008',
+      resourceType: 'party.registry.party',
+      tenantId,
+    },
+    sourceRevision: 1,
+  } as const;
+  const manual = { origin: partyBacked, profile, purposes: ['BILLING'], reason: add.reason } as const;
+  expect(Schema.is(AddSavedAddressPayloadSchema)(manual)).toBe(true);
+  expect(Schema.is(AddSavedAddressPayloadSchema)({ ...manual, source })).toBe(false);
+  const update = {
+    expectedRevision: 1,
+    origin: partyBacked,
+    profile,
+    reason: add.reason,
+    savedAddressRef,
+  };
+  expect(Schema.is(UpdateSavedAddressPayloadSchema)(update)).toBe(true);
+  expect(
+    Schema.is(UpdateSavedAddressPayloadSchema)({
+      ...update,
+      source: { ...source, nativeAddressId: savedAddressRef.resourceId },
+    }),
+  ).toBe(false);
+});
 it('pins Update and Remove to the actual source-bound native address', () => {
   const update = {
     expectedRevision: 1,

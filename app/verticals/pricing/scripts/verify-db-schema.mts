@@ -9,6 +9,7 @@ import {
   PRICING_RUNTIME_TABLE_GRANTS,
 } from '../../../scripts/postgres/runtime-role-grants.mts';
 import { PRICING_SCHEMA_NAME, PRICING_TABLE_INVENTORY } from '../src/database/schema.ts';
+import { exactTenantCompanyScopePredicateSql } from '../src/database/exact-scope-predicate.ts';
 
 class PricingSchemaVerificationError extends Schema.TaggedError<PricingSchemaVerificationError>()(
   'PricingSchemaVerificationError',
@@ -87,6 +88,8 @@ interface InfrastructureRow {
   readonly runtime_support_helper_count: number;
   readonly runtime_unplanned_routine_count: number;
   readonly runtime_update_count: number;
+  readonly standing_policy_access_valid: boolean;
+  readonly standing_policy_insert_guard_count: number;
   readonly unsafe_runtime_table_privilege_count: number;
 }
 
@@ -119,7 +122,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.action_receipt_principal_constraint_count === 2,
     row.acknowledgement_issuer_column_count === 1,
     row.acknowledgement_principal_binding_count === 1,
-    row.append_only_policy_count === 58,
+    row.append_only_policy_count === 62,
     row.canonical_support_exclusion_count === 1,
     row.canonical_support_legal_entity_column_count === 0,
     row.canonical_support_policy_count === 20,
@@ -153,7 +156,7 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.gateway_scope_column_count === 0,
     row.journal_count === 1,
     row.legacy_runtime_privilege_count === 0,
-    row.policy_count === 266,
+    row.policy_count === 274,
     row.price_exclusion_count === 1,
     row.price_function_count === 5,
     row.price_function_public_execute_count === 0,
@@ -170,7 +173,9 @@ const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefine
     row.quantity_tier_routine_count === 5,
     row.quantity_tier_routine_public_execute_count === 0,
     row.quantity_tier_table_count === 9,
-    row.routine_count === 135,
+    row.standing_policy_access_valid,
+    row.standing_policy_insert_guard_count === 2,
+    row.routine_count === 138,
     row.runtime_compatibility_membership_count === 0,
     row.runtime_support_helper_count === 2,
     row.routine_public_execute_count === 0,
@@ -365,6 +370,31 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
               join pg_catalog.pg_namespace as namespace on namespace.oid = journal.relnamespace
              where namespace.nspname = 'drizzle'
                and journal.relname = '__drizzle_migrations_pricing') as journal_count,
+           (select count(*) = 8 and count(distinct (p.polrelid, p.polcmd)) = 8 and bool_and(
+               p.polpermissive and p.polroles = array['ontos_runtime'::regrole::oid]
+               and case p.polcmd
+                 when 'r' then p.polwithcheck is null and expr.scoped
+                 when 'a' then p.polqual is null and expr.scoped
+                 when 'w' then pg_get_expr(p.polqual, p.polrelid) = 'false'
+                   and pg_get_expr(p.polwithcheck, p.polrelid) = 'false'
+                 when 'd' then pg_get_expr(p.polqual, p.polrelid) = 'false' and p.polwithcheck is null
+                 else false end is true)
+              from pg_catalog.pg_policy as p
+              cross join lateral (select ${exactTenantCompanyScopePredicateSql(
+                "pg_get_expr(case p.polcmd when 'r' then p.polqual else p.polwithcheck end, p.polrelid)",
+              )}
+                as scoped) as expr
+             where p.polrelid in ('pricing.external_price_source_policies'::regclass,
+               'pricing.external_price_source_policy_ends'::regclass)) as standing_policy_access_valid,
+           (select count(*)::integer from pg_catalog.pg_trigger as t
+              join pg_catalog.pg_proc as f on f.oid = t.tgfoid
+             where (t.tgrelid, t.tgname) in (
+               ('pricing.external_price_source_policies'::regclass, 'pricing_guard_policy_insert'),
+               ('pricing.external_price_source_policy_ends'::regclass, 'pricing_guard_end_insert'))
+               and not t.tgisinternal and t.tgenabled in ('O', 'A') and t.tgtype = 7 and t.tgqual is null
+               and f.oid = 'pricing.guard_external_price_source_policy_insert_v1()'::regprocedure
+               and not f.prosecdef and f.provolatile = 'v' and f.proconfig = array['search_path=pg_catalog, pg_temp']
+               and not has_function_privilege('ontos_runtime', f.oid, 'EXECUTE')) as standing_policy_insert_guard_count,
            (select count(*)::integer
               from pg_catalog.pg_policy as policy
               join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
@@ -380,6 +410,7 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                  'price_schedule_entries', 'price_schedule_revisions',
                  'price_source_assertion_deliveries', 'price_source_assertions', 'prices',
                  'external_price_source_authority_grants',
+                 'external_price_source_policies', 'external_price_source_policy_ends',
                  'price_candidate_set_roots', 'price_candidate_set_revisions'
                  , 'quantity_tier_revisions', 'quantity_tier_schedule_acknowledgements',
                  'quantity_tier_schedule_entries', 'quantity_tier_schedule_revisions', 'quantity_tiers',
@@ -412,6 +443,10 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                       then 'pricing_currency_support_proof_tenant_update'
                     when relation.relname = 'external_price_source_authority_grants'
                       then 'pricing_external_price_authority_scope_update'
+                    when relation.relname = 'external_price_source_policies'
+                      then 'pricing_external_price_policies_scope_update'
+                    when relation.relname = 'external_price_source_policy_ends'
+                      then 'pricing_external_price_policy_ends_scope_update'
                     when relation.relname = 'currency_support_recovery_compensation_receipts'
                       then 'pricing_currency_support_recovery_compensation_tenant_update'
                     else 'pricing_' || relation.relname || '_scope_update'
@@ -429,6 +464,10 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
                       then 'pricing_currency_support_proof_tenant_delete'
                     when relation.relname = 'external_price_source_authority_grants'
                       then 'pricing_external_price_authority_scope_delete'
+                    when relation.relname = 'external_price_source_policies'
+                      then 'pricing_external_price_policies_scope_delete'
+                    when relation.relname = 'external_price_source_policy_ends'
+                      then 'pricing_external_price_policy_ends_scope_delete'
                     when relation.relname = 'currency_support_recovery_compensation_receipts'
                       then 'pricing_currency_support_recovery_compensation_tenant_delete'
                     else 'pricing_' || relation.relname || '_scope_delete'

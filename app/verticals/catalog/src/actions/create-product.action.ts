@@ -165,8 +165,13 @@ export const handleCreateProduct = Effect.fn('CreateProductAction.handle')(funct
   );
   const result =
     payload.sourceCorrelation === undefined
-      ? { ...created, classification }
-      : { ...created, businessOriginalCreateInvocationId: context.actionInvocationId, classification };
+      ? { ...created, classification, initialVariantRevision: 1 }
+      : {
+          ...created,
+          businessOriginalCreateInvocationId: context.actionInvocationId,
+          classification,
+          initialVariantRevision: 1,
+        };
   if (payload.sourceCorrelation !== undefined) {
     if (context.services.sourceCorrelation === undefined) {
       return yield* new ProductPersistenceConflict({

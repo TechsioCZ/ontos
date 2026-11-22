@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
 import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductEvidenceReferenceSchema, ProductReasonSchema } from '../domain/product.ts';
@@ -14,6 +15,11 @@ const AxisDefinitionSchema = Schema.Struct({
 });
 
 const AxisChangeClassificationSchema = Schema.Union([
+  Schema.Struct({
+    evidenceRefs: Schema.NonEmptyArray(ProductEvidenceReferenceSchema),
+    kind: Schema.Literal('AXIS_INITIALIZATION'),
+    reason: ProductReasonSchema,
+  }),
   Schema.Struct({
     evidenceRefs: Schema.NonEmptyArray(ProductEvidenceReferenceSchema),
     kind: Schema.Literal('AXIS_ADDITION'),
@@ -33,6 +39,7 @@ export const GovernVariantAxesPayloadSchema = Schema.Struct({
   expectedAxisRevision: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 2_147_483_646, minimum: 0 })),
   productRef: ProductRefSchema,
   reason: ProductReasonSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
 });
 export type GovernVariantAxesPayload = typeof GovernVariantAxesPayloadSchema.Type;
 

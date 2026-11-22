@@ -18,10 +18,11 @@ import {
   createVariantOperation,
   productFactsOperation,
   updateProductOperation,
+  readinessOperations,
   variantFactsOperation,
   variantSkuOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
-import { stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
+import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../src/registered-workload-calls.ts';
 import { symmyCallInMode } from '../../src/ops/symmy-route-bindings.ts';
 import { SymmyRouteEnrollmentRefused } from '../../src/ops/symmy-route-enrollment-refused.ts';
@@ -316,8 +317,36 @@ const refusalCodes = (
   decision: ReturnType<typeof decideSymmyRouteDeactivation> | ReturnType<typeof decideSymmyRouteWrite>,
 ) => (Schema.is(SymmyRouteEnrollmentRefused)(decision) ? decision.refusals.map(({ code }) => code) : []);
 
+it('publishes the exact registered Inventory provision, receipt recovery and source-position read requirements', () => {
+  const providers = [
+    { entrypointKey: 'commerce.inventory.provision-source-stock-item', source: 'worker' },
+    { entrypointKey: 'commerce.inventory.api.source-stock-item-provisioning-receipt', source: 'worker' },
+    { entrypointKey: 'commerce.inventory.api.source-stock-position-resolution', source: 'admission' },
+  ] as const;
+  for (const { entrypointKey, source } of providers) {
+    const consumingEntrypoint =
+      source === 'worker' ? 'integration.symmy.execute-symmy-job' : 'integration.symmy.admit-symmy-sync';
+    expect(
+      symmyIntegrationManifest.requirements?.operations.filter(
+        (requirement) =>
+          requirement.entrypointKey === consumingEntrypoint &&
+          requirement.provider.entrypointKey === entrypointKey &&
+          requirement.provider.moduleId === 'commerce.inventory' &&
+          requirement.provider.schemaVersion === '1',
+      ),
+    ).toHaveLength(1);
+    expect(
+      symmyIntegrationRegisteredWorkloadCalls.filter(
+        (call) => call.entrypointKey === entrypointKey && symmyCallInMode(source === 'worker' ? 'job' : 'sync')(call),
+      ),
+    ).toHaveLength(1);
+  }
+});
+
 describe('Symmy route inventories', () => {
-  it('names no inventory for an operator fixture route', () => {
+  it('inventories dynamic stock resolution and names no inventory for an operator fixture route', () => {
+    const stock = symmyRouteInventoryOf('inventoryStockBatch');
+    expect(Option.isOption(stock) && Option.isSome(stock)).toBe(true);
     expect(symmyRouteInventoryOf('assortmentRulesFixtureBatch')).toEqual(Option.none());
     expect(symmyRouteInventoryOf('sellerVatDeclarationsFixtureBatch')).toEqual(Option.none());
   });
@@ -618,6 +647,26 @@ describe('Symmy route request refusals', () => {
     expect(Result.isSuccess(decodeReference(reference))).toBe(true);
     expect(Result.isFailure(decodeReference({ ...reference, routeRevision: encoded.routeRevision }))).toBe(true);
   });
+});
+
+it('requires every readiness action and a tenant-local Unit when the Product route enrolls readiness', () => {
+  const catalogReadiness = { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef } as const;
+  const incomplete = withConfiguration('productsBatch', { catalogReadiness });
+  expect(codes(incomplete)).toContain('configuration_field_not_allowed');
+  const complete = withConfiguration('productsBatch', {
+    catalogReadiness,
+    items: [
+      item('PRODUCT', [createProduct, ...readinessOperations]),
+      item('VARIANT', [createVariant]),
+      item('PRICE', [definePrice]),
+    ],
+  });
+  expect(codes(complete)).toEqual([]);
+  const foreign = withConfiguration('productsBatch', {
+    catalogReadiness: { ...catalogReadiness, unitRef: { ...unitRef, tenantId: otherLegalEntityId } },
+    items: [item('PRODUCT', [createProduct, ...readinessOperations]), item('PRICE', [definePrice])],
+  });
+  expect(codes(foreign)).toContain('configuration_field_not_allowed');
 });
 
 describe('Symmy route state refusals', () => {

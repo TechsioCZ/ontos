@@ -21,6 +21,7 @@ import { ActivatePackageDefinitionRecoveryApi } from './shared/apis/activate-pac
 import { activatePackageOptionAction } from './src/actions/activate-package-option.action.ts';
 import { ActivatePackageOptionRecoveryApi } from './shared/apis/activate-package-option-recovery.ts';
 import { addProductCategoryAssignmentAction } from './src/actions/add-product-category-assignment.action.ts';
+import { AddProductCategoryAssignmentActionApi } from './shared/apis/add-product-category-assignment-action.ts';
 import { AddProductCategoryAssignmentRecoveryApi } from './shared/apis/add-product-category-assignment-recovery.ts';
 import { assertSizeEquivalenceAction } from './src/actions/assert-size-equivalence.action.ts';
 import { AssertSizeEquivalenceRecoveryApi } from './shared/apis/assert-size-equivalence-recovery.ts';
@@ -51,6 +52,7 @@ import { ColorHistoryApi } from './shared/apis/color-history.ts';
 import { confirmGtinAction } from './src/actions/confirm-gtin.action.ts';
 import { ConfirmGtinRecoveryApi } from './shared/apis/confirm-gtin-recovery.ts';
 import { confirmVariantCombinationAction } from './src/actions/confirm-variant-combination.action.ts';
+import { ConfirmVariantCombinationActionApi } from './shared/apis/confirm-variant-combination-action.ts';
 import { ConfirmVariantCombinationRecoveryApi } from './shared/apis/confirm-variant-combination-recovery.ts';
 import { correctGtinAction } from './src/actions/correct-gtin.action.ts';
 import { CorrectGtinRecoveryApi } from './shared/apis/correct-gtin-recovery.ts';
@@ -83,6 +85,7 @@ import { CreateSetCompositionRecoveryApi } from './shared/apis/create-set-compos
 import { createVariantAction } from './src/actions/create-variant.action.ts';
 import { CreateVariantRecoveryApi } from './shared/apis/create-variant-recovery.ts';
 import { decideProductTypeUnnecessaryAction } from './src/actions/decide-product-type-unnecessary.action.ts';
+import { DecideProductTypeUnnecessaryActionApi } from './shared/apis/decide-product-type-unnecessary-action.ts';
 import { DecideProductTypeUnnecessaryRecoveryApi } from './shared/apis/decide-product-type-unnecessary-recovery.ts';
 import { EffectiveAttributeValuesCurrentApi } from './shared/apis/effective-attribute-values-current.ts';
 import { ExternalTargetResolutionApi } from './shared/apis/external-target-resolution.ts';
@@ -91,6 +94,7 @@ import { GovernProductAttributeApplicabilityRecoveryApi } from './shared/apis/go
 import { governVariantAllowedValuesAction } from './src/actions/govern-variant-allowed-values.action.ts';
 import { GovernVariantAllowedValuesRecoveryApi } from './shared/apis/govern-variant-allowed-values-recovery.ts';
 import { governVariantAxesAction } from './src/actions/govern-variant-axes.action.ts';
+import { GovernVariantAxesActionApi } from './shared/apis/govern-variant-axes-action.ts';
 import { GovernVariantAxesRecoveryApi } from './shared/apis/govern-variant-axes-recovery.ts';
 import { GtinCurrentApi } from './shared/apis/gtin-current.ts';
 import { GtinHistoryApi } from './shared/apis/gtin-history.ts';
@@ -204,12 +208,14 @@ import { SetProductAttributeValuesRecoveryApi } from './shared/apis/set-product-
 import { setProductBrandAction } from './src/actions/set-product-brand.action.ts';
 import { SetProductBrandRecoveryApi } from './shared/apis/set-product-brand-recovery.ts';
 import { setProductLocalizedFactsAction } from './src/actions/set-product-localized-facts.action.ts';
+import { SetProductLocalizedFactsActionApi } from './shared/apis/set-product-localized-facts-action.ts';
 import { SetProductLocalizedFactsRecoveryApi } from './shared/apis/set-product-localized-facts-recovery.ts';
 import { setProductManufacturerAction } from './src/actions/set-product-manufacturer.action.ts';
 import { SetProductManufacturerRecoveryApi } from './shared/apis/set-product-manufacturer-recovery.ts';
 import { setProductTypeAction } from './src/actions/set-product-type.action.ts';
 import { SetProductTypeRecoveryApi } from './shared/apis/set-product-type-recovery.ts';
 import { setProductUnitTargetDivisibilityAction } from './src/actions/set-product-unit-target-divisibility.action.ts';
+import { SetProductUnitTargetDivisibilityActionApi } from './shared/apis/set-product-unit-target-divisibility-action.ts';
 import { SetProductUnitTargetDivisibilityRecoveryApi } from './shared/apis/set-product-unit-target-divisibility-recovery.ts';
 import { setVariantAttributeOverrideAction } from './src/actions/set-variant-attribute-override.action.ts';
 import { SetVariantAttributeOverrideRecoveryApi } from './shared/apis/set-variant-attribute-override-recovery.ts';
@@ -224,6 +230,7 @@ import { quantityPreparationRead } from './src/api/quantity-preparation.read.ts'
 import { quantityBasisCompatibilityRead } from './src/api/quantity-basis-compatibility.read.ts';
 import { pricingPurposeEquivalenceRead } from './src/api/pricing-purpose-equivalence.read.ts';
 import { productVariantSnapshotRead } from './src/api/product-variant-snapshot.read.ts';
+import { catalogDocumentCurrentRead } from './src/api/catalog-document-current.read.ts';
 import { manufacturerRelationCurrentRead } from './src/api/manufacturer-relation-current.read.ts';
 import { assortmentProductClassificationV1Read } from './src/api/assortment-product-classification-v1.read.ts';
 import { bindInitialVariantSourceAction } from './src/actions/bind-initial-variant-source.action.ts';
@@ -241,6 +248,12 @@ import { createProductRecoveryRead } from './src/api/create-product-recovery.rea
 import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
 import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
+import { addProductCategoryAssignmentRecoveryRead } from './src/api/add-product-category-assignment-recovery.read.ts';
+import { governVariantAxesRecoveryRead } from './src/api/govern-variant-axes-recovery.read.ts';
+import { confirmVariantCombinationRecoveryRead } from './src/api/confirm-variant-combination-recovery.read.ts';
+import { setProductLocalizedFactsRecoveryRead } from './src/api/set-product-localized-facts-recovery.read.ts';
+import { setProductUnitTargetDivisibilityRecoveryRead } from './src/api/set-product-unit-target-divisibility-recovery.read.ts';
+import { decideProductTypeUnnecessaryRecoveryRead } from './src/api/decide-product-type-unnecessary-recovery.read.ts';
 import { CreateProductActionApi } from './shared/apis/create-product-action.ts';
 import { CreateVariantActionApi } from './shared/apis/create-variant-action.ts';
 import { UpdateProductActionApi } from './shared/apis/update-product-action.ts';
@@ -269,6 +282,7 @@ const partyRegistryModuleId = 'party.registry';
 const partyDetailProviderEntrypoint = 'party.registry.api.party-detail';
 const manufacturerPartyCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.party-current';
 const manufacturerExactRevisionEvidence = 'commerce.catalog.evidence.manufacturer-target.exact-revision';
+const coreMediaCurrentEvidence = 'commerce.catalog.evidence.core-media.asset-current';
 const manufacturerLegalEntityCurrentEvidence = 'commerce.catalog.evidence.manufacturer-target.legal-entity-current';
 const catalogModuleKey = 'commerce.catalog';
 const productsPageKey = 'commerce.catalog.page.products';
@@ -373,6 +387,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'activate-local-override-recovery': ActivateLocalOverrideRecoveryApi,
       'activate-package-definition-recovery': ActivatePackageDefinitionRecoveryApi,
       'activate-package-option-recovery': ActivatePackageOptionRecoveryApi,
+      'add-product-category-assignment-action': AddProductCategoryAssignmentActionApi,
       'add-product-category-assignment-recovery': AddProductCategoryAssignmentRecoveryApi,
       'assert-size-equivalence-recovery': AssertSizeEquivalenceRecoveryApi,
       'assign-catalog-media-recovery': AssignCatalogMediaRecoveryApi,
@@ -397,6 +412,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'color-current': ColorCurrentApi,
       'color-history': ColorHistoryApi,
       'confirm-gtin-recovery': ConfirmGtinRecoveryApi,
+      'confirm-variant-combination-action': ConfirmVariantCombinationActionApi,
       'confirm-variant-combination-recovery': ConfirmVariantCombinationRecoveryApi,
       'correct-gtin-recovery': CorrectGtinRecoveryApi,
       'correct-product-action': CorrectProductActionApi,
@@ -416,11 +432,13 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'create-set-composition-recovery': CreateSetCompositionRecoveryApi,
       'create-variant-action': CreateVariantActionApi,
       'create-variant-recovery': CreateVariantRecoveryApi,
+      'decide-product-type-unnecessary-action': DecideProductTypeUnnecessaryActionApi,
       'decide-product-type-unnecessary-recovery': DecideProductTypeUnnecessaryRecoveryApi,
       'effective-attribute-values-current': EffectiveAttributeValuesCurrentApi,
       'external-target-resolution': ExternalTargetResolutionApi,
       'govern-product-attribute-applicability-recovery': GovernProductAttributeApplicabilityRecoveryApi,
       'govern-variant-allowed-values-recovery': GovernVariantAllowedValuesRecoveryApi,
+      'govern-variant-axes-action': GovernVariantAxesActionApi,
       'govern-variant-axes-recovery': GovernVariantAxesRecoveryApi,
       'gtin-current': GtinCurrentApi,
       'gtin-history': GtinHistoryApi,
@@ -494,6 +512,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'set-product-localized-facts-recovery': SetProductLocalizedFactsRecoveryApi,
       'set-product-manufacturer-recovery': SetProductManufacturerRecoveryApi,
       'set-product-type-recovery': SetProductTypeRecoveryApi,
+      'set-product-unit-target-divisibility-action': SetProductUnitTargetDivisibilityActionApi,
       'set-product-unit-target-divisibility-recovery': SetProductUnitTargetDivisibilityRecoveryApi,
       'set-variant-attribute-override-recovery': SetVariantAttributeOverrideRecoveryApi,
       'set-variant-localized-facts-action': SetVariantLocalizedFactsActionApi,
@@ -506,6 +525,36 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
     },
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'add-product-category-assignment-action',
+        operationKey: 'addProductCategoryAssignmentAction.execute',
+        registration: addProductCategoryAssignmentAction,
+      },
+      {
+        apiKey: 'govern-variant-axes-action',
+        operationKey: 'governVariantAxesAction.execute',
+        registration: governVariantAxesAction,
+      },
+      {
+        apiKey: 'confirm-variant-combination-action',
+        operationKey: 'confirmVariantCombinationAction.execute',
+        registration: confirmVariantCombinationAction,
+      },
+      {
+        apiKey: 'set-product-localized-facts-action',
+        operationKey: 'setProductLocalizedFactsAction.execute',
+        registration: setProductLocalizedFactsAction,
+      },
+      {
+        apiKey: 'set-product-unit-target-divisibility-action',
+        operationKey: 'setProductUnitTargetDivisibilityAction.execute',
+        registration: setProductUnitTargetDivisibilityAction,
+      },
+      {
+        apiKey: 'decide-product-type-unnecessary-action',
+        operationKey: 'decideProductTypeUnnecessaryAction.execute',
+        registration: decideProductTypeUnnecessaryAction,
+      },
       { apiKey: 'selection-evidence', operationKey: 'selectionEvidence.execute', registration: selectionEvidenceRead },
       {
         apiKey: 'quantity-preparation',
@@ -611,6 +660,36 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         apiKey: 'bind-initial-variant-source-recovery',
         operationKey: 'bindInitialVariantSourceRecovery.execute',
         registration: bindInitialVariantSourceRecoveryRead,
+      },
+      {
+        apiKey: 'add-product-category-assignment-recovery',
+        operationKey: 'addProductCategoryAssignmentRecovery.execute',
+        registration: addProductCategoryAssignmentRecoveryRead,
+      },
+      {
+        apiKey: 'govern-variant-axes-recovery',
+        operationKey: 'governVariantAxesRecovery.execute',
+        registration: governVariantAxesRecoveryRead,
+      },
+      {
+        apiKey: 'confirm-variant-combination-recovery',
+        operationKey: 'confirmVariantCombinationRecovery.execute',
+        registration: confirmVariantCombinationRecoveryRead,
+      },
+      {
+        apiKey: 'set-product-localized-facts-recovery',
+        operationKey: 'setProductLocalizedFactsRecovery.execute',
+        registration: setProductLocalizedFactsRecoveryRead,
+      },
+      {
+        apiKey: 'set-product-unit-target-divisibility-recovery',
+        operationKey: 'setProductUnitTargetDivisibilityRecovery.execute',
+        registration: setProductUnitTargetDivisibilityRecoveryRead,
+      },
+      {
+        apiKey: 'decide-product-type-unnecessary-recovery',
+        operationKey: 'decideProductTypeUnnecessaryRecovery.execute',
+        registration: decideProductTypeUnnecessaryRecoveryRead,
       },
       {
         apiKey: 'catalog-source-product-page',
@@ -750,6 +829,17 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
           schemaVersion: '1',
         },
       },
+      {
+        // Core Media's Current V1, served by the Shell host (which holds the object store) for the requester Catalog
+        // relays as itself under the company they selected, so Core narrows the answer to that company's assets (the
+        // read accepts the company for exactly this reason): Catalog keeps no provider credential and no Core table.
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+        condition: 'commerce.catalog.condition.core-media-current',
+        entrypointKey: catalogDocumentCurrentRead.descriptor.entrypoint.entrypointKey,
+        evidence: [coreMediaCurrentEvidence],
+        key: 'commerce.catalog.requirement.core-media-current',
+        provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
+      },
     ],
     schemaVersion: '1',
   },
@@ -769,6 +859,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     pricingPurposeEquivalenceRead,
     productVariantSnapshotRead,
     manufacturerRelationCurrentRead,
+    catalogDocumentCurrentRead,
     assortmentProductClassificationV1Read,
     correctProductRecoveryRead,
     updateProductRecoveryRead,
@@ -778,6 +869,12 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,
+    addProductCategoryAssignmentRecoveryRead,
+    governVariantAxesRecoveryRead,
+    confirmVariantCombinationRecoveryRead,
+    setProductLocalizedFactsRecoveryRead,
+    setProductUnitTargetDivisibilityRecoveryRead,
+    decideProductTypeUnnecessaryRecoveryRead,
     catalogSourceProductPageRead,
     catalogSourceProductsRead,
     productPageRead,

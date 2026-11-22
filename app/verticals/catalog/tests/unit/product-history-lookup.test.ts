@@ -6,7 +6,11 @@ import { ProductHistorySchema } from '../../shared/domain/product.ts';
 import { ProductRevisionReferenceSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import { ReadHandlerNotFound } from '@app/core-runtime';
 import { readProductHistory } from '../../src/api/product-history.read.ts';
-import { ProductHistoricalLocalizedRevisionSchema } from '../../shared/apis/product-history.ts';
+import {
+  ProductHistoricalLocalizedRevisionSchema,
+  ProductHistoryRequestSchema,
+  ProductHistoryResponseSchema,
+} from '../../shared/apis/product-history.ts';
 import type { CatalogPersistence } from '../../src/persistence/catalog-persistence.ts';
 import type { LocalizedFactsReads } from '../../src/persistence/localized-facts-reads.ts';
 
@@ -104,6 +108,43 @@ const firstReference = Schema.decodeUnknownSync(ProductRevisionReferenceSchema)(
 });
 
 describe('governed Product historical lookup', () => {
+  it('decodes exact stored locale keys at the public Product history query boundary', () => {
+    for (const locale of ['cs-cz', 'cs-CZ']) {
+      expect(Schema.decodeUnknownSync(ProductHistoryRequestSchema)({ locale, productRef }).locale).toBe(locale);
+    }
+    for (const locale of ['x', ' cs-cz', 'cs-cz ', 'a'.repeat(65)]) {
+      expect(() => Schema.decodeUnknownSync(ProductHistoryRequestSchema)({ locale, productRef })).toThrow();
+    }
+  });
+
+  it('encodes historical localized revisions without changing their stored locale key', () => {
+    const retained = Schema.decodeUnknownSync(ProductHistoricalLocalizedRevisionSchema)({
+      evidenceRefs: [],
+      historical: true,
+      kind: 'SET',
+      locale: 'cs-CZ',
+      name: 'Původní název',
+      reason: 'Original copy',
+      recordedAt,
+      revision: 1,
+    });
+    const localizedRevisions = [{ ...retained, locale: 'cs-cz' }, retained];
+    const encoded = Schema.encodeSync(ProductHistoryResponseSchema)({ history, localizedRevisions });
+    expect(Schema.decodeUnknownSync(ProductHistoryResponseSchema)(encoded).localizedRevisions).toEqual(
+      localizedRevisions,
+    );
+  });
+
+  it.effect('preserves an old locale through public history query decode, Read, and response encoding', () =>
+    Effect.gen(function* exactStoredLocaleBoundary() {
+      const request = Schema.decodeUnknownSync(ProductHistoryRequestSchema)({ locale: 'cs-cz', productRef });
+      const response = yield* readProductHistory(request, tenantId, historyServices);
+      const encoded = Schema.encodeSync(ProductHistoryResponseSchema)(response);
+      const decoded = Schema.decodeUnknownSync(ProductHistoryResponseSchema)(encoded);
+      expect(decoded.localizedRevisions?.map(({ locale }) => locale)).toEqual(['cs-cz', 'cs-cz']);
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
   it.effect('returns the exact retained revision, not a Current replacement', () =>
     Effect.gen(function* foundRevision() {
       const response = yield* readProductHistory(

@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.reactivate-product', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ReactivateProductResultSchema),
-      encode: Schema.encodeEffect(ReactivateProductResultSchema),
     },
   );
 

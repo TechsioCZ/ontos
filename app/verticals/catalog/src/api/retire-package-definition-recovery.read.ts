@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.retire-package-definition', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RetirePackageDefinitionResultSchema),
-      encode: Schema.encodeEffect(RetirePackageDefinitionResultSchema),
     },
   );
 

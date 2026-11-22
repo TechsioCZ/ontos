@@ -8,12 +8,8 @@ import type { deriveOntosModuleReadScopes } from '../../../../scripts/generate-o
 import { SymmyRouteContextRequestSchema } from '../../shared/apis/symmy-route-context.ts';
 import { deriveSymmyRouteBindings } from '../../src/ops/symmy-route-bindings.ts';
 import type { SymmyRouteContract } from '../../src/ops/symmy-route-bindings.ts';
-import { symmyOperationName, symmyRouteInventoryOf } from '../../src/ops/symmy-route-enrollment.ts';
-import type {
-  SymmyEnrollmentRouteKey,
-  SymmyRouteAdmissionRead,
-  SymmyRouteInventoryOperation,
-} from '../../src/ops/symmy-route-enrollment.ts';
+import { symmyRouteInventoryOf } from '../../src/ops/symmy-route-enrollment.ts';
+import type { SymmyEnrollmentRouteKey, SymmyRouteInventoryOperation } from '../../src/ops/symmy-route-enrollment.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const decodeContracts = Schema.decodeUnknownEffect(
@@ -77,28 +73,12 @@ const mainContracts = overMainTopology(
 ).pipe(Effect.flatMap(decodeContracts));
 
 /**
- * The scope every public Read of main's reference topology is published under: the `legalEntityScope` of the read
- * registration each owner manifest binds as a public operation contract (`deriveOntosModuleReadScopes`), as the
- * owner's read descriptor states it. The deployment contracts carry no scope of a read.
- */
-const mainReadScopes = overMainTopology(
-  "import { deriveOntosModuleReadScopes } from './scripts/generate-ontos-module-contract.mts';",
-  'deriveOntosModuleReadScopes',
-  'JSON.stringify(derived)',
-).pipe(
-  Effect.flatMap(decodeReadScopes),
-  Effect.map((scopes): readonly PublishedReadScope[] => scopes.flat()),
-);
-
-/**
- * The binding plan of a route of this kind, of a company unless named otherwise, that enrolls the operations `enrolls`
- * picks besides the ones every enrollment of it enrolls; with none picked, any enrollment of the route reaches its calls
- * and reads.
+ * The binding plan of a company route of this kind that enrolls the operations `enrolls` picks besides the ones every
+ * enrollment of it enrolls; with none picked, any enrollment of the route reaches these calls and reads.
  */
 const requiredOnlyPlan = (
   routeKey: SymmyEnrollmentRouteKey,
   contracts: readonly SymmyRouteContract[],
-  companyScoped = true,
   enrolls: (operation: SymmyRouteInventoryOperation) => boolean = () => false,
 ) => {
   const found = symmyRouteInventoryOf(routeKey);
@@ -113,53 +93,42 @@ const requiredOnlyPlan = (
     inventory,
   });
 };
-/** The refusals of that route: any such enrollment of it is refused for each of them. */
+/** The refusals of that route, live and on recovery: any such enrollment of it is refused for each of them. */
 const requiredOnly = (
   routeKey: SymmyEnrollmentRouteKey,
   contracts: readonly SymmyRouteContract[],
   enrolls?: (operation: SymmyRouteInventoryOperation) => boolean,
-) => requiredOnlyPlan(routeKey, contracts, true, enrolls).refusals.map(({ code, detail }) => `${code}: ${detail}`);
-/** The customers route operations of one entrypoint each. */
+) => requiredOnlyPlan(routeKey, contracts, enrolls).refusals.map(({ code, detail }) => `${code}: ${detail}`);
+/** The customers route operations of these entrypoints. */
 const enrolling =
   (...entrypointKeys: readonly string[]) =>
   ({ entrypointKey }: SymmyRouteInventoryOperation) =>
     entrypointKeys.includes(entrypointKey);
-/** The organization plan: Party create, Counterparty onboarding and the purchasing profile. */
+/** A PERSON customer: the Party create and the Retail profile. */
+const personPlan = ['party.registry.create-party', 'commerce.customer-context.ensure-retail-customer-profile'];
+/** An ORGANIZATION customer: the Party create, the Counterparty onboarding and the purchasing profile. */
 const organizationPlan = [
+  'party.registry.create-party',
   'party.registry.counterparty-customer-onboard',
   'commerce.customer-context.create-counterparty-purchasing-profile',
 ];
+const contact = 'party.registry.add-contact-point';
+const address = 'commerce.customer-context.add-saved-address';
+const companyIco = 'commerce.customer-context.change-organization-customer-profile-ico';
 
 it.effect(
-  "enrolls the customers route with its organization plan, company ICO and contacts and the membership route on main's contracts, refuses an address whose Party read Customer Context registers no call to, and enrolls the customer groups route with its definition read and the stock route without a company",
+  "enrolls the customers route for a PERSON and an ORGANIZATION with contacts, addresses and the company ICO, and the membership route, on main's contracts, and the customer groups route with its definition read",
   () =>
     Effect.gen(function* enrolledOnMain() {
       const contracts = yield* mainContracts;
       expect(requiredOnly('customersBatch', contracts)).toEqual([]);
-      // Every owner of the organization plan registers each call its requirements name, live and on recovery.
+      // Every owner a customer plan reaches registers each call its requirements name, live and on recovery.
+      expect(requiredOnly('customersBatch', contracts, enrolling(...personPlan))).toEqual([]);
+      expect(requiredOnly('customersBatch', contracts, enrolling(...personPlan, contact, address))).toEqual([]);
       expect(requiredOnly('customersBatch', contracts, enrolling(...organizationPlan))).toEqual([]);
       expect(
-        requiredOnly(
-          'customersBatch',
-          contracts,
-          enrolling(
-            ...organizationPlan,
-            'commerce.customer-context.change-organization-customer-profile-ico',
-            'party.registry.add-contact-point',
-          ),
-        ),
+        requiredOnly('customersBatch', contracts, enrolling(...organizationPlan, companyIco, contact, address)),
       ).toEqual([]);
-      // Party publishes its contact point read for the buyer Customer Context relays, under no workload a
-      // registered call could name, so an address step stays refused.
-      expect(
-        requiredOnly(
-          'customersBatch',
-          contracts,
-          enrolling(...organizationPlan, 'commerce.customer-context.add-saved-address'),
-        ),
-      ).toEqual([
-        'call_not_declared: The installed commerce.customer-context requires party.registry party.registry.api.party-contact-point-detail@1 for commerce.customer-context.add-saved-address@1 (requirement commerce.customer-context.requirement.add-saved-address-party) and registers no call to it under commerce.customer-context.source-write',
-      ]);
       expect(requiredOnly('customerGroupCustomersBatch', contracts)).toEqual([]);
       // The Shell reads each group code's current definition with the integration principal before it admits.
       const groups = requiredOnlyPlan('customerGroupsBatch', contracts);

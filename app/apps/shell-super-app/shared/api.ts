@@ -168,10 +168,12 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
 
   // @ontos-core-read legal-entity-detail
   .add(ShellBrowserApi.groups.coreReadLegalEntityDetail)
+
+  // @ontos-core-read asset-metadata
+  .add(ShellBrowserApi.groups.coreReadAssetMetadata)
   // @ontos-codesmith-core-read-server-api-groups:end
-  .add(ShellBrowserApi.groups.agentPlatform)
-  .add(ShellBrowserApi.groups.peopleAdministration)
-  .add(ShellBrowserApi.groups.oauthConnectionsAdmin)
+  .add(ShellBrowserApi.groups.coreMediaDownload)
+  .add(ShellBrowserApi.groups.coreHostedOperations)
   .add(GatewayContextApiGroup)
   .add(ShellBrowserApi.groups.apiKeyGatewayRead)
   .add(ShellBrowserApi.groups.documentGateway)

@@ -5,8 +5,6 @@ import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
-import { CatalogPagePricesApi } from './shared/apis/catalog-page-prices.ts';
-import { catalogPagePricesRead } from './src/api/catalog-page-prices.read.ts';
 import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
 import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
@@ -33,6 +31,7 @@ import { exactPriceResolutionRead } from './src/api/exact-price-resolution.read.
 import { grantExternalPriceSourceAuthorityAction } from './src/actions/grant-external-price-source-authority.action.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
 import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
+import { manageExternalPriceSourcePolicyAction } from './src/actions/manage-external-price-source-policy.action.ts';
 import { manageProductCommercialFeesBulkAction } from './src/actions/manage-product-commercial-fees-bulk.action.ts';
 import { manageProductPricesBulkAction } from './src/actions/manage-product-prices-bulk.action.ts';
 import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.action.ts';
@@ -47,6 +46,18 @@ import { PriceResultLookupApi } from './shared/apis/price-result-lookup.ts';
 import { priceResultLookupRead } from './src/api/price-result-lookup.read.ts';
 import { PriceScheduleApi } from './shared/apis/price-schedule.ts';
 import { priceScheduleRead } from './src/api/price-schedule.read.ts';
+import { PriceSourceResultLookupApi } from './shared/apis/price-source-result-lookup.ts';
+import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
+import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
+import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
+import { QuotationVerificationApi } from './shared/apis/quotation-verification.ts';
+import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
+import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
+import { revisePriceAction } from './src/actions/revise-price.action.ts';
+import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
+import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
+import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
+// </generated-module-manifest-imports>
 import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing-commercial-fee-read.ts';
 import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
 import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
@@ -113,6 +124,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       grantExternalPriceSourceAuthorityAction,
       manageCommitmentConfirmationAction,
       manageContractualDiscountAction,
+      manageExternalPriceSourcePolicyAction,
       manageProductCommercialFeesBulkAction,
       manageProductPricesBulkAction,
       manageQuantityTierAction,

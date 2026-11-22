@@ -3,7 +3,13 @@ import { DateTime, Effect, Option, Schema } from 'effect';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SYMMY_PRICE_REASON } from '../../shared/domain/symmy-price-list-batch.ts';
-import { SYMMY_PRODUCT_REASON } from '../../shared/domain/symmy-product-batch.ts';
+import {
+  SYMMY_PRODUCT_BATCH_MAX_ITEMS,
+  SYMMY_PRODUCT_MAX_EFFECTS,
+  SYMMY_PRODUCT_PLAN_LIMIT_REASON,
+  SYMMY_PRODUCT_REASON,
+  SymmyProductPlanLimitError,
+} from '../../shared/domain/symmy-product-batch.ts';
 import type {
   SymmyProductHintKind,
   SymmyProductPriceGroupFacts,
@@ -30,19 +36,33 @@ export const updateProductOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
+export const categoryAssignmentOperation = {
+  entrypointKey: 'commerce.catalog.add-product-category-assignment',
+  moduleId: catalogModule,
+  schemaVersion: '1',
+} as const;
 export const variantFactsOperation = {
   entrypointKey: 'commerce.catalog.set-variant-localized-facts',
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
-export const productFactsOperation = {
-  entrypointKey: 'commerce.catalog.set-product-localized-facts',
+const readinessOperation = (entrypointKey: string) => ({
+  entrypointKey: `commerce.catalog.${entrypointKey}`,
   moduleId: catalogModule,
   schemaVersion: '1',
-} as const;
-export const variantSkuOperation = {
-  entrypointKey: 'commerce.catalog.assign-sku',
-  moduleId: catalogModule,
+});
+export const readinessOperations = [
+  readinessOperation('govern-variant-axes'),
+  readinessOperation('confirm-variant-combination'),
+  readinessOperation('set-product-localized-facts'),
+  updateProductOperation,
+  readinessOperation('set-product-unit-target-divisibility'),
+  readinessOperation('decide-product-type-unnecessary'),
+] as const;
+
+export const provisionStockItemOperation = {
+  entrypointKey: 'commerce.inventory.provision-source-stock-item',
+  moduleId: 'commerce.inventory',
   schemaVersion: '1',
 } as const;
 
@@ -63,6 +83,8 @@ const present = <Value>(key: string, value: Value | undefined): Readonly<Record<
 
 /** What the route enrolls for the products: where each kind of record lives, and the price grants when it has them. */
 interface Enrollment {
+  readonly catalogReadiness: SymmyFixtureExecutionPlan['catalogReadiness'];
+  readonly inventorySource: SymmyFixtureExecutionPlan['inventorySource'];
   readonly mappingRevision: string;
   readonly prices: Option.Option<PriceContext>;
   readonly routeScope: string;
@@ -82,6 +104,9 @@ const catalogSource = (rows: SymmyProductRows, template: SymmyFixtureExecutionPl
   const further = rows.some(({ variants: rowVariants }) => rowVariants.length > 1);
   const product = enrolledItem(template, 'PRODUCT', createProductOperation);
   const required = [
+    ...(rows.some(({ categories }) => (categories?.length ?? 0) > 0)
+      ? [enrolledItem(template, 'PRODUCT', categoryAssignmentOperation)]
+      : []),
     ...(updates ? [enrolledItem(template, 'PRODUCT', updateProductOperation)] : []),
     ...(productTexts ? [enrolledItem(template, 'PRODUCT', productFactsOperation)] : []),
     ...(further ? [enrolledItem(template, 'VARIANT', createVariantOperation)] : []),
@@ -308,7 +333,8 @@ const buildPriceItem = Effect.fn('SymmyProductPlan.price')(function* buildPriceI
                 sourceAssertionId: occurrenceId,
                 sourceAuthority: priceSource.sourceAuthority,
                 sourceRecord: {
-                  sourceChangeCorrelation: occurrenceId,
+                  // Version 1 is the initial source fact, not this delivery's occurrence.
+                  sourceChangeCorrelation: `initial:${record}`,
                   sourceRecordRef: recordId,
                   sourceRecordVersion: '1',
                   sourceSystem,
@@ -449,8 +475,41 @@ const buildVariantItem = (
   };
 };
 
-const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint')[]) =>
+const inventoryItemKey = (row: SymmyProductRow, variant: PlannedVariant, initial: boolean) => {
+  const { identifier } = variant.row;
+  if (identifier !== undefined && identifier.type !== 'ean') {
+    return Option.some(identifier.value);
+  }
+  if (initial && row.identifier !== undefined && row.identifier.type !== 'ean') {
+    return Option.some(row.identifier.value);
+  }
+  return Option.none<string>();
+};
+
+const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint' | 'StockProvisioningHint')[]) =>
   kinds.map((kind) => ({ branchKey: kind, kind }));
+
+const readinessIneligibleFor = (row: SymmyProductRow, policy: Enrollment['catalogReadiness']) =>
+  row.lifecycle === 'ACTIVE' &&
+  policy !== undefined &&
+  (row.variants.length !== 1 ||
+    row.unsupported.includes('AttributeHint') ||
+    row.unsupported.includes('ClassificationHint'));
+
+const categoryAssignmentEffects = (
+  categories: SymmyProductRow['categories'],
+  parent: { readonly effectKey: string; readonly itemKey: string },
+) =>
+  (categories ?? []).map((categoryRef, position) => ({
+    dependsOn: [parent],
+    effectKey: `category-assign-${position}`,
+    intent: {
+      _tag: 'CatalogProductDependentEffect',
+      parent,
+      request: { _tag: 'AddProductCategoryAssignment', payload: { categoryRef, reason: SYMMY_PRODUCT_REASON } },
+    },
+    operation: categoryAssignmentOperation,
+  }));
 
 /** One product: its item, the items of its variants and prices, and the unsupported groups it names. */
 const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduct<Failure>(
@@ -460,6 +519,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const { mappingRevision, prices, routeScope, source } = enrollment;
   const productItemKey = `product-${index}`;
   const parent = { effectKey: productCreateKey, itemKey: productItemKey };
+  const categoryEffects = categoryAssignmentEffects(row.categories, parent);
   const [productOccurrence, productRecord] = yield* Effect.all(
     [
       digest(`product-occurrence\u0000${idempotencyKey}\u0000${index}`),
@@ -483,55 +543,55 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const variantItems = variants.map((variant, position) =>
     buildVariantItem({ ...facts, enrollment, evidenceRefs, parent, position, productRecord, variant }),
   );
-  // The Product's own texts, one per locale, each the localized facts of the Product the create settled on: a text
-  // the owner already holds is reported as unchanged, any other one is written at the owner's current revision.
-  const productTexts = (row.localized ?? []).map((text, textIndex) => ({
-    dependsOn: [productCreateKey],
-    effectKey: `product-facts-${textIndex}`,
-    intent: {
-      _tag: 'CatalogProductDependentEffect',
-      parent,
-      request: {
-        _tag: 'SetProductLocalizedFacts',
-        payload: {
-          evidenceRefs,
-          facts: { ...present('description', text.description), ...present('name', text.name) },
-          locale: text.locale,
-          reason: SYMMY_PRODUCT_REASON,
-        },
-      },
-    },
-    operation: productFactsOperation,
-  }));
-  const updates = row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED';
-  const updateEffect = updates
-    ? [
-        {
-          // An activation needs a current localized name, so the lifecycle waits for the Product's texts.
+  const readinessIneligible = readinessIneligibleFor(row, enrollment.catalogReadiness);
+  const updates = !readinessIneligible && (row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
+  const ready = row.lifecycle === 'ACTIVE' && !readinessIneligible ? enrollment.catalogReadiness : undefined;
+  const readinessSteps = ['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED'] as const;
+  const readinessEffects =
+    ready === undefined
+      ? []
+      : readinessSteps.map((step, position) => ({
           dependsOn: [
-            productCreateKey,
-            ...productTexts.map(({ effectKey }) => effectKey),
-            ...variantItems.flatMap(({ created }) => created),
+            parent,
+            ...readinessSteps.slice(0, position).map((previous) => ({
+              effectKey: `readiness-${previous.toLowerCase()}`,
+              itemKey: productItemKey,
+            })),
           ],
-          effectKey: productUpdateKey,
+          effectKey: `readiness-${step.toLowerCase()}`,
           intent: {
             _tag: 'CatalogProductDependentEffect',
             parent,
-            request: {
-              _tag: 'UpdateProduct',
-              payload: { expectedRevision: 1, reason: SYMMY_PRODUCT_REASON, targetLifecycle: row.lifecycle },
-            },
+            request: { _tag: 'CatalogReadiness', ...ready, evidenceRefs, name: row.name, step },
           },
-          operation: updateProductOperation,
-        },
-      ]
-    : [];
+          operation: readinessOperations[position],
+        }));
+  const updateEffect =
+    updates && ready === undefined
+      ? [
+          {
+            dependsOn: [productCreateKey, ...variantItems.flatMap(({ created }) => created)],
+            effectKey: productUpdateKey,
+            intent: {
+              _tag: 'CatalogProductDependentEffect',
+              parent,
+              request: {
+                _tag: 'UpdateProduct',
+                payload: { expectedRevision: 1, reason: SYMMY_PRODUCT_REASON, targetLifecycle: row.lifecycle },
+              },
+            },
+            operation: updateProductOperation,
+          },
+        ]
+      : [];
   const priceDependencies = (variantPosition: number) => [
     parent,
+    ...categoryEffects.map(({ effectKey }) => ({ effectKey, itemKey: productItemKey })),
     ...variantItems.flatMap(({ created }, position) => (position === variantPosition ? created : [])),
-    ...(updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
+    ...(ready === undefined && updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
+    ...(ready === undefined ? [] : [{ effectKey: 'readiness-untyped', itemKey: productItemKey }]),
   ];
-  const priceItems = prices.pipe(
+  const priceItems = (readinessIneligible ? Option.none<PriceContext>() : prices).pipe(
     Option.match({
       onNone: () => Effect.succeed([]),
       onSome: (context) =>
@@ -563,11 +623,39 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const planned = yield* priceItems;
   const written = planned.length - planned.filter(Option.isNone).length;
   const unsupported = [
-    ...row.unsupported,
+    ...new Set([
+      ...row.unsupported,
+      ...(readinessIneligible && variants.length > 1 ? ['ClassificationHint' as const] : []),
+    ]),
     ...(written < variants.reduce((total, { row: variantRow }) => total + variantRow.prices.length, 0)
       ? ['PriceHint' as const]
       : []),
   ];
+  const provisionEffects = [];
+  let stockKeyMissing = false;
+  if (enrollment.inventorySource !== undefined) {
+    for (const [position, variant] of variants.entries()) {
+      const itemKey = inventoryItemKey(row, variant, position === 0);
+      if (Option.isNone(itemKey)) {
+        stockKeyMissing = true;
+        continue;
+      }
+      provisionEffects.push({
+        dependsOn: [
+          parent,
+          ...variantItems.flatMap(({ created }, variantPosition) => (variantPosition === position ? created : [])),
+        ],
+        effectKey: `inventory-provision-${position}`,
+        intent: {
+          _tag: 'CatalogProductDependentEffect',
+          parent,
+          request: { _tag: 'ProvisionSourceStockItem', itemKey: itemKey.value, source: enrollment.inventorySource },
+          ...present('variantParent', variantItems[position]?.created[0]),
+        },
+        operation: provisionStockItemOperation,
+      });
+    }
+  }
   const productItem = {
     effects: [
       {
@@ -594,6 +682,9 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       },
       ...productTexts,
       ...updateEffect,
+      ...categoryEffects,
+      ...readinessEffects,
+      ...provisionEffects,
     ],
     itemKey: productItemKey,
     source: {
@@ -603,7 +694,12 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       sourceRecordId: productRecord,
     },
     sourceOccurrenceId: uuidFromDigest(productOccurrence),
-    ...present('unsupportedBranches', unsupported.length === 0 ? undefined : hintBranches(unsupported)),
+    ...present(
+      'unsupportedBranches',
+      unsupported.length === 0 && !stockKeyMissing
+        ? undefined
+        : hintBranches([...unsupported, ...(stockKeyMissing ? ['StockProvisioningHint' as const] : [])]),
+    ),
   };
   return Option.some([
     productItem,
@@ -636,15 +732,36 @@ export interface SymmyProductPlanInput<Failure> {
  */
 export const buildSymmyProductPlan = Effect.fn('SymmyProductPlan.build')(function* buildSymmyProductPlan<Failure>(
   input: SymmyProductPlanInput<Failure>,
-): Effect.fn.Return<Option.Option<SymmyFixtureExecutionPlan>, Failure> {
+): Effect.fn.Return<Option.Option<SymmyFixtureExecutionPlan>, Failure | SymmyProductPlanLimitError> {
   const { digest, idempotencyKey, legalEntityId, priceGroups, receivedAt, route, rows, template, tenantId } = input;
+  if (rows.some(({ categories }) => categories?.some((ref) => ref.tenantId !== tenantId) === true)) {
+    return Option.none();
+  }
   const source = catalogSource(rows, template);
   const prices = priceContextOf(template, legalEntityId);
   const priced = rows.some(({ variants }) => variants.some((variant) => variant.prices.length > 0));
   if (Option.isNone(source) || (priced && Option.isNone(prices))) {
     return Option.none<SymmyFixtureExecutionPlan>();
   }
+  if (
+    template.inventorySource !== undefined &&
+    (template.inventorySource.policyRef.tenantId !== tenantId ||
+      template.inventoryBackendId !== template.inventorySource.issuer.backendId ||
+      Option.isNone(enrolledItem(template, 'PRODUCT', provisionStockItemOperation)))
+  ) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
+  if (
+    template.catalogReadiness !== undefined &&
+    (template.catalogReadiness.unitRef.tenantId !== tenantId ||
+      (rows.some(({ lifecycle }) => lifecycle === 'ACTIVE') &&
+        readinessOperations.some((operation) => Option.isNone(enrolledItem(template, 'PRODUCT', operation)))))
+  ) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
   const enrollment = {
+    catalogReadiness: template.catalogReadiness,
+    inventorySource: template.inventorySource,
     mappingRevision: template.sourceMappingVersion ?? route.mappingVersion,
     prices,
     routeScope: template.sourceRouteId ?? route.routeId,
@@ -665,7 +782,16 @@ export const buildSymmyProductPlan = Effect.fn('SymmyProductPlan.build')(functio
       }),
     { concurrency: 1 },
   );
-  return Option.flatMap(Option.all(products), (items) =>
-    Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema)({ items: items.flat() }),
-  );
+  const planned = Option.all(products);
+  if (Option.isNone(planned)) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
+  const items = planned.value.flat();
+  if (
+    items.length > SYMMY_PRODUCT_BATCH_MAX_ITEMS ||
+    items.some(({ effects }) => effects.length > SYMMY_PRODUCT_MAX_EFFECTS)
+  ) {
+    return yield* new SymmyProductPlanLimitError({ reason: SYMMY_PRODUCT_PLAN_LIMIT_REASON });
+  }
+  return Schema.decodeUnknownOption(SymmyFixtureExecutionPlanSchema)({ items });
 });

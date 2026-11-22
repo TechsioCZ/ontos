@@ -42,7 +42,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.change-local-override', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ChangeLocalOverrideResultSchema),
-      encode: Schema.encodeEffect(ChangeLocalOverrideResultSchema),
     },
   );
 

@@ -72,8 +72,12 @@ const cases = [
 
 describe('Set Action typed recovery reads', () => {
   for (const [slug, resultSchema, requestSchema, responseSchema, read] of cases) {
-    it(`${slug} retains its exact result schema and requires an invocation ID`, () => {
-      expect(responseSchema).toBe(resultSchema);
+    it(`${slug} retains its typed recovery contract and requires an invocation ID`, () => {
+      if (slug === 'set-product-unit-target-divisibility') {
+        expect(responseSchema.members[0].fields.result).toBe(resultSchema);
+      } else {
+        expect(responseSchema).toBe(resultSchema);
+      }
       expect(Schema.decodeUnknownSync(requestSchema)({ invocationId })).toEqual({ invocationId });
       expect(() => Schema.decodeUnknownSync(requestSchema)({})).toThrow();
       expect(read).toBeDefined();

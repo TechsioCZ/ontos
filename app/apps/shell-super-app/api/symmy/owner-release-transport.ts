@@ -16,6 +16,7 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       'reads/symmy-route-context',
     ]),
   ],
+  ['inventory', new Set(['reads/source-stock-position-resolution'])],
   ['catalog', new Set(['reads/catalog-source-products', 'reads/catalog-source-product-page'])],
   ['price-group-catalog', new Set(['reads/price-group-source-associations', 'reads/price-group-definition'])],
   [

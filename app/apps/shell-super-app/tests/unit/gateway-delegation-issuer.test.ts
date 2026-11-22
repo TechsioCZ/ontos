@@ -97,6 +97,11 @@ interface DelegationCase {
   readonly catalogUnavailable?: boolean;
   readonly contextFailure?: 'denied' | 'unavailable';
   readonly header?: Partial<Parameters<SignJWT['setProtectedHeader']>[0]>;
+  /**
+   * What the source module's reviewed manifest declares about the Core operation the Shell hosts for it: the
+   * requester relayed (`person`) or nothing. A registered caller on it is not a valid manifest at all.
+   */
+  readonly hostedRequirement?: 'person' | 'none';
   readonly ledgerFailure?: 'replay' | 'unavailable';
   readonly legalEntityScope?: 'subject' | 'tenant';
   readonly malformed?: boolean;
@@ -144,6 +149,7 @@ interface DelegationCase {
   readonly tamper?: boolean;
   readonly target?: Partial<typeof GatewayDelegatedContextRequestSchema.Encoded>;
   readonly verificationUnavailable?: boolean;
+  readonly withoutCoreMedia?: boolean;
   readonly wrongKey?: boolean;
 }
 
@@ -407,11 +413,46 @@ const attestedForCatalogBuild = <Credential extends object>(
   };
 };
 
+/** The modules the tenant has installed: the composition's, and `core.media` which hosts the Shell's operation. */
+const installedModulesOf = (
+  modules: readonly { readonly moduleId: string }[],
+  input: Pick<DelegationCase, 'withoutCoreMedia'>,
+) => (input.withoutCoreMedia === true ? modules : [...modules, { moduleId: 'core.media' }]);
+
+/** The Catalog contract, declaring a relayed requirement on the Core operation the Shell hosts when the case asks. */
+const catalogContractFor = (hosted: DelegationCase['hostedRequirement']) => {
+  const catalog = makeModuleContractFixture({ appId: 'catalog', moduleId: 'commerce.catalog' });
+  if (hosted !== 'person') {
+    return catalog;
+  }
+  return {
+    ...catalog,
+    manifest: {
+      ...catalog.manifest,
+      requirements: {
+        coreCapabilities: [],
+        intrinsic: [],
+        operations: [
+          {
+            callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+            condition: 'commerce.catalog.condition.core-media-current',
+            entrypointKey: 'commerce.catalog.api.catalog-document-current',
+            evidence: ['core.media.asset'],
+            key: 'commerce.catalog.requirement.core-media-current',
+            provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
+          },
+        ],
+        schemaVersion: '1',
+      },
+    },
+  };
+};
+
 /** Controlled authority collaborators are unit fixtures; native tests establish actual Current admission. */
 const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegationCase(input: DelegationCase = {}) {
   yield* TestClock.setTime(delegationUnitNow * 1000);
   const snapshot = yield* makeCompositionSnapshot([
-    makeModuleContractFixture({ appId: 'catalog', moduleId: 'commerce.catalog' }),
+    catalogContractFor(input.hostedRequirement),
     makeModuleContractFixture({ appId: 'party-registry', moduleId: 'party.registry' }),
   ]);
   const { revision } = snapshot.composition;
@@ -514,11 +555,28 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
       signingAttempts += 1;
       return 'a0000000-0000-4000-8000-000000000001';
     }),
-    loadAdmission: Effect.succeed({ audiences: new Map([['party-registry', 'party-registry-build']]), revision }),
+    loadAdmission: Effect.succeed({
+      audiences: new Map([
+        ['party-registry', 'party-registry-build'],
+        ['shell-super-app', 'shell-build'],
+      ]),
+      revision,
+    }),
     loadConfig: input.signerUnavailable === true ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration),
   }).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar.registrar)));
-  const moduleStates = moduleStatesFor(snapshot.composition.modules, input.moduleState);
-  const scopeResolver = yield* scopeResolverFor(input, resolvedScopes);
+  const moduleStates = moduleStatesFor(installedModulesOf(snapshot.composition.modules, input), input.moduleState);
+  const provider = ConfigProvider.fromUnknown({
+    ONTOS_GATEWAY_ISSUER: issuer,
+    ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
+      {
+        compositionRevision: input.bindingRevision ?? revision,
+        providerKeyId: sourceKeyId,
+        sourceAppId: 'catalog',
+        sourceBuildMarker: 'catalog-build',
+      },
+    ]),
+    ONTOS_GATEWAY_PUBLIC_JWKS: input.verificationUnavailable === true ? '{"keys":[]}' : publicJwks,
+  });
   const callerKeyId = input.providerKeyId ?? sourceKeyId;
   const callerKind = input.callerKind ?? 'service';
   const result = yield* Effect.exit(
@@ -742,6 +800,68 @@ it.effect('acts for asynchronous work: issues a fresh window for the recorded re
     expect(result.reservedSourceKeys).toEqual([subjectInvocationId]);
   }),
 );
+
+/*
+ * The Shell deployment as an audience (#1443 P2): a module may relay its requester to the Core operation the Shell
+ * hosts for it, and to nothing else of the Shell. The rule is the source release's own reviewed manifest.
+ */
+const shellTarget = { audience: 'shell-super-app' } as const;
+
+it.effect('relays the requester to the Shell deployment for a Core operation the source module declares', () =>
+  Effect.gen(function* shellAudience() {
+    const result = yield* delegationCase({ hostedRequirement: 'person', target: shellTarget });
+    const exit = result.result;
+    expect(Exit.isSuccess(exit)).toBe(true);
+    if (!Exit.isSuccess(exit)) {
+      return;
+    }
+    const verified = yield* Effect.promise(() =>
+      jwtVerify(exit.value.token, result.publicKey, {
+        audience: 'shell-super-app',
+        currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(delegationUnitNow * 1000)),
+        issuer,
+      }),
+    );
+    expect(verified.payload['ver']).toBe(3);
+    expect(verified.payload['principal']).toEqual(delegationUnitPrincipal);
+    // The requester's selected company travels with them (the hosted requirement relays the `subject`), which is what
+    // lets Core narrow the Current answer to that company's own assets (decision 7): the principal above names it.
+    expect(delegationUnitPrincipal.legalEntityId).toBeDefined();
+    expect(verified.payload['act']).toEqual({
+      appId: 'catalog',
+      buildMarker: 'catalog-build',
+      principalId: callerIdentity.principalId,
+    });
+    expect(verified.payload.sub).toBe(delegationUnitPrincipal.principalId);
+    // One exchange is reserved for the source assertion, and the window never exceeds the requester's.
+    expect(result.ledgerClaims).toBe(1);
+    expect(verified.payload.exp).toBe(delegationUnitNow + 280);
+    // The tenant module state of the hosting module is what was read, besides the calling module's.
+    expect(result.resolvedScopes).toHaveLength(1);
+  }),
+);
+
+it.effect('refuses the Shell deployment as an audience unless the source release declares the hosted operation', () =>
+  Effect.gen(function* shellAudienceRefused() {
+    for (const input of [
+      // Nothing declared: a module has no business at the Shell.
+      { hostedRequirement: 'none' },
+      // Asynchronous work is never relayed to the Shell host.
+      { hostedRequirement: 'person', originator: 'ok' },
+      // The tenant never installed the hosting module.
+      { hostedRequirement: 'person', withoutCoreMedia: true },
+    ] as const) {
+      assertDenied(yield* delegationCase({ ...input, target: shellTarget }), 'forbidden');
+    }
+    // The same declaration admits no other app that is not installed.
+    assertDenied(
+      yield* delegationCase({ hostedRequirement: 'person', target: { audience: 'not-installed' } }),
+      'forbidden',
+    );
+  }),
+);
+
+const namedCompany = '30000000-0000-4000-8000-000000000009';
 
 it.effect('names the company of work a workload started in the tenant context, resolved for the calling module', () =>
   Effect.gen(function* originatorNamesCompany() {

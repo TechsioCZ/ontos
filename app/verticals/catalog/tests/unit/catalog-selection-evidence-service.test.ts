@@ -273,35 +273,42 @@ describe('Catalog Selection evidence assembly service', () => {
     expect(result.validity).toBeUndefined();
   });
 
-  it('requires the Category basis for Pricing and names it when absent', () => {
-    const pricingBasis = [
-      fact('PRODUCT', productRef, 4),
-      fact('VARIANT', variantRef, 2),
+  it('requires Category for Pricing of typed and confirmed-untyped Products and names it when absent', () => {
+    const typeProofs = [
       fact('PRODUCT_TYPE', typeRef, 1),
+      decodeBasis({
+        provenance: 'CATALOG_OWNER_CONFIRMED_UNTYPED_DECISION',
+        role: 'PRODUCT_TYPE_UNTYPED_DECISION',
+        source: { resourceRef: productRef, revision: 1 },
+      }),
     ];
-    const missing = assembleCatalogSelectionEvidence({
-      current: observedFacts({ basis: pricingBasis, purpose: 'PRICING' }),
-      purpose: 'PRICING',
-      selection,
-    });
-    expect(missing.evidence).toMatchObject({
-      reason: expect.stringContaining('CATEGORY'),
-      status: 'INDETERMINATE',
-    });
-    expect(missing.missingRoles).toEqual(['CATEGORY']);
-    const complete = assembleCatalogSelectionEvidence({
-      current: observedFacts({ basis: [...pricingBasis, fact('CATEGORY', categoryRef, 8)], purpose: 'PRICING' }),
-      purpose: 'PRICING',
-      selection,
-    });
-    expect(complete.evidence).toMatchObject({ status: 'VALID' });
-    if (complete.evidence.status === 'VALID') {
-      expect(complete.evidence.basis.map(({ role }) => role)).toEqual([
-        'PRODUCT',
-        'VARIANT',
-        'PRODUCT_TYPE',
-        'CATEGORY',
-      ]);
+    for (const typeProof of typeProofs) {
+      const pricingBasis = [fact('PRODUCT', productRef, 4), fact('VARIANT', variantRef, 2), typeProof];
+      const missing = assembleCatalogSelectionEvidence({
+        current: observedFacts({ basis: pricingBasis, purpose: 'PRICING' }),
+        purpose: 'PRICING',
+        selection,
+      });
+      expect(missing.evidence).toMatchObject({
+        reason: expect.stringContaining('CATEGORY'),
+        status: 'INDETERMINATE',
+      });
+      expect(missing.missingRoles).toEqual(['CATEGORY']);
+      expect(missing.validity).toBeUndefined();
+      const complete = assembleCatalogSelectionEvidence({
+        current: observedFacts({ basis: [...pricingBasis, fact('CATEGORY', categoryRef, 8)], purpose: 'PRICING' }),
+        purpose: 'PRICING',
+        selection,
+      });
+      expect(complete.evidence).toMatchObject({ status: 'VALID' });
+      if (complete.evidence.status === 'VALID') {
+        expect(complete.evidence.basis.map(({ role }) => role)).toEqual([
+          'PRODUCT',
+          'VARIANT',
+          typeProof.role,
+          'CATEGORY',
+        ]);
+      }
     }
   });
 

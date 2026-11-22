@@ -163,7 +163,7 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     sourceWorkloadKey: commerceCustomerContextSourceRead,
     workloadKey: privacyCoreOrganizationProfileIcoCheck,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — commerce.customer-context.requirement.organization-profile-ico-read-privacy, read when Symmy recovers a lost company ICO change
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.organization-profile-ico-read-privacy, read when Symmy recovers a lost company ICO change
   {
     allowRecoverySource: true,
     audience: 'privacy',
@@ -198,7 +198,7 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     sourceWorkloadKey: commerceCustomerContextOrganizationIcoFactsRead,
     workloadKey: partyRegistrySourceRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — commerce.customer-context.requirement.create-counterparty-profile-source-role
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.create-counterparty-profile-source-role
   {
     audience: partyRegistry,
     declarationKey: partyRegistrySourceCounterpartyAdmissionRead,
@@ -209,7 +209,7 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     sourceWorkloadKey: commerceCustomerContextSourceWrite,
     workloadKey: partyRegistrySourceRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — commerce.customer-context.requirement.customer-profile-source-counterparty
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.customer-profile-source-counterparty
   {
     audience: partyRegistry,
     declarationKey: partyRegistrySourceCounterpartyAdmissionRead,
@@ -220,7 +220,7 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     sourceWorkloadKey: commerceCustomerContextSourceRead,
     workloadKey: partyRegistrySourceRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — commerce.customer-context.requirement.customer-profile-source-counterparty, read when Symmy recovers a lost profile write
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach commerce.customer-context.requirement.customer-profile-source-counterparty, read when Symmy recovers a lost profile write
   {
     allowRecoverySource: true,
     audience: partyRegistry,

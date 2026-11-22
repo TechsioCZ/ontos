@@ -14,6 +14,8 @@ import { setProductLocalizedFactsRecoveryRead } from '../../src/api/set-product-
 import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-localized-facts-recovery.read.ts';
 import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
+import { addProductCategoryAssignmentRecoveryRead } from '../../src/api/add-product-category-assignment-recovery.read.ts';
+import { addProductCategoryAssignmentAction } from '../../src/actions/add-product-category-assignment.action.ts';
 
 /**
  * The workload carrier the manifest publishes for an operation that admits workloads: its access declaration and
@@ -37,6 +39,16 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('publishes the native owner operations required by Product integration and Assortment', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     for (const [apiKey, operationKey, registration] of [
+      [
+        'add-product-category-assignment-action',
+        'addProductCategoryAssignmentAction.execute',
+        addProductCategoryAssignmentAction,
+      ],
+      [
+        'add-product-category-assignment-recovery',
+        'addProductCategoryAssignmentRecovery.execute',
+        addProductCategoryAssignmentRecoveryRead,
+      ],
       ['create-product-recovery', 'createProductRecovery.execute', createProductRecoveryRead],
       ['create-variant-recovery', 'createVariantRecovery.execute', createVariantRecoveryRead],
       ['update-product-recovery', 'updateProductRecovery.execute', updateProductRecoveryRead],
@@ -74,10 +86,10 @@ describe('Catalog owner-authored dependency contracts', () => {
     expect(catalogManifest.requirements?.intrinsic).toEqual([]);
     expect(catalogManifest.requirements?.coreCapabilities).toContainEqual(ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY);
     const operations = catalogManifest.requirements?.operations ?? [];
-    expect(operations).toHaveLength(4);
+    expect(operations).toHaveLength(5);
     // Core's own Legal Entity detail is satisfied by Core itself, never by the composition: the one Core
     // requirement is the call the current-relation read makes for a managed Legal Entity target.
-    const coreRequirements = operations.filter(({ provider }) => provider.moduleId.startsWith('core.'));
+    const coreRequirements = operations.filter(({ provider }) => provider.moduleId === 'core.identity');
     expect(coreRequirements).toEqual([
       {
         condition: 'commerce.catalog.condition.retained-manufacturer-target-legal-entity',
@@ -94,7 +106,20 @@ describe('Catalog owner-authored dependency contracts', () => {
         },
       },
     ]);
-    const requirements = operations.filter(({ provider }) => !provider.moduleId.startsWith('core.'));
+    // Core Media's Current V1 is the other Core requirement: served by the Shell host for the relayed requester, so it
+    // declares the requester (person) as its only caller and Catalog needs no provider credential or Core table. The
+    // requester is relayed as the `subject`, with the company they selected, so Core narrows Current to that company.
+    expect(operations.filter(({ provider }) => provider.moduleId === 'core.media')).toEqual([
+      {
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+        condition: 'commerce.catalog.condition.core-media-current',
+        entrypointKey: 'commerce.catalog.api.catalog-document-current',
+        evidence: ['commerce.catalog.evidence.core-media.asset-current'],
+        key: 'commerce.catalog.requirement.core-media-current',
+        provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
+      },
+    ]);
+    const requirements = operations.filter(({ provider }) => provider.moduleId === 'party.registry');
     expect(requirements).toHaveLength(3);
     expect(
       requirements.every(
@@ -113,7 +138,18 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(25);
+    expect(safe.operationContracts).toHaveLength(32);
+    expect(safe.operationContracts).toEqual(
+      expect.arrayContaining(
+        [
+          'govern-variant-axes-recovery',
+          'confirm-variant-combination-recovery',
+          'set-product-localized-facts-recovery',
+          'set-product-unit-target-divisibility-recovery',
+          'decide-product-type-unnecessary-recovery',
+        ].map((apiKey) => expect.objectContaining({ apiKey: `commerce.catalog.${apiKey}` })),
+      ),
+    );
     for (const contract of safe.operationContracts) {
       expect(contract.entrypoint.moduleKey).toBe('commerce.catalog');
       expect(['1', '2']).toContain(contract.schemaVersion);

@@ -959,15 +959,46 @@ jobs:
             echo "::error title=No changed-path list::The changed-files row has no changed paths, so it would prove nothing."
             exit 1
           fi
-          paths=()
-          while IFS= read -r -d '' path; do
-            paths+=("$path")
-          done <"$changed"
-          # A path the diff deleted has nothing to check.
-          git ls-files -z -- "${paths[@]}" >"$RUNNER_TEMP/changed-files"
-          echo "Linting $(tr -cd '\0' <"$RUNNER_TEMP/changed-files" | wc -c) changed tracked files."
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
-            <"$RUNNER_TEMP/changed-files"
+          case "$LINT_SWEEP" in
+            all)
+              echo 'ci-plan selected a sweep of every tracked file.'
+              git ls-files -z >"$files"
+              # Git's sorted, NUL-delimited list is identical on every row. Adjacent boundaries partition
+              # it exactly, including odd counts and file names containing whitespace or glob characters.
+              tracked=()
+              while IFS= read -r -d '' file; do
+                tracked+=("$file")
+              done <"$files"
+              start=$(( ${#tracked[@]} * (LINT_ROW - 1) / LINT_ROWS ))
+              end=$(( ${#tracked[@]} * LINT_ROW / LINT_ROWS ))
+              : >"$files"
+              if (( end > start )); then
+                printf '%s\0' "${tracked[@]:start:end-start}" >"$files"
+              fi
+              ;;
+            changed)
+              if [[ ! -s "$changed" ]]; then
+                echo "::error title=Empty changed-path list::ci-plan selected a changed-file lint with an empty list, so it would prove nothing."
+                exit 1
+              fi
+              # A path the diff deleted, or that this commit does not track, has nothing to check.
+              xargs -0 git ls-files -z -- <"$changed" >"$files"
+              ;;
+            *)
+              echo "::error title=Unknown lint sweep::ci-plan selected '$LINT_SWEEP'."
+              exit 1
+              ;;
+          esac
+          # A sweep runs through the hook too: lefthook cuts the list into command lines of contiguous files, so no
+          # linter process holds every type program at once. One `pnpm lint` over every file did, beside the
+          # workspace typecheck, and lost its 16 GB runner.
+          # CI checks the worktree against HEAD below; parallel hook jobs must not share writes to Git's index.
+          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed' \
+            <"$files"
+          # Effect's tsgolint emits no Effect language-service diagnostics.
+          if [[ "$LINT_ROW" == 1 ]]; then
+            mise exec --cd app -- pnpm lint:effect-diagnostics
+          fi
           git diff --exit-code HEAD
 
       # Once per run, whatever the hook found.

@@ -1714,6 +1714,728 @@ it('names every package integration suite and keeps native proofs one per runner
   }
 });
 
+it('formats and lints the run’s changed files through the pre-commit hook, and never silently nothing', () => {
+  const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
+  expect(lint.strategy).toEqual({ 'fail-fast': true, matrix: { include: [{ row: 1, rows: 1 }] } });
+  const download = lint.steps.find(({ name }) => name === 'Download the exact changed-path list');
+  expect(download?.with).toEqual({
+    name: CHANGED_PATHS_ARTIFACT,
+    path: `${RUNNER_TEMP_EXPRESSION}/ci-plan`,
+  });
+  const step = lint.steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
+  // ci-plan decides the sweep from the exact changed paths, so its successors can plan around it.
+  expect(step?.env).toEqual({
+    LINT_ROW: expression('matrix.row'),
+    LINT_ROWS: expression('matrix.rows'),
+    LINT_SWEEP: expression('needs.ci-plan.outputs.lintSweep'),
+  });
+  const run = step?.run ?? 'exit 1';
+  // The hook sees the selected files, and a file it fixes fails the gate.
+  expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
+  expect(run).toContain('--no-stage-fixed');
+  // A sweep goes through the hook as well: one `pnpm lint` over every file held every type program at once
+  // and lost its runner.
+  expect(run).not.toMatch(/pnpm lint$/mu);
+  // Effect's tsgolint emits no Effect language-service diagnostics, so the step runs them itself.
+  expect(run).toContain('mise exec --cd app -- pnpm lint:effect-diagnostics');
+  expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
+  const select = run.slice(0, run.indexOf('mise exec'));
+  const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-selection-'));
+  const repository = path.join(directory, 'repository');
+  const nativeGit = '/usr/bin/git';
+  /** Runs the selection with this changed-path list and returns the files the hook would receive. */
+  const selectFiles = (changedPaths?: readonly string[], environment: Readonly<Record<string, string>> = {}) => {
+    const planDirectory = path.join(directory, 'ci-plan');
+    mkdirSync(planDirectory, { recursive: true });
+    const list = path.join(planDirectory, CHANGED_PATHS_ARTIFACT);
+    rmSync(list, { force: true });
+    rmSync(path.join(directory, 'hook-files'), { force: true });
+    if (changedPaths !== undefined) {
+      writeFileSync(list, changedPaths.map((changed) => `${changed}\0`).join(''));
+    }
+    execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', select], {
+      cwd: repository,
+      env: {
+        LINT_ROW: '1',
+        LINT_ROWS: '1',
+        LINT_SWEEP: 'changed',
+        PATH: STEP_PATH,
+        RUNNER_TEMP: directory,
+        ...environment,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return readFileSync(path.join(directory, 'hook-files'), 'utf-8').split('\0').filter(Boolean);
+  };
+  try {
+    mkdirSync(repository);
+    execFileSync(nativeGit, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
+    const sourcePaths = [
+      '.github/workflows/ultramodern-workspace-gates.yml',
+      'README.md',
+      'app/package.json',
+      CHANGED_SOURCE_PATH,
+      LEFTHOOK_CONFIG,
+    ];
+    for (const file of sourcePaths) {
+      const destination = path.join(repository, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, readFileSync(path.join(sourceRepository, file)));
+    }
+    // A name with a space, a newline or a glob character is a file name, never a pathspec pattern.
+    const specialPaths = [
+      'app/source/with spaces.ts',
+      'app/source/with\nnewline.ts',
+      'app/source/žluťoučký.ts',
+      'app/source/star*.ts',
+    ];
+    const fixturePaths = [...Array.from({ length: 3 }, (_, index) => `app/source/file-${index}.ts`), ...specialPaths];
+    for (const file of fixturePaths) {
+      const destination = path.join(repository, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, 'export {};\n');
+    }
+    execFileSync(nativeGit, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
+    const untrackedPath = 'app/source/untracked-negative.ts';
+    writeFileSync(path.join(repository, untrackedPath), 'export {};\n');
+    const tracked = execFileSync(nativeGit, ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
+      .split('\0')
+      .filter(Boolean);
+    expect(tracked).toHaveLength(sourcePaths.length + fixturePaths.length);
+    expect(tracked).not.toContain(untrackedPath);
+    // Exactly the changed files that this commit still tracks: a deleted or untracked path has nothing
+    // to check, and nothing else rides along.
+    expect(sorted(selectFiles([...specialPaths, 'app/removed.ts', untrackedPath]))).toEqual(sorted(specialPaths));
+    // A sweep of every tracked file ignores the list; ci-plan selects it for tool configuration changes.
+    expect(selectFiles([CHANGED_SOURCE_PATH], { LINT_SWEEP: 'all' })).toEqual(tracked);
+    // Execute the workflow's real selection on even and odd lists, including special file names.
+    for (const extra of [false, true]) {
+      if (extra) {
+        writeFileSync(path.join(repository, 'odd.txt'), 'odd\n');
+        execFileSync(nativeGit, ['add', 'odd.txt'], { cwd: repository, env: { PATH: STEP_PATH } });
+      }
+      const expected = execFileSync(nativeGit, ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
+        .split('\0')
+        .filter(Boolean);
+      expect(expected.length % 2).toBe(extra ? 1 : 0);
+      const slices = fullPlanMatrices('all').lint.map(({ row, rows }) =>
+        selectFiles([], { LINT_ROW: String(row), LINT_ROWS: String(rows), LINT_SWEEP: 'all' }),
+      );
+      expect(slices.map((slice) => slice.length)).toEqual([
+        Math.floor(expected.length / 2),
+        Math.ceil(expected.length / 2),
+      ]);
+      expect(slices.flat()).toEqual(expected);
+      expect(new Set(slices.flat()).size).toBe(expected.length);
+    }
+    // An empty list where the planner selected the changed files, a missing list and an unknown sweep fail.
+    expect(() => selectFiles([])).toThrow();
+    expect(() => selectFiles()).toThrow();
+    expect(() => selectFiles([CHANGED_SOURCE_PATH], { LINT_SWEEP: 'none' })).toThrow();
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+it('runs the compiler, generators and repository tooling on lint row 1 only, with unconditional waits', () => {
+  const { steps } = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
+  const backgrounds = steps.filter(({ background }) => background === true);
+  const waits = steps.filter(({ wait }) => wait !== undefined);
+  expect(backgrounds.map(({ name }) => name)).toEqual([
+    'Typecheck the workspace',
+    'Check OntOS APIs and generator behavior',
+    'Check lint rules and shared contract types',
+  ]);
+  expect(waits.map(({ wait }) => wait)).toEqual(['lint-rule-checks', 'generator-checks', 'typecheck']);
+  for (const step of backgrounds) {
+    expect(step.if, step.name).toBe('matrix.row == 1');
+  }
+  // GitHub rejects the whole workflow file when a wait step carries a condition, so no run starts at all.
+  for (const step of waits) {
+    expect(step.if, step.name).toBeUndefined();
+  }
+  const lint = steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
+  expect(lint?.if).toBeUndefined();
+  expect(lint?.run).toContain(
+    'if [[ "$LINT_ROW" == 1 ]]; then\n  mise exec --cd app -- pnpm lint:effect-diagnostics\nfi',
+  );
+  expect(
+    Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(readGateWorkflow('all')).jobs[FORMAT_AND_LINT_JOB].strategy,
+  ).toEqual({ 'fail-fast': true, matrix: { include: fullPlanMatrices('all').lint } });
+  // A failed row cancels its sibling, so the existing stop-after-lint job observes a failed matrix
+  // promptly. Workspace gates still needs that same aggregate format-and-lint verdict.
+  expect(readCancelWorkflow().jobs['stop-red-queue-run-after-lint']?.needs).toEqual([FORMAT_AND_LINT_JOB]);
+  expect(readTargetWorkflow().jobs['workspace-gates'].needs).toContain(FORMAT_AND_LINT_JOB);
+});
+
+const RUNTIME_IDENTITY_URLS = Object.fromEntries(
+  DATABASE_IDENTITIES.filter(({ urlKey }) => urlKey !== 'DATABASE_URL').map(({ role, urlKey }) => [urlKey, role]),
+);
+const AUDIT_STEP = 'Audit runtime database identities against the checked-in grant manifest';
+const IdentityGateJobSchema = Schema.Struct({
+  // Unquoted placeholder IDs parse as numbers.
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+  steps: Schema.Array(WorkflowStepSchema),
+});
+const IdentityGateJobsSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    [SERVICE_INTEGRATION_JOB]: IdentityGateJobSchema,
+  }),
+});
+
+it('gives every CI database tool a separate login per runtime identity and audits their grants', () => {
+  const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
+  const integration = jobs[SERVICE_INTEGRATION_JOB];
+  for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
+    expect(integration.env?.[key]).toBe(`postgresql://${role}:${role}@localhost:5433/ontos_ci`);
+  }
+  // The grant audit runs once per run, on the bootstrap row only, directly after the migrations that
+  // provision the identities it audits. It reads no matrix input, so no other row repeats it.
+  const { steps } = integration;
+  const migrations = steps.findIndex(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
+  const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
+  expect(migrations).toBeGreaterThanOrEqual(0);
+  expect(audit).toBe(migrations + 1);
+  expect(steps[audit]?.if).toBe(BOOTSTRAP_CONDITION);
+  expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
+  expect(steps.filter(({ run }) => (run ?? '').includes('database-trust:audit'))).toHaveLength(1);
+});
+
+it('proves the deployment bootstrap once, on a row beside the suites', () => {
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(readGateWorkflow());
+  const { steps } = jobs[SERVICE_INTEGRATION_JOB];
+  const names = steps.map(({ name }) => name);
+  // Bootstrap ordering is proved end to end: the pre-seeded runtime role goes first, then the real
+  // migrator artifact against the scratch cluster, then the migrations, the grant audit and the host.
+  const order = [
+    START_INTEGRATION_SERVICES_STEP,
+    'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
+    BOOTSTRAP_MIGRATOR_STEP,
+    'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
+    AUDIT_STEP,
+    OUTBOX_WORKER_HOST_PROOF_STEP,
+  ];
+  expect(names.filter((name) => order.includes(name))).toEqual(order);
+  // Each of the four proofs runs on the bootstrap row alone. Without that guard every row would pay them
+  // again, which is the 72.8 machine-minutes per run this arrangement exists to remove; and the
+  // runtime-role drop in particular would leave an ordinary row with no login for its own suites.
+  const bootstrapOnly = [
+    'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
+    BOOTSTRAP_MIGRATOR_STEP,
+    AUDIT_STEP,
+    OUTBOX_WORKER_HOST_PROOF_STEP,
+  ];
+  for (const name of bootstrapOnly) {
+    const step = steps.find((candidate) => candidate.name === name);
+    expect(step?.if, name).toBe(BOOTSTRAP_CONDITION);
+  }
+  // Bootstrap's assembled migrator already applies and verifies every owner. Other rows
+  // prepare their own database once. Scoped-owner tests separately prove replay convergence.
+  const migrations = steps.find(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
+  expect(migrations?.if).toBe(NON_BOOTSTRAP_CONDITION);
+  expect(steps.filter(({ run }) => (run ?? '').includes('pnpm db:migrate'))).toHaveLength(1);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP)?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps.find(({ name }) => name === BACKEND_ARTIFACT_UNPACK_STEP)?.if).toBeUndefined();
+});
+
+it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>
+  Effect.gen(function* proveNodeDatabaseIdentities() {
+    const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(readGateWorkflow());
+    // The proof row migrates the compose cluster it starts itself, with the same identity URLs as the
+    // suites, instead of the retired service container of the build job.
+    const integration = jobs[SERVICE_INTEGRATION_JOB];
+    const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(integration.env);
+    const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
+    expect(admin.port).toBe(environment.POSTGRES_PORT);
+    expect(admin.username).toBe(environment.POSTGRES_USER);
+    expect(admin.password).toBe(environment.POSTGRES_PASSWORD);
+    expect(admin.pathname).toBe(`/${environment.POSTGRES_DB ?? ''}`);
+    const provision = integration.steps.findIndex(({ run }) => (run ?? '').includes('mise exec -- pnpm db:migrate'));
+    const proof = integration.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
+    expect(provision).toBeGreaterThanOrEqual(0);
+    expect(provision).toBeLessThan(proof);
+    expect(integration.steps[provision]?.if).toBe(NON_BOOTSTRAP_CONDITION);
+    const bootstrap = integration.steps.findIndex(({ name }) => name === BOOTSTRAP_MIGRATOR_STEP);
+    expect(integration.steps[bootstrap]?.if).toBe(BOOTSTRAP_CONDITION);
+    expect(bootstrap).toBeGreaterThanOrEqual(0);
+    expect(bootstrap).toBeLessThan(proof);
+    expect(integration.steps[proof]?.if).toBe(NODE_PROOF_CONDITION);
+    for (const identity of DATABASE_IDENTITIES) {
+      const connection = yield* loadDatabaseConfig({ environment, envPath: '/dev/null', identity });
+      expect(connection.user).toBe(identity.role);
+      expect(connection.database).toBe(environment.POSTGRES_DB);
+      expect(connection.host).toBe(admin.hostname);
+      expect(connection.port).toBe(Number(admin.port));
+    }
+  }),
+);
+
+it('restores same-run Node artifacts for every backend integration fixture and excludes browser rows', () => {
+  const source: unknown = readGateWorkflow();
+  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(source);
+  const integrationJobs = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs;
+  const integration = integrationJobs[OWNER_INTEGRATION_JOB];
+  expect(jobs[OWNER_INTEGRATION_JOB]?.needs).toContain(NODE_ARTIFACT_BUILD_JOB);
+  const ownerRows = integrationRows();
+  const roots = ownerRows.filter((shard) => rootRow(shard));
+  // Shard counts are reshard-dependent and their completeness is proved where the shard ids are checked
+  // as a derived 1..n set; here the contract is only that these fixtures exist and are backend rows.
+  expect(roots.length).toBeGreaterThan(0);
+  expect(roots.every(({ suite }) => suite === 'integration')).toBe(true);
+  const customerContext = ownerRows.filter((shard) => shardFilters(shard).includes(CUSTOMER_CONTEXT_SELECTOR));
+  expect(customerContext.length).toBeGreaterThan(0);
+  expect(customerContext.every(({ suite }) => suite === 'integration')).toBe(true);
+  expect(integrationJobs[SERVICE_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual([
+    'database',
+  ]);
+  expect(integrationJobs[BROWSER_INTEGRATION_JOB].strategy.matrix.include.map(({ suite }) => suite)).toEqual([
+    'browser',
+  ]);
+  expect(ownerRows).toEqual(integration.strategy.matrix.include);
+  const { steps } = integration;
+  const download = steps.findIndex(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  const unpack = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
+  expect(steps.some(({ run }) => run?.includes('zerops:materialize --app commerce-customer-context') === true)).toBe(
+    false,
+  );
+  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  expect(download).toBeGreaterThan(-1);
+  expect(download < unpack && unpack < tests).toBe(true);
+  expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
+  // gh explicitly binds the download to this repository and workflow run.
+  expect(steps[download]?.env).toEqual(BACKEND_ARTIFACT_ENV);
+  expect(steps[unpack]?.wait).toBe(NATIVE_ARTIFACTS_STEP_ID);
+  expect(steps[download]?.if).toBe(BACKEND_ARTIFACT_CONDITION);
+  expect(steps[unpack]?.if).toBeUndefined();
+  // Every owner row restores the same artifacts, which exist when it starts.
+  const preproposal = ownerRows.filter((shard) =>
+    (shard.tasks ?? []).some((task) => task.startsWith('whole:preproposal-')),
+  );
+  expect(preproposal).toHaveLength(2);
+  expect(preproposal.every(({ suite }) => suite === 'integration')).toBe(true);
+});
+
+it('refuses root native integration when the same-run build archives are missing', () => {
+  const integration = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    SERVICE_INTEGRATION_JOB
+  ];
+  const unpack = integration.steps.find(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-artifact-step-'));
+  try {
+    const scripts = path.join(directory, 'scripts');
+    mkdirSync(scripts);
+    // Execute the actual workflow command and unpack helper in an isolated workspace with no archives.
+    writeFileSync(
+      path.join(scripts, 'unpack-unit-build-outputs.sh'),
+      readFileSync(new URL('../unpack-unit-build-outputs.sh', import.meta.url), 'utf-8'),
+    );
+    expect(() =>
+      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', unpack?.run?.split('\n').slice(1).join('\n') ?? 'exit 0'], {
+        cwd: directory,
+        env: { PATH: STEP_PATH, RUNNER_TEMP: directory, SUITE: 'integration' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    ).toThrow(/No shard build outputs/u);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+// The organisation's free plan runs 20 hosted jobs for every repository together, and the gates may hold at
+// most 18 of them. The pull request's Quality Audit holds one while the first wave runs, so every job that
+// starts with the run counts against 17. Six build shards leave room for more consumers than producers;
+// independent checks still hand their slots to at most one successor each.
+it('starts 12 gate jobs and keeps the consumer wave at 16 gate jobs', () => {
+  const staticRows = readGateCommandJobs()[STATIC_CONTRACTS_JOB].strategy.matrix.row.length;
+  for (const lintSweep of ['changed', 'all'] as const) {
+    const plan = fullPlanMatrices(lintSweep);
+    const lint = plan.lint.length;
+    const sourceContracts = 1;
+    const producers = plan.integrationBuild.length + plan.integration.length;
+    const first = producers + plan.integrationBrowser.length + plan.source.length + sourceContracts + staticRows + lint;
+    expect(plan.integrationBuild, lintSweep).toHaveLength(6);
+    expect(producers, lintSweep).toBe(7);
+    expect(first, lintSweep).toBe(12);
+    // The owner rows and bootstrap also use four of the five slots left unused by the first wave.
+    const consumers = plan.integrationOwners.length + plan.integrationTopology.length;
+    expect(plan.integrationOwners, lintSweep).toHaveLength(10);
+    expect(consumers, lintSweep).toBe(11);
+    const peak = consumers + first - producers;
+    expect(peak, lintSweep).toBe(16);
+    // A ceiling is intentional here: the organisation reserves two slots outside the gates and audit.
+    expect(peak + 1, lintSweep).toBeLessThanOrEqual(18);
+    // Count executed jobs, including the planner and final gate; a sweep adds one lint job.
+    expect(
+      first +
+        consumers +
+        plan.integrationBrowserAfterStatic.length +
+        plan.unit.length +
+        plan.unitAfterLint.length +
+        plan.unitAfterStatic.length +
+        plan.unitAfterTooling.length +
+        2,
+      lintSweep,
+    ).toBe(lintSweep === 'changed' ? 29 : 30);
+    expect(plan.unit.length, lintSweep).toBeLessThanOrEqual(sourceContracts);
+    expect(plan.unitAfterLint.length, lintSweep).toBeLessThanOrEqual(lint);
+    expect(plan.unitAfterTooling.length, lintSweep).toBeLessThanOrEqual(plan.source.length);
+    expect(plan.unitAfterStatic.length + plan.integrationBrowserAfterStatic.length, lintSweep).toBeLessThanOrEqual(
+      staticRows,
+    );
+  }
+  expect(fullPlanMatrices('all').unitAfterLint).toHaveLength(2);
+  const deferredBrowser = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow('all')).jobs[DEFERRED_BROWSER_JOB];
+  expect(deferredBrowser?.needs).toEqual([CI_PLAN_JOB, STATIC_CONTRACTS_JOB]);
+  expect(deferredBrowser?.if).toContain("needs.static-contracts.result == 'success'");
+  expect(deferredBrowser?.if).toContain("needs.ci-plan.outputs.integrationBrowserAfterStatic != '[]'");
+});
+
+it('starts the producers with the run and every consumer in the slot its producers or predecessor free', () => {
+  const all = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow()).jobs;
+  for (const job of [
+    BROWSER_INTEGRATION_JOB,
+    FORMAT_AND_LINT_JOB,
+    NODE_ARTIFACT_BUILD_JOB,
+    SERVICE_INTEGRATION_JOB,
+    SOURCE_CONTRACTS_JOB,
+    STATIC_CONTRACTS_JOB,
+    WORKSPACE_GATE_JOB,
+  ]) {
+    expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB]);
+  }
+  // The bootstrap and the owner rows always read what they need, so each of their producers must have succeeded.
+  expect(all[TOPOLOGY_PROOF_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB]);
+  expect(all[OWNER_INTEGRATION_JOB]?.needs).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, SERVICE_INTEGRATION_JOB]);
+  for (const job of [TOPOLOGY_PROOF_JOB, OWNER_INTEGRATION_JOB]) {
+    for (const producer of all[job]?.needs ?? []) {
+      expect(all[job]?.if, `${job} needs ${producer}`).toContain(`needs.${producer}.result == 'success'`);
+    }
+  }
+  for (const [job, predecessor, output] of [
+    [WORKSPACE_UNIT_JOB, SOURCE_CONTRACTS_JOB, undefined],
+    [UNIT_AFTER_LINT_JOB, FORMAT_AND_LINT_JOB, 'unitAfterLint'],
+    [UNIT_AFTER_STATIC_JOB, STATIC_CONTRACTS_JOB, 'unitAfterStatic'],
+    [UNIT_AFTER_TOOLING_JOB, WORKSPACE_GATE_JOB, 'unitAfterTooling'],
+  ] as const) {
+    expect(all[job]?.needs, job).toEqual([CI_PLAN_JOB, NODE_ARTIFACT_BUILD_JOB, predecessor]);
+    // A failed or cancelled build shard never lets a unit row start on a partial set of Node artifacts.
+    const planned = output === undefined ? '' : ` && needs.ci-plan.outputs.${output} != '[]'`;
+    expect(all[job]?.if, job).toBe(
+      expression(
+        `!cancelled() && needs.ci-plan.result == 'success' && ${neededResult(NODE_ARTIFACT_BUILD_JOB)} && ${neededResult(predecessor)} && fromJSON(needs.ci-plan.outputs.expected)['${WORKSPACE_UNIT_JOB}'] == 'success'${planned}`,
+      ),
+    );
+  }
+  for (const [job, output] of [
+    [OWNER_INTEGRATION_JOB, 'integrationOwners'],
+    [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
+    [DEFERRED_BROWSER_JOB, 'integrationBrowserAfterStatic'],
+  ] as const) {
+    expect(all[job]?.if).toContain(`needs.ci-plan.outputs.${output} != '[]'`);
+  }
+  // The source contracts belong to the workspace-gate check and run whenever it does.
+  expect(all[SOURCE_CONTRACTS_JOB]?.if).toBe(all[WORKSPACE_GATE_JOB]?.if);
+});
+
+it('starts every unit row only once the build shards uploaded and gives it no Actions API access', () => {
+  const jobs = readGateCommandJobs();
+  const gated = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          needs: Schema.optional(Schema.Array(Schema.String)),
+          permissions: Schema.optional(Schema.Unknown),
+        }),
+      ),
+    }),
+  )(readGateWorkflow()).jobs;
+  for (const job of UNIT_JOBS) {
+    const { steps } = jobs[job];
+    const download = steps.findIndex(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
+    expect(download, job).toBeGreaterThan(-1);
+    expect(steps[download]?.if, job).toBe(UNIT_ARTIFACTS_CONDITION);
+    expect(gated[job]?.needs, job).toContain(NODE_ARTIFACT_BUILD_JOB);
+    // A same-run download needs no API access; only a job that lists or polls the run would.
+    expect(gated[job]?.permissions, job).toBeUndefined();
+  }
+});
+
+/** A step as the run-wait rule reads it. */
+const RuleStepSchema = Schema.Struct({
+  if: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+  with: Schema.optional(
+    Schema.Struct({
+      name: Schema.optional(Schema.String),
+      pattern: Schema.optional(Schema.String),
+      'run-id': Schema.optional(Schema.String),
+    }),
+  ),
+});
+const RuleJobSchema = Schema.Struct({
+  needs: Schema.optional(Schema.Array(Schema.String)),
+  steps: Schema.optional(Schema.Array(RuleStepSchema)),
+  // A planner matrix is an expression until readGateWorkflow expands it; only expanded rows name a suite.
+  strategy: Schema.optional(
+    Schema.Struct({ matrix: Schema.optional(Schema.Struct({ include: Schema.optional(Schema.Unknown) })) }),
+  ),
+});
+const RuleWorkflowSchema = Schema.Struct({ jobs: Schema.Record(Schema.String, RuleJobSchema) });
+type RuleWorkflow = typeof RuleWorkflowSchema.Type;
+type RuleStep = typeof RuleStepSchema.Type;
+const isSuiteRows = Schema.is(Schema.Array(Schema.Struct({ suite: Schema.optional(Schema.String) })));
+/** A step that waits for jobs of a run: no job of the workflow may hold a runner for that. */
+const RUN_WAITS = [/wait-for-[\w-]+\.sh/u, /gh run (?:watch|view)\b/u];
+/**
+ * A step that reads the jobs or artifacts of a run, or the repository's artifacts: what a poll for this run's
+ * output reads. A run id held in a variable cannot be told apart from this run's, so any run counts.
+ */
+const RUN_READS = [/actions\/(?:artifacts\b|runs\/[^/\s"']+\/(?:artifacts|jobs|attempts))/u];
+/** This run's id as a step script or an action input names it. */
+const SAME_RUN_ID = /^["']?(?:\$\{?GITHUB_RUN_ID\}?|\$\{\{\s*github\.run_id\s*\}\})["']?$/u;
+/** A `gh run download`; its run id may come before or after the options. */
+const GH_RUN_DOWNLOAD = /gh run download(?<options>[^\n]*)/gu;
+const DOWNLOAD_SELECTOR = /(?:--name|--pattern|-n|-p)[\s=]+["']?(?<selector>[^"'\s]+)/gu;
+const SUITE_CLAUSE = /^matrix\.suite (?<operator>==|!=) '(?<suite>[a-z]+)'$/u;
+
+/** An artifact name split at its wildcards and expressions; a name without any is exact. */
+const artifactName = (name: string) => {
+  const parts = name.split(/\$\{\{.*?\}\}|\*/u);
+  return { exact: parts.length === 1, prefix: parts[0] ?? '', suffix: parts.at(-1) ?? '' };
+};
+/** Whether an uploaded artifact name can be a name that a download selector reads. */
+const artifactMayMatch = (uploaded: string, selector: string) => {
+  const upload = artifactName(uploaded);
+  const download = artifactName(selector);
+  if (upload.exact && download.exact) {
+    return uploaded === selector;
+  }
+  return (
+    (upload.prefix.startsWith(download.prefix) || download.prefix.startsWith(upload.prefix)) &&
+    (upload.suffix.endsWith(download.suffix) || download.suffix.endsWith(upload.suffix))
+  );
+};
+/** The artifacts a script downloads with `gh run download` from the run it runs in; `*` for every one. */
+const scriptDownloads = (run: string) =>
+  [...run.matchAll(GH_RUN_DOWNLOAD)]
+    .filter(({ groups }) =>
+      (groups?.options ?? '')
+        .trim()
+        .split(/\s+/u)
+        .some((token) => SAME_RUN_ID.test(token)),
+    )
+    .flatMap(({ groups }) => {
+      const selectors = [...(groups?.options ?? '').matchAll(DOWNLOAD_SELECTOR)].map(
+        (match) => match.groups?.selector ?? '*',
+      );
+      return selectors.length === 0 ? ['*'] : selectors;
+    });
+/** The artifacts a step downloads from the run it runs in: names or patterns, `*` for every artifact. */
+const sameRunDownloads = (step: RuleStep): readonly string[] => {
+  if (step.uses?.startsWith(DOWNLOAD_ARTIFACT) !== true) {
+    return scriptDownloads(step.run ?? '');
+  }
+  const runId = step.with?.['run-id'];
+  return runId === undefined || SAME_RUN_ID.test(runId) ? [step.with?.name ?? step.with?.pattern ?? '*'] : [];
+};
+/** The scripts a step runs, read from the repository, so a wait cannot hide behind a script name. */
+const stepScripts = (run: string) =>
+  [...run.matchAll(/(?:^|\s)(?:bash|sh)\s+(?<script>(?:app\/)?scripts\/[\w./-]+\.sh)/gu)].flatMap(({ groups }) => {
+    const script = groups?.script ?? '';
+    const file = new URL(`../../${script.replace(/^app\//u, '')}`, import.meta.url);
+    return existsSync(file) ? [{ script, source: readFileSync(file, 'utf-8') }] : [];
+  });
+/**
+ * Whether a step runs on a job whose matrix rows have these suites. The integration jobs share one step list
+ * and pick their steps by `matrix.suite`; any other condition is assumed to hold.
+ */
+const stepRunsOnSuites = (condition: string | undefined, suites: readonly (string | undefined)[]) => {
+  if (condition === undefined) {
+    return true;
+  }
+  const clauses = condition
+    .replace(/^(?:failure|always)\(\) && /u, '')
+    .split(' || ')
+    .map((clause) => SUITE_CLAUSE.exec(clause)?.groups);
+  if (clauses.some((clause) => clause === undefined)) {
+    return true;
+  }
+  return suites.some((suite) => clauses.some((clause) => (clause?.operator === '==') === (suite === clause?.suite)));
+};
+/** The steps a job runs on at least one of its matrix rows. */
+const runningSteps = (jobs: RuleWorkflow['jobs'], job: string) => {
+  const include = jobs[job]?.strategy?.matrix?.include;
+  const suites = isSuiteRows(include) && include.length > 0 ? include.map(({ suite }) => suite) : [undefined];
+  return (jobs[job]?.steps ?? []).filter((step) => stepRunsOnSuites(step.if, suites));
+};
+/** Every job a job needs, directly or through a needed job. */
+const neededJobs = (jobs: RuleWorkflow['jobs'], job: string, needed = new Set<string>()): ReadonlySet<string> => {
+  for (const parent of jobs[job]?.needs ?? []) {
+    if (!needed.has(parent)) {
+      needed.add(parent);
+      neededJobs(jobs, parent, needed);
+    }
+  }
+  return needed;
+};
+interface RuleContext {
+  readonly jobs: RuleWorkflow['jobs'];
+  readonly uploads: readonly { readonly job: string; readonly name: string }[];
+}
+const pollViolations = (where: string, run: string, patterns: readonly RegExp[]) =>
+  [{ script: 'the step', source: run }, ...stepScripts(run)]
+    .filter(({ source }) => patterns.some((pattern) => pattern.test(source)))
+    .map(({ script }) => `${where} waits for this run in ${script}`);
+const downloadViolations = (context: RuleContext, job: string, where: string, selector: string) => {
+  const producers = [
+    ...new Set(context.uploads.filter(({ name }) => artifactMayMatch(name, selector)).map((upload) => upload.job)),
+  ];
+  if (producers.length === 0) {
+    return [`${where} downloads ${selector}, which no job of this run uploads`];
+  }
+  const needed = neededJobs(context.jobs, job);
+  // A job may read back what it uploaded itself in an earlier attempt.
+  return producers
+    .filter((producer) => producer !== job && !needed.has(producer))
+    .map((producer) => `${where} downloads ${selector} from ${producer} without needing it`);
+};
+const stepViolations = (context: RuleContext, job: string, step: RuleStep, reads: boolean) => {
+  const where = `${job}: ${step.name ?? step.uses ?? step.run ?? ''}`;
+  if (!reads) {
+    return pollViolations(where, step.run ?? '', RUN_WAITS);
+  }
+  return [
+    ...pollViolations(where, step.run ?? '', [...RUN_WAITS, ...RUN_READS]),
+    ...sameRunDownloads(step).flatMap((selector) => downloadViolations(context, job, where, selector)),
+  ];
+};
+
+/**
+ * Every way a job could hold a runner while it waits for output of another job of the same run: a step (or a
+ * script it runs) that waits for jobs, one that reads a run's jobs or artifacts, and a same-run download whose
+ * producing job is not among the job's needs, directly or through a needed job. Every job is checked for
+ * waits; only the jobs `readScope` accepts are checked for reads and downloads. Every job counts as a producer.
+ */
+const runWaitViolations = ({ jobs }: RuleWorkflow, readScope: (job: string) => boolean): readonly string[] => {
+  const uploads = Object.keys(jobs).flatMap((job) =>
+    runningSteps(jobs, job).flatMap(({ uses, with: inputs }) =>
+      uses?.startsWith(UPLOAD_ARTIFACT) === true && inputs?.name !== undefined ? [{ job, name: inputs.name }] : [],
+    ),
+  );
+  return Object.keys(jobs).flatMap((job) =>
+    runningSteps(jobs, job).flatMap((step) => stepViolations({ jobs, uploads }, job, step, readScope(job))),
+  );
+};
+const everyJob = () => true;
+
+// Run 44227243390 and its neighbours: on 20 hosted runners for the whole organisation, seven runs filled every
+// runner with jobs that had taken one and then polled for builds that had none, until the 30-minute limit.
+it('holds no runner while a job waits for output of another job of the same run', () => {
+  const workflow = Schema.decodeUnknownSync(RuleWorkflowSchema)(readGateWorkflow());
+  // No job waits for jobs: every job is checked for reads and downloads too.
+  for (const job of [NODE_ARTIFACT_BUILD_JOB, OWNER_INTEGRATION_JOB, TOPOLOGY_PROOF_JOB]) {
+    expect(Object.keys(workflow.jobs)).toContain(job);
+  }
+  expect(runWaitViolations(workflow, everyJob)).toEqual([]);
+  expect(runWaitViolations(Schema.decodeUnknownSync(RuleWorkflowSchema)(readGateWorkflow('all')), everyJob)).toEqual(
+    [],
+  );
+  expect(existsSync(new URL('../wait-for-build-shards.sh', import.meta.url))).toBe(false);
+});
+
+const fixtureUpload = (name: string): RuleStep => ({ uses: 'actions/upload-artifact@pin', with: { name } });
+const fixtureDownload = (inputs: RuleStep['with']): RuleStep => ({
+  uses: 'actions/download-artifact@pin',
+  with: inputs,
+});
+const onSuite = (suite: string, step: RuleStep): RuleStep => ({ ...step, if: `matrix.suite == '${suite}'` });
+const suiteRow = (suite: string) => ({ matrix: { include: [{ suite }] } });
+const FIXTURE_DOWNLOAD_UNIT = `gh run download "$GITHUB_RUN_ID" --name units-1 --dir out`;
+const FIXTURE_DOWNLOAD_UNIT_LAST = `gh run download --name units-1 --dir out "$GITHUB_RUN_ID"`;
+
+it('finds every job that polls its own run or downloads an artifact its needs do not produce', () => {
+  // Two jobs share one step list, as the integration jobs do; each runs only the steps of its suites.
+  const shared = [
+    onSuite('database', fixtureUpload(INTEGRATION_DATABASE_ARTIFACT)),
+    onSuite('integration', fixtureDownload({ name: INTEGRATION_DATABASE_ARTIFACT })),
+  ];
+  const owners = { needs: ['plan'], steps: shared, strategy: suiteRow('integration') };
+  const workflow: RuleWorkflow = {
+    jobs: {
+      // Needs a job that does not need the shards.
+      around: { needs: ['early'], steps: [{ run: FIXTURE_DOWNLOAD_UNIT }] },
+      build: { needs: ['plan'], steps: [fixtureUpload(`units-${expression('matrix.shard')}`)] },
+      database: { needs: ['plan'], steps: shared, strategy: suiteRow('database') },
+      // Needs only the plan, so it would start while the shards still build.
+      early: { needs: ['plan'], steps: [fixtureDownload({ pattern: 'units-*' })] },
+      // Another run's artifact is not this run's output.
+      elsewhere: {
+        steps: [fixtureDownload({ name: INTEGRATION_DATABASE_ARTIFACT, 'run-id': expression('inputs.run') })],
+      },
+      // Every artifact of the run, the database archive among them.
+      everything: { needs: ['build'], steps: [fixtureDownload({})] },
+      later: { needs: ['build'], steps: [fixtureDownload({ name: 'units-2' })] },
+      missing: { needs: ['build', 'database'], steps: [fixtureDownload({ name: 'never-uploaded' })] },
+      owners,
+      plan: { steps: [{ run: 'echo plan' }] },
+      // Takes a runner and then reads the run's jobs and artifacts until they are there.
+      poller: {
+        needs: ['plan'],
+        steps: [
+          { name: 'Wait', run: "bash scripts/wait-for-build-shards.sh 'Build x (' 3" },
+          { name: 'Poll', run: 'gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts"' },
+          { name: 'Watch', run: 'gh run watch "$GITHUB_RUN_ID"' },
+          // The repository's artifact list filtered by this run, and this run's id held in a variable.
+          { name: 'Repository', run: 'gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=units-1"' },
+          { name: 'Variable', run: 'run="$GITHUB_RUN_ID"\ngh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs"' },
+        ],
+      },
+      // Names this run's id after the options.
+      reordered: { needs: ['plan'], steps: [{ run: FIXTURE_DOWNLOAD_UNIT_LAST }] },
+      // A job may read back its own upload of an earlier attempt.
+      retry: { steps: [fixtureDownload({ name: 'own-plan' }), fixtureUpload('own-plan')] },
+      // Names this run's id as the action's run id.
+      sameRun: {
+        needs: ['plan'],
+        steps: [fixtureDownload({ name: 'units-1', 'run-id': expression('github.run_id') })],
+      },
+      // Needs a job that needs the shards: the artifacts exist when it starts.
+      through: { needs: ['later'], steps: [{ run: FIXTURE_DOWNLOAD_UNIT }] },
+    },
+  };
+  const ownersWithoutDatabase =
+    'owners: actions/download-artifact@pin downloads integration-database from database without needing it';
+  expect(runWaitViolations(workflow, everyJob)).toEqual([
+    `around: ${FIXTURE_DOWNLOAD_UNIT} downloads units-1 from build without needing it`,
+    'early: actions/download-artifact@pin downloads units-* from build without needing it',
+    'everything: actions/download-artifact@pin downloads * from database without needing it',
+    'everything: actions/download-artifact@pin downloads * from retry without needing it',
+    'missing: actions/download-artifact@pin downloads never-uploaded, which no job of this run uploads',
+    ownersWithoutDatabase,
+    'poller: Wait waits for this run in the step',
+    'poller: Poll waits for this run in the step',
+    'poller: Watch waits for this run in the step',
+    'poller: Repository waits for this run in the step',
+    'poller: Variable waits for this run in the step',
+    `reordered: ${FIXTURE_DOWNLOAD_UNIT_LAST} downloads units-1 from build without needing it`,
+    'sameRun: actions/download-artifact@pin downloads units-1 from build without needing it',
+  ]);
+  // The owners of the shared step list are fine once they need the database producer.
+  expect(
+    runWaitViolations({ jobs: { ...workflow.jobs, owners: { ...owners, needs: ['database'] } } }, everyJob),
+  ).not.toContain(ownersWithoutDatabase);
+  // A job outside the read scope may read the run's artifacts, but it may still never wait for jobs.
+  expect(runWaitViolations(workflow, (job) => job !== 'poller').filter((line) => line.startsWith('poller'))).toEqual([
+    'poller: Wait waits for this run in the step',
+    'poller: Watch waits for this run in the step',
+  ]);
+});
+
 it('runs excluded whole-owner scenarios exactly once in isolated integration lanes', () => {
   const jobs = readIntegrationJobs();
   const scheduler = readFileSync(new URL(INTEGRATION_SCHEDULER, import.meta.url), 'utf-8');

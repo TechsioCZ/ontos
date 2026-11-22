@@ -11,16 +11,34 @@ import type {
 } from '@app/pricing-contracts/domain/price-source-provenance';
 import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 
+import { ExternalPriceSourcePolicySchema } from '../../shared/domain/external-price-source-policy.ts';
+import type { ExternalPriceSourcePolicy } from '../../shared/domain/external-price-source-policy.ts';
+
 import { preparePriceSourceEvidence } from './price-source-provenance.service.ts';
 import type { PreparedPriceSourceEvidence } from './price-source-provenance.service.ts';
 
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 
+// Assessments (including the projection of historical grant evidence) use native lowercase UUIDs.
+const authorityIdentityKeySchema = PriceIdentityKeySchema.check(
+  Schema.makeFilter(({ priceGroupSelector, unitBasis }) =>
+    unitBasis.unitRef.resourceId === unitBasis.unitRef.resourceId.toLowerCase() &&
+    (priceGroupSelector.kind === 'NO_GROUP' ||
+      priceGroupSelector.priceGroupRef.resourceId === priceGroupSelector.priceGroupRef.resourceId.toLowerCase())
+      ? undefined
+      : 'External Price authority requires canonical lowercase Unit and Price Group IDs',
+  ),
+);
+
+// PriceIdentityKeySchema requires every reference in the key to share the product Tenant.
+export const priceAuthorityKeyInTenant = (key: PriceIdentityKey, tenantId: string): boolean =>
+  Schema.is(authorityIdentityKeySchema)(key) && key.catalogSelection.productRef.tenantId === tenantId;
+
 /**
  * Pricing-owned proof that a source assertion is allowed to create one exact Price fact. The
  * transport/source-system identity is deliberately absent: delivery is not business authority.
  */
-export const ExternalPriceSourceAuthorityGrantSchema = Schema.Struct({
+export const ExternalPriceSourceAuthorityGrantInputSchema = Schema.Struct({
   authority: PriceSourceAuthoritySchema,
   effectivePeriod: Schema.Struct({
     effectiveFrom: PricingInstantSchema,
@@ -40,6 +58,12 @@ export const ExternalPriceSourceAuthorityGrantSchema = Schema.Struct({
       : 'Source Authority grant end must be after its start',
   ),
 );
+// Enrollment preserves the caller's UUID spelling for receipt replay. A resolved grant is always canonical.
+export const ExternalPriceSourceAuthorityGrantSchema = ExternalPriceSourceAuthorityGrantInputSchema.check(
+  Schema.makeFilter(({ exactIdentityKey }) =>
+    Schema.is(authorityIdentityKeySchema)(exactIdentityKey) ? undefined : 'Expected a canonical grant identity',
+  ),
+);
 export type ExternalPriceSourceAuthorityGrant = typeof ExternalPriceSourceAuthorityGrantSchema.Type;
 
 export interface ExternalPriceSourceAuthorityAssessmentRequest {
@@ -51,6 +75,7 @@ export interface ExternalPriceSourceAuthorityAssessmentRequest {
 
 export type ExternalPriceSourceAuthorityAssessment =
   | { readonly grant: ExternalPriceSourceAuthorityGrant; readonly outcome: 'AUTHORITY_GRANTED' }
+  | { readonly outcome: 'AUTHORITY_COVERED_BY_POLICY'; readonly policy: ExternalPriceSourcePolicy }
   | { readonly outcome: 'AUTHORITY_REJECTED'; readonly reason: 'AUTHORITY' | 'MAPPING' }
   | { readonly outcome: 'AUTHORITY_UNRESOLVED'; readonly reason: 'AUTHORITY' | 'MAPPING' }
   | { readonly dependency: 'MAPPING_REGISTRY' | 'SOURCE_AUTHORITY'; readonly outcome: 'AUTHORITY_UNAVAILABLE' };
@@ -152,6 +177,19 @@ const unavailable = (
   sourceAssertionId: sourceAssertion.sourceAssertionId,
 });
 
+const effectivePeriodAdmits = (
+  effectivePeriod: ExternalPriceSourceAuthorityGrant['effectivePeriod'],
+  verifiedAt: string,
+  request: ExternalPriceInputBoundaryRequest,
+): boolean => {
+  const effectiveAt = request.sourceAssertion.timing.ownerBusinessEffectiveAt;
+  return (
+    effectivePeriod.effectiveFrom <= effectiveAt &&
+    (effectivePeriod.effectiveTo === undefined || effectiveAt < effectivePeriod.effectiveTo) &&
+    verifiedAt <= DateTime.formatIso(DateTime.makeUnsafe(request.trustedOperationAt))
+  );
+};
+
 const grantMatchesRequest = (
   grant: ExternalPriceSourceAuthorityGrant,
   request: ExternalPriceInputBoundaryRequest,
@@ -169,28 +207,97 @@ const grantMatchesRequest = (
     grant.mapping.mappingContractRef !== sourceAssertion.mapping.mappingContractRef ||
     grant.mapping.mappingContractVersion !== sourceAssertion.mapping.mappingContractVersion ||
     !exactIdentityEquals(grant.exactIdentityKey, request.identityKey) ||
-    request.identityKey.catalogSelection.productRef.tenantId !== request.tenantId ||
-    request.identityKey.catalogSelection.variantRef.tenantId !== request.tenantId ||
-    request.identityKey.unitBasis.unitRef.tenantId !== request.tenantId
+    !priceAuthorityKeyInTenant(request.identityKey, request.tenantId)
   ) {
     return 'MAPPING_MISMATCH';
   }
-  const effectiveAt = sourceAssertion.timing.ownerBusinessEffectiveAt;
-  return grant.effectivePeriod.effectiveFrom <= effectiveAt &&
-    (grant.effectivePeriod.effectiveTo === undefined || effectiveAt < grant.effectivePeriod.effectiveTo) &&
-    grant.verifiedAt <= DateTime.formatIso(DateTime.makeUnsafe(request.trustedOperationAt))
-    ? 'MATCH'
-    : 'AUTHORITY_MISMATCH';
+  return effectivePeriodAdmits(grant.effectivePeriod, grant.verifiedAt, request) ? 'MATCH' : 'AUTHORITY_MISMATCH';
+};
+
+const priceGroupCoverageAdmits = (
+  coverage: ExternalPriceSourcePolicy['priceGroupCoverage'],
+  selector: PriceIdentityKey['priceGroupSelector'],
+): boolean => {
+  if (coverage.kind === 'NO_GROUP') {
+    return selector.kind === 'NO_GROUP';
+  }
+  if (selector.kind !== 'PRICE_GROUP') {
+    return false;
+  }
+  return (
+    coverage.kind === 'ANY_PRICE_GROUP' ||
+    (coverage.priceGroupRef.resourceId === selector.priceGroupRef.resourceId &&
+      coverage.priceGroupRef.tenantId === selector.priceGroupRef.tenantId)
+  );
 };
 
 /**
- * Accepts an external assertion only after Pricing verifies a versioned authority and mapping
- * grant for the exact canonical key. It does not fetch, normalize, or poll any external system.
+ * A standing policy authorizes the exact key being written only when the key lies inside everything the policy
+ * names: authority, mapping, commercial scope, currency, unit basis and Price Group coverage, at the asserted time.
+ */
+export const policyCoversRequest = (
+  policy: ExternalPriceSourcePolicy,
+  request: ExternalPriceInputBoundaryRequest,
+): 'AUTHORITY_MISMATCH' | 'MATCH' | 'MAPPING_MISMATCH' => {
+  const { identityKey, sourceAssertion } = request;
+  if (
+    policy.authority.sourceAuthorityRef !== sourceAssertion.sourceAuthority.sourceAuthorityRef ||
+    policy.authority.sourceAuthorityVersion !== sourceAssertion.sourceAuthority.sourceAuthorityVersion
+  ) {
+    return 'AUTHORITY_MISMATCH';
+  }
+  const policyUnit = policy.unitBasis.unitRef;
+  const keyUnit = identityKey.unitBasis.unitRef;
+  if (
+    policy.mapping.mappingContractRef !== sourceAssertion.mapping.mappingContractRef ||
+    policy.mapping.mappingContractVersion !== sourceAssertion.mapping.mappingContractVersion ||
+    policy.commercialScope.channelId !== identityKey.commercialScope.channelId ||
+    policy.commercialScope.marketId !== identityKey.commercialScope.marketId ||
+    policy.commercialScope.sellingLegalEntityId !== identityKey.commercialScope.sellingLegalEntityId ||
+    policy.currencyCode !== identityKey.currencyCode ||
+    !priceDecimalValuesEqual(policy.unitBasis.quantity, identityKey.unitBasis.quantity) ||
+    policyUnit.moduleId !== keyUnit.moduleId ||
+    policyUnit.resourceId !== keyUnit.resourceId ||
+    policyUnit.resourceType !== keyUnit.resourceType ||
+    policyUnit.tenantId !== keyUnit.tenantId ||
+    !priceGroupCoverageAdmits(policy.priceGroupCoverage, identityKey.priceGroupSelector) ||
+    !priceAuthorityKeyInTenant(request.identityKey, request.tenantId)
+  ) {
+    return 'MAPPING_MISMATCH';
+  }
+  return effectivePeriodAdmits(policy.effectivePeriod, policy.verifiedAt, request) ? 'MATCH' : 'AUTHORITY_MISMATCH';
+};
+
+/** Re-checks the owner's resolved authorization against the exact request before any evidence is prepared. */
+const authorizationMatchesRequest = (
+  assessment: Extract<
+    ExternalPriceSourceAuthorityAssessment,
+    { readonly outcome: 'AUTHORITY_COVERED_BY_POLICY' | 'AUTHORITY_GRANTED' }
+  >,
+  request: ExternalPriceInputBoundaryRequest,
+): 'AUTHORITY_MISMATCH' | 'MATCH' | 'MAPPING_MISMATCH' | 'UNVERIFIABLE' => {
+  if (assessment.outcome === 'AUTHORITY_GRANTED') {
+    return Schema.is(ExternalPriceSourceAuthorityGrantSchema)(assessment.grant)
+      ? grantMatchesRequest(assessment.grant, request)
+      : 'UNVERIFIABLE';
+  }
+  return Schema.is(ExternalPriceSourcePolicySchema)(assessment.policy)
+    ? policyCoversRequest(assessment.policy, request)
+    : 'UNVERIFIABLE';
+};
+
+/**
+ * Accepts an external assertion only after Pricing verifies a versioned authority and mapping for the exact
+ * canonical key: an exact-key grant, or a standing source policy that covers the key. Authority never comes from
+ * the incoming assertion. It does not fetch, normalize, or poll any external system.
  */
 export const makeExternalPriceInputBoundary = (
   authority: ExternalPriceSourceAuthorityPort,
 ): ExternalPriceInputBoundaryService => ({
   assess: Effect.fn('ExternalPriceInputBoundary.assess')(function* assessExternalPriceInput(request) {
+    if (!priceAuthorityKeyInTenant(request.identityKey, request.tenantId)) {
+      return invalid(request.sourceAssertion, 'MAPPING_REJECTED');
+    }
     const assessment = yield* authority.assess({
       exactIdentityKey: request.identityKey,
       sourceAssertion: request.sourceAssertion,
@@ -212,10 +319,10 @@ export const makeExternalPriceInputBoundary = (
     if (assessment.outcome === 'AUTHORITY_UNAVAILABLE') {
       return unavailable(request.sourceAssertion, assessment.dependency);
     }
-    if (!Schema.is(ExternalPriceSourceAuthorityGrantSchema)(assessment.grant)) {
+    const match = authorizationMatchesRequest(assessment, request);
+    if (match === 'UNVERIFIABLE') {
       return unavailable(request.sourceAssertion, 'SOURCE_AUTHORITY');
     }
-    const match = grantMatchesRequest(assessment.grant, request);
     if (match !== 'MATCH') {
       return invalid(
         request.sourceAssertion,

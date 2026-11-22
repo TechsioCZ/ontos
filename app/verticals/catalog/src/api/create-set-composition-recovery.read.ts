@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-set-composition', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CreateSetCompositionResultSchema),
-      encode: Schema.encodeEffect(CreateSetCompositionResultSchema),
     },
   );
 

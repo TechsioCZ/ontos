@@ -3356,6 +3356,7 @@ it.effect('projects owner admission and polling failures without owner details',
       { expected: 401, ownerStatus: 401, tag: 'AdmitSymmyJobActionAuthenticationProblem' },
       { code: 'action_permission_denied', expected: 403, ownerStatus: 403, tag: 'AdmitSymmyJobActionForbiddenProblem' },
       { code: 'symmy_job_route_denied', expected: 403, ownerStatus: 403, tag: 'AdmitSymmyJobRouteDeniedProblem' },
+      { code: 'symmy_job_plan_limit_exceeded', expected: 400, ownerStatus: 400, tag: 'AdmitSymmyJobPlanLimitProblem' },
       {
         code: 'symmy_job_intent_conflict',
         expected: 409,
@@ -3424,6 +3425,10 @@ it.effect('projects owner admission and polling failures without owner details',
       expect(body).not.toContain(privateDetail);
       expect(body).not.toContain(jobId);
       expect(body).not.toContain(idempotencyKey);
+      if (entry.expected === 400) {
+        expect(body).toContain('32 owner effects');
+        expect(body).toContain('Split the batch');
+      }
       if (entry.expected === 401) {
         expect(response.headers.get('www-authenticate')).toContain('ApiKey');
       }

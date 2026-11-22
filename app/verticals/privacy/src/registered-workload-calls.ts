@@ -52,7 +52,7 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreSourceProcessingCheck,
     workloadKey: partyRegistrySourceRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — privacy.core.requirement.customer-intake-organization-party
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-party
   {
     audience: partyRegistry,
     declarationKey: partyRegistryOrganizationRecordFactsRead,
@@ -63,7 +63,7 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreSourceProcessingCheck,
     workloadKey: partyRegistrySourceRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — privacy.core.requirement.customer-intake-organization-party
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-party
   {
     allowRecoverySource: true,
     audience: partyRegistry,
@@ -75,7 +75,7 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreSourceProcessingCheck,
     workloadKey: partyRegistrySourceRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — privacy.core.requirement.customer-intake-organization-profile
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-profile
   {
     audience: commerceCustomerContext,
     declarationKey: commerceCustomerContextCustomerProfileOrganizationIcoFactsRead,
@@ -86,7 +86,7 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreSourceProcessingCheck,
     workloadKey: commerceCustomerContextOrganizationIcoFactsRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — privacy.core.requirement.customer-intake-organization-profile
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-profile
   {
     allowRecoverySource: true,
     audience: commerceCustomerContext,
@@ -109,7 +109,7 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreOrganizationBusinessCheck,
     workloadKey: integrationSymmySourceOrganizationFactsRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — privacy.core.requirement.organization-business-source-facts
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.organization-business-source-facts
   {
     allowRecoverySource: true,
     audience: symmyIntegration,
@@ -178,7 +178,7 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreOrganizationProfileIcoCheck,
     workloadKey: commerceCustomerContextOrganizationIcoFactsRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — privacy.core.requirement.organization-profile-ico-owner-facts, read when Symmy recovers a lost company ICO change
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.organization-profile-ico-owner-facts, read when Symmy recovers a lost company ICO change
   {
     allowRecoverySource: true,
     audience: commerceCustomerContext,
@@ -201,7 +201,7 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreOrganizationProfileIcoCheck,
     workloadKey: partyRegistrySourceRead,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — privacy.core.requirement.organization-profile-ico-party-facts, read when Symmy recovers a lost company ICO change
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.organization-profile-ico-party-facts, read when Symmy recovers a lost company ICO change
   {
     allowRecoverySource: true,
     audience: partyRegistry,

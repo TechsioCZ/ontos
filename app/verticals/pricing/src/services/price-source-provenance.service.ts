@@ -105,7 +105,17 @@ export const preparePriceSourceEvidence = (input: PreparePriceSourceEvidenceInpu
   if (originalAssertion.monetaryAmount.currencyCode !== canonicalCurrency) {
     return invalid(sourceAssertion, 'CURRENCY_MISMATCH');
   }
-  if (identityKey !== undefined && !sourceUnitBasisMatches(originalAssertion, identityKey)) {
+  if (
+    identityKey !== undefined &&
+    (!priceDecimalValuesEqual(originalAssertion.unitBasis.quantity, identityKey.unitBasis.quantity) ||
+      originalAssertion.unitBasis.unitRef.moduleId !== identityKey.unitBasis.unitRef.moduleId ||
+      // Both references are schema-validated native UUIDs. Authority lookup canonicalizes a
+      // historical Price's Unit spelling, but its immutable source assertion must stay verbatim.
+      originalAssertion.unitBasis.unitRef.resourceId.toLowerCase() !==
+        identityKey.unitBasis.unitRef.resourceId.toLowerCase() ||
+      originalAssertion.unitBasis.unitRef.resourceType !== identityKey.unitBasis.unitRef.resourceType ||
+      originalAssertion.unitBasis.unitRef.tenantId !== identityKey.unitBasis.unitRef.tenantId)
+  ) {
     return invalid(sourceAssertion, 'UNIT_AMBIGUOUS');
   }
   if (originalAssertion.monetaryBoundary === 'TAX_INCLUSIVE' && preTaxNormalization === undefined) {

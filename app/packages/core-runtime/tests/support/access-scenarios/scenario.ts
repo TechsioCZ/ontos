@@ -60,6 +60,8 @@ export interface SeededRoleInput {
   readonly createdBy: string;
   /** Required when the role grants explicit record targets in one Legal Entity. */
   readonly legalEntityId?: string;
+  /** The one mode every cell of this role carries; omitted means `run`. */
+  readonly mode?: Cell['mode'];
   readonly roleId: string;
   readonly roleRevisionId: string;
   readonly scopeId: string;
@@ -284,7 +286,7 @@ export const insertRoleWithCells = (
     const cells: readonly Cell[] = input.capabilityKeys.map((key) => {
       const base = {
         capabilityKey: CapabilityKeySchema.make(key),
-        mode: 'run' as const,
+        mode: input.mode ?? ('run' as const),
         selector: input.selector ?? { _tag: 'all' as const },
       };
       return ceiling === undefined

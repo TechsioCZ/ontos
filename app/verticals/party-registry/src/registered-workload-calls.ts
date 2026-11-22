@@ -61,7 +61,7 @@ export const partyRegistryRegisteredWorkloadCalls = [
     sourceWorkloadKey: partyRegistrySourceWrite,
     workloadKey: privacyCoreOrganizationBusinessCheck,
   },
-  // demo/sales-crm: the Symmy customers route's requirement check (symmy-route-bindings-main-contracts.test.ts) — party.registry.requirement.api.party-source-effect-receipt-organization-business-privacy, read when Symmy recovers a lost Party write
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach party.registry.requirement.api.party-source-effect-receipt-organization-business-privacy, read when Symmy recovers a lost Party write
   {
     allowRecoverySource: true,
     audience: 'privacy',

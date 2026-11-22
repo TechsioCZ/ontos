@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
 import { ProductEvidenceReferenceSchema, ProductReasonSchema, ProductRevisionSchema } from '../domain/product.ts';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
@@ -20,12 +21,14 @@ export const DecideProductTypeUnnecessaryPayloadSchema = Schema.Struct({
   expectedVariantRevisionTokens: Schema.Array(Schema.String),
   productRef: ProductRefSchema,
   reason: ProductReasonSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
   structuredAttributesRequired: Schema.Literal(false),
   variantAxesRequired: Schema.Literal(false),
 });
 export type DecideProductTypeUnnecessaryPayload = typeof DecideProductTypeUnnecessaryPayloadSchema.Type;
 
 export const DecideProductTypeUnnecessaryResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
   decisionRevision: ProductRevisionSchema,
   decisionState: DecisionStateSchema,
   productRef: ProductRefSchema,

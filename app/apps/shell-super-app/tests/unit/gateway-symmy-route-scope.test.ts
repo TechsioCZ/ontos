@@ -1,12 +1,21 @@
 import {
+  AccessWorkloadSchema,
   buildApplicationCompositionCatalog,
+  makeActiveApplicationCompositionLayer,
   defineTenantModuleEntrypoint,
   LegalEntityContext,
 } from '@app/core-runtime';
+import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
+import {
+  preserveSystemPrincipalContextTrust,
+  readVerifiedGatewayRouteScope,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
+import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
-import { DateTime, Effect, Layer } from 'effect';
+import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
@@ -116,6 +125,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
       audiences: new Map([
         ['commerce-customer-context', 'native-route-build'],
         ['symmy-integration', 'native-route-build'],
+        ['inventory', 'native-route-build'],
       ]),
       revision: options.catalog?.composition.revision ?? compositionRevision,
     }),
@@ -512,4 +522,140 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
       expect(refused).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
     }
   }),
+);
+
+it.effect(
+  'restricts the redeemed tenant-only Inventory assertion to the enrolled position read and version, even from a company route',
+  () =>
+    Effect.gen(function* inventoryReadProjection() {
+      const moduleId = 'commerce.inventory';
+      const entrypointKey = 'commerce.inventory.api.source-stock-position-resolution';
+      const otherRead = 'commerce.inventory.api.inventory-source-import-receipt';
+      const base = makeModuleContractFixture({ appId: 'inventory', buildMarker: 'native-route-build', moduleId });
+      const snapshot = yield* makeCompositionSnapshot([
+        {
+          ...base,
+          manifest: {
+            ...base.manifest,
+            publicSurface: {
+              ...base.manifest.publicSurface,
+              api: [{ key: 'commerce.inventory.api.reads', operationKeys: ['read0.execute', 'read1.execute'] }],
+              operationContracts: [entrypointKey, otherRead].map((key, index) => ({
+                apiKey: 'commerce.inventory.api.reads',
+                entrypoint: defineTenantModuleEntrypoint({
+                  access: 'read',
+                  authorization: { kind: 'protected' },
+                  entrypointKey: key,
+                  moduleKey: moduleId,
+                  role: 'api',
+                }),
+                operationKey: `read${index}.execute`,
+                schemaVersion: '1',
+              })),
+            },
+          },
+        },
+      ]);
+      const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+      const installed = { ...catalog, composition: snapshot.composition };
+      const ports = inertAccessEnforcementPorts();
+      const workload = 'commerce.inventory.source-read';
+      const accessWorkload = yield* Schema.decodeUnknownEffect(AccessWorkloadSchema)({
+        reason: 'Inventory source reads',
+        workloads: [workload],
+      });
+      const gate = makeAccessDecisionService({
+        authorityFor: ports.intent.authorityFor,
+        check: ports.check,
+        decisionLog: ports.decisionLog,
+        legalEntities: ports.candidates,
+        principalKinds: { readKind: () => Effect.succeedSome('integration') },
+        workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set([workload])) },
+      });
+      yield* Effect.forEach(
+        [true, false],
+        (companyless) =>
+          Effect.gen(function* tenantAndCompany() {
+            const current = yield* fixture({
+              allowedOwnerOperations: [{ entrypointKey, moduleId, schemaVersion: '1' }],
+              catalog: installed,
+              companyless,
+            });
+            const assertion = yield* Effect.gen(function* issueRead() {
+              const proof = yield* acquireSymmyRouteScopeProof({
+                ...request,
+                compositionRevision: snapshot.composition.revision,
+                routeRequest: { routeKey: 'inventoryStockBatch' },
+                sourcePurpose: 'admit',
+              });
+              const target = { audience: 'inventory', principal };
+              const denied = yield* issueSymmyRouteScopeAssertion(proof, { ...target, legalEntityId }).pipe(
+                Effect.flip,
+              );
+              expect(denied).toMatchObject({ code: 'forbidden' });
+              return yield* issueSymmyRouteScopeAssertion(proof, target);
+            }).pipe(Effect.provide(current.layer));
+            const publicJwk = yield* Effect.promise(() => exportJWK(current.publicKey));
+            const redeemed = yield* bindGatewayPrincipalVerifier('inventory', base.deployment)
+              .verifyAndRedeem(Redacted.make(`Bearer ${assertion.token}`), {
+                currentTimeSeconds: Effect.succeed(1_700_000_001),
+                environment: {
+                  ONTOS_GATEWAY_ISSUER: 'https://shell.test',
+                  ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+                    keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }],
+                  }),
+                },
+                redemption: { consume: () => Effect.void },
+              })
+              .pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
+            const scope = preserveSystemPrincipalContextTrust(redeemed, {
+              ...redeemed,
+              correlationId: request.requestCorrelation,
+            });
+            expect(scope.legalEntityId).toBeUndefined();
+            const decide = (key: string, schemaVersion: string) =>
+              gate.decide({
+                carrier: { accessWorkload, entrypoint: { entrypointKey: key }, schemaVersion },
+                legalEntityScope: 'forbidden',
+                now: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+                scope,
+              });
+            expect((yield* decide(entrypointKey, '1')).outcome).toBe('ALLOWED');
+            expect((yield* decide(otherRead, '1')).outcome).toBe('DENIED');
+            expect((yield* decide(entrypointKey, '2')).outcome).toBe('DENIED');
+            expect(readVerifiedGatewayRouteScope(redeemed)?.operations).toEqual([
+              { entrypointKey, schemaVersion: '1' },
+            ]);
+          }),
+        { concurrency: 1 },
+      );
+      yield* Effect.forEach(
+        ['customersBatch', 'inventoryStockBatch'] as const,
+        (routeKey) =>
+          Effect.gen(function* deniedRead() {
+            const current = yield* fixture({
+              allowedOwnerOperations: [
+                {
+                  entrypointKey: 'commerce.inventory.api.inventory-source-import-receipt',
+                  moduleId,
+                  schemaVersion: '1',
+                },
+              ],
+              catalog: installed,
+              companyless: true,
+            });
+            const failure = yield* Effect.gen(function* readWithoutEnrollment() {
+              const proof = yield* acquireSymmyRouteScopeProof({
+                ...request,
+                compositionRevision: snapshot.composition.revision,
+                routeRequest: { routeKey },
+                sourcePurpose: 'admit',
+              });
+              return yield* projectSymmyRouteScopePrincipal(proof, { audience: 'inventory', principal });
+            }).pipe(Effect.provide(current.layer), Effect.flip);
+            expect(failure).toMatchObject({ code: 'forbidden' });
+          }),
+        { concurrency: 1 },
+      );
+    }),
 );

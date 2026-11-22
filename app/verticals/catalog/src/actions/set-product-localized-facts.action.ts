@@ -100,6 +100,7 @@ export const handleSetProductLocalizedFacts = Effect.fn('SetProductLocalizedFact
       principalId: context.scope.principalId,
       productRef: payload.productRef,
       reason: payload.reason,
+      sourceProduct: payload.sourceProduct,
 
       value: { facts: payload.facts, kind: 'SET' },
     });
@@ -153,8 +154,8 @@ export const setProductLocalizedFactsAction = defineAction(
       policyKey: 'commerce.catalog.set-product-localized-facts.access.v1',
     },
     accessWorkload: {
-      reason: 'Write an explicitly authorized localized Product source fact for the registered C14 integration',
-      workloads: ['commerce.catalog.symmy-product-localized-facts'],
+      reason: 'Govern source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-import'],
     },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: ProductAuditEvidenceSchema,

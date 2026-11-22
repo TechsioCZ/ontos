@@ -251,6 +251,7 @@ describe('Pricing Price Management Actions issue #797 acceptance', () => {
       'commerce.pricing.grant-external-price-source-authority',
       'commerce.pricing.manage-commitment-confirmation',
       'commerce.pricing.manage-contractual-discount',
+      'commerce.pricing.manage-external-price-source-policy',
       'commerce.pricing.manage-product-commercial-fees-bulk',
       'commerce.pricing.manage-product-prices-bulk',
       'commerce.pricing.manage-quantity-tier',

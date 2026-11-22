@@ -29,6 +29,7 @@ export const AUTH_TABLE_INVENTORY = [
   'oauth_consent',
   'oauth_client_assertion',
   'gateway_relay_exchanges',
+  'gateway_assertion_redemptions',
 ] as const;
 
 export const authSchema = pgSchema(AUTH_SCHEMA_NAME);
@@ -382,9 +383,30 @@ export const gatewayRelayExchanges = authSchema.table(
   ],
 );
 
+/**
+ * Single-use evidence of the delegated assertions the Shell host itself receives (the Core operations it hosts for a
+ * module, #1443). Technical ingress replay evidence consumed before any trusted tenant scope exists, so it is global
+ * and holds no tenant data. It is the Shell's own table beside the exchange ledger, never another deployment's.
+ */
+export const gatewayAssertionRedemptions = authSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('auth_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('auth_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
+
 export const authDatabaseSchema = {
   account,
   apikey,
+  gatewayAssertionRedemptions,
   gatewayRelayExchanges,
   jwks,
   oauthAccessToken,
@@ -449,4 +471,5 @@ export const AUTH_TABLES = [
   oauthConsent,
   oauthClientAssertion,
   gatewayRelayExchanges,
+  gatewayAssertionRedemptions,
 ] as const;

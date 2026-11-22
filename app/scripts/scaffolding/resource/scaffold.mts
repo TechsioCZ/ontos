@@ -25,23 +25,42 @@ import {
 } from '../shared.mts';
 import type { OntosVerticalMetadata, ResourceScaffoldConfig } from '../shared.mts';
 
-const renderResource = (vertical: Pick<OntosVerticalMetadata, 'moduleId'>, resource: string, core = false): string => {
+const CoreResourceNameSchema = Schema.Literals(['legal-entity', 'media-asset']);
+type CoreResourceName = typeof CoreResourceNameSchema.Type;
+const isCoreResourceName = Schema.is(CoreResourceNameSchema);
+const CORE_RESOURCE_NAMES = CoreResourceNameSchema.literals.join(', ');
+
+interface CoreResourceOwner {
+  readonly brand: string;
+  readonly moduleId: string;
+  readonly typeSlug: string;
+}
+
+/**
+ * Core-owned Resources the generator can publish. The owner, the identifier brand and the owner-qualified
+ * resource type slug are fixed per resource; the file and export names follow the resource name.
+ */
+const CORE_RESOURCES = {
+  'legal-entity': { brand: 'LegalEntityId', moduleId: 'core.identity', typeSlug: 'legal-entity' },
+  'media-asset': { brand: 'MediaAssetId', moduleId: 'core.media', typeSlug: 'asset' },
+} as const satisfies Readonly<Record<CoreResourceName, CoreResourceOwner>>;
+
+const renderResource = (
+  vertical: Pick<OntosVerticalMetadata, 'moduleId'>,
+  resource: string,
+  coreResource?: CoreResourceOwner,
+): string => {
+  const core = coreResource !== undefined;
   const type = toPascalCase(resource);
   const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
-  const resourceType = `${vertical.moduleId}.${resource}`;
-  // Demo-only exception (Core people): a Core person is addressed by its company and principal UUIDs.
-  const corePerson = core && resource === 'person';
-  const coreIdValidation = corePerson
-    ? "Schema.makeFilter((value) => value.split('.').length === 2 && value.split('.').every(Schema.is(Schema.String.check(Schema.isUUID()))) ? undefined : 'Expected company and principal UUIDs')"
-    : 'Schema.isUUID()';
-  const coreIdBrand = corePerson ? ".pipe(Schema.brand('PersonResourceId'))" : ".pipe(Schema.brand('LegalEntityId'))";
+  const resourceType = `${vertical.moduleId}.${coreResource?.typeSlug ?? resource}`;
   return `${RESOURCE_GENERATOR_HEADER}
 // @ontos-resource-owner ${vertical.moduleId}
 // @ontos-resource-slug ${resource}
 import type { OntosResourceType } from '${core ? '../modules/manifest.ts' : '@app/core-runtime'}';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(${core ? coreIdValidation : 'Schema.isMinLength(1), Schema.isMaxLength(300)'})${core ? coreIdBrand : ''};
+const ResourceIdSchema = Schema.String.check(${core ? 'Schema.isUUID()' : 'Schema.isMinLength(1), Schema.isMaxLength(300)'})${coreResource === undefined ? '' : `.pipe(Schema.brand('${coreResource.brand}'))`};
 const TenantIdSchema = Schema.String.check(Schema.isUUID())${core ? ".pipe(Schema.brand('TenantId'))" : ''};
 
 export const ${type}RefSchema = Schema.Struct({
@@ -69,15 +88,15 @@ export const ${descriptor} = {
 };
 
 const isResourceDescriptor = (candidate: string): boolean => /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
+// The Core package carries conditional exports (objects), so only the keys are inspected.
 const CorePackageSchema = Schema.Struct({
-  // Demo-only exception (Core people): Core's package publishes conditional exports.
-  exports: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
+  exports: Schema.Record(Schema.String, Schema.Unknown),
   name: Schema.Literal('@app/core-runtime'),
 });
 
 const planCoreResourceScaffold = Effect.fn('ResourceScaffold.planCore')(function* planCoreResourceScaffold(
   workspaceRoot: string,
-  resource: string,
+  resource: CoreResourceName,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const packagePath = yield* tryScaffold('failed to resolve Core package', () =>
@@ -99,17 +118,13 @@ const planCoreResourceScaffold = Effect.fn('ResourceScaffold.planCore')(function
   );
   const resourceMutation = yield* createMutationEffect(
     resourcePath,
-    renderResource({ moduleId: 'core.identity' }, resource, true),
+    renderResource({ moduleId: CORE_RESOURCES[resource].moduleId }, resource, CORE_RESOURCES[resource]),
   );
-  const patchedExports = Object.fromEntries(
-    Object.entries({ ...exportsValue, [contractExport]: `./src/resources/${resource}.ts` }).toSorted(
-      ([left], [right]) => left.localeCompare(right),
-    ),
-  );
+  // Append the single export: re-sorting would reorder the Core package's existing, hand-ordered exports.
   const packageMutation = updateMutation(
     packagePath,
     packageContent,
-    patchJsonObjectProperty(packageContent, [], 'exports', patchedExports),
+    patchJsonObjectProperty(packageContent, ['exports'], contractExport, `./src/resources/${resource}.ts`),
   );
   if (packageMutation === undefined) {
     return yield* scaffoldFailure('Core resource package export patch unexpectedly made no change');
@@ -127,9 +142,8 @@ const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planRe
     requireCanonicalSlug(config.resource, 'resource'),
   );
   if (config.vertical === 'core') {
-    // Demo-only exception (Core people): the Core person resource is generated too.
-    if (resource !== 'legal-entity' && resource !== 'person') {
-      return yield* scaffoldFailure('Core Resource generation supports only legal-entity and person');
+    if (!isCoreResourceName(resource)) {
+      return yield* scaffoldFailure(`Core Resource generation currently supports only ${CORE_RESOURCE_NAMES}`);
     }
     return yield* planCoreResourceScaffold(workspaceRoot, resource);
   }

@@ -49,6 +49,11 @@ export const VariantUseChangeOperationSchema = Schema.Union([
   }),
   Schema.Struct({
     evidenceRefs: Schema.NonEmptyArray(ProductEvidenceReferenceSchema),
+    kind: Schema.Literal('AXIS_INITIALIZATION'),
+    reason: ProductReasonSchema,
+  }),
+  Schema.Struct({
+    evidenceRefs: Schema.NonEmptyArray(ProductEvidenceReferenceSchema),
     kind: Schema.Literal('AXIS_ADDITION'),
     reason: ProductReasonSchema,
   }),
@@ -147,6 +152,7 @@ export const decideVariantUseChange = (
         ),
       ),
     ),
+    Match.discriminator('kind')('AXIS_INITIALIZATION', () => Effect.succeed(preserve('AXIS_REVALIDATION', 'REQUIRED'))),
     Match.discriminator('kind')('AXIS_ADDITION', () => Effect.succeed(preserve('AXIS_REVALIDATION', 'REQUIRED'))),
     Match.discriminator('kind')('AXIS_REMOVAL', () => Effect.succeed(preserve('AXIS_REVALIDATION', 'REQUIRED'))),
     Match.exhaustive,

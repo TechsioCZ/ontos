@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
 
+import { inventorySourceProvisioningDatabaseContract } from '../src/persistence/source-provisioning-table.ts';
 import { compareInventoryCatalog } from '../src/database/catalog.ts';
 import { InventoryDatabase, InventoryDatabaseLive } from '../src/database/client.ts';
 import { INVENTORY_GOVERNED_TABLES, INVENTORY_SCHEMA_NAME, INVENTORY_TABLES } from '../src/database/schema.ts';
@@ -274,6 +275,90 @@ const verification = Effect.gen(function* verifyDatabase() {
   ) {
     return yield* new VerificationError({
       reason: 'Inventory ownership, RLS, trigger, journal, or runtime-role verification failed',
+    });
+  }
+  const [provisioning] = yield* database.executor.execute<{
+    readonly declared_locations_constraint_valid: boolean;
+    readonly foreign_key_count: number;
+    readonly functions_hardened: boolean;
+    readonly private_functions_executable: boolean;
+    readonly trigger_count: number;
+    readonly unique_index_count: number;
+  }>(
+    sql`select
+    (select count(*)::integer from pg_catalog.pg_trigger t
+      join pg_catalog.pg_class c on c.oid = t.tgrelid
+      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = ${INVENTORY_SCHEMA_NAME} and not t.tgisinternal and t.tgenabled = 'O'
+      and c.relname in (${sql.join(
+        inventorySourceProvisioningDatabaseContract.tables.map((name) => sql`${name}`),
+        sql`, `,
+      )})
+      and ((t.tgtype = 7 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.scopeFunction})
+          and t.tgname = 'inventory_' || c.relname || '_scope_trg')
+        or (t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.manifestFunction})
+          and t.tgname = 'inventory_' || c.relname || '_manifest_trg'
+          and ((t.tgtype = 5 and c.relname = 'source_provisioning_policies')
+            or (t.tgtype = 7 and c.relname in ('source_provisioning_policy_locations', 'source_stock_item_provisionings'))))
+        or (t.tgtype = 27 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.immutableFunction})
+          and t.tgname = 'inventory_' || c.relname || '_no_mutation_trg'))
+      and t.tgname in (${sql.join(
+        inventorySourceProvisioningDatabaseContract.triggers.map((name) => sql`${name}`),
+        sql`, `,
+      )})) as trigger_count,
+    exists(select 1 from pg_catalog.pg_constraint k
+      cross join lateral (
+        select coalesce(string_agg(case when left(token.parts[1], 1) = '''' then token.parts[1]
+          else regexp_replace(lower(token.parts[1]), '[()[:space:]]', '', 'g') end,
+          '' order by token.ordinal), '') as normalized
+        from regexp_matches(pg_get_expr(k.conbin, k.conrelid), $$'(?:[^']|'')*'|[^']+$$, 'g')
+          with ordinality as token(parts, ordinal)
+      ) expression
+      where k.conrelid = 'inventory.source_provisioning_policies'::regclass
+        and k.conname = 'inventory_source_provisioning_declared_locations_ck'
+        and k.contype = 'c' and k.convalidated
+        and expression.normalized in (
+          $$jsonb_typeofdeclared_locations='array'::textandjsonb_array_lengthdeclared_locations>=1andjsonb_array_lengthdeclared_locations<=50$$,
+          $$jsonb_typeofdeclared_locations='array'::textandjsonb_array_lengthdeclared_locationsbetween1and50$$
+        )
+      ) as declared_locations_constraint_valid,
+    (select count(*)::integer from pg_catalog.pg_constraint k
+      join pg_catalog.pg_class c on c.oid = k.conrelid
+      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = ${INVENTORY_SCHEMA_NAME} and k.contype = 'f' and k.convalidated
+      and c.relname in (${sql.join(
+        inventorySourceProvisioningDatabaseContract.tables.map((name) => sql`${name}`),
+        sql`, `,
+      )})) as foreign_key_count,
+    (select count(*)::integer from pg_catalog.pg_index i
+      join pg_catalog.pg_class c on c.oid = i.indexrelid
+      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = ${INVENTORY_SCHEMA_NAME} and i.indisunique and i.indisvalid
+      and c.relname in ('inventory_source_provisioning_policies_scope_id_uk', 'inventory_source_provisioning_policies_owner_uk',
+        'inventory_source_provisioning_policies_qualification_uk', 'inventory_source_provisioning_policy_locations_location_uk')) as unique_index_count,
+    has_function_privilege('ontos_runtime', ${inventorySourceProvisioningDatabaseContract.immutableFunction}, 'EXECUTE')
+      or has_function_privilege('ontos_runtime', ${inventorySourceProvisioningDatabaseContract.manifestFunction}, 'EXECUTE')
+      or has_function_privilege('ontos_runtime', ${inventorySourceProvisioningDatabaseContract.scopeFunction}, 'EXECUTE') as private_functions_executable,
+    (select count(*) = 3 from pg_catalog.pg_proc p
+      where p.oid in (pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.immutableFunction}),
+        pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.manifestFunction}),
+        pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.scopeFunction}))
+      and not p.prosecdef and p.proconfig @> array['search_path=pg_catalog, pg_temp']
+      and not exists(select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE')) as functions_hardened
+  `,
+    'objects',
+  );
+  if (
+    provisioning === undefined ||
+    !provisioning.declared_locations_constraint_valid ||
+    provisioning.trigger_count !== inventorySourceProvisioningDatabaseContract.triggers.length ||
+    provisioning.foreign_key_count !== 5 ||
+    provisioning.unique_index_count !== 4 ||
+    provisioning.private_functions_executable ||
+    !provisioning.functions_hardened
+  ) {
+    return yield* new VerificationError({
+      reason: 'Inventory source provisioning scope, immutability or routine grants are invalid',
     });
   }
   return { typedTableCount: INVENTORY_TABLES.length };

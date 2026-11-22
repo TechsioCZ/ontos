@@ -220,10 +220,11 @@ export interface PrepareActionInvocationInput {
   readonly transport: ActionTransportMetadata;
 }
 
-type ResolveActionInvocationInput = { readonly principal: TrustedPrincipalContext } & (
-  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: string }
-  | { readonly actionKey: string; readonly idempotencyKey: string; readonly invocationId?: never }
-);
+interface ResolveActionInvocationInput {
+  readonly expectedActionKey?: string | undefined;
+  readonly invocationId: string;
+  readonly principal: TrustedPrincipalContext;
+}
 
 export interface ActionInvocationRecord {
   readonly actionInvocationId: string;
@@ -570,15 +571,10 @@ const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executo
         .from(actionInvocations)
         .where(
           and(
-            hasInvocationId
-              ? eq(actionInvocations.actionInvocationId, input.invocationId)
-              : and(
-                  eq(actionInvocations.actionKey, input.actionKey),
-                  eq(actionInvocations.idempotencyKey, input.idempotencyKey),
-                ),
-            input.principal.legalEntityId === undefined
-              ? isNull(actionInvocations.legalEntityId)
-              : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
+            eq(actionInvocations.actionInvocationId, input.invocationId),
+            input.expectedActionKey === undefined
+              ? undefined
+              : eq(actionInvocations.actionKey, input.expectedActionKey),
             eq(actionInvocations.tenantId, input.principal.tenantId),
             eq(actionInvocations.principalId, recovery?.originalPrincipalId ?? input.principal.principalId),
             ...(recovery === undefined

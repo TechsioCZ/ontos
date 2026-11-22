@@ -1,10 +1,13 @@
+import {
+  SourceStockPositionResolutionRequestSchema,
+  SourceStockPositionResolutionResponseSchema,
+} from '@app/inventory/api/source-stock-position-resolution';
+import { SourceExternalKeySchema, SourceProvisioningPolicySchema } from '@app/inventory/source-provisioning';
 import { InventorySourceAssertionProposalSchema } from '@app/inventory/source-assertion';
 import { Schema } from 'effect';
 
 const boundedText = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300));
 const proposal = InventorySourceAssertionProposalSchema.fields;
-const itemKey = boundedText.pipe(Schema.brand('SymmyStockItemKey'));
-const locationKey = boundedText.pipe(Schema.brand('SymmyStockLocationKey'));
 
 /**
  * One normalized absolute on-hand figure from the public stock route. The identifier kinds, the
@@ -12,8 +15,8 @@ const locationKey = boundedText.pipe(Schema.brand('SymmyStockLocationKey'));
  */
 export const SymmyStockRowSchema = Schema.Struct({
   businessObservedAt: proposal.businessObservedAt,
-  itemKey,
-  locationKey,
+  itemKey: SourceExternalKeySchema,
+  locationKey: SourceExternalKeySchema,
   quantity: proposal.quantity,
   revision: boundedText,
   sourceReference: proposal.sourceReference,
@@ -24,22 +27,26 @@ export type SymmyStockRow = typeof SymmyStockRowSchema.Type;
 export const SymmyStockRowsSchema = Schema.NonEmptyArray(SymmyStockRowSchema).check(Schema.isMaxLength(16));
 export type SymmyStockRows = typeof SymmyStockRowsSchema.Type;
 
-/**
- * One stock position the route is enrolled for. A row is admitted only when its item key and
- * location key name an entry. Quantity, revision, times and source reference are never enrolled.
- */
-export const SymmyStockScopeEntrySchema = Schema.Struct({
-  customerConfigurationId: proposal.customerConfigurationId,
-  issuerBackendId: proposal.issuer.fields.backendId,
-  itemKey,
-  locationKey,
-  namespace: proposal.itemExternalKey.fields.namespace,
-  positionRef: proposal.positionRef,
-  scope: proposal.itemExternalKey.fields.externalScope,
-});
-export type SymmyStockScopeEntry = typeof SymmyStockScopeEntrySchema.Type;
+/** One integration-wide policy. No item key or Stock Position is enrolled here. */
+export const SymmyInventorySourceSchema = Schema.Struct({
+  customerConfigurationId: SourceProvisioningPolicySchema.fields.customerConfigurationId,
+  externalScope: SourceProvisioningPolicySchema.fields.externalScope,
+  issuer: SourceProvisioningPolicySchema.fields.issuer,
+  locations: SourceProvisioningPolicySchema.fields.locations,
+  namespace: SourceProvisioningPolicySchema.fields.namespace,
+  policyRef: SourceProvisioningPolicySchema.fields.policyRef,
+  unitRef: SourceProvisioningPolicySchema.fields.unitRef,
+}).check(
+  Schema.makeFilter(
+    ({ locations, policyRef, unitRef }) =>
+      (unitRef.tenantId === policyRef.tenantId &&
+        locations.every(({ stockLocationRef }) => stockLocationRef.tenantId === policyRef.tenantId)) ||
+      'Inventory source policy, locations and unit share one Tenant',
+  ),
+);
+export type SymmyInventorySource = typeof SymmyInventorySourceSchema.Type;
 
-/** The identity of a position inside the enrollment. Length prefixes keep two different pairs apart. */
+/** Length prefixes keep two different external key pairs apart. */
 export const symmyStockScopeKey = ({
   itemKey: item,
   locationKey: location,
@@ -48,11 +55,11 @@ export const symmyStockScopeKey = ({
   readonly locationKey: string;
 }): string => `${item.length}:${item}${location.length}:${location}`;
 
-export const SymmyStockScopeSchema = Schema.NonEmptyArray(SymmyStockScopeEntrySchema).check(
-  Schema.isMaxLength(10_000),
-  Schema.makeFilter(
-    (entries) =>
-      new Set(entries.map(symmyStockScopeKey)).size === entries.length ||
-      'A stock scope entry names one item and location only once',
-  ),
-);
+/** Current Inventory answers read before synchronous admission. They never enter caller-intent identity. */
+export const SymmyStockPositionFactsSchema = Schema.Array(
+  Schema.Struct({
+    request: SourceStockPositionResolutionRequestSchema,
+    resolution: SourceStockPositionResolutionResponseSchema,
+  }),
+).check(Schema.isMaxLength(16));
+export type SymmyStockPositionFacts = typeof SymmyStockPositionFactsSchema.Type;

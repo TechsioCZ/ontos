@@ -128,6 +128,11 @@ export const AdmitSymmyJobResultSchema = Schema.Struct({
 });
 
 export class AdmitSymmyJobRejected extends Schema.TaggedError<AdmitSymmyJobRejected>()('AdmitSymmyJobRejected', {
-  code: Schema.Literals(['symmy_job_intent_conflict', 'symmy_job_persistence_unavailable', 'symmy_job_route_denied']),
+  code: Schema.Literals([
+    'symmy_job_intent_conflict',
+    'symmy_job_persistence_unavailable',
+    'symmy_job_plan_limit_exceeded',
+    'symmy_job_route_denied',
+  ]),
   reason: Schema.String,
 }) {}

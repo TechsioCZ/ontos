@@ -12,8 +12,12 @@ import {
 import { admitRegisteredAssertionWorkload } from './gateway-registered-assertion.ts';
 import { admitRegisteredGatewayWorkload } from './gateway-workload-evidence.ts';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
-import { PrincipalResolver, TenantModuleStateService, tenantStatesAllowingAccess } from '@app/core-runtime';
-import type { OperationContextError, TenantModuleState } from '@app/core-runtime';
+import {
+  PrincipalResolver,
+  TenantModuleStateService,
+  isShellHostedCoreProvider,
+  tenantStatesAllowingAccess,
+} from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
@@ -67,6 +71,46 @@ import {
   refusalTenant,
 } from './gateway-delegation-errors.ts';
 import type { RefusalContext } from './gateway-delegation-errors.ts';
+
+type InstalledContract = ShellInstalledCatalog['contracts'][number];
+
+/**
+ * The Core modules whose Shell-hosted operations the source module's reviewed manifest declares a requirement on,
+ * relaying the requester (`person`). This is the issuer-owned rule that admits the Shell deployment as an audience:
+ * it comes from the installed contract of the attested source release, never from the request.
+ */
+const shellHostedProviderModules = (source: InstalledContract | undefined): readonly string[] => [
+  ...new Set(
+    (source?.manifest.requirements?.operations ?? []).flatMap((requirement) =>
+      isShellHostedCoreProvider(requirement.provider) &&
+      requirement.callers?.some((caller) => caller.kind === 'person') === true
+        ? [requirement.provider.moduleId]
+        : [],
+    ),
+  ),
+];
+
+/**
+ * The modules the delegated context is for: the installed destination, or, for the Shell deployment, the Core
+ * modules whose operations the Shell hosts for the source module. The Shell is an audience only for the requester
+ * a module relays (never for asynchronous work) and only while the attested source release declares exactly that.
+ * Empty means there is no destination.
+ */
+const destinationModuleIds = (input: {
+  readonly installed: ShellInstalledCatalog;
+  readonly payload: GatewayDelegationRequestPayload;
+  readonly sourceContract: InstalledContract | undefined;
+}): readonly string[] => {
+  const { installed, payload, sourceContract } = input;
+  const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+  if (destination !== undefined) {
+    return [destination.manifest.module.id];
+  }
+  return payload.audience === installed.composition.shell.deployment.appId &&
+    Predicate.isTagged(payload.subject, 'Assertion')
+    ? shellHostedProviderModules(sourceContract)
+    : [];
+};
 
 export type GatewayDelegationRequestPayload = Schema.Schema.Type<typeof GatewayDelegatedContextRequestSchema>;
 
@@ -736,21 +780,28 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
   );
   yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(subject.principal.tenantId) }));
 
-  if (installed.composition.revision !== payload.compositionRevision) {
-    return yield* new GatewayDelegationError({ code: 'reload_required', reason: 'release_changed' });
-  }
-  const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
-  if (
-    sourceContract?.deployment.buildMarker !== binding.sourceBuildMarker ||
-    binding.compositionRevision !== installed.composition.revision
-  ) {
-    return yield* delegationForbidden('caller_build_not_installed')();
-  }
-  if (destination === undefined) {
-    return yield* delegationForbidden('audience_not_installed')();
-  }
-  return yield* issueForSubject(input, { actor, caller, destination, sourceContract, subject });
-});
+    if (installed.composition.revision !== payload.compositionRevision) {
+      return yield* new GatewayDelegationError({ code: 'reload_required' });
+    }
+    const destinationModules = destinationModuleIds({ installed, payload, sourceContract });
+    if (
+      sourceContract?.deployment.buildMarker !== binding.sourceBuildMarker ||
+      binding.compositionRevision !== installed.composition.revision ||
+      destinationModules.length === 0
+    ) {
+      return yield* delegationForbidden();
+    }
+    // `tenant` names no Legal Entity, so the context and its scope are issued for the tenant alone.
+    const tenantOnly = payload.legalEntityScope === 'tenant';
+    const principal = tenantOnly ? tenantScopedPrincipal(subject.principal) : subject.principal;
+    const scopePrincipal = tenantOnly ? tenantScopedPrincipal(subject.scopePrincipal) : subject.scopePrincipal;
+    if (
+      // A delegated context names two parties, and the subject's authentication namespace must be explicit.
+      principal.principalId === caller.principalId ||
+      principal.authenticationNamespaceId === undefined
+    ) {
+      return yield* delegationForbidden();
+    }
 
 /**
  * The calling module is the actor: its module credential's bound service principal goes in `act`, and only this
@@ -771,20 +822,36 @@ const issueWithin = Effect.fn('GatewayDelegation.issueWithin')(function* issueWi
   return yield* issueForBinding(input, binding, learned);
 });
 
-/**
- * Module-to-module capability issuance. Every refusal writes one warning with the step that refused it and what the
- * issuer knew by then: the calling module once its key bound one, the subject's tenant once the subject was admitted.
- */
-export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegation.issue')(
-  function* issueDelegatedGatewayContext(input: GatewayDelegationIssueInput) {
-    const learned = yield* Ref.make<RefusalContext>({});
-    const { audience } = input.payload;
-    return yield* issueWithin(input, learned).pipe(
-      Effect.tapErrorTag('GatewayDelegationError', (refusal) =>
-        Ref.get(learned).pipe(
-          Effect.flatMap((context) =>
-            logDelegationRefusal({ audience, context, reason: refusal.reason, status: refusal.code }),
-          ),
+    const moduleStates = yield* TenantModuleStateService;
+    const moduleKeys = [sourceContract.manifest.module.id, ...destinationModules];
+    const states = yield* moduleStates
+      .getTenantModuleStates(principal.tenantId, moduleKeys)
+      .pipe(Effect.mapError(delegationUnavailable));
+    const readableStates = new Set(tenantStatesAllowingAccess('read'));
+    if (moduleKeys.some((key) => !states.some((state) => state.moduleKey === key && readableStates.has(state.state)))) {
+      return yield* delegationForbidden();
+    }
+
+    const ledger = yield* GatewayDelegationExchangeLedger;
+    const requestFingerprint = yield* exchangeFingerprint({
+      actor,
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      principal,
+      requestCorrelation: input.requestCorrelation,
+    }).pipe(Effect.mapError(delegationUnavailable));
+    yield* ledger
+      .reserve({
+        exchangeId: payload.exchangeId,
+        expiresAtEpochSeconds: subject.expiresAtEpochSeconds,
+        requestFingerprint,
+        sourceJti: subject.sourceKey,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
+            ? delegationForbidden(cause)
+            : delegationUnavailable(cause),
         ),
       ),
       Effect.tapErrorTag('GatewayIssuerError', (failure) =>

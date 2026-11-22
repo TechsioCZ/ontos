@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.change-product-relationship', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ChangeProductRelationshipResultSchema),
-      encode: Schema.encodeEffect(ChangeProductRelationshipResultSchema),
     },
   );
 

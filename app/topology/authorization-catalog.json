@@ -11268,6 +11268,114 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.inventory.source-provisioning-policy.define",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.define-source-provisioning-policy",
+            "moduleKey": "commerce.inventory",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.inventory.source-stock-item-provisioning-receipt.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.source-stock-item-provisioning-receipt",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.inventory.source-stock-item.provision",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.provision-source-stock-item",
+            "moduleKey": "commerce.inventory",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "commerce.inventory.source-stock-position-resolution.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-evidence",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.inventory.api.source-stock-position-resolution",
+            "moduleKey": "commerce.inventory",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.inventory.stock-item.register",
             "kind": "action",
             "modes": [
@@ -13205,7 +13313,7 @@
         },
         {
           "accessDeclaration": {
-            "key": "commerce.pricing.external-price-source-authority.grant",
+            "key": "commerce.pricing.external-price-source-policy.manage",
             "kind": "action",
             "modes": [
               "run",
@@ -13213,7 +13321,7 @@
               "approve"
             ],
             "placement": {
-              "group": "external-price-source-authority",
+              "group": "external-price-source-policy",
               "level": "extended"
             },
             "risk": "critical",
@@ -13225,7 +13333,7 @@
             "authorization": {
               "kind": "protected"
             },
-            "entrypointKey": "commerce.pricing.grant-external-price-source-authority",
+            "entrypointKey": "commerce.pricing.manage-external-price-source-policy",
             "moduleKey": "commerce.pricing",
             "role": "action",
             "scope": "tenant"
@@ -15683,6 +15791,207 @@
         }
       ],
       "moduleId": "core.identity"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
+            "key": "core.media.asset-current.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.api.asset-current",
+            "moduleKey": "core.media",
+            "role": "api",
+            "scope": "system"
+          },
+          "actor": {
+            "callers": [
+              "catalog"
+            ],
+            "subject": "rights"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.asset-download.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.api.asset-download",
+            "moduleKey": "core.media",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.asset-integrity.fail",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.record-asset-integrity-failure",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.asset-metadata.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.api.asset-metadata",
+            "moduleKey": "core.media",
+            "role": "api",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.asset.confirm",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.confirm-asset",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.asset.upload",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.upload-asset",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.media.display-filename.rename",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "media",
+              "level": "extended"
+            },
+            "risk": "routine",
+            "selectors": [
+              "all"
+            ]
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.media.rename-display-filename",
+            "moduleKey": "core.media",
+            "role": "action",
+            "scope": "system"
+          }
+        }
+      ],
+      "moduleId": "core.media"
     },
     {
       "descriptors": [

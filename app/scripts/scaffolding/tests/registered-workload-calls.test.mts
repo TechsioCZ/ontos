@@ -71,6 +71,11 @@ const expectOneRecoveryPerLostWrite = (
   const symmyCalls =
     built.find(({ deployment }) => deployment.appId === symmyIntegration)?.manifest.registeredWorkloadCalls ?? [];
   for (const [audience, declarationKey, write] of [
+    [
+      'catalog',
+      'commerce.catalog.add-product-category-assignment-recovery.read',
+      'commerce.catalog.add-product-category-assignment',
+    ],
     ['catalog', 'commerce.catalog.update-product-recovery.read', 'commerce.catalog.update-product'],
     [partyRegistry, partySourceEffectReceipt, 'party.registry.create-party'],
     [partyRegistry, partySourceEffectReceipt, 'party.registry.update-party'],

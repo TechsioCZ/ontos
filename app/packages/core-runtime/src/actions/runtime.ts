@@ -359,21 +359,12 @@ export interface ActionReplay {
   readonly invocationId: string;
 }
 
-export type ResolveActionCommitInput = { readonly principal: unknown } & (
-  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: unknown }
-  | { readonly actionKey: unknown; readonly idempotencyKey: unknown; readonly invocationId?: never }
-);
-
-export type ResolveActionExecutionInput = ResolveActionCommitInput & {
-  readonly expectedRequestHash?: unknown;
-};
-
-const ExpectedActionRequestHashSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
-const actionRequestMismatch = () =>
-  new ActionPayloadValidationError({
-    code: 'action_payload_invalid',
-    reason: 'The original Action request could not be matched',
-  });
+export interface ResolveActionCommitInput {
+  /** Owner-specific resolution must pin its Action, not just a principal's invocation identifier. */
+  readonly expectedActionKey?: unknown;
+  readonly invocationId: unknown;
+  readonly principal: unknown;
+}
 
 const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId'));
 
@@ -3908,6 +3899,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         }
         const resolved = yield* Effect.option(
           repository.resolveInvocation(invocationScopeExecutor(original.scope), {
+            expectedActionKey: input.registration.descriptor.actionKey,
             invocationId: original.invocationId,
             principal: original.principal,
           }),
@@ -4164,19 +4156,24 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             ),
           ),
         );
-    const identity = yield* Schema.decodeUnknownEffect(ActionCommitIdentitySchema)(input).pipe(
-      Effect.mapError((cause) =>
-        attachFailureCause(
-          new ActionPayloadValidationError({
-            code: 'action_payload_invalid',
-            reason: 'The Action commit lookup identity is invalid',
-          }),
-          cause,
-        ),
-      ),
-    );
-    const requestedInvocationId = 'invocationId' in identity ? identity.invocationId : undefined;
-    if (recovery !== undefined && requestedInvocationId !== recovery.originalActionInvocationId) {
+    const invocationId = yield* validateInvocationId(input.invocationId);
+    const expectedActionKey =
+      input.expectedActionKey === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownEffect(Schema.NonEmptyString.check(Schema.isTrimmed()))(
+            input.expectedActionKey,
+          ).pipe(
+            Effect.mapError((cause) =>
+              attachFailureCause(
+                new ActionPayloadValidationError({
+                  code: 'action_payload_invalid',
+                  reason: 'The expected Action key is invalid',
+                }),
+                cause,
+              ),
+            ),
+          );
+    if (recovery !== undefined && invocationId !== recovery.originalActionInvocationId) {
       return yield* new ActionInvocationNotFound({
         code: 'action_invocation_not_found',
         reason: 'The Action invocation does not match the exact recovery authority',
@@ -4185,7 +4182,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     const invocation = yield* repository
       .resolveInvocation(
         invocationScopeExecutor(preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' })),
-        { ...identity, principal },
+        {
+          expectedActionKey,
+          invocationId,
+          principal,
+        },
       )
       .pipe(
         Effect.tapError((error) =>

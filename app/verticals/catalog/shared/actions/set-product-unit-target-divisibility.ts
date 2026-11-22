@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
 import {
   CatalogRevisionNumberSchema,
@@ -27,6 +28,7 @@ export const SetProductUnitTargetDivisibilityPayloadSchema = Schema.Struct({
     variant: Schema.Struct({ resourceRef: VariantRefSchema, revision: CatalogRevisionNumberSchema }),
   }),
   reason: ProductUnitReasonSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
   target: Schema.Struct({
     targetId: CatalogRevisionResourceIdSchema,
     targetType: Schema.Literals(['commerce.catalog.variant', 'commerce.catalog.package-definition']),
@@ -35,5 +37,8 @@ export const SetProductUnitTargetDivisibilityPayloadSchema = Schema.Struct({
   }),
 });
 export type SetProductUnitTargetDivisibilityPayload = typeof SetProductUnitTargetDivisibilityPayloadSchema.Type;
-export const SetProductUnitTargetDivisibilityResultSchema = ProductUnitMutationResultSchema;
+export const SetProductUnitTargetDivisibilityResultSchema = Schema.Struct({
+  ...ProductUnitMutationResultSchema.fields,
+  changed: Schema.Boolean,
+});
 export type SetProductUnitTargetDivisibilityResult = typeof SetProductUnitTargetDivisibilityResultSchema.Type;

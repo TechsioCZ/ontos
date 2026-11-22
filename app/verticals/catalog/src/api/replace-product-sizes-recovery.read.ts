@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.replace-product-sizes', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ReplaceProductSizesResultSchema),
-      encode: Schema.encodeEffect(ReplaceProductSizesResultSchema),
     },
   );
 

@@ -8,7 +8,7 @@ import {
   SymmyCustomerGroupRowsSchema,
 } from '../domain/symmy-customer-group-batch.ts';
 import { SymmyPinnedJobPlanSchema } from '../domain/symmy-job-execution.ts';
-import { SymmyStockRowsSchema } from '../domain/symmy-stock-batch.ts';
+import { SymmyStockPositionFactsSchema, SymmyStockRowsSchema } from '../domain/symmy-stock-batch.ts';
 
 export const AdmitSymmySyncPayloadSchema = Schema.Struct({
   /** The public customer groups. The route enrollment, not the caller, supplies every source fact. */
@@ -22,12 +22,14 @@ export const AdmitSymmySyncPayloadSchema = Schema.Struct({
   routeKey: Schema.Literals(['customerGroupsBatch', 'inventoryStockBatch']),
   /** The public stock rows. The route enrollment, not the caller, supplies every other stock fact. */
   stock: Schema.optionalKey(SymmyStockRowsSchema),
+  /** Current public Inventory resolution answers. Omitted on replay, like groupFacts. */
+  stockFacts: Schema.optionalKey(SymmyStockPositionFactsSchema),
 }).check(
   Schema.makeFilter(
-    ({ customerGroups, groupFacts, routeKey, stock }) =>
+    ({ customerGroups, groupFacts, routeKey, stock, stockFacts }) =>
       (routeKey === 'inventoryStockBatch'
         ? stock !== undefined && customerGroups === undefined && groupFacts === undefined
-        : stock === undefined && customerGroups !== undefined) ||
+        : stock === undefined && stockFacts === undefined && customerGroups !== undefined) ||
       'Send stock rows only to the stock route, and customer groups with any definition facts only to the group route',
   ),
 );

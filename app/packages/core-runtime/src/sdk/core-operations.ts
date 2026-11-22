@@ -11,8 +11,9 @@
  */
 import { Schema } from 'effect';
 
+import { AssetCurrentRequestSchema, AssetCurrentResponseSchema } from '../media/current-contract.ts';
 import { LegalEntityRefSchema } from '../resources/legal-entity.ts';
-import { CoreOperationRouteSchema } from './index.ts';
+import { CoreOperationRouteSchema, ModuleOperationRouteSchema } from './index.ts';
 import type { CallSchema, OperationProvider, OperationRef } from './index.ts';
 
 const coreOperation = <RequestSchema extends CallSchema, ResponseSchema extends CallSchema>(input: {
@@ -28,6 +29,29 @@ const coreOperation = <RequestSchema extends CallSchema, ResponseSchema extends 
     route: CoreOperationRouteSchema.make({}),
   });
 
+/**
+ * A Core operation the SHELL HOST serves to modules over the module route (#1443 P2): its answer needs a credential
+ * (the object store) that stays in the one deployment that holds it, so a consuming module host never runs it. It
+ * is reached like a vertical's operation (delegated assertion of the requester, one Shell receiver); only the
+ * route and the provider app differ, and `isShellHostedCoreProvider` names the closed set.
+ */
+const shellHostedOperation = <RequestSchema extends CallSchema, ResponseSchema extends CallSchema>(input: {
+  readonly path: `/${string}`;
+  readonly provider: OperationProvider;
+  readonly request: RequestSchema;
+  readonly response: ResponseSchema;
+}): OperationRef<RequestSchema, ResponseSchema> =>
+  Object.freeze({
+    kind: 'read' as const,
+    provider: Object.freeze({ ...input.provider }),
+    request: input.request,
+    response: input.response,
+    route: ModuleOperationRouteSchema.make({ path: input.path }),
+  });
+
+/** The Shell deployment's topology app id: the audience of every Shell-hosted Core operation. */
+export const SHELL_HOST_APP_ID = 'shell-super-app';
+
 export const LegalEntityDetailRequestSchema = Schema.Struct({ legalEntityRef: LegalEntityRefSchema });
 export const LegalEntityDetailResponseSchema = Schema.Struct({
   legalEntityRef: LegalEntityRefSchema,
@@ -40,9 +64,19 @@ export const LegalEntityDetailResponseSchema = Schema.Struct({
 });
 
 export const coreOperations = Object.freeze({
+  /** Current V1 of Media Assets for a consumer's assignments (#1443): one entry per requested owner-qualified ref. */
+  assetCurrent: shellHostedOperation({
+    path: '/core/operations/asset-current',
+    provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
+    request: AssetCurrentRequestSchema,
+    response: AssetCurrentResponseSchema,
+  }),
   legalEntityDetail: coreOperation({
     provider: { entrypointKey: 'core.identity.api.legal-entity-detail', moduleId: 'core.identity', schemaVersion: '1' },
     request: LegalEntityDetailRequestSchema,
     response: LegalEntityDetailResponseSchema,
   }),
 });
+
+/** Every Core operation the Shell host serves to modules over the module route; all others run in-process. */
+export const shellHostedCoreOperations = Object.freeze([coreOperations.assetCurrent]);

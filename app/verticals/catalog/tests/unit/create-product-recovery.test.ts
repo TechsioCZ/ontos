@@ -216,10 +216,10 @@ interface SnapshotRow {
 }
 
 const reconciliationTransaction = (rows?: CanonicalCreateRows, snapshot?: SnapshotRow) => {
-  let snapshotReads = 0;
+  const queriedTables: CatalogTable[] = [];
   const limit = (table: CatalogTable) => {
+    queriedTables.push(table);
     if (table === catalogResultSnapshots) {
-      snapshotReads += 1;
       return Effect.succeed(snapshot === undefined ? [] : [snapshot]);
     }
     if (rows === undefined) {
@@ -246,9 +246,7 @@ const reconciliationTransaction = (rows?: CanonicalCreateRows, snapshot?: Snapsh
     }),
   };
   return {
-    get snapshotReads() {
-      return snapshotReads;
-    },
+    queriedTables,
     transaction,
   };
 };
@@ -275,7 +273,7 @@ describe('create Product exact result recovery (#415/#478)', () => {
         .pipe(Effect.provideService(ActionRuntime, committedRuntime));
       expect(recovery).toEqual({ result, status: 'committed' });
       expect(recovery).toMatchObject({ result: { classification: { kind: 'INDEPENDENT_PRODUCT' } } });
-      expect(mock.snapshotReads).toBe(2);
+      expect(mock.queriedTables).toEqual([catalogResultSnapshots]);
     }),
   );
 
@@ -300,7 +298,7 @@ describe('create Product exact result recovery (#415/#478)', () => {
         .recoverCreateProduct(invocationId)
         .pipe(Effect.provideService(ActionRuntime, committedRuntime));
       expect(recovery).toEqual({ result: legacyResult, status: 'committed' });
-      expect(mock.snapshotReads).toBe(3);
+      expect(mock.queriedTables).toEqual([catalogResultSnapshots, catalogResultSnapshots]);
     }),
   );
 
@@ -316,7 +314,7 @@ describe('create Product exact result recovery (#415/#478)', () => {
         .recoverCreateProduct(invocationId)
         .pipe(Effect.provideService(ActionRuntime, committedRuntime));
       expect(recovery).toEqual({ status: 'unavailable' });
-      expect(mock.snapshotReads).toBe(2);
+      expect(mock.queriedTables).toEqual([catalogResultSnapshots, catalogResultSnapshots]);
     }),
   );
 
@@ -324,15 +322,17 @@ describe('create Product exact result recovery (#415/#478)', () => {
     'keeps a committed create without any canonical Product row indeterminate instead of inventing a result',
     () =>
       Effect.gen(function* missingCanonicalRow() {
+        const mock = reconciliationTransaction();
         const persistence = yield* catalogPersistenceForScope(
           // @ts-expect-error Focused mock implements only snapshot and canonical-row select chains.
-          reconciliationTransaction().transaction,
+          mock.transaction,
           scope,
         );
         const recovery = yield* persistence
           .recoverCreateProduct(invocationId)
           .pipe(Effect.provideService(ActionRuntime, committedRuntime));
         expect(recovery).toEqual({ status: 'unavailable' });
+        expect(mock.queriedTables).toEqual([catalogResultSnapshots, catalogResultSnapshots]);
       }),
   );
 });

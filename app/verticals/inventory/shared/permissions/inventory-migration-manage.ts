@@ -18,6 +18,8 @@ export const inventoryMigrationManagePermission = defineBusinessPermission({
     'commerce.inventory.register-stock-item',
     'commerce.inventory.create-stock-location',
     'commerce.inventory.establish-stock-position',
+    'commerce.inventory.define-source-provisioning-policy',
+    'commerce.inventory.provision-source-stock-item',
   ],
   schemaVersion: '1',
 });

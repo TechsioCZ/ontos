@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.set-product-localized-facts', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(SetProductLocalizedFactsResultSchema),
-      encode: Schema.encodeEffect(SetProductLocalizedFactsResultSchema),
     },
   );
 
@@ -81,8 +80,8 @@ export const setProductLocalizedFactsRecoveryRead = defineRead(
     },
     accessKind: 'detail',
     accessWorkload: {
-      reason: 'Recover the exact original localized Product source fact for the registered C14 integration',
-      workloads: ['commerce.catalog.symmy-product-localized-facts-recovery'],
+      reason: 'Recover source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-read'],
     },
     entrypoint: setProductLocalizedFactsRecoveryEntrypoint,
     evidencePolicy: {

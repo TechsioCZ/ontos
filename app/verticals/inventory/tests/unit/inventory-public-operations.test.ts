@@ -37,6 +37,8 @@ const expectedActionKeys = [
   'commerce.inventory.change-stock-sharing-eligibility',
   'commerce.inventory.end-stock-sharing-eligibility',
   'commerce.inventory.recover-inventory-effect',
+  'commerce.inventory.define-source-provisioning-policy',
+  'commerce.inventory.provision-source-stock-item',
 ] as const;
 
 const expectedReadSchemas = {
@@ -51,6 +53,8 @@ const expectedReadSchemas = {
   'commerce.inventory.api.inventory-source-conflict-detail': 'InventorySourceConflictDetailResponseSchema',
   'commerce.inventory.api.inventory-source-import-receipt': 'InventorySourceImportReceiptResponseSchema',
   'commerce.inventory.api.reservation-confirmation-verification': 'ReservationConfirmationVerificationResponseSchema',
+  'commerce.inventory.api.source-stock-item-provisioning-receipt': 'SourceStockItemProvisioningReceiptResponseSchema',
+  'commerce.inventory.api.source-stock-position-resolution': 'SourceStockPositionResolutionResponseSchema',
   'commerce.inventory.api.stock-sharing-eligibility-resolution': 'StockSharingEligibilityResolutionResponseSchema',
 } as const;
 
@@ -91,11 +95,11 @@ describe('Inventory public owner contracts', () => {
     }
   });
 
-  it('publishes the eleven distinct governed reads with their exact stable key and response vocabulary', () => {
+  it('publishes the thirteen distinct governed reads with their exact stable key and response vocabulary', () => {
     expect(
       Object.fromEntries(inventoryGovernedReadContracts.map(({ key, outcomes }) => [key, outcomes.sourceSchemaName])),
     ).toEqual(expectedReadSchemas);
-    expect(new Set(inventoryGovernedReadContracts.map(({ key }) => key)).size).toBe(11);
+    expect(new Set(inventoryGovernedReadContracts.map(({ key }) => key)).size).toBe(13);
 
     for (const operation of inventoryGovernedReadContracts) {
       expect(operation).toMatchObject({ kind: 'GOVERNED_READ', owner: 'commerce.inventory' });
@@ -136,8 +140,8 @@ describe('Inventory public owner contracts', () => {
   it('exports the exact launch client pairs plus the #1038 governed Position-set read pair', () => {
     const actualOperationClientExports = Object.keys(inventoryPublicClient).filter((key) => key.startsWith('execute'));
 
-    expect(inventoryPublicActionContracts).toHaveLength(23);
-    expect(inventoryGovernedReadContracts).toHaveLength(11);
+    expect(inventoryPublicActionContracts).toHaveLength(25);
+    expect(inventoryGovernedReadContracts).toHaveLength(13);
     expect(new Set(actualOperationClientExports)).toEqual(new Set(expectedOperationClientExports));
     expect(inventoryPublicClient.executeCurrentRelevantStockPositionSet).toBe(executeCurrentRelevantStockPositionSet);
     expect(inventoryPublicClient.executeCurrentRelevantStockPositionSetWithAuthorization).toBe(

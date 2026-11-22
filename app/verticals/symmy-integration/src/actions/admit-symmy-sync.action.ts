@@ -24,6 +24,7 @@ const rejected = (code: typeof AdmitSymmySyncRejected.fields.code.Type, cause?: 
 };
 const admissionProblemByCode = {
   idempotency_conflict: 'symmy_sync_intent_conflict',
+  plan_limit_exceeded: 'symmy_sync_unavailable',
   route_denied: 'symmy_sync_route_denied',
   stock_assertion_denied: 'symmy_sync_stock_assertion_denied',
   unavailable: 'symmy_sync_unavailable',

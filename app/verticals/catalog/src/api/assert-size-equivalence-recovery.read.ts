@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.assert-size-equivalence', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(AssertSizeEquivalenceResultSchema),
-      encode: Schema.encodeEffect(AssertSizeEquivalenceResultSchema),
     },
   );
 

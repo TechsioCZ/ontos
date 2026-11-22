@@ -99,9 +99,32 @@ export type OntosOperationContract = typeof OntosOperationContractSchema.Type;
 const unique = (values: readonly string[]): boolean => new Set(values).size === values.length;
 const owns = (moduleId: string, key: string): boolean => key.startsWith(`${moduleId}.`);
 
-/** A provider whose module id is a Core module: Core itself satisfies it, never the composition. */
-export const isCoreOperationProvider = (provider: { readonly moduleId: string }): boolean =>
-  provider.moduleId.startsWith('core.');
+/**
+ * The closed set of Core operations the Shell host serves to modules over the module route (#1443), as plain data: the
+ * provider identity of each. Kept here, not derived from the operation references, so manifest validation never
+ * depends on the Core operation schemas; a test pins it to `shellHostedCoreOperations` in `sdk/core-operations.ts`.
+ */
+export const SHELL_HOSTED_CORE_PROVIDERS = Object.freeze([
+  Object.freeze({ entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media' }),
+]);
+
+export const isShellHostedCoreProvider = (provider: {
+  readonly entrypointKey: string;
+  readonly moduleId: string;
+}): boolean =>
+  SHELL_HOSTED_CORE_PROVIDERS.some(
+    (hosted) => hosted.moduleId === provider.moduleId && hosted.entrypointKey === provider.entrypointKey,
+  );
+
+/**
+ * A provider whose module id is a Core module that Core runs IN-PROCESS: Core itself satisfies it, never the
+ * composition. A Core operation the Shell host serves (`isShellHostedCoreProvider`) is reached over the module
+ * route like a vertical's, so it is not one.
+ */
+export const isCoreOperationProvider = (provider: {
+  readonly entrypointKey: string;
+  readonly moduleId: string;
+}): boolean => provider.moduleId.startsWith('core.') && !isShellHostedCoreProvider(provider);
 
 /**
  * Core runs a Core provider in-process with the execution's own principal, so its requirement names no
@@ -118,6 +141,9 @@ const requirementCallersIssue = (requirement: OntosOperationRequirement): string
   }
   if (callers.length === 0) {
     return `operation requirement ${requirement.key} must declare at least one caller or none at all`;
+  }
+  if (isShellHostedCoreProvider(requirement.provider) && callers.some(({ kind }) => kind !== 'person')) {
+    return `operation requirement ${requirement.key} on a Shell-hosted Core provider may only relay the requester (person)`;
   }
   return unique(callers.map(({ kind }) => kind))
     ? undefined
@@ -154,6 +180,11 @@ const requirementCallersIssues = (
   const callers = requirement.callers ?? [];
   if (callers.length === 0) {
     return [`${label}: requirement ${requirement.key} must declare the callers a call to its provider may carry`];
+  }
+  if (isShellHostedCoreProvider(requirement.provider) && callers.some(({ kind }) => kind !== 'person')) {
+    return [
+      `${label}: requirement ${requirement.key} on a Shell-hosted Core provider may only relay the requester (person)`,
+    ];
   }
   return callers.flatMap((caller) =>
     caller.kind === 'person' ||

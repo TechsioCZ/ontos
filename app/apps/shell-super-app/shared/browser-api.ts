@@ -23,50 +23,19 @@ import {
   accessAdminPeopleGroup,
   accessAdminRolesGroup,
 } from './access-admin-api.ts';
+import { coreOperations } from '@app/core-runtime/sdk/core';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { ResourceIdentitySchema } from '@app/shared-contracts/resource-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import {
-  AgentActivityRequestSchema,
-  AgentActivityResponseSchema,
-  AgentDecideRequestSchema,
-  AgentDecideResponseSchema,
-  AgentProposalSubmitRequestSchema,
-  AgentProposalSubmitResponseSchema,
-  AgentQueueResponseSchema,
-  AgentQueueRequestSchema,
-  AgentRevertRequestSchema,
-  AgentRevertResponseSchema,
-} from '@app/shared-contracts/agent-proposals';
-import {
-  AgentEntityOverviewSchema,
-  AgentOperatorsRequestSchema,
-  AgentOperatorsResponseSchema,
-  ConnectionAdminListRequestSchema,
-  ConnectionAdminListResponseSchema,
-  ConnectionListResponseSchema,
-  ConnectionMutationResponseSchema,
-  ConnectionRevokeRequestSchema,
-  ConnectionUpdateRequestSchema,
-  ManageAgentEntityRequestSchema,
-  ManageAgentEntityResponseSchema,
-} from '@app/shared-contracts/agent-access';
-import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
-import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
-import {
-  PEOPLE_PATHS,
-  InvitePeopleRequestSchema,
-  InvitePeopleResponseSchema,
-  PeopleListRequestSchema,
-  PeopleListResponseSchema,
-  SetPeopleCompanyMembershipRequestSchema,
-  SetPeopleCompanyMembershipResponseSchema,
-} from './people-api.ts';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
+import { coreHostedOperationErrors } from './core-hosted-operations.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
 import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from './core-reads/legal-entity-detail.ts';
+
+// @ontos-core-read asset-metadata
+import { AssetMetadataRequestSchema, AssetMetadataResponseSchema } from './core-reads/asset-metadata.ts';
 // @ontos-codesmith-core-read-contract-imports:end
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
@@ -1473,150 +1442,41 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       }),
     ),
   )
+
+  // @ontos-core-read asset-metadata
+  .add(
+    HttpApiGroup.make('coreReadAssetMetadata').add(
+      HttpApiEndpoint.post('executeAssetMetadata', '/core/reads/asset-metadata', {
+        error: identityErrors,
+        payload: AssetMetadataRequestSchema,
+        success: AssetMetadataResponseSchema,
+      }),
+    ),
+  )
   // @ontos-codesmith-core-read-api-groups:end
+
+  // Core Media byte delivery (#1443, #1436): a hand-written streaming edge. Its success body is the exact verified
+  // bytes of one asset; it carries no storage value, takes only the asset id and runs its own governed
+  // `download` Core Read on every request.
   .add(
-    HttpApiGroup.make('agentPlatform')
-      .add(
-        HttpApiEndpoint.post('submitAgentProposals', '/agent-platform/proposals', {
-          error: identityErrors,
-          headers: AgentProposalRequestHeadersSchema,
-          payload: AgentProposalSubmitRequestSchema,
-          success: AgentProposalSubmitResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('listOwnAgentProposals', '/agent-platform/proposals/list', {
-          error: identityErrors,
-          headers: AgentApiKeyHeadersSchema,
-          payload: AgentOwnProposalsRequestSchema,
-          success: AgentQueueResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('agentQueue', '/agent-platform/queue', {
-          error: identityErrors,
-          payload: AgentQueueRequestSchema,
-          success: AgentQueueResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('agentDecide', '/agent-platform/decide', {
-          error: identityErrors,
-          headers: AgentActionRequestHeadersSchema,
-          payload: AgentDecideRequestSchema,
-          success: AgentDecideResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('agentRevert', '/agent-platform/revert', {
-          error: identityErrors,
-          headers: AgentActionRequestHeadersSchema,
-          payload: AgentRevertRequestSchema,
-          success: AgentRevertResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('agentActivity', '/agent-platform/activity', {
-          error: identityErrors,
-          payload: AgentActivityRequestSchema,
-          success: AgentActivityResponseSchema,
-        }),
-      ),
+    HttpApiGroup.make('coreMediaDownload').add(
+      HttpApiEndpoint.get('downloadAsset', '/core/media/assets/:mediaAssetId/content', {
+        error: identityErrors,
+        params: { mediaAssetId: Schema.String.check(Schema.isUUID()) },
+        success: HttpApiSchema.StreamUint8Array({ contentType: 'application/octet-stream' }),
+      }),
+    ),
   )
+  // The Core operations the Shell host serves to modules (#1443 P2). A module reaches them only by relaying its
+  // requester as an audience-scoped Bearer assertion, never with a session cookie: one endpoint per operation.
   .add(
-    HttpApiGroup.make('peopleAdministration')
-      .add(
-        HttpApiEndpoint.post('requestPeopleSearchRebuild', peopleSearchRebuildHttpPath, {
-          error: identityErrors,
-          headers: RequestPeopleSearchRebuildHttpHeadersSchema,
-          payload: RequestPeopleSearchRebuildHttpPayloadSchema,
-          success: RequestPeopleSearchRebuildHttpResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('invitePerson', PEOPLE_PATHS.companyInvite, {
-          error: identityErrors,
-          headers: IdentityRequestHeadersSchema,
-          payload: InvitePeopleRequestSchema,
-          success: InvitePeopleResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('listCompanyPeople', PEOPLE_PATHS.companyList, {
-          error: identityErrors,
-          payload: PeopleListRequestSchema,
-          success: PeopleListResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('listTenantPeople', PEOPLE_PATHS.tenantList, {
-          error: identityErrors,
-          payload: PeopleListRequestSchema,
-          success: PeopleListResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('setPeopleCompanyMembership', PEOPLE_PATHS.companyMembership, {
-          error: identityErrors,
-          headers: IdentityRequestHeadersSchema,
-          payload: SetPeopleCompanyMembershipRequestSchema,
-          success: SetPeopleCompanyMembershipResponseSchema,
-        }),
-      ),
-  )
-  // "Připojené aplikace" and Agentní entity management (paths equal CONNECTION_MANAGEMENT_PATHS and AGENT_ACCESS_PATHS).
-  .add(
-    HttpApiGroup.make('oauthConnectionsAdmin')
-      .add(
-        HttpApiEndpoint.post('listMyConnections', '/auth/oauth-connections/mine', {
-          error: identityErrors,
-          payload: Schema.Struct({}),
-          success: ConnectionListResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('listCompanyConnections', '/auth/oauth-connections/admin-list', {
-          error: identityErrors,
-          payload: ConnectionAdminListRequestSchema,
-          success: ConnectionAdminListResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('updateConnectionAccess', '/auth/oauth-connections/update', {
-          error: identityErrors,
-          payload: ConnectionUpdateRequestSchema,
-          success: ConnectionMutationResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('revokeConnection', '/auth/oauth-connections/revoke', {
-          error: identityErrors,
-          payload: ConnectionRevokeRequestSchema,
-          success: ConnectionMutationResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('listAgentEntities', '/auth/identity/agent-entities/list', {
-          error: identityErrors,
-          payload: Schema.Struct({}),
-          success: AgentEntityOverviewSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('manageAgentEntity', '/auth/identity/agent-entities', {
-          error: identityErrors,
-          headers: IdentityRequestHeadersSchema,
-          payload: ManageAgentEntityRequestSchema,
-          success: ManageAgentEntityResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('replaceAgentOperators', '/auth/identity/agent-entities/operators', {
-          error: identityErrors,
-          payload: AgentOperatorsRequestSchema,
-          success: AgentOperatorsResponseSchema,
-        }),
-      ),
+    HttpApiGroup.make('coreHostedOperations').add(
+      HttpApiEndpoint.post('assetCurrent', '/core/operations/asset-current', {
+        error: coreHostedOperationErrors,
+        payload: coreOperations.assetCurrent.request,
+        success: coreOperations.assetCurrent.response,
+      }),
+    ),
   )
   .add(GatewayContextApiGroup)
   .add(ApiKeyGatewayReadApiGroup)

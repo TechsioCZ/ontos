@@ -93,6 +93,7 @@ it.live('appends and isolates explicit Product Type absence decisions in Postgre
       });
 
       expect(yield* decide(tenantId, 'CONFIRMED', 0)).toMatchObject({
+        changed: true,
         decisionRevision: 1,
         decisionState: 'CONFIRMED',
       });
@@ -115,6 +116,7 @@ it.live('appends and isolates explicit Product Type absence decisions in Postgre
       expect(yield* failureTag(foreignTenantId, 'REVOKED', 1)).toBe('ProductTypeUntypedDecisionRejected');
 
       expect(yield* decide(tenantId, 'REVOKED', 1)).toMatchObject({
+        changed: true,
         decisionRevision: 2,
         decisionState: 'REVOKED',
       });
