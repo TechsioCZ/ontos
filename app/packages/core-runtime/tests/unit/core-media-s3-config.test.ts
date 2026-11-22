@@ -118,6 +118,31 @@ it.effect('rejects a bucket with a dot under virtual-host addressing', () =>
   }),
 );
 
+it.effect('rejects an IP-literal endpoint under virtual-host addressing, where no bucket subdomain can exist', () =>
+  Effect.gen(function* ipEndpoint() {
+    for (const endpoint of [plainHttp('127.0.0.1:9000'), 'https://203.0.113.7', plainHttp('[::1]:9000')]) {
+      const failure = yield* failureOf({
+        ...complete,
+        CORE_MEDIA_S3_ADDRESSING_STYLE: 'virtual-host',
+        CORE_MEDIA_S3_ENDPOINT: endpoint,
+      });
+      expect(failure?.reason, endpoint).toContain('CORE_MEDIA_S3_ENDPOINT');
+    }
+    // A DNS name carries the bucket as a subdomain (`localhost` included), and path style needs no subdomain at all.
+    expect(
+      (yield* parseS3ObjectStorageConfig({
+        ...complete,
+        CORE_MEDIA_S3_ADDRESSING_STYLE: 'virtual-host',
+        CORE_MEDIA_S3_ENDPOINT: plainHttp('localhost:9000'),
+      })).addressingStyle,
+    ).toBe('virtual-host');
+    expect(
+      (yield* parseS3ObjectStorageConfig({ ...complete, CORE_MEDIA_S3_ENDPOINT: plainHttp('127.0.0.1:9000') }))
+        .addressingStyle,
+    ).toBe('path');
+  }),
+);
+
 it.effect('accepts the optional part size and timeout only as explicit values, with no default', () =>
   Effect.gen(function* optionalValues() {
     const config = yield* parseS3ObjectStorageConfig({
