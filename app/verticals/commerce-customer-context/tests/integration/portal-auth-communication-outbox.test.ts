@@ -36,7 +36,8 @@ import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests
 
 /**
  * D1 and D2 of #1406 on native PostgreSQL as the realm's runtime role: the Auth-local outbox is written in the same Auth
- * transaction as its issuance, a rolled-back transaction leaves no request (#1392 scenario 3), two relays never submit one row
+ * transaction as its issuance, a rolled-back transaction holding both leaves no request (#1392 scenario 3, as far as the
+ * issuance and outbox atomicity go: not Better Auth's own token write, which commits separately), two relays never submit one row
  * twice, a crashed relay's row is taken over after its lease and resubmitted to the SAME Communications idempotency, and the
  * sealed protected value serves every Auth process alike. Communications is a LABELLED in-memory intake double that keeps its
  * owner-local idempotency (same key, same decision); the real Action is the end-to-end suites'. Every value is FICTIONAL.
@@ -234,13 +235,18 @@ describe('The Portal Auth communication outbox on PostgreSQL (#1406 D1, D2)', ()
   );
 
   it.live(
-    '[#1392 S3] a rolled-back Auth source transaction yields no request: nothing is stored, relayed or submitted',
+    '[#1392 S3, issuance and outbox atomicity] a rolled-back transaction holding an issuance and its request leaves neither: nothing is stored, relayed or submitted',
     () =>
       atNow(
         Effect.gen(function* rolledBack() {
           const { first, prefix } = yield* scopedRun();
           const intake = yield* intakeDouble;
-          // the request is written, then the Auth source transaction it belongs to fails and rolls back as a whole
+          // WHAT THIS PROVES: the issuance and its request commit or roll back together, also inside an enclosing
+          // transaction that fails after they were written. WHAT IT DOES NOT: production's Better Auth callback runs
+          // `hold` in its own Auth transaction, outside Better Auth's adapter write of the token, so the two are NOT one
+          // transaction; a Better Auth write failing after `hold` committed would leave a request whose issuance Auth's
+          // ledger probe must then answer as not resumable (no send). That sequencing is not exercised here.
+          // The request is written, then the transaction it belongs to fails and rolls back as a whole
           const failed = yield* first.database.executor
             .transaction(() =>
               hold(first.handoff, heldOf(prefix, 'rolled-back')).pipe(
