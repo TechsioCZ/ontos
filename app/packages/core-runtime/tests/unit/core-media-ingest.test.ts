@@ -299,6 +299,100 @@ it.effect('is a conflict when a replay carries different bytes, and the sealed o
   }),
 );
 
+/*
+ * The byte PUT edge is accepted only for a reserved row in `uploaded`, bound to the principal and tenant that reserved it,
+ * and writes at most the reserved size (decision 5, #1433). The matrix below pins the whole boundary in one place.
+ */
+const otherTenantId = '00000000-0000-4000-8000-000000000002';
+const closedStatuses = ['uploaded', 'ready', 'failed', 'scanning'] as const;
+
+it.effect('answers another principal of the same tenant the same refusal for every status, with no provider call', () =>
+  Effect.gen(function* statusOracle() {
+    const { callsOf, confirms, ingest } = yield* setup();
+    for (const processingStatus of closedStatuses) {
+      const asset = reserved({ processingStatus, sealedAt: processingStatus === 'ready' ? sealedAt : null });
+      expect(failureTag(yield* Effect.exit(ingest({ asset, principalId: stranger })))).toBe('MediaForbidden');
+    }
+    // An unbound reservation has no principal to match, so nobody may send its bytes.
+    expect(
+      failureTag(
+        yield* Effect.exit(ingest({ asset: reserved({ ingestedByPrincipalId: null }), principalId: stranger })),
+      ),
+    ).toBe('MediaForbidden');
+    expect(yield* callsOf).toEqual([]);
+    expect(yield* confirms).toEqual([]);
+  }),
+);
+
+it.effect('never writes for a sealed, failed or scanning asset, even for the principal that reserved it', () =>
+  Effect.gen(function* neverWrites() {
+    const { callsOf, confirms, ingest } = yield* setup();
+    expect(
+      failureTag(yield* Effect.exit(ingest({ asset: reserved({ processingStatus: 'ready', sealedAt }) }))),
+    ).toBeUndefined();
+    expect(failureTag(yield* Effect.exit(ingest({ asset: reserved({ processingStatus: 'failed' }) })))).toBe(
+      'MediaIntegrityFailed',
+    );
+    expect(failureTag(yield* Effect.exit(ingest({ asset: reserved({ processingStatus: 'scanning' }) })))).toBe(
+      'MediaNotReady',
+    );
+    expect(yield* callsOf).toEqual([]);
+    expect(yield* confirms).toEqual([]);
+  }),
+);
+
+it.effect(
+  'refuses a row whose storage key is not the one derived from the asset the caller named, before any call',
+  () =>
+    Effect.gen(function* boundToTenant() {
+      const { callsOf, confirms, ingest } = yield* setup();
+      // The key of the same asset id under another tenant, and of another asset id under this tenant.
+      const foreignKey = deriveMediaStorageKey({ mediaAssetId: assetId, tenantId: otherTenantId });
+      const siblingKey = deriveMediaStorageKey({ mediaAssetId: '00000000-0000-4000-8000-0000000000a2', tenantId });
+      for (const key of [foreignKey, siblingKey]) {
+        expect(failureTag(yield* Effect.exit(ingest({ asset: reserved({ storageKey: key }) })))).toBe(
+          'MediaAssetNotFound',
+        );
+      }
+      expect(yield* callsOf).toEqual([]);
+      expect(yield* confirms).toEqual([]);
+    }),
+);
+
+it.effect('hands the provider no more bytes than the reserved size, whatever the body and its stated length say', () =>
+  Effect.gen(function* atMostReserved() {
+    const { ingest, storage } = yield* setup();
+    const received = yield* Ref.make(0);
+    const counting: typeof storage.service = {
+      ...storage.service,
+      put: (request) =>
+        storage.service.put({
+          ...request,
+          body: request.body.pipe(Stream.tap((chunk) => Ref.update(received, (total) => total + chunk.byteLength))),
+        }),
+    };
+    // The request states the reserved length but the body is far longer: the body is cut at the declared size.
+    const longBody = Stream.fromIterable(Array.from({ length: 40 }, () => encoder.encode('0123456789')));
+    expect(
+      failureTag(
+        yield* Effect.exit(ingest({ body: longBody, contentLength: content.byteLength, storageOverride: counting })),
+      ),
+    ).toBe('MediaContentConflict');
+    expect(yield* Ref.get(received)).toBeLessThanOrEqual(content.byteLength);
+    expect(Option.isNone(yield* storage.peek(storageKey))).toBe(true);
+    // A body that states and sends a larger size than reserved reaches the provider not at all.
+    yield* Ref.set(received, 0);
+    expect(
+      failureTag(
+        yield* Effect.exit(
+          ingest({ body: longBody, contentLength: content.byteLength * 40, storageOverride: counting }),
+        ),
+      ),
+    ).toBe('MediaContentConflict');
+    expect(yield* Ref.get(received)).toBe(0);
+  }),
+);
+
 it('parses only an exact decimal Content-Length', () => {
   expect(parseContentLength('12')).toBe(12);
   expect(parseContentLength('0')).toBe(0);
