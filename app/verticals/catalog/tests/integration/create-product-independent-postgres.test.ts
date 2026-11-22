@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
 import { generateKeyPairSync, sign } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   GatewayAssertionRedemptionService,
@@ -19,7 +20,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
   ConfigProvider,
@@ -40,6 +41,8 @@ import { assert, expect, it } from 'effect-rstest';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import { createProductActionApiLive } from '../../api/create-product-action-server.ts';
 import { createProductRecoveryReadApiLive } from '../../api/create-product-recovery-read-server.ts';
+import { confirmVariantCombinationActionApiLive } from '../../api/confirm-variant-combination-action-server.ts';
+import { confirmVariantCombinationRecoveryReadApiLive } from '../../api/confirm-variant-combination-recovery-read-server.ts';
 import { productHistoryReadApiLive } from '../../api/product-history-read-server.ts';
 import { variantHistoryReadApiLive } from '../../api/variant-history-read-server.ts';
 import { CreateProductPayloadSchema, CreateProductResultSchema } from '../../shared/actions/create-product.ts';
@@ -56,6 +59,14 @@ import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { createProductAction } from '../../src/actions/create-product.action.ts';
+import { confirmVariantCombinationAction } from '../../src/actions/confirm-variant-combination.action.ts';
+import {
+  ConfirmVariantCombinationPayloadSchema,
+  ConfirmVariantCombinationResultSchema,
+} from '../../shared/actions/confirm-variant-combination.ts';
+import { ConfirmVariantCombinationActionAlreadyCommittedProblemSchema } from '../../shared/apis/confirm-variant-combination-action.ts';
+import { ConfirmVariantCombinationRecoveryResponseSchema } from '../../shared/apis/confirm-variant-combination-recovery.ts';
+import { executeConfirmVariantCombinationWithAuthorization } from '../../src/api/confirm-variant-combination-action-client.ts';
 import { createVariantRecoveryReadApiLive } from '../../api/create-variant-recovery-read-server.ts';
 import { createVariantActionApiLive } from '../../api/create-variant-action-server.ts';
 import { createVariantAction } from '../../src/actions/create-variant.action.ts';
@@ -147,6 +158,7 @@ it.live(
             createVariantAction.descriptor.actionKey,
             correctProductAction.descriptor.actionKey,
             updateProductAction.descriptor.actionKey,
+            confirmVariantCombinationAction.descriptor.actionKey,
           ],
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           allowedAudiences: ['catalog'],
@@ -183,6 +195,10 @@ it.live(
       const targets = [
         { moduleId: 'commerce.catalog', permission: 'module.access' as const },
         { moduleId: 'commerce.catalog', permission: 'commerce.catalog.read.create-product-recovery' as const },
+        {
+          moduleId: 'commerce.catalog',
+          permission: 'commerce.catalog.read.confirm-variant-combination-recovery' as const,
+        },
         { moduleId: 'commerce.catalog', permission: 'commerce.catalog.read.catalog-source-products' as const },
         {
           moduleId: 'commerce.catalog',
@@ -244,6 +260,8 @@ it.live(
       const api = HttpApi.make('CatalogApi')
         .add(catalogApi.groups.createProductAction)
         .add(catalogApi.groups.createProductRecovery)
+        .add(catalogApi.groups.confirmVariantCombinationAction)
+        .add(catalogApi.groups.confirmVariantCombinationRecovery)
         .add(catalogApi.groups.catalogSourceProducts)
         .add(catalogApi.groups.createVariantAction)
         .add(catalogApi.groups.createVariantRecovery)
@@ -256,6 +274,8 @@ it.live(
       const handlers = Layer.mergeAll(
         createProductActionApiLive,
         createProductRecoveryReadApiLive,
+        confirmVariantCombinationActionApiLive,
+        confirmVariantCombinationRecoveryReadApiLive,
         catalogSourceProductsReadApiLive,
         createVariantActionApiLive,
         createVariantRecoveryReadApiLive,
@@ -1202,6 +1222,117 @@ it.live(
             ).not.toBe(invocation.requestHash);
           }
         });
+      });
+      yield* Effect.gen(function* previousContractConfirmationRecovery() {
+        const [initialVariant] = first.product.variants;
+        assert(initialVariant !== undefined);
+        const invocationId = yield* nextId;
+        const idempotencyKey = yield* nextId;
+        const { actionKey } = confirmVariantCombinationAction.descriptor;
+        const original = {
+          combinationAxisRevision: 1,
+          combinationKey: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+          variant: { ...initialVariant, lifecycle: 'ACTIVE' as const },
+        };
+        const payload = yield* Schema.decodeUnknownEffect(ConfirmVariantCombinationPayloadSchema)({
+          evidenceRefs: ['internal-fixture:previous-contract-confirmation'],
+          expectedAxisRevision: 1,
+          expectedVariantRevision: 1,
+          productRef: first.product.productRef,
+          reason: 'Original confirmation before execution disposition was recorded',
+          variantRef: initialVariant.variantRef,
+        });
+        const normalizedPayload = yield* Schema.encodeEffect(ConfirmVariantCombinationPayloadSchema)(payload);
+        const requestHash = computeActionRequestHash({
+          actionKey,
+          normalizedPayload,
+          owningModuleKey: 'commerce.catalog',
+          principal: fixture.manager,
+          schemaVersion: '1',
+          target: {},
+        });
+        expect(confirmVariantCombinationAction.descriptor.schemaVersion).toBe('1');
+        expect(Schema.is(ConfirmVariantCombinationResultSchema)(original)).toBe(false);
+        const savedReply = { encoded: original, kind: 'result' as const };
+        // Seed previous-contract bytes in this disposable fixture, never by editing a saved receipt.
+        // Current intentionally differs from the original receipt; recovery cannot substitute it.
+        yield* coreEvidenceExecutor.execute(sql`
+          insert into core.action_invocations
+            (action_invocation_id, tenant_id, principal_id, action_key, idempotency_key,
+             status, request_hash, completed_at, committed_reply_json)
+          values
+            (${invocationId}::uuid, ${tenantId}::uuid, ${fixture.manager.principalId}::uuid,
+             ${actionKey}, ${idempotencyKey}, 'succeeded', ${requestHash}, current_timestamp,
+             ${JSON.stringify(savedReply)}::jsonb)
+        `);
+        yield* fixture
+          .prepareOwner((transaction) =>
+            transaction.insert(catalogResultSnapshots).values({
+              actingPrincipalId: fixture.manager.principalId,
+              actionInvocationId: invocationId,
+              actionKey,
+              encodedResult: original,
+              schemaVersion: 1,
+              tenantId,
+            }),
+          )
+          .pipe(Effect.provide(fixture.layer));
+        const beforeOwner = yield* observe();
+        const beforeCore = yield* fixture.evidence(coreEvidenceExecutor);
+        const historicalInvocations = beforeCore.invocations.filter((row) => row.actionInvocationId === invocationId);
+        expect(historicalInvocations).toHaveLength(1);
+        expect(historicalInvocations[0]).toMatchObject({
+          committedReplyJson: savedReply,
+          idempotencyKey,
+          requestHash,
+          status: 'succeeded',
+        });
+        const retry = yield* executeConfirmVariantCombinationWithAuthorization(
+          payload,
+          yield* authorization(),
+          yield* nextId,
+          {
+            baseUrl: 'https://catalog.ontos.test',
+            compositionRevision: composition.composition.revision,
+            idempotencyKey,
+          },
+        ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch), Effect.flip);
+        expect(Schema.is(ConfirmVariantCombinationActionAlreadyCommittedProblemSchema)(retry)).toBe(true);
+        expect(retry).toMatchObject({
+          code: 'action_already_committed',
+          invocationId,
+          resolution: 'REFRESH_GOVERNED_READS',
+          retryCommand: false,
+          status: 409,
+        });
+        expect(yield* observe()).toEqual(beforeOwner);
+        const afterRetry = yield* fixture.evidence(coreEvidenceExecutor);
+        expect(afterRetry.invocations).toEqual(beforeCore.invocations);
+        expect(afterRetry.events).toEqual(beforeCore.events);
+        expect(afterRetry.outbox).toEqual(beforeCore.outbox);
+        expect(afterRetry.audits.filter((row) => row.outcome === 'succeeded')).toEqual(
+          beforeCore.audits.filter((row) => row.outcome === 'succeeded'),
+        );
+        const handlerQueryHash = `catalog-confirm-variant-combination:${initialVariant.variantId}`;
+        expect(afterRetry.accesses.filter((row) => row.queryHash === handlerQueryHash)).toEqual(
+          beforeCore.accesses.filter((row) => row.queryHash === handlerQueryHash),
+        );
+        const response = yield* read('/reads/confirm-variant-combination-recovery', JSON.stringify({ invocationId }));
+        expect(response.status).toBe(200);
+        const recovered = yield* Schema.decodeUnknownEffect(ConfirmVariantCombinationRecoveryResponseSchema)(
+          yield* Effect.tryPromise(() => response.json()),
+        );
+        expect(
+          isDeepStrictEqual(recovered, {
+            _tag: 'HistoricalReceipt',
+            executionProof: 'NOT_RECORDED',
+            original,
+          }),
+        ).toBe(true);
+        expect(Object.hasOwn(original, 'changed')).toBe(false);
+        expect(Object.hasOwn(original, 'variantRevision')).toBe(false);
+        expect(yield* observe()).toEqual(beforeOwner);
+        expect((yield* fixture.evidence(coreEvidenceExecutor)).invocations).toEqual(beforeCore.invocations);
       });
     }).pipe(Effect.provide(nativeServices)),
   120_000,
