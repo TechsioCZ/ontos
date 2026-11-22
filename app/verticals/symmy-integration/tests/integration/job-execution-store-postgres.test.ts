@@ -1197,7 +1197,11 @@ it.live(
       const routeId = crypto.randomUUID();
       const admissionId = crypto.randomUUID();
       const importInvocationId = crypto.randomUUID();
+      const retentionAdmissionId = crypto.randomUUID();
       const key = Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema.fields.idempotencyKey)('retired-native-stock');
+      const retentionKey = Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema.fields.idempotencyKey)(
+        'retired-native-stock-retention',
+      );
       const rows = Schema.decodeUnknownSync(SymmyStockRowsSchema)([
         {
           businessObservedAt: '2026-01-01T00:00:00.000Z',
@@ -1308,6 +1312,7 @@ it.live(
       });
       const { effectId } = savedPlan.items[0].effects[0].ref;
       const keyDigest = yield* sha256Digest(key);
+      const retentionKeyDigest = yield* sha256Digest(retentionKey);
       const intentDigest = yield* sha256Digest(
         JSON.stringify([
           'inventoryStockBatch',
@@ -1322,14 +1327,28 @@ it.live(
       values
       (${admissionId}::uuid,${tenantId}::uuid,${fixture.manager.principalId}::uuid,
         'integration.symmy.admit-symmy-sync','succeeded',${'b'.repeat(64)},${fixture.manager.authContextRef},'original-admission'),
+      (${retentionAdmissionId}::uuid,${tenantId}::uuid,${fixture.manager.principalId}::uuid,
+        'integration.symmy.admit-symmy-sync','succeeded',${'c'.repeat(64)},${fixture.manager.authContextRef},'retention-admission'),
       (${importInvocationId}::uuid,${tenantId}::uuid,${fixture.manager.principalId}::uuid,
         'commerce.inventory.import-source-assertion','succeeded',${importRequestHash},${fixture.manager.authContextRef},${effectId})`);
       yield* admin.execute(sql`insert into core.source_execution_fences(tenant_id,admission_invocation_id,state)
-      values (${tenantId}::uuid,${admissionId}::uuid,'open')`);
+      values (${tenantId}::uuid,${admissionId}::uuid,'open'), (${tenantId}::uuid,${retentionAdmissionId}::uuid,'open')`);
       yield* admin.insert(symmySyncAdmissions).values({
         admissionId,
         executionPlan: savedPlan,
         idempotencyDigest: keyDigest,
+        intentDigest,
+        mappingVersion: 'v1',
+        principalId: fixture.manager.principalId,
+        routeId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      yield* admin.insert(symmySyncAdmissions).values({
+        admissionId: retentionAdmissionId,
+        executionPlan: savedPlan,
+        idempotencyDigest: retentionKeyDigest,
         intentDigest,
         mappingVersion: 'v1',
         principalId: fixture.manager.principalId,
@@ -1416,6 +1435,7 @@ it.live(
         active: false,
         fixtureIds: ['INTERNAL_C14'],
         fixturePlan: sql`${JSON.stringify(legacyTemplate)}::jsonb`,
+        legalEntityId: fixture.legalEntityId,
         mappingVersion: 'v1',
         principalId: fixture.manager.principalId,
         routeId: competingRouteId,
@@ -1428,6 +1448,7 @@ it.live(
         executionPlan: savedPlan,
         idempotencyDigest: keyDigest,
         intentDigest,
+        legalEntityId: fixture.legalEntityId,
         mappingVersion: 'v1',
         principalId: fixture.manager.principalId,
         routeId: competingRouteId,
@@ -1436,7 +1457,8 @@ it.live(
         tenantId,
       });
       expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
-      expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+      // The company-free producer cannot choose a route. An already scoped consumer still names one exact identity.
+      expect(yield* consume(input)).toMatchObject({ admissionId, replayed: true });
       yield* admin.delete(symmySyncAdmissions).where(eq(symmySyncAdmissions.admissionId, competingAdmissionId));
       yield* admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.routeId, competingRouteId));
       yield* admin
@@ -1458,6 +1480,10 @@ it.live(
         sql`update core.source_execution_fences set state='cancelled' where admission_invocation_id=${admissionId}::uuid`,
       );
       expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+      // Retention has its own open fence; cancellation of the other admission cannot mask this denial.
+      const retentionInput = { ...input, idempotencyKey: retentionKey };
+      expect(yield* context(retentionKey)).toMatchObject({ replayIdempotencyDigest: retentionKeyDigest });
+      expect(yield* consume(retentionInput)).toMatchObject({ admissionId: retentionAdmissionId, replayed: true });
       yield* admin
         .update(symmySyncAdmissions)
         .set({
@@ -1469,9 +1495,9 @@ it.live(
             revision: '1',
           },
         })
-        .where(eq(symmySyncAdmissions.admissionId, admissionId));
-      expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
-      expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+        .where(eq(symmySyncAdmissions.admissionId, retentionAdmissionId));
+      expect(yield* context(retentionKey).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(yield* denied(retentionInput)).toMatchObject({ code: 'route_denied' });
       const [counts] = yield* admin.execute<{
         readonly active: boolean;
         readonly admissions: number;
@@ -1489,7 +1515,7 @@ it.live(
         and workload_key='commerce.inventory.source-write' and status='active') as writers`,
         'objects',
       );
-      expect(counts).toEqual({ active: false, admissions: 1, effects: 0, imports: 1, writers: 0 });
+      expect(counts).toEqual({ active: false, admissions: 2, effects: 0, imports: 1, writers: 0 });
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, Reactivity.layer))),
 );
 
