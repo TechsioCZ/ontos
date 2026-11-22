@@ -141,7 +141,7 @@ export const portalAuthCopyReview = Effect.fn('PortalAuthCopyDraft.review')(func
     (copy) =>
       Effect.map(templateContentDigest(copy.subject, copy.body), (digest) =>
         [
-          `## ${copy.flow} / ${copy.language}${copy.language === 'cs' ? ' (default)' : ''}`,
+          `## ${copy.flow} / ${copy.language}`,
           `Message type: ${copy.messageType}`,
           `Owner-rendered placeholder: {{${copy.ownerRenderedSlot}}}`,
           `Content digest: ${digest}`,
@@ -154,6 +154,7 @@ export const portalAuthCopyReview = Effect.fn('PortalAuthCopyDraft.review')(func
   );
   return [
     `# Portal Auth e-mail copy, version ${PORTAL_AUTH_COPY_DRAFT_VERSION}: ${PORTAL_AUTH_COPY_DRAFT_APPROVAL}`,
+    'Czech (cs) is the default language while no trusted recipient locale exists.',
     ...sections,
   ].join('\n\n');
 });
