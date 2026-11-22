@@ -616,8 +616,9 @@ export const provisionSourceStockItem = Effect.fn('SourceStockItemProvisioning.p
           correlation === undefined ||
           !sameValue(correlation.target, { _tag: 'STOCK_LOCATION', ref: location.stockLocationRef })
         ) {
-          yield* provisioningRejected('STOCK_LOCATION_NOT_ACTIVE', location.stockLocationRef);
+          return yield* provisioningRejected('STOCK_LOCATION_NOT_ACTIVE', location.stockLocationRef);
         }
+        return yield* Effect.void;
       }),
       { concurrency: 1, discard: true },
     );

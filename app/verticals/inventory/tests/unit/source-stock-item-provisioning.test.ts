@@ -2,7 +2,10 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Option, Schema } from 'effect';
 import { assert, describe, expect, it } from 'effect-rstest';
 
-import { SourceStockItemProvisioningReceiptResponseSchema } from '../../shared/apis/source-stock-item-provisioning-receipt.ts';
+import {
+  SourceStockItemProvisioningReceiptRequestSchema,
+  SourceStockItemProvisioningReceiptResponseSchema,
+} from '../../shared/apis/source-stock-item-provisioning-receipt.ts';
 import {
   SourceStockPositionResolutionRequestSchema,
   SourceStockPositionResolutionResponseSchema,
@@ -386,6 +389,30 @@ const isProvisioningRejected = Schema.is(SourceStockItemProvisioningRejected);
 const isPolicyRejected = Schema.is(SourceProvisioningPolicyRejected);
 
 describe('Inventory source stock item provisioning', () => {
+  it('requires canonical policy references at provisioning and receipt recovery boundaries', () => {
+    const nativeId = 'abcdef01-2345-4678-9abc-def012345678';
+    const reference = { ...policy.policyRef, resourceId: nativeId, tenantId: nativeId };
+    const referenceSchema = ProvisionSourceStockItemInputSchema.fields.policyRef;
+    expect(Schema.is(referenceSchema)(reference)).toBe(true);
+    for (const field of ['resourceId', 'tenantId'] as const) {
+      expect(Schema.is(referenceSchema)({ ...reference, [field]: nativeId.toUpperCase() })).toBe(false);
+    }
+    const input = provisionInput({
+      policyRef: { ...policy.policyRef, resourceId: nativeId },
+    });
+    const receiptRequest = { actionInvocationId: invocation('1'), input };
+    expect(Schema.is(ProvisionSourceStockItemInputSchema)(input)).toBe(true);
+    expect(Schema.is(SourceStockItemProvisioningReceiptRequestSchema)(receiptRequest)).toBe(true);
+    const noncanonical = {
+      ...input,
+      policyRef: { ...input.policyRef, resourceId: nativeId.toUpperCase() },
+    };
+    expect(Schema.is(ProvisionSourceStockItemInputSchema)(noncanonical)).toBe(false);
+    expect(Schema.is(SourceStockItemProvisioningReceiptRequestSchema)({ ...receiptRequest, input: noncanonical })).toBe(
+      false,
+    );
+  });
+
   it('rejects noncanonical native policy identifiers without changing case-sensitive ERP keys', () => {
     const nativeId = 'abcdef01-2345-4678-9abc-def012345678';
     const payload = {
