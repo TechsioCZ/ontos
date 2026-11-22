@@ -2,7 +2,7 @@ import {
   ActiveApplicationCompositionService,
   loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
-import { Config, Crypto, DateTime, Duration, Effect, Layer, Option, Ref, Result, Schedule, Schema } from 'effect';
+import { Crypto, DateTime, Duration, Effect, Layer, Option, Ref, Result, Schedule, Schema } from 'effect';
 
 import { portalAuthRealmConfigured } from '../../../api/portal-auth/provider/config.ts';
 import { ultramodernApiMarker } from '../../../shared/ultramodern-build.ts';
@@ -11,6 +11,7 @@ import type { PortalAuthTransportAnswer } from './communication-request-submitte
 import type { PortalAuthCommunicationUnavailable } from './communication-unavailable.ts';
 import { CommercePortalAuthCommunicationStore } from './communication-store.ts';
 import type { ClaimedCommunicationRequest } from './communication-store.ts';
+import { relayCredential } from './relay-configuration.ts';
 import { requestOfStored } from './request.ts';
 import { CommercePortalAuthTrustedScope } from './trusted-scope.ts';
 import type { PortalAuthTrustedScopeUnavailable } from './trusted-scope-unavailable.ts';
@@ -349,16 +350,13 @@ export interface PortalAuthCommunicationRelayAdoption {
 
 /**
  * The relay is opt-in: a worker host relays only when its deployment opted in to the Portal Auth realm AND named the relay
- * credential. Read once, when the worker entry's layer is built.
+ * credential (a blank value names none). Read once, when the worker entry's layer is built. An enabled relay then requires its
+ * whole configuration (`relay-configuration.ts`).
  */
 export const portalAuthCommunicationRelayAdoption: Effect.Effect<PortalAuthCommunicationRelayAdoption> = Effect.all(
   {
     realmConfigured: portalAuthRealmConfigured,
-    relayCredentialNamed: Config.Redacted('COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY').pipe(
-      Config.option,
-      Effect.map(Option.isSome),
-      Effect.orElseSucceed(() => false),
-    ),
+    relayCredentialNamed: relayCredential.pipe(Effect.map(Option.isSome)),
   },
   { concurrency: 1 },
 );

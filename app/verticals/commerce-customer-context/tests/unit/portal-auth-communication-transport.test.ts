@@ -29,6 +29,12 @@ import {
   makePortalAuthCommunicationRelayLive,
   relayCommunicationRequests,
 } from '../../src/portal-auth/communications/request-relay.ts';
+import {
+  PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES,
+  PortalAuthCommunicationRelayConfigurationError,
+  portalAuthCommunicationRelayConfiguration,
+  relayCredential,
+} from '../../src/portal-auth/communications/relay-configuration.ts';
 import { PortalAuthRelayTransportLive } from '../../src/portal-auth/communications/relay-transport.ts';
 import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communications/trusted-scope.ts';
 import { PortalAuthTrustedScopeUnavailable } from '../../src/portal-auth/communications/trusted-scope-unavailable.ts';
@@ -374,6 +380,9 @@ const unavailableComposition = Layer.succeed(
     ),
   ),
 );
+const trustedTenantScope = Layer.succeed(CommercePortalAuthTrustedScope, {
+  current: Effect.succeed({ tenantId: TENANT }),
+});
 const transportWith = (
   configuration: Record<string, string>,
   composition: Layer.Layer<ActiveApplicationCompositionService>,
@@ -381,7 +390,13 @@ const transportWith = (
   CommercePortalAuthCommunicationRequestSubmitter.pipe(
     Effect.provide(
       PortalAuthRelayTransportLive.pipe(
-        Layer.provide(Layer.merge(composition, ConfigProvider.layer(ConfigProvider.fromUnknown(configuration)))),
+        Layer.provide(
+          Layer.mergeAll(
+            composition,
+            trustedTenantScope,
+            ConfigProvider.layer(ConfigProvider.fromUnknown(configuration)),
+          ),
+        ),
       ),
     ),
   );
@@ -401,8 +416,17 @@ const recordingShell = Effect.gen(function* recordingShellEffect() {
 const configurationOf = (origin: string) => ({
   COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key',
   ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: origin,
+  ONTOS_COMMUNICATIONS_API_BASE_URL: `${origin}/communications-api`,
   ONTOS_SHELL_GATEWAY_BASE_URL: `${origin}/shell-super-app-api`,
 });
+const admittedComposition = Effect.map(
+  makeApplicationCompositionSnapshotFixture(['commerce-customer-context']),
+  (snapshot) =>
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+    ),
+);
 
 describe('The relay loop and the production relay transport (#1406 D1)', () => {
   it.effect(
@@ -519,16 +543,77 @@ describe('The relay loop and the production relay transport (#1406 D1)', () => {
         expect(yield* Ref.get(shell.received)).toBe(0);
         // CONTROL: the same configured transport with an admitted composition does reach the Shell, so the composition
         // gate alone is what kept the call above from leaving
-        const snapshot = yield* makeApplicationCompositionSnapshotFixture(['commerce-customer-context']);
-        const admitted = yield* transportWith(
-          configurationOf(shell.origin),
-          Layer.succeed(
-            ActiveApplicationCompositionService,
-            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
-          ),
-        );
+        const admitted = yield* transportWith(configurationOf(shell.origin), yield* admittedComposition);
         expect(Schema.is(PortalAuthCommunicationUnavailable)(yield* Effect.flip(admitted.submit(request)))).toBe(true);
         expect(yield* Ref.get(shell.received)).toBeGreaterThanOrEqual(1);
       }).pipe(Effect.scoped),
+  );
+});
+
+/** The relay configuration as an enabled relay reads it from the given deployment environment. */
+const readUnder = (environment: Record<string, string>) =>
+  Effect.result(portalAuthCommunicationRelayConfiguration).pipe(
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+  );
+
+describe('The relay configuration and its one key per Tenant (#1406)', () => {
+  it.live('presents the relay key only for a request of the realm trusted Tenant, and sends nothing for another', () =>
+    Effect.gen(function* oneKeyPerTenant() {
+      const shell = yield* recordingShell;
+      const transport = yield* transportWith(configurationOf(shell.origin), yield* admittedComposition);
+      const failure = yield* Effect.flip(transport.submit(yield* requestOf('pa-transport-foreign', OTHER_TENANT)));
+      expect(Schema.is(PortalAuthCommunicationUnavailable)(failure)).toBe(true);
+      expect(JSON.stringify(failure)).not.toContain('fictional-relay-key');
+      expect(yield* Ref.get(shell.received)).toBe(0);
+      // CONTROL: the trusted Tenant's own request does reach the Shell with the same key
+      yield* Effect.flip(transport.submit(yield* requestOf('pa-transport-own')));
+      expect(yield* Ref.get(shell.received)).toBeGreaterThanOrEqual(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect('requires all four values once the relay is enabled, naming the missing keys and never a value', () =>
+    Effect.gen(function* requiredKeys() {
+      const complete = configurationOf('https://fictional.example');
+      const configured = yield* readUnder(complete);
+      expect(Result.isSuccess(configured)).toBe(true);
+      for (const key of Object.values(PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES)) {
+        const { [key]: _omitted, ...withoutKey } = complete;
+        for (const environment of [withoutKey, { ...complete, [key]: '  ' }]) {
+          const read = yield* readUnder(environment);
+          expect(read).toStrictEqual(Result.fail(new PortalAuthCommunicationRelayConfigurationError({ keys: [key] })));
+        }
+      }
+      // a gateway URL carrying credentials or a query is malformed; nothing of the configured values is echoed
+      const malformed = yield* readUnder({
+        ...complete,
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'https://user:fictional-secret@fictional.example/shell?x=1',
+      });
+      expect(malformed).toStrictEqual(
+        Result.fail(new PortalAuthCommunicationRelayConfigurationError({ keys: ['ONTOS_SHELL_GATEWAY_BASE_URL'] })),
+      );
+      expect(JSON.stringify(malformed)).not.toContain('fictional-secret');
+      expect(yield* readUnder({})).toStrictEqual(
+        Result.fail(
+          new PortalAuthCommunicationRelayConfigurationError({
+            keys: Object.values(PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect('treats a blank relay credential as no credential, so a deployment without the relay is not enabled', () =>
+    Effect.gen(function* blankCredential() {
+      for (const [environment, named] of [
+        [{}, false],
+        [{ COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: ' ' }, false],
+        [{ COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key' }, true],
+      ] as const) {
+        const credential = yield* relayCredential.pipe(
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+        );
+        expect(Option.isSome(credential)).toBe(named);
+      }
+    }),
   );
 });

@@ -161,9 +161,17 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
       byUrl(ORDER_UNIT, 'ONTOS_COMMERCE_ORDER_API_BASE_URL'),
       // The Worker reaches Price Group Catalog through its VERTICAL_PRICE_GROUP_CATALOG_WORKER binding.
       zeropsOnly('price-group-catalog', 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL'),
+      // The opt-in Portal Auth communication relay of the Outbox Worker (#1406) calls the module's own relay Action, and its
+      // source worker calls Communications; both are reached inside Zerops only. A topology without Communications omits
+      // that base, and a deployment that never enables the relay reads neither.
+      zeropsOnly(CUSTOMER_CONTEXT_UNIT, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
+      zeropsOnly(COMMUNICATIONS_UNIT, 'ONTOS_COMMUNICATIONS_API_BASE_URL'),
       shellGateway,
     ],
-    credentialVariables: [],
+    // COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY is the one managed API key of the Portal Auth realm's trusted Tenant
+    // for the relay workload (one key per Tenant). It is optional: without it the relay is not enabled and nothing else
+    // changes; once it is set, the relay requires the Shell, own-API and Communications bases too.
+    credentialVariables: ['COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY'],
     moduleCredentialHolders: SERVICE_AND_WORKER,
     moduleCredentialVariable: moduleCredentialVariable(CUSTOMER_CONTEXT_UNIT),
     operatorValues: [],

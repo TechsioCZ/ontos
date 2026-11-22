@@ -6,13 +6,19 @@ import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-co
 import { Config, Context, Crypto, Effect, Layer, Schema } from 'effect';
 
 import { withSafeCause } from '../../api/portal-auth/provider/safe-failure.ts';
-import { GatewayHttpUrlSchema } from '../portal-auth/communications/relay-transport.ts';
+import {
+  GatewayHttpUrlSchema,
+  PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES,
+} from '../portal-auth/communications/relay-configuration.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from './submit-portal-auth-communication-request-rejected.ts';
 
 const COMMUNICATIONS_AUDIENCE = 'communications';
 const SUBMIT_DECLARATION_KEY = 'communications.core.communication-request.submit';
 
-const configuration = Config.schema(GatewayHttpUrlSchema, 'ONTOS_COMMUNICATIONS_API_BASE_URL');
+const configuration = Config.schema(
+  GatewayHttpUrlSchema,
+  PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES.communicationsBaseUrl,
+);
 
 /**
  * The last hop of the Portal Auth transport (#1406 D1): the module's own source worker, inside its genuine Core delivery,

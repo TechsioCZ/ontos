@@ -13,6 +13,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
 import { CommercePortalAuthConfigLive } from '../../api/portal-auth/provider/config.ts';
+import { portalAuthCommunicationRelayConfiguration } from '../portal-auth/communications/relay-configuration.ts';
 import { PortalAuthRelayTransportLive } from '../portal-auth/communications/relay-transport.ts';
 import {
   PortalAuthCommunicationRelayLive,
@@ -29,6 +30,14 @@ import {
   outboxWorkerRepositoryLive,
 } from './layer.ts';
 
+/** A relay that could not start: one error line with tags and key names only. */
+const relayNotStarted = (annotations: Readonly<Record<string, string>>) =>
+  Layer.effectDiscard(
+    Effect.annotateLogs(
+      Effect.logError('The Portal Auth communication relay could not start; nothing is relayed'),
+      annotations,
+    ),
+  );
 /**
  * The Portal Auth communication relay (#1406 D1) over Auth's own store and pool and the production relay transport. The sweep
  * of the Auth-local outbox runs here, beside the source worker it feeds, never in a request-serving API process.
@@ -36,30 +45,33 @@ import {
  * The realm's trusted Tenant is the deployment's reviewed `COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID`; while it is unset or
  * malformed the relay relays nothing and reports the typed configuration error (fail closed).
  */
-const portalAuthCommunicationRelayLive = PortalAuthCommunicationRelayLive.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      CommercePortalAuthCommunicationStoreLive.pipe(
-        Layer.provide(CommercePortalAuthDatabaseLive),
-        Layer.provide(CommercePortalAuthConfigLive),
-      ),
-      PortalAuthRelayTransportLive,
-      configuredTrustedScopeLayer,
-    ),
-  ),
-  // An adopted relay that cannot start (an unreadable realm configuration, an unreachable Auth database) fails closed alone:
-  // it is logged once and no loop runs, every row stays due, and the host's other loops are not taken down with it.
-  Layer.catchTag(
-    ['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError', 'PlatformError'],
-    (failure) =>
-      Layer.effectDiscard(
-        Effect.annotateLogs(
-          Effect.logError('The Portal Auth communication relay could not start; nothing is relayed'),
-          {
-            reason: failure._tag,
-          },
+const portalAuthCommunicationRelayLive = Layer.unwrap(
+  // an enabled relay requires its whole configuration before anything else is built
+  portalAuthCommunicationRelayConfiguration.pipe(
+    Effect.as(
+      PortalAuthCommunicationRelayLive.pipe(
+        Layer.provide(
+          Layer.merge(
+            CommercePortalAuthCommunicationStoreLive.pipe(
+              Layer.provide(CommercePortalAuthDatabaseLive),
+              Layer.provide(CommercePortalAuthConfigLive),
+            ),
+            PortalAuthRelayTransportLive,
+          ).pipe(Layer.provideMerge(configuredTrustedScopeLayer)),
         ),
       ),
+    ),
+  ),
+).pipe(
+  // An adopted relay that cannot start (an incomplete relay configuration, an unreadable realm configuration, an unreachable
+  // Auth database) fails closed alone: it is logged once with key names and tags only, no loop runs, every row stays due, and
+  // the host's other loops are not taken down with it.
+  Layer.catchTag('PortalAuthCommunicationRelayConfigurationError', (failure) =>
+    relayNotStarted({ keys: failure.keys.join(','), reason: failure._tag }),
+  ),
+  Layer.catchTag(
+    ['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError', 'PlatformError'],
+    (failure) => relayNotStarted({ reason: failure._tag }),
   ),
 );
 /** Composed only for a host that adopted the relay; any other host gets nothing. */

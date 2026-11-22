@@ -3,13 +3,15 @@ import {
   loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Config, Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 
 import { withSafeCause } from '../../../api/portal-auth/provider/safe-failure.ts';
 import { executeRelayPortalAuthCommunicationRequestWithAuthorization } from '../../api/relay-portal-auth-communication-request-action-client.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from './communication-request-submitter.ts';
 import type { CommunicationRequestSubmitterService } from './communication-request-submitter.ts';
 import { PortalAuthCommunicationUnavailable } from './communication-unavailable.ts';
+import { portalAuthCommunicationRelayConfiguration } from './relay-configuration.ts';
+import { CommercePortalAuthTrustedScope } from './trusted-scope.ts';
 
 /**
  * The production transport of the Portal Auth relay (#1406 D1). Communications admits a Communication Request only from the
@@ -23,30 +25,13 @@ import { PortalAuthCommunicationUnavailable } from './communication-unavailable.
  * relay of one row commit once; Communications' owner-local idempotency makes a redelivery land on the stored decision.
  *
  * Its answer is RELAYED: the request is durably queued in Core, not yet decided. The decision is Communications' and reaches
- * Auth through the outcome Read, never through this call. Without its configuration the transport is unavailable and every row
- * stays due (fail closed); nothing is sent another way.
+ * Auth through the outcome Read, never through this call. Without its configuration (`relay-configuration.ts`) or a trusted
+ * Tenant the transport is unavailable and every row stays due (fail closed); nothing is sent another way. The relay key is bound
+ * one key per Tenant: it is presented only for a request of the realm's trusted Tenant.
  */
 
 const RELAY_AUDIENCE = 'commerce-customer-context';
 const RELAY_OPERATION = 'relay-portal-auth-communication-request';
-
-/** An HTTP(S) origin of a governed gateway or owner API: no credentials, query or fragment. */
-export const GatewayHttpUrlSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'Gateway URL must be HTTP(S) without credentials, query, or fragment',
-  ),
-);
-const configuration = Config.all({
-  apiKey: Config.Redacted('COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY'),
-  ownerBaseUrl: Config.schema(GatewayHttpUrlSchema, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL'),
-  shellBaseUrl: Config.schema(GatewayHttpUrlSchema, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
 
 const unavailable = (cause: unknown) =>
   withSafeCause(new PortalAuthCommunicationUnavailable({ operation: RELAY_OPERATION }), cause);
@@ -55,11 +40,17 @@ export const PortalAuthRelayTransportLive = Layer.effect(
   CommercePortalAuthCommunicationRequestSubmitter,
   Effect.gen(function* makePortalAuthRelayTransport() {
     const compositions = yield* ActiveApplicationCompositionService;
-    const configured = yield* configuration.pipe(Effect.option);
+    const trustedScope = yield* CommercePortalAuthTrustedScope;
+    const configured = yield* portalAuthCommunicationRelayConfiguration.pipe(Effect.option);
     const submit: CommunicationRequestSubmitterService['submit'] = Effect.fn('PortalAuthRelayTransport.submit')(
       function* relay(request) {
         if (Option.isNone(configured)) {
           return yield* unavailable('unconfigured');
+        }
+        // one key per Tenant: the relay key belongs to the realm's trusted Tenant and is never presented for another one
+        const { tenantId } = yield* trustedScope.current.pipe(Effect.mapError(unavailable));
+        if (request.scope.tenantId !== tenantId) {
+          return yield* unavailable('foreign-tenant');
         }
         const { apiKey, ownerBaseUrl, shellBaseUrl } = configured.value;
         const requestCorrelation = request.idempotency.correlationId ?? request.idempotency.key;
