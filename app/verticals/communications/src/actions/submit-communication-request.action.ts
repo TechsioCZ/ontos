@@ -156,7 +156,10 @@ export const submitCommunicationRequestAction = defineAction(
   {
     // The declaration a registered source worker's call names: the Shell keeps that call, and Core admits its sealed
     // workload context, only when this Action declares it beside the workload. It grants no person anything by itself;
-    // a person granted it is still refused by the verified-caller check (see `source-caller.ts`).
+    // a person granted it is still refused by the verified-caller check (see `source-caller.ts`). The source worker's call
+    // is `run`; `propose` and `approve` are kept only because Core requires every sensitive Action to accept proposals
+    // (O14, `requiresProposal` in core-runtime `access-declaration.ts`; the catalog refuses a sensitive `run`-only
+    // declaration). They open nothing: an approved proposal still names no verified source module and is refused.
     accessDeclaration: {
       key: 'communications.core.communication-request.submit',
       kind: 'action',
