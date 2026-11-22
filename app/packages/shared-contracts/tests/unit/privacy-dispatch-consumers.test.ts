@@ -429,9 +429,11 @@ it('lets a continuation payload name only the original dispatch and an attempt a
     expect(Schema.is(PrivacyDispatchContinuationPayloadSchema)(invalid)).toBe(false);
   }
   expect(
-    Schema.decodeUnknownResult(PrivacyDispatchContinuationPayloadSchema, { onExcessProperty: 'error' })({
-      ...valid,
-      outcome: 'SUCCEEDED',
-    })._tag,
-  ).toBe('Failure');
+    Result.isFailure(
+      Schema.decodeUnknownResult(PrivacyDispatchContinuationPayloadSchema, { onExcessProperty: 'error' })({
+        ...valid,
+        outcome: 'SUCCEEDED',
+      }),
+    ),
+  ).toBe(true);
 });

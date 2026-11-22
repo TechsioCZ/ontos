@@ -1,6 +1,6 @@
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { PrivacyDispatchContinuationPayloadSchema } from '@app/shared-contracts';
@@ -75,7 +75,7 @@ it.effect(
     Effect.gen(function* continuationWorker() {
       const context = attestOutboxWorkerHandlerContext(fields);
       const reported = yield* run(context);
-      expect(reported.result._tag).toBe('Success');
+      expect(Result.isSuccess(reported.result)).toBe(true);
       expect(reported.reports).toEqual([{ context, payload }]);
       for (const change of [
         { workerKey: 'communications.core.receive-privacy-measure' },
@@ -85,12 +85,12 @@ it.effect(
         { legalEntityScope: 'required' as const },
       ]) {
         const refused = yield* run(attestOutboxWorkerHandlerContext({ ...fields, ...change }));
-        expect(refused.result._tag).toBe('Failure');
+        expect(Result.isFailure(refused.result)).toBe(true);
         expect(refused.reports).toEqual([]);
       }
       // a caller-built context is not a native claimed delivery
       const callerBuilt = yield* run(fields);
-      expect(callerBuilt.result._tag).toBe('Failure');
+      expect(Result.isFailure(callerBuilt.result)).toBe(true);
       expect(callerBuilt.reports).toEqual([]);
     }),
 );
