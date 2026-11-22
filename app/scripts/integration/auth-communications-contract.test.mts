@@ -19,6 +19,8 @@ import {
   CommunicationPurposeKeySchema,
   findMessageTypeByPurpose,
   nativeServices,
+  PORTAL_AUTH_COPY_DRAFT_APPROVAL,
+  portalAuthCopyDraft,
   recoveryPolicyOf,
   resendPolicyOf,
 } from '@app/communications/testing/source-owner-world';
@@ -71,6 +73,20 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
         ),
       ),
     ).toBe(true);
+  });
+
+  it("the DRAFT copy of Communications names, per flow and language, the approved type of that flow and Auth's own owner-rendered slot", () => {
+    expect(PORTAL_AUTH_COPY_DRAFT_APPROVAL).toBe('DRAFT-NOT-APPROVED');
+    for (const flow of PORTAL_AUTH_EMAIL_FLOWS) {
+      const type = approvedMessageTypes.find(({ purpose }) => purpose === portalAuthCommunicationPurposeOf(flow));
+      const drafts = portalAuthCopyDraft.filter((copy) => copy.flow === flow);
+      expect(drafts.map(({ language }) => language)).toEqual(['cs', 'en']);
+      for (const copy of drafts) {
+        expect(copy.messageType).toBe(type?.typeId);
+        expect(copy.ownerRenderedSlot).toBe(portalAuthOwnerRenderedSlotOf(flow));
+        expect(copy.body.split(`{{${portalAuthOwnerRenderedSlotOf(flow)}}}`)).toHaveLength(2);
+      }
+    }
   });
 
   it.live(

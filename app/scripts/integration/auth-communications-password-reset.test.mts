@@ -214,6 +214,23 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
   );
 
   it.live(
+    '[#1398] while the Tenant has no active revision at all (the DRAFT copy is not activated) nothing is sent, with a typed reason',
+    () =>
+      Effect.gen(function* nothingActive() {
+        const { realm, world } = yield* setup({ languages: [], mode: 'B' });
+        yield* requestReset(realm);
+        expect(world.mailbox).toHaveLength(0);
+        expect(pendingIntentsOf(world)).toHaveLength(0);
+        expect((yield* attemptsOf(world)).length).toBe(0);
+        const page = yield* (yield* historyReads(world)).list();
+        expect(page.items[0]?.headline).toMatchObject({
+          reasonCodes: ['CZECH_REVISION_UNAVAILABLE'],
+          status: 'SUPPRESSED',
+        });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
     '[S2.3 AC-07] an expired reset link stops before the handoff with a reason and nothing is reissued or sent',
     () =>
       Effect.gen(function* expired() {

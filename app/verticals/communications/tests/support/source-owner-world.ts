@@ -60,6 +60,10 @@ import { actorFor, domainFor, fictionalDraft, identity } from './template-fixtur
 export { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
 export type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
 export { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
+export {
+  PORTAL_AUTH_COPY_DRAFT_APPROVAL,
+  portalAuthCopyDraft,
+} from '../../src/domain/catalog/portal-auth-copy-draft.ts';
 export { recoveryPolicyOf, resendPolicyOf } from '../../src/domain/catalog/message-type.ts';
 export type { TransactionalMessageType } from '../../src/domain/catalog/message-type.ts';
 export { buildMessageTypeRegistry, findMessageTypeByPurpose } from '../../src/domain/catalog/registry.ts';
