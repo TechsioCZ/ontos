@@ -1422,17 +1422,27 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
         return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessConfirm: Effect.fn('SymmyOwnerAdapters.recoverReadinessConfirm')(function* recoverConfirm() {
-        const result = yield* executeConfirmVariantCombinationRecoveryWithAuthorization(
+        const receipt = yield* executeConfirmVariantCombinationRecoveryWithAuthorization(
           catalogRequest,
           credential,
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        if (result.variantRevision === undefined) {
-          return yield* symmyJobWorkerUnavailable();
-        }
-        yield* input.recordOwnerReceipt({ _tag: 'ReadinessVariant', variantRevision: result.variantRevision });
-        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+        return yield* Match.value(receipt).pipe(
+          Match.tags({
+            CurrentReceipt: Effect.fn('SymmyOwnerAdapters.currentConfirmationReceipt')(
+              function* currentConfirmationReceipt({ result }) {
+                if (result.variantRevision === undefined) {
+                  return yield* symmyJobWorkerUnavailable();
+                }
+                yield* input.recordOwnerReceipt({ _tag: 'ReadinessVariant', variantRevision: result.variantRevision });
+                return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+              },
+            ),
+            HistoricalReceipt: () => Effect.succeed(safeOutcome(input, 'unresolved')),
+          }),
+          Match.exhaustive,
+        );
       }),
       CatalogReadinessName: Effect.fn('SymmyOwnerAdapters.recoverReadinessName')(function* recoverName() {
         const result = yield* executeSetProductLocalizedFactsRecoveryWithAuthorization(
@@ -1444,22 +1454,36 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
         return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessUnit: Effect.fn('SymmyOwnerAdapters.recoverReadinessUnit')(function* recoverUnit() {
-        const result = yield* executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization(
+        const receipt = yield* executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization(
           catalogRequest,
           credential,
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+        return Match.value(receipt).pipe(
+          Match.tags({
+            CurrentReceipt: ({ result }) =>
+              safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change'),
+            HistoricalReceipt: () => safeOutcome(input, 'unresolved'),
+          }),
+          Match.exhaustive,
+        );
       }),
       CatalogReadinessUntyped: Effect.fn('SymmyOwnerAdapters.recoverReadinessUntyped')(function* recoverUntyped() {
-        const result = yield* executeDecideProductTypeUnnecessaryRecoveryWithAuthorization(
+        const receipt = yield* executeDecideProductTypeUnnecessaryRecoveryWithAuthorization(
           catalogRequest,
           credential,
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+        return Match.value(receipt).pipe(
+          Match.tags({
+            CurrentReceipt: ({ result }) =>
+              safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change'),
+            HistoricalReceipt: () => safeOutcome(input, 'unresolved'),
+          }),
+          Match.exhaustive,
+        );
       }),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.recoverVariantLocalizedFacts')(
         function* recoverVariantLocalizedFacts() {
