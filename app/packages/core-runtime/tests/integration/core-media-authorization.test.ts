@@ -2342,7 +2342,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
         ),
     );
     suite.effect(
-      "a requester Catalog relays under their selected company gets another company's asset as ABSENT, exactly what an asset that never existed gets, and sees everything only when no company is selected",
+      "a requester's selected company narrows Current: another company's asset is ABSENT, exactly what an asset that never existed gets, the relayed gate decides on the requester's own right, and no company selected sees the whole tenant",
       () =>
         withMediaWorld((world) =>
           Effect.gen(function* relayedCompanyScope() {

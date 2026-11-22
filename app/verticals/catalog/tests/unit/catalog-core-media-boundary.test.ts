@@ -81,9 +81,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Catalog Core Me
         expect(read).toContain("legalEntityScope: 'optional'");
         expect(read).not.toContain("legalEntityScope: 'forbidden'");
         const declaration = codeOf(yield* readApp('vertical.runtime-declaration.ts'));
-        expect(declaration).toContain("callers: [{ kind: 'person', legalEntityScope: 'subject' }]");
         const start = declaration.indexOf("key: 'commerce.catalog.requirement.core-media-current'");
-        expect(declaration.slice(Math.max(0, start - 400), start)).not.toContain("legalEntityScope: 'tenant'");
+        expect(start).toBeGreaterThan(0);
+        const block = declaration.slice(Math.max(0, start - 400), start + 300);
+        expect(block).toContain("callers: [{ kind: 'person', legalEntityScope: 'subject' }]");
+        expect(block).not.toContain("legalEntityScope: 'tenant'");
       }),
   );
 
