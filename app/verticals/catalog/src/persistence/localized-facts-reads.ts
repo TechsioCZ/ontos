@@ -5,7 +5,7 @@ import { Effect, Option, Schema } from 'effect';
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { ProductHistoryResponse } from '../../shared/apis/product-history.ts';
 import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
-import { CatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
+import { StoredCatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
 import {
   productLocalizedFactRevisions,
   productLocalizedFacts,
@@ -80,7 +80,7 @@ const unavailable = (cause?: unknown) => {
   return failure;
 };
 const uuid = (value: string) => Schema.is(Schema.String.check(Schema.isUUID()))(value);
-const validLocale = Schema.is(CatalogLocaleSchema);
+const validLocale = Schema.is(StoredCatalogLocaleSchema);
 const validProduct = (ref: ProductRef, tenantId: string) =>
   ref.tenantId === tenantId &&
   ref.moduleId === 'commerce.catalog' &&

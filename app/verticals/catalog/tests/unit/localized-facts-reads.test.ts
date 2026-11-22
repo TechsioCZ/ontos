@@ -1,4 +1,5 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { Effect, Exit, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -74,8 +75,84 @@ const selected = (values: readonly object[]) => {
 const mockTransaction = (rows: Map<Table, readonly object[]>) => ({
   select: () => ({ from: (table: Table) => ({ where: () => selected(rows.get(table) ?? []) }) }),
 });
+const dialect = new PgDialect();
+const selectExactLocaleRows = (rows: readonly object[], condition: Parameters<typeof dialect.sqlToQuery>[0]) => {
+  const { params } = dialect.sqlToQuery(condition);
+  return selected(rows.filter((row) => !('locale' in row) || params.includes(row.locale)));
+};
+const mockLocaleTransaction = (rows: Map<Table, readonly object[]>) => ({
+  select: () => ({
+    from: (table: Table) => ({
+      where: (condition: Parameters<typeof dialect.sqlToQuery>[0]) =>
+        selectExactLocaleRows(rows.get(table) ?? [], condition),
+    }),
+  }),
+});
 
 describe('localized facts private reads', () => {
+  it.effect('reads exact stored Product and Variant locale keys and their immutable revisions', () =>
+    Effect.gen(function* storedLocaleKeys() {
+      const rows = new Map<Table, readonly object[]>([
+        [products, [{ productId }]],
+        [productVariants, [{ id: variantId }]],
+        [productLocalizedFacts, [fact, { ...fact, locale: 'cs-cz', name: 'Původní název' }]],
+        [
+          productLocalizedFactRevisions,
+          [
+            { ...revision, name: fact.name, revision: 3 },
+            { ...revision, locale: 'cs-cz', name: 'Původní název', revision: 3 },
+          ],
+        ],
+        [
+          variantLocalizedFacts,
+          [
+            { ...fact, name: 'Varianta', variantId },
+            { ...fact, locale: 'cs-cz', name: 'Původní varianta', variantId },
+          ],
+        ],
+        [
+          variantLocalizedFactRevisions,
+          [
+            { ...revision, name: 'Varianta', revision: 3, variantId },
+            { ...revision, locale: 'cs-cz', name: 'Původní varianta', revision: 3, variantId },
+          ],
+        ],
+      ]);
+      // @ts-expect-error Focused mock implements only queried Drizzle chains.
+      const reads = localizedFactsReadsForScope(mockLocaleTransaction(rows), scope);
+      for (const locale of ['cs-cz', 'cs-CZ']) {
+        expect(yield* reads.currentProduct(productRef, locale)).toMatchObject({
+          kind: 'PRESENT',
+          locale,
+          name: locale === 'cs-cz' ? 'Původní název' : fact.name,
+          provenance: { actionInvocationId: revision.actionInvocationId },
+          revision: 3,
+        });
+        expect(yield* reads.currentVariant(productRef, variantRef, locale)).toMatchObject({
+          kind: 'PRESENT',
+          locale,
+          name: locale === 'cs-cz' ? 'Původní varianta' : 'Varianta',
+          revision: 3,
+        });
+        expect(yield* reads.productHistory(productRef, locale)).toMatchObject([
+          { historical: true, locale, name: locale === 'cs-cz' ? 'Původní název' : fact.name, revision: 3 },
+        ]);
+      }
+    }),
+  );
+
+  it.effect('counts an existing ACTIVE Product name under its exact stored locale key', () =>
+    Effect.gen(function* storedActiveName() {
+      const rows = new Map<Table, readonly object[]>([
+        [products, [{ lifecycleState: 'ACTIVE' }]],
+        [productLocalizedFacts, [{ ...fact, locale: 'cs-cz' }]],
+      ]);
+      // @ts-expect-error Focused mock implements only queried Drizzle chains.
+      const reads = localizedFactsReadsForScope(mockTransaction(rows), scope);
+      expect(yield* reads.activeNameStatus(productRef)).toBe('HAS_NAME');
+    }),
+  );
+
   it.effect('lists only exact historical locale revisions, including removal, in revision order', () =>
     Effect.gen(function* historicalTimeline() {
       const rows = new Map<Table, readonly object[]>([

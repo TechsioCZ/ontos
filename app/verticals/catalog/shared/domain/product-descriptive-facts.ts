@@ -3,11 +3,16 @@ import { Schema } from 'effect';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductNameSchema } from './product.ts';
 
-/** A locale identifies the language of the supplied fact; it is not a Product identity. */
-export const CatalogLocaleSchema = Schema.String.check(
+/** Stored language value, not an entity identifier; preserve historical spelling without normalization. */
+export const StoredCatalogLocaleSchema = Schema.String.check(
   Schema.isMinLength(2),
   Schema.isMaxLength(64),
   Schema.isTrimmed(),
+);
+export type StoredCatalogLocale = typeof StoredCatalogLocaleSchema.Type;
+
+/** New external locale input must use canonical spelling before any owner write. */
+export const CatalogLocaleSchema = StoredCatalogLocaleSchema.check(
   Schema.makeFilter((locale) => {
     try {
       return Intl.getCanonicalLocales(locale)[0] === locale || 'A Catalog locale must be a canonical locale tag';
@@ -22,7 +27,7 @@ const FactualDescriptionSchema = Schema.Trim.check(Schema.isMinLength(1), Schema
 
 const ProductLocalizedFactsSchema = Schema.Struct({
   description: Schema.optionalKey(FactualDescriptionSchema),
-  locale: CatalogLocaleSchema,
+  locale: StoredCatalogLocaleSchema,
   name: ProductNameSchema,
 });
 type ProductLocalizedFacts = typeof ProductLocalizedFactsSchema.Type;
@@ -45,12 +50,12 @@ export const hasCatalogTextMinimum = (facts: ProductDescriptiveFacts): boolean =
 
 export type LocalizedFactsLookup =
   | { readonly facts: ProductLocalizedFacts; readonly kind: 'PRESENT' }
-  | { readonly kind: 'MISSING_TRANSLATION'; readonly requestedLocale: CatalogLocale };
+  | { readonly kind: 'MISSING_TRANSLATION'; readonly requestedLocale: StoredCatalogLocale };
 
 /** Never relabel another locale's value as a translation or persist a presentation fallback. */
 export const lookupProductLocalizedFacts = (
   facts: ProductDescriptiveFacts,
-  requestedLocale: CatalogLocale,
+  requestedLocale: StoredCatalogLocale,
 ): LocalizedFactsLookup => {
   const found = facts.localized.find(({ locale }) => locale === requestedLocale);
   return found === undefined ? { kind: 'MISSING_TRANSLATION', requestedLocale } : { facts: found, kind: 'PRESENT' };
