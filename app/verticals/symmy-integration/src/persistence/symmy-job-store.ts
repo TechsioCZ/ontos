@@ -75,7 +75,13 @@ import { symmyExecutionRegistration } from '../services/symmy-worker-identity.se
 import { SymmyRouteContextResponseSchema } from '../../shared/apis/symmy-route-context.ts';
 
 export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()('SymmyJobStoreError', {
-  code: Schema.Literals(['route_denied', 'idempotency_conflict', 'stock_assertion_denied', 'unavailable']),
+  code: Schema.Literals([
+    'route_denied',
+    'idempotency_conflict',
+    'plan_limit_exceeded',
+    'stock_assertion_denied',
+    'unavailable',
+  ]),
 }) {}
 
 export interface SymmyJobAdmissionRequest {
@@ -552,7 +558,11 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
           rows: input.products,
           template,
           tenantId: scope.tenantId,
-        });
+        }).pipe(
+          Effect.catchTag('SymmyProductPlanLimitError', () =>
+            Effect.fail(new SymmyJobStoreError({ code: 'plan_limit_exceeded' })),
+          ),
+        );
   }
   if (input.priceBatch !== undefined) {
     return input.reviseFacts === undefined

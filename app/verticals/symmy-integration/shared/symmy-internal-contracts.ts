@@ -23,6 +23,7 @@ export type { SymmyPriceListRows } from './domain/symmy-price-list-batch.ts';
 export { SymmyPriceBatchSchema } from './domain/symmy-price-batch.ts';
 export type { SymmyPriceBatch, SymmyPriceReviseFacts } from './domain/symmy-price-batch.ts';
 export {
+  SYMMY_PRODUCT_PLAN_LIMIT_REASON,
   SymmyProductPlanSizeSchema,
   SymmyProductPriceGroupFactsSchema,
   SymmyProductRowsSchema,

@@ -1,6 +1,7 @@
 import { SYMMY_FIXTURE_ROUTES } from '@app/shared-contracts/symmy';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { executeAdmitSymmyJobWithAuthorization } from '@app/symmy-integration/api/admit-symmy-job-action/client';
+import { SYMMY_PRODUCT_PLAN_LIMIT_REASON } from '@app/symmy-integration/symmy-internal-contracts';
 import { executeAdmitSymmySyncWithAuthorization } from '@app/symmy-integration/api/admit-symmy-sync-action/client';
 import { AdmitSymmySyncPayloadSchema } from '@app/symmy-integration/api/admit-symmy-sync-action';
 import { executeSymmyJobStatusWithAuthorization } from '@app/symmy-integration/api/symmy-job-status/client';
@@ -490,6 +491,10 @@ export const makeSymmyGovernedDispatch = (
           Match.when('AdmitSymmyJobActionAuthenticationProblem', () => authenticationRequired),
           Match.whenOr('AdmitSymmyJobActionForbiddenProblem', 'AdmitSymmyJobRouteDeniedProblem', () => forbidden),
           Match.when('AdmitSymmyJobIntentConflictProblem', () => symmyFixtureIntentConflictProblem),
+          Match.when('AdmitSymmyJobPlanLimitProblem', () => ({
+            ...symmyInvalidProblem,
+            detail: SYMMY_PRODUCT_PLAN_LIMIT_REASON,
+          })),
           Match.orElse(() => symmyUnavailableProblem),
         ),
       ),

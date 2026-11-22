@@ -2,7 +2,11 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 
 import type { AdmitSymmyJobRejected } from './symmy-job-admission.ts';
+import { SYMMY_PRODUCT_PLAN_LIMIT_REASON } from './symmy-product-batch.ts';
 
+const PlanLimitProblemSchema = makeProblemDetailsSchema('AdmitSymmyJobPlanLimitProblem', 400, {
+  code: Schema.Literal('symmy_job_plan_limit_exceeded'),
+});
 const RouteDeniedProblemSchema = makeProblemDetailsSchema('AdmitSymmyJobRouteDeniedProblem', 403, {
   code: Schema.Literal('symmy_job_route_denied'),
 });
@@ -16,6 +20,7 @@ const PersistenceUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
 );
 
 export const AdmitSymmyJobBusinessProblemSchema = Schema.Union([
+  PlanLimitProblemSchema,
   RouteDeniedProblemSchema,
   IntentConflictProblemSchema,
   PersistenceUnavailableProblemSchema,
@@ -36,6 +41,13 @@ const problems = {
     status: PersistenceUnavailableProblemSchema.fields.status.literal,
     title: 'Integration job unavailable',
     type: 'https://ontos.dev/problems/symmy-job-unavailable',
+  }),
+  symmy_job_plan_limit_exceeded: PlanLimitProblemSchema.make({
+    code: 'symmy_job_plan_limit_exceeded',
+    detail: SYMMY_PRODUCT_PLAN_LIMIT_REASON,
+    status: PlanLimitProblemSchema.fields.status.literal,
+    title: 'Integration Product batch too large',
+    type: 'https://ontos.dev/problems/symmy-job-plan-limit',
   }),
   symmy_job_route_denied: RouteDeniedProblemSchema.make({
     code: 'symmy_job_route_denied',
