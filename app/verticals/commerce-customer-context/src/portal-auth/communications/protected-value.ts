@@ -1,4 +1,4 @@
-import { Context, Crypto, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Option, Redacted, Ref, Result, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
 
 import { CommercePortalAuthConfig } from '../../../api/portal-auth/provider/config-service.ts';
@@ -62,7 +62,7 @@ const cipherCall = <Value>(call: () => Promise<Value>) =>
     Effect.timeoutOrElse({ duration: CIPHER_TIMEOUT, orElse: timedOut }),
   );
 
-/** The AES-GCM key of the realm secret; derived once, never exported. */
+/** The AES-GCM key of the realm secret; never exported. */
 const deriveKey = (secret: Redacted.Redacted) => {
   const { subtle } = globalThis.crypto;
   return cipherCall(
@@ -107,7 +107,17 @@ const makeProtectedValueSealer = Effect.fn('CommercePortalAuthProtectedValueSeal
   secret: Redacted.Redacted,
 ) {
   const crypto = yield* Crypto.Crypto;
-  const key = yield* Effect.cached(deriveKey(secret));
+  // only a derived key is kept for the process: a failed derivation (a timeout, an unavailable WebCrypto) is retried by the
+  // next seal or open instead of making every later one fail until the process restarts
+  const derivedKey = yield* Ref.make(Option.none<CryptoKey>());
+  const key = Ref.get(derivedKey).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => deriveKey(secret).pipe(Effect.tap((derived) => Ref.set(derivedKey, Option.some(derived)))),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
   const { subtle } = globalThis.crypto;
 
   const seal = Effect.fn('CommercePortalAuthProtectedValueSealer.seal')(function* sealValue(held: HeldIssuance) {
