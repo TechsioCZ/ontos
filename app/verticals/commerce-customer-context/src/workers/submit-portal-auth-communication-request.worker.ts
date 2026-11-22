@@ -4,8 +4,9 @@
 // @ontos-outbox-worker-producer commerce.customer-context
 // @ontos-outbox-worker-topic commerce.customer-context.portal-auth-communication-requested.v1
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { OutboxWorkerDeferred } from '@app/core-runtime/outbox/worker';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
@@ -18,6 +19,12 @@ import { SubmitPortalAuthCommunicationRequestRejected } from './submit-portal-au
 
 const OWNER = 'commerce.customer-context';
 const WORKER_KEY = 'commerce.customer-context.submit-portal-auth-communication-request';
+const RETRY_POLICY = {
+  initialBackoffMs: 1000,
+  maxAttempts: 5,
+  maxBackoffMs: 60_000,
+  multiplier: 2,
+} as const;
 
 /**
  * The delivery must be exactly this worker's, of this module's own topic, in the Tenant the request claims. A Portal Auth
@@ -31,6 +38,31 @@ const deliveryMatches = (payload: OutboxPayload, context: OutboxWorkerHandlerCon
   context.tenantId === payload.request.scope.tenantId &&
   payload.request.scope.legalEntityId === undefined;
 
+/**
+ * A request is owed for as long as its issuance is usable (`occurrence.validUntil`, Auth's own expiry), and Auth's relay has
+ * already handed it to Core for good, so the ordinary retry budget must not end it: a Communications outage or a Tenant whose
+ * `communications.core.request-source` registration is still missing would otherwise dead-letter the only delivery of a link
+ * the user is still waiting for. Once the budget is spent, the delivery is deferred (Core does not charge a deferral to the
+ * budget) at the ordinary backoff ceiling, never past the expiry. Past it nothing can be sent any more (Communications stops a
+ * handoff past `validUntil`), so the failure ends the delivery as Core decides. Every wake submits the SAME request under the
+ * SAME idempotency key, so a request Communications already admitted lands on its stored decision, never on a second link.
+ */
+const deferWhileUsable = Effect.fn('SubmitPortalAuthCommunicationRequestWorker.deferWhileUsable')(function* defer(
+  payload: OutboxPayload,
+  rejected: SubmitPortalAuthCommunicationRequestRejected,
+) {
+  const now = yield* DateTime.now;
+  const usableUntil = Option.fromUndefinedOr(payload.request.occurrence.validUntil).pipe(
+    Option.flatMap((validUntil) => DateTime.make(validUntil)),
+    Option.filter((validUntil) => DateTime.isGreaterThan(validUntil, now)),
+  );
+  if (Option.isNone(usableUntil)) {
+    return yield* rejected;
+  }
+  const wakeAtMs = Math.min(now.epochMilliseconds + RETRY_POLICY.maxBackoffMs, usableUntil.value.epochMilliseconds);
+  return yield* new OutboxWorkerDeferred({ wakeAtMs });
+});
+
 /** Submits one committed Portal Auth request to the public Communications Action, at least once (#1406 D1). */
 export const handleSubmitPortalAuthCommunicationRequest = Effect.fn(
   'SubmitPortalAuthCommunicationRequestWorker.handle',
@@ -43,7 +75,12 @@ export const handleSubmitPortalAuthCommunicationRequest = Effect.fn(
     });
   }
   const gateway = yield* PortalAuthCommunicationSourceGateway;
-  return yield* gateway.submit(payload.request, context);
+  return yield* gateway.submit(payload.request, context).pipe(
+    Effect.catchIf(
+      (rejected) => rejected.retryable && context.attemptNumber >= RETRY_POLICY.maxAttempts,
+      (rejected) => deferWhileUsable(payload, rejected),
+    ),
+  );
 });
 
 export const submitPortalAuthCommunicationRequestWorker = defineOutboxWorker(
@@ -58,14 +95,11 @@ export const submitPortalAuthCommunicationRequestWorker = defineOutboxWorker(
     }),
     leaseDurationMs: 30_000,
     legalEntityScope: 'forbidden',
+    // a usable issuance's request waits out an outage at the backoff ceiling instead of dead-lettering (`deferWhileUsable`)
+    maxDeferralMs: RETRY_POLICY.maxBackoffMs,
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    retryPolicy: {
-      initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
-      multiplier: 2,
-    },
+    retryPolicy: RETRY_POLICY,
     topic: outboxTopic,
     workerKey: WORKER_KEY,
   },

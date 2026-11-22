@@ -2,6 +2,7 @@ import type { CommunicationRequestEncoded } from '@app/communications-contracts/
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { getActionHandler } from '@app/core-runtime/testing/actions';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { OutboxWorkerDeferred } from '@app/core-runtime/outbox/worker';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   ActiveApplicationCompositionService,
@@ -222,6 +223,93 @@ describe('The Portal Auth source worker (#1406 D1)', () => {
       );
       expect(failure).toMatchObject({ code: 'COMMUNICATIONS_UNAVAILABLE', retryable: true });
     }),
+  );
+});
+
+/** A Communications outage, or a Tenant whose request-source registration is still missing: retryable. */
+const outage = () =>
+  gatewayDouble(() =>
+    Effect.fail(
+      new SubmitPortalAuthCommunicationRequestRejected({
+        code: 'COMMUNICATIONS_UNAVAILABLE',
+        reason: 'fictional outage or missing request-source registration',
+        retryable: true,
+      }),
+    ),
+  );
+
+describe('The Portal Auth source worker past its ordinary retry budget (#1406 D1, A1)', () => {
+  it.effect(
+    'the last ordinary attempt defers the delivery at the backoff ceiling while the issuance is usable, never dead-letters it',
+    () =>
+      Effect.gen(function* deferred() {
+        const now = DateTime.add(ISSUED_AT, { minutes: 1 });
+        yield* TestClock.setTime(now.epochMilliseconds);
+        const request = yield* requestOf('pa-transport-budget-1');
+        const gateway = outage();
+        const early = yield* handleSubmitPortalAuthCommunicationRequest(
+          { request },
+          deliveryOf({ attemptNumber: 4 }),
+        ).pipe(Effect.provide(gateway.layer), Effect.flip);
+        expect(early).toMatchObject({ code: 'COMMUNICATIONS_UNAVAILABLE', retryable: true });
+        for (const attemptNumber of [5, 5, 5]) {
+          const failure = yield* handleSubmitPortalAuthCommunicationRequest(
+            { request },
+            deliveryOf({ attemptNumber }),
+          ).pipe(Effect.provide(gateway.layer), Effect.flip);
+          expect(Schema.is(OutboxWorkerDeferred)(failure)).toBe(true);
+          expect(failure).toMatchObject({ wakeAtMs: now.epochMilliseconds + 60_000 });
+        }
+        // every wake submitted the SAME request under the same idempotency key
+        expect(new Set(gateway.calls.map((call) => call.request.idempotency.key))).toStrictEqual(
+          new Set([request.idempotency.key]),
+        );
+        expect(gateway.calls).toHaveLength(4);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect('a deferral never wakes past the issuance expiry, and past it the delivery ends as Core decides', () =>
+    Effect.gen(function* bounded() {
+      const request = yield* requestOf('pa-transport-budget-2');
+      const expiresAt = DateTime.add(ISSUED_AT, { minutes: 30 });
+      const gateway = outage();
+      yield* TestClock.setTime(DateTime.subtract(expiresAt, { seconds: 10 }).epochMilliseconds);
+      const beforeExpiry = yield* handleSubmitPortalAuthCommunicationRequest(
+        { request },
+        deliveryOf({ attemptNumber: 5 }),
+      ).pipe(Effect.provide(gateway.layer), Effect.flip);
+      expect(Schema.is(OutboxWorkerDeferred)(beforeExpiry)).toBe(true);
+      expect(beforeExpiry).toMatchObject({ wakeAtMs: expiresAt.epochMilliseconds });
+      yield* TestClock.setTime(expiresAt.epochMilliseconds);
+      const atExpiry = yield* handleSubmitPortalAuthCommunicationRequest(
+        { request },
+        deliveryOf({ attemptNumber: 5 }),
+      ).pipe(Effect.provide(gateway.layer), Effect.flip);
+      expect(Schema.is(SubmitPortalAuthCommunicationRequestRejected)(atExpiry)).toBe(true);
+      expect(atExpiry).toMatchObject({ code: 'COMMUNICATIONS_UNAVAILABLE', retryable: true });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect('a final refusal is never deferred', () =>
+    Effect.gen(function* final() {
+      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+      const request = yield* requestOf('pa-transport-budget-3');
+      const gateway = gatewayDouble(() =>
+        Effect.fail(
+          new SubmitPortalAuthCommunicationRequestRejected({
+            code: 'WORKER_CONTEXT_INVALID',
+            reason: 'fictional final refusal',
+            retryable: false,
+          }),
+        ),
+      );
+      const refused = yield* handleSubmitPortalAuthCommunicationRequest(
+        { request },
+        deliveryOf({ attemptNumber: 5 }),
+      ).pipe(Effect.provide(gateway.layer), Effect.flip);
+      expect(Schema.is(SubmitPortalAuthCommunicationRequestRejected)(refused)).toBe(true);
+      expect(refused).toMatchObject({ code: 'WORKER_CONTEXT_INVALID', retryable: false });
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });
 
