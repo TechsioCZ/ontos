@@ -12,6 +12,7 @@ import {
   privacyOwnerExecutionReceiptForScope,
 } from '../services/privacy-owner-execution-receipt.service.ts';
 import type { PrivacyOwnerExecutionReceiptService } from '../services/privacy-owner-execution-receipt.service.ts';
+import { requirePrivacyCaller } from './privacy-owner-caller.ts';
 
 const privacyOwnerExecutionOutcomeEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -34,15 +35,18 @@ export const readPrivacyOwnerExecutionOutcome = (
   input: PrivacyOwnerExecutionOutcomeRequest,
   context: ReadHandlerContext<Services>,
 ) =>
-  context.services.receipts.receipt(input).pipe(
-    Effect.mapError((failure) =>
-      Object.defineProperty(
-        new ReadHandlerUnavailable({
-          code: 'read_handler_unavailable',
-          reason: 'The Communications owner execution receipt is temporarily unavailable',
-        }),
-        'cause',
-        { configurable: true, value: failure },
+  requirePrivacyCaller(context.scope).pipe(
+    Effect.andThen(context.services.receipts.receipt(input)),
+    Effect.catchTag('PrivacyOwnerCoverageUnavailable', (failure) =>
+      Effect.fail(
+        Object.defineProperty(
+          new ReadHandlerUnavailable({
+            code: 'read_handler_unavailable',
+            reason: 'The Communications owner execution receipt is temporarily unavailable',
+          }),
+          'cause',
+          { configurable: true, value: failure },
+        ),
       ),
     ),
     Effect.map((result) => ({ evidence: { resultCount: Option.isSome(result) ? 1 : 0 }, result })),
@@ -53,17 +57,19 @@ export const privacyOwnerExecutionOutcomeRead = defineRead(
     accessActor: {
       callers: ['privacy'],
       reason:
-        'Privacy asks the owner for the receipt of one measure it dispatched, for the verified originating requester.',
-      subject: 'identity',
+        'Privacy asks the owner for the receipt of one measure it dispatched, for the verified originating requester; the requester must hold this declaration itself.',
+      subject: 'rights',
     },
-    // A receipt does not identify a record set the requester owns: only the scope-wide Tenant grant authorizes this Read.
+    // A receipt does not identify a record set the requester owns: only the scope-wide Tenant grant authorizes this Read,
+    // on every path. A Privacy-delegated call is decided on the requester's own grant of this declaration, never on
+    // identity alone; the Shell-issued Privacy dispatch rechecks the same grant Tenant-wide.
     accessDeclaration: {
       key: 'communications.core.privacy-owner-execution-outcome.read',
       kind: 'read',
       modes: ['run'],
       placement: { group: 'privacy-owner-execution-outcome', level: 'basic' },
       risk: 'sensitive',
-      selectors: ['all'],
+      selectors: [],
     },
     accessKind: 'detail',
     entrypoint: privacyOwnerExecutionOutcomeEntrypoint,

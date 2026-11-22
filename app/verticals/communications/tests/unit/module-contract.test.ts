@@ -12,6 +12,7 @@ import { prepareTemplateRevisionAction } from '../../src/actions/prepare-templat
 import { recordOwnerExecutionEvidenceAction } from '../../src/actions/record-owner-execution-evidence.action.ts';
 import { setLanguagePolicyAction } from '../../src/actions/set-language-policy.action.ts';
 import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
+import { privacyOwnerCoverageRead } from '../../src/api/privacy-owner-coverage.read.ts';
 import { privacyOwnerExecutionOutcomeRead } from '../../src/api/privacy-owner-execution-outcome.read.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { communicationsManifest } from '../../vertical.manifest.ts';
@@ -94,12 +95,18 @@ describe('Communications module contract', () => {
       },
     });
     expect(privacyOwnerExecutionOutcomeRead.descriptor).toMatchObject({
-      accessActor: { callers: ['privacy'], subject: 'identity' },
+      accessActor: { callers: ['privacy'], subject: 'rights' },
       accessDeclaration: {
         key: 'communications.core.privacy-owner-execution-outcome.read',
         kind: 'read',
-        selectors: ['all'],
+        selectors: [],
       },
+      legalEntityScope: 'optional',
+    });
+    // the coverage Read is decided the same way: on the requester's own scope-wide grant, never on identity alone
+    expect(privacyOwnerCoverageRead.descriptor).toMatchObject({
+      accessActor: { callers: ['privacy'], subject: 'rights' },
+      accessDeclaration: { key: 'communications.core.privacy-owner-coverage.read', kind: 'read', selectors: [] },
       legalEntityScope: 'optional',
     });
     expect(recordOwnerExecutionEvidenceAction.descriptor).toMatchObject({
