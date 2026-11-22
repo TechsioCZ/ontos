@@ -40,7 +40,9 @@ export const makeShellGatewayAssertionRedemption = (
     input: GatewayAssertionRedemptionInput,
   ) {
     const nowEpochMs = yield* Clock.currentTimeMillis;
-    const acceptanceDeadlineMs = (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) * 1000;
+    const acceptanceDeadlineMs = Duration.toMillis(
+      Duration.seconds(input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS),
+    );
     // Verification can finish after its captured clock passes the assertion's skew window. Reject before cleanup can
     // delete this assertion's existing replay evidence.
     if (acceptanceDeadlineMs <= nowEpochMs) {
