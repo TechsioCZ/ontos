@@ -6,13 +6,10 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
-import {
-  ProvisionSourceStockItemPayloadSchema,
-  ProvisionSourceStockItemResultSchema,
-} from '../actions/provision-source-stock-item.ts';
+import { ProvisionSourceStockItemResultSchema } from '../actions/provision-source-stock-item.ts';
+import { ProvisionSourceStockItemPayloadSchema } from '../domain/source-provisioning.ts';
 import { SourceStockItemProvisioningRejected } from '../domain/source-stock-item-provisioning-rejected.ts';
 
-export { ProvisionSourceStockItemPayloadSchema } from '../actions/provision-source-stock-item.ts';
 export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ProvisionSourceStockItemActionInvalidProblemSchema = makeProblemDetailsSchema(

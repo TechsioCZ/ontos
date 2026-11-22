@@ -7,13 +7,13 @@ import { DateTime, Effect, Schema } from 'effect';
 
 import {
   ProvisionSourceStockItemErrorSchema,
-  ProvisionSourceStockItemPayloadSchema,
   ProvisionSourceStockItemResultSchema,
 } from '../../shared/actions/provision-source-stock-item.ts';
-import type { ProvisionSourceStockItemPayload } from '../../shared/actions/provision-source-stock-item.ts';
+import type { ProvisionSourceStockItemPayload } from '../../shared/domain/source-provisioning.ts';
 import { makeCatalogToStockBindingLifecycle } from '../../shared/domain/catalog-to-stock-binding.ts';
 import { makeExternalStockCorrelationLifecycle } from '../../shared/domain/external-stock-correlation.ts';
 import {
+  ProvisionSourceStockItemPayloadSchema,
   SourceStockItemProvisioningInvocationIdSchema,
   SourceStockItemProvisioningSchema,
 } from '../../shared/domain/source-provisioning.ts';
@@ -33,9 +33,9 @@ import type { SourceStockItemProvisioningPorts } from '../services/source-provis
 
 export {
   ProvisionSourceStockItemErrorSchema,
-  ProvisionSourceStockItemPayloadSchema,
   ProvisionSourceStockItemResultSchema,
 } from '../../shared/actions/provision-source-stock-item.ts';
+export { ProvisionSourceStockItemPayloadSchema } from '../../shared/domain/source-provisioning.ts';
 
 const ACTION_KEY = 'commerce.inventory.provision-source-stock-item';
 const MODULE_KEY = 'commerce.inventory';

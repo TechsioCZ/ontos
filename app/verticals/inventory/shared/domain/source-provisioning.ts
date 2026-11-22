@@ -1,6 +1,6 @@
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
-import { Order, Schema, Struct } from 'effect';
+import { Order, Schema, SchemaGetter, Struct } from 'effect';
 
 import { InventoryBackendOriginSchema } from './external-stock-correlation.ts';
 import { ExactCatalogSelectionMeaningSchema } from './stock-item.ts';
@@ -71,16 +71,14 @@ export const SourceProvisioningPolicySchema = Schema.Struct({
 export type SourceProvisioningPolicy = typeof SourceProvisioningPolicySchema.Type;
 
 /** The caller's enrolled terms, not authority to alter the referenced Inventory policy. */
-export const SourceProvisioningExpectedPolicySchema = Schema.Struct(
-  Struct.pick(SourceProvisioningPolicySchema.fields, [
-    'customerConfigurationId',
-    'externalScope',
-    'issuer',
-    'namespace',
-    'unitRef',
-    'locations',
-  ]),
-);
+export const SourceProvisioningExpectedPolicySchema = Schema.Struct({
+  customerConfigurationId: SourceProvisioningPolicySchema.fields.customerConfigurationId,
+  externalScope: SourceProvisioningPolicySchema.fields.externalScope,
+  issuer: SourceProvisioningPolicySchema.fields.issuer,
+  locations: SourceProvisioningPolicySchema.fields.locations,
+  namespace: SourceProvisioningPolicySchema.fields.namespace,
+  unitRef: SourceProvisioningPolicySchema.fields.unitRef,
+});
 export type SourceProvisioningExpectedPolicy = typeof SourceProvisioningExpectedPolicySchema.Type;
 
 export const canonicalSourceProvisioningExpectedPolicy = (policy: SourceProvisioningExpectedPolicy) => ({
@@ -91,20 +89,31 @@ export const canonicalSourceProvisioningExpectedPolicy = (policy: SourceProvisio
 export const ProvisioningDispositionSchema = Schema.Literals(['ESTABLISHED', 'ADOPTED']);
 export type ProvisioningDisposition = typeof ProvisioningDispositionSchema.Type;
 
-export const ProvisionSourceStockItemInputSchema = Schema.Struct({
+const provisionSourceStockItem = Schema.Struct({
   catalogSelection: CatalogSelectionSchema,
   exactSelectionMeaning: ExactCatalogSelectionMeaningSchema,
   expectedPolicy: SourceProvisioningExpectedPolicySchema,
   itemKey: SourceExternalKeySchema,
   policyRef: SourceProvisioningPolicyRefSchema,
-}).check(
-  Schema.makeFilter(({ catalogSelection, policyRef }) =>
+});
+const sameProvisioningTenant = Schema.makeFilter(
+  ({ catalogSelection, policyRef }: typeof provisionSourceStockItem.Type) =>
     catalogSelection.productRef.tenantId === policyRef.tenantId
       ? undefined
       : 'The Catalog selection and the provisioning policy must share one Tenant',
-  ),
 );
+export const ProvisionSourceStockItemInputSchema = provisionSourceStockItem.check(sameProvisioningTenant);
 export type ProvisionSourceStockItemInput = typeof ProvisionSourceStockItemInputSchema.Type;
+
+// Core hashes the encoded Action payload before calling Inventory. Receipts retain their original input order.
+const canonicalTerms = SchemaGetter.transform(canonicalSourceProvisioningExpectedPolicy);
+export const ProvisionSourceStockItemPayloadSchema = Schema.Struct({
+  ...provisionSourceStockItem.fields,
+  expectedPolicy: provisionSourceStockItem.fields.expectedPolicy.pipe(
+    Schema.decode({ decode: canonicalTerms, encode: canonicalTerms }),
+  ),
+}).check(sameProvisioningTenant);
+export type ProvisionSourceStockItemPayload = typeof ProvisionSourceStockItemPayloadSchema.Type;
 
 /** The refs one provisioned ERP item resolves to. A repeated call returns the same refs, every part ADOPTED. */
 export const SourceStockItemProvisioningSchema = Schema.Struct({

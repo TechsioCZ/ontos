@@ -1,3 +1,4 @@
+import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
 import { NodeCrypto } from '@effect/platform-node';
 import { Array as EffectArray, DateTime, Duration, Effect, Option, Schema, Struct } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -31,6 +32,7 @@ import { SourceProvisioningPolicyRejected } from '../../shared/domain/source-pro
 import { SourceStockItemProvisioningRejected } from '../../shared/domain/source-stock-item-provisioning-rejected.ts';
 import {
   ProvisionSourceStockItemInputSchema,
+  ProvisionSourceStockItemPayloadSchema,
   SourceProvisioningPolicySchema,
   SourceProvisioningExpectedPolicySchema,
   SourceStockItemProvisioningInvocationIdSchema,
@@ -513,8 +515,60 @@ describe('Inventory source stock item provisioning', () => {
 
   it('encodes the same Core action payload for the same allowed-location set', () => {
     const encode = Schema.encodeSync(provisionSourceStockItemAction.descriptor.payloadSchema);
+    expect(provisionSourceStockItemAction.descriptor.payloadSchema).toBe(ProvisionSourceStockItemPayloadSchema);
     expect(encode(reversedLocationInput())).toEqual(encode(provisionInput()));
     expect(encode(movedLocationInput())).not.toEqual(encode(provisionInput()));
+    const decoded = Schema.decodeUnknownSync(ProvisionSourceStockItemPayloadSchema)(reversedLocationInput());
+    expect(decoded.expectedPolicy.locations).toEqual(provisionInput().expectedPolicy.locations);
+    const foreignTenant = {
+      ...provisionInput(),
+      policyRef: Schema.decodeUnknownSync(ProvisionSourceStockItemInputSchema.fields.policyRef)({
+        ...policy.policyRef,
+        tenantId: '11111111-1111-4111-8111-111111111112',
+      }),
+    };
+    expect(() => Schema.decodeUnknownSync(ProvisionSourceStockItemPayloadSchema)(foreignTenant)).toThrow();
+    expect(() => encode(foreignTenant)).toThrow();
+  });
+
+  it('publishes the exact canonical owner request identity without changing receipt input order', () => {
+    const principal = { principalId: '11111111-1111-4111-8111-111111111113', tenantId };
+    const { actionKey, owningModuleKey, payloadSchema, schemaVersion } = provisionSourceStockItemAction.descriptor;
+    const ownerHash = computeActionRequestHash({
+      actionKey,
+      normalizedPayload: Schema.encodeSync(payloadSchema)(provisionInput()),
+      owningModuleKey,
+      principal,
+      schemaVersion,
+      target: {},
+    });
+    for (const input of [provisionInput(), reversedLocationInput()]) {
+      expect(
+        computeActionRequestHash({
+          actionKey,
+          normalizedPayload: Schema.encodeSync(ProvisionSourceStockItemPayloadSchema)(input),
+          owningModuleKey,
+          principal,
+          schemaVersion,
+          target: {},
+        }),
+      ).toBe(ownerHash);
+      const receipt = Schema.decodeUnknownSync(SourceStockItemProvisioningReceiptRequestSchema)({
+        actionInvocationId: invocation('1'),
+        input,
+      });
+      expect(receipt.input.expectedPolicy.locations).toEqual(input.expectedPolicy.locations);
+    }
+    expect(
+      computeActionRequestHash({
+        actionKey,
+        normalizedPayload: Schema.encodeSync(ProvisionSourceStockItemPayloadSchema)(movedLocationInput()),
+        owningModuleKey,
+        principal,
+        schemaVersion,
+        target: {},
+      }),
+    ).not.toBe(ownerHash);
   });
 
   it.live('replays the original invocation across reordered locations but rejects a moved location', () =>

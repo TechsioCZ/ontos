@@ -3,11 +3,9 @@
 // @ontos-action-http-slug provision-source-stock-item
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
-import {
-  ProvisionSourceStockItemActionApi,
-  ProvisionSourceStockItemPayloadSchema,
-} from '../../shared/apis/provision-source-stock-item-action.ts';
-import type { ProvisionSourceStockItemPayload } from '../../shared/actions/provision-source-stock-item.ts';
+import { ProvisionSourceStockItemActionApi } from '../../shared/apis/provision-source-stock-item-action.ts';
+import { ProvisionSourceStockItemPayloadSchema } from '../../shared/domain/source-provisioning.ts';
+import type { ProvisionSourceStockItemPayload } from '../../shared/domain/source-provisioning.ts';
 import { operationGateway } from './action-gateway.ts';
 
 const traceIdOption = 'traceId' as const;
