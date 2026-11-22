@@ -86,7 +86,7 @@ import {
 } from '@app/pricing/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Match, Option, Schema, Stream } from 'effect';
+import { Context, Crypto, Effect, Exit, Layer, Match, Option, Schema, Stream } from 'effect';
 
 import {
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -2543,56 +2543,104 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   return yield* symmyJobWorkerUnavailable(error);
 });
 
+const preDispatchStage = Schema.Literals([
+  'product-dependency',
+  'group-dependency',
+  'provisioning-validation',
+  'intent-validation',
+  'batch-price-group',
+  'price-list-dependency',
+  'target-validation',
+  'fresh-gateway',
+  'machine-context',
+  'request-hash',
+  'request-identity',
+  'record-owner-request',
+]);
+
 const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEffectAdapter => ({
   execute: Effect.fn('SymmyOwnerAdapters.execute')(function* execute(originalInput) {
-    const productInput = yield* resolveProductDependency(originalInput, contract, crypto);
-    const input = yield* resolveGroupDependency(productInput, contract, crypto);
-    yield* validateProvisioningResolution(input);
-    const intent = yield* checkedIntent(input);
+    const observe = <A, E, R>(stage: typeof preDispatchStage.Type, effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.onExit((exit) =>
+          Effect.logInfo('Symmy owner pre-dispatch stage', {
+            effectId: originalInput.effect.ref.effectId,
+            operation: contract.tag,
+            stage,
+            status: Exit.isSuccess(exit) ? 'succeeded' : 'failed',
+          }).pipe(Effect.ignoreCause),
+        ),
+      );
+    const productInput = yield* observe(
+      'product-dependency',
+      resolveProductDependency(originalInput, contract, crypto),
+    );
+    const input = yield* observe('group-dependency', resolveGroupDependency(productInput, contract, crypto));
+    yield* observe('provisioning-validation', validateProvisioningResolution(input));
+    const intent = yield* observe('intent-validation', checkedIntent(input));
     if (!Schema.is(Schema.Literal(contract.tag))(intent._tag)) {
       return yield* symmyJobWorkerInvalid();
     }
     if (!input.canExecuteNewEffects) {
       return yield* symmyJobWorkerInvalid();
     }
-    const batchGroupMatches = yield* verifyBatchPriceGroup(input, intent, contract, crypto);
+    const batchGroupMatches = yield* observe(
+      'batch-price-group',
+      verifyBatchPriceGroup(input, intent, contract, crypto),
+    );
     if (
       !batchGroupMatches ||
-      !(yield* verifyPriceListDependency(input, originalInput.effect, intent, contract, crypto))
+      !(yield* observe(
+        'price-list-dependency',
+        verifyPriceListDependency(input, originalInput.effect, intent, contract, crypto),
+      ))
     ) {
       return safeOutcome(input, 'unresolved');
     }
-    const boundTarget = yield* verifyExistingCatalogTarget(input, intent, contract, crypto);
+    const boundTarget = yield* observe(
+      'target-validation',
+      verifyExistingCatalogTarget(input, intent, contract, crypto),
+    );
     if (!boundTarget) {
       return safeOutcome(input, 'unresolved');
     }
-    const wire = yield* freshGateway(input, contract, false, crypto);
-    if (wire.machineContext === undefined) {
-      return yield* symmyJobWorkerUnavailable();
-    }
-    const originalRequestHash = yield* prepareSymmyCatalogPricingInventoryRequestHash(
-      intent,
-      { principalId: wire.machineContext.principalId, tenantId: input.effect.ref.occurrence.record.route.tenantId },
-      input.legalEntityId,
+    const wire = yield* observe('fresh-gateway', freshGateway(input, contract, false, crypto));
+    const machineContext = yield* observe(
+      'machine-context',
+      wire.machineContext === undefined
+        ? Effect.fail(symmyJobWorkerUnavailable())
+        : Effect.succeed(wire.machineContext),
     );
-    if (
+    const originalRequestHash = yield* observe(
+      'request-hash',
+      prepareSymmyCatalogPricingInventoryRequestHash(
+        intent,
+        { principalId: machineContext.principalId, tenantId: input.effect.ref.occurrence.record.route.tenantId },
+        input.legalEntityId,
+      ),
+    );
+    yield* observe(
+      'request-identity',
       (input.originalExecutorPrincipalId !== undefined &&
-        input.originalExecutorPrincipalId !== wire.machineContext.principalId) ||
-      (input.originalAuthContextRef !== undefined &&
-        input.originalAuthContextRef !== wire.machineContext.authContextRef) ||
-      (input.originalRequestHash !== undefined && input.originalRequestHash !== originalRequestHash)
-    ) {
-      return yield* symmyJobWorkerInvalid();
-    }
-    yield* input.recordOwnerRequest({
-      authContextRef: wire.machineContext.authContextRef,
-      executorPrincipalId: wire.machineContext.principalId,
-      requestHash: originalRequestHash,
-    });
+        input.originalExecutorPrincipalId !== machineContext.principalId) ||
+        (input.originalAuthContextRef !== undefined &&
+          input.originalAuthContextRef !== machineContext.authContextRef) ||
+        (input.originalRequestHash !== undefined && input.originalRequestHash !== originalRequestHash)
+        ? Effect.fail(symmyJobWorkerInvalid())
+        : Effect.void,
+    );
+    yield* observe(
+      'record-owner-request',
+      input.recordOwnerRequest({
+        authContextRef: machineContext.authContextRef,
+        executorPrincipalId: machineContext.principalId,
+        requestHash: originalRequestHash,
+      }),
+    );
     const executionInput = {
       ...input,
-      originalAuthContextRef: wire.machineContext.authContextRef,
-      originalExecutorPrincipalId: wire.machineContext.principalId,
+      originalAuthContextRef: machineContext.authContextRef,
+      originalExecutorPrincipalId: machineContext.principalId,
       originalRequestHash,
     };
     return yield* executeNative(executionInput, intent, wire, contract, crypto).pipe(

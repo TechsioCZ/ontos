@@ -167,16 +167,29 @@ const readOwnerLostAckWitness = (
     }),
   );
 
+const captureShell = <A, E, R>(diagnostic: Effect.Effect<A, E, R>) =>
+  diagnostic.pipe(
+    Effect.timeout(Duration.seconds(5)),
+    Effect.matchCause({
+      onFailure: () => JSON.stringify({ status: 'unavailable' }),
+      onSuccess: (output) => JSON.stringify(output),
+    }),
+  );
+
 const preserveProvisioningWitnessDiagnostics = Effect.fn('InternalC14Sync.provisioningWitnessDiagnostics')(
   function* provisioningWitnessDiagnostics(input: {
     readonly admin: Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>['admin'];
     readonly jobId: string;
     readonly key: string;
     readonly ownerDiagnostics: readonly Effect.Effect<string>[];
+    readonly shell: Pick<
+      Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>['shell'],
+      'gatewayDiagnostics' | 'issuerDiagnostics' | 'requestDiagnostics'
+    >;
     readonly tenantId: string;
     readonly workerDiagnostic: Effect.Effect<string>;
   }) {
-    const { admin, jobId, key, ownerDiagnostics, tenantId, workerDiagnostic } = input;
+    const { admin, jobId, key, ownerDiagnostics, shell, tenantId, workerDiagnostic } = input;
     const fs = yield* FileSystem.FileSystem;
     // This existing artifact glob survives fixture cleanup; the path is unique to this admitted job.
     const diagnosticFile = `/tmp/commerce-org-http-symmy-c14-${jobId}-provisioning-witness.diag.log`;
@@ -185,7 +198,7 @@ const preserveProvisioningWitnessDiagnostics = Effect.fn('InternalC14Sync.provis
       workerDiagnostic.pipe(Effect.map((output) => `[worker]\n${output}`)),
     ]);
     const header = JSON.stringify({ jobId, key, stage: 'provisioning-witness-not-observed', tenantId });
-    const logText = `${header}\n\n${logs.join('\n\n')}`;
+    const nativeLogText = `${header}\n\n${logs.join('\n\n')}`;
     const persist = (text: string) =>
       fs.writeFileString(diagnosticFile, text).pipe(
         Effect.catchCause((cause) =>
@@ -198,7 +211,15 @@ const preserveProvisioningWitnessDiagnostics = Effect.fn('InternalC14Sync.provis
       );
     yield* Effect.logError('Provisioning witness failure native logs', { diagnosticFile, jobId, logs });
     // Save logs first: a failed or blocked diagnostic query must not lose the native process evidence.
+    yield* persist(nativeLogText);
+    const shellLogs = yield* Effect.all({
+      gateway: captureShell(Effect.suspend(() => shell.gatewayDiagnostics())),
+      issuer: captureShell(Effect.suspend(() => shell.issuerDiagnostics())),
+      requests: captureShell(Effect.suspend(() => shell.requestDiagnostics())),
+    });
+    const logText = `${nativeLogText}\n\n[shell]\n${JSON.stringify(shellLogs, null, 2)}`;
     yield* persist(logText);
+    yield* Effect.logError('Provisioning witness failure Shell diagnostics', { diagnosticFile, jobId, shellLogs });
     const effects = yield* admin`
       select e.effect_id, e.effect_key, e.state, e.version, e.owner_invocation_id,
         e.owner_executor_principal_id, e.outcome, e.owner_receipt, e.effect, e.resolved_effect,
@@ -727,9 +748,10 @@ it.live(
                       jobId,
                       key,
                       ownerDiagnostics,
+                      shell,
                       tenantId,
                       workerDiagnostic: worker.diagnostic,
-                    }),
+                    }).pipe(Effect.ignoreCause),
                   ),
                 );
                 expect(lostProvisioning.path.endsWith('/actions/provision-source-stock-item')).toBe(true);
@@ -879,6 +901,42 @@ it.live(
         );
         const beforeExactProductReplay = yield* provisioningInvocations;
         expect(beforeExactProductReplay).toBe(2);
+        const productAdmissionDeliveries = admin`
+          select e.domain_event_id, e.action_invocation_id, m.outbox_message_id,
+            m.payload_json as message_payload, d.outbox_delivery_id,
+            d.consumer_module_key, d.worker_key, d.status
+          from core.outbox_messages m
+          join core.domain_events e on e.tenant_id=m.tenant_id and e.domain_event_id=m.domain_event_id
+          left join core.outbox_deliveries d on d.outbox_message_id=m.outbox_message_id
+          where m.tenant_id=${tenantId} and m.producer_module_key='integration.symmy'
+            and m.topic='integration.symmy.job-admitted.v1'
+            and (m.payload_json->>'jobId'=${firstProductJobId} or e.subject_resource_id=${firstProductJobId})
+          order by m.outbox_message_id, d.outbox_delivery_id
+        `.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  action_invocation_id: Schema.String.check(Schema.isUUID()),
+                  consumer_module_key: Schema.OptionFromNullOr(Schema.String),
+                  domain_event_id: Schema.String.check(Schema.isUUID()),
+                  message_payload: Schema.Json,
+                  outbox_delivery_id: Schema.OptionFromNullOr(Schema.String.check(Schema.isUUID())),
+                  outbox_message_id: Schema.String.check(Schema.isUUID()),
+                  status: Schema.OptionFromNullOr(Schema.String),
+                  worker_key: Schema.OptionFromNullOr(Schema.String),
+                }),
+              ),
+            ),
+          ),
+        );
+        const beforeExactProductDeliveries = yield* productAdmissionDeliveries;
+        expect(beforeExactProductDeliveries).toHaveLength(1);
+        expect(beforeExactProductDeliveries[0]).toMatchObject({
+          consumer_module_key: Option.some('integration.symmy'),
+          status: Option.some('done'),
+          worker_key: Option.some('integration.symmy.execute-symmy-job'),
+        });
         const exactProductReplay = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${productsPath}`, {
           body: yield* HttpBody.json(firstProductBody),
           headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_NEW_STOCK_PRODUCTS_A' },
@@ -888,6 +946,8 @@ it.live(
           (yield* exactProductReplay.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(jobReceipt)))).jobId,
         ).toBe(firstProductJobId);
         expect(yield* provisioningInvocations).toBe(beforeExactProductReplay);
+        // The worker is stopped: a duplicate queued message/delivery must fail even before it can execute.
+        expect(yield* productAdmissionDeliveries).toEqual(beforeExactProductDeliveries);
         // The same logical key retains the exact owner invocations and their immutable result snapshots.
         expect(
           yield* assertInternalSyncCatalog({
