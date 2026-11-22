@@ -67,6 +67,22 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the Catalog Core Me
     }),
   );
 
+  suite.effect(
+    'relays the requester tenant-wide because the Catalog read itself accepts no company: the residual is recorded',
+    () =>
+      Effect.gen(function* tenantWideRelay() {
+        // The platform refuses a company on a `forbidden` read (OperationContextInvalid), so the requester's selected
+        // company never exists in this read's execution and a `subject` relay would have nothing to carry. A company
+        // narrowing of Current needs this read to accept a company first (a Catalog contract change); until then the
+        // availability, never the metadata or bytes, of a company-owned asset is visible to every holder of the
+        // Current capability through a ref Catalog holds (handoff decision 7, CORE_MEDIA.md). Change both or neither.
+        const read = codeOf(yield* readApp('src/api/catalog-document-current.read.ts'));
+        expect(read).toContain("legalEntityScope: 'forbidden'");
+        const declaration = codeOf(yield* readApp('vertical.runtime-declaration.ts'));
+        expect(declaration).toContain("callers: [{ kind: 'person', legalEntityScope: 'tenant' }]");
+      }),
+  );
+
   suite.effect('leaves the Catalog contract files exactly as they were: the guard is their content, not the diff', () =>
     Effect.gen(function* contractUnchanged() {
       const domain = yield* readApp('shared/domain/catalog-media-assignment.ts');
