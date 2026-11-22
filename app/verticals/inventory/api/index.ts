@@ -84,6 +84,7 @@ import { stockSharingEligibilityResolutionReadApiLive } from './stock-sharing-el
 // </generated-governed-http-handler-imports>
 
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
+import { defineSourceProvisioningPolicyCommitApiLive } from './define-source-provisioning-policy-commit-server.ts';
 import { inventoryApi, inventoryOperationContexts } from '../shared/api.ts';
 import { importSourceAssertionOwnerAuthorizationOverlayLive } from '../src/persistence/import-source-assertion-owner-authorization.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
@@ -204,6 +205,7 @@ export const makeInventoryApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     inventoryReadinessLayer,
+    defineSourceProvisioningPolicyCommitApiLive.pipe(Layer.provide(governedActionRuntimeLive)),
     // <generated-governed-http-handler-layers>
     catalogToStockBindingResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     changeStockSharingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -4,24 +4,23 @@ import {
   ActionRuntime,
   GatewayAssertionRedemptionService,
   isVerifiedGatewayPrincipalContext,
+  ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { ActionInvocationIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
+import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { OpenApi } from 'effect/http-api';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
-import { defineSourceProvisioningPolicyActionApiLive } from '../../api/define-source-provisioning-policy-action-server.ts';
-import { inventoryApi } from '../../shared/api.ts';
+import { makeInventoryApiRuntime } from '../../api/index.ts';
 import {
   DefineSourceProvisioningPolicyActionApi,
   SourceProvisioningPolicyCommitOpenSchema,
@@ -120,16 +119,14 @@ it.live('recovers only the operator’s exact policy invocation without executin
       },
       runAction: () => Effect.die('Commit resolution must not run an Action'),
     });
-    const handlers = defineSourceProvisioningPolicyActionApiLive.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          runtime,
-          GatewayPrincipalVerifierLive,
-          makeActiveApplicationCompositionLayer(Effect.succeed(composition)),
-          Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
-        ),
-      ),
-      Layer.provide(
+    const compositionDocument = yield* Schema.encodeEffect(
+      Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+    )(composition);
+    const assembled = makeInventoryApiRuntime(
+      Layer.succeed(ReadRuntime, { runRead: () => Effect.die('Commit resolution must not run a Read') }),
+      Layer.mergeAll(
+        runtime,
+        Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
             ONTOS_GATEWAY_ISSUER: issuer,
@@ -137,22 +134,13 @@ it.live('recovers only the operator’s exact policy invocation without executin
           }),
         ),
       ),
+      Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
     );
     const app = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        HttpRouter.toWebHandler(
-          HttpApiBuilder.layer(
-            HttpApi.make('InventoryApi').add(
-              inventoryApi.groups.defineSourceProvisioningPolicyAction,
-              inventoryApi.groups.defineSourceProvisioningPolicyCommit,
-            ),
-          ).pipe(Layer.provide(handlers), Layer.provide(HttpServer.layerServices), Layer.provide(NodeCrypto.layer)),
-        ),
-      ),
-      (value) => Effect.promise(value.dispose.bind(value)).pipe(Effect.orDie),
+      Effect.sync(() => assembled.createHandler()),
+      (value) => Effect.promise(() => value.dispose()).pipe(Effect.orDie),
     );
-    const empty = Context.makeUnsafe<unknown>(new Map());
-    const fetchThrough: typeof fetch = (input, init) => app.handler(new Request(input, init), empty);
+    const fetchThrough: typeof fetch = (input, init) => app.handler(new Request(input, init));
     const resolve = (id: string, authorization: string) =>
       resolveSourceProvisioningPolicyCommitWithAuthorization(
         { invocationId: id },
