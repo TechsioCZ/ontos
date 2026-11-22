@@ -46,12 +46,13 @@ import { GatewayDelegatedContextRequestSchema, privacyDispatchConsumers } from '
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair } from 'jose';
 
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { GatewayDelegationError } from '../../api/auth/gateway-delegation-errors.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
 import {
   GatewayDelegationExchangeLedger,
@@ -567,7 +568,15 @@ it.live(
           subject: (typeof GatewayDelegatedContextRequestSchema.Encoded)['subject'],
           audience = 'privacy',
           providerKey = communicationsProviderKey,
-        ) => Effect.exit(issue(subject, audience, providerKey)).pipe(Effect.map(Exit.isFailure));
+        ) =>
+          // refused means exactly the Shell's forbidden delegation answer, never any other failure of the issuance
+          Effect.exit(issue(subject, audience, providerKey)).pipe(
+            Effect.map((exit) =>
+              Exit.findErrorOption(exit).pipe(
+                Option.exists((failure) => Schema.is(GatewayDelegationError)(failure) && failure.code === 'forbidden'),
+              ),
+            ),
+          );
         const receive = (token: string, audience: 'communications' | 'privacy') =>
           bindGatewayPrincipalVerifier(audience, { appId: audience, buildMarker: `${audience}-build` })
             .verifyAndRedeem(Redacted.make(`Bearer ${token}`), {

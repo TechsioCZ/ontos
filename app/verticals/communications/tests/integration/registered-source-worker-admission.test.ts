@@ -6,6 +6,7 @@ import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CommunicationRequestSourceMismatch } from '../../shared/communication-intake-errors.ts';
+import { communicationRequests } from '../../src/database/schema.ts';
 import { submitCommunicationRequestAction } from '../../src/actions/submit-communication-request.action.ts';
 import { communicationRequest, originalRecipient } from '../support/intake-fixtures.ts';
 import { decided, intakeWorld } from '../support/intake-world.ts';
@@ -112,12 +113,12 @@ describe('The Portal Auth source worker -> Communications admission (#1406 D1)',
     Effect.gen(function* otherAssertion() {
       const gate = gateWith({ [TENANT]: [REQUEST_SOURCE, 'payment.source-ingress'] });
       const otherWorkload = yield* gate(workerIn(TENANT, { workloadKey: 'payment.source-ingress' }));
-      expect(otherWorkload.outcome).not.toBe('ALLOWED');
+      expect(otherWorkload).toMatchObject({ outcome: 'DENIED', reasons: [{ code: 'deny.workload_unbound' }] });
       // the pre-admission spelling of the call (an Action key, not a declaration) is not this Action's declaration
       const otherDeclaration = yield* gate(
         workerIn(TENANT, { declarationKey: 'communications.core.submit-communication-request' }),
       );
-      expect(otherDeclaration.outcome).not.toBe('ALLOWED');
+      expect(otherDeclaration).toMatchObject({ outcome: 'DENIED', reasons: [{ code: 'deny.workload_unbound' }] });
     }),
   );
 
@@ -142,6 +143,24 @@ describe('The Portal Auth source worker -> Communications admission (#1406 D1)',
         world.runner.submit(world.tenantId, request, '00000000-0000-4000-8000-0000000000d2', 'payment.core'),
       );
       expect(Schema.is(CommunicationRequestSourceMismatch)(failure)).toBe(true);
+      // a NEW request claimed by another module is refused before anything is stored: only the first request exists
+      const foreign = communicationRequest({
+        bindings: [originalRecipient('customer-1')],
+        occurrenceId: 'portal-auth-issuance-2',
+        sourceModule: SOURCE_MODULE,
+        tenantId: world.tenantId,
+      });
+      expect(
+        Schema.is(CommunicationRequestSourceMismatch)(
+          yield* Effect.flip(
+            world.runner.submit(world.tenantId, foreign, '00000000-0000-4000-8000-0000000000d3', 'payment.core'),
+          ),
+        ),
+      ).toBe(true);
+      const stored = yield* world.read((transaction) =>
+        transaction.select({ requestId: communicationRequests.requestId }).from(communicationRequests),
+      );
+      expect(stored).toEqual([{ requestId: accepted.requestId }]);
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

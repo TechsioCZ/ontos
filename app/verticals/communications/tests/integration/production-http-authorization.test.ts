@@ -933,7 +933,9 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           // CROSS-TENANT: the foreign manager's grant never reaches this Tenant's revision, and a forged Tenant claim fails
           for (const operation of ['activate', 'deactivate', 'invalidate'] as const) {
             const crossed = yield* templateAction(foreignManager, operation, revisionId);
-            expect(crossed.status, `${operation} ${JSON.stringify(crossed.body)}`).not.toBe(200);
+            // the revision does not exist in the foreign Tenant: a not-found refusal, never a decision about it
+            expect(crossed.status, `${operation} ${JSON.stringify(crossed.body)}`).toBe(404);
+            expect(crossed.body).toMatchObject({ code: 'template_revision_not_found' });
           }
           expect([401, 403]).toContain(
             (yield* prepare({ ...foreignManager, tenantId: tenant.tenantId }, 'fixture.authorization-notice')).status,
@@ -1140,7 +1142,9 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           expect((yield* evidence(reader)).status).toBe(403);
           expect([401, 403]).toContain((yield* evidence({ ...foreignManager, tenantId: tenant.tenantId })).status);
           // the foreign manager in its own Tenant has no such handoff: refused, and nothing continues anywhere
-          expect((yield* evidence(foreignManager)).status).not.toBe(200);
+          const foreignEvidence = yield* evidence(foreignManager);
+          expect(foreignEvidence.status).toBe(422);
+          expect(foreignEvidence.body).toMatchObject({ code: 'owner_execution_evidence_rejected' });
           expect(yield* continuationMessages).toEqual([]);
           const recorded = yield* evidence(manager);
           expect(recorded.status, JSON.stringify(recorded.body)).toBe(200);
@@ -1238,7 +1242,11 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           const otherMeasure = Option.getOrThrow(
             (yield* receipt(manager, 2, { ...handoff, measureId: 'FICTIONAL-other' })).receipt,
           );
-          expect(otherMeasure.outcome.status).not.toBe('SUCCEEDED');
+          expect(otherMeasure.outcome).toMatchObject({
+            includedResourceRefs: [],
+            reason: 'HANDOFF_DOES_NOT_MATCH_THE_RECORDED_HANDOFF',
+            status: 'BUSINESS_REJECTED',
+          });
           // CROSS-TENANT: the foreign Tenant has no such receipt; the owner says so and proves nothing
           const foreignReceipt = yield* receipt(foreignManager, 2);
           expect(foreignReceipt.status).toBe(200);
