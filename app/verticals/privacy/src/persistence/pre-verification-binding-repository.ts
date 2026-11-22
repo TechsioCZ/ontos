@@ -1,5 +1,5 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { Context, DateTime, Effect, Option, Schema } from 'effect';
 
@@ -13,7 +13,9 @@ import type {
   PreVerificationBindingRecord,
   PreVerificationSourceSubject,
 } from '../../shared/domain/pre-verification-binding.ts';
-import { preVerificationBindings } from '../database/schema.ts';
+import { PrivacyProcessingInterventionSchema } from '../../shared/domain/privacy-processing-eligibility.ts';
+import type { PrivacyProcessingIntervention } from '../../shared/domain/privacy-processing-eligibility.ts';
+import { preVerificationBindings, processingInterventions } from '../database/schema.ts';
 import { PrivacyOperationPersistenceError } from './privacy-operation-persistence-error.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
@@ -36,6 +38,14 @@ export interface PreVerificationBindingRepositoryService {
   readonly get: (
     bindingRef: string,
   ) => Effect.Effect<Option.Option<PreVerificationBindingRecord>, PrivacyOperationPersistenceError>;
+  /**
+   * Privacy's retained objection and restriction records of one processing scope in the exact scope of the operation, the
+   * same records source processing evaluates. Privacy records an intervention only in a Legal Entity, so a Tenant-wide
+   * operation holds none by construction: its complete snapshot is empty.
+   */
+  readonly interventions: (
+    processingScopeRef: string,
+  ) => Effect.Effect<readonly PrivacyProcessingIntervention[], PrivacyOperationPersistenceError>;
   readonly withdraw: (input: {
     readonly bindingRef: string;
     readonly evidenceRef: string;
@@ -155,6 +165,29 @@ export const preVerificationBindingRepositoryFor = (
     },
   );
 
+  const interventions: PreVerificationBindingRepositoryService['interventions'] = Effect.fn(
+    'PrivacyPreVerificationBinding.interventions',
+  )(function* readInterventions(processingScopeRef) {
+    if (legalEntityId === undefined) {
+      return [];
+    }
+    const rows = yield* transaction
+      .select({ record: processingInterventions.interventionRecord })
+      .from(processingInterventions)
+      .where(
+        and(
+          eq(processingInterventions.tenantId, tenantId),
+          eq(processingInterventions.legalEntityId, legalEntityId),
+          eq(processingInterventions.processingScopeRef, processingScopeRef),
+        ),
+      )
+      .orderBy(desc(processingInterventions.observedAt))
+      .pipe(Effect.mapError(unavailable('Processing interventions could not be read')));
+    return yield* Schema.decodeUnknownEffect(Schema.Array(PrivacyProcessingInterventionSchema))(
+      rows.map(({ record }) => record),
+    ).pipe(Effect.mapError(unavailable('A stored processing intervention is not readable')));
+  });
+
   const withdraw: PreVerificationBindingRepositoryService['withdraw'] = Effect.fn(
     'PrivacyPreVerificationBinding.withdraw',
   )(function* withdrawBinding(input) {
@@ -178,5 +211,5 @@ export const preVerificationBindingRepositoryFor = (
     );
   });
 
-  return PreVerificationBindingRepository.of({ bind, get, withdraw });
+  return PreVerificationBindingRepository.of({ bind, get, interventions, withdraw });
 };

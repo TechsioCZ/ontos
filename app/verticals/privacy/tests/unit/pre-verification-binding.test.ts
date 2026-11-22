@@ -9,6 +9,7 @@ import {
   PreVerificationEligibilityRequestSchema,
   PreVerificationEligibilityResponseSchema,
 } from '../../shared/apis/pre-verification-eligibility.ts';
+import type { PrivacyProcessingIntervention } from '../../shared/domain/privacy-processing-eligibility.ts';
 import {
   evaluatePreVerificationEligibility,
   PreVerificationBindingPolicySchema,
@@ -94,8 +95,37 @@ const tenantQuery = {
   tenantId,
 } as const;
 
-const evaluate = (binding: PreVerificationBindingRecord, policy = policyOf()) =>
-  evaluatePreVerificationEligibility({ asOf, binding: Option.some(binding), policy });
+const evaluate = (
+  binding: PreVerificationBindingRecord,
+  policy = policyOf(),
+  interventions: readonly PrivacyProcessingIntervention[] = [],
+) => evaluatePreVerificationEligibility({ asOf, binding: Option.some(binding), interventions, policy });
+
+/** One objection or restriction Privacy recorded for the bound subject in the policy's exact scope. FICTIONAL. */
+const interventionOf = (
+  kind: PrivacyProcessingIntervention['kind'],
+  overrides: Partial<PrivacyProcessingIntervention> = {},
+): PrivacyProcessingIntervention => ({
+  currentness: {
+    authoritative: true,
+    observedAt: '2026-11-22T09:30:00.000Z',
+    revision: 'fictional-intervention-r1',
+    sourceRef: 'privacy.core.processing-interventions',
+  },
+  interventionRef: `fictional-${kind.toLowerCase()}-1`,
+  kind,
+  scope: {
+    ...policyOf().scope,
+    subjectRef: {
+      moduleId: 'privacy.core',
+      resourceId: bindingRef,
+      resourceType: 'privacy.core.privacy-subject',
+      tenantId,
+    },
+  },
+  status: 'ACTIVE',
+  ...overrides,
+});
 
 describe('#1406 D.8 the policy of an exact use', () => {
   it('finds the one current policy of the exact Tenant-wide use', () => {
@@ -173,13 +203,66 @@ describe('#1406 D.8 the eligibility of one bound subject keeps three outcomes ap
     });
   });
 
+  it('P1: is a proven NOT_ALLOWED when Privacy recorded a restriction or an objection for the bound subject', () => {
+    for (const kind of ['RESTRICTION', 'OBJECTION'] as const) {
+      const result = evaluate(bindingOf(), policyOf(), [interventionOf(kind)]);
+      expect(result).toMatchObject({
+        kind: 'EVALUATED',
+        outcome: {
+          inputResolutions: { [kind.toLowerCase()]: { state: 'CURRENT' } },
+          outcome: 'NOT_ALLOWED',
+          reasonCodes: [kind === 'RESTRICTION' ? 'processing_restriction_active' : 'processing_objection_active'],
+        },
+      });
+    }
+  });
+
+  it('P1: is ALLOWED when Privacy holds no current intervention for the bound subject in that scope', () => {
+    const resolved = interventionOf('RESTRICTION', {
+      currentness: { ...interventionOf('RESTRICTION').currentness, observedAt: '2026-11-22T09:45:00.000Z' },
+      interventionRef: 'fictional-restriction-resolved',
+      status: 'RESOLVED',
+    });
+    const otherSubject = interventionOf('OBJECTION', {
+      scope: {
+        ...interventionOf('OBJECTION').scope,
+        subjectRef: { ...interventionOf('OBJECTION').scope.subjectRef, resourceId: 'other' },
+      },
+    });
+    const later = interventionOf('OBJECTION', {
+      currentness: { ...interventionOf('OBJECTION').currentness, observedAt: '2026-11-22T10:30:00.000Z' },
+    });
+    for (const interventions of [[], [interventionOf('RESTRICTION'), resolved], [otherSubject], [later]]) {
+      expect(evaluate(bindingOf(), policyOf(), interventions)).toMatchObject({
+        kind: 'EVALUATED',
+        outcome: {
+          inputResolutions: { objection: { state: 'CURRENT' }, restriction: { state: 'CURRENT' } },
+          outcome: 'ALLOWED',
+        },
+      });
+    }
+  });
+
+  it('P1: is INDETERMINATE, never ALLOWED, when Privacy cannot resolve the current intervention', () => {
+    const conflicting = [
+      interventionOf('RESTRICTION'),
+      interventionOf('RESTRICTION', { interventionRef: 'fictional-other', status: 'RESOLVED' }),
+    ];
+    expect(evaluate(bindingOf(), policyOf(), conflicting)).toMatchObject({
+      kind: 'EVALUATED',
+      outcome: { inputResolutions: { restriction: { state: 'UNAVAILABLE' } }, outcome: 'INDETERMINATE' },
+    });
+  });
+
   it('evaluates nothing for a binding of another Legal Entity, source type or for no binding', () => {
     expect(evaluate(bindingOf({ legalEntityId }))).toEqual({ kind: 'NOT_EVALUATED', reasonCode: 'SUBJECT_NOT_FOUND' });
     expect(evaluate(bindingOf({ source: { ...source, resourceType: 'other' } }))).toEqual({
       kind: 'NOT_EVALUATED',
       reasonCode: 'SUBJECT_NOT_FOUND',
     });
-    expect(evaluatePreVerificationEligibility({ asOf, binding: Option.none(), policy: policyOf() })).toEqual({
+    expect(
+      evaluatePreVerificationEligibility({ asOf, binding: Option.none(), interventions: [], policy: policyOf() }),
+    ).toEqual({
       kind: 'NOT_EVALUATED',
       reasonCode: 'SUBJECT_NOT_FOUND',
     });
@@ -240,7 +323,10 @@ const scopeFrom = (appId: string | null): OperationalScope => {
 };
 
 /** An in-memory repository of the exact scope; the real one runs in the PostgreSQL suite. */
-const memoryRepository = (seed: readonly PreVerificationBindingRecord[] = []) => {
+const memoryRepository = (
+  seed: readonly PreVerificationBindingRecord[] = [],
+  recorded: readonly PrivacyProcessingIntervention[] = [],
+) => {
   const rows = new Map(seed.map((record) => [String(record.bindingRef), record]));
   return PreVerificationBindingRepository.of({
     bind: ({ bindingRef: ref, occurrenceValidUntil, source: bound }) =>
@@ -258,6 +344,7 @@ const memoryRepository = (seed: readonly PreVerificationBindingRecord[] = []) =>
         return { kind: 'BOUND', record } as const;
       }),
     get: (ref) => Effect.sync(() => Option.fromUndefinedOr(rows.get(ref))),
+    interventions: () => Effect.succeed(recorded),
     withdraw: () => Effect.succeed(Option.none()),
   });
 };
@@ -286,10 +373,14 @@ const eligibilityRequest = Schema.decodeUnknownSync(PreVerificationEligibilityRe
   sourcePurposeRef: 'fictional.source.verify',
 });
 
-const askAs = (appId: string | null, request = eligibilityRequest) =>
+const askAs = (
+  appId: string | null,
+  request = eligibilityRequest,
+  recorded: readonly PrivacyProcessingIntervention[] = [],
+) =>
   evaluatePreVerificationEligibilityRequest(request, scopeFrom(appId), {
     policies: farPolicies,
-    repository: memoryRepository([bindingOf({ validUntil: FAR })]),
+    repository: memoryRepository([bindingOf({ validUntil: FAR })], recorded),
   });
 
 describe('#1406 D.8 only the source owner binds, and only Communications asks', () => {
@@ -341,6 +432,21 @@ describe('#1406 D.8 only the source owner binds, and only Communications asks', 
       expect(yield* askAs('communications', unknownBinding)).toMatchObject({
         eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'SUBJECT_NOT_FOUND' },
         outcome: 'DENIED',
+      });
+    }),
+  );
+});
+
+describe('#1406 D.8 a recorded intervention reaches the published answer (P1)', () => {
+  it.live('answers PROCESSING_NOT_ALLOWED to Communications for a bound subject with a recorded restriction', () =>
+    Effect.gen(function* restricted() {
+      const restriction = interventionOf('RESTRICTION', {
+        scope: { ...interventionOf('RESTRICTION').scope, ...policyOf({ validUntil: FAR }).scope },
+      });
+      expect(yield* askAs('communications', eligibilityRequest, [restriction])).toMatchObject({
+        eligibility: { outcome: 'NOT_ALLOWED' },
+        outcome: 'DENIED',
+        reason: 'PROCESSING_NOT_ALLOWED',
       });
     }),
   );

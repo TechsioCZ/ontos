@@ -2,12 +2,18 @@ import { Option, Schema } from 'effect';
 
 import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 import type { PrivacySubjectRef } from '../resources/privacy-subject.ts';
-import { consentIsRequired, IntendedProcessingScopeSchema } from './privacy-processing-eligibility.ts';
+import {
+  consentIsRequired,
+  currentProcessingIntervention,
+  IntendedProcessingScopeSchema,
+} from './privacy-processing-eligibility.ts';
 import type {
+  IntendedProcessingScope,
   PrivacyEligibilityAuthoritativeReference,
   PrivacyEligibilityOutcome,
   PrivacyEligibilityPolicyRevision,
   PrivacyInputResolution,
+  PrivacyProcessingIntervention,
 } from './privacy-processing-eligibility.ts';
 import { isPrivacyInstantAfter, isPrivacyInstantAtOrBefore, PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 
@@ -217,52 +223,97 @@ const resolution = (
   currentness: PrivacyInputResolution['currentness'],
 ): PrivacyInputResolution => ({ currentness, reason, state });
 
+/** The Current objection and restriction Privacy holds for the bound subject in the policy's exact scope. */
+interface BoundInterventions {
+  readonly objection: PrivacyProcessingIntervention;
+  readonly restriction: PrivacyProcessingIntervention;
+}
+
+/** An intervention Privacy cannot resolve (two at one instant, a non-authoritative record) is never read as absent. */
+const interventionUnknown = (intervention: PrivacyProcessingIntervention): readonly string[] =>
+  intervention.currentness.authoritative ? [] : [`${intervention.kind.toLowerCase()}_unresolved`];
+
 const unknownReasonsOf = (
   binding: PreVerificationBindingRecord,
   policy: PreVerificationBindingPolicy,
+  interventions: BoundInterventions,
   asOf: string,
 ): readonly string[] => [
   ...(isPrivacyInstantAfter(binding.validUntil, asOf) ? [] : [EXPIRED_REASON]),
   // nobody can have given a Current Consent for an account whose address is not verified
   ...(consentIsRequired(policy.legalBasisRef) ? ['consent_absent'] : []),
+  ...interventionUnknown(interventions.objection),
+  ...interventionUnknown(interventions.restriction),
 ];
 
-/** A withdrawal decides alone; otherwise any input Privacy cannot evidence makes the result INDETERMINATE. */
+const ACTIVE_REASON = {
+  OBJECTION: 'processing_objection_active',
+  RESTRICTION: 'processing_restriction_active',
+} as const satisfies Readonly<Record<PrivacyProcessingIntervention['kind'], string>>;
+
+/** A recorded, authoritative, ACTIVE objection or restriction is a proven prohibition, as in source processing. */
+const activeBlockers = (interventions: BoundInterventions): readonly string[] =>
+  [interventions.objection, interventions.restriction]
+    .filter(({ currentness, status }) => currentness.authoritative && status === 'ACTIVE')
+    .map(({ kind }) => ACTIVE_REASON[kind]);
+
+/** A withdrawal or a recorded intervention decides alone; otherwise any input Privacy cannot evidence is INDETERMINATE. */
 const decisionOf = (
   binding: PreVerificationBindingRecord,
+  interventions: BoundInterventions,
   unknown: readonly string[],
 ): Pick<PrivacyEligibilityOutcome, 'outcome' | 'reasonCodes'> => {
-  if (binding.status === 'WITHDRAWN') {
-    return { outcome: 'NOT_ALLOWED', reasonCodes: [WITHDRAWN_REASON] };
+  const blockers = [...(binding.status === 'WITHDRAWN' ? [WITHDRAWN_REASON] : []), ...activeBlockers(interventions)];
+  if (blockers.length > 0) {
+    return { outcome: 'NOT_ALLOWED', reasonCodes: blockers };
   }
   return unknown.length > 0
     ? { outcome: 'INDETERMINATE', reasonCodes: unknown }
     : { outcome: 'ALLOWED', reasonCodes: ['all_mandatory_inputs_current_no_blocker'] };
 };
 
-/** The restriction fact of a binding: withdrawn (a blocker), past its stated validity (stale), or none. */
+/** One intervention as an input resolution: its own record and currentness, never a constant absence. */
+const interventionResolution = (intervention: PrivacyProcessingIntervention): PrivacyInputResolution => {
+  if (!intervention.currentness.authoritative) {
+    return resolution('UNAVAILABLE', `${intervention.kind.toLowerCase()}_unresolved`, intervention.currentness);
+  }
+  return resolution(
+    'CURRENT',
+    intervention.status === 'ACTIVE' ? ACTIVE_REASON[intervention.kind] : `${intervention.kind.toLowerCase()}_absent`,
+    intervention.currentness,
+  );
+};
+
+/** The restriction fact of a binding: withdrawn (a blocker), past its stated validity (stale), or Privacy's record. */
 const restrictionOf = (
   binding: PreVerificationBindingRecord,
+  restriction: PrivacyProcessingIntervention,
   unknown: readonly string[],
   currentness: PrivacyInputResolution['currentness'],
 ): PrivacyInputResolution => {
   if (binding.status === 'WITHDRAWN') {
     return resolution('CURRENT', WITHDRAWN_REASON, currentness);
   }
-  return unknown.includes(EXPIRED_REASON)
-    ? resolution('STALE', EXPIRED_REASON, currentness)
-    : resolution('CURRENT', 'restriction_absent', currentness);
+  if (restriction.currentness.authoritative && restriction.status !== 'ACTIVE' && unknown.includes(EXPIRED_REASON)) {
+    return resolution('STALE', EXPIRED_REASON, currentness);
+  }
+  return interventionResolution(restriction);
 };
 
 /**
- * The eligibility of ONE bound subject for ONE current policy, now. A withdrawal is a proven prohibition (NOT_ALLOWED)
- * whatever else holds; a binding past the validity the source stated, or a legal basis that needs a Consent nobody can
- * have given yet, cannot be evidenced (INDETERMINATE); only an active, current binding under a current policy whose
- * basis needs no Consent is ALLOWED. A binding of another source, resource type or Legal Entity is not this subject.
+ * The eligibility of ONE bound subject for ONE current policy, now. A withdrawal, or an objection or restriction Privacy
+ * recorded for the bound subject in the policy's exact processing scope (`interventions`, Privacy's retained processing
+ * interventions of that scope, evaluated by the same rule as source processing), is a proven prohibition (NOT_ALLOWED)
+ * whatever else holds; an intervention Privacy cannot resolve, a binding past the validity the source stated, or a legal
+ * basis that needs a Consent nobody can have given yet cannot be evidenced (INDETERMINATE); only an active, current binding
+ * under a current policy whose basis needs no Consent and with no recorded intervention is ALLOWED. A binding of another
+ * source, resource type or Legal Entity is not this subject.
  */
 export const evaluatePreVerificationEligibility = (input: {
   readonly asOf: string;
   readonly binding: Option.Option<PreVerificationBindingRecord>;
+  /** Privacy's retained objection and restriction records of the policy's processing scope, in the binding's scope. */
+  readonly interventions: readonly PrivacyProcessingIntervention[];
   readonly legalEntityId?: string | undefined;
   readonly policy: PreVerificationBindingPolicy;
 }): PreVerificationEligibilityEvaluation => {
@@ -294,11 +345,16 @@ export const evaluatePreVerificationEligibility = (input: {
     sourceRef: policy.policyRef,
     validUntil: policy.validUntil,
   };
-  const unknown = unknownReasonsOf(bound, policy, asOf);
+  const evaluatedScope: IntendedProcessingScope = { ...policy.scope, subjectRef: preVerificationSubjectRefOf(bound) };
+  const interventions: BoundInterventions = {
+    objection: currentProcessingIntervention(input.interventions, 'OBJECTION', evaluatedScope, asOf),
+    restriction: currentProcessingIntervention(input.interventions, 'RESTRICTION', evaluatedScope, asOf),
+  };
+  const unknown = unknownReasonsOf(bound, policy, interventions, asOf);
   const outcome: PrivacyEligibilityOutcome = {
-    ...decisionOf(bound, unknown),
+    ...decisionOf(bound, interventions, unknown),
     evaluatedAt: asOf,
-    evaluatedScope: { ...policy.scope, subjectRef: preVerificationSubjectRefOf(bound) },
+    evaluatedScope,
     inputResolutions: {
       applicability: resolution('CURRENT', 'pre_verification_policy_current', policyCurrentness),
       consent: resolution(
@@ -310,14 +366,19 @@ export const evaluatePreVerificationEligibility = (input: {
         ...policyCurrentness,
         sourceRef: policy.legalBasisRef,
       }),
-      objection: resolution('CURRENT', 'objection_absent', bindingCurrentness),
-      restriction: restrictionOf(bound, unknown, bindingCurrentness),
+      objection: interventionResolution(interventions.objection),
+      restriction: restrictionOf(bound, interventions.restriction, unknown, bindingCurrentness),
     },
   };
   return {
     authoritativeReferences: [
       { kind: 'privacy.core.pre-verification-binding', reference: bound.bindingRef, revision: String(bound.revision) },
       { kind: 'privacy.core.pre-verification-policy', reference: policy.policyRef, revision: policy.revision },
+      ...[interventions.objection, interventions.restriction].map((intervention) => ({
+        kind: 'privacy.core.processing-intervention',
+        reference: intervention.interventionRef,
+        revision: intervention.currentness.revision,
+      })),
     ],
     kind: 'EVALUATED',
     outcome,

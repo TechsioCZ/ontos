@@ -94,8 +94,8 @@ import type { PrivacyNoticeVersion } from '../../shared/domain/privacy-notice-ve
 import { PrivacyNoticeProvisionSchema, isProofOfProvision } from '../../shared/domain/privacy-notice-provision.ts';
 import type { PrivacyNoticeProvision } from '../../shared/domain/privacy-notice-provision.ts';
 import {
-  IntendedProcessingScopeSchema,
   PrivacyEligibilityEvidenceSchema,
+  currentProcessingIntervention,
   PrivacyProcessingInterventionSchema,
   validatePrivacyApplicabilityEligibilityAuthorityResult,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
@@ -375,7 +375,6 @@ const dsrResponseEquivalent = Schema.toEquivalence(DsrResponseSchema);
 const dsrTaskEquivalent = Schema.toEquivalence(DsrOwnerTaskSchema);
 const deliveryEvidenceEquivalent = Schema.toEquivalence(DsrDeliveryEvidenceSchema);
 const temporaryExportEquivalent = Schema.toEquivalence(TemporaryDsrExportSchema);
-const intendedScopeEquivalent = Schema.toEquivalence(IntendedProcessingScopeSchema);
 const DSR_DELIVERY_EVIDENCE_LABEL = 'DSR Delivery Evidence';
 
 const latestRecordsByRef = <
@@ -3411,43 +3410,8 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
           consentCurrentness = unavailableCurrentness(asOf, 'conflict', 'privacy.core.consent-decisions');
         }
 
-        const currentIntervention = (kind: PrivacyProcessingIntervention['kind']) => {
-          const matching = interventions
-            .filter(
-              (intervention) =>
-                intervention.kind === kind &&
-                intervention.currentness.observedAt <= asOf &&
-                intendedScopeEquivalent(intervention.scope, intendedScope),
-            )
-            .toSorted((left, right) => right.currentness.observedAt.localeCompare(left.currentness.observedAt));
-          const current = matching.at(0);
-          const sameTime = matching.filter(
-            ({ currentness }) => currentness.observedAt === current?.currentness.observedAt,
-          );
-          if (sameTime.length > 1 || (current !== undefined && !current.currentness.authoritative)) {
-            return {
-              currentness: unavailableCurrentness(asOf, 'conflict', 'privacy.core.processing-interventions'),
-              interventionRef: `privacy-${kind.toLowerCase()}:unresolved:${intendedScope.processingScopeRef.scopeId}`,
-              kind,
-              scope: intendedScope,
-              status: 'ACTIVE' as const,
-            };
-          }
-          if (current !== undefined) {
-            return current;
-          }
-          return {
-            currentness: authoritativeCurrentness(
-              asOf,
-              'complete-empty-snapshot',
-              'privacy.core.processing-interventions',
-            ),
-            interventionRef: `privacy-${kind.toLowerCase()}:absent:${intendedScope.processingScopeRef.scopeId}`,
-            kind,
-            scope: intendedScope,
-            status: 'ABSENT' as const,
-          };
-        };
+        const currentIntervention = (kind: PrivacyProcessingIntervention['kind']) =>
+          currentProcessingIntervention(interventions, kind, intendedScope, asOf);
         const objectionRecord = currentIntervention('OBJECTION');
         const restrictionRecord = currentIntervention('RESTRICTION');
         const objection = {

@@ -61,10 +61,10 @@ export interface PreVerificationBindingServices {
   readonly repository: Pick<PreVerificationBindingRepositoryService, 'bind'>;
 }
 
-/** What answering needs besides the request: the current policies and the binding store. */
+/** What answering needs besides the request: the current policies, the binding store and Privacy's interventions. */
 export interface PreVerificationEligibilityServices {
   readonly policies: readonly PreVerificationBindingPolicy[];
-  readonly repository: Pick<PreVerificationBindingRepositoryService, 'get'>;
+  readonly repository: Pick<PreVerificationBindingRepositoryService, 'get' | 'interventions'>;
 }
 
 const rejected = (reason: PreVerificationBindingRejected['reason']) =>
@@ -185,9 +185,11 @@ export const evaluatePreVerificationEligibilityRequest = Effect.fn('PrivacyPreVe
     if (resolved.kind === 'NOT_EVALUATED') {
       return notEvaluated(resolved.reasonCode);
     }
+    const interventions = yield* services.repository.interventions(resolved.policy.scope.processingScopeRef.scopeId);
     const evaluation = evaluatePreVerificationEligibility({
       asOf: evaluatedAt,
       binding,
+      interventions,
       legalEntityId: scope.legalEntityId,
       policy: resolved.policy,
     });

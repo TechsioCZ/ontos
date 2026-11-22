@@ -97,6 +97,57 @@ export const PrivacyProcessingInterventionSchema = Schema.Struct({
 });
 export type PrivacyProcessingIntervention = typeof PrivacyProcessingInterventionSchema.Type;
 
+const interventionScopeEquivalent = Schema.toEquivalence(IntendedProcessingScopeSchema);
+const INTERVENTIONS_SOURCE = 'privacy.core.processing-interventions';
+
+/**
+ * The Current objection or restriction of ONE exact intended scope among Privacy's retained interventions of that
+ * processing scope (newest first or in any order), as of `asOf`. The latest record of that kind and exact scope observed at
+ * or before `asOf` is Current; two at the same instant, or a non-authoritative one, cannot be resolved (a non-authoritative
+ * ACTIVE record, so nothing reads it as absent); none at all is an authoritative ABSENT of a complete, empty snapshot.
+ */
+export const currentProcessingIntervention = (
+  interventions: readonly PrivacyProcessingIntervention[],
+  kind: PrivacyProcessingIntervention['kind'],
+  intendedScope: IntendedProcessingScope,
+  asOf: string,
+): PrivacyProcessingIntervention => {
+  const matching = interventions
+    .filter(
+      (intervention) =>
+        intervention.kind === kind &&
+        intervention.currentness.observedAt <= asOf &&
+        interventionScopeEquivalent(intervention.scope, intendedScope),
+    )
+    .toSorted((left, right) => right.currentness.observedAt.localeCompare(left.currentness.observedAt));
+  const current = matching.at(0);
+  const sameTime = matching.filter(({ currentness }) => currentness.observedAt === current?.currentness.observedAt);
+  if (sameTime.length > 1 || (current !== undefined && !current.currentness.authoritative)) {
+    return {
+      currentness: { authoritative: false, observedAt: asOf, revision: 'conflict', sourceRef: INTERVENTIONS_SOURCE },
+      interventionRef: `privacy-${kind.toLowerCase()}:unresolved:${intendedScope.processingScopeRef.scopeId}`,
+      kind,
+      scope: intendedScope,
+      status: 'ACTIVE',
+    };
+  }
+  if (current !== undefined) {
+    return current;
+  }
+  return {
+    currentness: {
+      authoritative: true,
+      observedAt: asOf,
+      revision: 'complete-empty-snapshot',
+      sourceRef: INTERVENTIONS_SOURCE,
+    },
+    interventionRef: `privacy-${kind.toLowerCase()}:absent:${intendedScope.processingScopeRef.scopeId}`,
+    kind,
+    scope: intendedScope,
+    status: 'ABSENT',
+  };
+};
+
 export const ProcessingInterventionAuthorityRequestSchema = Schema.Struct({
   interventionRef: Ref,
   kind: InterventionKinds,

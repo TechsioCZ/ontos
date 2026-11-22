@@ -1,8 +1,9 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Layer, Struct } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Schema, Struct } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { preVerificationBindings } from '../../src/database/schema.ts';
+import { PrivacyProcessingInterventionSchema } from '../../shared/domain/privacy-processing-eligibility.ts';
+import { preVerificationBindings, processingInterventions } from '../../src/database/schema.ts';
 import {
   makePreVerificationPrivacyNative,
   preVerificationPrivacyDatabaseLive,
@@ -164,6 +165,50 @@ describe('#1406 D.8 Privacy binds an unverified Portal Auth account and answers 
         eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'SUBJECT_NOT_FOUND' },
       });
       expect(yield* w.ask(entityBound.bindingRef, w.inEntity('communications'))).toMatchObject({ outcome: 'ALLOWED' });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live('P1: a restriction Privacy recorded for the bound subject in the policy scope is a proven NOT_ALLOWED', () =>
+    Effect.gen(function* restricted() {
+      const w = yield* world();
+      const crypto = yield* Crypto.Crypto;
+      const bound = yield* w.privacy.bind(
+        w.inEntity('commerce-customer-context'),
+        w.bindPayload('2099-01-01T00:00:00.000Z', `${w.account}-restricted`),
+      );
+      expect(yield* w.ask(bound.bindingRef, w.inEntity('communications'))).toMatchObject({ outcome: 'ALLOWED' });
+      // a FICTIONAL restriction of exactly this subject and scope, stored the way Privacy records an intervention
+      const intervention = Schema.decodeUnknownSync(PrivacyProcessingInterventionSchema)({
+        currentness: {
+          authoritative: true,
+          observedAt: DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { seconds: 1 })),
+          revision: 'fictional-restriction-r1',
+          sourceRef: 'privacy.core.processing-interventions',
+        },
+        interventionRef: `fictional-restriction-${bound.bindingRef}`,
+        kind: 'RESTRICTION',
+        scope: bound.scope,
+        status: 'ACTIVE',
+      });
+      const actionInvocationId = yield* crypto.randomUUIDv4();
+      yield* inPrivacyLedger(w.ledger, (transaction) =>
+        transaction.insert(processingInterventions).values({
+          actionInvocationId,
+          interventionKind: intervention.kind,
+          interventionRecord: Schema.encodeSync(PrivacyProcessingInterventionSchema)(intervention),
+          interventionRef: intervention.interventionRef,
+          legalEntityId: w.ledger.legalEntityId ?? '',
+          observedAt: DateTime.toDateUtc(DateTime.makeUnsafe(intervention.currentness.observedAt)),
+          processingScopeRef: intervention.scope.processingScopeRef.scopeId,
+          status: intervention.status,
+          tenantId: w.tenantId,
+        }),
+      );
+      expect(yield* w.ask(bound.bindingRef, w.inEntity('communications'))).toMatchObject({
+        eligibility: { evidence: { reasonCodes: ['processing_restriction_active'] }, outcome: 'NOT_ALLOWED' },
+        outcome: 'DENIED',
+        reason: 'PROCESSING_NOT_ALLOWED',
+      });
     }).pipe(Effect.provide(layer)),
   );
 
