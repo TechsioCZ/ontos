@@ -1,8 +1,14 @@
-import { defineTenantModuleEntrypoint, OntosModuleDeploymentContractSchema } from '@app/core-runtime';
+import {
+  defineTenantModuleEntrypoint,
+  extractVerticalRuntimeSafeDescriptors,
+  OntosModuleDeploymentContractSchema,
+} from '@app/core-runtime';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
+import { providesRequiredOperationContracts } from '../../packages/core-runtime/src/modules/module-dependency-contracts.ts';
+import { catalogRegistration } from '../../verticals/catalog/vertical.registration.ts';
 import { symmyIntegrationManifest } from '../../verticals/symmy-integration/vertical.manifest.ts';
 import { symmyIntegrationRegisteredWorkloadCalls } from '../../verticals/symmy-integration/src/registered-workload-calls.ts';
 import { symmyOwnerProviderContractProof } from '../integration/support/symmy-c14-product-runtime.mts';
@@ -89,7 +95,8 @@ it('does not claim a provider proof when the published consumer contract is abse
   });
 });
 
-it('publishes the exact conditional worker leases for source Category assignment and its recovery', () => {
+it('publishes source Category worker requirements that the actual Catalog write and recovery contracts satisfy', () => {
+  const catalog = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
   for (const entrypointKey of [
     'commerce.catalog.add-product-category-assignment',
     'commerce.catalog.api.add-product-category-assignment-recovery',
@@ -97,6 +104,7 @@ it('publishes the exact conditional worker leases for source Category assignment
     const call = symmyIntegrationRegisteredWorkloadCalls.find(
       (candidate) => candidate.entrypointKey === entrypointKey && 'workerKey' in candidate,
     );
+    assert.isDefined(call);
     expect(call).toMatchObject({
       audience: 'catalog',
       legalEntityScope: 'forbidden',
@@ -104,10 +112,16 @@ it('publishes the exact conditional worker leases for source Category assignment
       workerKey,
     });
     expect(
+      catalog.operationContracts.find(({ entrypoint }) => entrypoint.entrypointKey === entrypointKey),
+    ).toMatchObject({
+      schemaVersion: call.schemaVersion,
+      workloadCarrier: { declarationKey: call.declarationKey, workloads: [call.workloadKey] },
+    });
+    const requirements =
       symmyIntegrationManifest.requirements?.operations.filter(
         ({ key }) => key === `integration.symmy.requirement.worker.${entrypointKey}`,
-      ),
-    ).toEqual([
+      ) ?? [];
+    expect(requirements).toEqual([
       {
         condition: 'integration.symmy.condition.accepted-owner-effect',
         entrypointKey: workerKey,
@@ -119,5 +133,11 @@ it('publishes the exact conditional worker leases for source Category assignment
         provider: { entrypointKey, moduleId: catalogModuleId, schemaVersion: '1' },
       },
     ]);
+    expect(
+      providesRequiredOperationContracts(
+        catalog.operationContracts,
+        requirements.map(({ provider }) => provider),
+      ),
+    ).toBe(true);
   }
 });

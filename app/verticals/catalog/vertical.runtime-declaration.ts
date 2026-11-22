@@ -20,6 +20,7 @@ import { ActivatePackageDefinitionRecoveryApi } from './shared/apis/activate-pac
 import { activatePackageOptionAction } from './src/actions/activate-package-option.action.ts';
 import { ActivatePackageOptionRecoveryApi } from './shared/apis/activate-package-option-recovery.ts';
 import { addProductCategoryAssignmentAction } from './src/actions/add-product-category-assignment.action.ts';
+import { AddProductCategoryAssignmentActionApi } from './shared/apis/add-product-category-assignment-action.ts';
 import { AddProductCategoryAssignmentRecoveryApi } from './shared/apis/add-product-category-assignment-recovery.ts';
 import { assertSizeEquivalenceAction } from './src/actions/assert-size-equivalence.action.ts';
 import { AssertSizeEquivalenceRecoveryApi } from './shared/apis/assert-size-equivalence-recovery.ts';
@@ -375,6 +376,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'activate-local-override-recovery': ActivateLocalOverrideRecoveryApi,
       'activate-package-definition-recovery': ActivatePackageDefinitionRecoveryApi,
       'activate-package-option-recovery': ActivatePackageOptionRecoveryApi,
+      'add-product-category-assignment-action': AddProductCategoryAssignmentActionApi,
       'add-product-category-assignment-recovery': AddProductCategoryAssignmentRecoveryApi,
       'assert-size-equivalence-recovery': AssertSizeEquivalenceRecoveryApi,
       'assign-catalog-media-recovery': AssignCatalogMediaRecoveryApi,
@@ -509,6 +511,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
     },
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'add-product-category-assignment-action',
+        operationKey: 'addProductCategoryAssignmentAction.execute',
+        registration: addProductCategoryAssignmentAction,
+      },
       {
         apiKey: 'govern-variant-axes-action',
         operationKey: 'governVariantAxesAction.execute',

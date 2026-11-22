@@ -6,6 +6,9 @@ import {
 import { describe, expect, it } from 'effect-rstest';
 
 import { catalogRegistration } from '../../vertical.registration.ts';
+import { catalogRuntimeManifest } from '../../vertical.runtime-declaration.ts';
+import { AddProductCategoryAssignmentActionApi } from '../../shared/apis/add-product-category-assignment-action.ts';
+import { addProductCategoryAssignmentAction } from '../../src/actions/add-product-category-assignment.action.ts';
 import { bindInitialVariantSourceAction } from '../../src/actions/bind-initial-variant-source.action.ts';
 import { correctProductAction } from '../../src/actions/correct-product.action.ts';
 import { createProductAction } from '../../src/actions/create-product.action.ts';
@@ -13,6 +16,11 @@ import { createVariantAction } from '../../src/actions/create-variant.action.ts'
 import { updateProductAction } from '../../src/actions/update-product.action.ts';
 
 const actionPublications = [
+  {
+    action: addProductCategoryAssignmentAction,
+    apiKey: 'add-product-category-assignment-action',
+    recoveryKey: 'add-product-category-assignment-recovery',
+  },
   {
     action: bindInitialVariantSourceAction,
     apiKey: 'bind-initial-variant-source-action',
@@ -53,5 +61,8 @@ describe('Catalog Action HTTP publication', () => {
         ),
       ).toBe(true);
     }
+    expect(catalogRuntimeManifest.publicSurface.api['add-product-category-assignment-action']).toBe(
+      AddProductCategoryAssignmentActionApi,
+    );
   });
 });

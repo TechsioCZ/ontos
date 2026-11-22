@@ -11,6 +11,7 @@ import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-
 import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
 import { addProductCategoryAssignmentRecoveryRead } from '../../src/api/add-product-category-assignment-recovery.read.ts';
+import { addProductCategoryAssignmentAction } from '../../src/actions/add-product-category-assignment.action.ts';
 
 /**
  * The workload carrier the manifest publishes for an operation that admits workloads: its access declaration and
@@ -34,6 +35,11 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('publishes the native owner operations required by Product integration and Assortment', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     for (const [apiKey, operationKey, registration] of [
+      [
+        'add-product-category-assignment-action',
+        'addProductCategoryAssignmentAction.execute',
+        addProductCategoryAssignmentAction,
+      ],
       [
         'add-product-category-assignment-recovery',
         'addProductCategoryAssignmentRecovery.execute',
@@ -107,7 +113,7 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(31);
+    expect(safe.operationContracts).toHaveLength(32);
     expect(safe.operationContracts).toEqual(
       expect.arrayContaining(
         [
