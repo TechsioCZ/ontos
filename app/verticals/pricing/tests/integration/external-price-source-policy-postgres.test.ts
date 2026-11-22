@@ -359,7 +359,7 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
           Effect.andThen(
             setScope(tx, tenantId, legalEntityId),
             tx.execute(
-              sql`select payload from pricing.store_external_price_source_authority_grant_v1(${tenantId}::uuid, ${legalEntityId}::uuid, ${sql.param(invalid)}::jsonb)`,
+              sql`select payload from pricing.store_external_price_source_authority_grant_v1(${tenantId}::uuid, ${legalEntityId}::uuid, ${sql.param(JSON.stringify(invalid))}::jsonb)`,
               'objects',
             ),
           ),
@@ -514,10 +514,11 @@ it.live('ANY_PRICE_GROUP covers only selectors naming the scoped tenant at the n
             ),
           ),
         );
-      const valid = sql`${sql.param(request)}::jsonb`;
+      const serializedRequest = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(request);
+      const valid = sql`${sql.param(serializedRequest)}::jsonb`;
       expect(yield* nativeAssess(valid)).toMatchObject([{ payload: { outcome: 'AUTHORITY_COVERED_BY_POLICY' } }]);
       for (const invalid of [
-        ...rejectedRequests.map((input) => sql`${sql.param(input)}::jsonb`),
+        ...rejectedRequests.map((input) => sql`${sql.param(JSON.stringify(input))}::jsonb`),
         sql`${valid} #- '{exactIdentityKey,priceGroupSelector,priceGroupRef,tenantId}'`,
       ]) {
         const failure = yield* Effect.flip(nativeAssess(invalid));

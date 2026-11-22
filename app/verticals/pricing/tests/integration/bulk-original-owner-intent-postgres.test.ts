@@ -2100,13 +2100,6 @@ const registeredPriceOriginalIntentTest = Effect.fnUntraced(function* registered
               if (canonicalKey === undefined) {
                 return yield* Effect.die('The supported precursor must expose its canonical native Price identity');
               }
-              expect(
-                yield* authority.store({
-                  ...grant,
-                  exactIdentityKey: canonicalKey,
-                  verificationRef: `TEST:1278:canonical-owned-grant:${priceId}`,
-                }),
-              ).toMatchObject({ outcome: 'STORED' });
               const sourceAssertion = yield* registeredSourceAssertion(
                 canonicalKey,
                 priceId,

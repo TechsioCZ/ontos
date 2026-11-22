@@ -19,6 +19,16 @@ import {
 } from '../support/standing-price-source-policy.fixture.ts';
 
 const history = [
+  // The effective-time upgrade patches the deployed revise_price_v1. Install its real
+  // currency, Price, receipt and schedule prerequisites before upgrading authority storage.
+  '20260922093000_pricing-currency-support',
+  '20260927143130_pricing-price-foundation',
+  '20260927143143_pricing-price-routines-v1',
+  '20260927144222_pricing-price-append-only-policies',
+  '20260927150506_pricing-price-invocation-receipts',
+  '20260927150522_pricing-price-invocation-receipts-force-rls',
+  '20260927162951_pricing-price-schedules-v1',
+  '20260927162957_pricing-price-schedule-runtime-v1',
   '20261001163700_external-price-source-authority-v1',
   '20261001164414_external-price-source-authority-runtime-v1',
   '20261116083947_pricing-source-effective-time-and-normalized-grant-identity',
