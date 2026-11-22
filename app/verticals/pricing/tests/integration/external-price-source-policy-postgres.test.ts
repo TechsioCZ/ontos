@@ -20,7 +20,10 @@ import {
   applyManageExternalPriceSourcePolicy,
 } from '../../src/actions/manage-external-price-source-policy.action.ts';
 import type { ManageExternalPriceSourcePolicyPayload } from '../../src/actions/manage-external-price-source-policy.action.ts';
-import { externalPriceSourceAuthorityForScope } from '../../src/persistence/external-price-source-authority-persistence.ts';
+import {
+  ExternalPriceSourceAuthorityPersistenceUnavailable,
+  externalPriceSourceAuthorityForScope,
+} from '../../src/persistence/external-price-source-authority-persistence.ts';
 import type { ExternalPriceSourceAuthorityPersistence } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import { makeExternalPriceInputBoundary } from '../../src/services/external-price-input-boundary.service.ts';
 import {
@@ -345,9 +348,41 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
         verificationRef: 'exact-grant',
         verifiedAt: '2026-11-01T00:00:00.000Z',
       };
-      expect(yield* withAuthority(runtime, scope, (authority) => authority.store(grant))).toEqual({
-        outcome: 'STORED',
-      });
+      const badGrants = [
+        { ...grant, authority: { ...grant.authority, sourceAuthorityRef: '*' } },
+        { ...grant, authority: { ...grant.authority, sourceAuthorityVersion: '*' } },
+        { ...grant, mapping: { ...grant.mapping, mappingContractRef: '*' } },
+        { ...grant, mapping: { ...grant.mapping, mappingContractVersion: '*' } },
+        { ...grant, exactIdentityKey: priceKey({ ...world, unitId: world.unitId.toUpperCase() }, neverSeenVariant(9)) },
+        {
+          ...grant,
+          exactIdentityKey: priceKey(world, neverSeenVariant(9), {
+            priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: priceGroupRef(tenantId, groupId.toUpperCase()) },
+          }),
+        },
+      ];
+      for (const invalid of badGrants) {
+        const directStore = runtime.transaction((tx) =>
+          Effect.andThen(
+            setScope(tx, tenantId, legalEntityId),
+            tx.execute(
+              sql`select payload from pricing.store_external_price_source_authority_grant_v1(${tenantId}::uuid, ${legalEntityId}::uuid, ${sql.param(invalid)}::jsonb)`,
+              'objects',
+            ),
+          ),
+        );
+        expect(Option.getOrThrow(findPostgresFailure(yield* Effect.flip(directStore))).code).toBe('23514');
+      }
+      yield* withAuthority(runtime, scope, (authority) =>
+        Effect.gen(function* grantAdmission() {
+          for (const invalid of badGrants) {
+            expect(yield* Effect.flip(authority.store(invalid))).toBeInstanceOf(
+              ExternalPriceSourceAuthorityPersistenceUnavailable,
+            );
+          }
+          expect(yield* authority.store(grant)).toEqual({ outcome: 'STORED' });
+        }),
+      );
       const assessment = (selectedKey: PriceIdentityKey, effectiveAt = grant.effectivePeriod.effectiveFrom) =>
         withAuthority(runtime, scope, (authority) =>
           authority.assess({
@@ -363,7 +398,12 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
       const equivalentKey = priceKey(world, neverSeenVariant(9), {
         unitBasis: { ...key.unitBasis, quantity: '1.000000000' },
       });
-      for (const identity of [key, equivalentKey]) {
+      const spellings = [
+        key,
+        equivalentKey,
+        priceKey(world, neverSeenVariant(9), { unitBasis: { ...key.unitBasis, quantity: '1.0' } }),
+      ];
+      for (const identity of spellings) {
         expect(yield* assessment(identity)).toEqual({ grant, outcome: 'AUTHORITY_GRANTED' });
         expect(yield* assessment(identity, '2026-11-14T23:59:59.999Z')).toEqual({
           grant,
@@ -375,6 +415,14 @@ it.live('an exact-key grant keeps deciding on its own when a standing policy als
             reason: 'AUTHORITY',
           });
         }
+      }
+      expect(
+        yield* withAuthority(runtime, scope, (authority) =>
+          authority.store({ ...grant, exactIdentityKey: equivalentKey }),
+        ),
+      ).toEqual({ outcome: 'STORED' });
+      for (const identity of spellings) {
+        expect(yield* assessment(identity)).toEqual({ outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' });
       }
       const mismatchedKey = priceKey(world, neverSeenVariant(7));
       yield* withAuthority(runtime, scope, (authority) =>
@@ -432,15 +480,29 @@ it.live('ANY_PRICE_GROUP covers only selectors naming the scoped tenant at the n
           priceGroupSelector: { kind: 'PRICE_GROUP' as const, priceGroupRef: priceGroupRef(foreignTenant, groupId) },
         },
       };
+      const rejectedRequests = [
+        foreignRequest,
+        {
+          ...request,
+          exactIdentityKey: priceKey({ ...world, unitId: world.unitId.toUpperCase() }, neverSeenVariant(4), {
+            priceGroupSelector: localKey.priceGroupSelector,
+          }),
+        },
+        {
+          ...request,
+          exactIdentityKey: priceKey(world, neverSeenVariant(4), {
+            priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: priceGroupRef(tenantId, groupId.toUpperCase()) },
+          }),
+        },
+      ];
       expect(yield* withAuthority(runtime, scope, (authority) => authority.assess(request))).toMatchObject({
         outcome: 'AUTHORITY_COVERED_BY_POLICY',
       });
       yield* withAuthority(runtime, scope, (authority) =>
         Effect.gen(function* rejectForeignWithoutAbortingTransaction() {
-          expect(yield* authority.assess(foreignRequest)).toEqual({
-            outcome: 'AUTHORITY_REJECTED',
-            reason: 'MAPPING',
-          });
+          for (const invalid of rejectedRequests) {
+            expect(yield* authority.assess(invalid)).toEqual({ outcome: 'AUTHORITY_REJECTED', reason: 'MAPPING' });
+          }
           expect(yield* authority.assess(request)).toMatchObject({
             outcome: 'AUTHORITY_COVERED_BY_POLICY',
           });
@@ -462,7 +524,7 @@ it.live('ANY_PRICE_GROUP covers only selectors naming the scoped tenant at the n
       const valid = sql`${sql.param(request)}::jsonb`;
       expect(yield* nativeAssess(valid)).toMatchObject([{ payload: { outcome: 'AUTHORITY_COVERED_BY_POLICY' } }]);
       for (const invalid of [
-        sql`${sql.param(foreignRequest)}::jsonb`,
+        ...rejectedRequests.map((input) => sql`${sql.param(input)}::jsonb`),
         sql`${valid} #- '{exactIdentityKey,priceGroupSelector,priceGroupRef,tenantId}'`,
       ]) {
         const failure = yield* Effect.flip(nativeAssess(invalid));
@@ -471,6 +533,9 @@ it.live('ANY_PRICE_GROUP covers only selectors naming the scoped tenant at the n
     }),
   ),
 );
+
+// 300 UTF-16 code units; whitespace inside a verification reference is significant, not padding.
+const directVerificationRef = `a\t${'🔖'.repeat(149)}`;
 
 const directPolicyInsert = (
   tenant = tenantId,
@@ -482,6 +547,7 @@ const directPolicyInsert = (
     mappingContractVersion = 'v1',
     sourceAuthorityRef = 'erp-prices',
     sourceAuthorityVersion = 'v1',
+    verificationRef = directVerificationRef,
   }: {
     readonly effectiveFrom?: string;
     readonly effectiveTo?: string | null;
@@ -489,6 +555,7 @@ const directPolicyInsert = (
     readonly mappingContractVersion?: string;
     readonly sourceAuthorityRef?: string;
     readonly sourceAuthorityVersion?: string;
+    readonly verificationRef?: string;
   } = {},
 ) => sql`
   insert into pricing.external_price_source_policies (
@@ -497,7 +564,7 @@ const directPolicyInsert = (
     effective_from, effective_to, verification_ref, verified_at
   ) values (${tenant}, ${entity}, ${sourceAuthorityRef}, ${sourceAuthorityVersion}, ${mappingContractRef},
     ${mappingContractVersion}, 'B2C', 'akros-cz', 'CZK', ${world.unitId}, 1, 'NO_GROUP',
-    ${effectiveFrom}::timestamptz, ${effectiveTo}::timestamptz, 'direct', now()) returning policy_id`;
+    ${effectiveFrom}::timestamptz, ${effectiveTo}::timestamptz, ${verificationRef}, now()) returning policy_id`;
 
 const insertEnd = (policyId: string, effectiveTo: SQL, tenant = tenantId, entity = legalEntityId) => sql`
   insert into pricing.external_price_source_policy_ends
@@ -541,6 +608,10 @@ it.live('scoped SQL cannot rewrite policy history or store a second overlapping 
         { effectiveFrom: '-infinity', effectiveTo: null },
         { effectiveFrom: 'infinity', effectiveTo: null },
         { effectiveTo: 'infinity' },
+        { verificationRef: 'trailing\t' },
+        { verificationRef: '\u00A0leading' },
+        { verificationRef: 'trailing\uFEFF' },
+        { verificationRef: '🔖'.repeat(151) },
         { sourceAuthorityRef: '*' },
         { sourceAuthorityVersion: '*' },
         { mappingContractRef: '*' },
@@ -570,7 +641,7 @@ it.live('scoped SQL cannot rewrite policy history or store a second overlapping 
         policyTerms(world, {
           effectivePeriod: { effectiveFrom: '2099-01-01T00:00:00.000Z', effectiveTo: '2100-01-01T00:00:00.000Z' },
         }),
-        'direct',
+        directVerificationRef,
       );
       expect(parent.outcome).toBe('REUSED');
 

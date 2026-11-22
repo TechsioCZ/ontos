@@ -12,7 +12,10 @@ import type {
   ExternalPriceSourcePolicyEndRecord,
   ExternalPriceSourcePolicyRecord,
 } from '../../shared/domain/external-price-source-policy.ts';
-import { ExternalPriceSourceAuthorityGrantSchema } from '../services/external-price-input-boundary.service.ts';
+import {
+  ExternalPriceSourceAuthorityGrantSchema,
+  priceAuthorityKeyInTenant,
+} from '../services/external-price-input-boundary.service.ts';
 import type {
   ExternalPriceSourceAuthorityAssessment,
   ExternalPriceSourceAuthorityAssessmentRequest,
@@ -172,18 +175,11 @@ const identityMatchesScope = (
   identity: ExternalPriceSourceAuthorityAssessmentRequest['exactIdentityKey'],
   scope: OperationalScope,
 ) =>
-  identity.catalogSelection.productRef.tenantId === scope.tenantId &&
-  identity.catalogSelection.variantRef.tenantId === scope.tenantId &&
-  identity.unitBasis.unitRef.tenantId === scope.tenantId &&
-  identity.commercialScope.sellingLegalEntityId === scope.legalEntityId &&
-  (identity.priceGroupSelector.kind === 'NO_GROUP' ||
-    identity.priceGroupSelector.priceGroupRef.tenantId === scope.tenantId);
+  priceAuthorityKeyInTenant(identity, scope.tenantId) &&
+  identity.commercialScope.sellingLegalEntityId === scope.legalEntityId;
 
 const requestMatchesScope = (request: ExternalPriceSourceAuthorityAssessmentRequest, scope: OperationalScope) =>
   request.tenantId === scope.tenantId && identityMatchesScope(request.exactIdentityKey, scope);
-
-const grantMatchesScope = (grant: ExternalPriceSourceAuthorityGrant, scope: OperationalScope) =>
-  identityMatchesScope(grant.exactIdentityKey, scope);
 
 const policyMatchesScope = (policy: ExternalPriceSourcePolicyRecord, scope: OperationalScope) =>
   policy.unitBasis.unitRef.tenantId === scope.tenantId &&
@@ -218,13 +214,21 @@ export const externalPriceSourceAuthorityForScope = (
             Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
             Effect.flatMap(decodePolicyEndOutcome),
           ),
-    store: (grant) =>
-      grantMatchesScope(grant, scope)
-        ? transaction.invoke(storeExternalPriceSourceAuthorityGrantRoutine, [grant]).pipe(
-            Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
-            Effect.flatMap(decodeStoreOutcome),
-          )
-        : Effect.fail(unavailable('Pricing external Price Source Authority grant is outside the trusted scope')),
+    store: Effect.fn('ExternalPriceSourceAuthority.store')(function* store(input) {
+      const grant = yield* Schema.decodeUnknownEffect(ExternalPriceSourceAuthorityGrantSchema)(input).pipe(
+        Effect.mapError(unavailable),
+      );
+      if (
+        grant.exactIdentityKey.catalogSelection.productRef.tenantId !== scope.tenantId ||
+        grant.exactIdentityKey.commercialScope.sellingLegalEntityId !== scope.legalEntityId
+      ) {
+        return yield* unavailable('Pricing external Price Source Authority grant is outside the trusted scope');
+      }
+      return yield* transaction.invoke(storeExternalPriceSourceAuthorityGrantRoutine, [grant]).pipe(
+        Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
+        Effect.flatMap(decodeStoreOutcome),
+      );
+    }),
     storePolicy: (policy) =>
       policyMatchesScope(policy, scope)
         ? transaction.invoke(storeExternalPriceSourcePolicyRoutine, [policy]).pipe(

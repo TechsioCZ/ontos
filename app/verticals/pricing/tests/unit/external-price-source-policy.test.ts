@@ -23,6 +23,7 @@ import {
   policyTerms,
   productMapping,
   sourceAssertionFor,
+  unitRefFor,
 } from '../support/standing-price-source-policy.fixture.ts';
 
 const world = {
@@ -49,6 +50,16 @@ describe('Standing source policy native identifier boundary', () => {
       { ...terms, mapping: { ...terms.mapping, mappingContractVersion: '*' } },
     ]) {
       expect(Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)({ ...payload, policy })).toBe(false);
+    }
+  });
+
+  it('preserves trimmed verification references up to 300 UTF-16 code units', () => {
+    const payload = { intent: 'ESTABLISH', policy: policyTerms(world), reason: 'Source authority' };
+    const accepts = (verificationRef: string) =>
+      Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)({ ...payload, verificationRef });
+    expect(accepts(`a\t${'🔖'.repeat(149)}`)).toBe(true);
+    for (const ref of ['trailing\t', '\u00A0leading', 'trailing\uFEFF', '🔖'.repeat(151)]) {
+      expect(accepts(ref)).toBe(false);
     }
   });
 
@@ -157,6 +168,30 @@ const boundaryCovering = (policy: ExternalPriceSourcePolicy) =>
   });
 
 describe('Standing external Price source policy at the external Price input boundary', () => {
+  it.effect('rejects noncanonical Unit and Price Group IDs before consulting exact or standing authority', () =>
+    Effect.gen(function* rejectNoncanonicalIdentity() {
+      const boundary = makeExternalPriceInputBoundary({ assess: () => Effect.die('invalid key reached authority') });
+      // The shared Price key and source contracts accept uppercase UUIDs. Pricing source admission is stricter.
+      const keys = [
+        priceKey(world, newVariant, {
+          unitBasis: { quantity: '1', unitRef: unitRefFor(world, world.unitId.toUpperCase()) },
+        }),
+        priceKey(world, newVariant, {
+          priceGroupSelector: {
+            kind: 'PRICE_GROUP',
+            priceGroupRef: priceGroupRef(world.tenantId, groupId.toUpperCase()),
+          },
+        }),
+      ];
+      for (const key of keys) {
+        expect(yield* boundary.assess(requestFor(key))).toMatchObject({
+          outcome: 'PRICE_SOURCE_ASSERTION_KNOWN_INVALID',
+          reason: 'MAPPING_REJECTED',
+        });
+      }
+    }),
+  );
+
   it.effect('accepts a never-seen variant under the policy and keeps the exact source evidence', () =>
     Effect.gen(function* acceptsNewVariant() {
       const request = requestFor();
