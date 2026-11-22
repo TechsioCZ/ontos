@@ -15,12 +15,13 @@ This page describes what is implemented. Rows that have no executed proof agains
 
 Action keys (all `idempotency: required`) and the access declarations they carry:
 
-| Entrypoint                                  | Declaration key                      | Risk and modes                               | Carrier                                                                                               |
-| ------------------------------------------- | ------------------------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Action `core.media.upload-asset` (reserve)  | `core.media.asset.upload`            | routine, run                                 | human or agent holds the declaration; system, integration and import use workload `core.media.ingest` |
-| Action `core.media.confirm-asset`           | `core.media.asset.confirm`           | routine, run                                 | as above                                                                                              |
-| Action `core.media.rename-display-filename` | `core.media.display-filename.rename` | routine, run/propose/approve, selector `all` | declaration only, no machine carrier                                                                  |
-| Read metadata                               | `core.media.asset-metadata.read`     | routine, selector `all`                      | declaration                                                                                           |
+| Entrypoint                                         | Declaration key                      | Risk and modes                               | Carrier                                                                                               |
+| -------------------------------------------------- | ------------------------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Action `core.media.upload-asset` (reserve)         | `core.media.asset.upload`            | routine, run                                 | human or agent holds the declaration; system, integration and import use workload `core.media.ingest` |
+| Action `core.media.confirm-asset`                  | `core.media.asset.confirm`           | routine, run                                 | as above                                                                                              |
+| Action `core.media.rename-display-filename`        | `core.media.display-filename.rename` | routine, run/propose/approve, selector `all` | declaration only, no machine carrier                                                                  |
+| Action `core.media.record-asset-integrity-failure` | `core.media.asset-integrity.fail`    | routine, run                                 | workload `core.media.integrity`                                                                       |
+| Read metadata                                      | `core.media.asset-metadata.read`     | routine, selector `all`                      | declaration                                                                                           |
 
 The generated descriptors are in `topology/authorization-catalog.json` (`pnpm authorization:catalog:artifact:check`). The origin a caller states (`user`, `system`, `integration`, `import`) is recorded provenance and grants nothing.
 
@@ -30,6 +31,27 @@ The generated descriptors are in `topology/authorization-catalog.json` (`pnpm au
 2. **Confirm** (`core.media.confirm-asset`): seals the row (`ready`, with the actual size and SHA-256) after the stored object is read back and verified against the reserved identity (`StoredMediaObjectVerification`). Only this Action seals the row. A retry after an uncertain end completes the original asset, never a second one.
 
 Each stored object is addressed by its derived key only; the key, provider id, version reference and any URL never reach a response, log or error. A new upload is always a new Media Asset id.
+
+## Verified read and failed versus unavailable
+
+`media/verified-read.ts` is the single place that classifies what a provider returns for a `ready` asset. Outcomes:
+
+- `verified`: the delivered bytes equal the sealed size and SHA-256.
+- `unavailable`: this request could not be judged (provider failure, short or doubtful end of stream, object changed while read). Never durable, never promoted by time, never corruption.
+- `missing_object`: the provider holds nothing under the key. Neither an absent asset nor proof of corruption.
+- `inconsistent_metadata`: the row is not a sealed `ready` identity, or (stream mode) the provider's own stat already disagrees; delivery is refused before a byte.
+- `integrity_failed`: proven corruption only: the whole object was read, the stream ended with the length the provider declared, the object did not change meanwhile, and its size or SHA-256 differs from the sealed identity.
+
+Proven corruption is handed to `core.media.record-asset-integrity-failure` (the only writer of `failed`, conditional on the sealed identity). A read never changes status.
+
+## Recovery
+
+Recovery is client or workload driven; there is no scheduler, timer, retry loop, attempt count or deadline in Core Media code (guard test `core-media-recovery-guards`).
+
+- `reconcileUncertainUpload` settles an uncertain upload against the original asset row: `completed`, `closed_failed` (only when the confirm Action proves a mismatch) or `unresolved` (nothing proven; the same client may resend to the same asset).
+- A new independent upload may start only after a confirmed failure; `mayStartIndependentUpload` is the check and has no production caller (advisory).
+- `cleanup-eligibility.ts` is a check only; nothing removes objects. The S3 adapter's only HTTP `DELETE` aborts its own unfinished multipart upload.
+- Recovery logging uses a closed vocabulary and a redacted reference, never keys, bytes, URLs or credentials.
 
 ## S3 provider configuration
 
