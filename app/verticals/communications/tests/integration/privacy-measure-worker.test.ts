@@ -93,6 +93,8 @@ const harness = Effect.gen(function* harness() {
         reports.push({ attempt, handoff });
         return failure === null ? Effect.void : Effect.fail(failure);
       }),
+    // the take-over worker never reports a later human-recorded confirmation
+    reportRecorded: () => Effect.die('The continuation belongs to the continuation worker'),
   };
   const tenantScope = {
     run: <Failure, Requirements>(

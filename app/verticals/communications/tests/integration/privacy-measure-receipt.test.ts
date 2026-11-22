@@ -235,10 +235,18 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
             results: [{ contentRef: first ?? '', result: 'RESTRICTED' }],
           }),
         );
-        expect(partial).toEqual({
+        expect(partial.result).toEqual({
           destructiveActionPerformed: false,
           evidenceRef: 'FICTIONAL-evidence-1',
           outcome: 'RECORDED',
+        });
+        // newly stored evidence continues the ORIGINAL dispatch with the next receipt attempt and carries no outcome:
+        // the take-over report was attempt 1 and this is the second confirmation, so Privacy is asked for attempt 3
+        expect(Option.getOrThrow(partial.continuation)).toEqual({
+          attempt: 3,
+          dispatchInvocationId: invocation,
+          measureId: handoff.measureId,
+          taskId: handoff.taskId,
         });
         const partialReceipt = Option.getOrThrow(yield* receiptOf(handoff)).outcome;
         expect(partialReceipt.status).toBe('PARTIAL');
@@ -464,11 +472,23 @@ describe('Communications owner receipt of a Privacy Measure on native PostgreSQL
 
   it.live('replays an identical confirmation as a no-op even with a fresh invocation, and refuses other content', () =>
     Effect.gen(function* replay() {
-      const { confirm, targets } = yield* recordedMeasure(restriction);
+      const { confirm, handoff, invocation, recorded, targets, world } = yield* recordedMeasure(restriction);
       const results = targets.map((contentRef) => ({ contentRef, result: 'RESTRICTED' as const }));
-      expect(yield* confirm({ results })).toMatchObject({ outcome: 'RECORDED' });
+      const record = (payload: Partial<RecordOwnerExecutionEvidencePayload>, confirmation = invocation) =>
+        world.database.inTenant(world.tenantId, (transaction) =>
+          ownerExecutionEvidenceFor(transaction).record(
+            evidenceOf(handoff, recorded.fingerprint, payload),
+            confirmation,
+          ),
+        );
+      const first = yield* record({ results });
+      expect(first.result.outcome).toBe('RECORDED');
+      expect(Option.getOrThrow(first.continuation).attempt).toBe(2);
       const fresh = yield* nextId;
-      expect(yield* confirm({ results: [...results].toReversed() }, fresh)).toMatchObject({ outcome: 'EXISTS' });
+      const replayed = yield* record({ results: [...results].toReversed() }, fresh);
+      expect(replayed.result.outcome).toBe('EXISTS');
+      // a replay stores nothing new, so it continues nothing: no second report for the same evidence
+      expect(Option.isNone(replayed.continuation)).toBe(true);
       expect(yield* confirm({ results: results.slice(1) }, fresh)).toBe(
         'EVIDENCE_REF_ALREADY_RECORDED_WITH_OTHER_CONTENT',
       );

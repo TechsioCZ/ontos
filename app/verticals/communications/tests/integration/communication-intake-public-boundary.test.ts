@@ -308,18 +308,23 @@ describe('Communication Request intake over the public Action boundary (#1401, A
     expect(subscriptions).toEqual([
       ['communications.core', 'communications.core.message-intent-prepared.v1'],
       ['privacy.core', 'privacy.measure.dispatched'],
+      ['communications.core', 'communications.core.owner-execution-evidence-recorded.v1'],
     ]);
     // The pre-handoff worker's consumer is Communications itself, for its own self-outbox only, and the one other worker
     // consumes the Privacy measure dispatch to record the handoff of a measure: it subscribes to no business producer's
     // event, so a source event can never be turned into a send, and `matched_at` of the first-match rule only ever concerns
     // messages observed after a consumer exists. The activation order (worker registered before the first producer) is
     // documented on the worker; Core's own runtime tests (`outbox:test`) prove that a later consumer receives no earlier message.
-    const [worker, privacyWorker] = outboxWorkers;
+    // The third worker reports only the owner's own evidence message to Privacy: it is a self-outbox like the first and
+    // carries the identities of a dispatch Privacy already made, never a source event or an earlier message.
+    const [worker, privacyWorker, continuationWorker] = outboxWorkers;
     expect(worker?.descriptor.consumerModuleKey).toBe('communications.core');
     expect(worker?.descriptor.consumerModuleKey).toBe(worker?.descriptor.producerModuleKey);
     expect(worker?.descriptor.workerKey).toBe('communications.core.prepare-message-handoff');
     expect(privacyWorker?.descriptor.workerKey).toBe('communications.core.receive-privacy-measure');
-    // No replay, redrive or backfill entry point exists in the owner: its worker list is exactly these two workers.
-    expect(outboxWorkers).toHaveLength(2);
+    expect(continuationWorker?.descriptor.workerKey).toBe('communications.core.report-privacy-owner-outcome');
+    expect(continuationWorker?.descriptor.consumerModuleKey).toBe(continuationWorker?.descriptor.producerModuleKey);
+    // No replay, redrive or backfill entry point exists in the owner: its worker list is exactly these three workers.
+    expect(outboxWorkers).toHaveLength(3);
   });
 });

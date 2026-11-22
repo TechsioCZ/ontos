@@ -145,6 +145,20 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
           schemaVersion: '1',
         },
       },
+      {
+        condition: 'communications.core.condition.human-recorded-owner-execution-evidence',
+        entrypointKey: 'communications.core.report-privacy-owner-outcome',
+        evidence: [
+          'communications.core.evidence.privacy.recorded-owner-execution-evidence',
+          'communications.core.evidence.privacy.exact-execution-correlation',
+        ],
+        key: 'communications.core.requirement.privacy-report-recorded-owner-outcome',
+        provider: {
+          entrypointKey: 'privacy.core.record-owner-execution-outcome',
+          moduleId: 'privacy.core',
+          schemaVersion: '1',
+        },
+      },
     ],
     schemaVersion: '1',
   },

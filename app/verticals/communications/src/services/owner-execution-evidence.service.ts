@@ -1,4 +1,6 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
+import { PrivacyDispatchContinuationPayloadSchema } from '@app/shared-contracts';
+import type { PrivacyDispatchContinuationPayload } from '@app/shared-contracts';
 import { Context, Effect, Match, Option, Schema } from 'effect';
 
 import {
@@ -90,6 +92,7 @@ const reconcilesRecordedFailures = (document: HandoffDocument, payload: RecordOw
   );
 
 const decodeAnswer = Schema.decodeUnknownEffect(RecordEvidenceAnswerSchema);
+const decodeContinuation = Schema.decodeUnknownEffect(PrivacyDispatchContinuationPayloadSchema);
 
 const readDocument = (transaction: ScopedTransactionExecutor, idempotencyKey: string) =>
   transaction.invoke(readPrivacyMeasureHandoffRoutine, [idempotencyKey]).pipe(
@@ -97,12 +100,26 @@ const readDocument = (transaction: ScopedTransactionExecutor, idempotencyKey: st
     Effect.mapError(unavailable),
   );
 
+/**
+ * What one confirmation leaves behind: its public result and, only when THIS call stored new evidence, the continuation
+ * that asks Privacy to read the next receipt attempt of the original dispatch. A replay or refusal continues nothing.
+ */
+export interface RecordedOwnerExecutionEvidence {
+  readonly continuation: Option.Option<PrivacyDispatchContinuationPayload>;
+  readonly result: RecordOwnerExecutionEvidenceResult;
+}
+
 export interface OwnerExecutionEvidenceService {
   readonly record: (
     payload: RecordOwnerExecutionEvidencePayload,
     confirmationInvocationId: string,
-  ) => Effect.Effect<RecordOwnerExecutionEvidenceResult, typeof OwnerExecutionEvidenceErrorSchema.Type>;
+  ) => Effect.Effect<RecordedOwnerExecutionEvidence, typeof OwnerExecutionEvidenceErrorSchema.Type>;
 }
+
+const settledOnly = (result: RecordOwnerExecutionEvidenceResult): RecordedOwnerExecutionEvidence => ({
+  continuation: Option.none(),
+  result,
+});
 
 export class OwnerExecutionEvidence extends Context.Service<OwnerExecutionEvidence, OwnerExecutionEvidenceService>()(
   '@app/communications/services/owner-execution-evidence.service/OwnerExecutionEvidence',
@@ -134,7 +151,7 @@ export const ownerExecutionEvidenceFor = (transaction: ScopedTransactionExecutor
       );
     }
     if (identicalRecord(document, payload, stored.scopeDigest)) {
-      return settled(payload, 'EXISTS');
+      return settledOnly(settled(payload, 'EXISTS'));
     }
     if (!reconcilesRecordedFailures(document, payload)) {
       return yield* refused(
@@ -154,14 +171,31 @@ export const ownerExecutionEvidenceFor = (transaction: ScopedTransactionExecutor
       .pipe(Effect.mapError(unavailable));
     const answer = yield* decodeAnswer(answerRows[0]?.result).pipe(Effect.mapError(unavailable));
     return yield* Match.value(answer.outcome).pipe(
-      Match.when('RECORDED', (outcome) => Effect.succeed(settled(payload, outcome))),
-      Match.when('EXISTS', (outcome) => Effect.succeed(settled(payload, outcome))),
+      Match.when('RECORDED', (outcome) =>
+        // The routine holds the handoff's lock to the end of this transaction, so the evidence count is exact: the
+        // take-over report is attempt 1 and the n-th recorded confirmation asks Privacy for attempt n + 1.
+        readDocument(transaction, payload.idempotencyKey).pipe(
+          Effect.flatMap((current) =>
+            decodeContinuation({
+              attempt: current.evidence.length + 1,
+              dispatchInvocationId: stored.originatorInvocationId,
+              measureId: stored.measureId,
+              taskId: stored.taskId,
+            }).pipe(Effect.mapError(unavailable)),
+          ),
+          Effect.map((continuation) => ({
+            continuation: Option.some(continuation),
+            result: settled(payload, outcome),
+          })),
+        ),
+      ),
+      Match.when('EXISTS', (outcome) => Effect.succeed(settledOnly(settled(payload, outcome)))),
       Match.when('CONFLICT', () =>
         // A concurrent submission of the same content stored it first: look again before calling it a conflict.
         readDocument(transaction, payload.idempotencyKey).pipe(
           Effect.flatMap((current) =>
             identicalRecord(current, payload, stored.scopeDigest)
-              ? Effect.succeed(settled(payload, 'EXISTS'))
+              ? Effect.succeed(settledOnly(settled(payload, 'EXISTS')))
               : Effect.fail(
                   refused(
                     'EVIDENCE_REF_ALREADY_RECORDED_WITH_OTHER_CONTENT',
