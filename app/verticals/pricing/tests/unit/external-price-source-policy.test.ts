@@ -1,6 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ManageExternalPriceSourcePolicyPayloadSchema } from '../../shared/actions/manage-external-price-source-policy.ts';
 import { ExternalPriceSourcePolicySchema } from '../../shared/domain/external-price-source-policy.ts';
 import type { ExternalPriceSourcePolicy } from '../../shared/domain/external-price-source-policy.ts';
 import {
@@ -35,6 +36,73 @@ const newVariant = {
 };
 const groupId = 'f1000000-0000-4000-8000-000000000021';
 const operationAt = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-20T10:00:00.000Z'));
+
+describe('Standing source policy native identifier boundary', () => {
+  it('rejects an uppercase END identifier before it can become a persistence-unavailable error', () => {
+    const payload = {
+      effectiveTo: '2026-11-21T00:00:00.000Z',
+      intent: 'END',
+      policyId: 'f1000000-0000-4000-8000-000000000031',
+      reason: 'End the source authority',
+      verificationRef: 'policy-end-proof',
+    };
+    expect(Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)(payload)).toBe(true);
+    expect(
+      Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)({
+        ...payload,
+        policyId: payload.policyId.toUpperCase(),
+      }),
+    ).toBe(false);
+  });
+
+  it('requires canonical native Unit, Price Group, Tenant and Legal Entity identifiers on ESTABLISH', () => {
+    const terms = policyTerms(world);
+    const payload = {
+      intent: 'ESTABLISH',
+      policy: terms,
+      reason: 'Establish the source authority',
+      verificationRef: 'policy-establish-proof',
+    };
+    expect(Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)(payload)).toBe(true);
+    const noncanonicalPolicies = [
+      {
+        ...terms,
+        unitBasis: {
+          ...terms.unitBasis,
+          unitRef: { ...terms.unitBasis.unitRef, resourceId: world.unitId.toUpperCase() },
+        },
+      },
+      {
+        ...terms,
+        unitBasis: {
+          ...terms.unitBasis,
+          unitRef: { ...terms.unitBasis.unitRef, tenantId: world.tenantId.toUpperCase() },
+        },
+      },
+      {
+        ...terms,
+        commercialScope: { ...terms.commercialScope, sellingLegalEntityId: world.legalEntityId.toUpperCase() },
+      },
+      {
+        ...terms,
+        priceGroupCoverage: {
+          kind: 'PRICE_GROUP',
+          priceGroupRef: priceGroupRef(world.tenantId, groupId.toUpperCase()),
+        },
+      },
+      {
+        ...terms,
+        priceGroupCoverage: {
+          kind: 'PRICE_GROUP',
+          priceGroupRef: priceGroupRef(world.tenantId.toUpperCase(), groupId),
+        },
+      },
+    ];
+    for (const policy of noncanonicalPolicies) {
+      expect(Schema.is(ManageExternalPriceSourcePolicyPayloadSchema)({ ...payload, policy })).toBe(false);
+    }
+  });
+});
 
 const storedPolicy = (overrides: Partial<ExternalPriceSourcePolicy> = {}): ExternalPriceSourcePolicy =>
   Schema.decodeSync(ExternalPriceSourcePolicySchema)({

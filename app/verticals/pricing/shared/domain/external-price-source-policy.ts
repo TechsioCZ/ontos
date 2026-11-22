@@ -7,7 +7,7 @@ import {
 import { PriceGroupRefSchema } from '@app/price-group-catalog-contracts/resources/price-group';
 import { Schema } from 'effect';
 
-const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
+const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed(), Schema.isPattern(/^[0-9a-f-]+$/u));
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 
 /** Pricing-allocated identity of one standing external Price source policy. */
@@ -64,12 +64,27 @@ const policyTermsFields = {
   priceGroupCoverage: ExternalPriceSourcePriceGroupCoverageSchema,
   unitBasis: PriceUnitBasisSchema,
 };
+const policyTerms = Schema.Struct(policyTermsFields);
+const nativeIdentifiersAreCanonical = Schema.makeFilter((terms: typeof policyTerms.Type) => {
+  const identifiers = [
+    terms.commercialScope.sellingLegalEntityId,
+    terms.unitBasis.unitRef.resourceId,
+    terms.unitBasis.unitRef.tenantId,
+    ...(terms.priceGroupCoverage.kind === 'PRICE_GROUP'
+      ? [terms.priceGroupCoverage.priceGroupRef.resourceId, terms.priceGroupCoverage.priceGroupRef.tenantId]
+      : []),
+  ];
+  return identifiers.every(Schema.is(checkedUuid))
+    ? undefined
+    : 'External Price source policy native identifiers must be canonical lowercase UUIDs';
+});
 
 /**
  * What an operator verified once: this source authority, under this mapping contract, is the Price source for
  * every Price key of one commercial scope, currency and unit basis whose Price Group selector the coverage names.
  */
-export const ExternalPriceSourcePolicyTermsSchema = Schema.Struct(policyTermsFields).check(
+export const ExternalPriceSourcePolicyTermsSchema = policyTerms.check(
+  nativeIdentifiersAreCanonical,
   periodIsOrdered,
   groupBelongsToUnitTenant,
 );
@@ -86,6 +101,7 @@ const policyRecordFields = {
 
 /** A policy as Pricing stores it: the operator's verified terms plus Pricing's own verification time. */
 export const ExternalPriceSourcePolicyRecordSchema = Schema.Struct(policyRecordFields).check(
+  nativeIdentifiersAreCanonical,
   periodIsOrdered,
   groupBelongsToUnitTenant,
 );
@@ -95,7 +111,7 @@ export type ExternalPriceSourcePolicyRecord = typeof ExternalPriceSourcePolicyRe
 export const ExternalPriceSourcePolicySchema = Schema.Struct({
   ...policyRecordFields,
   policyId: ExternalPriceSourcePolicyIdSchema,
-}).check(periodIsOrdered, groupBelongsToUnitTenant);
+}).check(nativeIdentifiersAreCanonical, periodIsOrdered, groupBelongsToUnitTenant);
 export type ExternalPriceSourcePolicy = typeof ExternalPriceSourcePolicySchema.Type;
 
 /** The end of one policy, stamped with the trusted time Pricing recorded it. */
