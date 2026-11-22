@@ -1029,18 +1029,22 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
             reason: 'AWAITING_HUMAN_CONFIRMED_OWNER_ACTION',
             status: 'RECEIVED',
           });
-          const coverage = yield* askAsPrivacy(manager, '/reads/privacy-owner-coverage', {
+          const coverageRequest = {
             scope: {
               controllerRef: 'FICTIONAL-controller',
               ownerCapability: 'communications.core',
               requestedScopePartRefs: [...scopePartRefs],
               requestedScopeRef: 'FICTIONAL-requested-scope',
-              subject: { _tag: 'RESOLVED_DATA_SUBJECT', subjectRef: 'FICTIONAL-subject-1' },
+              subject: { _tag: 'RESOLVED_DATA_SUBJECT' as const, subjectRef: 'FICTIONAL-subject-1' },
               tenantId: tenant.tenantId,
               trustedLookupRefs: [lookup.lookupRef],
             },
             trustedLookups: [lookup],
-          });
+          };
+          const coverageFor = (principal: Principal) =>
+            askAsPrivacy(principal, '/reads/privacy-owner-coverage', coverageRequest);
+          // the manager holds both Read capabilities Tenant-wide: Privacy asks for it and is answered
+          const coverage = yield* coverageFor(manager);
           expect(coverage.status, JSON.stringify(coverage.body)).toBe(200);
           const found = Schema.decodeUnknownSync(PrivacyOwnerCoverageResponseSchema)(coverage.body);
           expect(found.coverage.coverageParts.flatMap(({ foundContentRefs }) => foundContentRefs)).toEqual(
@@ -1251,8 +1255,8 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           const foreignReceipt = yield* receipt(foreignManager, 2);
           expect(foreignReceipt.status).toBe(200);
           expect(Option.isNone(foreignReceipt.receipt)).toBe(true);
-          // DENIED: these Reads declare `accessActor.subject: 'identity'`, so only Privacy as the calling module may ask;
-          // a direct staff call, even with the capability, and another calling module are refused.
+          // DENIED: only Privacy, as the calling module of its requester, may ask; a direct staff call, even with the
+          // capability, and another calling module are refused.
           const direct = yield* send(manager, '/reads/privacy-owner-execution-outcome', {
             attempt: 2,
             handoff: Schema.encodeSync(PrivacyMeasureHandoffSchema)(handoff),
@@ -1274,23 +1278,24 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
             ),
           );
           expect([401, 403]).toContain(asCommunications.status);
-          const directCoverage = yield* send(manager, '/reads/privacy-owner-coverage', {
-            scope: {
-              controllerRef: 'FICTIONAL-controller',
-              ownerCapability: 'communications.core',
-              requestedScopePartRefs: [...scopePartRefs],
-              requestedScopeRef: 'FICTIONAL-requested-scope',
-              subject: { _tag: 'RESOLVED_DATA_SUBJECT', subjectRef: 'FICTIONAL-subject-1' },
-              tenantId: tenant.tenantId,
-              trustedLookupRefs: [lookup.lookupRef],
-            },
-            trustedLookups: [lookup],
-          });
-          expect(directCoverage.status).toBe(403);
-          // Under the identity subject the Privacy-delegated Read does not consult the member's own grant (pre-existing
-          // contract): a member without the receipt capability is still answered through Privacy.
-          expect((yield* receipt(reader, 2)).status).toBe(200);
-          // REVOKED: the identity itself ends, and the very next Privacy-delegated Read for it is refused
+          expect((yield* send(manager, '/reads/privacy-owner-coverage', coverageRequest)).status).toBe(403);
+          // Both Reads declare `accessActor.subject: 'rights'`: a Privacy-delegated Read is decided on the requester's OWN
+          // grant of that Read's declaration, never on identity alone. DENIED: a Tenant member without the capability.
+          expect((yield* receipt(reader, 2)).status).toBe(403);
+          expect((yield* coverageFor(reader)).status).toBe(403);
+          // GRANTED THEN REVOKED, each Read separately: the receipt capability alone admits the receipt, not the coverage
+          const receiptRole = yield* roles.capabilityRole([RECEIPT_READ]);
+          yield* receiptRole.grant();
+          const readerReceipt = yield* receipt(reader, 2);
+          expect(readerReceipt.status).toBe(200);
+          expect(Option.getOrThrow(readerReceipt.receipt).handoffFingerprint).toBe(fingerprint);
+          expect((yield* coverageFor(reader)).status).toBe(403);
+          const coverageRole = yield* roles.capabilityRole([COVERAGE_READ]);
+          yield* coverageRole.grant();
+          expect((yield* coverageFor(reader)).status).toBe(200);
+          // even with both grants, the member's direct call is still refused: only the Privacy-delegated form is answered
+          expect((yield* send(reader, '/reads/privacy-owner-coverage', coverageRequest)).status).toBe(403);
+          // REVOKED: the identity itself ends, and the very next Privacy-delegated Read for it is refused despite its grants
           const setPrincipalStatus = (status: 'active' | 'disabled') =>
             core.transaction((transaction) =>
               transaction.execute(
@@ -1301,6 +1306,17 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           yield* setPrincipalStatus('disabled');
           expect([401, 403]).toContain((yield* receipt(reader, 2)).status);
           yield* setPrincipalStatus('active');
+          yield* receiptRole.revoke();
+          yield* coverageRole.revoke();
+          expect((yield* receipt(reader, 2)).status).toBe(403);
+          expect((yield* coverageFor(reader)).status).toBe(403);
+          // CROSS-TENANT: the foreign manager holds both capabilities in its own Tenant only; a claim naming this Tenant is
+          // refused, and in its own Tenant this Tenant's scope is not found rather than answered
+          const forged = { ...foreignManager, tenantId: tenant.tenantId };
+          expect([401, 403]).toContain((yield* receipt(forged, 2)).status);
+          expect([401, 403]).toContain((yield* coverageFor(forged)).status);
+          const foreignCoverage = yield* coverageFor(foreignManager);
+          expect(foreignCoverage.status, JSON.stringify(foreignCoverage.body)).toBe(404);
           // The evidence Action is rights-based: a role of exactly that capability admits it, revoking it refuses it
           const evidenceRole = yield* roles.capabilityRole([EVIDENCE_RECORD]);
           yield* evidenceRole.grant();

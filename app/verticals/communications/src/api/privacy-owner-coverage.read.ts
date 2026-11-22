@@ -14,6 +14,7 @@ import {
 import type { PrivacyOwnerCoverageRequest } from '../../shared/apis/privacy-owner-coverage.ts';
 import { privacyOwnerCoverageForScope } from '../services/privacy-owner-coverage.service.ts';
 import type { PrivacyOwnerCoverageService } from '../services/privacy-owner-coverage.service.ts';
+import { requirePrivacyCaller } from './privacy-owner-caller.ts';
 
 const privacyOwnerCoverageEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -33,7 +34,8 @@ interface Services {
  * The Read observes and reports. It writes nothing and cannot cause a write.
  */
 export const readPrivacyOwnerCoverage = (input: PrivacyOwnerCoverageRequest, context: ReadHandlerContext<Services>) =>
-  context.services.privacy.coverage(input).pipe(
+  requirePrivacyCaller(context.scope).pipe(
+    Effect.andThen(context.services.privacy.coverage(input)),
     Effect.catchTag('PrivacyOwnerCoverageUnavailable', (failure) =>
       Effect.fail(
         Object.defineProperty(
@@ -65,8 +67,8 @@ export const privacyOwnerCoverageRead = defineRead(
     accessActor: {
       callers: ['privacy'],
       reason:
-        'Privacy asks the owner for its own coverage and contribution for the verified requester and exact scope.',
-      subject: 'identity',
+        'Privacy asks the owner for its own coverage and contribution for the verified requester and exact scope; the requester must hold this declaration itself.',
+      subject: 'rights',
     },
     accessDeclaration: {
       key: 'communications.core.privacy-owner-coverage.read',
@@ -74,7 +76,7 @@ export const privacyOwnerCoverageRead = defineRead(
       modes: ['run'],
       placement: { group: 'privacy-owner-coverage', level: 'basic' },
       risk: 'sensitive',
-      selectors: ['all'],
+      selectors: [],
     },
     accessKind: 'detail',
     entrypoint: privacyOwnerCoverageEntrypoint,

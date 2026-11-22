@@ -14242,9 +14242,7 @@
               "level": "basic"
             },
             "risk": "sensitive",
-            "selectors": [
-              "all"
-            ]
+            "selectors": []
           },
           "accessFieldGroups": [],
           "entrypoint": {
@@ -14261,7 +14259,7 @@
             "callers": [
               "privacy"
             ],
-            "subject": "identity"
+            "subject": "rights"
           }
         },
         {
@@ -14276,9 +14274,7 @@
               "level": "basic"
             },
             "risk": "sensitive",
-            "selectors": [
-              "all"
-            ]
+            "selectors": []
           },
           "accessFieldGroups": [],
           "entrypoint": {
@@ -14295,7 +14291,7 @@
             "callers": [
               "privacy"
             ],
-            "subject": "identity"
+            "subject": "rights"
           }
         },
         {
