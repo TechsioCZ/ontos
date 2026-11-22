@@ -55,7 +55,7 @@ const moduleActor = Schema.decodeUnknownSync(GatewayActorClaimSchema)({
 });
 
 const hostedRequirement = {
-  callers: [{ kind: 'person', legalEntityScope: 'tenant' }],
+  callers: [{ kind: 'person', legalEntityScope: 'subject' }],
   condition: 'commerce.catalog.condition.core-media-current',
   entrypointKey: 'commerce.catalog.api.catalog-document-current',
   evidence: ['core.media.asset'],
