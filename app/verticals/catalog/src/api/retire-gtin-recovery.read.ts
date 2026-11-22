@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.retire-gtin', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RetireGtinResultSchema),
-      encode: Schema.encodeEffect(RetireGtinResultSchema),
     },
   );
 

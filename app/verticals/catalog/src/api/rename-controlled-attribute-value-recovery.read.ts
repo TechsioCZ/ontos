@@ -45,7 +45,6 @@ const recoverResult = (
     },
     {
       decode: Schema.decodeUnknownEffect(RenameControlledAttributeValueResultSchema),
-      encode: Schema.encodeEffect(RenameControlledAttributeValueResultSchema),
     },
   );
 

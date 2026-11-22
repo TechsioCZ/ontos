@@ -15,7 +15,7 @@ import {
 } from '../persistence/catalog-action-result-snapshot.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
-const isResultObject = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+const isResultObject = Schema.is(Schema.JsonObject);
 
 export type CatalogActionRecovery<Result> =
   | { readonly result: Result; readonly status: 'committed' }

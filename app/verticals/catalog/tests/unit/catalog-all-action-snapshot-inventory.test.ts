@@ -94,7 +94,6 @@ describe('all published Catalog Action snapshot/recovery tuples', () => {
           expect(recoverySource).toContain('catalogActionRecoveryReceiptDecoder(');
         } else {
           expect(recoverySource).toContain('Schema.decodeUnknownEffect(');
-          expect(recoverySource).toContain('Schema.encodeEffect(');
         }
       }
     });

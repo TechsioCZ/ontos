@@ -45,7 +45,6 @@ const recoverResult = (
     },
     {
       decode: Schema.decodeUnknownEffect(GovernProductAttributeApplicabilityResultSchema),
-      encode: Schema.encodeEffect(GovernProductAttributeApplicabilityResultSchema),
     },
   );
 

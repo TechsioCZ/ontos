@@ -310,7 +310,6 @@ export const variantPersistenceForScope = (
         { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-variant', schemaVersion },
         {
           decode: Schema.decodeUnknownEffect(CreateVariantResultSchema),
-          encode: Schema.encodeEffect(CreateVariantResultSchema),
         },
       ),
     );

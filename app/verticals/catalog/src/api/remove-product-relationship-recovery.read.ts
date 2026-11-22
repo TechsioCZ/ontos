@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.remove-product-relationship', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RemoveProductRelationshipResultSchema),
-      encode: Schema.encodeEffect(RemoveProductRelationshipResultSchema),
     },
   );
 

@@ -45,7 +45,6 @@ const recoverResult = (
     },
     {
       decode: Schema.decodeUnknownEffect(SetVariantAttributeOverrideResultSchema),
-      encode: Schema.encodeEffect(SetVariantAttributeOverrideResultSchema),
     },
   );
 

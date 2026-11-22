@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.retire-product', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RetireProductResultSchema),
-      encode: Schema.encodeEffect(RetireProductResultSchema),
     },
   );
 

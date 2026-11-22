@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-brand', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CreateBrandResultSchema),
-      encode: Schema.encodeEffect(CreateBrandResultSchema),
     },
   );
 
