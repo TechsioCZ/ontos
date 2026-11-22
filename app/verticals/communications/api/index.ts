@@ -219,4 +219,6 @@ export const makeCommunicationsApiRuntime = (configuration?: ConfigProvider.Conf
     ),
   });
 
-export default makeCommunicationsApiRuntime();
+const apiRuntime = makeCommunicationsApiRuntime();
+
+export default apiRuntime;
