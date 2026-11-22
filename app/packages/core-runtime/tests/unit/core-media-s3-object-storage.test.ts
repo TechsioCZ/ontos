@@ -238,7 +238,7 @@ it.layer(NodeCrypto.layer)('the S3 object storage adapter against a scripted pro
   suite.effect('sends a header-safe content type, whatever the recorded media type says', () =>
     Effect.gen(function* contentTypeSafety() {
       // The recorded media type is caller-stated text: outside printable ASCII it cannot travel as a signed header.
-      for (const recorded of ['text/\u0159', 'text/caf\u00e9', 'text/plain\u0000']) {
+      for (const recorded of ['text/\u0159', 'text/caf\u00E9', 'text/plain\u0000']) {
         const { requests, storage } = storageOn(configWith(), () => ok());
         yield* (yield* storage).put({ body: Stream.make(new Uint8Array(3)), contentType: recorded, key });
         expect(requests[0]?.headers['content-type']).toBe('application/octet-stream');
