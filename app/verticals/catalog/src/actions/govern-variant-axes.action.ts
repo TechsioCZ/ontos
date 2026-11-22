@@ -73,16 +73,20 @@ export const handleGovernVariantAxes = Effect.fn('GovernVariantAxesAction.handle
         }),
     ),
   );
-  yield* context.services.assessOpenSelectionImpact(payload.productRef).pipe(
-    Effect.mapError(
-      (failure) =>
-        new VariantAxisWriteConflict({
-          code: 'variant_axis_write_conflict',
-          conflict: 'ACTIVE_SELECTION',
-          reason: failure.reason,
-        }),
-    ),
-  );
+  // Initialization replaces no governed combination; persistence proves the fresh DRAFT/empty basis under lock.
+  // Changing an existing basis still requires the complete Cart-owned population, never an inferred empty one.
+  if (!Schema.is(Schema.Struct({ kind: Schema.Literal('AXIS_INITIALIZATION') }))(payload.classification)) {
+    yield* context.services.assessOpenSelectionImpact(payload.productRef).pipe(
+      Effect.mapError(
+        (failure) =>
+          new VariantAxisWriteConflict({
+            code: 'variant_axis_write_conflict',
+            conflict: 'ACTIVE_SELECTION',
+            reason: failure.reason,
+          }),
+      ),
+    );
+  }
   const result = yield* context.services.govern({
     actionInvocationId: context.actionInvocationId,
     axes: evidencedAxes.map((axis) => ({

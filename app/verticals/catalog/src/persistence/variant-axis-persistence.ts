@@ -1030,9 +1030,12 @@ export const variantAxisPersistenceForScope = (
     }
     if (
       input.change.kind === 'AXIS_INITIALIZATION' &&
-      (latest !== undefined || current.length !== 0 || input.axes.length !== 0)
+      (product.lifecycleState !== 'DRAFT' || latest !== undefined || current.length !== 0 || input.axes.length !== 0)
     ) {
-      return yield* conflict('INVALID_INPUT', 'Axis-free initialization requires an uninitialized empty basis');
+      return yield* conflict(
+        'INVALID_INPUT',
+        'Axis-free initialization requires a DRAFT Product with an uninitialized empty basis',
+      );
     }
     const unchanged =
       current.length === input.axes.length &&
