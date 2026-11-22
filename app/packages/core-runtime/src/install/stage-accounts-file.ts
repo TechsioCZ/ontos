@@ -52,6 +52,8 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.storefront-client',
   'core.identity-provider',
   'core.media.ingest',
+  // Declared by a carrier, but a stage entry binds an ACCOUNT principal and the Shell resolves only a `system` one for
+  // this key, so an entry for it records nothing (CORE_MEDIA.md, "Enrolling the integrity principal").
   'core.media.integrity',
   'payment.source-ingress',
   'payment.provider-notification-ingress',
