@@ -5,22 +5,21 @@ import { Array as EffectArray, DateTime, Effect, Order, Option, Redacted, Ref, S
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CommercePortalAuthAccountCreationUnavailable } from '../../verticals/commerce-customer-context/api/portal-auth/provider/account-creation-unavailable.ts';
 import {
+  COMMERCE_PORTAL_AUTH_POLICY,
+  CommercePortalAuthAccountCreationUnavailable,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentTenantIdSchema,
-} from '../../verticals/commerce-customer-context/shared/enrollment-contracts.ts';
-import { PortalAuthIssuanceRefSchema } from '../../verticals/commerce-customer-context/shared/portal-auth-communications.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
-import { privacyNotAllowed } from '../../verticals/communications/tests/unit/support/privacy-fixtures.ts';
-import {
+  PortalAuthIssuanceRefSchema,
   user,
   verification,
-} from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
-import { approvedMessageTypes } from '../../verticals/communications/src/domain/catalog/approved-registry.ts';
-import { deliveryAttempts, messageIntents } from '../../verticals/communications/src/database/schema.ts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import {
+  approvedMessageTypes,
+  nativeServices,
+  privacyNotAllowed,
+} from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -92,8 +91,8 @@ const onlyIntent = (world: AuthWorld) => {
   });
 };
 
-const attemptsOf = (world: AuthWorld) => world.read((tx) => tx.select().from(deliveryAttempts));
-const intentsOf = (world: AuthWorld) => world.read((tx) => tx.select().from(messageIntents));
+const attemptsOf = (world: AuthWorld) => world.attemptRows;
+const intentsOf = (world: AuthWorld) => world.intentRows;
 const verificationRows = (realm: PostgresRealm, subjectId: string) =>
   realm.database.executor.select({ id: verification.id }).from(verification).where(eq(verification.value, subjectId));
 

@@ -5,10 +5,8 @@ import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { verification } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
-import { deliveryAttempts, messageIntents } from '../../verticals/communications/src/database/schema.ts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
-import { privacyNotAllowed } from '../../verticals/communications/tests/unit/support/privacy-fixtures.ts';
+import { verification } from '@app/commerce-customer-context/testing/portal-auth-communications';
+import { nativeServices, privacyNotAllowed } from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -295,12 +293,12 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
           decisionId: decisionIdOf(submission),
           replayed: true,
         });
-        expect(yield* world.read((tx) => tx.select().from(messageIntents))).toHaveLength(1);
+        expect(yield* world.intentRows).toHaveLength(1);
         const intentId = yield* onlyIntent(world);
         yield* step(world, world.messageHandoff, intentId);
         yield* step(world, world.messageHandoff, intentId);
         expect(world.mailbox).toHaveLength(1);
-        expect(yield* world.read((tx) => tx.select().from(deliveryAttempts))).toHaveLength(1);
+        expect(yield* world.attemptRows).toHaveLength(1);
         expect((yield* (yield* historyReads(world)).list()).items[0]?.headline).toMatchObject({
           attention: 'UNKNOWN',
           providerAccepted: false,

@@ -1,11 +1,5 @@
 import { Effect, Option, Predicate, Redacted } from 'effect';
 
-import {
-  accessReads,
-  nativeRuntimeClient,
-  visibilityDouble,
-} from '../../../verticals/communications/tests/support/access-reads.ts';
-import { MessageIntentIdSchema } from '../../../verticals/communications/shared/communication-intake.ts';
 import type { AuthWorld } from './auth-communications-world.spec.mts';
 
 /**
@@ -14,42 +8,10 @@ import type { AuthWorld } from './auth-communications-world.spec.mts';
  */
 
 const SHORT_SECRET_LENGTH = 12;
-const LIST = 'communications.core.message-history.list';
-const LIST_MASK = 'communications.core.message-history-recipient-mask.list';
-const READ = 'communications.core.message-history.read';
-const READ_MASK = 'communications.core.message-history-recipient-mask.read';
-export const allowedAccess = {
-  [LIST]: 'allowed',
-  [LIST_MASK]: 'allowed',
-  [READ]: 'allowed',
-  [READ_MASK]: 'allowed',
-} as const;
-
-/**
- * Every row of EVERY table of the `communications` schema (enumerated from the database catalog, so no table is left out
- * by a hand list) and of Core's real outbox tables (`core.outbox_messages`, `core.outbox_deliveries`), as the runtime role
- * sees them for the world's Tenant. The in-process messages the Action collector held are scanned separately as `outboxes`.
- */
-export const everyStoredRow = (world: AuthWorld) =>
-  world.database.everyRowOf(world.tenantId, {
-    schemas: ['communications'],
-    tables: ['core.outbox_messages', 'core.outbox_deliveries'],
-  });
 
 /** The authorized history Reads of the world's Tenant, through Core's real Read lifecycle over the real owner SQL. */
-export const historyReads = Effect.fn('AuthCommunicationsChecks.reads')(function* reads(
-  world: AuthWorld,
-  access: Parameters<typeof accessReads>[1]['access'] = allowedAccess,
-) {
-  const client = yield* nativeRuntimeClient;
-  const handle = yield* accessReads(client, { access, tenantId: world.tenantId });
-  const visibility = visibilityDouble(() => 'VISIBLE');
-  return {
-    detail: (intentId: string) =>
-      handle.detail({ intentId: MessageIntentIdSchema.make(intentId) }).pipe(Effect.provide(visibility.layer)),
-    list: () => handle.list().pipe(Effect.provide(visibility.layer)),
-  };
-});
+export const historyReads = (world: AuthWorld, access?: Parameters<AuthWorld['historyReads']>[0]) =>
+  world.historyReads(access);
 
 /** Console output of a run, so a secret that reached a log line is found. */
 export const captureLogs = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
@@ -96,7 +58,7 @@ export const expectNoSecretAnywhere = Effect.fn('AuthCommunicationsChecks.noSecr
   needles: readonly string[],
   logLines: readonly string[] = [],
 ) {
-  const tables = yield* everyStoredRow(world);
+  const tables = yield* world.everyStoredRow;
   const stored = JSON.stringify(tables);
   const outbox = JSON.stringify(world.outboxes);
   const requests = JSON.stringify(world.submissions);

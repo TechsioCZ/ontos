@@ -2,6 +2,8 @@ import { Effect, Option, Ref, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  COMMERCE_PORTAL_AUTH_MFA_POLICY,
+  COMMERCE_PORTAL_AUTH_POLICY,
   PORTAL_AUTH_COMMUNICATION_SOURCE_MODULE,
   PORTAL_AUTH_EMAIL_FLOWS,
   PORTAL_AUTH_ISSUANCE_STATE,
@@ -10,19 +12,18 @@ import {
   PortalAuthIssuanceRefSchema,
   portalAuthCommunicationPurposeOf,
   portalAuthOwnerRenderedSlotOf,
-} from '../../verticals/commerce-customer-context/shared/portal-auth-communications.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
-import { COMMERCE_PORTAL_AUTH_MFA_POLICY } from '../../verticals/commerce-customer-context/api/portal-auth/provider/mfa/plugin.ts';
-import { approvedMessageTypes } from '../../verticals/communications/src/domain/catalog/approved-registry.ts';
-import { recoveryPolicyOf, resendPolicyOf } from '../../verticals/communications/src/domain/catalog/message-type.ts';
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
 import {
-  findMessageTypeByPurpose,
+  approvedMessageTypes,
   buildMessageTypeRegistry,
-} from '../../verticals/communications/src/domain/catalog/registry.ts';
-import { CommunicationPurposeKeySchema } from '../../verticals/communications/src/domain/catalog/vocabulary.ts';
+  CommunicationPurposeKeySchema,
+  findMessageTypeByPurpose,
+  nativeServices,
+  recoveryPolicyOf,
+  resendPolicyOf,
+} from '@app/communications/testing/source-owner-world';
 import { authWorld, flowOfPurpose } from './support/auth-communications-world.spec.mts';
 import { makeOtpRealm } from './support/auth-communications-realms.spec.mts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
 
 /**
  * #1406: the two owners' strings are SEPARATE source files that must agree. Auth publishes its vocabulary; Communications

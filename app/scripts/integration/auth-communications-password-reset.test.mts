@@ -3,15 +3,16 @@ import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { portalAuthCommunicationRequest } from '../../verticals/commerce-customer-context/src/portal-auth/communications/request.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
-import { user } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
-import { deliveryAttempts, messageIntents } from '../../verticals/communications/src/database/schema.ts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
 import {
+  COMMERCE_PORTAL_AUTH_POLICY,
+  portalAuthCommunicationRequest,
+  user,
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import {
+  nativeServices,
   privacyIndeterminate,
   privacyNotAllowed,
-} from '../../verticals/communications/tests/unit/support/privacy-fixtures.ts';
+} from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -79,7 +80,7 @@ const stepAfterMinutes = (world: AuthWorld, intentId: string, minutes: number) =
     }).pipe(Effect.provide(TestClock.layer()));
   });
 
-const attemptsOf = (world: AuthWorld) => world.read((tx) => tx.select().from(deliveryAttempts));
+const attemptsOf = (world: AuthWorld) => world.attemptRows;
 
 describe('Password reset: real Auth source -> public Action -> durable decision/intent -> authorized Read (#1406)', () => {
   it.live(
@@ -278,7 +279,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         });
         expect(world.submissions).toHaveLength(2);
         // the replay is the SAME intent: one intent row, not two
-        expect(yield* world.read((tx) => tx.select().from(messageIntents))).toHaveLength(1);
+        expect(yield* world.intentRows).toHaveLength(1);
 
         // only a new Auth-authorized issuance creates a separate security message
         yield* requestReset(realm);

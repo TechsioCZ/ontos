@@ -201,6 +201,7 @@
     "./testing/price-group-current-receiver": "./tests/support/price-group-current-process.fixture.ts",
     "./testing/price-group-temporal-protocol": "./tests/support/price-group-temporal-protocol.ts",
     "./testing/privacy-consent-authority-owner": "./tests/support/privacy-consent-authority-owner.fixture.ts",
+    "./testing/portal-auth-communications": "./tests/support/portal-auth-communications-world.ts",
     "./domain/organization-profile-ico-migration": "./shared/domain/organization-profile-ico-migration.ts",
     "./api/organization-customer-profile-ico": "./shared/apis/organization-customer-profile-ico.ts",
     "./api/organization-customer-profile-ico/client": "./src/api/organization-customer-profile-ico-client.ts",
