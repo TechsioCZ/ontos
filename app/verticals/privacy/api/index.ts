@@ -51,6 +51,7 @@ import { applicabilityDecisionsReadApiLive } from './applicability-decisions-rea
 import { assignDsrResolverActionApiLive } from './assign-dsr-resolver-action-server.ts';
 import { assignLegalBasisActionApiLive } from './assign-legal-basis-action-server.ts';
 import { assignPrivacyResponsibilityActionApiLive } from './assign-privacy-responsibility-action-server.ts';
+import { bindPreVerificationSubjectActionApiLive } from './bind-pre-verification-subject-action-server.ts';
 import { consentSelfServiceActionApiLive } from './consent-self-service-action-server.ts';
 import { createDsrCaseActionApiLive } from './create-dsr-case-action-server.ts';
 import { createNoticeVersionActionApiLive } from './create-notice-version-action-server.ts';
@@ -71,6 +72,7 @@ import { organizationBusinessApplicabilityReadApiLive } from './organization-bus
 import { organizationIcoApplicabilityReadApiLive } from './organization-ico-applicability-read-server.ts';
 import { organizationProfileIcoApplicabilityReadApiLive } from './organization-profile-ico-applicability-read-server.ts';
 import { ownerInventoryReadApiLive } from './owner-inventory-read-server.ts';
+import { preVerificationEligibilityReadApiLive } from './pre-verification-eligibility-read-server.ts';
 import { privacySubjectsReadApiLive } from './privacy-subjects-read-server.ts';
 import { processingActivitiesReadApiLive } from './processing-activities-read-server.ts';
 import { processingEligibilityReadApiLive } from './processing-eligibility-read-server.ts';
@@ -101,6 +103,7 @@ import { updateDsrCaseActionApiLive } from './update-dsr-case-action-server.ts';
 import { upsertDsrOwnerTaskActionApiLive } from './upsert-dsr-owner-task-action-server.ts';
 import { upsertRetentionRuleActionApiLive } from './upsert-retention-rule-action-server.ts';
 import { upsertTemporaryDsrExportActionApiLive } from './upsert-temporary-dsr-export-action-server.ts';
+import { withdrawPreVerificationBindingActionApiLive } from './withdraw-pre-verification-binding-action-server.ts';
 // </generated-governed-http-handler-imports>
 
 import { privacyApi, privacyMarkerSchema, privacyOperationContexts } from '../shared/api.ts';
@@ -303,6 +306,7 @@ export const makePrivacyApiRuntime = (
     assignDsrResolverActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignLegalBasisActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignPrivacyResponsibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    bindPreVerificationSubjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     consentSelfServiceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createDsrCaseActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createNoticeVersionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -323,6 +327,7 @@ export const makePrivacyApiRuntime = (
     organizationIcoApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     organizationProfileIcoApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     ownerInventoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    preVerificationEligibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacySubjectsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     processingActivitiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     processingEligibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -353,6 +358,7 @@ export const makePrivacyApiRuntime = (
     upsertDsrOwnerTaskActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     upsertRetentionRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     upsertTemporaryDsrExportActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    withdrawPreVerificationBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // </generated-governed-http-handler-layers>
   ).pipe(
     Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),

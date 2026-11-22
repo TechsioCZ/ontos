@@ -1,5 +1,6 @@
 import { tenantLegalEntityRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   boolean,
   check,
@@ -7,6 +8,7 @@ import {
   index,
   integer,
   jsonb,
+  pgPolicy,
   pgSchema,
   text,
   timestamp,
@@ -43,6 +45,7 @@ export const PRIVACY_TABLE_INVENTORY = [
   'notice_versions',
   'owner_contributions',
   'owner_execution_outcomes',
+  'pre_verification_bindings',
   'privacy_measure_dispatches',
   'privacy_representations',
   'privacy_subjects',
@@ -104,6 +107,54 @@ export const privacySubjects = privacySchema.table.withRLS(
       sql`(${table.subjectKind} = 'SOURCE_ASSERTED') = (${table.sourceIdentityKey} is not null)`,
     ),
     ...tenantLegalEntityRlsPolicies('privacy_subjects_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/**
+ * Exact Tenant scope with an OPTIONAL Legal Entity: a row of no Legal Entity is visible only to a Tenant-wide operation,
+ * and a row of one Legal Entity only to an operation of that Legal Entity. Nothing widens across the two.
+ */
+const exactOptionalLegalEntityRlsPolicies = (
+  prefix: string,
+  tenantColumn: AnyPgColumn,
+  legalEntityColumn: AnyPgColumn,
+) => {
+  const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${legalEntityColumn} is not distinct from nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+  return [
+    pgPolicy(`${prefix}_select`, { for: 'select', to: 'ontos_runtime', using: predicate }),
+    pgPolicy(`${prefix}_insert`, { for: 'insert', to: 'ontos_runtime', withCheck: predicate }),
+    pgPolicy(`${prefix}_update`, { for: 'update', to: 'ontos_runtime', using: predicate, withCheck: predicate }),
+    pgPolicy(`${prefix}_delete`, { for: 'delete', to: 'ontos_runtime', using: predicate }),
+  ] as const;
+};
+
+/**
+ * Privacy subjects a source owner bound BEFORE it verified the person's address (#1406 D.8). One row per source account
+ * of a Tenant; it stores the source owner's own account reference and Privacy facts only, never an address or a secret.
+ */
+export const preVerificationBindings = privacySchema.table.withRLS(
+  'pre_verification_bindings',
+  {
+    bindingId: uuid('binding_id').primaryKey(),
+    bindingRecord: jsonb('binding_record').notNull(),
+    createdAt: recordedAt(),
+    legalEntityId: uuid('legal_entity_id'),
+    revision: integer('revision').notNull(),
+    sourceSubjectKey: text('source_subject_key').notNull(),
+    status: text('status').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('privacy_pre_verification_bindings_scope_id_uk').on(table.tenantId, table.bindingId),
+    unique('privacy_pre_verification_bindings_source_uk').on(table.tenantId, table.sourceSubjectKey),
+    check('privacy_pre_verification_bindings_status_ck', sql`${table.status} in ('ACTIVE', 'WITHDRAWN')`),
+    check('privacy_pre_verification_bindings_revision_ck', sql`${table.revision} >= 1`),
+    ...exactOptionalLegalEntityRlsPolicies(
+      'privacy_pre_verification_bindings_scope',
+      table.tenantId,
+      table.legalEntityId,
+    ),
   ],
 );
 
@@ -1406,6 +1457,7 @@ export const PRIVACY_TABLES = [
   noticeVersions,
   ownerExecutionOutcomes,
   ownerContributions,
+  preVerificationBindings,
   privacyMeasureDispatches,
   privacyRepresentations,
   privacySubjects,
@@ -1448,6 +1500,7 @@ const privacyDatabaseSchema = {
   noticeVersions,
   ownerContributions,
   ownerExecutionOutcomes,
+  preVerificationBindings,
   privacyMeasureDispatches,
   privacyRepresentations,
   privacySubjects,

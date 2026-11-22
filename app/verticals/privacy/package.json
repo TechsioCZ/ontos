@@ -7,6 +7,10 @@
     "./api/client": "./src/api/privacy-client.ts",
     "./api/source-processing-eligibility": "./shared/apis/source-processing-eligibility.ts",
     "./api/source-processing-eligibility/client": "./src/api/source-processing-eligibility-client.ts",
+    "./api/pre-verification-eligibility": "./shared/apis/pre-verification-eligibility.ts",
+    "./api/pre-verification-eligibility/client": "./src/api/pre-verification-eligibility-client.ts",
+    "./api/bind-pre-verification-subject-action": "./shared/apis/bind-pre-verification-subject-action.ts",
+    "./api/bind-pre-verification-subject-action/client": "./src/api/bind-pre-verification-subject-action-client.ts",
     "./api/measure-execution-eligibility": "./shared/apis/measure-execution-eligibility.ts",
     "./api/record-owner-execution-outcome-action": "./shared/apis/record-owner-execution-outcome-action.ts",
     "./api/organization-business-applicability": "./shared/apis/organization-business-applicability.ts",
@@ -61,7 +65,8 @@
     "./testing/organization-business-source-native": "./tests/support/organization-business-source-native.ts",
     "./testing/organization-business-profile-native": "./tests/support/organization-business-profile-native.ts",
     "./testing/organization-business-party-native": "./tests/support/organization-business-party-native.ts",
-    "./testing/measure-execution-native": "./tests/support/measure-execution-native.ts"
+    "./testing/measure-execution-native": "./tests/support/measure-execution-native.ts",
+    "./testing/pre-verification-binding-native": "./tests/support/pre-verification-binding-native.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical privacy --target dist && ultramodern-create ultramodern public-surface --app privacy --target dist && modern deploy --skip-build --deploy-target node",

@@ -12,19 +12,43 @@ import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { acknowledgePrivacyNoticeAction } from './src/actions/acknowledge-privacy-notice.action.ts';
 import { addProcessingPurposeVersionAction } from './src/actions/add-processing-purpose-version.action.ts';
+import { ApplicabilityDecisionsApi } from './shared/apis/applicability-decisions.ts';
 import { assignDsrResolverAction } from './src/actions/assign-dsr-resolver.action.ts';
 import { assignLegalBasisAction } from './src/actions/assign-legal-basis.action.ts';
 import { assignPrivacyResponsibilityAction } from './src/actions/assign-privacy-responsibility.action.ts';
+import { bindPreVerificationSubjectAction } from './src/actions/bind-pre-verification-subject.action.ts';
 import { consentSelfServiceAction } from './src/actions/consent-self-service.action.ts';
 import { createDsrCaseAction } from './src/actions/create-dsr-case.action.ts';
 import { createNoticeVersionAction } from './src/actions/create-notice-version.action.ts';
 import { createPrivacySubjectAction } from './src/actions/create-privacy-subject.action.ts';
 import { createProcessingActivityAction } from './src/actions/create-processing-activity.action.ts';
 import { createProcessingPurposeAction } from './src/actions/create-processing-purpose.action.ts';
+import { CurrentConsentApi } from './shared/apis/current-consent.ts';
 import { dispatchPrivacyMeasureAction } from './src/actions/dispatch-privacy-measure.action.ts';
+import { DsrCasesApi } from './shared/apis/dsr-cases.ts';
 import { enqueueRetentionEvaluationAction } from './src/actions/enqueue-retention-evaluation.action.ts';
 import { evaluateProcessingEligibilityAction } from './src/actions/evaluate-processing-eligibility.action.ts';
 import { issueDsrDeliveryAccessAction } from './src/actions/issue-dsr-delivery-access.action.ts';
+import { LegalBasisAssignmentsApi } from './shared/apis/legal-basis-assignments.ts';
+import { MeasureExecutionEligibilityApi } from './shared/apis/measure-execution-eligibility.ts';
+import { measureExecutionEligibilityRead } from './src/api/measure-execution-eligibility.read.ts';
+import { NoticePresentationApi } from './shared/apis/notice-presentation.ts';
+import { NoticeVersionsApi } from './shared/apis/notice-versions.ts';
+import { OrganizationBusinessApplicabilityApi } from './shared/apis/organization-business-applicability.ts';
+import { organizationBusinessApplicabilityRead } from './src/api/organization-business-applicability.read.ts';
+import { OrganizationIcoApplicabilityApi } from './shared/apis/organization-ico-applicability.ts';
+import { organizationIcoApplicabilityRead } from './src/api/organization-ico-applicability.read.ts';
+import { OrganizationProfileIcoApplicabilityApi } from './shared/apis/organization-profile-ico-applicability.ts';
+import { organizationProfileIcoApplicabilityRead } from './src/api/organization-profile-ico-applicability.read.ts';
+import { OwnerInventoryApi } from './shared/apis/owner-inventory.ts';
+import { ownerInventoryRead } from './src/api/owner-inventory.read.ts';
+import { PreVerificationEligibilityApi } from './shared/apis/pre-verification-eligibility.ts';
+import { preVerificationEligibilityRead } from './src/api/pre-verification-eligibility.read.ts';
+import { PrivacySubjectsApi } from './shared/apis/privacy-subjects.ts';
+import { privacySubjectsRead } from './src/api/privacy-subjects.read.ts';
+import { ProcessingActivitiesApi } from './shared/apis/processing-activities.ts';
+import { ProcessingEligibilityApi } from './shared/apis/processing-eligibility.ts';
+import { ProcessingPurposesApi } from './shared/apis/processing-purposes.ts';
 import { recordAntiResurrectionProtectionAction } from './src/actions/record-anti-resurrection-protection.action.ts';
 import { recordApplicabilityPolicyAction } from './src/actions/record-applicability-policy.action.ts';
 import { recordConsentDecisionAction } from './src/actions/record-consent-decision.action.ts';
@@ -39,41 +63,21 @@ import { recordLegalHoldAction } from './src/actions/record-legal-hold.action.ts
 import { recordNoticeProvisionAction } from './src/actions/record-notice-provision.action.ts';
 import { recordOwnerContributionAction } from './src/actions/record-owner-contribution.action.ts';
 import { recordOwnerExecutionOutcomeAction } from './src/actions/record-owner-execution-outcome.action.ts';
+import { RecordOwnerExecutionOutcomeActionApi } from './shared/apis/record-owner-execution-outcome-action.ts';
 import { recordPrivacyApplicabilityAction } from './src/actions/record-privacy-applicability.action.ts';
 import { recordPrivacyRepresentationAction } from './src/actions/record-privacy-representation.action.ts';
 import { recordProcessingInterventionAction } from './src/actions/record-processing-intervention.action.ts';
 import { recordRetentionExceptionAction } from './src/actions/record-retention-exception.action.ts';
+import { ResponsibilityAssignmentsApi } from './shared/apis/responsibility-assignments.ts';
+import { RetentionRulesApi } from './shared/apis/retention-rules.ts';
+import { SourceProcessingEligibilityApi } from './shared/apis/source-processing-eligibility.ts';
+import { sourceProcessingEligibilityRead } from './src/api/source-processing-eligibility.read.ts';
 import { transitionProcessingActivityAction } from './src/actions/transition-processing-activity.action.ts';
 import { updateDsrCaseAction } from './src/actions/update-dsr-case.action.ts';
 import { upsertDsrOwnerTaskAction } from './src/actions/upsert-dsr-owner-task.action.ts';
 import { upsertRetentionRuleAction } from './src/actions/upsert-retention-rule.action.ts';
 import { upsertTemporaryDsrExportAction } from './src/actions/upsert-temporary-dsr-export.action.ts';
-import { ApplicabilityDecisionsApi } from './shared/apis/applicability-decisions.ts';
-import { CurrentConsentApi } from './shared/apis/current-consent.ts';
-import { DsrCasesApi } from './shared/apis/dsr-cases.ts';
-import { LegalBasisAssignmentsApi } from './shared/apis/legal-basis-assignments.ts';
-import { NoticePresentationApi } from './shared/apis/notice-presentation.ts';
-import { NoticeVersionsApi } from './shared/apis/notice-versions.ts';
-import { OwnerInventoryApi } from './shared/apis/owner-inventory.ts';
-import { ownerInventoryRead } from './src/api/owner-inventory.read.ts';
-import { PrivacySubjectsApi } from './shared/apis/privacy-subjects.ts';
-import { ProcessingActivitiesApi } from './shared/apis/processing-activities.ts';
-import { ProcessingEligibilityApi } from './shared/apis/processing-eligibility.ts';
-import { ProcessingPurposesApi } from './shared/apis/processing-purposes.ts';
-import { RecordOwnerExecutionOutcomeActionApi } from './shared/apis/record-owner-execution-outcome-action.ts';
-import { ResponsibilityAssignmentsApi } from './shared/apis/responsibility-assignments.ts';
-import { RetentionRulesApi } from './shared/apis/retention-rules.ts';
-import { MeasureExecutionEligibilityApi } from './shared/apis/measure-execution-eligibility.ts';
-import { measureExecutionEligibilityRead } from './src/api/measure-execution-eligibility.read.ts';
-import { OrganizationBusinessApplicabilityApi } from './shared/apis/organization-business-applicability.ts';
-import { organizationBusinessApplicabilityRead } from './src/api/organization-business-applicability.read.ts';
-import { OrganizationIcoApplicabilityApi } from './shared/apis/organization-ico-applicability.ts';
-import { organizationIcoApplicabilityRead } from './src/api/organization-ico-applicability.read.ts';
-import { OrganizationProfileIcoApplicabilityApi } from './shared/apis/organization-profile-ico-applicability.ts';
-import { organizationProfileIcoApplicabilityRead } from './src/api/organization-profile-ico-applicability.read.ts';
-import { privacySubjectsRead } from './src/api/privacy-subjects.read.ts';
-import { SourceProcessingEligibilityApi } from './shared/apis/source-processing-eligibility.ts';
-import { sourceProcessingEligibilityRead } from './src/api/source-processing-eligibility.read.ts';
+import { withdrawPreVerificationBindingAction } from './src/actions/withdraw-pre-verification-binding.action.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
 import { privacyMeasureDispatchWorker } from './src/workers/privacy-measure-dispatch.worker.ts';
@@ -119,6 +123,7 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       assignDsrResolverAction,
       assignLegalBasisAction,
       assignPrivacyResponsibilityAction,
+      bindPreVerificationSubjectAction,
       consentSelfServiceAction,
       createDsrCaseAction,
       createNoticeVersionAction,
@@ -152,6 +157,7 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       upsertDsrOwnerTaskAction,
       upsertRetentionRuleAction,
       upsertTemporaryDsrExportAction,
+      withdrawPreVerificationBindingAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -167,6 +173,7 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'organization-ico-applicability': OrganizationIcoApplicabilityApi,
       'organization-profile-ico-applicability': OrganizationProfileIcoApplicabilityApi,
       'owner-inventory': OwnerInventoryApi,
+      'pre-verification-eligibility': PreVerificationEligibilityApi,
       'privacy-subjects': PrivacySubjectsApi,
       'processing-activities': ProcessingActivitiesApi,
       'processing-eligibility': ProcessingEligibilityApi,
@@ -189,7 +196,6 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         operationKey: 'organizationBusinessApplicability.execute',
         registration: organizationBusinessApplicabilityRead,
       },
-      { apiKey: 'owner-inventory', operationKey: 'ownerInventory.execute', registration: ownerInventoryRead },
       {
         apiKey: 'organization-ico-applicability',
         operationKey: 'organizationIcoApplicability.execute',
@@ -199,6 +205,12 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         apiKey: 'organization-profile-ico-applicability',
         operationKey: 'organizationProfileIcoApplicability.execute',
         registration: organizationProfileIcoApplicabilityRead,
+      },
+      { apiKey: 'owner-inventory', operationKey: 'ownerInventory.execute', registration: ownerInventoryRead },
+      {
+        apiKey: 'pre-verification-eligibility',
+        operationKey: 'preVerificationEligibility.execute',
+        registration: preVerificationEligibilityRead,
       },
       {
         apiKey: 'record-owner-execution-outcome-action',
@@ -493,6 +505,7 @@ export const privacyRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     organizationIcoApplicabilityRead,
     organizationProfileIcoApplicabilityRead,
     ownerInventoryRead,
+    preVerificationEligibilityRead,
     privacySubjectsRead,
     sourceProcessingEligibilityRead,
     // </generated-module-registration-reads>

@@ -23,6 +23,7 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'organization-profile-ico-applicability': () =>
         import('./src/api/organization-profile-ico-applicability-client.ts'),
       'owner-inventory': () => import('./src/api/owner-inventory-client.ts'),
+      'pre-verification-eligibility': () => import('./src/api/pre-verification-eligibility-client.ts'),
       'privacy-subjects': () => import('./src/api/privacy-subjects-client.ts'),
       'processing-activities': () => import('./src/api/processing-activities-client.ts'),
       'processing-eligibility': () => import('./src/api/processing-eligibility-client.ts'),

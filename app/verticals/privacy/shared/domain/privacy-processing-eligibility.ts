@@ -711,7 +711,8 @@ export const resolvePrivacyEligibilityInputs = (
 export const isReliableCurrentPrivacyInput = (resolution: PrivacyInputResolution): boolean =>
   resolution.state === 'CURRENT';
 
-const consentIsRequired = (basisRef: string): boolean =>
+/** Whether a legal basis reference needs a Current Consent before processing may be ALLOWED. */
+export const consentIsRequired = (basisRef: string): boolean =>
   basisRef === 'legal-basis:consent' || basisRef.endsWith(':consent');
 
 const reliableConsentBlocker = (
