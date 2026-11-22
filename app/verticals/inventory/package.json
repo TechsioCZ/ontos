@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./actions/define-source-provisioning-policy": "./shared/actions/define-source-provisioning-policy.ts",
+    "./actions/provision-source-stock-item": "./shared/actions/provision-source-stock-item.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/inventory-client.ts",
+    "./api/source-stock-item-provisioning-receipt": "./shared/apis/source-stock-item-provisioning-receipt.ts",
+    "./api/source-stock-position-resolution": "./shared/apis/source-stock-position-resolution.ts",
     "./backend-configuration": "./shared/domain/inventory-backend-configuration.ts",
     "./launch-scope": "./shared/inventory-launch-scope.ts",
     "./outbox/commerce-inventory-commitment-protection-changed-v1": "./shared/outbox/commerce-inventory-commitment-protection-changed-v1.ts",
@@ -53,6 +57,7 @@
     "./source-import": "./shared/actions/import-source-assertion.ts",
     "./source-assertion": "./shared/domain/inventory-source-assertion.ts",
     "./source-import-outcome": "./shared/domain/inventory-source-import-outcome.ts",
+    "./source-provisioning": "./shared/domain/source-provisioning.ts",
     "./api/inventory-source-import-receipt": "./shared/apis/inventory-source-import-receipt.ts",
     "./testing/c14-source-import-native": "./tests/support/c14-source-import-native.ts"
   },
