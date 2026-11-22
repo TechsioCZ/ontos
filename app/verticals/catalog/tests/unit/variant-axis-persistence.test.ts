@@ -819,6 +819,7 @@ describe('Variant Axis governed write', () => {
         // @ts-expect-error Focused Drizzle transaction mock.
         transactionWith(
           new Map<AxisTable, readonly object[]>([
+            [products, [{ lifecycleState: 'DRAFT', productId }]],
             [productVariantAxisEvents, []],
             [productVariantAxes, []],
             [productTypeAssignments, []],
@@ -844,6 +845,68 @@ describe('Variant Axis governed write', () => {
         values: expect.objectContaining({ attributeDefinitionIds: [], axisRevision: 1 }),
       });
       return yield* Effect.void;
+    }),
+  );
+
+  it.effect('refuses initialization of a non-DRAFT Product even when its axis basis is empty', () =>
+    Effect.gen(function* initializationRequiresDraft() {
+      for (const lifecycleState of ['ACTIVE', 'RETIRED'] as const) {
+        const writes: object[] = [];
+        const persistence = variantAxisPersistenceForScope(
+          // @ts-expect-error Focused Drizzle transaction mock.
+          transactionWith(
+            new Map<AxisTable, readonly object[]>([
+              [products, [{ lifecycleState, productId }]],
+              [productVariantAxisEvents, []],
+              [productVariantAxes, []],
+              [productTypeAssignments, []],
+              [productVariants, []],
+            ]),
+            writes,
+          ),
+          scope,
+        );
+        const failure = yield* persistence
+          .govern({
+            ...input,
+            axes: [],
+            change: { ...input.change, kind: 'AXIS_INITIALIZATION' },
+            expectedAxisRevision: 0,
+          })
+          .pipe(Effect.flip);
+        expect(failure).toMatchObject({ conflict: 'INVALID_INPUT' });
+        expect(writes).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect('refuses initialization when a DRAFT Product already carries an active combination', () =>
+    Effect.gen(function* initializationCannotRebaseActiveVariant() {
+      const writes: object[] = [];
+      const persistence = variantAxisPersistenceForScope(
+        // @ts-expect-error Focused Drizzle transaction mock.
+        transactionWith(
+          new Map<AxisTable, readonly object[]>([
+            [products, [{ lifecycleState: 'DRAFT', productId }]],
+            [productVariantAxisEvents, []],
+            [productVariantAxes, []],
+            [productTypeAssignments, []],
+            [productVariants, [{ combinationAxisRevision: null, lifecycleState: 'ACTIVE', variantId }]],
+          ]),
+          writes,
+        ),
+        scope,
+      );
+      const failure = yield* persistence
+        .govern({
+          ...input,
+          axes: [],
+          change: { ...input.change, kind: 'AXIS_INITIALIZATION' },
+          expectedAxisRevision: 0,
+        })
+        .pipe(Effect.flip);
+      expect(failure).toMatchObject({ conflict: 'REVISION' });
+      expect(writes).toEqual([]);
     }),
   );
 
