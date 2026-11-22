@@ -21,6 +21,7 @@ import { makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
 import {
+  Cause,
   Config,
   DateTime,
   Duration,
@@ -165,6 +166,66 @@ const readOwnerLostAckWitness = (
         }),
     }),
   );
+
+const preserveProvisioningWitnessDiagnostics = Effect.fn('InternalC14Sync.provisioningWitnessDiagnostics')(
+  function* provisioningWitnessDiagnostics(input: {
+    readonly admin: Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>['admin'];
+    readonly jobId: string;
+    readonly key: string;
+    readonly ownerDiagnostics: readonly Effect.Effect<string>[];
+    readonly tenantId: string;
+    readonly workerDiagnostic: Effect.Effect<string>;
+  }) {
+    const { admin, jobId, key, ownerDiagnostics, tenantId, workerDiagnostic } = input;
+    const fs = yield* FileSystem.FileSystem;
+    // This existing artifact glob survives fixture cleanup; the path is unique to this admitted job.
+    const diagnosticFile = `/tmp/commerce-org-http-symmy-c14-${jobId}-provisioning-witness.diag.log`;
+    const logs = yield* Effect.all([
+      ...ownerDiagnostics,
+      workerDiagnostic.pipe(Effect.map((output) => `[worker]\n${output}`)),
+    ]);
+    const header = JSON.stringify({ jobId, key, stage: 'provisioning-witness-not-observed', tenantId });
+    const logText = `${header}\n\n${logs.join('\n\n')}`;
+    const persist = (text: string) =>
+      fs.writeFileString(diagnosticFile, text).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError('Could not persist provisioning witness diagnostics', {
+            cause: Cause.pretty(cause),
+            diagnosticFile,
+            jobId,
+          }),
+        ),
+      );
+    yield* Effect.logError('Provisioning witness failure native logs', { diagnosticFile, jobId, logs });
+    // Save logs first: a failed or blocked diagnostic query must not lose the native process evidence.
+    yield* persist(logText);
+    const effects = yield* admin`
+      select e.effect_id, e.effect_key, e.state, e.version, e.owner_invocation_id,
+        e.owner_executor_principal_id, e.outcome, e.owner_receipt, e.effect, e.resolved_effect,
+        i.action_key as owner_action_key, i.status as owner_invocation_status, j.phase as job_phase
+      from symmy_integration.job_effects e
+      join symmy_integration.import_jobs j on j.tenant_id=e.tenant_id and j.job_id=e.job_id
+      left join core.action_invocations i
+        on i.tenant_id=e.tenant_id and i.action_invocation_id=e.owner_invocation_id
+      where e.tenant_id=${tenantId} and e.job_id=${jobId}
+      order by e.item_id,e.effect_key
+    `.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Json))),
+      Effect.timeout(Duration.seconds(5)),
+      Effect.matchCause({
+        onFailure: (cause) => ({ diagnosticQueryFailure: Cause.pretty(cause) }),
+        onSuccess: (rows) => ({ effects: rows }),
+      }),
+    );
+    const effectsText = JSON.stringify(effects, null, 2);
+    yield* persist(`${logText}\n\n[current-effects-after-witness-failure]\n${effectsText}\n`);
+    yield* Effect.logError('Provisioning witness failure current effects', {
+      diagnosticFile,
+      effects: effectsText,
+      jobId,
+    });
+  },
+);
 
 it.live(
   'INTERNAL_C14 two unseen SKUs receive product, base/list prices and stock under fixed source policies; registered workers and synchronous routes recover native receipts',
@@ -425,7 +486,7 @@ it.live(
             port,
             prefix,
           });
-          ownerDiagnostics.push(running.diagnostic);
+          ownerDiagnostics.push(running.diagnostic.pipe(Effect.map((output) => `[owner:${appId}]\n${output}`)));
           ownerOutput.set(appId, running.output);
         }
         // The Shell reads each code's current definition as the API-key integration principal before it admits.
@@ -659,7 +720,18 @@ it.live(
             ? Effect.gen(function* restartAfterLostAck() {
                 const output = ownerOutput.get('inventory');
                 assert.isDefined(output);
-                const lostProvisioning = yield* readOwnerLostAckWitness(output, 'inventory', Duration.seconds(30));
+                const lostProvisioning = yield* readOwnerLostAckWitness(output, 'inventory', Duration.seconds(30)).pipe(
+                  Effect.tapError(() =>
+                    preserveProvisioningWitnessDiagnostics({
+                      admin,
+                      jobId,
+                      key,
+                      ownerDiagnostics,
+                      tenantId,
+                      workerDiagnostic: worker.diagnostic,
+                    }),
+                  ),
+                );
                 expect(lostProvisioning.path.endsWith('/actions/provision-source-stock-item')).toBe(true);
                 yield* worker.child.kill();
                 yield* worker.child.exitCode.pipe(Effect.timeout(Duration.seconds(20)));
