@@ -20,6 +20,21 @@ import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from 
 import { AssetMetadataRequestSchema, AssetMetadataResponseSchema } from './core-reads/asset-metadata.ts';
 // @ontos-codesmith-core-read-contract-imports:end
 
+// @ontos-codesmith-core-action-contract-imports:start
+
+// @ontos-core-action rename-display-filename
+import {
+  RenameDisplayFilenameRequestSchema,
+  RenameDisplayFilenameResultSchema,
+} from './core-actions/rename-display-filename.ts';
+
+// @ontos-core-action confirm-asset
+import { ConfirmAssetRequestSchema, ConfirmAssetResultSchema } from './core-actions/confirm-asset.ts';
+
+// @ontos-core-action upload-asset
+import { UploadAssetRequestSchema, UploadAssetResultSchema } from './core-actions/upload-asset.ts';
+// @ontos-codesmith-core-action-contract-imports:end
+
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
 export type SafeAuthenticatedIdentity = typeof SafeAuthenticatedIdentitySchema.Type;
 export type LegalEntityChoice = typeof LegalEntityChoiceSchema.Type;
@@ -927,6 +942,45 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
     ),
   )
   // @ontos-codesmith-core-read-api-groups:end
+
+  // @ontos-codesmith-core-action-api-groups:start
+
+  // @ontos-core-action rename-display-filename
+  .add(
+    HttpApiGroup.make('coreActionRenameDisplayFilename').add(
+      HttpApiEndpoint.post('executeRenameDisplayFilename', '/core/actions/rename-display-filename', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: RenameDisplayFilenameRequestSchema,
+        success: RenameDisplayFilenameResultSchema,
+      }),
+    ),
+  )
+
+  // @ontos-core-action confirm-asset
+  .add(
+    HttpApiGroup.make('coreActionConfirmAsset').add(
+      HttpApiEndpoint.post('executeConfirmAsset', '/core/actions/confirm-asset', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: ConfirmAssetRequestSchema,
+        success: ConfirmAssetResultSchema,
+      }),
+    ),
+  )
+
+  // @ontos-core-action upload-asset
+  .add(
+    HttpApiGroup.make('coreActionUploadAsset').add(
+      HttpApiEndpoint.post('executeUploadAsset', '/core/actions/upload-asset', {
+        error: identityErrors,
+        headers: IdentityRequestHeadersSchema,
+        payload: UploadAssetRequestSchema,
+        success: UploadAssetResultSchema,
+      }),
+    ),
+  )
+  // @ontos-codesmith-core-action-api-groups:end
 
   // Core Media byte delivery (#1443, #1436): a hand-written streaming edge. Its success body is the exact verified
   // bytes of one asset; it carries no storage value, takes only the asset id and runs its own governed
