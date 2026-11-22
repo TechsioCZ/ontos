@@ -134,29 +134,17 @@ export const PriceSourceLineageSchema = Schema.Union([
 ]);
 export type PriceSourceLineage = typeof PriceSourceLineageSchema.Type;
 
-// Recorded references are opaque facts, including literals accepted by the original write contract.
-// New writes still require exact references; immutable evidence is never rewritten to fit them.
-const recordedSourceAuthority = Schema.Struct({
-  sourceAuthorityRef: stableReference,
-  sourceAuthorityVersion: stableReference,
-});
-const recordedSourceAssertion = Schema.Struct({
+export const PriceSourceAssertionInputSchema = Schema.Struct({
   lineage: PriceSourceAssertionLineageSchema,
-  mapping: Schema.Struct({
-    mappingContractRef: stableReference,
-    mappingContractVersion: stableReference,
-  }),
+  mapping: PriceSourceMappingSchema,
   originalAssertion: PriceSourceOriginalAssertionSchema,
-  preTaxNormalization: Schema.optionalKey(
-    Schema.Struct({ ...PriceSourcePreTaxNormalizationSchema.fields, authority: recordedSourceAuthority }),
-  ),
+  preTaxNormalization: Schema.optionalKey(PriceSourcePreTaxNormalizationSchema),
   sourceAssertionId: PriceSourceAssertionIdSchema,
-  sourceAuthority: recordedSourceAuthority,
+  sourceAuthority: PriceSourceAuthoritySchema,
   sourceRecord: PriceSourceRecordSchema,
   timing: PriceSourceAssertionTimingSchema,
-});
-const distinctSourceAssertionPredecessor = Schema.makeFilter(
-  ({ lineage, sourceAssertionId }: typeof recordedSourceAssertion.Type) => {
+}).check(
+  Schema.makeFilter(({ lineage, sourceAssertionId }) => {
     if (lineage.kind === 'INITIAL') {
       return [];
     }
@@ -165,15 +153,8 @@ const distinctSourceAssertionPredecessor = Schema.makeFilter(
     return sourceAssertionIdEquivalence(sourceAssertionId, predecessorId)
       ? 'Source correction or supersession cannot refer to itself'
       : undefined;
-  },
+  }),
 );
-const recordedSourceAssertionSchema = recordedSourceAssertion.check(distinctSourceAssertionPredecessor);
-export const PriceSourceAssertionInputSchema = Schema.Struct({
-  ...recordedSourceAssertion.fields,
-  mapping: PriceSourceMappingSchema,
-  preTaxNormalization: Schema.optionalKey(PriceSourcePreTaxNormalizationSchema),
-  sourceAuthority: PriceSourceAuthoritySchema,
-}).check(distinctSourceAssertionPredecessor);
 export type PriceSourceAssertionInput = typeof PriceSourceAssertionInputSchema.Type;
 
 /**
@@ -215,7 +196,7 @@ export const priceSourceFactFingerprintBasisFrom = (
 export const PriceSourceEvidenceSchema = Schema.Struct({
   lineage: PriceSourceLineageSchema,
   recordedAt: PricingInstantSchema,
-  sourceAssertion: recordedSourceAssertionSchema,
+  sourceAssertion: PriceSourceAssertionInputSchema,
   sourceFactFingerprint: PriceSourceFactFingerprintSchema,
   tenantId: PriceTenantIdSchema,
 }).check(
