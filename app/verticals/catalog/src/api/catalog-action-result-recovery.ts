@@ -2,7 +2,7 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { ActionRuntime } from '@app/core-runtime';
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { and, eq } from 'drizzle-orm';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import { catalogResultSnapshots } from '../database/schema.ts';
 import type {
@@ -10,12 +10,12 @@ import type {
   CatalogActionResultIdentity,
 } from '../persistence/catalog-action-result-snapshot.ts';
 import {
-  catalogActionResultSnapshotForScope,
   catalogRecoveryIdentityMatchesScope,
   validCatalogActionResultIdentity,
 } from '../persistence/catalog-action-result-snapshot.ts';
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
+const isResultObject = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
 
 export type CatalogActionRecovery<Result> =
   | { readonly result: Result; readonly status: 'committed' }
@@ -24,6 +24,18 @@ export type CatalogActionRecovery<Result> =
   | { readonly status: 'absent' }
   | { readonly status: 'indeterminate' }
   | { readonly status: 'unavailable' };
+
+/** Classify the stored encoding before decoding; a malformed present disposition is never historical. */
+export const catalogActionRecoveryReceiptDecoder = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+): Pick<CatalogActionResultCodec<S['Type']>, 'decode'> => ({
+  decode: (encoded) =>
+    Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })(
+      Object.hasOwn(encoded, 'changed')
+        ? { _tag: 'CurrentReceipt', result: encoded }
+        : { _tag: 'HistoricalReceipt', executionProof: 'NOT_RECORDED', original: encoded },
+    ),
+});
 
 /**
  * Recover the current snapshot version first, then older compatible result encodings. An
@@ -51,7 +63,7 @@ export const recoverCatalogActionResult = Effect.fn('CatalogActionResultRecovery
   transaction: ScopedTransaction,
   scope: OperationalScope,
   identity: CatalogActionResultIdentity,
-  codec: CatalogActionResultCodec<Result>,
+  codec: Pick<CatalogActionResultCodec<Result>, 'decode'>,
 ) {
   if (!validCatalogActionResultIdentity(identity) || !catalogRecoveryIdentityMatchesScope(scope, identity)) {
     return { status: 'absent' } as const;
@@ -102,6 +114,9 @@ export const recoverCatalogActionResult = Effect.fn('CatalogActionResultRecovery
   if (row === null || row === undefined) {
     return { status: 'unavailable' } as const;
   }
+  if (row.tenantId !== scope.tenantId || row.actionInvocationId !== identity.actionInvocationId) {
+    return { status: 'unavailable' } as const;
+  }
   const expectedPrincipalId = readVerifiedGatewayRecovery(scope)?.originalPrincipalId ?? scope.principalId;
   if (row.actingPrincipalId !== expectedPrincipalId || row.actionKey !== identity.actionKey) {
     return { status: 'absent' } as const;
@@ -109,12 +124,13 @@ export const recoverCatalogActionResult = Effect.fn('CatalogActionResultRecovery
   if (row.schemaVersion !== identity.schemaVersion) {
     return { status: 'unavailable' } as const;
   }
+  if (!isResultObject(row.encodedResult)) {
+    return { status: 'unavailable' } as const;
+  }
 
-  const result = yield* catalogActionResultSnapshotForScope(transaction, scope, codec)
-    .read(identity)
-    .pipe(
-      Effect.map((value) => ({ result: value, status: 'committed' }) as const),
-      Effect.orElseSucceed(() => ({ status: 'unavailable' }) as const),
-    );
+  const result = yield* codec.decode(row.encodedResult).pipe(
+    Effect.map((value) => ({ result: value, status: 'committed' }) as const),
+    Effect.orElseSucceed(() => ({ status: 'unavailable' }) as const),
+  );
   return result;
 });

@@ -6,14 +6,13 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   DecideProductTypeUnnecessaryRecoveryRequestSchema,
   DecideProductTypeUnnecessaryRecoveryResponseSchema,
 } from '../../shared/apis/decide-product-type-unnecessary-recovery.ts';
 import type { DecideProductTypeUnnecessaryRecoveryRequest } from '../../shared/apis/decide-product-type-unnecessary-recovery.ts';
-import { DecideProductTypeUnnecessaryResultSchema } from '../../shared/actions/decide-product-type-unnecessary.ts';
-import { recoverCatalogActionResult } from './catalog-action-result-recovery.ts';
+import { catalogActionRecoveryReceiptDecoder, recoverCatalogActionResult } from './catalog-action-result-recovery.ts';
 
 interface RecoveryService {
   readonly recover: (invocationId: string) => ReturnType<typeof recoverResult>;
@@ -43,10 +42,7 @@ const recoverResult = (
       actionKey: 'commerce.catalog.decide-product-type-unnecessary',
       schemaVersion: 1,
     },
-    {
-      decode: Schema.decodeUnknownEffect(DecideProductTypeUnnecessaryResultSchema),
-      encode: Schema.encodeEffect(DecideProductTypeUnnecessaryResultSchema),
-    },
+    catalogActionRecoveryReceiptDecoder(DecideProductTypeUnnecessaryRecoveryResponseSchema),
   );
 
 const recoverDecideProductTypeUnnecessary = Effect.fn('DecideProductTypeUnnecessaryRecoveryRead.recover')(

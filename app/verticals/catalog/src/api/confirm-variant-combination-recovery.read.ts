@@ -6,14 +6,13 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   ConfirmVariantCombinationRecoveryRequestSchema,
   ConfirmVariantCombinationRecoveryResponseSchema,
 } from '../../shared/apis/confirm-variant-combination-recovery.ts';
 import type { ConfirmVariantCombinationRecoveryRequest } from '../../shared/apis/confirm-variant-combination-recovery.ts';
-import { ConfirmVariantCombinationResultSchema } from '../../shared/actions/confirm-variant-combination.ts';
-import { recoverCatalogActionResult } from './catalog-action-result-recovery.ts';
+import { catalogActionRecoveryReceiptDecoder, recoverCatalogActionResult } from './catalog-action-result-recovery.ts';
 
 interface RecoveryService {
   readonly recover: (invocationId: string) => ReturnType<typeof recoverResult>;
@@ -43,10 +42,7 @@ const recoverResult = (
       actionKey: 'commerce.catalog.confirm-variant-combination',
       schemaVersion: 1,
     },
-    {
-      decode: Schema.decodeUnknownEffect(ConfirmVariantCombinationResultSchema),
-      encode: Schema.encodeEffect(ConfirmVariantCombinationResultSchema),
-    },
+    catalogActionRecoveryReceiptDecoder(ConfirmVariantCombinationRecoveryResponseSchema),
   );
 
 const recoverConfirmVariantCombination = Effect.fn('ConfirmVariantCombinationRecoveryRead.recover')(function* recover(

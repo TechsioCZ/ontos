@@ -13,7 +13,7 @@ import { DefinePriceResultSchema } from '@app/pricing/actions/define-price';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Array as EffectArray, ConfigProvider, Effect, Exit, Match, Option, Schema } from 'effect';
+import { Array as EffectArray, ConfigProvider, Effect, Exit, Match, Option, Schema, Struct } from 'effect';
 import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
@@ -688,9 +688,22 @@ const inventoryProvisioningMock = (request: Request) => {
   return Option.none();
 };
 
-const readinessMock = (request: Request, selected?: { readonly action: string; readonly response: object }) => {
+interface ReadinessWire {
+  readonly action: string;
+  readonly recoveryResponse?: object;
+  readonly response: object;
+}
+
+const readinessMock = (request: Request, selected?: ReadinessWire) => {
   if (selected !== undefined && request.url.includes(selected.action)) {
-    return Option.some({ event: 'owner-readiness', response: Promise.resolve(Response.json(selected.response)) });
+    return Option.some({
+      event: 'owner-readiness',
+      response: Promise.resolve(
+        Response.json(
+          request.url.includes('/reads/') ? (selected.recoveryResponse ?? selected.response) : selected.response,
+        ),
+      ),
+    });
   }
   return request.url.includes('/actions/govern-variant-axes') ||
     request.url.includes('/reads/govern-variant-axes-recovery')
@@ -715,7 +728,7 @@ const harness = (
   variantBindingReceipt?: { readonly changed?: boolean },
   definitionGroup = priceGroupA,
   reviseProblem?: ReviseProblem,
-  readinessWire?: { readonly action: string; readonly response: object },
+  readinessWire?: ReadinessWire,
 ) => {
   const requests: Request[] = [];
   const events: string[] = [];
@@ -2728,7 +2741,7 @@ describe('Symmy Product readiness', () => {
     );
   });
 
-  it.effect('preserves owner change disposition on dispatch and lost-ack recovery for each readiness decision', () =>
+  it.effect('preserves current readiness disposition and keeps historical recovery unresolved', () =>
     Effect.gen(function* ownerDispositions() {
       const parent = {
         ...parentState,
@@ -2823,6 +2836,7 @@ describe('Symmy Product readiness', () => {
             undefined,
             {
               action,
+              recoveryResponse: { _tag: 'CurrentReceipt', result: response },
               response,
             },
           );
@@ -2861,6 +2875,58 @@ describe('Symmy Product readiness', () => {
                 status: 'settled',
               });
               expect(h.events.filter((event) => event === 'owner-readiness')).toHaveLength(2);
+              const { changed: _changed, ...withoutDisposition } = response;
+              const historicalResult =
+                'variantRevision' in withoutDisposition
+                  ? Struct.omit(withoutDisposition, ['variantRevision'])
+                  : withoutDisposition;
+              const historical = harness(
+                false,
+                resolved,
+                productId,
+                priceGroupA,
+                false,
+                undefined,
+                undefined,
+                undefined,
+                priceGroupA,
+                undefined,
+                {
+                  action,
+                  response: {
+                    _tag: 'HistoricalReceipt',
+                    executionProof: 'NOT_RECORDED',
+                    original: historicalResult,
+                  },
+                },
+              );
+              yield* historical.provide(
+                Effect.gen(function* historicalRecovery() {
+                  const historicalAdapter = yield* historical.adapter;
+                  const historicalProof = yield* originalProof({
+                    ...historical.input,
+                    acceptedPlan,
+                    dependencies,
+                    effect: resolved,
+                  });
+                  for (const canExecuteNewEffects of [false, true]) {
+                    const recoveredHistorical = yield* historicalAdapter.recover({
+                      ...historicalProof,
+                      canExecuteNewEffects,
+                      originalInvocationId: invocationId,
+                    });
+                    expect(recoveredHistorical).toMatchObject({
+                      outcome: { status: 'unresolved' },
+                      status: 'settled',
+                    });
+                  }
+                  expect(historical.events).toEqual(['owner-readiness', 'owner-readiness']);
+                  expect(historical.requests.filter((request) => request.url.includes('/reads/'))).toHaveLength(2);
+                  expect(historical.requests.some((request) => request.url.includes('/actions/'))).toBe(false);
+                  expect(historical.receipts).toEqual([]);
+                  expect(historical.resolvedEffects).toEqual([]);
+                }),
+              );
             }),
           );
         }

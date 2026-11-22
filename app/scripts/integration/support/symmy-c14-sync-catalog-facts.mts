@@ -1,11 +1,11 @@
 import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-action';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
 import { GovernVariantAxesRecoveryResponseSchema } from '@app/catalog/api/govern-variant-axes-recovery';
-import { ConfirmVariantCombinationRecoveryResponseSchema } from '@app/catalog/api/confirm-variant-combination-recovery';
+import { ConfirmVariantCombinationResultSchema } from '@app/catalog/api/confirm-variant-combination-recovery';
 import { SetProductLocalizedFactsRecoveryResponseSchema } from '@app/catalog/api/set-product-localized-facts-recovery';
 import { UpdateProductRecoveryResponseSchema } from '@app/catalog/api/update-product-recovery';
-import { SetProductUnitTargetDivisibilityRecoveryResponseSchema } from '@app/catalog/api/set-product-unit-target-divisibility-recovery';
-import { DecideProductTypeUnnecessaryRecoveryResponseSchema } from '@app/catalog/api/decide-product-type-unnecessary-recovery';
+import { SetProductUnitTargetDivisibilityResultSchema } from '@app/catalog/api/set-product-unit-target-divisibility-recovery';
+import { DecideProductTypeUnnecessaryResultSchema } from '@app/catalog/api/decide-product-type-unnecessary-recovery';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import type { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
@@ -195,17 +195,11 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           expect(row.ref.mappingVersion).toBe(internalSyncSource.mappingVersion);
         }
         const axes = yield* Schema.decodeUnknownEffect(GovernVariantAxesRecoveryResponseSchema)(axesRow.result);
-        const confirmed = yield* Schema.decodeUnknownEffect(ConfirmVariantCombinationRecoveryResponseSchema)(
-          confirmRow.result,
-        );
+        const confirmed = yield* Schema.decodeUnknownEffect(ConfirmVariantCombinationResultSchema)(confirmRow.result);
         const name = yield* Schema.decodeUnknownEffect(SetProductLocalizedFactsRecoveryResponseSchema)(nameRow.result);
         const activated = yield* Schema.decodeUnknownEffect(UpdateProductRecoveryResponseSchema)(activateRow.result);
-        const unit = yield* Schema.decodeUnknownEffect(SetProductUnitTargetDivisibilityRecoveryResponseSchema)(
-          unitRow.result,
-        );
-        const untyped = yield* Schema.decodeUnknownEffect(DecideProductTypeUnnecessaryRecoveryResponseSchema)(
-          untypedRow.result,
-        );
+        const unit = yield* Schema.decodeUnknownEffect(SetProductUnitTargetDivisibilityResultSchema)(unitRow.result);
+        const untyped = yield* Schema.decodeUnknownEffect(DecideProductTypeUnnecessaryResultSchema)(untypedRow.result);
         for (const result of [axes, confirmed, name, activated, unit, untyped]) {
           expect(result.changed).toBe(!input.adoption);
         }

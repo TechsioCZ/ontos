@@ -6,14 +6,13 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match } from 'effect';
 import {
   SetProductUnitTargetDivisibilityRecoveryRequestSchema,
   SetProductUnitTargetDivisibilityRecoveryResponseSchema,
 } from '../../shared/apis/set-product-unit-target-divisibility-recovery.ts';
 import type { SetProductUnitTargetDivisibilityRecoveryRequest } from '../../shared/apis/set-product-unit-target-divisibility-recovery.ts';
-import { SetProductUnitTargetDivisibilityResultSchema } from '../../shared/actions/set-product-unit-target-divisibility.ts';
-import { recoverCatalogActionResult } from './catalog-action-result-recovery.ts';
+import { catalogActionRecoveryReceiptDecoder, recoverCatalogActionResult } from './catalog-action-result-recovery.ts';
 
 interface RecoveryService {
   readonly recover: (invocationId: string) => ReturnType<typeof recoverResult>;
@@ -43,10 +42,7 @@ const recoverResult = (
       actionKey: 'commerce.catalog.set-product-unit-target-divisibility',
       schemaVersion: 1,
     },
-    {
-      decode: Schema.decodeUnknownEffect(SetProductUnitTargetDivisibilityResultSchema),
-      encode: Schema.encodeEffect(SetProductUnitTargetDivisibilityResultSchema),
-    },
+    catalogActionRecoveryReceiptDecoder(SetProductUnitTargetDivisibilityRecoveryResponseSchema),
   );
 
 const recoverSetProductUnitTargetDivisibility = Effect.fn('SetProductUnitTargetDivisibilityRecoveryRead.recover')(

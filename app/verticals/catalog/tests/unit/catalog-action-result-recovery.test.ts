@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   ActionAlreadyCommitted,
   ActionCommitIndeterminate,
@@ -16,6 +18,15 @@ import {
   recoverCatalogActionResultVersions,
 } from '../../src/api/catalog-action-result-recovery.ts';
 import { recoverChangeVariantResult } from '../../src/api/change-variant-recovery.read.ts';
+import { ConfirmVariantCombinationResultSchema } from '../../shared/actions/confirm-variant-combination.ts';
+import { SetProductUnitTargetDivisibilityResultSchema } from '../../shared/actions/set-product-unit-target-divisibility.ts';
+import { DecideProductTypeUnnecessaryResultSchema } from '../../shared/actions/decide-product-type-unnecessary.ts';
+import { ConfirmVariantCombinationRecoveryResponseSchema } from '../../shared/apis/confirm-variant-combination-recovery.ts';
+import { SetProductUnitTargetDivisibilityRecoveryResponseSchema } from '../../shared/apis/set-product-unit-target-divisibility-recovery.ts';
+import { DecideProductTypeUnnecessaryRecoveryResponseSchema } from '../../shared/apis/decide-product-type-unnecessary-recovery.ts';
+import { confirmVariantCombinationRecoveryRead } from '../../src/api/confirm-variant-combination-recovery.read.ts';
+import { setProductUnitTargetDivisibilityRecoveryRead } from '../../src/api/set-product-unit-target-divisibility-recovery.read.ts';
+import { decideProductTypeUnnecessaryRecoveryRead } from '../../src/api/decide-product-type-unnecessary-recovery.read.ts';
 /* oxlint-disable anti-slop/no-object-parameters, sonarjs/no-nested-functions -- Typed codec and scoped transaction mock require these shapes. owner: Catalog #478; expires: 2027-03-31. */
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -71,6 +82,7 @@ const committed = new ActionAlreadyCommitted({
   invocationId: identity.actionInvocationId,
   reason: 'committed',
 });
+
 const runtime = (resolution: ActionRuntimeService['resolveActionCommit']): ActionRuntimeService => ({
   resolveActionCommit: resolution,
   runAction: () => Effect.die('unused'),
@@ -192,7 +204,7 @@ describe('Catalog Action result recovery', () => {
           runtime(() => Effect.fail(committed)),
         ),
       ).toEqual({ result: { productId: 'original' }, status: 'committed' });
-      expect(tx.reads).toBe(2);
+      expect(tx.reads).toBe(1);
     }),
   );
 
@@ -251,3 +263,162 @@ describe('Catalog Action result recovery', () => {
       }),
   );
 });
+
+const unitRef = {
+  ...productRef,
+  resourceId: '00000000-0000-4000-8000-000000000012',
+  resourceType: 'commerce.catalog.product-unit',
+};
+type RecoveryTransaction = Parameters<typeof recoverCatalogActionResult>[0];
+interface ReceiptCase {
+  readonly actionKey: string;
+  readonly current: Schema.ConstraintDecoder<unknown>;
+  readonly original: object;
+  readonly recover: (tx: RecoveryTransaction) => Effect.Effect<unknown, unknown, ActionRuntime>;
+  readonly response: Schema.ConstraintCodec<unknown, unknown>;
+}
+const receiptCases: readonly ReceiptCase[] = [
+  {
+    actionKey: 'commerce.catalog.confirm-variant-combination',
+    current: ConfirmVariantCombinationResultSchema,
+    original: {
+      combinationAxisRevision: 1,
+      combinationKey: 'a'.repeat(64),
+      variant: { ...changeVariantResult.variant, lifecycle: 'ACTIVE' },
+    },
+    recover: (tx: RecoveryTransaction) =>
+      getReadServiceFactory(confirmVariantCombinationRecoveryRead)(tx, scope, 'a'.repeat(64)).pipe(
+        Effect.flatMap((services) => services.recover(identity.actionInvocationId)),
+      ),
+    response: ConfirmVariantCombinationRecoveryResponseSchema,
+  },
+  {
+    actionKey: 'commerce.catalog.set-product-unit-target-divisibility',
+    current: SetProductUnitTargetDivisibilityResultSchema,
+    original: { ruleRevision: { revision: 1, rounding: 'UP', step: '1', unit: unitRef }, unit: unitRef },
+    recover: (tx: RecoveryTransaction) =>
+      getReadServiceFactory(setProductUnitTargetDivisibilityRecoveryRead)(tx, scope, 'a'.repeat(64)).pipe(
+        Effect.flatMap((services) => services.recover(identity.actionInvocationId)),
+      ),
+    response: SetProductUnitTargetDivisibilityRecoveryResponseSchema,
+  },
+  {
+    actionKey: 'commerce.catalog.decide-product-type-unnecessary',
+    current: DecideProductTypeUnnecessaryResultSchema,
+    original: { decisionRevision: 1, decisionState: 'CONFIRMED', productRef },
+    recover: (tx: RecoveryTransaction) =>
+      getReadServiceFactory(decideProductTypeUnnecessaryRecoveryRead)(tx, scope, 'a'.repeat(64)).pipe(
+        Effect.flatMap((services) => services.recover(identity.actionInvocationId)),
+      ),
+    response: DecideProductTypeUnnecessaryRecoveryResponseSchema,
+  },
+];
+
+for (const receiptCase of receiptCases) {
+  const recoverReceipt = (
+    row: typeof catalogResultSnapshots.$inferSelect,
+    service = runtime(() => Effect.fail(committed)),
+  ) => {
+    const tx = transaction(row);
+    return receiptCase
+      .recover(
+        // @ts-expect-error The focused transaction only reads immutable owner snapshots.
+        tx.tx,
+      )
+      .pipe(Effect.provideService(ActionRuntime, service));
+  };
+  const row = (encodedResult: object) => snapshot({ actionKey: receiptCase.actionKey, encodedResult });
+
+  describe(`${receiptCase.actionKey} owner recovery receipt`, () => {
+    it.effect('returns the exact historical receipt without inventing execution or revision proof', () =>
+      Effect.gen(function* historicalReceipt() {
+        const stored = row(receiptCase.original);
+        const before = JSON.stringify(stored);
+        const expected = { _tag: 'HistoricalReceipt', executionProof: 'NOT_RECORDED', original: receiptCase.original };
+        expect(yield* recoverReceipt(stored)).toEqual({ result: expected, status: 'committed' });
+        expect(isDeepStrictEqual(Schema.decodeUnknownSync(receiptCase.response)(expected), expected)).toBe(true);
+        expect(isDeepStrictEqual(Schema.encodeUnknownSync(receiptCase.response)(expected), expected)).toBe(true);
+        expect(Object.hasOwn(expected.original, 'changed')).toBe(false);
+        expect(Object.hasOwn(expected.original, 'variantRevision')).toBe(false);
+        expect(JSON.stringify(stored)).toBe(before);
+        if (receiptCase.actionKey === 'commerce.catalog.confirm-variant-combination') {
+          const original = { ...receiptCase.original, variantRevision: 7 };
+          expect(yield* recoverReceipt(row(original))).toEqual({
+            result: { _tag: 'HistoricalReceipt', executionProof: 'NOT_RECORDED', original },
+            status: 'committed',
+          });
+        }
+      }),
+    );
+
+    it.effect('wraps strict current results with their exact true or false disposition', () =>
+      Effect.gen(function* currentReceipts() {
+        expect(() => Schema.decodeUnknownSync(receiptCase.current)(receiptCase.original)).toThrow();
+        for (const changed of [true, false]) {
+          const result = { ...receiptCase.original, changed };
+          const expected = { _tag: 'CurrentReceipt', result };
+          expect(yield* recoverReceipt(row(result))).toEqual({ result: expected, status: 'committed' });
+          expect(isDeepStrictEqual(Schema.decodeUnknownSync(receiptCase.response)(expected), expected)).toBe(true);
+          expect(() =>
+            Schema.decodeUnknownSync(receiptCase.response)({
+              _tag: 'HistoricalReceipt',
+              executionProof: 'NOT_RECORDED',
+              original: result,
+            }),
+          ).toThrow();
+          expect(() =>
+            Schema.decodeUnknownSync(receiptCase.response)({ _tag: 'CurrentReceipt', result: receiptCase.original }),
+          ).toThrow();
+        }
+      }),
+    );
+
+    it.effect('never treats a present malformed changed field as a historical receipt', () =>
+      Effect.gen(function* corruptDisposition() {
+        expect(yield* recoverReceipt(row({}))).toEqual({ status: 'unavailable' });
+        expect(yield* recoverReceipt(row({ ...receiptCase.original, unexpected: 'must not be stripped' }))).toEqual({
+          status: 'unavailable',
+        });
+        for (const changed of [undefined, null, 'false', 0, {}]) {
+          const corrupt = { ...receiptCase.original, changed };
+          expect(yield* recoverReceipt(row(corrupt))).toEqual({ status: 'unavailable' });
+          expect(() =>
+            Schema.decodeUnknownSync(receiptCase.response)({
+              _tag: 'HistoricalReceipt',
+              executionProof: 'NOT_RECORDED',
+              original: corrupt,
+            }),
+          ).toThrow();
+        }
+      }),
+    );
+
+    it.effect('retains principal, action, snapshot identity, and Core commit proof boundaries', () =>
+      Effect.gen(function* receiptAuthority() {
+        const original = row(receiptCase.original);
+        expect(
+          yield* recoverReceipt({ ...original, actingPrincipalId: '00000000-0000-4000-8000-000000000099' }),
+        ).toEqual({ status: 'absent' });
+        expect(yield* recoverReceipt({ ...original, actionKey: 'commerce.catalog.other' })).toEqual({
+          status: 'absent',
+        });
+        expect(yield* recoverReceipt({ ...original, tenantId: '00000000-0000-4000-8000-000000000099' })).toEqual({
+          status: 'unavailable',
+        });
+        expect(
+          yield* recoverReceipt({ ...original, actionInvocationId: '00000000-0000-4000-8000-000000000099' }),
+        ).toEqual({ status: 'unavailable' });
+        expect(yield* recoverReceipt({ ...original, schemaVersion: 2 })).toEqual({ status: 'unavailable' });
+
+        expect(
+          yield* recoverReceipt(
+            original,
+            runtime(() =>
+              Effect.fail(new ActionInvocationNotFound({ code: 'action_invocation_not_found', reason: 'absent' })),
+            ),
+          ),
+        ).toEqual({ status: 'absent' });
+      }),
+    );
+  });
+}
