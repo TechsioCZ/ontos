@@ -1,6 +1,6 @@
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { CatalogSelectionOwnerAssessmentResultSchema } from '@app/catalog/domain/catalog-selection-owner-contract';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Logger, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { makeCatalogSelectionAssessmentPort } from '../../src/integrations/catalog-selection-evidence.ts';
@@ -139,6 +139,55 @@ describe('Pricing Catalog selection evidence integration', () => {
 
       const failure = yield* port.assess(selection).pipe(Effect.flip);
       expect(failure).toMatchObject({ code: 'pricing_catalog_selection_unavailable', retryable: true });
+    }),
+  );
+
+  it.effect('preserves incomplete Catalog evidence and diagnoses missing roles without logging private data', () =>
+    Effect.gen(function* incompleteCatalogEvidence() {
+      const incomplete = yield* Schema.decodeEffect(CatalogSelectionOwnerAssessmentResultSchema)({
+        assessedAt,
+        basis: [],
+        purpose: 'PRICING',
+        reason: 'private-catalog-assessment-details',
+        selection,
+        status: 'INDETERMINATE',
+      });
+      const entries: unknown[] = [];
+      const logger = Logger.make(({ message }) => {
+        if (Array.isArray(message)) {
+          entries.push(...message);
+        } else {
+          entries.push(message);
+        }
+      });
+      const port = yield* portFromEnvironment(
+        { compositionRevision, legalEntityId, requestCorrelation: 'define-price-correlation' },
+        () => Effect.succeed({ evidence: incomplete, missingRoles: ['CATEGORY'] }),
+      );
+      const result = yield* port
+        .assess(selection)
+        .pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])));
+
+      expect(result).toEqual(incomplete);
+      expect(entries).toEqual([
+        'Pricing Catalog selection did not validate',
+        {
+          missingRoles: ['CATEGORY'],
+          outcome: 'INDETERMINATE',
+          productId: selection.productRef.resourceId,
+          requestCorrelation: 'define-price-correlation',
+          variantId: selection.variantRef.resourceId,
+        },
+      ]);
+      const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(entries);
+      expect(serialized).not.toContain('private-catalog-assessment-details');
+      expect(serialized).not.toContain('catalog-owner-assertion');
+      const brokenLogger = Logger.make(() => {
+        throw new Error('diagnostic-capture-failed');
+      });
+      expect(
+        yield* port.assess(selection).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([brokenLogger]))),
+      ).toEqual(incomplete);
     }),
   );
 });
