@@ -101,7 +101,7 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(25);
+    expect(safe.operationContracts).toHaveLength(30);
     expect(safe.operationContracts).toEqual(
       expect.arrayContaining(
         [

@@ -61,6 +61,7 @@ import { inventorySourceConflictResourceDescriptor } from './shared/resources/in
 import { InventorySourceImportReceiptApi } from './shared/apis/inventory-source-import-receipt.ts';
 import { inventorySourceImportReceiptRead } from './src/api/inventory-source-import-receipt.read.ts';
 import { provisionSourceStockItemAction } from './src/actions/provision-source-stock-item.action.ts';
+import { ProvisionSourceStockItemActionApi } from './shared/apis/provision-source-stock-item-action.ts';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
 import { registerStockItemAction } from './src/actions/register-stock-item.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
@@ -154,6 +155,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       'inventory-reservation-detail': InventoryReservationDetailApi,
       'inventory-source-conflict-detail': InventorySourceConflictDetailApi,
       'inventory-source-import-receipt': InventorySourceImportReceiptApi,
+      'provision-source-stock-item-action': ProvisionSourceStockItemActionApi,
       'reservation-confirmation-verification': ReservationConfirmationVerificationApi,
       'source-stock-item-provisioning-receipt': SourceStockItemProvisioningReceiptApi,
       'source-stock-position-resolution': SourceStockPositionResolutionApi,
@@ -185,6 +187,11 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
     mcp: inventoryMcpContribution,
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'provision-source-stock-item-action',
+        operationKey: 'provisionSourceStockItemAction.execute',
+        registration: provisionSourceStockItemAction,
+      },
       {
         apiKey: 'import-source-assertion-action',
         operationKey: 'importSourceAssertionAction.execute',

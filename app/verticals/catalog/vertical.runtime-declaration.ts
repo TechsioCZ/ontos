@@ -48,6 +48,7 @@ import { ColorHistoryApi } from './shared/apis/color-history.ts';
 import { confirmGtinAction } from './src/actions/confirm-gtin.action.ts';
 import { ConfirmGtinRecoveryApi } from './shared/apis/confirm-gtin-recovery.ts';
 import { confirmVariantCombinationAction } from './src/actions/confirm-variant-combination.action.ts';
+import { ConfirmVariantCombinationActionApi } from './shared/apis/confirm-variant-combination-action.ts';
 import { ConfirmVariantCombinationRecoveryApi } from './shared/apis/confirm-variant-combination-recovery.ts';
 import { correctGtinAction } from './src/actions/correct-gtin.action.ts';
 import { CorrectGtinRecoveryApi } from './shared/apis/correct-gtin-recovery.ts';
@@ -80,6 +81,7 @@ import { CreateSetCompositionRecoveryApi } from './shared/apis/create-set-compos
 import { createVariantAction } from './src/actions/create-variant.action.ts';
 import { CreateVariantRecoveryApi } from './shared/apis/create-variant-recovery.ts';
 import { decideProductTypeUnnecessaryAction } from './src/actions/decide-product-type-unnecessary.action.ts';
+import { DecideProductTypeUnnecessaryActionApi } from './shared/apis/decide-product-type-unnecessary-action.ts';
 import { DecideProductTypeUnnecessaryRecoveryApi } from './shared/apis/decide-product-type-unnecessary-recovery.ts';
 import { EffectiveAttributeValuesCurrentApi } from './shared/apis/effective-attribute-values-current.ts';
 import { ExternalTargetResolutionApi } from './shared/apis/external-target-resolution.ts';
@@ -88,6 +90,7 @@ import { GovernProductAttributeApplicabilityRecoveryApi } from './shared/apis/go
 import { governVariantAllowedValuesAction } from './src/actions/govern-variant-allowed-values.action.ts';
 import { GovernVariantAllowedValuesRecoveryApi } from './shared/apis/govern-variant-allowed-values-recovery.ts';
 import { governVariantAxesAction } from './src/actions/govern-variant-axes.action.ts';
+import { GovernVariantAxesActionApi } from './shared/apis/govern-variant-axes-action.ts';
 import { GovernVariantAxesRecoveryApi } from './shared/apis/govern-variant-axes-recovery.ts';
 import { GtinCurrentApi } from './shared/apis/gtin-current.ts';
 import { GtinHistoryApi } from './shared/apis/gtin-history.ts';
@@ -199,12 +202,14 @@ import { SetProductAttributeValuesRecoveryApi } from './shared/apis/set-product-
 import { setProductBrandAction } from './src/actions/set-product-brand.action.ts';
 import { SetProductBrandRecoveryApi } from './shared/apis/set-product-brand-recovery.ts';
 import { setProductLocalizedFactsAction } from './src/actions/set-product-localized-facts.action.ts';
+import { SetProductLocalizedFactsActionApi } from './shared/apis/set-product-localized-facts-action.ts';
 import { SetProductLocalizedFactsRecoveryApi } from './shared/apis/set-product-localized-facts-recovery.ts';
 import { setProductManufacturerAction } from './src/actions/set-product-manufacturer.action.ts';
 import { SetProductManufacturerRecoveryApi } from './shared/apis/set-product-manufacturer-recovery.ts';
 import { setProductTypeAction } from './src/actions/set-product-type.action.ts';
 import { SetProductTypeRecoveryApi } from './shared/apis/set-product-type-recovery.ts';
 import { setProductUnitTargetDivisibilityAction } from './src/actions/set-product-unit-target-divisibility.action.ts';
+import { SetProductUnitTargetDivisibilityActionApi } from './shared/apis/set-product-unit-target-divisibility-action.ts';
 import { SetProductUnitTargetDivisibilityRecoveryApi } from './shared/apis/set-product-unit-target-divisibility-recovery.ts';
 import { setVariantAttributeOverrideAction } from './src/actions/set-variant-attribute-override.action.ts';
 import { SetVariantAttributeOverrideRecoveryApi } from './shared/apis/set-variant-attribute-override-recovery.ts';
@@ -392,6 +397,7 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'color-current': ColorCurrentApi,
       'color-history': ColorHistoryApi,
       'confirm-gtin-recovery': ConfirmGtinRecoveryApi,
+      'confirm-variant-combination-action': ConfirmVariantCombinationActionApi,
       'confirm-variant-combination-recovery': ConfirmVariantCombinationRecoveryApi,
       'correct-gtin-recovery': CorrectGtinRecoveryApi,
       'correct-product-action': CorrectProductActionApi,
@@ -411,11 +417,13 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'create-set-composition-recovery': CreateSetCompositionRecoveryApi,
       'create-variant-action': CreateVariantActionApi,
       'create-variant-recovery': CreateVariantRecoveryApi,
+      'decide-product-type-unnecessary-action': DecideProductTypeUnnecessaryActionApi,
       'decide-product-type-unnecessary-recovery': DecideProductTypeUnnecessaryRecoveryApi,
       'effective-attribute-values-current': EffectiveAttributeValuesCurrentApi,
       'external-target-resolution': ExternalTargetResolutionApi,
       'govern-product-attribute-applicability-recovery': GovernProductAttributeApplicabilityRecoveryApi,
       'govern-variant-allowed-values-recovery': GovernVariantAllowedValuesRecoveryApi,
+      'govern-variant-axes-action': GovernVariantAxesActionApi,
       'govern-variant-axes-recovery': GovernVariantAxesRecoveryApi,
       'gtin-current': GtinCurrentApi,
       'gtin-history': GtinHistoryApi,
@@ -483,9 +491,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
       'set-composition-history': SetCompositionHistoryApi,
       'set-product-attribute-values-recovery': SetProductAttributeValuesRecoveryApi,
       'set-product-brand-recovery': SetProductBrandRecoveryApi,
+      'set-product-localized-facts-action': SetProductLocalizedFactsActionApi,
       'set-product-localized-facts-recovery': SetProductLocalizedFactsRecoveryApi,
       'set-product-manufacturer-recovery': SetProductManufacturerRecoveryApi,
       'set-product-type-recovery': SetProductTypeRecoveryApi,
+      'set-product-unit-target-divisibility-action': SetProductUnitTargetDivisibilityActionApi,
       'set-product-unit-target-divisibility-recovery': SetProductUnitTargetDivisibilityRecoveryApi,
       'set-variant-attribute-override-recovery': SetVariantAttributeOverrideRecoveryApi,
       'set-variant-localized-facts-action': SetVariantLocalizedFactsActionApi,
@@ -498,6 +508,31 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
     },
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'govern-variant-axes-action',
+        operationKey: 'governVariantAxesAction.execute',
+        registration: governVariantAxesAction,
+      },
+      {
+        apiKey: 'confirm-variant-combination-action',
+        operationKey: 'confirmVariantCombinationAction.execute',
+        registration: confirmVariantCombinationAction,
+      },
+      {
+        apiKey: 'set-product-localized-facts-action',
+        operationKey: 'setProductLocalizedFactsAction.execute',
+        registration: setProductLocalizedFactsAction,
+      },
+      {
+        apiKey: 'set-product-unit-target-divisibility-action',
+        operationKey: 'setProductUnitTargetDivisibilityAction.execute',
+        registration: setProductUnitTargetDivisibilityAction,
+      },
+      {
+        apiKey: 'decide-product-type-unnecessary-action',
+        operationKey: 'decideProductTypeUnnecessaryAction.execute',
+        registration: decideProductTypeUnnecessaryAction,
+      },
       { apiKey: 'selection-evidence', operationKey: 'selectionEvidence.execute', registration: selectionEvidenceRead },
       {
         apiKey: 'quantity-preparation',
