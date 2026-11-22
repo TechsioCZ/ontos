@@ -429,7 +429,7 @@ const inventoryItemKey = (row: SymmyProductRow, variant: PlannedVariant, initial
   return Option.none<string>();
 };
 
-const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint')[]) =>
+const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint' | 'StockProvisioningHint')[]) =>
   kinds.map((kind) => ({ branchKey: kind, kind }));
 
 /** One product: its item, the items of its variants and prices, and the unsupported groups it names. */
@@ -524,11 +524,13 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       : []),
   ];
   const provisionEffects = [];
+  let stockKeyMissing = false;
   if (enrollment.inventorySource !== undefined) {
     for (const [position, variant] of variants.entries()) {
       const itemKey = inventoryItemKey(row, variant, position === 0);
       if (Option.isNone(itemKey)) {
-        return Option.none();
+        stockKeyMissing = true;
+        continue;
       }
       provisionEffects.push({
         dependsOn: [
@@ -581,7 +583,12 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       sourceRecordId: productRecord,
     },
     sourceOccurrenceId: uuidFromDigest(productOccurrence),
-    ...present('unsupportedBranches', unsupported.length === 0 ? undefined : hintBranches(unsupported)),
+    ...present(
+      'unsupportedBranches',
+      unsupported.length === 0 && !stockKeyMissing
+        ? undefined
+        : hintBranches([...unsupported, ...(stockKeyMissing ? ['StockProvisioningHint' as const] : [])]),
+    ),
   };
   return Option.some([
     productItem,

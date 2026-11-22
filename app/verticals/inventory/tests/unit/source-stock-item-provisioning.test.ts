@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, Option, Schema, Struct } from 'effect';
 import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
@@ -31,6 +31,7 @@ import { SourceStockItemProvisioningRejected } from '../../shared/domain/source-
 import {
   ProvisionSourceStockItemInputSchema,
   SourceProvisioningPolicySchema,
+  SourceProvisioningExpectedPolicySchema,
   SourceStockItemProvisioningInvocationIdSchema,
 } from '../../shared/domain/source-provisioning.ts';
 import type {
@@ -84,12 +85,13 @@ const unitRef = (resourceId = unitId) =>
     resourceType: 'commerce.catalog.product-unit',
     tenantId,
   }) as const;
-const locationRef = (resourceId: string) => ({
-  moduleId: 'commerce.inventory',
-  resourceId,
-  resourceType: 'commerce.inventory.stock-location',
-  tenantId,
-});
+const locationRef = (resourceId: string) =>
+  ({
+    moduleId: 'commerce.inventory',
+    resourceId,
+    resourceType: 'commerce.inventory.stock-location',
+    tenantId,
+  }) as const;
 const ownerConfigurationRef = {
   moduleId: 'commerce.inventory',
   resourceId: configurationId,
@@ -133,6 +135,8 @@ const policy: SourceProvisioningPolicy = Schema.decodeUnknownSync(SourceProvisio
   unitRef: unitRef(),
 });
 
+const expectedPolicy = Schema.decodeUnknownSync(SourceProvisioningExpectedPolicySchema)(policy);
+
 const selection = (selectedVariantId = variantId) =>
   ({
     productRef: {
@@ -155,9 +159,23 @@ const provisionInput = (overrides: ProvisionInputOverrides = {}): ProvisionSourc
   Schema.decodeUnknownSync(ProvisionSourceStockItemInputSchema)({
     catalogSelection: selection(),
     exactSelectionMeaning: { id: `catalog-variant:${variantId}`, kind: 'PRODUCT_VARIANT' },
+    expectedPolicy,
     itemKey: 'AKROS-10001-V1',
     policyRef: policy.policyRef,
     ...overrides,
+  });
+
+const reversedLocationInput = () =>
+  provisionInput({ expectedPolicy: { ...expectedPolicy, locations: EffectArray.reverse(expectedPolicy.locations) } });
+const movedLocationInput = () =>
+  provisionInput({
+    expectedPolicy: {
+      ...expectedPolicy,
+      locations: [
+        { ...outletLocation, stockLocationRef: warehouseLocation.stockLocationRef },
+        { ...warehouseLocation, stockLocationRef: outletLocation.stockLocationRef },
+      ],
+    },
   });
 
 const invocation = (suffix: string) =>
@@ -492,13 +510,69 @@ describe('Inventory source stock item provisioning', () => {
     expect(sourceProvisioningPolicyHasCurrentOwner(policy, otherTenant, now)).toBe(false);
   });
 
-  it.live('returns the stable original receipt on the same invocation, not a newly adopted result', () =>
+  it('encodes the same Core action payload for the same allowed-location set', () => {
+    const encode = Schema.encodeSync(provisionSourceStockItemAction.descriptor.payloadSchema);
+    expect(encode(reversedLocationInput())).toEqual(encode(provisionInput()));
+    expect(encode(movedLocationInput())).not.toEqual(encode(provisionInput()));
+  });
+
+  it.live('replays the original invocation across reordered locations but rejects a moved location', () =>
     Effect.gen(function* stableInvocationReplay() {
       const state = makeOwnerState();
-      const original = yield* state.provision('1');
-      expect(yield* state.provision('1')).toEqual(original);
+      const original = yield* state.provision('1', reversedLocationInput());
+      expect(yield* state.provision('1', provisionInput())).toEqual(original);
+      const different = yield* state.provision('1', movedLocationInput()).pipe(Effect.flip);
+      assert(isProvisioningRejected(different));
+      expect(different.reason).toBe('POLICY_TERMS_MISMATCH');
+      expect(state.receipts[0]?.input).toEqual(reversedLocationInput());
       expect(state.receipts).toHaveLength(1);
       expect(state.receipts[0]?.provisioning.stockItem.disposition).toBe('ESTABLISHED');
+    }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
+
+  it('does not admit a bare policy reference', () => {
+    expect(Schema.is(ProvisionSourceStockItemInputSchema)(Struct.omit(provisionInput(), ['expectedPolicy']))).toBe(
+      false,
+    );
+  });
+
+  it.live('rejects any mismatched enrolled term before mutating Inventory', () =>
+    Effect.gen(function* refusesForeignTerms() {
+      const state = makeOwnerState();
+      const originalCorrelations = [...state.correlations];
+      for (const mismatch of [
+        { customerConfigurationId: 'another-customer' },
+        { issuer: { ...issuer, backendId: 'another-erp' } },
+        { issuer: { ...issuer, backendKind: 'ontos_wms' } },
+        { namespace: 'another-namespace' },
+        { externalScope: 'another-scope' },
+        { unitRef: unitRef(otherUnitId) },
+        { locations: [outletLocation] },
+        { locations: [...policy.locations, { locationKey: 'extra', stockLocationRef: locationRef(otherUnitId) }] },
+        { locations: [outletLocation, { ...warehouseLocation, locationKey: 'renamed' }] },
+        {
+          locations: [
+            { ...outletLocation, stockLocationRef: warehouseLocation.stockLocationRef },
+            { ...warehouseLocation, stockLocationRef: outletLocation.stockLocationRef },
+          ],
+        },
+      ] as const) {
+        const input = provisionInput({ expectedPolicy: { ...expectedPolicy, ...mismatch } });
+        const failure = yield* Effect.flip(state.provision('1', input));
+        assert(isProvisioningRejected(failure));
+        expect(failure.reason).toBe('POLICY_TERMS_MISMATCH');
+        expect(failure.conflictRef).toEqual(policy.policyRef);
+        expect([state.stockItems.size, state.positions.size, state.bindings.length, state.receipts.length]).toEqual([
+          0, 0, 0, 0,
+        ]);
+        expect(state.correlations).toEqual(originalCorrelations);
+      }
+      const reordered = provisionInput({
+        expectedPolicy: { ...expectedPolicy, locations: EffectArray.reverse(expectedPolicy.locations) },
+      });
+      const first = yield* state.provision('1', reordered);
+      expect(yield* state.provision('1', reordered)).toEqual(first);
+      expect(state.receipts).toHaveLength(1);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -805,7 +879,7 @@ describe('Inventory source Stock Position resolution and provisioning receipt', 
   it.live('answers a receipt only for the exact original input', () =>
     Effect.gen(function* recovers() {
       const state = makeOwnerState();
-      yield* state.provision('1');
+      yield* state.provision('1', reversedLocationInput());
       const [receipt] = state.receipts;
       assert(receipt !== undefined);
       const context = {
@@ -818,6 +892,12 @@ describe('Inventory source Stock Position resolution and provisioning receipt', 
       );
       assert(isRecorded(recorded.result));
       expect(recorded.result.receipt).toEqual(receipt);
+      expect(recorded.result.receipt.input).toEqual(reversedLocationInput());
+      const moved = yield* sourceStockItemProvisioningReceiptHandler(
+        { actionInvocationId: invocation('1'), input: movedLocationInput() },
+        context,
+      );
+      assert(isIndeterminate(moved.result));
       const other = yield* sourceStockItemProvisioningReceiptHandler(
         { actionInvocationId: invocation('1'), input: provisionInput({ itemKey: 'AKROS-10002-V1' }) },
         context,

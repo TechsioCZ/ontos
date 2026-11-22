@@ -13,10 +13,10 @@ import {
   SymmyStockRowsSchema,
 } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockPositionFacts } from '../../shared/domain/symmy-stock-batch.ts';
-import { readSymmyStockPositionFacts } from '../../shared/symmy-stock-position-facts.ts';
 import {
   buildSymmyProductPlan,
   createProductOperation,
+  createVariantOperation,
   provisionStockItemOperation,
 } from '../../src/persistence/symmy-product-plan.ts';
 import { buildSymmyStockPlan, stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
@@ -98,6 +98,8 @@ const factsOf = (...keys: readonly string[]): SymmyStockPositionFacts =>
     })),
   );
 const digest = (value: string) => Effect.succeed(createHash('sha256').update(value).digest('hex'));
+const productVariant = (identifier?: { readonly type: 'sku' | 'ean'; readonly value: string }) =>
+  identifier === undefined ? { localized: [], prices: [] } : { identifier, localized: [], prices: [] };
 const build = (
   rows: ReturnType<typeof rowsOf>,
   facts: SymmyStockPositionFacts | null,
@@ -113,16 +115,91 @@ const build = (
   });
 
 describe('Symmy stock from the public Inventory resolution contract', () => {
+  it.effect('keeps Catalog work for mixed SKU, EAN-only and missing-key variants without inventing stock keys', () =>
+    Effect.gen(function* test() {
+      const productTemplate = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+        inventoryBackendId: source.issuer.backendId,
+        inventorySource: source,
+        items: [
+          {
+            effects: [createProductOperation, provisionStockItemOperation].map((operation, index) => ({
+              effectKey: `enrolled-${index}`,
+              operation,
+            })),
+            itemKey: 'products',
+            source: { ...enrolledSource, entityKind: 'PRODUCT' },
+          },
+          {
+            effects: [{ effectKey: 'variant', operation: createVariantOperation }],
+            itemKey: 'variants',
+            source: { ...enrolledSource, entityKind: 'VARIANT' },
+          },
+        ],
+      });
+      const plan = Option.getOrThrow(
+        yield* buildSymmyProductPlan({
+          digest,
+          idempotencyKey: 'mixed-products',
+          legalEntityId: Option.getOrUndefined(Option.none<string>()),
+          priceGroups: [],
+          receivedAt: DateTime.makeUnsafe('2026-01-01T12:00:00.000Z'),
+          route: { mappingVersion: 'v1', routeId: '66666666-6666-4666-8666-666666666666' },
+          rows: Schema.decodeUnknownSync(SymmyProductRowsSchema)([
+            { name: 'SKU', unsupported: [], variants: [productVariant({ type: 'sku', value: 'real-SKU' })] },
+            {
+              identifier: { type: 'ean', value: '1234567890123' },
+              name: 'EAN only',
+              unsupported: [],
+              variants: [productVariant({ type: 'ean', value: '1234567890123' })],
+            },
+            {
+              name: 'Mixed variants',
+              unsupported: [],
+              variants: [
+                productVariant(),
+                productVariant({ type: 'sku', value: 'second-SKU' }),
+                productVariant({ type: 'ean', value: '9876543210123' }),
+                productVariant(),
+              ],
+            },
+          ]),
+          template: productTemplate,
+          tenantId,
+        }),
+      );
+      const effects = plan.items.flatMap((item) => item.effects);
+      expect(
+        effects.filter(({ operation }) => operation.entrypointKey === createProductOperation.entrypointKey),
+      ).toHaveLength(3);
+      expect(
+        effects.filter(({ operation }) => operation.entrypointKey === createVariantOperation.entrypointKey),
+      ).toHaveLength(3);
+      const provisions = effects.flatMap(({ intent }) =>
+        Match.value(intent).pipe(
+          Match.when(
+            { _tag: 'CatalogProductDependentEffect', request: { _tag: 'ProvisionSourceStockItem' } },
+            ({ request }) => [request.itemKey],
+          ),
+          Match.orElse(() => []),
+        ),
+      );
+      expect(provisions).toEqual(['real-SKU', 'second-SKU']);
+      expect(
+        plan.items
+          .filter(({ itemKey }) => itemKey === 'product-1' || itemKey === 'product-2')
+          .map(({ unsupportedBranches }) => unsupportedBranches),
+      ).toEqual([
+        [{ branchKey: 'StockProvisioningHint', kind: 'StockProvisioningHint' }],
+        [{ branchKey: 'StockProvisioningHint', kind: 'StockProvisioningHint' }],
+      ]);
+      expect(plan.items.find(({ itemKey }) => itemKey === 'product-0')?.unsupportedBranches).toBeUndefined();
+    }),
+  );
+
   it.effect('accepts two unseen SKUs without a configuration change and pins the owner positions', () =>
     Effect.gen(function* test() {
       const rows = rowsOf(row('unseen-A'), row('unseen-B'));
-      const facts = Option.getOrThrow(
-        yield* readSymmyStockPositionFacts({
-          resolve: (request) => Effect.succeed(resolution(request.itemKey)),
-          rows,
-          source,
-        }),
-      );
+      const facts = factsOf('unseen-A', 'unseen-B');
       const plan = Option.getOrThrow(yield* build(rows, facts));
       expect(plan.items).toHaveLength(2);
       expect(plan.items.map(({ effects }) => effects[0].originalTarget?.resourceId)).toEqual([
@@ -152,19 +229,8 @@ describe('Symmy stock from the public Inventory resolution contract', () => {
   it.effect('keeps an early stock batch unadmitted until product provisioning is visible to the public read', () =>
     Effect.gen(function* test() {
       const rows = rowsOf(row('unseen-A'));
-      const early = yield* readSymmyStockPositionFacts({
-        resolve: () => Effect.succeed({ _tag: 'UNRESOLVED', reason: 'ITEM_NOT_PROVISIONED' }),
-        rows,
-        source,
-      });
-      expect(Option.isNone(early)).toBe(true);
       expect(Option.isNone(yield* build(rows, null))).toBe(true);
-      const ready = yield* readSymmyStockPositionFacts({
-        resolve: (request) => Effect.succeed(resolution(request.itemKey)),
-        rows,
-        source,
-      });
-      expect(Option.isSome(yield* build(rows, Option.getOrThrow(ready)))).toBe(true);
+      expect(Option.isSome(yield* build(rows, factsOf('unseen-A')))).toBe(true);
     }),
   );
 

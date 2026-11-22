@@ -20,6 +20,7 @@ import type {
   SourceStockItemProvisioningReceiptResponse,
 } from '../../shared/apis/source-stock-item-provisioning-receipt.ts';
 import type { SourceStockItemProvisioningReceipt } from '../../shared/domain/source-provisioning.ts';
+import { sameProvisionSourceStockItemInput } from '../domain/source-provisioning-input.ts';
 import { sourceStockItemProvisioningReceiptPersistenceForScope } from '../persistence/source-provisioning-repository.ts';
 
 interface SourceStockItemProvisioningReceiptServices {
@@ -77,9 +78,7 @@ export const sourceStockItemProvisioningReceiptHandler = Effect.fn('SourceStockI
     }
     const original = yield* context.services.findOriginal(input);
     // Only the exact original input is answered: a receipt is never handed to a different request.
-    const matches =
-      Option.isSome(original) &&
-      computeCanonicalValueHash(original.value.input) === computeCanonicalValueHash(input.input);
+    const matches = Option.isSome(original) && sameProvisionSourceStockItemInput(original.value.input, input.input);
     const result: SourceStockItemProvisioningReceiptResponse =
       matches && Option.isSome(original)
         ? { _tag: 'RECORDED', receipt: original.value }

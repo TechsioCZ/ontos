@@ -1,6 +1,6 @@
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
-import { Schema } from 'effect';
+import { Order, Schema, Struct } from 'effect';
 
 import { InventoryBackendOriginSchema } from './external-stock-correlation.ts';
 import { ExactCatalogSelectionMeaningSchema } from './stock-item.ts';
@@ -70,12 +70,31 @@ export const SourceProvisioningPolicySchema = Schema.Struct({
 );
 export type SourceProvisioningPolicy = typeof SourceProvisioningPolicySchema.Type;
 
+/** The caller's enrolled terms, not authority to alter the referenced Inventory policy. */
+export const SourceProvisioningExpectedPolicySchema = Schema.Struct(
+  Struct.pick(SourceProvisioningPolicySchema.fields, [
+    'customerConfigurationId',
+    'externalScope',
+    'issuer',
+    'namespace',
+    'unitRef',
+    'locations',
+  ]),
+);
+export type SourceProvisioningExpectedPolicy = typeof SourceProvisioningExpectedPolicySchema.Type;
+
+export const canonicalSourceProvisioningExpectedPolicy = (policy: SourceProvisioningExpectedPolicy) => ({
+  ...Struct.pick(policy, Struct.keys(SourceProvisioningExpectedPolicySchema.fields)),
+  locations: policy.locations.toSorted((left, right) => Order.String(left.locationKey, right.locationKey)),
+});
+
 export const ProvisioningDispositionSchema = Schema.Literals(['ESTABLISHED', 'ADOPTED']);
 export type ProvisioningDisposition = typeof ProvisioningDispositionSchema.Type;
 
 export const ProvisionSourceStockItemInputSchema = Schema.Struct({
   catalogSelection: CatalogSelectionSchema,
   exactSelectionMeaning: ExactCatalogSelectionMeaningSchema,
+  expectedPolicy: SourceProvisioningExpectedPolicySchema,
   itemKey: SourceExternalKeySchema,
   policyRef: SourceProvisioningPolicyRefSchema,
 }).check(

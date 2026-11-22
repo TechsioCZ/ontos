@@ -1253,8 +1253,9 @@ it('exact Inventory catalog comparison rejects missing and unexpected tables', (
 
 it('retains source provisioning authority, exact receipt scope and immutable history behind private trigger functions', () => {
   const migration = readMigration('20261122090000_inventory-source-provisioning');
+  const seal = readMigration('20261122100000_seal-source-provisioning-locations');
   for (const trigger of inventorySourceProvisioningDatabaseContract.triggers) {
-    expect(migration).toContain(`CREATE TRIGGER "${trigger}"`);
+    expect(migration + seal).toContain(`CREATE TRIGGER "${trigger}"`);
   }
   for (const table of inventorySourceProvisioningDatabaseContract.tables) {
     expect(migration).toContain(`ALTER TABLE "inventory"."${table}" FORCE ROW LEVEL SECURITY`);
@@ -1270,7 +1271,7 @@ it('retains source provisioning authority, exact receipt scope and immutable his
   expect(migration.match(/REVOKE ALL ON FUNCTION/gu)).toHaveLength(2);
   expect(migration).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE');
   const verifier = readFileSync(fileURLToPath(new URL('../../scripts/verify-db-schema.mts', import.meta.url)), 'utf-8');
-  expect(verifier).toContain('provisioning.trigger_count !== 6');
+  expect(verifier).toContain('inventorySourceProvisioningDatabaseContract.manifestFunction');
   expect(verifier).toContain('provisioning.foreign_key_count !== 5');
   expect(verifier).toContain('provisioning.private_functions_executable');
 });

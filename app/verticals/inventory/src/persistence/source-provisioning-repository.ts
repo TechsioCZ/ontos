@@ -1,5 +1,4 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
@@ -15,10 +14,10 @@ import type {
 } from '../../shared/domain/source-provisioning.ts';
 import type { InventoryBackendOrigin } from '../../shared/domain/external-stock-correlation.ts';
 import type { SourceProvisioningPolicyRef } from '../../shared/resources/source-provisioning-policy.ts';
+import { sameProvisionSourceStockItemInput } from '../domain/source-provisioning-input.ts';
 import { inventoryBackendConfigurations } from './inventory-backend-configuration-table.ts';
 import {
   inventorySourceProvisioningPolicies,
-  inventorySourceProvisioningPolicyLocations,
   inventorySourceStockItemProvisionings,
 } from './source-provisioning-table.ts';
 
@@ -84,60 +83,39 @@ const decodeReceiptRow = (row: typeof inventorySourceStockItemProvisionings.$inf
     recordedAt: row.recordedAt.toISOString(),
   }).pipe(Effect.mapError(sourceProvisioningUnavailable));
 
+const decodePolicyRow = (row: PolicyRow) =>
+  Schema.decodeUnknownEffect(SourceProvisioningPolicySchema)({
+    customerConfigurationId: row.customerConfigurationId,
+    definedAt: row.definedAt.toISOString(),
+    effectiveFrom: row.effectiveFrom.toISOString(),
+    externalScope: row.externalScope,
+    issuer: { backendId: row.issuerBackendId, backendKind: row.issuerBackendKind },
+    locations: row.declaredLocations,
+    namespace: row.namespace,
+    ownerConfigurationRef: {
+      moduleId: INVENTORY_MODULE_ID,
+      resourceId: row.ownerConfigurationId,
+      resourceType: 'commerce.inventory.inventory-backend-configuration',
+      tenantId: row.tenantId,
+    },
+    policyRef: {
+      moduleId: INVENTORY_MODULE_ID,
+      resourceId: row.policyId,
+      resourceType: 'commerce.inventory.source-provisioning-policy',
+      tenantId: row.tenantId,
+    },
+    unitRef: {
+      moduleId: 'commerce.catalog',
+      resourceId: row.unitResourceId,
+      resourceType: 'commerce.catalog.product-unit',
+      tenantId: row.tenantId,
+    },
+  }).pipe(Effect.mapError(sourceProvisioningUnavailable));
+
 export const sourceProvisioningPolicyPersistenceForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
 ): SourceProvisioningPolicyPersistence => {
-  const decode = Effect.fn('SourceProvisioningPolicyPersistence.decode')(function* decodePolicy(row: PolicyRow) {
-    const locations = yield* transaction
-      .select()
-      .from(inventorySourceProvisioningPolicyLocations)
-      .where(
-        and(
-          eq(inventorySourceProvisioningPolicyLocations.tenantId, scope.tenantId),
-          eq(inventorySourceProvisioningPolicyLocations.policyId, row.policyId),
-        ),
-      )
-      .pipe(Effect.mapError(sourceProvisioningUnavailable));
-    return yield* Schema.decodeUnknownEffect(SourceProvisioningPolicySchema)({
-      customerConfigurationId: row.customerConfigurationId,
-      definedAt: row.definedAt.toISOString(),
-      effectiveFrom: row.effectiveFrom.toISOString(),
-      externalScope: row.externalScope,
-      issuer: { backendId: row.issuerBackendId, backendKind: row.issuerBackendKind },
-      locations: locations
-        .map((location) => ({
-          locationKey: location.locationKey,
-          stockLocationRef: {
-            moduleId: INVENTORY_MODULE_ID,
-            resourceId: location.stockLocationId,
-            resourceType: 'commerce.inventory.stock-location',
-            tenantId: row.tenantId,
-          },
-        }))
-        .toSorted((left, right) => left.locationKey.localeCompare(right.locationKey)),
-      namespace: row.namespace,
-      ownerConfigurationRef: {
-        moduleId: INVENTORY_MODULE_ID,
-        resourceId: row.ownerConfigurationId,
-        resourceType: 'commerce.inventory.inventory-backend-configuration',
-        tenantId: row.tenantId,
-      },
-      policyRef: {
-        moduleId: INVENTORY_MODULE_ID,
-        resourceId: row.policyId,
-        resourceType: 'commerce.inventory.source-provisioning-policy',
-        tenantId: row.tenantId,
-      },
-      unitRef: {
-        moduleId: 'commerce.catalog',
-        resourceId: row.unitResourceId,
-        resourceType: 'commerce.catalog.product-unit',
-        tenantId: row.tenantId,
-      },
-    }).pipe(Effect.mapError(sourceProvisioningUnavailable));
-  });
-
   const findOne = (predicate: ReturnType<typeof and>) =>
     transaction
       .select()
@@ -146,7 +124,7 @@ export const sourceProvisioningPolicyPersistenceForScope = (
       .limit(1)
       .pipe(
         Effect.mapError(sourceProvisioningUnavailable),
-        Effect.flatMap(([row]) => (row === undefined ? Effect.succeedNone : decode(row).pipe(Effect.asSome))),
+        Effect.flatMap(([row]) => (row === undefined ? Effect.succeedNone : decodePolicyRow(row).pipe(Effect.asSome))),
       );
 
   const lockOwnerConfiguration: SourceProvisioningPolicyPersistence['lockOwnerConfiguration'] = (ownerId) =>
@@ -191,6 +169,7 @@ export const sourceProvisioningPolicyPersistenceForScope = (
         .insert(inventorySourceProvisioningPolicies)
         .values({
           customerConfigurationId: policy.customerConfigurationId,
+          declaredLocations: policy.locations,
           definedAt: instantAsDate(policy.definedAt),
           effectiveFrom: instantAsDate(policy.effectiveFrom),
           externalScope: policy.externalScope,
@@ -211,18 +190,7 @@ export const sourceProvisioningPolicyPersistenceForScope = (
           ? { outcome: 'EXISTING' as const, policy: existing.value }
           : yield* sourceProvisioningUnavailable('A conflicting Source Provisioning Policy could not be read');
       }
-      yield* transaction
-        .insert(inventorySourceProvisioningPolicyLocations)
-        .values(
-          policy.locations.map(({ locationKey, stockLocationRef }) => ({
-            locationKey,
-            policyId: policy.policyRef.resourceId,
-            stockLocationId: stockLocationRef.resourceId,
-            tenantId: scope.tenantId,
-          })),
-        )
-        .pipe(Effect.mapError(sourceProvisioningUnavailable));
-      return { outcome: 'INSERTED' as const, policy: yield* decode(inserted) };
+      return { outcome: 'INSERTED' as const, policy: yield* decodePolicyRow(inserted) };
     },
   );
 
@@ -272,10 +240,7 @@ export const sourceStockItemProvisioningReceiptPersistenceForScope = (
       .pipe(Effect.mapError(sourceProvisioningUnavailable));
     if (row === undefined) {
       const original = yield* findByInvocation(receipt.actionInvocationId);
-      if (
-        Option.isSome(original) &&
-        computeCanonicalValueHash(original.value.input) === computeCanonicalValueHash(receipt.input)
-      ) {
+      if (Option.isSome(original) && sameProvisionSourceStockItemInput(original.value.input, receipt.input)) {
         return original.value;
       }
       return yield* sourceProvisioningUnavailable('Provisioning invocation already records different input');
