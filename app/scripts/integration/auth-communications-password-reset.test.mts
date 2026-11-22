@@ -3,15 +3,16 @@ import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { portalAuthCommunicationRequest } from '../../verticals/commerce-customer-context/src/portal-auth/communications/request.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
-import { user } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
-import { deliveryAttempts, messageIntents } from '../../verticals/communications/src/database/schema.ts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
 import {
+  COMMERCE_PORTAL_AUTH_POLICY,
+  portalAuthCommunicationRequest,
+  user,
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import {
+  nativeServices,
   privacyIndeterminate,
   privacyNotAllowed,
-} from '../../verticals/communications/tests/unit/support/privacy-fixtures.ts';
+} from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -48,10 +49,11 @@ import {
  * Nothing here is Privacy, delivery or provider evidence.
  */
 
+/** The user asks for a reset; the issuance commits with its request, and one relay tick submits it. */
 const requestReset = (realm: PostgresRealm, address = realm.email) =>
   Effect.promise(
     async () => await realm.auth.api.requestPasswordReset({ body: { email: address }, headers: headersOf(realm.ip) }),
-  );
+  ).pipe(Effect.tap(() => realm.relay));
 
 const setup = Effect.fn('PasswordResetE2E.setup')(function* setupWorld(options?: Parameters<typeof authWorld>[0]) {
   const world = yield* authWorld(options ?? { mode: 'B' });
@@ -78,7 +80,7 @@ const stepAfterMinutes = (world: AuthWorld, intentId: string, minutes: number) =
     }).pipe(Effect.provide(TestClock.layer()));
   });
 
-const attemptsOf = (world: AuthWorld) => world.read((tx) => tx.select().from(deliveryAttempts));
+const attemptsOf = (world: AuthWorld) => world.attemptRows;
 
 describe('Password reset: real Auth source -> public Action -> durable decision/intent -> authorized Read (#1406)', () => {
   it.live(
@@ -277,7 +279,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         });
         expect(world.submissions).toHaveLength(2);
         // the replay is the SAME intent: one intent row, not two
-        expect(yield* world.read((tx) => tx.select().from(messageIntents))).toHaveLength(1);
+        expect(yield* world.intentRows).toHaveLength(1);
 
         // only a new Auth-authorized issuance creates a separate security message
         yield* requestReset(realm);
@@ -441,14 +443,15 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
   );
 
   it.live(
-    '[AC-06 restart] after a restart Auth cannot resume the issuance: a truthful stop and the link is never reproduced',
+    '[AC-06 D2] an issuance whose protected value Auth cleared is resumed by no Auth process, restarted or not: a truthful stop, never reproduced',
     () =>
       Effect.gen(function* restart() {
         const { realm, world } = yield* setup();
         yield* requestReset(realm);
         const intentId = yield* onlyIntent(world);
-        // a restart drops the process-local protected handoff: the entry is gone, observably the same
+        // Auth cleared the protected value (it serves nothing any more); a restarted process finds nothing to resume either
         yield* world.handoff.forget(issuanceRefOf(world));
+        yield* world.restartAuth;
         const outcome = yield* step(world, world.messageHandoff, intentId);
         expect(outcome.kind).not.toBe('HANDED_OFF');
         expect(world.mailbox).toHaveLength(0);

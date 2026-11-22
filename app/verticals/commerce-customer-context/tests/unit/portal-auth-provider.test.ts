@@ -931,6 +931,8 @@ it.effect('keeps the Better Auth table inventory in the isolated commerce_auth s
       'recoveryReconciliation',
       'recoveryResetLedger',
       'portalAuthAuditEvent',
+      'communicationIssuance',
+      'communicationRequestOutbox',
     ]);
     // The governed invocation that created an account is a column on the account row, never a
     // table of its own: a second row written after the user transaction committed could fail on

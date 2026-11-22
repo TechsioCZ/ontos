@@ -7,15 +7,13 @@ import {
   unavailableCommunicationOutcomeReaderLayer,
 } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
 import type { PortalAuthSourceOutcome } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
-import {
-  CommercePortalAuthProtectedHandoff,
-  protectedHandoffLayer,
-} from '../../src/portal-auth/communications/protected-handoff.ts';
+import { CommercePortalAuthProtectedHandoff } from '../../src/portal-auth/communications/protected-handoff.ts';
 import {
   CommercePortalAuthVerificationReplay,
   enrollmentVerificationIssuanceRef,
   verificationReplayLayer,
 } from '../../src/portal-auth/communications/verification-replay.ts';
+import { handoffOverDouble, holdWithRequest } from '../support/portal-auth-communication-store.double.ts';
 
 /**
  * #1406 AUTH-COM-09, D.2 and D.9: one enrollment operation causes ONE verification issuance with its OWN identity, and a replay
@@ -27,7 +25,7 @@ const INVOCATION = '22222222-2222-4222-8222-222222222222';
 const SUBJECT = 'subject-1';
 
 const replayWith = (outcome: PortalAuthSourceOutcome) => {
-  const handoff = protectedHandoffLayer(() => Effect.succeed('CURRENT'));
+  const handoff = handoffOverDouble(() => Effect.succeed('CURRENT'));
   const reader = Layer.succeed(CommercePortalAuthCommunicationOutcomeReader, {
     outcomeOf: () => Effect.succeed(outcome),
   });
@@ -96,8 +94,9 @@ describe('The enrollment verification issuance and its replay (#1406)', () => {
         const replay = yield* CommercePortalAuthVerificationReplay;
         const issuanceRef = yield* enrollmentVerificationIssuanceRef(INVOCATION);
         const issuedAt = DateTime.makeUnsafe('2026-11-19T10:00:00.000Z');
-        // the first creation held the issuance and submitted; Communications admitted the request but the caller saw "unavailable"
-        yield* handoff.hold(
+        // the first creation held the issuance with its request; Communications may have admitted it with a lost answer
+        yield* holdWithRequest(
+          handoff,
           {
             endpoint: Redacted.make('fictional@example.test'),
             issuance: {
@@ -109,7 +108,7 @@ describe('The enrollment verification issuance and its replay (#1406)', () => {
             },
             secret: Redacted.make('https://fictional.example.test/verify'),
           },
-          { supersede: true },
+          true,
         );
         const decision = yield* replay.begin({
           ownerInvocationId: INVOCATION,
@@ -144,7 +143,7 @@ describe('The enrollment verification issuance and its replay (#1406)', () => {
   );
 
   it.effect('an unavailable outcome Read (the production default) sends nothing and issues nothing', () => {
-    const handoff = protectedHandoffLayer(() => Effect.succeed('CURRENT'));
+    const handoff = handoffOverDouble(() => Effect.succeed('CURRENT'));
     const layer = Layer.mergeAll(
       handoff,
       verificationReplayLayer.pipe(

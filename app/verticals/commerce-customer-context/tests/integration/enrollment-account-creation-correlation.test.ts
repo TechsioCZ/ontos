@@ -43,7 +43,6 @@ import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from '../../
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { CommercePortalAuthCommunicationOutcomeReader } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
 import type { PortalAuthSourceOutcome } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
-import { protectedHandoffLayer } from '../../src/portal-auth/communications/protected-handoff.ts';
 import { verificationReplayLayer } from '../../src/portal-auth/communications/verification-replay.ts';
 import { VerificationReplayUnavailable } from '../../src/portal-auth/communications/verification-replay-unavailable.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
@@ -51,6 +50,9 @@ import {
   CommercePortalAuthDatabase,
   makeCommercePortalAuthDatabase,
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { CommercePortalAuthCommunicationStoreLive } from '../../src/portal-auth/persistence/portal-auth-communication-store.ts';
+import { protectedHandoffLayer } from '../../src/portal-auth/communications/protected-handoff.ts';
+import { protectedValueSealerLayer } from '../../src/portal-auth/communications/protected-value.ts';
 import { user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import {
   expireEnrollmentAcceptanceLeases,
@@ -332,7 +334,18 @@ const makeVerificationSendFixture = Effect.fn('CommerceEnrollmentAccountCorrelat
     const replayLive = verificationReplayLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
-          protectedHandoffLayer(() => Effect.succeed('CURRENT')),
+          protectedHandoffLayer(() => Effect.succeed('CURRENT')).pipe(
+            Layer.provide(
+              Layer.merge(
+                CommercePortalAuthCommunicationStoreLive.pipe(
+                  Layer.provide(Layer.succeed(CommercePortalAuthDatabase, database)),
+                ),
+                protectedValueSealerLayer(configuration.secret).pipe(
+                  Layer.provide(commercePortalAuthPlatformCryptoLive),
+                ),
+              ),
+            ),
+          ),
           outcomeReader,
           commercePortalAuthPlatformCryptoLive,
         ),

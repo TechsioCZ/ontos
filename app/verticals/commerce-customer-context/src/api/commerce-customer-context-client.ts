@@ -59,6 +59,7 @@ export * from './reactivate-customer-group-action-client.ts';
 export * from './reactivate-customer-profile-action-client.ts';
 export * from './record-portal-enrollment-outcome-action-client.ts';
 export * from './recover-retail-portal-profile-binding-action-client.ts';
+export * from './relay-portal-auth-communication-request-action-client.ts';
 export * from './remove-counterparty-price-group-action-client.ts';
 export * from './remove-customer-group-action-client.ts';
 export * from './remove-customer-payment-term-action-client.ts';

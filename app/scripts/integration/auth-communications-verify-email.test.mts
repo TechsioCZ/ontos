@@ -5,22 +5,21 @@ import { Array as EffectArray, DateTime, Effect, Order, Option, Redacted, Ref, S
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CommercePortalAuthAccountCreationUnavailable } from '../../verticals/commerce-customer-context/api/portal-auth/provider/account-creation-unavailable.ts';
 import {
+  COMMERCE_PORTAL_AUTH_POLICY,
+  CommercePortalAuthAccountCreationUnavailable,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentTenantIdSchema,
-} from '../../verticals/commerce-customer-context/shared/enrollment-contracts.ts';
-import { PortalAuthIssuanceRefSchema } from '../../verticals/commerce-customer-context/shared/portal-auth-communications.ts';
-import { COMMERCE_PORTAL_AUTH_POLICY } from '../../verticals/commerce-customer-context/api/portal-auth/provider/config.ts';
-import { privacyNotAllowed } from '../../verticals/communications/tests/unit/support/privacy-fixtures.ts';
-import {
+  PortalAuthIssuanceRefSchema,
   user,
   verification,
-} from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
-import { approvedMessageTypes } from '../../verticals/communications/src/domain/catalog/approved-registry.ts';
-import { deliveryAttempts, messageIntents } from '../../verticals/communications/src/database/schema.ts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import {
+  approvedMessageTypes,
+  nativeServices,
+  privacyNotAllowed,
+} from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -80,7 +79,8 @@ const setup = Effect.fn('VerifyEmailE2E.setup')(function* setupWorld(
   const realm = yield* makePostgresRealm(world, 'verify');
   const enrollment = enrollmentOf(realm);
   const create = yield* makeEnrollmentGateway(world, realm, gateway ?? { withReplay: true });
-  return { create: () => create.create(enrollment), enrollment, realm, world };
+  // the creation commits the account, the issuance and its request; one relay tick then submits what it committed
+  return { create: () => create.create(enrollment).pipe(Effect.tap(() => world.relay)), enrollment, realm, world };
 });
 
 const onlyIntent = (world: AuthWorld) => {
@@ -91,8 +91,8 @@ const onlyIntent = (world: AuthWorld) => {
   });
 };
 
-const attemptsOf = (world: AuthWorld) => world.read((tx) => tx.select().from(deliveryAttempts));
-const intentsOf = (world: AuthWorld) => world.read((tx) => tx.select().from(messageIntents));
+const attemptsOf = (world: AuthWorld) => world.attemptRows;
+const intentsOf = (world: AuthWorld) => world.intentRows;
 const verificationRows = (realm: PostgresRealm, subjectId: string) =>
   realm.database.executor.select({ id: verification.id }).from(verification).where(eq(verification.value, subjectId));
 
@@ -159,13 +159,16 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
       Effect.gen(function* languages() {
         const modeB = yield* setup({ languages: ['en'], mode: 'B' });
         yield* Ref.set(modeB.world.languageRef, { kind: 'trusted', language: 'en' });
-        // the account is committed but no verification message can leave: the creation reports it truthfully, as unavailable
-        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(yield* Effect.flip(modeB.create()))).toBe(true);
+        // D1: the account and its issuance commit with the request; Communications then decides that no message can leave,
+        // and a replay of the creation reports that stop truthfully, as unavailable, and never repairs it
+        yield* modeB.create();
         expect(modeB.world.mailbox).toHaveLength(0);
         expect(pendingIntentsOf(modeB.world)).toHaveLength(0);
         expect((yield* (yield* historyReads(modeB.world)).list()).items[0]?.headline.reasonCodes).toEqual([
           'CZECH_REVISION_REQUIRED_BY_MODE_B',
         ]);
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(yield* Effect.flip(modeB.create()))).toBe(true);
+        expect(modeB.realm.issued.verification).toHaveLength(1);
 
         const modeA = yield* setup({ languages: ['en'], mode: 'A' });
         yield* Ref.set(modeA.world.languageRef, { kind: 'trusted', language: 'en' });
@@ -299,52 +302,64 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
   );
 
   it.live(
-    '[AC-09] a first submission whose answer never came back is NEVER treated as not submitted: the replay issues no second link',
+    '[AC-09 D1] an intake unreachable after the commit never loses the request: the relay resubmits the SAME request and the replay issues no second link',
     () =>
-      Effect.gen(function* neverSubmitted() {
+      Effect.gen(function* intakeUnreachable() {
         const { create, realm, world } = yield* setup();
         world.unavailableSubject.current = true;
-        const failure = yield* Effect.flip(create());
-        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
+        // the account, the issuance and its request committed together; only the relay could not reach Communications
+        yield* create();
         expect(world.submissions).toHaveLength(0);
+        const [held] = yield* world.outboxRows;
+        expect(held?.state).toBe('PENDING');
+        expect(held?.lastFailure).toBe('INTAKE_UNAVAILABLE');
 
-        // Auth cannot tell "never reached Communications" from "admitted, answer lost": the replay issues nothing new, and the held
-        // issuance is continued only by resubmitting the SAME request (the idempotent retry of the issuance identity)
+        // the replay of the same enrollment operation finds the held issuance: its request is owed, so nothing new is issued;
+        // the relay tick that follows retries the SAME committed request: one request, one decision, one intent
         world.unavailableSubject.current = false;
         yield* create();
         expect(realm.issued.verification).toHaveLength(1);
-        expect(world.submissions).toHaveLength(0);
+        expect(world.submissions).toHaveLength(1);
+        expect(world.submissions[0]?.request.occurrence.occurrenceId).toBe(held?.issuanceRef);
+        expect(yield* intentsOf(world)).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
   it.live(
-    '[AC-09 REGRESSION] the request is persisted, the submit then reports unavailable: the replay must not issue a second provider link',
+    '[AC-09 REGRESSION] Communications decided, the answer was lost: the relay resubmits the same request onto the SAME decision and the replay issues no second link',
     () =>
       Effect.gen(function* lostAnswer() {
         const { create, realm, world } = yield* setup();
         world.lostAnswerSubject.current = true;
-        const failure = yield* Effect.flip(create());
-        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
-        // Communications admitted and decided the request; only the answer was lost
+        yield* create();
+        // Communications admitted and decided the request; only the answer was lost, so the row stays due
         expect(world.submissions).toHaveLength(1);
         expect(yield* intentsOf(world)).toHaveLength(1);
+        expect((yield* world.outboxRows)[0]?.state).toBe('PENDING');
 
+        // the replay issues nothing; the relay tick that follows resubmits the same request onto the stored decision
         world.lostAnswerSubject.current = false;
         yield* create();
-        // never a second link, never a second request, never a second intent
+        // never a second link, never a second request identity, never a second intent: the replay lands on the stored decision
         expect(realm.issued.verification).toHaveLength(1);
-        expect(world.submissions).toHaveLength(1);
+        const [first, second] = world.submissions;
+        expect(second?.request).toStrictEqual(first?.request);
+        expect(second?.submission).toMatchObject({
+          decisionId: first === undefined ? 'missing' : decisionIdOf(first.submission),
+          replayed: true,
+        });
         expect(yield* intentsOf(world)).toHaveLength(1);
+        expect((yield* world.outboxRows)[0]?.state).toBe('DECIDED');
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
   it.live(
-    '[AC-09 unavailable reconciliation] when the last outcome cannot be established the replay sends nothing new and stays retryable',
+    '[AC-09 unavailable reconciliation] a stopped first message is never repaired: the replay sends nothing new and stays retryable',
     () =>
       Effect.gen(function* unavailableReconciliation() {
         const { create, realm, world } = yield* setup({ evidencing: false, mode: 'B' });
-        // Privacy cannot be evidenced: the first message is stopped; a replay must not repair it by issuing another link
-        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(yield* Effect.flip(create()))).toBe(true);
+        // Privacy cannot be evidenced: the committed request is decided, and its message is stopped
+        yield* create();
         expect(world.submissions).toHaveLength(1);
         const failure = yield* Effect.flip(create());
         expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
@@ -380,7 +395,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
   );
 
   it.live(
-    '[S2.7 AC-06 AC-08] Privacy prohibition and a restart stop the message; an operator without access learns nothing',
+    '[S2.7 AC-06 AC-08 D2] Privacy prohibition stops the message; a restarted Auth process completes the same issuance; an operator without access learns nothing',
     () =>
       Effect.gen(function* stopsAndAccess() {
         const prohibited = yield* setup();
@@ -397,15 +412,12 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         const restarted = yield* setup();
         yield* restarted.create();
         const restartedIntent = yield* onlyIntent(restarted.world);
-        const [{ request }] = restarted.world.submissions;
-        yield* restarted.world.handoff.forget(
-          Schema.decodeSync(PortalAuthIssuanceRefSchema)(request.occurrence.occurrenceId),
-        );
-        expect((yield* step(restarted.world, restarted.world.messageHandoff, restartedIntent)).kind).not.toBe(
-          'HANDED_OFF',
-        );
-        expect(restarted.world.mailbox).toHaveLength(0);
+        // D2: the Auth process that issued is gone; a fresh process over the same Auth store completes the SAME link
+        yield* restarted.world.restartAuth;
+        expect((yield* step(restarted.world, restarted.world.messageHandoff, restartedIntent)).kind).toBe('HANDED_OFF');
+        expect(restarted.world.mailbox).toHaveLength(1);
         expect(restarted.realm.issued.verification).toHaveLength(1);
+        expect(textOf(restarted.world.mailbox[0])).toContain(restarted.realm.issued.verification[0] ?? 'missing');
 
         const denied = yield* historyReads(restarted.world, 'denied');
         const failures = JSON.stringify([

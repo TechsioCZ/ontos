@@ -99,6 +99,7 @@ import { reactivateCustomerProfileAction } from './src/actions/reactivate-custom
 import { reconcilePartyMergeWorker } from './src/workers/reconcile-party-merge.worker.ts';
 import { recordPortalEnrollmentOutcomeAction } from './src/actions/record-portal-enrollment-outcome.action.ts';
 import { recoverRetailPortalProfileBindingAction } from './src/actions/recover-retail-portal-profile-binding.action.ts';
+import { relayPortalAuthCommunicationRequestAction } from './src/actions/relay-portal-auth-communication-request.action.ts';
 import { removeCounterpartyPriceGroupAction } from './src/actions/remove-counterparty-price-group.action.ts';
 import { removeCustomerGroupAction } from './src/actions/remove-customer-group.action.ts';
 import { removeCustomerPaymentTermAction } from './src/actions/remove-customer-payment-term.action.ts';
@@ -130,6 +131,7 @@ import { savedAddressSourceReceiptRead } from './src/api/saved-address-source-re
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
 import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
+import { submitPortalAuthCommunicationRequestWorker } from './src/workers/submit-portal-auth-communication-request.worker.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
 import { terminatePortalEnrollmentAction } from './src/actions/terminate-portal-enrollment.action.ts';
@@ -193,6 +195,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     reactivateCustomerProfileAction,
     recordPortalEnrollmentOutcomeAction,
     recoverRetailPortalProfileBindingAction,
+    relayPortalAuthCommunicationRequestAction,
     removeCounterpartyPriceGroupAction,
     removeCustomerGroupAction,
     removeCustomerPaymentTermAction,
@@ -329,6 +332,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     executePrivacyMeasureWorker,
     // <generated-module-registration-workers>
     reconcilePartyMergeWorker,
+    submitPortalAuthCommunicationRequestWorker,
     // </generated-module-registration-workers>
   ],
   reads: [

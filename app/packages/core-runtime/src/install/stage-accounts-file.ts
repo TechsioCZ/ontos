@@ -80,6 +80,7 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.customer-context.organization-ico-facts.read',
   'integration.symmy.source-organization-facts.read',
   'communications.core.request-source',
+  'commerce.customer-context.portal-auth-communication-relay',
 ]);
 const StageWorkloadKeySchema = WorkloadKeySchema.check(
   Schema.makeFilter((key) =>

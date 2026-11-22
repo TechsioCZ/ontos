@@ -5,10 +5,8 @@ import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
-import { verification } from '../../verticals/commerce-customer-context/src/portal-auth/persistence/portal-auth-tables.ts';
-import { deliveryAttempts, messageIntents } from '../../verticals/communications/src/database/schema.ts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
-import { privacyNotAllowed } from '../../verticals/communications/tests/unit/support/privacy-fixtures.ts';
+import { verification } from '@app/commerce-customer-context/testing/portal-auth-communications';
+import { nativeServices, privacyNotAllowed } from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -51,7 +49,7 @@ const setup = Effect.fn('OtpE2E.setup')(function* setupWorld(options?: Parameter
   return { challenge, realm, world };
 });
 
-/** The provider may run the code callback in the background: wait until it has submitted its request. */
+/** The provider may run the code callback in the background: relay until its committed request has been submitted. */
 const sendCode = Effect.fn('OtpE2E.sendCode')(function* send(
   world: AuthWorld,
   realm: OtpRealm,
@@ -61,7 +59,10 @@ const sendCode = Effect.fn('OtpE2E.sendCode')(function* send(
   const wanted = expectedSubmissions ?? world.submissions.length + 1;
   yield* Effect.promise(async () => await realm.auth.api.sendTwoFactorOTP({ body: { trustDevice: false }, headers }));
   for (let attempt = 0; attempt < POLL_LIMIT && world.submissions.length < wanted; attempt += 1) {
-    yield* Effect.sleep(POLL_MS);
+    yield* world.relay;
+    if (world.submissions.length < wanted) {
+      yield* Effect.sleep(POLL_MS);
+    }
   }
   expect(world.submissions.length).toBeGreaterThanOrEqual(wanted);
 });
@@ -238,13 +239,14 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
   );
 
   it.live(
-    '[AC-06 restart] after a restart Auth cannot resume the code: a truthful stop and nothing is reproduced or reissued',
+    '[AC-06 D2] a code whose protected value Auth cleared is resumed by no Auth process, restarted or not: a truthful stop, nothing reproduced or reissued',
     () =>
       Effect.gen(function* restart() {
         const { challenge, realm, world } = yield* setup();
         yield* sendCode(world, realm, challenge.headers);
         const intentId = yield* onlyIntent(world);
         yield* world.handoff.forget(issuanceRefOf(world));
+        yield* world.restartAuth;
         expect((yield* step(world, world.messageHandoff, intentId)).kind).not.toBe('HANDED_OFF');
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued).toHaveLength(1);
@@ -291,12 +293,12 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
           decisionId: decisionIdOf(submission),
           replayed: true,
         });
-        expect(yield* world.read((tx) => tx.select().from(messageIntents))).toHaveLength(1);
+        expect(yield* world.intentRows).toHaveLength(1);
         const intentId = yield* onlyIntent(world);
         yield* step(world, world.messageHandoff, intentId);
         yield* step(world, world.messageHandoff, intentId);
         expect(world.mailbox).toHaveLength(1);
-        expect(yield* world.read((tx) => tx.select().from(deliveryAttempts))).toHaveLength(1);
+        expect(yield* world.attemptRows).toHaveLength(1);
         expect((yield* (yield* historyReads(world)).list()).items[0]?.headline).toMatchObject({
           attention: 'UNKNOWN',
           providerAccepted: false,

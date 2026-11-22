@@ -17,14 +17,12 @@ import type { HeldIssuance, IssuanceCurrentness } from '../../src/portal-auth/co
 import { PortalAuthIssuanceStateUnavailable } from '../../src/portal-auth/communications/issuance-state-unavailable.ts';
 import { issuanceSourceStateOf } from '../../src/portal-auth/communications/owner-facts.ts';
 import { OwnerSlotStopReasonSchema } from '../../src/portal-auth/communications/owner-slot-stop.ts';
-import {
-  CommercePortalAuthProtectedHandoff,
-  protectedHandoffLayer,
-} from '../../src/portal-auth/communications/protected-handoff.ts';
+import { CommercePortalAuthProtectedHandoff } from '../../src/portal-auth/communications/protected-handoff.ts';
 import {
   CommercePortalAuthVerificationReplay,
   verificationReplayLayer,
 } from '../../src/portal-auth/communications/verification-replay.ts';
+import { handoffOverDouble, holdWithRequest } from '../support/portal-auth-communication-store.double.ts';
 
 /**
  * #1406 own-reason stops and OTP state: each lifecycle end of an issuance is its OWN state key (Communications maps each to its own
@@ -152,19 +150,20 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
     }),
   );
 
-  it.effect('a restart (a fresh handoff that never held the issuance) is NOT_RESUMABLE and reveals nothing', () =>
+  it.effect('a handoff over a store that never recorded the issuance is NOT_RESUMABLE and reveals nothing', () =>
     Effect.gen(function* restarted() {
       yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
       const live = yield* Effect.provide(
         Effect.gen(function* hold() {
           const handoff = yield* CommercePortalAuthProtectedHandoff;
-          yield* handoff.hold(heldOf('otp', 'pa-otp-3', OTP_CHALLENGE), { supersede: true });
+          yield* holdWithRequest(handoff, heldOf('otp', 'pa-otp-3', OTP_CHALLENGE), true);
           return yield* handoff.currentness(PA_OTP_3);
         }),
-        protectedHandoffLayer(() => Effect.succeed('CURRENT')),
+        handoffOverDouble(() => Effect.succeed('CURRENT')),
       );
       expect(live).toBe('CURRENT');
-      // the process is gone: its handoff is a new instance that was never given the issuance
+      // another store (a deployment that never recorded the issuance) answers nothing; one process restarting over the SAME
+      // store resumes it, which `portal-auth-protected-handoff.test.ts` and the PostgreSQL suite prove
       const [state, stop] = yield* Effect.provide(
         Effect.gen(function* afterRestart() {
           const handoff = yield* CommercePortalAuthProtectedHandoff;
@@ -173,7 +172,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
             yield* Effect.flip(handoff.revealSecret({ flow: 'otp', issuanceRef: PA_OTP_3, slot: 'otp_code' })),
           ] as const;
         }),
-        protectedHandoffLayer(() => Effect.succeed('CURRENT')),
+        handoffOverDouble(() => Effect.succeed('CURRENT')),
       );
       expect(state).toBe('NOT_RESUMABLE');
       expect(stop).toMatchObject({ reason: 'NOT_RESUMABLE' });
@@ -184,7 +183,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
   it.effect(
     'CONCURRENT replays of one enrollment operation never issue a second link while its request is held',
     () => {
-      const handoff = protectedHandoffLayer(() => Effect.succeed('CURRENT'));
+      const handoff = handoffOverDouble(() => Effect.succeed('CURRENT'));
       const reader = Layer.succeed(CommercePortalAuthCommunicationOutcomeReader, {
         outcomeOf: () => Effect.succeed('NOT_SUBMITTED' as const),
       });
@@ -202,7 +201,7 @@ describe('Portal Auth issuance states and the one-time code state (#1406)', () =
         const first = yield* begin;
         // the first creation held its issuance and submitted; the replays now race while the answer is lost
         const ref = Option.getOrThrow(yield* store.takeReservation('verify-email', 'subject-1')).issuanceRef;
-        yield* store.hold(heldOf('verify-email', ref), { supersede: true });
+        yield* holdWithRequest(store, heldOf('verify-email', ref), true);
         const results = yield* Effect.all(
           Array.from({ length: 8 }, () => begin),
           { concurrency: 'unbounded' },
