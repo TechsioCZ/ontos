@@ -410,10 +410,11 @@ const requirePinnedPolicyFixture = (
     : Effect.fail(routeDenied());
 };
 
-const routeSourceAuthority = (
-  route: typeof symmyJobRoutes.$inferSelect,
-  template: SymmyFixtureExecutionPlan | null,
-) => ({
+type SourceRouteAuthority = Pick<
+  SymmyFixtureExecutionPlan,
+  'sourceMappingVersion' | 'sourceRouteId' | 'sourceRouteRevision'
+>;
+const routeSourceAuthority = (route: typeof symmyJobRoutes.$inferSelect, template: SourceRouteAuthority | null) => ({
   sourceMappingVersion: template?.sourceMappingVersion ?? route.mappingVersion,
   sourceRouteId: template?.sourceRouteId ?? route.routeId,
   sourceRouteRevision: template?.sourceRouteRevision ?? route.routeRevision,
@@ -422,7 +423,7 @@ const routeSourceAuthority = (
 const exactRouteProofMatches = (
   route: typeof symmyJobRoutes.$inferSelect,
   scope: OperationalScope,
-  template: SymmyFixtureExecutionPlan | null,
+  template: SourceRouteAuthority | null,
   idempotencyDigest?: string,
 ): boolean => {
   const proof = readVerifiedGatewayRouteScope(scope);
@@ -726,9 +727,20 @@ const syncReceipt = Effect.fn('SymmyJobStore.syncReceipt')(function* syncReceipt
 const syncAdmissionReceipt = Effect.fn('SymmyJobStore.syncAdmissionReceipt')(function* syncAdmissionReceipt(
   transaction: ScopedTransactionExecutor,
   saved: typeof symmySyncAdmissions.$inferSelect,
-  attempt: { readonly invocationId: string; readonly replayed: boolean },
+  attempt: { readonly invocationId: string; readonly replayed: boolean; readonly retiredRoute?: true },
 ) {
   const receipt = yield* syncReceipt(transaction, saved, attempt.replayed);
+  // A retired route can recover committed history, never resume an unexecuted import.
+  if (
+    attempt.retiredRoute === true &&
+    receipt.plan.items.some(({ effects }) =>
+      effects.some(
+        (effect) => effect.originalInvocationId === undefined || effect.originalInvocationStatus !== 'succeeded',
+      ),
+    )
+  ) {
+    return yield* routeDenied();
+  }
   yield* transaction
     .insert(symmySyncAdmissionAttempts)
     .values({ admissionId: saved.admissionId, invocationId: attempt.invocationId, tenantId: saved.tenantId })
@@ -910,7 +922,7 @@ const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(fun
   row: typeof symmyJobRoutes.$inferSelect,
   original: SymmyPinnedJobPlan,
   digest: string,
-  template: SymmyFixtureExecutionPlan | null = null,
+  template: SourceRouteAuthority | null = null,
 ): Effect.fn.Return<ConfiguredRouteContext, SymmyJobStoreError> {
   const [item] = original.items;
   const [effect] = item.effects;
@@ -977,6 +989,78 @@ const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRou
   );
   return Option.some(yield* retainedRouteContext(row, original, digest, yield* decodeRouteTemplate(row)));
 });
+
+/**
+ * A disabled stock enrollment is not a write authority. Only its one exact saved logical key can still carry a
+ * history read; source identity comes from the saved plan, never from decoding a retired stockScope template.
+ */
+const retiredStockSyncAdmission = Effect.fn('SymmyJobStore.retiredStockSyncAdmission')(
+  function* retiredStockSyncAdmission(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    digest: string,
+    purpose: 'consume' | 'context',
+  ) {
+    const [entry, duplicate] = yield* transaction
+      .select({ route: symmyJobRoutes, saved: symmySyncAdmissions })
+      .from(symmySyncAdmissions)
+      .innerJoin(
+        symmyJobRoutes,
+        and(
+          eq(symmyJobRoutes.tenantId, symmySyncAdmissions.tenantId),
+          eq(symmyJobRoutes.routeId, symmySyncAdmissions.routeId),
+        ),
+      )
+      .where(
+        purpose === 'context' && scope.legalEntityId === undefined
+          ? and(
+              eq(symmySyncAdmissions.tenantId, scope.tenantId),
+              eq(symmySyncAdmissions.principalId, scope.principalId),
+              eq(symmySyncAdmissions.routeKey, 'inventoryStockBatch'),
+              eq(symmySyncAdmissions.idempotencyDigest, digest),
+            )
+          : syncAdmissionKey(scope, 'inventoryStockBatch', digest),
+      )
+      .limit(2)
+      .pipe(Effect.mapError(unavailable));
+    if (duplicate !== undefined) {
+      return yield* routeDenied();
+    }
+    if (entry === undefined) {
+      return Option.none();
+    }
+    const { route, saved } = entry;
+    if (
+      route.tenantId !== saved.tenantId ||
+      route.principalId !== saved.principalId ||
+      route.legalEntityId !== saved.legalEntityId ||
+      route.routeKey !== saved.routeKey ||
+      route.routeCode !== null
+    ) {
+      return yield* routeDenied();
+    }
+    if (route.active) {
+      return Option.none();
+    }
+    if (
+      scope.authMethod !== 'api_key' ||
+      saved.retentionReceipt !== null ||
+      route.mappingVersion !== saved.mappingVersion ||
+      route.routeRevision !== saved.routeRevision
+    ) {
+      return yield* routeDenied();
+    }
+    yield* lockRoute(transaction, route);
+    const original = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(saved.executionPlan).pipe(
+      Effect.mapError(unavailable),
+    );
+    // The tenant Read resolves a unique company for Shell to validate and sign; only its consumer has that proof.
+    if (purpose === 'consume' && !exactRouteProofMatches(route, scope, original, digest)) {
+      return yield* routeDenied();
+    }
+    return Option.some({ original, route, saved });
+  },
+);
 const qualifyRetainedJobRoute = Effect.fn('SymmyJobStore.qualifyRetainedJobRoute')(function* qualifyRetainedJobRoute(
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
@@ -1383,6 +1467,21 @@ export const symmyJobStoreFactory = (
       if (!isSyncAdmissionRoute(input.routeKey)) {
         return yield* routeDenied();
       }
+      const callerIntent = yield* encodeCallerIntent(input, 'INTERNAL_C14');
+      const [keyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
+        concurrency: 2,
+      });
+      if (input.routeKey === 'inventoryStockBatch') {
+        const retired = yield* retiredStockSyncAdmission(transaction, scope, keyDigest, 'consume');
+        if (Option.isSome(retired)) {
+          yield* verifySyncReplay(retired.value.saved, intentDigest);
+          return yield* syncAdmissionReceipt(transaction, retired.value.saved, {
+            invocationId: admissionId,
+            replayed: true,
+            retiredRoute: true,
+          });
+        }
+      }
       const rows = yield* transaction
         .select()
         .from(symmyJobRoutes)
@@ -1405,13 +1504,7 @@ export const symmyJobStoreFactory = (
         return yield* routeDenied();
       }
       yield* lockRoute(transaction, route);
-      const [template, callerIntent] = yield* Effect.all(
-        [decodeRouteTemplate(route), encodeCallerIntent(input, 'INTERNAL_C14')],
-        { concurrency: 2 },
-      );
-      const [keyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
-        concurrency: 2,
-      });
+      const template = yield* decodeRouteTemplate(route);
       if (!exactRouteProofMatches(route, scope, template, keyDigest)) {
         return yield* routeDenied();
       }
@@ -1596,6 +1689,18 @@ export const symmyJobStoreFactory = (
         input.code === undefined
           ? undefined
           : yield* decodeSymmySourceSelector(input.code).pipe(Effect.mapError(routeDenied));
+      if (
+        input.routeKey === 'inventoryStockBatch' &&
+        input.code === undefined &&
+        input.replayIdempotencyKey !== undefined
+      ) {
+        const digest = yield* hash(input.replayIdempotencyKey);
+        const retired = yield* retiredStockSyncAdmission(transaction, scope, digest, 'context');
+        if (Option.isSome(retired)) {
+          const { original, route } = retired.value;
+          return yield* retainedRouteContext(route, original, digest, original);
+        }
+      }
       const selector = configuredRouteSelector(decoded, scope.tenantId);
       const rows = yield* transaction
         .select()
