@@ -1,12 +1,19 @@
 import { scopedRoutineInvokerFromTransaction, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { PricingExactPriceOwnerReadReceiptSchema } from '@app/pricing-contracts/domain/material-evidence';
+import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { PgTypes } from '@effect/sql-pg';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import {
+  PriceResultLookupRequestSchema,
+  PriceResultLookupResponseSchema,
+} from '../../shared/apis/price-result-lookup.ts';
+import { PriceSourceResultLookupResponseSchema } from '../../shared/apis/price-source-result-lookup.ts';
+import { readPriceResult } from '../../src/api/price-result-lookup.read.ts';
 import {
   ExactPriceCandidateSetAuthoritySchema,
   PriceActionResultLookupOutcomeSchema,
@@ -107,6 +114,122 @@ const firstClaimant = claimant('77777777-7777-4777-8777-777777777777', '88888888
 const secondClaimant = claimant('99999999-9999-4999-8999-999999999999', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 2);
 
 describe('Price exact candidate-set persistence authority (#797)', () => {
+  it.effect('recovers original committed source references without admitting them as new Price assertions', () =>
+    Effect.gen(function* historicalSourceReferences() {
+      const actionInvocationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const input = yield* Schema.decodeUnknownEffect(PriceResultLookupRequestSchema)({ actionInvocationId });
+      const definition = {
+        identityKey: exactKey,
+        priceRef: firstClaimant.priceRef,
+        revision: firstClaimant.priceRevision,
+      };
+      const assertion = {
+        lineage: { kind: 'INITIAL' as const },
+        mapping: { mappingContractRef: 'erp-price', mappingContractVersion: '1' },
+        originalAssertion: {
+          monetaryAmount: definition.revision.monetaryAmount,
+          monetaryBoundary: 'PRE_TAX' as const,
+          unitBasis: exactKey.unitBasis,
+        },
+        sourceAssertionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        sourceAuthority: { sourceAuthorityRef: 'pricing-owner', sourceAuthorityVersion: '1' },
+        sourceRecord: {
+          sourceChangeCorrelation: 'original-change',
+          sourceRecordRef: 'original-price-row',
+          sourceRecordVersion: '1',
+          sourceSystem: { ownerModuleId: 'commerce.pricing', sourceSystemRef: 'erp' },
+        },
+        timing: {
+          importedAt: effectiveAt,
+          ownerBusinessEffectiveAt: definition.revision.effectiveFrom,
+          sourceEffectiveAt: definition.revision.effectiveFrom,
+        },
+      };
+      expect(Schema.is(PriceSourceAssertionInputSchema)(assertion)).toBe(true);
+      const historicalAssertions = [
+        { ...assertion, sourceAuthority: { ...assertion.sourceAuthority, sourceAuthorityRef: '*' } },
+        { ...assertion, sourceAuthority: { ...assertion.sourceAuthority, sourceAuthorityVersion: '*' } },
+        { ...assertion, mapping: { ...assertion.mapping, mappingContractRef: '*' } },
+        { ...assertion, mapping: { ...assertion.mapping, mappingContractVersion: '*' } },
+        ...[
+          { ...assertion.sourceAuthority, sourceAuthorityRef: '*' },
+          { ...assertion.sourceAuthority, sourceAuthorityVersion: '*' },
+        ].map((sourceAuthority) => ({
+          ...assertion,
+          originalAssertion: { ...assertion.originalAssertion, monetaryBoundary: 'TAX_INCLUSIVE' as const },
+          preTaxNormalization: {
+            authority: sourceAuthority,
+            normalizedMonetaryAmount: definition.revision.monetaryAmount,
+          },
+          sourceAuthority,
+        })),
+      ];
+      for (const sourceAssertion of historicalAssertions) {
+        expect(Schema.is(PriceSourceAssertionInputSchema)(sourceAssertion)).toBe(false);
+        if ('preTaxNormalization' in sourceAssertion) {
+          expect(
+            Schema.is(PriceSourceAssertionInputSchema)({
+              ...sourceAssertion,
+              sourceAuthority: assertion.sourceAuthority,
+            }),
+          ).toBe(false);
+        }
+        const found = {
+          actionInvocationId,
+          outcome: 'PRICE_ACTION_RESULT_FOUND',
+          result: {
+            definition,
+            outcome: 'CREATED',
+            provenance: {
+              canonicalLink: { ...definition.revision, identityKey: exactKey, priceRef: definition.priceRef },
+              evidence: {
+                lineage: assertion.lineage,
+                recordedAt: observedAt,
+                sourceAssertion,
+                sourceFactFingerprint: 'a'.repeat(64),
+                tenantId,
+              },
+              provenanceRef: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            },
+          },
+        };
+        const transaction = scopedRoutineInvokerFromTransaction(() => Effect.succeed([{ payload: found }]), {
+          legalEntityId,
+          tenantId,
+        });
+        const persistence = yield* pricePersistenceForScope(transaction, scope);
+        const recovered = yield* readPriceResult(
+          input,
+          { legalEntityId },
+          {
+            ...persistence,
+            resolveCommit: () => Effect.succeed('COMMITTED' as const),
+          },
+        );
+        expect(yield* Schema.encodeEffect(PriceResultLookupResponseSchema)(recovered)).toEqual(found);
+        expect(yield* Schema.encodeEffect(PriceSourceResultLookupResponseSchema)(recovered)).toEqual(found);
+        expect(
+          Schema.is(PriceActionResultLookupOutcomeSchema)({
+            ...found,
+            result: {
+              ...found.result,
+              provenance: {
+                ...found.result.provenance,
+                evidence: {
+                  ...found.result.provenance.evidence,
+                  sourceAssertion: {
+                    ...sourceAssertion,
+                    sourceAuthority: { ...sourceAssertion.sourceAuthority, sourceAuthorityRef: '' },
+                  },
+                },
+              },
+            },
+          }),
+        ).toBe(false);
+      }
+    }),
+  );
+
   it('preserves legacy receipt decoding while validating additive native exact-lookup evidence (#1279)', () => {
     const legacy = { authority, factProofs: [] };
     const lookupEvidence = {
