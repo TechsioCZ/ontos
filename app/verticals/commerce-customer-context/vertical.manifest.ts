@@ -252,6 +252,12 @@ const counterpartyIcoMigrationCondition = 'commerce.customer-context.condition.c
 const counterpartyPartyCorrelationEvidence = 'commerce.customer-context.evidence.counterparty-party-correlation';
 const counterpartyMigrationCorrelationEntrypoint = 'party.registry.api.counterparty-migration-correlation';
 const partyContactPointProviderEntrypoint = 'party.registry.api.party-contact-point-detail';
+/**
+ * A buyer Party read that Customer Context makes by relaying the requester it serves, never as a registered call: a
+ * source writes only Commerce-only saved addresses (Party projects a Contact Point value out of every workload read)
+ * and resolves a Retail profile's Party through the source person admission, so no source workload reaches it.
+ */
+const relayedBuyerCallers = [{ kind: 'person', legalEntityScope: 'subject' }] as const;
 const partyAddressCurrentEvidence = 'commerce.customer-context.evidence.address.party-origin-current';
 const partyAddressSourceIdentityEvidence = 'commerce.customer-context.evidence.address.source-identity-and-revision';
 
@@ -1334,6 +1340,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        callers: relayedBuyerCallers,
         condition: 'commerce.customer-context.condition.new-retail-party-binding',
         entrypointKey: ensureRetailCustomerProfileAction.descriptor.entrypoint.entrypointKey,
         evidence: [
@@ -1348,6 +1355,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        callers: relayedBuyerCallers,
         condition: 'commerce.customer-context.condition.saved-address-explicit-party-origin',
         entrypointKey: addSavedAddressAction.descriptor.entrypoint.entrypointKey,
         evidence: [partyAddressCurrentEvidence, partyAddressSourceIdentityEvidence],
@@ -1359,6 +1367,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         },
       },
       {
+        callers: relayedBuyerCallers,
         condition: 'commerce.customer-context.condition.saved-address-explicit-party-origin',
         entrypointKey: updateSavedAddressAction.descriptor.entrypoint.entrypointKey,
         evidence: [partyAddressCurrentEvidence, partyAddressSourceIdentityEvidence],

@@ -12,7 +12,8 @@
  * Symmy declares no caller for one of them is refused. The nested calls start from the requirements: every requirement
  * the owner of a reached operation declares for exactly that operation needs one call the owner registers under the
  * workload the operation is served with, to the required provider, so a requirement without its call is refused by
- * name and a route needs only what its own operations can call, at any depth. A call the owner names as an intrinsic
+ * name and a route needs only what its own operations can call, at any depth. A requirement whose owner declares only
+ * relayed callers is made for the requester it relays, never as a registered call, and needs none. A call the owner names as an intrinsic
  * requirement, which the gateway admits from any of its operations, is followed when it is registered.
  *
  * The integration principal needs one published workload of every Symmy carrier and Shell read the route uses, and
@@ -64,6 +65,7 @@ interface Provider extends RequiredOperation {
   readonly moduleId: string;
 }
 interface OperationRequirement {
+  readonly callers?: readonly { readonly kind: string }[] | undefined;
   readonly entrypointKey: string;
   readonly key: string;
   readonly provider: Provider;
@@ -115,6 +117,16 @@ const operationRequirements = (caller: Contract, served: string) =>
   (caller.manifest.requirements?.operations ?? []).filter(
     ({ entrypointKey, provider }) => entrypointKey === served && !provider.moduleId.startsWith('core.'),
   );
+/**
+ * Whether the owner makes a requirement's call only by relaying the requester it serves: it declares a `person`
+ * caller and no `registered` one, the only caller a verified workload or a recovery calls as (`selectCaller` in
+ * Core), so no registered call of the route's workloads serves it. A requirement that names neither, such as one a
+ * worker delivery alone calls, relays nobody and keeps its registered call.
+ */
+const relayedOnly = ({ callers }: OperationRequirement) =>
+  callers !== undefined &&
+  callers.some(({ kind }) => kind === 'person') &&
+  !callers.some(({ kind }) => kind === 'registered');
 
 /** The installed module of the app a call is addressed to. */
 const receivingModule = (contracts: readonly Contract[], call: Call) =>
@@ -217,7 +229,9 @@ const followCall = (
       candidate.sourceActionKey === undefined &&
       candidate.recoveryOf === undefined,
   );
-  for (const requirement of operationRequirements(receiver, call.entrypointKey)) {
+  for (const requirement of operationRequirements(receiver, call.entrypointKey).filter(
+    (candidate) => !relayedOnly(candidate),
+  )) {
     const required = `The installed ${moduleId} requires ${providerName(requirement.provider)} for ${symmyOperationName(call)} (requirement ${requirement.key})`;
     const declared = served.filter((candidate) => sameVersion(candidate, requirement.provider));
     const [only] = declared;

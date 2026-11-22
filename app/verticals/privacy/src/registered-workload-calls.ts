@@ -6,16 +6,22 @@ const commerceCustomerContextApiCustomerProfileOrganizationIcoFacts =
 const commerceCustomerContextCustomerProfileOrganizationIcoFactsRead =
   'commerce.customer-context.customer-profile-organization-ico-facts.read';
 const commerceCustomerContextOrganizationIcoFactsRead = 'commerce.customer-context.organization-ico-facts.read';
+const integrationSymmyApiSymmySourceOrganizationFacts = 'integration.symmy.api.symmy-source-organization-facts';
 const integrationSymmyExecuteSymmyJob = 'integration.symmy.execute-symmy-job';
+const integrationSymmySourceOrganizationFactsRead = 'integration.symmy.source-organization-facts.read';
+const integrationSymmySymmySourceOrganizationFactsRead = 'integration.symmy.symmy-source-organization-facts.read';
 const partyRegistry = 'party-registry';
+const partyRegistryApiOrganizationIcoFacts = 'party.registry.api.organization-ico-facts';
 const partyRegistryApiOrganizationRecordFacts = 'party.registry.api.organization-record-facts';
 const partyRegistryApiSourcePersonAdmission = 'party.registry.api.source-person-admission';
+const partyRegistryOrganizationIcoFactsRead = 'party.registry.organization-ico-facts.read';
 const partyRegistryOrganizationRecordFactsRead = 'party.registry.organization-record-facts.read';
 const partyRegistrySourcePersonAdmissionRead = 'party.registry.source-person-admission.read';
 const partyRegistrySourceRead = 'party.registry.source-read';
 const privacyCoreOrganizationBusinessCheck = 'privacy.core.organization-business-check';
 const privacyCoreOrganizationProfileIcoCheck = 'privacy.core.organization-profile-ico-check';
 const privacyCoreSourceProcessingCheck = 'privacy.core.source-processing-check';
+const symmyIntegration = 'symmy-integration';
 
 /**
  * The registered-workload calls this module's credential makes; its manifest declares them. Each entry is verbatim
@@ -46,16 +52,74 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreSourceProcessingCheck,
     workloadKey: partyRegistrySourceRead,
   },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-party
+  {
+    audience: partyRegistry,
+    declarationKey: partyRegistryOrganizationRecordFactsRead,
+    entrypointKey: partyRegistryApiOrganizationRecordFacts,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    sourceWorkloadKey: privacyCoreSourceProcessingCheck,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-party
+  {
+    allowRecoverySource: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryOrganizationRecordFactsRead,
+    entrypointKey: partyRegistryApiOrganizationRecordFacts,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    sourceWorkloadKey: privacyCoreSourceProcessingCheck,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-profile
+  {
+    audience: commerceCustomerContext,
+    declarationKey: commerceCustomerContextCustomerProfileOrganizationIcoFactsRead,
+    entrypointKey: commerceCustomerContextApiCustomerProfileOrganizationIcoFacts,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: privacyCoreSourceProcessingCheck,
+    workloadKey: commerceCustomerContextOrganizationIcoFactsRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.customer-intake-organization-profile
+  {
+    allowRecoverySource: true,
+    audience: commerceCustomerContext,
+    declarationKey: commerceCustomerContextCustomerProfileOrganizationIcoFactsRead,
+    entrypointKey: commerceCustomerContextApiCustomerProfileOrganizationIcoFacts,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: privacyCoreSourceProcessingCheck,
+    workloadKey: commerceCustomerContextOrganizationIcoFactsRead,
+  },
   // origin/main 5608aae1d: organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
-    audience: 'symmy-integration',
-    declarationKey: 'integration.symmy.symmy-source-organization-facts.read',
-    entrypointKey: 'integration.symmy.api.symmy-source-organization-facts',
+    audience: symmyIntegration,
+    declarationKey: integrationSymmySymmySourceOrganizationFactsRead,
+    entrypointKey: integrationSymmyApiSymmySourceOrganizationFacts,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'required',
     schemaVersion: '1',
     sourceWorkloadKey: privacyCoreOrganizationBusinessCheck,
-    workloadKey: 'integration.symmy.source-organization-facts.read',
+    workloadKey: integrationSymmySourceOrganizationFactsRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.organization-business-source-facts
+  {
+    allowRecoverySource: true,
+    audience: symmyIntegration,
+    declarationKey: integrationSymmySymmySourceOrganizationFactsRead,
+    entrypointKey: integrationSymmyApiSymmySourceOrganizationFacts,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: privacyCoreOrganizationBusinessCheck,
+    workloadKey: integrationSymmySourceOrganizationFactsRead,
   },
   // origin/main 5608aae1d: organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
@@ -114,11 +178,35 @@ export const privacyRegisteredWorkloadCalls = [
     sourceWorkloadKey: privacyCoreOrganizationProfileIcoCheck,
     workloadKey: commerceCustomerContextOrganizationIcoFactsRead,
   },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.organization-profile-ico-owner-facts, read when Symmy recovers a lost company ICO change
+  {
+    allowRecoverySource: true,
+    audience: commerceCustomerContext,
+    declarationKey: commerceCustomerContextCustomerProfileOrganizationIcoFactsRead,
+    entrypointKey: commerceCustomerContextApiCustomerProfileOrganizationIcoFacts,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: privacyCoreOrganizationProfileIcoCheck,
+    workloadKey: commerceCustomerContextOrganizationIcoFactsRead,
+  },
   // origin/main 5608aae1d: organization-source-customer-owner-fixture.mts — actual source Organization completes customer onboarding, memberships, company ICO and governed name roundtrip without future UUID policy seeds
   {
     audience: partyRegistry,
-    declarationKey: 'party.registry.organization-ico-facts.read',
-    entrypointKey: 'party.registry.api.organization-ico-facts',
+    declarationKey: partyRegistryOrganizationIcoFactsRead,
+    entrypointKey: partyRegistryApiOrganizationIcoFacts,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    sourceWorkloadKey: privacyCoreOrganizationProfileIcoCheck,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach privacy.core.requirement.organization-profile-ico-party-facts, read when Symmy recovers a lost company ICO change
+  {
+    allowRecoverySource: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryOrganizationIcoFactsRead,
+    entrypointKey: partyRegistryApiOrganizationIcoFacts,
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'optional',
     schemaVersion: '1',

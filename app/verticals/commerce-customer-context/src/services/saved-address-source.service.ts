@@ -347,19 +347,9 @@ export const savedAddressSourceService = (
               run('UPDATE', payload, identity, attribution, () => base.update(payload, attribution)),
             ),
           ),
-    validatePartySource: (payload) => {
-      if (payload.source === undefined) {
-        return manualCarrier.pipe(Effect.andThen(() => base.validatePartySource(payload)));
-      }
-      const operation = Schema.is(UpdateSavedAddressPayloadSchema)(payload) ? 'UPDATE' : 'ADD';
-      return privacyCheck(
-        scope,
-        payload.source,
-        payload.profile,
-        operationOf[operation],
-        requirementOf[operation],
-      ).pipe(Effect.andThen(() => base.validatePartySource(payload)));
-    },
+    // A source payload never names a Party-backed origin (its schema refuses one), so only a manual caller reaches
+    // the Party Contact Point it cites.
+    validatePartySource: (payload) => manualCarrier.pipe(Effect.andThen(() => base.validatePartySource(payload))),
   };
 };
 
