@@ -14,6 +14,7 @@ import {
   mediaAssetNotFound,
 } from './errors.ts';
 import { reconcileUncertainUpload } from './reconciliation.ts';
+import { deriveMediaStorageKey } from './storage-key.ts';
 import type { ConfirmAssetResultSchema } from './upload-contract.ts';
 import type { MediaStoredObjectVerification } from './verification.ts';
 
@@ -111,6 +112,15 @@ export const ingestMediaBytes = Effect.fn('MediaIngest.ingest')(function* ingest
   ConfirmServices,
 >(input: IngestMediaBytesInput<BodyError, ConfirmFailure, ConfirmServices>) {
   const { asset } = input;
+  // The row must be the very asset the caller named, in the caller's tenant: its storage key is a pure function of
+  // that identity, so a row offered for another tenant or another asset id never gets a byte written to its key.
+  const namedKey = deriveMediaStorageKey({
+    mediaAssetId: input.mediaAssetRef.resourceId,
+    tenantId: input.mediaAssetRef.tenantId,
+  });
+  if (asset.storageKey !== namedKey) {
+    return yield* mediaAssetNotFound();
+  }
   if (
     input.selectedLegalEntityId !== undefined &&
     asset.legalEntityId !== null &&
