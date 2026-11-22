@@ -102,7 +102,6 @@ describe('Symmy products batch public mapping', () => {
 
   it('reports every supplied field no intent writes, by group, and nothing else', () => {
     const cases: readonly (readonly [string, Fields, readonly string[]])[] = [
-      ['categories', { categories: [catalogRef('product-category', '1')] }, ['CategoryHint']],
       [
         'attributes',
         { attributes: [{ attributeDefinitionRef: catalogRef('attribute-definition', '2') }] },
@@ -142,6 +141,13 @@ describe('Symmy products batch public mapping', () => {
       expect(map([product(extra)])[0]?.unsupported, field).toEqual(kinds);
     }
     expect(map([product({ categories: [], localized: [], relationships: [], sizes: [] })])[0]?.unsupported).toEqual([]);
+  });
+
+  it('carries only the exact source-supplied Category references, without inventing a default', () => {
+    const categories = [catalogRef('product-category', '1'), catalogRef('product-category', '2')];
+    expect(map([product({ categories })])[0]).toMatchObject({ categories, unsupported: [] });
+    expect(map([product()])[0]).not.toHaveProperty('categories');
+    expect(map([product({ categories: [] })])[0]).toMatchObject({ categories: [], unsupported: [] });
   });
 
   it('reports the variant fields no intent writes, and drops a localized text that has no text', () => {

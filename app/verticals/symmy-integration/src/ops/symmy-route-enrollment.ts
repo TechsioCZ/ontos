@@ -49,6 +49,7 @@ import {
 import { reviseOperation } from '../persistence/symmy-price-batch-plan.ts';
 import { groupOperation, priceOperation } from '../persistence/symmy-price-list-plan.ts';
 import {
+  categoryAssignmentOperation,
   provisionStockItemOperation,
   readinessOperations,
   createProductOperation,
@@ -386,6 +387,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       family: 'products',
       operations: [
         executor(createProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts], required: true }),
+        executor(categoryAssignmentOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
         executor(updateProductOperation, { entityKind: 'PRODUCT', reads: [catalogSourceProducts] }),
         ...readinessOperations.flatMap((operation) =>
           operation.entrypointKey === updateProductOperation.entrypointKey

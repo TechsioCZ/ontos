@@ -1,5 +1,6 @@
 import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
 import { ProductDescriptionSchema, ProductNameSchema } from '@app/catalog/domain/product';
+import { ProductCategoryRefSchema } from '@app/catalog/resources/product-category';
 import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
 import { Schema } from 'effect';
 
@@ -21,7 +22,6 @@ export const SYMMY_PRODUCT_REASON = 'Symmy product import';
  * product item instead of being dropped; one kind stands for every field of its group.
  */
 export const SymmyProductHintKindSchema = Schema.Literals([
-  'CategoryHint',
   'AttributeHint',
   'MediaHint',
   'VariantUpdateHint',
@@ -72,6 +72,14 @@ const SymmyProductVariantSchema = Schema.Struct({
  * `unsupported`. The first variant is the initial variant, created together with the product.
  */
 export const SymmyProductRowSchema = Schema.Struct({
+  categories: Schema.optionalKey(
+    Schema.Array(ProductCategoryRefSchema).check(
+      Schema.makeFilter(
+        (refs) =>
+          new Set(refs.map(({ resourceId }) => resourceId)).size === refs.length || 'Category refs must be distinct',
+      ),
+    ),
+  ),
   description: Schema.optionalKey(ProductDescriptionSchema),
   identifier: Schema.optionalKey(
     Schema.Struct({ type: Schema.Literals(['sku', 'ean', 'erpId']), value: identifierValue }),
@@ -88,6 +96,7 @@ export const SymmyProductRowSchema = Schema.Struct({
 export type SymmyProductRow = typeof SymmyProductRowSchema.Type;
 
 interface SizedProduct {
+  readonly categories?: readonly unknown[] | undefined;
   readonly lifecycle?: 'DRAFT' | 'ACTIVE' | 'RETIRED' | undefined;
   readonly variants: readonly {
     readonly localized?: readonly unknown[] | undefined;
@@ -100,12 +109,18 @@ interface SizedProduct {
  * create per further variant, one text effect per localized text and one define per price. A source record
  * belongs to one item, so the product, each variant that has its own effects and each price is an item.
  */
-export const symmyProductPlanSize = ({ lifecycle, variants }: SizedProduct) => {
+export const symmyProductPlanSize = ({ categories, lifecycle, variants }: SizedProduct) => {
   const texts = variants.reduce((total, variant) => total + (variant.localized?.length ?? 0), 0);
   const prices = variants.reduce((total, variant) => total + (variant.prices?.length ?? 0), 0);
   const variantItems = variants.filter((variant, index) => index > 0 || (variant.localized?.length ?? 0) > 0).length;
   return {
-    effects: 1 + (lifecycle === 'ACTIVE' || lifecycle === 'RETIRED' ? 1 : 0) + (variants.length - 1) + texts + prices,
+    effects:
+      1 +
+      (categories?.length ?? 0) +
+      (lifecycle === 'ACTIVE' || lifecycle === 'RETIRED' ? 1 : 0) +
+      (variants.length - 1) +
+      texts +
+      prices,
     items: 1 + variantItems + prices,
   };
 };
@@ -127,6 +142,7 @@ export const symmyProductBatchLimit = (products: readonly SizedProduct[]): strin
  */
 export const SymmyProductPlanSizeSchema = Schema.Array(
   Schema.Struct({
+    categories: Schema.optionalKey(Schema.Array(Schema.Unknown)),
     lifecycle: Schema.optionalKey(ProductLifecycleSchema),
     variants: Schema.Array(
       Schema.Struct({

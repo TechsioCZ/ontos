@@ -30,6 +30,11 @@ export const updateProductOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
+export const categoryAssignmentOperation = {
+  entrypointKey: 'commerce.catalog.add-product-category-assignment',
+  moduleId: catalogModule,
+  schemaVersion: '1',
+} as const;
 export const variantFactsOperation = {
   entrypointKey: 'commerce.catalog.set-variant-localized-facts',
   moduleId: catalogModule,
@@ -90,6 +95,9 @@ const catalogSource = (rows: SymmyProductRows, template: SymmyFixtureExecutionPl
   const further = rows.some(({ variants: rowVariants }) => rowVariants.length > 1);
   const product = enrolledItem(template, 'PRODUCT', createProductOperation);
   const required = [
+    ...(rows.some(({ categories }) => (categories?.length ?? 0) > 0)
+      ? [enrolledItem(template, 'PRODUCT', categoryAssignmentOperation)]
+      : []),
     ...(updates ? [enrolledItem(template, 'PRODUCT', updateProductOperation)] : []),
     ...(further ? [enrolledItem(template, 'VARIANT', createVariantOperation)] : []),
     ...(texts ? [enrolledItem(template, 'VARIANT', variantFactsOperation)] : []),
@@ -453,6 +461,21 @@ const readinessIneligibleFor = (row: SymmyProductRow, policy: Enrollment['catalo
     row.unsupported.includes('AttributeHint') ||
     row.unsupported.includes('ClassificationHint'));
 
+const categoryAssignmentEffects = (
+  categories: SymmyProductRow['categories'],
+  parent: { readonly effectKey: string; readonly itemKey: string },
+) =>
+  (categories ?? []).map((categoryRef, position) => ({
+    dependsOn: [parent],
+    effectKey: `category-assign-${position}`,
+    intent: {
+      _tag: 'CatalogProductDependentEffect',
+      parent,
+      request: { _tag: 'AddProductCategoryAssignment', payload: { categoryRef, reason: SYMMY_PRODUCT_REASON } },
+    },
+    operation: categoryAssignmentOperation,
+  }));
+
 /** One product: its item, the items of its variants and prices, and the unsupported groups it names. */
 const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduct<Failure>(
   facts: ProductFacts<Failure>,
@@ -461,6 +484,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const { mappingRevision, prices, routeScope, source } = enrollment;
   const productItemKey = `product-${index}`;
   const parent = { effectKey: productCreateKey, itemKey: productItemKey };
+  const categoryEffects = categoryAssignmentEffects(row.categories, parent);
   const [productOccurrence, productRecord] = yield* Effect.all(
     [
       digest(`product-occurrence\u0000${idempotencyKey}\u0000${index}`),
@@ -527,6 +551,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       : [];
   const priceDependencies = (variantPosition: number) => [
     parent,
+    ...categoryEffects.map(({ effectKey }) => ({ effectKey, itemKey: productItemKey })),
     ...variantItems.flatMap(({ created }, position) => (position === variantPosition ? created : [])),
     ...(ready === undefined && updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
     ...(ready === undefined ? [] : [{ effectKey: 'readiness-untyped', itemKey: productItemKey }]),
@@ -621,6 +646,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
         operation: createProductOperation,
       },
       ...updateEffect,
+      ...categoryEffects,
       ...readinessEffects,
       ...provisionEffects,
     ],
@@ -672,6 +698,9 @@ export const buildSymmyProductPlan = Effect.fn('SymmyProductPlan.build')(functio
   input: SymmyProductPlanInput<Failure>,
 ): Effect.fn.Return<Option.Option<SymmyFixtureExecutionPlan>, Failure> {
   const { digest, idempotencyKey, legalEntityId, priceGroups, receivedAt, route, rows, template, tenantId } = input;
+  if (rows.some(({ categories }) => categories?.some((ref) => ref.tenantId !== tenantId) === true)) {
+    return Option.none();
+  }
   const source = catalogSource(rows, template);
   const prices = priceContextOf(template, legalEntityId);
   const priced = rows.some(({ variants }) => variants.some((variant) => variant.prices.length > 0));

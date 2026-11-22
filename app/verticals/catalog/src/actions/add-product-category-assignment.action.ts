@@ -92,6 +92,10 @@ export const addProductCategoryAssignmentAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.add-product-category-assignment.access.v1',
     },
+    accessWorkload: {
+      reason: 'Assign only the Categories explicitly supplied by the Product source',
+      workloads: ['commerce.catalog.symmy-product-import'],
+    },
     actionKey: ACTION_KEY,
     auditEvidenceSchema: CategoryAuditEvidenceSchema,
     auditProfile: 'standard',

@@ -82,6 +82,10 @@ export const addProductCategoryAssignmentRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Recover the exact source-requested Category assignment',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: addProductCategoryAssignmentRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

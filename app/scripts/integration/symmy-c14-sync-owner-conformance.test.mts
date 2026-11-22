@@ -45,6 +45,7 @@ import { assertInternalSyncCatalog } from './support/symmy-c14-sync-catalog-fact
 import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 import {
   assertInternalSyncPrices,
+  internalSyncListCode,
   makeInternalSyncListBody,
   makeInternalSyncListEnrollment,
   makeInternalSyncProducts,
@@ -256,7 +257,7 @@ const preserveProductJobDiagnostics = Effect.fn('InternalC14Sync.productJobDiagn
 );
 
 it.live(
-  'INTERNAL_C14 two unseen SKUs receive product, base/list prices and stock under fixed source policies; registered workers and synchronous routes recover native receipts',
+  'INTERNAL_C14 two unseen SKUs with source-selected Categories receive prices and stock; category-free input cannot complete Pricing',
   () =>
     Effect.scoped(
       Effect.gen(function* actualSyncConformance() {
@@ -313,6 +314,7 @@ it.live(
             {
               capabilityKeys: [
                 'commerce.catalog.product-unit.create',
+                'commerce.catalog.product-category.create',
                 'commerce.inventory.backend-configuration.select',
                 'commerce.inventory.stock-location.create',
                 'commerce.inventory.source-provisioning-policy.define',
@@ -889,10 +891,15 @@ it.live(
           provisioningFaultMarker,
           'Drop one actual committed provisioning ACK and block its receipt until restart',
         );
-        const firstProductBody = makeInternalSyncProducts([internalStockItemKeys[0]], priceEffectiveFrom);
+        const sourceCategories = [pricingSetup.sourceCategory];
+        const firstProductBody = makeInternalSyncProducts(
+          [internalStockItemKeys[0]],
+          priceEffectiveFrom,
+          sourceCategories,
+        );
         const firstProductJobId = yield* runSourceJob({
           body: firstProductBody,
-          effectCount: 10,
+          effectCount: 11,
           interrupted: true,
           key: 'INTERNAL_C14_NEW_STOCK_PRODUCTS_A',
           path: productsPath,
@@ -910,8 +917,8 @@ it.live(
         });
         expect(yield* configuredRoutes).toEqual(initialRoutes);
         const secondProductJobId = yield* runSourceJob({
-          body: makeInternalSyncProducts([internalStockItemKeys[1]], priceEffectiveFrom),
-          effectCount: 10,
+          body: makeInternalSyncProducts([internalStockItemKeys[1]], priceEffectiveFrom, sourceCategories),
+          effectCount: 11,
           interrupted: false,
           key: 'INTERNAL_C14_NEW_STOCK_PRODUCTS_B',
           path: productsPath,
@@ -925,6 +932,29 @@ it.live(
         const originalCatalog = [...firstCatalog, ...secondCatalog];
         expect(new Set(originalCatalog.map(({ state }) => state.productRef.resourceId)).size).toBe(2);
         expect(new Set(originalCatalog.map(({ state }) => state.variantRef.resourceId)).size).toBe(2);
+        const sourceAssignments = admin`select product_id,category_id from catalog.product_category_assignments
+          where tenant_id=${tenantId} order by product_id`.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  category_id: Schema.String,
+                  product_id: Schema.String,
+                }),
+              ),
+            ),
+          ),
+        );
+        const assigned = yield* sourceAssignments;
+        expect(assigned).toHaveLength(2);
+        expect(assigned.every(({ category_id }) => category_id === pricingSetup.sourceCategory.resourceId)).toBe(true);
+        expect(new Set(assigned.map(({ product_id }) => product_id))).toEqual(
+          new Set(originalCatalog.map(({ state }) => state.productRef.resourceId)),
+        );
+        const [categoryCount] = yield* admin`select count(*)::integer as count from catalog.product_categories
+          where tenant_id=${tenantId}`.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))));
+        assert.isDefined(categoryCount);
+        expect(categoryCount.count).toBe(1);
         expect(yield* configuredRoutes).toEqual(initialRoutes);
         const originalPrices = yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId });
         const provisioningCount =
@@ -999,12 +1029,13 @@ it.live(
         ).toEqual(firstCatalog);
         // A new key is a distinct adoption admission, not the exact-key replay above.
         const adoptionJobId = yield* runSourceJob({
-          body: makeInternalSyncProducts(internalStockItemKeys, priceEffectiveFrom),
-          effectCount: 20,
+          body: makeInternalSyncProducts(internalStockItemKeys, priceEffectiveFrom, sourceCategories),
+          effectCount: 22,
           interrupted: false,
           key: 'INTERNAL_C14_REPLAY_STOCK_PRODUCTS',
           path: productsPath,
         });
+        expect(yield* sourceAssignments).toEqual(assigned);
         expect(adoptionJobId).not.toBe(firstProductJobId);
         expect(adoptionJobId).not.toBe(secondProductJobId);
         const adoptedCatalog = yield* assertInternalSyncCatalog({
@@ -1487,6 +1518,72 @@ it.live(
           );
         expect(importsAfterCancellation).toEqual(importsBeforeCancellation);
         // Later Group conflicts, revocation and cancellation must not alter any Price or create another list.
+        expect(yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId })).toEqual(
+          originalPrices,
+        );
+        // The original category-free input is not a success case. Restore only the independently revoked
+        // Inventory writer so the negative control reaches Pricing instead of failing admission early.
+        yield* stockWriter.rebind();
+        const categoryFree = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${productsPath}`, {
+          body: yield* HttpBody.json({
+            products: [
+              {
+                identifier: { type: 'sku', value: 'INTERNAL_C14_CATEGORY_FREE_NEGATIVE' },
+                lifecycle: 'ACTIVE',
+                name: 'INTERNAL_C14_CATEGORY_FREE_NEGATIVE',
+                variants: [
+                  {
+                    identifier: { type: 'sku', value: 'INTERNAL_C14_CATEGORY_FREE_NEGATIVE' },
+                    prices: [
+                      { amount: '25', currencyCode: 'CZK', effectiveFrom: priceEffectiveFrom },
+                      {
+                        amount: '19',
+                        currencyCode: 'CZK',
+                        effectiveFrom: priceEffectiveFrom,
+                        priceGroupCode: internalSyncListCode,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+          headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_CATEGORY_FREE_NEGATIVE' },
+        });
+        expect(categoryFree.status).toBe(202);
+        const negativeJob = yield* categoryFree.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(jobReceipt)));
+        const negativeWorker = yield* startProductWorker(workerArtifact, {
+          ...ownerEnvironment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: randomUUID(),
+        });
+        yield* admin`select count(distinct e.effect_id)::integer as count
+          from symmy_integration.job_effects e
+          join core.action_invocations i on i.tenant_id=e.tenant_id and i.action_invocation_id=e.owner_invocation_id
+          join core.audit_events a on a.tenant_id=i.tenant_id and a.action_invocation_id=i.action_invocation_id
+          where e.tenant_id=${tenantId} and e.job_id=${negativeJob.jobId} and e.effect_key='price-define'
+            and e.state='indeterminate' and i.status='succeeded'
+            and a.evidence_json->>'sourceOutcome'='PRICE_SOURCE_ASSERTION_DEPENDENCY_UNAVAILABLE'`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+          Effect.repeat({ schedule: Schedule.spaced(Duration.millis(200)), until: ([row]) => row?.count === 2 }),
+          Effect.timeout(Duration.seconds(60)),
+        );
+        yield* negativeWorker.child.kill();
+        yield* negativeWorker.child.exitCode;
+        const [negativeAssignments] = yield* admin`select count(*)::integer as count
+          from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${negativeJob.jobId}
+            and effect_key like 'category-assign-%'`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+        );
+        assert.isDefined(negativeAssignments);
+        expect(negativeAssignments.count).toBe(0);
+        const [negativeReceipts] = yield* admin`select count(*)::integer as count
+          from pricing.price_fee_action_result_receipts r join symmy_integration.job_effects e
+            on e.tenant_id=r.tenant_id and e.owner_invocation_id=r.action_invocation_id
+          where e.tenant_id=${tenantId} and e.job_id=${negativeJob.jobId}`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(countSchema))),
+        );
+        assert.isDefined(negativeReceipts);
+        expect(negativeReceipts.count).toBe(0);
         expect(yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId })).toEqual(
           originalPrices,
         );

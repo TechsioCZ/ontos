@@ -2365,6 +2365,232 @@ const provisionPlan = (provision: SymmyPinnedEffect) =>
     ],
   });
 
+describe('Symmy source-supplied Category assignment', () => {
+  const categoryRef = {
+    ...productRef,
+    resourceId: '10000000-0000-4000-8000-000000000091',
+    resourceType: 'commerce.catalog.product-category',
+  };
+  const operation = {
+    entrypointKey: 'commerce.catalog.add-product-category-assignment',
+    moduleId: 'commerce.catalog',
+    schemaVersion: '1',
+  };
+  const sourceEffect = () => {
+    const selected = dependentEffect(
+      {
+        _tag: 'AddProductCategoryAssignment',
+        payload: { categoryRef, reason: 'Symmy product import' },
+      },
+      operation,
+    );
+    return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...selected,
+      itemId: '10000000-0000-4000-8000-000000000071',
+      ref: { ...selected.ref, effectId: '10000000-0000-4000-8000-000000000072' },
+    });
+  };
+
+  for (const changed of [true, false]) {
+    it.effect(`preserves native assignment disposition and recovers without write authority: ${changed}`, () => {
+      const original = sourceEffect();
+      const h = harness(false, original);
+      const writes: Request[] = [];
+      const reads: Request[] = [];
+      const response = { assignmentRevision: 1, categoryRef, changed, productRef };
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        if (request.url.includes('add-product-category-assignment')) {
+          (request.url.includes('/reads/') ? reads : writes).push(request);
+          return Promise.resolve(Response.json(response));
+        }
+        return h.fetch(request);
+      };
+      return h.provide(
+        Effect.gen(function* assignmentAndRecovery() {
+          const adapter = yield* h.adapter;
+          const input = { ...h.input, acceptedPlan: provisionPlan(original), dependencies: [parentState] };
+          expect((yield* adapter.execute(input)).status).toBe(changed ? 'accepted_change' : 'accepted_no_change');
+          const [resolved] = h.resolvedEffects;
+          assert.isDefined(resolved);
+          expect(Schema.is(Schema.TaggedStruct('CatalogAddProductCategoryAssignment', {}))(resolved.intent)).toBe(true);
+          expect(resolved.intent).toMatchObject({
+            payload: { categoryRef, productRef, reason: 'Symmy product import' },
+          });
+          const proof = yield* originalProof({ ...input, effect: resolved });
+          expect(
+            yield* adapter.recover({ ...proof, canExecuteNewEffects: false, originalInvocationId: invocationId }),
+          ).toMatchObject({
+            outcome: { status: changed ? 'accepted_change' : 'accepted_no_change' },
+            status: 'settled',
+          });
+          expect(writes).toHaveLength(1);
+          expect(reads).toHaveLength(1);
+          expect(writes[0]?.headers.get('idempotency-key')).toBe(original.ref.effectId);
+          const tampered = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+            ...resolved,
+            intent: {
+              _tag: 'CatalogAddProductCategoryAssignment',
+              payload: {
+                categoryRef: { ...categoryRef, resourceId: productId },
+                productRef,
+                reason: 'Symmy product import',
+              },
+            },
+          });
+          expect(Exit.isFailure(yield* Effect.exit(adapter.recover({ ...proof, effect: tampered })))).toBe(true);
+          expect(reads).toHaveLength(1);
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
+      );
+    });
+  }
+
+  it.effect('requires the named Product receipt and rejects a foreign source Category before any owner request', () =>
+    Effect.gen(function* categoryAuthority() {
+      const original = sourceEffect();
+      const foreign = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+        ...original,
+        intent: {
+          _tag: 'CatalogProductDependentEffect',
+          parent: productParent,
+          request: {
+            _tag: 'AddProductCategoryAssignment',
+            payload: { categoryRef: { ...categoryRef, tenantId: productId }, reason: 'Symmy product import' },
+          },
+        },
+      });
+      for (const [selected, dependencies] of [
+        [original, []],
+        [foreign, [parentState]],
+      ] as const) {
+        const h = harness(false, selected);
+        yield* h.provide(
+          Effect.gen(function* rejectUnprovenAssignment() {
+            const adapter = yield* h.adapter;
+            expect(
+              Exit.isFailure(
+                yield* Effect.exit(
+                  adapter.execute({
+                    ...h.input,
+                    acceptedPlan: provisionPlan(selected),
+                    dependencies,
+                  }),
+                ),
+              ),
+            ).toBe(true);
+            expect(h.requests).toEqual([]);
+            expect(h.resolvedEffects).toEqual([]);
+          }),
+        );
+      }
+    }),
+  );
+
+  it.effect('recovers a lost assignment ACK and rejects unrelated, absent and forbidden owner receipts', () => {
+    const original = sourceEffect();
+    const h = harness(false, original);
+    let writes = 0;
+    let wrongReceipt = false;
+    let recoveryStatus = 200;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      const request = new Request(input, init);
+      if (request.url.includes('/actions/add-product-category-assignment')) {
+        writes += 1;
+        return Promise.reject(new Error('committed ACK lost'));
+      }
+      if (request.url.includes('/reads/add-product-category-assignment-recovery')) {
+        if (recoveryStatus !== 200) {
+          return Promise.resolve(
+            Response.json(
+              {
+                _tag:
+                  recoveryStatus === 404
+                    ? 'AddProductCategoryAssignmentRecoveryNotFoundProblem'
+                    : 'AddProductCategoryAssignmentRecoveryForbiddenProblem',
+                detail: 'The exact original receipt cannot be released',
+                status: recoveryStatus,
+                title: 'Receipt unavailable',
+                type: 'https://ontos.dev/problems/receipt-unavailable',
+              },
+              { headers: { 'content-type': 'application/problem+json' }, status: recoveryStatus },
+            ),
+          );
+        }
+        return Promise.resolve(
+          Response.json({
+            assignmentRevision: 1,
+            categoryRef: wrongReceipt ? { ...categoryRef, resourceId: productId } : categoryRef,
+            changed: true,
+            productRef,
+          }),
+        );
+      }
+      return h.fetch(request);
+    };
+    return h.provide(
+      Effect.gen(function* lostAssignmentAck() {
+        const adapter = yield* h.adapter;
+        const input = { ...h.input, acceptedPlan: provisionPlan(original), dependencies: [parentState] };
+        expect(Exit.isFailure(yield* Effect.exit(adapter.execute(input)))).toBe(true);
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        const proof = yield* originalProof({ ...input, effect: resolved });
+        expect(yield* adapter.recover({ ...proof, canExecuteNewEffects: false })).toMatchObject({
+          outcome: { status: 'accepted_change' },
+          status: 'settled',
+        });
+        wrongReceipt = true;
+        expect(Exit.isFailure(yield* Effect.exit(adapter.recover(proof)))).toBe(true);
+        for (const status of [404, 403]) {
+          recoveryStatus = status;
+          expect(Exit.isFailure(yield* Effect.exit(adapter.recover(proof)))).toBe(true);
+        }
+        expect(writes).toBe(1);
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
+    );
+  });
+
+  for (const [status, code, tag, expected] of [
+    [403, 'action_permission_denied', 'Forbidden', 'denied'],
+    [404, 'category_not_found', 'NotFound', 'unresolved'],
+    [409, 'category_reference_conflict', 'Conflict', 'conflict'],
+    [422, 'action_policy_denied', 'Ineligible', 'invalid'],
+  ] as const) {
+    it.effect(`never accepts a native assignment refusal: ${status}`, () => {
+      const original = sourceEffect();
+      const h = harness(false, original);
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        return request.url.includes('/actions/add-product-category-assignment')
+          ? Promise.resolve(
+              Response.json(
+                {
+                  _tag: `AddProductCategoryAssignmentAction${tag}Problem`,
+                  code,
+                  detail: 'Explicit native refusal',
+                  status,
+                  title: 'Refused',
+                  type: 'https://ontos.dev/problems/refused',
+                },
+                { headers: { 'content-type': 'application/problem+json' }, status },
+              ),
+            )
+          : h.fetch(request);
+      };
+      return h.provide(
+        Effect.gen(function* nativeRefusal() {
+          const adapter = yield* h.adapter;
+          expect(
+            (yield* adapter.execute({ ...h.input, acceptedPlan: provisionPlan(original), dependencies: [parentState] }))
+              .status,
+          ).toBe(expected);
+          expect(h.receipts).toEqual([]);
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
+      );
+    });
+  }
+});
+
 describe('Symmy committed Catalog selection provisions Inventory through its public owner Action', () => {
   for (const stage of ['fresh-gateway', 'machine-context', 'record-owner-request', 'success'] as const) {
     it.effect(`reports the first provisioning pre-dispatch boundary: ${stage}`, () => {

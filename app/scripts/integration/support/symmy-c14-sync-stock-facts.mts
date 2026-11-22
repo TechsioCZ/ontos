@@ -115,6 +115,7 @@ const enrollment = (input: {
     ? [
         operation('commerce.catalog.create-product', 'commerce.catalog', '2'),
         ...[
+          'add-product-category-assignment',
           'govern-variant-axes',
           'confirm-variant-combination',
           'set-product-localized-facts',
