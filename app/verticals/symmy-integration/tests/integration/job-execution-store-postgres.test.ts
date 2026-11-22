@@ -10,7 +10,7 @@ import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { installOperationalScope, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/api/provision-source-stock-item-action';
+import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/source-provisioning';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';

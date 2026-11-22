@@ -23,8 +23,10 @@ import { executeSetProductUnitTargetDivisibilityWithAuthorization } from '@app/c
 import { executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization } from '@app/catalog/api/set-product-unit-target-divisibility-recovery-client';
 import { executeDecideProductTypeUnnecessaryWithAuthorization } from '@app/catalog/api/decide-product-type-unnecessary-action-client';
 import { executeDecideProductTypeUnnecessaryRecoveryWithAuthorization } from '@app/catalog/api/decide-product-type-unnecessary-recovery-client';
-import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/api/provision-source-stock-item-action';
-import { SourceProvisioningExpectedPolicySchema } from '@app/inventory/source-provisioning';
+import {
+  ProvisionSourceStockItemPayloadSchema,
+  SourceProvisioningExpectedPolicySchema,
+} from '@app/inventory/source-provisioning';
 import type { SourceStockItemProvisioning } from '@app/inventory/source-provisioning';
 import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
 import { InventorySourceImportReceiptRequestSchema } from '@app/inventory/api/inventory-source-import-receipt';

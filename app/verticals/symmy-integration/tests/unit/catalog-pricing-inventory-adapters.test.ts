@@ -1,5 +1,11 @@
 import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
-import { SourceStockItemProvisioningSchema } from '@app/inventory/source-provisioning';
+import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { executeProvisionSourceStockItemWithAuthorization } from '@app/inventory/api/client';
+import {
+  ProvisionSourceStockItemInputSchema,
+  ProvisionSourceStockItemPayloadSchema,
+  SourceStockItemProvisioningSchema,
+} from '@app/inventory/source-provisioning';
 import { CreateProductRecoveryForbiddenProblemSchema } from '@app/catalog/api/create-product-recovery';
 import { CreateProductActionAlreadyCommittedProblemSchema } from '@app/catalog/api/create-product-action';
 import { PriceGroupResultLookupResponseSchema } from '@app/price-group-catalog/apis/price-group-result-lookup';
@@ -7,7 +13,7 @@ import { DefinePriceResultSchema } from '@app/pricing/actions/define-price';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Effect, Exit, Match, Option, Schema } from 'effect';
+import { Array as EffectArray, ConfigProvider, Effect, Exit, Match, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
@@ -2258,6 +2264,71 @@ const provisionPlan = (provision: SymmyPinnedEffect) =>
   });
 
 describe('Symmy committed Catalog selection provisions Inventory through its public owner Action', () => {
+  it.effect('hashes reordered locations exactly as the native Inventory HTTP client sends them', () => {
+    const h = harness(false, provisionEffectOf());
+    return h.provide(
+      Effect.gen(function* canonicalProvisioningHash() {
+        const input = Schema.decodeUnknownSync(ProvisionSourceStockItemInputSchema)({
+          catalogSelection: { productRef, variantRef },
+          exactSelectionMeaning: { id: `catalog-variant:${variantId}`, kind: 'PRODUCT_VARIANT' },
+          expectedPolicy: {
+            ...provisioningSource,
+            locations: [
+              {
+                locationKey: 'warehouse-2',
+                stockLocationRef: provisionRef('stock-location', '10000000-0000-4000-8000-000000000067'),
+              },
+              ...provisioningSource.locations,
+            ],
+          },
+          itemKey: 'unseen-SKU',
+          policyRef: provisioningSource.policyRef,
+        });
+        const principal = { principalId: executorId, tenantId };
+        const intent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[15])({
+          _tag: 'InventoryProvision',
+          payload: input,
+          source: provisioningSource,
+        });
+        const hashes: string[] = [];
+        for (const payload of [
+          input,
+          {
+            ...input,
+            expectedPolicy: { ...input.expectedPolicy, locations: EffectArray.reverse(input.expectedPolicy.locations) },
+          },
+        ]) {
+          hashes.push(yield* prepareSymmyCatalogPricingInventoryRequestHash({ ...intent, payload }, principal));
+          yield* executeProvisionSourceStockItemWithAuthorization(payload, 'assertion', 'provision-test', {
+            baseUrl: 'https://inventory.test/inventory-api',
+            compositionRevision,
+            idempotencyKey: 'provision-test',
+          });
+        }
+        const writes = h.requests.filter((request) => request.url.includes('/actions/provision-source-stock-item'));
+        expect(writes).toHaveLength(2);
+        for (const request of writes) {
+          const wire: unknown = yield* Effect.promise(() => request.clone().json());
+          const normalizedPayload = Schema.encodeSync(ProvisionSourceStockItemPayloadSchema)(
+            Schema.decodeUnknownSync(ProvisionSourceStockItemPayloadSchema)(wire),
+          );
+          expect(wire).toEqual(normalizedPayload);
+          expect(
+            computeActionRequestHash({
+              actionKey: provisionOperation.entrypointKey,
+              normalizedPayload,
+              owningModuleKey: provisionOperation.moduleId,
+              principal,
+              schemaVersion: provisionOperation.schemaVersion,
+              target: {},
+            }),
+          ).toBe(hashes[0]);
+        }
+        expect(hashes[1]).toBe(hashes[0]);
+      }),
+    );
+  });
+
   it.effect(
     'pins the receipt-selected Product and Variant, never the planned UUIDs, before the native provisioning call',
     () => {
