@@ -32,9 +32,11 @@ import { stockPositionPersistenceForScope } from '../persistence/stock-position-
 export interface SourceStockPositionResolutionServices {
   readonly findItemCorrelations: (
     request: SourceStockPositionResolutionRequest,
+    asOf: string,
   ) => Effect.Effect<readonly ExternalStockCorrelation[], ReadHandlerUnavailable>;
   readonly findPolicy: (
     request: SourceStockPositionResolutionRequest,
+    asOf: string,
   ) => Effect.Effect<Option.Option<SourceProvisioningPolicy>, ReadHandlerUnavailable>;
   readonly findPosition: (
     scope: StockPositionScope,
@@ -42,6 +44,7 @@ export interface SourceStockPositionResolutionServices {
   readonly isLocationAllowed: (
     policy: SourceProvisioningPolicy,
     locationKey: string,
+    asOf: string,
   ) => Effect.Effect<boolean, ReadHandlerUnavailable>;
 }
 
@@ -56,29 +59,24 @@ const unavailable = (cause: unknown) => {
 
 const services: ReadServiceFactory<SourceStockPositionResolutionServices> = (transaction, scope) =>
   Effect.succeed({
-    findItemCorrelations: (request) =>
-      Effect.all(
-        {
-          externalKey: Schema.decodeUnknownEffect(ExternalStockKeySchema)({
-            customerConfigurationId: request.customerConfigurationId,
-            externalScope: request.externalScope,
-            externalValue: request.itemKey,
-            identifierKind: 'ITEM',
-            issuer: request.issuer,
-            namespace: request.namespace,
-            tenantId: scope.tenantId,
-          }),
-          now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-        },
-        { concurrency: 2 },
-      ).pipe(
-        Effect.flatMap(({ externalKey, now }) =>
-          externalStockCorrelationPersistenceForScope(transaction, scope).findEffective(externalKey, now),
+    findItemCorrelations: (request, asOf) =>
+      Schema.decodeUnknownEffect(ExternalStockKeySchema)({
+        customerConfigurationId: request.customerConfigurationId,
+        externalScope: request.externalScope,
+        externalValue: request.itemKey,
+        identifierKind: 'ITEM',
+        issuer: request.issuer,
+        namespace: request.namespace,
+        tenantId: scope.tenantId,
+      }).pipe(
+        Effect.flatMap((externalKey) =>
+          externalStockCorrelationPersistenceForScope(transaction, scope).findEffective(externalKey, asOf),
         ),
         Effect.mapError(unavailable),
       ),
     findPolicy: Effect.fn('SourceStockPositionResolution.findPolicy')(function* findCurrentPolicy(
       request: SourceStockPositionResolutionRequest,
+      asOf: string,
     ) {
       const policy = yield* sourceProvisioningPolicyPersistenceForScope(transaction, scope).findByQualification(
         request,
@@ -89,9 +87,8 @@ const services: ReadServiceFactory<SourceStockPositionResolutionServices> = (tra
       const configuration = yield* inventoryBackendConfigurationPersistenceForScope(transaction, scope).findCurrent(
         policy.value.customerConfigurationId,
       );
-      const now = DateTime.formatIso(yield* DateTime.now);
       return Option.isSome(configuration) &&
-        sourceProvisioningPolicyHasCurrentOwner(policy.value, configuration.value, now)
+        sourceProvisioningPolicyHasCurrentOwner(policy.value, configuration.value, asOf)
         ? policy
         : Option.none<SourceProvisioningPolicy>();
     }, Effect.mapError(unavailable)),
@@ -114,6 +111,7 @@ const services: ReadServiceFactory<SourceStockPositionResolutionServices> = (tra
     isLocationAllowed: Effect.fn('SourceStockPositionResolution.isLocationAllowed')(function* currentLocationAuthority(
       policy: SourceProvisioningPolicy,
       locationKey: string,
+      asOf: string,
     ) {
       const location = policy.locations.find((entry) => entry.locationKey === locationKey);
       if (location === undefined) {
@@ -138,10 +136,7 @@ const services: ReadServiceFactory<SourceStockPositionResolutionServices> = (tra
         namespace: policy.namespace,
         tenantId: scope.tenantId,
       });
-      const current = yield* externalStockCorrelationPersistenceForScope(transaction, scope).findEffective(
-        key,
-        DateTime.formatIso(yield* DateTime.now),
-      );
+      const current = yield* externalStockCorrelationPersistenceForScope(transaction, scope).findEffective(key, asOf);
       const [correlation] = current;
       return (
         current.length === 1 &&
@@ -166,15 +161,19 @@ export const sourceStockPositionResolutionHandler = Effect.fn('SourceStockPositi
   context: { readonly services: SourceStockPositionResolutionServices },
 ) {
   const resolve = Effect.gen(function* resolvePosition() {
-    const policy = yield* context.services.findPolicy(request);
+    const asOf = DateTime.formatIso(yield* DateTime.now);
+    const policy = yield* context.services.findPolicy(request, asOf);
     if (Option.isNone(policy)) {
       return unresolved('POLICY_NOT_FOUND');
     }
     const location = policy.value.locations.find(({ locationKey }) => locationKey === request.locationKey);
-    if (location === undefined || !(yield* context.services.isLocationAllowed(policy.value, request.locationKey))) {
+    if (
+      location === undefined ||
+      !(yield* context.services.isLocationAllowed(policy.value, request.locationKey, asOf))
+    ) {
       return unresolved('LOCATION_NOT_ALLOWED');
     }
-    const correlations = yield* context.services.findItemCorrelations(request);
+    const correlations = yield* context.services.findItemCorrelations(request, asOf);
     const [correlation] = correlations;
     if (correlation === undefined) {
       return unresolved('ITEM_NOT_PROVISIONED');

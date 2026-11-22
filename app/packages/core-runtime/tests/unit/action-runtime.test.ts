@@ -4570,6 +4570,23 @@ it.effect(
 );
 
 it.effect(
+  'rejects an invalid expected Action key before resolving commit state',
+  Effect.fn(function* invalidResolutionKey() {
+    const harness = yield* makeHarness({});
+    for (const expectedActionKey of ['', ' shell.counter.change', 'shell.counter.change ']) {
+      const failure = yield* Effect.flip(
+        harness.runtime.resolveActionCommit({
+          expectedActionKey,
+          invocationId: '00000000-0000-4000-8000-000000000099',
+          principal,
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
+    }
+  }),
+);
+
+it.effect(
   'resolves commit state explicitly and keeps unavailable outcomes indeterminate',
   Effect.fn(function* testProgram37() {
     const invocationId = '00000000-0000-4000-8000-000000000099';

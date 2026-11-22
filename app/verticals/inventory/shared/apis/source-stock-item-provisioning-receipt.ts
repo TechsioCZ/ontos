@@ -17,8 +17,9 @@ export const SourceStockItemProvisioningReceiptRequestSchema = Schema.Struct({
 });
 export type SourceStockItemProvisioningReceiptRequest = typeof SourceStockItemProvisioningReceiptRequestSchema.Type;
 /**
- * A missing receipt never proves the original call had no effect. Provisioning is replay-safe, so the caller may
- * send the same input again under a new idempotency key and receives the same refs.
+ * A missing receipt never proves the original call had no effect. Recover the immutable original by invocation id.
+ * A new-key attempt reuses refs only while the policy, backend and correlations remain admissible; it never
+ * reactivates an ended ITEM correlation.
  */
 export const SourceStockItemProvisioningReceiptResponseSchema = Schema.Union([
   Schema.TaggedStruct('RECORDED', { receipt: SourceStockItemProvisioningReceiptSchema }),
