@@ -9,6 +9,7 @@
 export { assetByteSourceRead } from '../generated-reads/asset-byte-source.ts';
 export { MediaByteSource } from './byte-source-contract.ts';
 export type { MediaByteSourceOffer } from './byte-source-contract.ts';
+export { confirmReservedUpload } from './confirm-upload.ts';
 export { confirmAssetRequest, ingestMediaBytes, parseContentLength, uploadResponseHeaders } from './ingest.ts';
 export { StoredMediaObjectVerification } from './verification.ts';
 export { confirmAssetAction } from '../modules/actions/confirm-asset.action.ts';
