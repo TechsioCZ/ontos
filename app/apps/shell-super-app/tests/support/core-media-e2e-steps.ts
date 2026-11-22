@@ -282,7 +282,16 @@ export const confirmOverHttp = (
   actor: E2eActor,
   mediaAssetId: string,
   idempotencyKey: string | null,
-) => coreActionOf(edge, actor, 'confirm-asset', { mediaAssetRef: refOf(actor.tenantId, mediaAssetId) }, idempotencyKey);
+  /** The tenant the request names in the reference; the caller's own unless a scenario states another. */
+  referencedTenantId = actor.tenantId,
+) =>
+  coreActionOf(
+    edge,
+    actor,
+    'confirm-asset',
+    { mediaAssetRef: refOf(referencedTenantId, mediaAssetId) },
+    idempotencyKey,
+  );
 
 export const renameOverHttp = (
   edge: ShellEdge,

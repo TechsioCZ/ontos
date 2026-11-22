@@ -279,13 +279,13 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 // @ontos-codesmith-core-action-server-imports:start
 
 // @ontos-core-action rename-display-filename
-// renameDisplayFilenameAction uses the canonical @app/core-runtime import
+// renameDisplayFilenameAction is imported once by the host root
 
 // @ontos-core-action confirm-asset
-// confirmAssetAction uses the canonical @app/core-runtime import
+// confirmAssetAction is imported once by the host root
 
 // @ontos-core-action upload-asset
-// uploadAssetAction uses the canonical @app/core-runtime import
+// uploadAssetAction is imported once by the host root
 // @ontos-codesmith-core-action-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
@@ -2521,14 +2521,18 @@ const settleReservedUpload = Effect.fn('shell.coreMedia.settleReservedUpload')(f
   Requirements,
 >(
   context: {
-    readonly payload: { readonly mediaAssetRef: { readonly resourceId: string } };
+    readonly payload: { readonly mediaAssetRef: { readonly resourceId: string; readonly tenantId: string } };
     readonly principal: TrustedPrincipalContext;
     readonly transport: ActionTransportMetadata;
   },
   run: Effect.Effect<ConfirmAssetResult, Failure, Requirements>,
 ) {
   const { payload, principal, transport } = context;
-  // The tenant is the authenticated principal's, never the request's: another tenant's id is "not found".
+  // The tenant is the authenticated principal's, never the request's: another tenant's id is "not found", and no
+  // read-back is made for it (the Action would answer the same, but only after the provider had been asked).
+  if (payload.mediaAssetRef.tenantId !== principal.tenantId) {
+    return yield* mediaAssetNotFound();
+  }
   const mediaAssetRef = {
     moduleId: 'core.media',
     resourceId: payload.mediaAssetRef.resourceId,
@@ -2551,6 +2555,10 @@ const settleReservedUpload = Effect.fn('shell.coreMedia.settleReservedUpload')(f
             offered = Option.some(asset);
           }),
       }),
+      // Only an absent asset is "not found"; every other refusal is retryable here, and its tag is logged, never sent.
+      Effect.tapError((error) =>
+        Effect.logWarning('core.media.confirm.read-failed').pipe(Effect.annotateLogs({ failureTag: error._tag })),
+      ),
       Effect.mapError((error) =>
         Predicate.isTagged(error, 'ReadHandlerNotFound')
           ? mediaAssetNotFound()

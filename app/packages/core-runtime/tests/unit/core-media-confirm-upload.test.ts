@@ -7,6 +7,7 @@ import type { MediaByteSourceOffer } from '../../src/media/byte-source-contract.
 import { confirmReservedUpload } from '../../src/media/confirm-upload.ts';
 import { MediaIngestUncertain, MediaIntegrityFailed } from '../../src/media/errors.ts';
 import { TenantMediaAssetKeySchema, mediaAssetRefFor } from '../../src/media/identity.ts';
+import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
 import { ObjectStorage } from '../../src/media/object-storage.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import type { ConfirmAssetResultSchema } from '../../src/media/upload-contract.ts';
@@ -43,14 +44,21 @@ const reserved = (overrides: Partial<MediaByteSourceOffer> = {}): MediaByteSourc
 });
 
 type ConfirmResult = typeof ConfirmAssetResultSchema.Type;
+const sealedByteSize = Schema.decodeUnknownSync(MediaByteSizeSchema)(content.byteLength);
+const sealedSha256 = Schema.decodeUnknownSync(MediaContentSha256Schema)(digestOf(content));
 
+/** What the confirm Action does: a settled row is followed whatever the evidence, an `uploaded` one is judged by it. */
 const confirmOutcome = (
+  status: MediaByteSourceOffer['processingStatus'],
   verification: MediaStoredObjectVerification,
 ): Effect.Effect<ConfirmResult, MediaIngestUncertain | MediaIntegrityFailed> => {
-  if (verification.outcome === 'verified') {
+  if (status === 'failed') {
+    return Effect.fail(new MediaIntegrityFailed({ code: 'media_integrity_failed', reason: 'the asset failed' }));
+  }
+  if (status === 'ready' || verification.outcome === 'verified') {
     return Effect.succeed({
-      byteSize: verification.byteSize,
-      contentSha256: verification.contentSha256,
+      byteSize: sealedByteSize,
+      contentSha256: sealedSha256,
       mediaAssetRef,
       processingStatus: 'ready',
     });
@@ -64,23 +72,26 @@ const confirmOutcome = (
 
 const setup = Effect.fn('ConfirmUploadTest.setup')(function* setup() {
   const storage = yield* makeInMemoryObjectStorage();
-  const confirms = yield* Ref.make(0);
-  const confirm = (verification: MediaStoredObjectVerification) =>
-    Ref.update(confirms, (count) => count + 1).pipe(Effect.andThen(() => confirmOutcome(verification)));
+  const confirms = yield* Ref.make<readonly MediaStoredObjectVerification['outcome'][]>([]);
   const run = (
     options: {
       readonly asset?: MediaByteSourceOffer;
       readonly principalId?: string;
       readonly selectedLegalEntityId?: string;
     } = {},
-  ) =>
-    confirmReservedUpload({
-      asset: options.asset ?? reserved(),
-      confirm,
+  ) => {
+    const asset = options.asset ?? reserved();
+    return confirmReservedUpload({
+      asset,
+      confirm: (verification) =>
+        Ref.update(confirms, (all) => [...all, verification.outcome]).pipe(
+          Effect.andThen(() => confirmOutcome(asset.processingStatus, verification)),
+        ),
       mediaAssetRef,
       principalId: options.principalId ?? reserving,
       selectedLegalEntityId: options.selectedLegalEntityId,
     }).pipe(Effect.provideService(ObjectStorage, storage.service));
+  };
   const calls = storage.calls.pipe(Effect.map((all) => all.map(({ operation }) => operation)));
   return { calls, confirms: Ref.get(confirms), run, storage };
 });
@@ -109,7 +120,7 @@ it.effect('seals the asset from the stored object and answers the ready identity
       processingStatus: 'ready',
     });
     expect((yield* calls).slice(before)).toEqual(['get', 'stat']);
-    expect(yield* confirms).toBe(1);
+    expect(yield* confirms).toEqual(['verified']);
   }),
 );
 
@@ -117,7 +128,7 @@ it.effect('is uncertain, and keeps the asset recoverable, while no object is sto
   Effect.gen(function* notThereYet() {
     const { confirms, run } = yield* setup();
     expect(failureTag(yield* Effect.exit(run()))).toBe('MediaIngestUncertain');
-    expect(yield* confirms).toBe(1);
+    expect(yield* confirms).toEqual(['unverifiable']);
   }),
 );
 
@@ -129,14 +140,20 @@ it.effect('proves a stored object that is not the declared content as an integri
   }),
 );
 
-it.effect('answers a sealed asset from its row without asking the provider or the Action', () =>
-  Effect.gen(function* alreadyReady() {
-    const { calls, confirms, run } = yield* setup();
-    const result = yield* run({ asset: reserved({ processingStatus: 'ready' }) });
-    expect(result.processingStatus).toBe('ready');
-    expect(yield* calls).toEqual([]);
-    expect(yield* confirms).toBe(0);
-  }),
+it.effect(
+  'asks the Action for a sealed or failed asset too, with evidence that proves nothing and no provider read',
+  () =>
+    Effect.gen(function* settledRows() {
+      const { calls, confirms, run } = yield* setup();
+      // The Action, not this step, decides: capability, idempotency and replay are its. It follows the row.
+      const sealed = yield* run({ asset: reserved({ processingStatus: 'ready' }) });
+      expect(sealed.processingStatus).toBe('ready');
+      expect(failureTag(yield* Effect.exit(run({ asset: reserved({ processingStatus: 'failed' }) })))).toBe(
+        'MediaIntegrityFailed',
+      );
+      expect(yield* confirms).toEqual(['unverifiable', 'unverifiable']);
+      expect(yield* calls).toEqual([]);
+    }),
 );
 
 it.effect('does not reveal the asset to another principal or another company, and reads nothing for them', () =>
@@ -156,6 +173,6 @@ it.effect('does not reveal the asset to another principal or another company, an
       'MediaAssetNotFound',
     );
     expect(yield* calls).toEqual([]);
-    expect(yield* confirms).toBe(0);
+    expect(yield* confirms).toEqual([]);
   }),
 );

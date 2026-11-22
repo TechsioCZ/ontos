@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import type { MediaAssetRef } from '../resources/media-asset.ts';
 import type { MediaByteSourceOffer } from './byte-source-contract.ts';
@@ -6,6 +6,7 @@ import { MediaIngestUncertain, MediaIntegrityFailed, mediaAssetNotFound } from '
 import { reconcileUncertainUpload } from './reconciliation.ts';
 import { deriveMediaStorageKey } from './storage-key.ts';
 import type { ConfirmAssetResultSchema } from './upload-contract.ts';
+import { MediaStoredObjectVerificationSchema } from './verification.ts';
 import type { MediaStoredObjectVerification } from './verification.ts';
 
 /*
@@ -15,7 +16,10 @@ import type { MediaStoredObjectVerification } from './verification.ts';
  *
  * The caller that may trigger a read-back of the stored object is the principal that reserved the asset, exactly as
  * for the byte hop: a stranger learns nothing of the asset, not even that it exists. The confirm Action is still
- * what decides, under the caller's own capability; this step only produces its evidence.
+ * what decides, under the caller's own capability, for EVERY row: an asset that is already sealed or closed is not
+ * answered from the row here, because that would answer without the capability, the idempotency check or the replay
+ * re-decision. For such a row the Action needs no evidence about the stored object (it follows the row), so it is
+ * handed evidence that proves nothing and the provider is not asked.
  */
 
 type ConfirmResult = typeof ConfirmAssetResultSchema.Type;
@@ -52,6 +56,15 @@ export const confirmReservedUpload = Effect.fn('MediaConfirmUpload.confirm')(fun
       asset.legalEntityId !== input.selectedLegalEntityId)
   ) {
     return yield* mediaAssetNotFound();
+  }
+  if (asset.processingStatus !== 'uploaded') {
+    const evidence = yield* Schema.decodeUnknownEffect(MediaStoredObjectVerificationSchema)({
+      outcome: 'unverifiable',
+      providerId: asset.storageProvider,
+      reason: 'object_missing',
+      storageKey: asset.storageKey,
+    }).pipe(Effect.orDie);
+    return yield* input.confirm(evidence);
   }
   const reconciliation = yield* reconcileUncertainUpload({ asset, confirm: input.confirm });
   if (reconciliation.outcome === 'completed') {

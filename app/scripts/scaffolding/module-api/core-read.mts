@@ -50,23 +50,23 @@ export const patchSlot = (
   const start = marker(name, 'start');
   const end = marker(name, 'end');
   if (source.split(start).length !== 2 || source.split(end).length !== 2) {
-    return raiseScaffoldFailure(`missing or duplicate Core read insertion slot: ${name}`);
+    return raiseScaffoldFailure(`missing or duplicate Core insertion slot: ${name}`);
   }
   const startIndex = source.indexOf(start) + start.length;
   const endIndex = source.indexOf(end);
   if (startIndex > endIndex) {
-    return raiseScaffoldFailure(`reversed Core read insertion slot: ${name}`);
+    return raiseScaffoldFailure(`reversed Core insertion slot: ${name}`);
   }
   const body = source.slice(startIndex, endIndex);
   const tag = `// @ontos-${owner} ${identity}`;
   if (body.includes(tag)) {
     if (!comparable(body).includes(comparable(contribution))) {
-      return raiseScaffoldFailure(`Core read insertion slot drift: ${name} / ${identity}`);
+      return raiseScaffoldFailure(`Core insertion slot drift: ${name} / ${identity}`);
     }
     return source;
   }
   if (body.trim().length > 0 && !body.includes(`// @ontos-${owner} `)) {
-    return raiseScaffoldFailure(`unsupported content in Core read insertion slot: ${name}`);
+    return raiseScaffoldFailure(`unsupported content in Core insertion slot: ${name}`);
   }
   const insertion = `\n${tag}\n${contribution}\n`;
   return `${source.slice(0, endIndex)}${insertion}${source.slice(endIndex)}`;
@@ -83,7 +83,7 @@ export const patchCoreRuntimeImport = (source: string, value: string): string =>
     return raiseScaffoldFailure('Core read cannot patch Shell Core runtime import');
   }
   // Already imported, from the Core runtime or from another published Core entry: a second binding would not compile.
-  if (new RegExp(`import\\s+(?:type\\s+)?\\{[^}]*\\b${value}\\b[^}]*\\}\\s+from`, 'u').test(source)) {
+  if (new RegExp(`^import\\s+\\{[^}]*\\b${value}\\b[^}]*\\}\\s+from`, 'mu').test(source)) {
     return source;
   }
   const replacement = `import {${members.trimEnd()}\n  ${value},\n} from '@app/core-runtime';`;

@@ -306,5 +306,41 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
           ),
         ),
     );
+
+    suite.effect(
+      'the confirm Action decides for a sealed or failed asset too: a revoked confirm grant is refused, and a foreign tenant in the reference is not found',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* confirmDecidedByTheAction() {
+              const uploader = person(world, 'uploader');
+              yield* world.grant(uploader, [MEDIA_CAPABILITIES.upload]);
+              const confirmGrant = yield* world.grant(uploader, [MEDIA_CAPABILITIES.confirm]);
+              const edge = yield* world.shell;
+              const bytes = patternBytes(1024);
+              const sealed = assetIdOf(yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'seal' }));
+              expect((yield* putBytes(edge, uploader, sealed, bytes)).status).toBe(200);
+              const closed = assetIdOf(yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'close' }));
+              yield* storeObjectOutOfBand(world, closed, patternBytes(1025));
+              expect((yield* confirmOverHttp(edge, uploader, closed, 'close-confirm')).status).toBe(422);
+              const settled = yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm');
+              expect(settled.status).toBe(200);
+
+              // A foreign tenant named in the reference is "not found" before any read-back, whatever the asset's state.
+              const foreignTenant = '00000000-0000-4000-8000-0000000000aa';
+              expect((yield* confirmOverHttp(edge, uploader, sealed, 'foreign', foreignTenant)).status).toBe(404);
+
+              // The capability goes away: a sealed asset is no longer answered from its row, and neither is a failed one.
+              yield* world.revoke(confirmGrant.incarnationId);
+              expect((yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm-new')).status).toBe(403);
+              expect((yield* confirmOverHttp(edge, uploader, closed, 'close-confirm-new')).status).toBe(403);
+              // Nor is the saved reply of the earlier key handed to a caller who may no longer confirm.
+              expect((yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm')).status).not.toBe(200);
+              expect((yield* rowOf(world, sealed))?.processing_status).toBe('ready');
+              expect((yield* rowOf(world, closed))?.processing_status).toBe('failed');
+            }),
+          ),
+        ),
+    );
   },
 );
