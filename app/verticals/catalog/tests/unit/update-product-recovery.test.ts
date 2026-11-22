@@ -62,7 +62,7 @@ const snapshot = (overrides: Partial<typeof catalogResultSnapshots.$inferSelect>
   ...overrides,
 });
 const recover = (row?: typeof catalogResultSnapshots.$inferSelect) => {
-  let reads = 0;
+  const queriedTables: (typeof catalogResultSnapshots)[] = [];
   const transaction = {
     select: () => ({
       from: (table: typeof catalogResultSnapshots) => {
@@ -70,7 +70,7 @@ const recover = (row?: typeof catalogResultSnapshots.$inferSelect) => {
         return {
           where: () => ({
             limit: () => {
-              reads += 1;
+              queriedTables.push(table);
               return Effect.succeed(row === undefined ? [] : [row]);
             },
           }),
@@ -79,9 +79,7 @@ const recover = (row?: typeof catalogResultSnapshots.$inferSelect) => {
     }),
   };
   return {
-    get reads() {
-      return reads;
-    },
+    queriedTables,
     services: catalogPersistenceForScope(
       // @ts-expect-error Focused mock implements only snapshot reads.
       transaction,
@@ -129,7 +127,7 @@ describe('Update Product immutable recovery', () => {
         ),
       );
       expect(recovery).toEqual({ result, status: 'committed' });
-      expect(test.reads).toBe(2);
+      expect(test.queriedTables).toEqual([catalogResultSnapshots]);
     }),
   );
 
@@ -140,7 +138,8 @@ describe('Update Product immutable recovery', () => {
         [snapshot({ actionKey: 'commerce.catalog.create-product' }), 'absent'],
         [undefined, 'unavailable'],
       ] as const) {
-        const services = yield* recover(row).services;
+        const test = recover(row);
+        const services = yield* test.services;
         const recovery = yield* services.recoverUpdateProduct(invocationId).pipe(
           Effect.provideService(
             ActionRuntime,
@@ -148,6 +147,7 @@ describe('Update Product immutable recovery', () => {
           ),
         );
         expect(recovery.status).toBe(status);
+        expect(test.queriedTables).toEqual([catalogResultSnapshots]);
       }
     }),
   );

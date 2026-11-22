@@ -3,6 +3,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CreateVariantResultSchema } from '../../shared/actions/create-variant.ts';
+import { catalogResultSnapshots } from '../../src/database/schema.ts';
 import { variantPersistenceForScope } from '../../src/persistence/variant-persistence.ts';
 
 const invocationId = '33333333-3333-4333-8333-333333333333';
@@ -56,20 +57,24 @@ interface SnapshotRow {
   readonly tenantId: string;
 }
 
-const snapshotTransaction = (row: SnapshotRow, onRead: () => void) => {
-  const limit = () => {
-    onRead();
+const snapshotTransaction = (row: SnapshotRow) => {
+  const queriedTables: (typeof catalogResultSnapshots)[] = [];
+  const limit = (table: typeof catalogResultSnapshots) => {
+    expect(table).toBe(catalogResultSnapshots);
+    queriedTables.push(table);
     return Effect.succeed([row]);
   };
-  return {
+  const from = (table: typeof catalogResultSnapshots) => ({
+    where: () => ({
+      limit: () => limit(table),
+    }),
+  });
+  const transaction = {
     select: () => ({
-      from: () => ({
-        where: () => ({
-          limit,
-        }),
-      }),
+      from,
     }),
   };
+  return { queriedTables, transaction };
 };
 
 describe('create Variant recovery response', () => {
@@ -84,12 +89,9 @@ describe('create Variant recovery response', () => {
         schemaVersion: 2,
         tenantId,
       };
-      let snapshotReads = 0;
-      const transaction = snapshotTransaction(row, () => {
-        snapshotReads += 1;
-      });
+      const mock = snapshotTransaction(row);
       // @ts-expect-error Only the exercised snapshot read chain is mocked.
-      const services = variantPersistenceForScope(transaction, scope);
+      const services = variantPersistenceForScope(mock.transaction, scope);
       const runtime = {
         resolveActionCommit: () =>
           Effect.fail(
@@ -102,17 +104,22 @@ describe('create Variant recovery response', () => {
         .pipe(Effect.provideService(ActionRuntime, runtime));
       expect(recovered).toEqual({ result, status: 'committed' });
       expect(recovered).toMatchObject({ result: { classification: { kind: 'NEW_REALIZATION' } } });
-      expect(snapshotReads).toBe(2);
+      expect(mock.queriedTables).toEqual([catalogResultSnapshots]);
 
+      const otherPrincipalMock = snapshotTransaction({
+        ...row,
+        actingPrincipalId: '77777777-7777-4777-8777-777777777777',
+      });
       const otherPrincipal = variantPersistenceForScope(
         // @ts-expect-error Only the exercised snapshot read chain is mocked.
-        snapshotTransaction({ ...row, actingPrincipalId: '77777777-7777-4777-8777-777777777777' }, () => {}),
+        otherPrincipalMock.transaction,
         scope,
       );
       const hidden = yield* otherPrincipal
         .recoverCreateVariant(invocationId)
         .pipe(Effect.provideService(ActionRuntime, runtime));
       expect(hidden).toEqual({ status: 'absent' });
+      expect(otherPrincipalMock.queriedTables).toEqual([catalogResultSnapshots]);
     }),
   );
 
@@ -128,12 +135,9 @@ describe('create Variant recovery response', () => {
         schemaVersion: 1,
         tenantId,
       };
-      let snapshotReads = 0;
-      const transaction = snapshotTransaction(row, () => {
-        snapshotReads += 1;
-      });
+      const mock = snapshotTransaction(row);
       // @ts-expect-error Only the exercised snapshot read chain is mocked.
-      const services = variantPersistenceForScope(transaction, scope);
+      const services = variantPersistenceForScope(mock.transaction, scope);
       const runtime = {
         resolveActionCommit: () =>
           Effect.fail(
@@ -145,7 +149,7 @@ describe('create Variant recovery response', () => {
         .recoverCreateVariant(invocationId)
         .pipe(Effect.provideService(ActionRuntime, runtime));
       expect(recovered).toEqual({ result: legacyResult, status: 'committed' });
-      expect(snapshotReads).toBe(3);
+      expect(mock.queriedTables).toEqual([catalogResultSnapshots, catalogResultSnapshots]);
     }),
   );
 });
