@@ -239,6 +239,7 @@ import { createProductRecoveryRead } from './src/api/create-product-recovery.rea
 import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
 import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
+import { addProductCategoryAssignmentRecoveryRead } from './src/api/add-product-category-assignment-recovery.read.ts';
 import { governVariantAxesRecoveryRead } from './src/api/govern-variant-axes-recovery.read.ts';
 import { confirmVariantCombinationRecoveryRead } from './src/api/confirm-variant-combination-recovery.read.ts';
 import { setProductLocalizedFactsRecoveryRead } from './src/api/set-product-localized-facts-recovery.read.ts';
@@ -620,6 +621,11 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
         registration: bindInitialVariantSourceRecoveryRead,
       },
       {
+        apiKey: 'add-product-category-assignment-recovery',
+        operationKey: 'addProductCategoryAssignmentRecovery.execute',
+        registration: addProductCategoryAssignmentRecoveryRead,
+      },
+      {
         apiKey: 'govern-variant-axes-recovery',
         operationKey: 'governVariantAxesRecovery.execute',
         registration: governVariantAxesRecoveryRead,
@@ -761,6 +767,7 @@ export const catalogRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,
+    addProductCategoryAssignmentRecoveryRead,
     governVariantAxesRecoveryRead,
     confirmVariantCombinationRecoveryRead,
     setProductLocalizedFactsRecoveryRead,
