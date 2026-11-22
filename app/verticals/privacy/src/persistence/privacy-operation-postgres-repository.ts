@@ -68,6 +68,7 @@ import {
 } from '../../shared/domain/privacy-dsr.ts';
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
 import {
+  isSameOwnerExecutionReceipt,
   OwnerExecutionOutcomeSchema,
   PrivacyMeasureHandoffSchema,
   validateOwnerExecutionAuthorityResult,
@@ -3103,6 +3104,26 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
       function* recordOwnerOutcomeEffect(tenantId, legalEntityId, _actionInvocationId, request, authority) {
         yield* resolveValidatedOwnerExecutionHandoff(tenantId, legalEntityId, request, authority);
         const { outcome } = authority;
+        const [held] = yield* transaction
+          .select({ record: ownerExecutionOutcomes.outcomeRecord })
+          .from(ownerExecutionOutcomes)
+          .where(
+            and(
+              eq(ownerExecutionOutcomes.tenantId, tenantId),
+              eq(ownerExecutionOutcomes.legalEntityId, legalEntityId),
+              eq(ownerExecutionOutcomes.measureId, outcome.measureId),
+              eq(ownerExecutionOutcomes.attempt, outcome.attempt),
+            ),
+          )
+          .limit(1)
+          .pipe(Effect.mapError((cause) => persistenceFailure('Owner Execution Outcome could not be read', cause)));
+        if (held !== undefined) {
+          // a second report of an attempt Privacy already holds: the same receipt is the same fact, anything else conflicts
+          const stored = yield* decode(OwnerExecutionOutcomeSchema, held.record, 'Owner Execution Outcome');
+          return isSameOwnerExecutionReceipt(stored, outcome)
+            ? stored
+            : yield* conflict('This Owner Execution Outcome attempt already holds another owner receipt');
+        }
         yield* transaction
           .insert(ownerExecutionOutcomes)
           .values({

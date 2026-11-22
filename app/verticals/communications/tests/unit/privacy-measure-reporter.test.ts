@@ -7,7 +7,7 @@ import { FetchHttpClient } from 'effect/http';
 import { Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { privacyMeasureReporterService } from '../../src/services/privacy-measure-reporter.ts';
+import { gatewayFailure, privacyMeasureReporterService } from '../../src/services/privacy-measure-reporter.ts';
 
 /**
  * [#1410 AC-14] The reporting transport of the Communications worker. Everything before Core's gateway is proved here: the claim
@@ -111,3 +111,22 @@ it.effect('reports a later human-recorded confirmation only from a native claime
     });
   }),
 );
+
+it('R1: a Privacy conflict for the reported attempt is a non-retryable, honest failure; an outage stays retryable', () => {
+  // Privacy's published answer for a state that contradicts the report (another receipt already held for the attempt)
+  const conflict = gatewayFailure({
+    _tag: 'RecordOwnerExecutionOutcomeActionUnavailableProblem',
+    code: 'privacy_operation_conflict',
+    retryable: true,
+    status: 503,
+  });
+  expect(conflict).toMatchObject({ code: 'privacy_measure_report_conflict', retryable: false });
+  const outage = gatewayFailure({
+    _tag: 'RecordOwnerExecutionOutcomeActionUnavailableProblem',
+    code: 'privacy_operation_persistence_unavailable',
+    retryable: true,
+    status: 503,
+  });
+  expect(outage).toMatchObject({ code: 'privacy_measure_report_unavailable', retryable: true });
+  expect(gatewayFailure(new Error('fictional transport failure'))).toMatchObject({ retryable: true });
+});

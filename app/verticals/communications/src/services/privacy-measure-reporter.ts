@@ -68,12 +68,30 @@ const requirementUnavailable = (cause: unknown) =>
 
 // Keep only recognized public failure metadata: transport and configuration causes can carry assertions or the handoff.
 const gatewayFailureSchema = Schema.Struct({
-  code: Schema.optionalKey(Schema.Literal('action_already_committed')),
+  code: Schema.optionalKey(Schema.Literals(['action_already_committed', 'privacy_operation_conflict'])),
   resolution: Schema.optionalKey(Schema.Literal('RESOLVE_COMMIT')),
 });
 const decodeGatewayFailure = Schema.decodeUnknownOption(gatewayFailureSchema);
-const gatewayFailure = (cause: unknown) => {
+
+/**
+ * The report failure of one gateway or Privacy answer. Privacy answers `privacy_operation_conflict` when its state for this
+ * measure and attempt contradicts the report (it already holds ANOTHER receipt for the attempt; the same receipt is an
+ * idempotent success there): repeating the same report cannot change that, so it is a non-retryable, honest failure that an
+ * operator reconciles, never a retry storm. Everything else is an unavailable gateway, retried.
+ */
+export const gatewayFailure = (cause: unknown) => {
   const parsed = decodeGatewayFailure(cause);
+  if (Option.isSome(parsed) && parsed.value.code === 'privacy_operation_conflict') {
+    return Object.defineProperty(
+      new PrivacyMeasureReportError({
+        code: 'privacy_measure_report_conflict',
+        reason: 'Privacy holds another receipt or state for this measure attempt; the same report cannot change it',
+        retryable: false,
+      }),
+      'cause',
+      { value: parsed.value },
+    );
+  }
   const indeterminate = Option.isSome(parsed) && parsed.value.resolution === 'RESOLVE_COMMIT';
   return Object.defineProperty(
     new PrivacyMeasureReportError({

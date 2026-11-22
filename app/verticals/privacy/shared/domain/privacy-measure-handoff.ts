@@ -83,6 +83,17 @@ export const OwnerExecutionOutcomeSchema = Schema.Struct({
 });
 export type OwnerExecutionOutcome = typeof OwnerExecutionOutcomeSchema.Type;
 
+const ownerExecutionOutcomeEquivalence = Schema.toEquivalence(OwnerExecutionOutcomeSchema);
+
+/**
+ * Whether the outcome Privacy already holds for an attempt is the SAME owner receipt as an incoming one. The owner stamps
+ * each read of its receipt with the instant of that read (`recordedAt`); every other field is the receipt itself. A second
+ * report of the same receipt for the same attempt (an owner continuation after a manual pull of that attempt, or the
+ * reverse) is therefore the same fact, never a conflict; any other difference is one.
+ */
+export const isSameOwnerExecutionReceipt = (stored: OwnerExecutionOutcome, incoming: OwnerExecutionOutcome): boolean =>
+  ownerExecutionOutcomeEquivalence({ ...stored, recordedAt: incoming.recordedAt }, incoming);
+
 /** Public coordinator input identifies an attempt but cannot carry an owner result. */
 export const OwnerExecutionOutcomeRequestSchema = Schema.Struct({
   attempt: Revision,
