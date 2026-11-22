@@ -23,6 +23,7 @@ import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import {
   pointAt,
   recordKey,
+  s3FaultInjectableConfig,
   s3ProviderConfig,
   s3Providers,
   spaceSameKeyWrites,
@@ -45,7 +46,7 @@ const withProxy = <Value, Failure, Requirement>(
   ctx: { readonly skip: () => void },
   use: (proxy: S3FaultProxy, base: S3ObjectStorageConfigValue) => Effect.Effect<Value, Failure, Requirement>,
 ): Effect.Effect<Value, Failure, Requirement | Scope.Scope | S3ProviderUnderTest> =>
-  s3ProviderConfig(ctx).pipe(
+  s3FaultInjectableConfig(ctx).pipe(
     Effect.flatMap((base) => Effect.flatMap(startS3FaultProxy(base.endpoint), (proxy) => use(proxy, base))),
   );
 

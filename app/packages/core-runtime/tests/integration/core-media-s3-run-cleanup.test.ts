@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Layer, Redacted, Stream } from 'effect';
+import { Cause, Effect, Exit, Layer, Redacted, Stream } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -8,6 +8,7 @@ import { parseS3ObjectStorageConfig } from '../../src/media/s3-config.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { startR2BehaviourMock } from '../support/r2-behaviour-mock.ts';
 import type { R2BehaviourMock } from '../support/r2-behaviour-mock.ts';
+import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import { cleanupRecordedKeys } from '../support/s3-run-cleanup.ts';
 
 /*
@@ -96,6 +97,15 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer), { excludeTestS
           expect(mock.admin.keys(mock.bucket)).toContain(key);
         }),
       ),
+    );
+
+    suite.effect('the fault proxy forwards in plain HTTP, so it refuses an upstream that is not on loopback', () =>
+      Effect.gen(function* proxyRefusal() {
+        const exit = yield* Effect.exit(
+          Effect.scoped(startS3FaultProxy(new URL('https://0123456789abcdef.r2.cloudflarestorage.com'))),
+        );
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      }),
     );
   },
 );

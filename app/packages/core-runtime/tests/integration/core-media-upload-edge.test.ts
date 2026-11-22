@@ -74,7 +74,7 @@ import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/act
 import { makeTestPgClient } from '../support/database.ts';
 import { emulatorConfig } from '../support/s3-emulator-config.ts';
 import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
-import { pointAt, s3ProviderConfig, s3Providers } from '../support/s3-provider-under-test.ts';
+import { pointAt, s3FaultInjectableConfig, s3ProviderConfig, s3Providers } from '../support/s3-provider-under-test.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 /*
@@ -934,7 +934,7 @@ for (const provider of s3Providers) {
     excludeTestServices: true,
   })(`core media upload edge through the S3 adapter [${provider.label}]`, (suite) => {
     const s3Edge = Effect.fn('CoreMediaUploadEdgeS3Test.edge')(function* s3Edge(ctx: { readonly skip: () => void }) {
-      const base = yield* s3ProviderConfig(ctx);
+      const base = yield* s3FaultInjectableConfig(ctx);
       const proxy = yield* startS3FaultProxy(base.endpoint);
       const storage = yield* makeS3ObjectStorage({
         ...pointAt(base, proxy.origin),

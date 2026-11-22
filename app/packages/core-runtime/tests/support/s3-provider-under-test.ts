@@ -204,6 +204,21 @@ export const s3ProviderConfig = (ctx: { readonly skip: () => void }) =>
         }).pipe(Effect.andThen(Effect.never));
   });
 
+/**
+ * The settings of the provider row for a test that injects faults through the local proxy. The proxy forwards in plain
+ * HTTP and only to loopback, so on the REMOTE row such a test is SKIPPED, never pointed at the real endpoint.
+ */
+export const s3FaultInjectableConfig = (ctx: { readonly skip: () => void }) =>
+  Effect.gen(function* faultInjectableConfig() {
+    const provider = yield* S3ProviderUnderTest;
+    if (provider.id === REMOTE) {
+      return yield* Effect.sync(() => {
+        ctx.skip();
+      }).pipe(Effect.andThen(Effect.never));
+    }
+    return yield* s3ProviderConfig(ctx);
+  });
+
 /** Records a key the run created (a remote run removes exactly the recorded keys when it ends). */
 export const recordKey = (key: string) =>
   Effect.gen(function* recordCreatedKey() {
