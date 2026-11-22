@@ -3,10 +3,12 @@ import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import type { PriceSourceAuthority, PriceSourceMapping } from '@app/pricing-contracts/domain/price-source-provenance';
-import { Crypto, Effect, FileSystem, Option } from 'effect';
+import { Crypto, DateTime, Effect, FileSystem, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { decodeExternalPriceSourceAuthorityAssessment } from '../../src/persistence/external-price-source-authority-persistence.ts';
+import { makeExternalPriceInputBoundary } from '../../src/services/external-price-input-boundary.service.ts';
 import {
   erpAuthority,
   policyTerms,
@@ -120,13 +122,48 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           const upper = grant(key(11, true, true));
           const pairUpper = grant(key(12, true, true), 'first receipt');
           const pairLower = grant(key(12), 'second receipt');
+          const oneEligiblePairs = [
+            [grant(key(31, true, true)), { ...grant(key(31)), verifiedAt: '2026-11-10T00:00:00.001Z' }],
+            [
+              grant(key(32, true, true)),
+              {
+                ...grant(key(32)),
+                effectivePeriod: { ...evidence.effectivePeriod, effectiveFrom: '2026-11-10T00:00:00.001Z' },
+              },
+            ],
+            [
+              grant(key(33, true, true)),
+              {
+                ...grant(key(33)),
+                effectivePeriod: { effectiveFrom: '2026-11-01T00:00:00.000Z', effectiveTo: effectiveAt },
+              },
+            ],
+            [
+              grant(key(34, true, true)),
+              { ...grant(key(34)), mapping: { ...mapping, mappingContractVersion: 'other-version' } },
+            ],
+            [
+              grant(key(35, true, true)),
+              {
+                ...grant({
+                  ...key(35),
+                  unitBasis: { ...key(35).unitBasis, quantity: '1.000000000' },
+                }),
+                verifiedAt: '2026-11-10T00:00:00.001Z',
+              },
+            ],
+            [
+              grant(key(36, true, true)),
+              { ...grant(key(36)), authority: { ...authority, sourceAuthorityVersion: 'other-version' } },
+            ],
+          ];
           const historicWildcards = [
             { ...grant(key(21)), authority: { ...erpAuthority, sourceAuthorityRef: '*' } },
             { ...grant(key(22)), authority: { ...erpAuthority, sourceAuthorityVersion: '*' } },
             { ...grant(key(23)), mapping: { ...productMapping, mappingContractRef: '*' } },
             { ...grant(key(24)), mapping: { ...productMapping, mappingContractVersion: '*' } },
           ];
-          for (const stored of [upper, pairUpper, pairLower, ...historicWildcards]) {
+          for (const stored of [upper, pairUpper, pairLower, ...oneEligiblePairs.flat(), ...historicWildcards]) {
             expect(yield* store(stored)).toEqual([{ payload: { outcome: 'STORED' } }]);
           }
           const policy = { ...evidence, ...policyTerms(world, { priceGroupCoverage: { kind: 'ANY_PRICE_GROUP' } }) };
@@ -135,6 +172,20 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
               runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(policy)})`,
             ),
           ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
+          // Direct storage historically allows sub-millisecond precision. Preserve that receipt,
+          // but admission must use the same millisecond, half-open period projected to TypeScript.
+          yield* scoped(
+            runtime`insert into pricing.external_price_source_policy_ends
+              (tenant_id, legal_entity_id, policy_id, effective_to, verification_ref, ended_at)
+              select tenant_id, legal_entity_id, policy_id, '2099-11-25T00:00:00.000500Z'::timestamptz,
+                'fractional-cutoff', '2026-11-01T00:00:00.000Z'::timestamptz
+              from pricing.external_price_source_policies where market_id = ${policy.commercialScope.marketId}`,
+          );
+          const endRows = scoped(
+            runtime`select to_jsonb(e) as row from pricing.external_price_source_policy_ends e order by policy_id`,
+          );
+          const endsBefore = yield* endRows;
+          expect(endsBefore).toHaveLength(1);
           const historicPolicy = {
             ...policy,
             commercialScope: { ...policy.commercialScope, marketId: 'legacy-verification' },
@@ -151,10 +202,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           const policiesBefore = yield* policyRows;
           expect(policiesBefore).toHaveLength(2);
           const before = yield* historyRows;
-          expect(before).toHaveLength(7);
+          expect(before).toHaveLength(19);
           yield* migrate(admin, forward);
           expect(yield* historyRows).toEqual(before);
           expect(yield* policyRows).toEqual(policiesBefore);
+          expect(yield* endRows).toEqual(endsBefore);
           expect(
             yield* admin`select convalidated from pg_catalog.pg_constraint
               where conrelid='pricing.external_price_source_authority_grants'::regclass
@@ -190,7 +242,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
               trustedOperationAt: at,
             };
             return scoped(
-              runtime`select payload from pricing.assess_external_price_source_authority_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
+              runtime<{
+                readonly payload: unknown;
+              }>`select payload from pricing.assess_external_price_source_authority_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
             );
           };
           expect(yield* assess(key(11))).toEqual([
@@ -198,12 +252,51 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           ]);
           const held = [{ payload: { outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' } }];
           expect(yield* assess(key(12))).toEqual(held);
+          for (const variant of [31, 32, 33, 34, 35, 36]) {
+            expect(yield* assess(key(variant))).toEqual(held);
+          }
           for (const variant of [21, 22, 23, 24]) {
             expect(yield* assess(key(variant))).toEqual(held);
           }
           expect(yield* assess(key(11), evidence.effectivePeriod.effectiveTo)).toEqual(held);
           expect(yield* assess(key(13))).toMatchObject([{ payload: { outcome: 'AUTHORITY_COVERED_BY_POLICY' } }]);
-          for (const retry of [upper, grant(key(11)), pairUpper, pairLower]) {
+          const beforeCutoff = '2099-11-24T23:59:59.999Z';
+          expect(yield* assess(key(13), beforeCutoff)).toMatchObject([
+            {
+              payload: {
+                outcome: 'AUTHORITY_COVERED_BY_POLICY',
+                policy: { effectivePeriod: { effectiveTo: '2099-11-25T00:00:00.000Z' } },
+              },
+            },
+          ]);
+          for (const at of [beforeCutoff, '2099-11-25T00:00:00.000Z', '2099-11-25T00:00:00.001Z']) {
+            const rows = yield* assess(key(13), at);
+            const assessment = yield* decodeExternalPriceSourceAuthorityAssessment(rows);
+            const admission = yield* makeExternalPriceInputBoundary({
+              assess: () => Effect.succeed(assessment),
+            }).assess({
+              actingPrincipalId: world.tenantId,
+              effectiveFrom: at,
+              identityKey: key(13),
+              monetaryAmount: { amount: '199.90', currencyCode: 'CZK' },
+              sourceAssertion: sourceAssertionFor(key(13), {
+                effectiveAt: at,
+                sourceAssertionId: 'ab000000-0000-4000-8000-000000000007',
+              }),
+              tenantId: world.tenantId,
+              trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(at)),
+            });
+            if (at === beforeCutoff) {
+              expect(admission.outcome).toBe('READY_FOR_CANONICAL_WRITE');
+            } else {
+              expect(rows).toEqual(held);
+              expect(admission).toMatchObject({
+                outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+                reason: 'SOURCE_AUTHORITY_UNRESOLVED',
+              });
+            }
+          }
+          for (const retry of [upper, grant(key(11)), pairUpper, pairLower, ...oneEligiblePairs.flat()]) {
             expect(yield* store(retry)).toEqual([{ payload: { outcome: 'REUSED' } }]);
           }
           const conflict = [{ payload: { outcome: 'CONFLICT', reason: 'GRANT_IDENTITY_ALREADY_BOUND' } }];
@@ -211,6 +304,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           expect(yield* store(grant(key(12, true), 'first receipt'))).toEqual(conflict);
           expect(yield* historyRows).toEqual(before);
           expect(yield* policyRows).toEqual(policiesBefore);
+          expect(yield* endRows).toEqual(endsBefore);
           expect(yield* store(grant(key(14, true)))).toEqual([{ payload: { outcome: 'STORED' } }]);
           expect(yield* store(grant(key(14)))).toEqual([{ payload: { outcome: 'REUSED' } }]);
           expect(

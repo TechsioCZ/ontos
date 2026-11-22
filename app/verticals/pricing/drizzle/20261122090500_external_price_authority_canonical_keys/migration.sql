@@ -28,7 +28,7 @@ DECLARE
   v_trusted_operation_at timestamptz;
   v_grants jsonb := '[]'::jsonb;
   v_match_count integer := 0;
-  v_has_key boolean;
+  v_key_count integer := 0;
   canonical_uuid CONSTANT text := '^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$';
   v_policies jsonb := '[]'::jsonb;
   v_policy_count integer := 0;
@@ -75,8 +75,9 @@ BEGIN
   -- Stored JSON is immutable evidence. Fold only the two UUID resource IDs: never tenant,
   -- scope, source, mapping, or arbitrary JSON text. Do not merge or pick a historic row.
   -- A key has one numeric quantity, independent of the JSON spelling. Count all grants for
-  -- that key before filtering for eligibility: even an ineligible grant precludes a policy.
-  SELECT count(*) > 0, (count(*) FILTER (WHERE matching.eligible))::integer,
+  -- that key before filtering for eligibility: multiple receipts remain ambiguous even if
+  -- only one is eligible, and even an ineligible grant precludes a policy.
+  SELECT count(*)::integer, (count(*) FILTER (WHERE matching.eligible))::integer,
          coalesce(
            pg_catalog.jsonb_agg(
              pg_catalog.jsonb_build_object(
@@ -108,7 +109,7 @@ BEGIN
            ) FILTER (WHERE matching.eligible),
            '[]'::jsonb
          )
-    INTO v_has_key, v_match_count, v_grants
+    INTO v_key_count, v_match_count, v_grants
     FROM pricing.external_price_source_authority_grants AS authority
    CROSS JOIN LATERAL (SELECT pg_catalog.jsonb_set(authority.exact_identity_key, '{unitBasis,unitRef,resourceId}',
      pg_catalog.to_jsonb(pg_catalog.translate(authority.exact_identity_key #>> '{unitBasis,unitRef,resourceId}', 'ABCDEF', 'abcdef')), false) AS key) AS unit
@@ -132,7 +133,7 @@ BEGIN
            ELSE false
          END;
 
-  IF v_match_count = 1 THEN
+  IF v_key_count = 1 AND v_match_count = 1 THEN
     RETURN QUERY SELECT pg_catalog.jsonb_build_object(
       'grant', v_grants -> 0,
       'outcome', 'AUTHORITY_GRANTED'
@@ -144,7 +145,7 @@ BEGIN
   -- authority, mapping, commercial scope, currency and unit basis are exactly the key's and its Price Group
   -- coverage names the key's selector, at the asserted effective time. Store refuses overlapping policies, so
   -- more than one match is ambiguity and stays unresolved.
-  IF NOT v_has_key THEN
+  IF v_key_count = 0 THEN
     SELECT count(*)::integer,
            coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
       'authority', pg_catalog.jsonb_build_object(
@@ -220,8 +221,9 @@ BEGIN
              ELSE false
            END
        AND policy.effective_from <= v_effective_at
+       -- Match the projected MS timestamp's half-open end, including historical fractional cutoffs.
        AND (LEAST(policy.effective_to, policy_end.effective_to) IS NULL
-         OR v_effective_at < LEAST(policy.effective_to, policy_end.effective_to))
+         OR v_effective_at < pg_catalog.date_trunc('milliseconds', LEAST(policy.effective_to, policy_end.effective_to)))
        AND policy.verified_at <= v_trusted_operation_at;
 
     IF v_policy_count = 1 THEN

@@ -271,10 +271,29 @@ export const applyPriceRevision = Effect.fn('RevisePriceAction.apply')(function*
       });
     }
     const sourceTarget = yield* resolveRevisionSourceTarget(payload, trusted.trustedOperationAt, services.readSchedule);
+    // The persisted Price remains the target. Only native UUIDs in the authority lookup use
+    // canonical spelling; neither the schedule identity nor the incoming source receipt is rewritten.
+    const { priceGroupSelector, unitBasis } = sourceTarget.identityKey;
     const readiness = yield* services.assessExternalPriceInput({
       actingPrincipalId: trusted.actingPrincipalId,
       effectiveFrom: sourceTarget.effectiveFrom,
-      identityKey: sourceTarget.identityKey,
+      identityKey: {
+        ...sourceTarget.identityKey,
+        priceGroupSelector:
+          priceGroupSelector.kind === 'NO_GROUP'
+            ? priceGroupSelector
+            : {
+                ...priceGroupSelector,
+                priceGroupRef: {
+                  ...priceGroupSelector.priceGroupRef,
+                  resourceId: priceGroupSelector.priceGroupRef.resourceId.toLowerCase(),
+                },
+              },
+        unitBasis: {
+          ...unitBasis,
+          unitRef: { ...unitBasis.unitRef, resourceId: unitBasis.unitRef.resourceId.toLowerCase() },
+        },
+      },
       monetaryAmount: payload.monetaryAmount,
       sourceAssertion: payload.sourceAssertion,
       tenantId: trusted.tenantId,

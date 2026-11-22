@@ -21,6 +21,7 @@ import {
 } from '../../src/actions/revise-price.action.ts';
 import type { RevisePriceActionServices } from '../../src/actions/revise-price.action.ts';
 import type { PricePersistence } from '../../src/services/price-persistence.service.ts';
+import { makeExternalPriceInputBoundary } from '../../src/services/external-price-input-boundary.service.ts';
 import {
   preparePriceSourceEvidence,
   priceSourceFactFingerprint,
@@ -270,6 +271,109 @@ const applyPriceRevision = (
 ) => applyPriceRevisionWithServices(revisionPayload, trustedContext, servicesFor(revise, overrides));
 
 describe('Revise Price Action', () => {
+  it.effect(
+    'revises a historical uppercase native identity through real source admission without rewriting evidence',
+    () =>
+      Effect.gen(function* reviseHistoricalIdentity() {
+        const lowerKey = {
+          ...scheduledRevision.definition.identityKey,
+          priceGroupSelector: {
+            kind: 'PRICE_GROUP' as const,
+            priceGroupRef: {
+              moduleId: 'pricing.price-group-catalog' as const,
+              resourceId: 'ab000000-0000-4000-8000-000000000004',
+              resourceType: 'pricing.price-group-catalog.price-group' as const,
+              tenantId,
+            },
+          },
+          unitBasis: {
+            ...scheduledRevision.definition.identityKey.unitBasis,
+            unitRef: {
+              ...scheduledRevision.definition.identityKey.unitBasis.unitRef,
+              resourceId: 'ab000000-0000-4000-8000-000000000003',
+            },
+          },
+        };
+        const historicalKey = {
+          ...lowerKey,
+          priceGroupSelector: {
+            ...lowerKey.priceGroupSelector,
+            priceGroupRef: {
+              ...lowerKey.priceGroupSelector.priceGroupRef,
+              resourceId: lowerKey.priceGroupSelector.priceGroupRef.resourceId.toUpperCase(),
+            },
+          },
+          unitBasis: {
+            ...lowerKey.unitBasis,
+            unitRef: { ...lowerKey.unitBasis.unitRef, resourceId: lowerKey.unitBasis.unitRef.resourceId.toUpperCase() },
+          },
+        };
+        const historical = {
+          ...scheduledRevision,
+          definition: { ...scheduledRevision.definition, identityKey: historicalKey },
+        };
+        const revised = {
+          ...revisedScheduledRevision,
+          definition: { ...revisedScheduledRevision.definition, identityKey: historicalKey },
+        };
+        const assertion = {
+          ...sourceAssertion,
+          originalAssertion: { ...sourceAssertion.originalAssertion, unitBasis: historicalKey.unitBasis },
+          sourceAuthority: { sourceAuthorityRef: 'ERP-Prices', sourceAuthorityVersion: 'V1' },
+        };
+        const requests: unknown[] = [];
+        const commands: unknown[] = [];
+        const boundary = makeExternalPriceInputBoundary({
+          assess: (request) => {
+            requests.push(request);
+            return Effect.succeed({
+              grant: {
+                authority: assertion.sourceAuthority,
+                effectivePeriod: { effectiveFrom: effectivePeriod.effectiveFrom },
+                exactIdentityKey: lowerKey,
+                family: 'PRICE',
+                mapping: assertion.mapping,
+                ownerModuleId: 'commerce.pricing',
+                schemaVersion: '1',
+                verificationRef: 'historical-authority',
+                verifiedAt: effectivePeriod.effectiveFrom,
+              },
+              outcome: 'AUTHORITY_GRANTED',
+            });
+          },
+        });
+        const result = yield* applyPriceRevision(
+          { ...payload, sourceAssertion: assertion },
+          trusted,
+          (command) => {
+            commands.push(command);
+            return Effect.succeed(persistenceSuccess('REVISED', revised, assertion));
+          },
+          {
+            assessExternalPriceInput: boundary.assess,
+            readSchedule: () =>
+              Effect.succeed({
+                ...currentSchedule,
+                schedule: { ...currentSchedule.schedule, current: historical, revisions: [historical] },
+              }),
+          },
+        );
+        expect(requests).toEqual([
+          {
+            exactIdentityKey: lowerKey,
+            sourceAssertion: assertion,
+            tenantId,
+            trustedOperationAt: trusted.trustedOperationAt,
+          },
+        ]);
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toMatchObject({ priceRef, sourceEvidence: { sourceAssertion: assertion } });
+        expect(result.outcome).toBe('PRICE_REVISION_CREATED');
+        expect(result.revision.definition.identityKey).toEqual(historicalKey);
+        expect(historical.definition.identityKey).toEqual(historicalKey);
+      }),
+  );
+
   it.effect('maps persistence revision and no-op outcomes distinctly', () =>
     Effect.gen(function* mapAcceptedOutcomes() {
       const revised = yield* applyPriceRevision(payload, trusted, () => Effect.succeed(persistenceSuccess('REVISED')));
