@@ -58,22 +58,30 @@ const hostedRequirement = {
   key: 'commerce.catalog.requirement.core-media-current',
   provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
 };
-const catalogContract = (declaresHosted: boolean) => {
+// The operation this endpoint serves: the exact registration `assetCurrentRead` (provider identity, never a family).
+const servedAssetCurrent = {
+  entrypointKey: 'core.media.api.asset-current',
+  moduleId: 'core.media',
+  schemaVersion: '1',
+};
+const catalogContract = (declared: typeof hostedRequirement | 'nothing') => {
   const catalog = makeModuleContractFixture({ appId: 'catalog', moduleId: 'commerce.catalog' });
-  return declaresHosted
-    ? {
+  return declared === 'nothing'
+    ? catalog
+    : {
         ...catalog,
         manifest: {
           ...catalog.manifest,
-          requirements: { coreCapabilities: [], intrinsic: [], operations: [hostedRequirement], schemaVersion: '1' },
+          requirements: { coreCapabilities: [], intrinsic: [], operations: [declared], schemaVersion: '1' },
         },
-      }
-    : catalog;
+      };
 };
 
-const world = Effect.fn('CoreHostedOperationTest.world')(function* world(declaresHosted = true) {
+const world = Effect.fn('CoreHostedOperationTest.world')(function* world(
+  declared: typeof hostedRequirement | 'nothing' = hostedRequirement,
+) {
   yield* TestClock.setTime((issuedAt + 1) * 1000);
-  const snapshot = yield* makeCompositionSnapshot([catalogContract(declaresHosted)]);
+  const snapshot = yield* makeCompositionSnapshot([catalogContract(declared)]);
   const { privateKey } = yield* Effect.promise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const privateJwk = yield* Effect.promise(() => exportJWK(privateKey));
   const jwk = {
@@ -129,9 +137,13 @@ const world = Effect.fn('CoreHostedOperationTest.world')(function* world(declare
   const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
   const receive = (
     token: string,
-    options: { readonly catalogUnavailable?: boolean; readonly otherKey?: boolean } = {},
+    options: {
+      readonly catalogUnavailable?: boolean;
+      readonly otherKey?: boolean;
+      readonly served?: typeof servedAssetCurrent;
+    } = {},
   ) =>
-    authenticateHostedOperationPrincipal(Redacted.make(`Bearer ${token}`)).pipe(
+    authenticateHostedOperationPrincipal(Redacted.make(`Bearer ${token}`), options.served ?? servedAssetCurrent).pipe(
       Effect.provideService(GatewayAssertionRedemptionService, redemption),
       Effect.provideService(ShellInstalledModuleCatalog, {
         load:
@@ -187,12 +199,42 @@ it.effect(
 
 it.effect('refuses a module whose own installed release does not declare the hosted operation', () =>
   Effect.gen(function* undeclared() {
-    const { consumed, issue, receive } = yield* world(false);
+    const { consumed, issue, receive } = yield* world('nothing');
     const { token } = yield* issue('shell-super-app');
     const refusal = yield* Effect.flip(receive(token));
     expect(Schema.is(ActionPrincipalScopeErrorSchema)(refusal)).toBe(true);
     // The assertion was verified and redeemed, so it cannot be tried again at another endpoint of this audience.
     expect(consumed).toHaveLength(1);
+  }),
+);
+
+it.effect(
+  'refuses a module that declares a DIFFERENT hosted operation than the one this endpoint serves (no confused deputy)',
+  () =>
+    Effect.gen(function* otherHostedOperation() {
+      // The module is approved and declares a hosted operation, but asset-current is not it: a second hosted
+      // operation of the Shell must never be reachable through the declaration of the first.
+      const { consumed, issue, receive } = yield* world();
+      const { token } = yield* issue('shell-super-app');
+      const refusal = yield* Effect.flip(
+        receive(token, {
+          served: { entrypointKey: 'core.media.api.asset-download', moduleId: 'core.media', schemaVersion: '1' },
+        }),
+      );
+      expect(Schema.is(ActionPrincipalScopeErrorSchema)(refusal)).toBe(true);
+      expect(consumed).toHaveLength(1);
+    }),
+);
+
+it.effect('refuses a module that declares the operation at another schema version than the one served', () =>
+  Effect.gen(function* otherSchemaVersion() {
+    const { issue, receive } = yield* world({
+      ...hostedRequirement,
+      provider: { ...hostedRequirement.provider, schemaVersion: '2' },
+    });
+    const { token } = yield* issue('shell-super-app');
+    const refusal = yield* Effect.flip(receive(token));
+    expect(Schema.is(ActionPrincipalScopeErrorSchema)(refusal)).toBe(true);
   }),
 );
 

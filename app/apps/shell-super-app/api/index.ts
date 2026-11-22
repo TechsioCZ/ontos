@@ -2939,7 +2939,7 @@ const coreHostedOperationsGroupLive = HttpApiBuilder.group(ShellAuthenticationAp
     'assetCurrent',
     makeGovernedReadHttpHandler({
       audience: SHELL_HOST_APP_ID,
-      authenticatePrincipal: authenticateHostedOperation,
+      authenticatePrincipal: authenticateHostedOperation(assetCurrentRead),
       problems: hostedOperationProblems,
       registration: assetCurrentRead,
     }),
