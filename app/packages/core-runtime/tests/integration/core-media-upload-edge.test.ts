@@ -74,6 +74,7 @@ import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/act
 import { makeTestPgClient } from '../support/database.ts';
 import { emulatorConfig } from '../support/s3-emulator-config.ts';
 import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
+import { pointAt, s3ProviderConfig, s3Providers } from '../support/s3-provider-under-test.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 /*
@@ -906,12 +907,14 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
 );
 
 /*
- * EVIDENCE LEVEL: INTEGRATION EXECUTED against an S3-compatible EMULATOR (MinIO), NOT Cloudflare R2.
+ * EVIDENCE LEVEL: INTEGRATION EXECUTED against an S3-compatible EMULATOR (MinIO) and against the R2-behaviour MOCK built
+ * from documentation, NEITHER IS Cloudflare R2 (the provider rows are in tests/support/s3-provider-under-test.ts).
  *
- * The same edge over real PostgreSQL with the REAL S3 adapter between it and the emulator. Every fault is CONTROLLED
+ * The same edge over real PostgreSQL with the REAL S3 adapter between it and the provider. Every fault is CONTROLLED
  * FAULT INJECTION by the proxy in tests/support, or an out-of-band write for the corruption: not a real incident, and
  * none of it proves R2, whose rows stay NOT VERIFIED until a real endpoint is configured and run by its owner. The
- * suite runs only when CORE_MEDIA_S3_* points at a LOOPBACK server; with none supplied it is skipped.
+ * emulator row runs only when CORE_MEDIA_S3_* points at a LOOPBACK server; with none supplied it is skipped. The mock
+ * rows need no configuration.
  */
 const MIB = 1024 * 1024;
 
@@ -926,15 +929,15 @@ const patternedBytes = (totalBytes: number, seed: number): Uint8Array => {
   return bytes;
 };
 
-it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), { excludeTestServices: true })(
-  'core media upload edge through the S3 adapter (emulator, NOT R2)',
-  (suite) => {
+for (const provider of s3Providers) {
+  it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs, provider.layer), {
+    excludeTestServices: true,
+  })(`core media upload edge through the S3 adapter [${provider.label}]`, (suite) => {
     const s3Edge = Effect.fn('CoreMediaUploadEdgeS3Test.edge')(function* s3Edge(ctx: { readonly skip: () => void }) {
-      const base = yield* emulatorConfig(ctx);
+      const base = yield* s3ProviderConfig(ctx);
       const proxy = yield* startS3FaultProxy(base.endpoint);
       const storage = yield* makeS3ObjectStorage({
-        ...base,
-        endpoint: proxy.origin,
+        ...pointAt(base, proxy.origin),
         requestTimeoutMillis: Option.some(500),
       });
       const harness = yield* openEdgeHarness();
@@ -1023,7 +1026,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
 
     suite.effect('puts no key, provider id, endpoint, bucket or credential into any answer or log line', (ctx) =>
       Effect.gen(function* s3NoLocator() {
-        const base = yield* emulatorConfig(ctx);
+        const base = yield* s3ProviderConfig(ctx);
         const everything = [...seen, ...logged].join('\n');
         for (const key of keysTouched) {
           expect(everything).not.toContain(key);
@@ -1034,5 +1037,5 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
         expect(everything).not.toMatch(/x-amz|authorization|signature|credential|secret/iu);
       }),
     );
-  },
-);
+  });
+}
