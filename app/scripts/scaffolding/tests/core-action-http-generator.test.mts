@@ -1,0 +1,336 @@
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { NodeServices } from '@effect/platform-node';
+import { Effect, Exit } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { resolveCoreDomainProblems } from '../action-http/core.mts';
+import type { DomainErrorIdentity } from '../action-http/scaffold.mts';
+import { runScaffoldEffect } from '../cli.mts';
+
+const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
+const CORE_MODULE = 'core.media';
+const ACTION = 'upload-asset';
+const UPLOAD_CONTRACT = '@app/core-runtime/media/upload-contract';
+const RENAME_CONTRACT = '@app/core-runtime/media/rename-contract';
+const BROWSER_API = 'apps/shell-super-app/shared/browser-api.ts';
+const SERVER_API = 'apps/shell-super-app/shared/api.ts';
+const SERVER = 'apps/shell-super-app/api/index.ts';
+const CLIENT = 'apps/shell-super-app/src/api/auth-client.ts';
+const CONTRACT = 'apps/shell-super-app/shared/core-actions/upload-asset.ts';
+const PROVIDER = 'apps/shell-super-app/api/fixture-evidence.ts';
+const roots = [BROWSER_API, SERVER_API, SERVER, CLIENT] as const;
+const CONFIRM_ACTION = 'confirm-asset';
+const RENAME_ACTION = 'rename-display-filename';
+const DOMAIN_ERROR_KIND = '--domain-error-kind';
+const NOT_READY_KIND = 'MediaNotReady=conflict';
+const UNCERTAIN_KIND = 'MediaIngestUncertain=unavailable';
+const REQUEST_SERVICES = '--request-services';
+const scopeFlags = (action: string, contractModule: string, module = CORE_MODULE): readonly string[] => [
+  '--scope',
+  'core',
+  '--module',
+  module,
+  '--action',
+  action,
+  '--contract-module',
+  contractModule,
+];
+const coreFlags = scopeFlags(ACTION, UPLOAD_CONTRACT);
+const confirmFlags = [
+  ...scopeFlags(CONFIRM_ACTION, UPLOAD_CONTRACT),
+  DOMAIN_ERROR_KIND,
+  NOT_READY_KIND,
+  DOMAIN_ERROR_KIND,
+  UNCERTAIN_KIND,
+];
+
+/**
+ * The Core Action insertion slots sit beside the Core read ones, so a fixture is the real root with its own slots
+ * added at the same anchors. The generator is judged against the files it will really patch.
+ */
+const slot = (name: string, indent: string) =>
+  `\n${indent}// @ontos-codesmith-${name}:start\n${indent}// @ontos-codesmith-${name}:end`;
+
+const addSlot = (source: string, after: string, name: string, indent: string): string => {
+  expect(source.split(after)).toHaveLength(2);
+  return source.replace(after, `${after}${slot(name, indent)}`);
+};
+
+const slotsByRoot = {
+  [BROWSER_API]: [
+    ['// @ontos-codesmith-core-read-contract-imports:end', 'core-action-contract-imports', ''],
+    ['  // @ontos-codesmith-core-read-api-groups:end', 'core-action-api-groups', '  '],
+  ],
+  [CLIENT]: [
+    ['// @ontos-codesmith-core-read-client-imports:end', 'core-action-client-imports', ''],
+    ['// @ontos-codesmith-core-read-client-operations:end', 'core-action-client-operations', ''],
+  ],
+  [SERVER]: [
+    ['// @ontos-codesmith-core-read-server-imports:end', 'core-action-server-imports', ''],
+    ['// @ontos-codesmith-core-read-server-groups:end', 'core-action-server-groups', ''],
+    ['    // @ontos-codesmith-core-read-server-layers:end', 'core-action-server-layers', '    '],
+  ],
+  [SERVER_API]: [['  // @ontos-codesmith-core-read-server-api-groups:end', 'core-action-server-api-groups', '  ']],
+} as const satisfies Record<string, readonly (readonly [after: string, name: string, indent: string])[]>;
+
+const withCoreActionSlots = (relative: string, source: string): string => {
+  let next = source;
+  for (const [after, name, indent] of Object.entries(slotsByRoot).find(([root]) => root === relative)?.[1] ?? []) {
+    next = addSlot(next, after, name, indent);
+  }
+  return next;
+};
+
+const fixture = <A, E, R>(runFixture: (root: string) => Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-core-action-http-'))),
+    (root) =>
+      Effect.gen(function* prepareFixture() {
+        for (const relative of roots) {
+          const target = path.join(root, relative);
+          yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+          yield* Effect.promise(async () => {
+            const source = await readFile(path.join(appRoot, relative), 'utf-8');
+            await writeFile(target, withCoreActionSlots(relative, source));
+          });
+        }
+        // The Action and its published contract are inspected where they live; the generator never writes there.
+        yield* Effect.promise(async () => {
+          await mkdir(path.join(root, 'packages'), { recursive: true });
+          await symlink(path.join(appRoot, 'packages', 'core-runtime'), path.join(root, 'packages', 'core-runtime'));
+          await copyFile(path.join(appRoot, 'package.json'), path.join(root, 'package.json'));
+        });
+        return yield* runFixture(root);
+      }),
+    (root) => Effect.promise(() => rm(root, { force: true, recursive: true })),
+  );
+
+const run = (root: string, flags: readonly string[] = coreFlags) =>
+  runScaffoldEffect('action-http', [...flags], { workspaceRoot: root }).pipe(Effect.provide(NodeServices.layer));
+const read = (root: string, relative: string) => Effect.promise(() => readFile(path.join(root, relative), 'utf-8'));
+const readAll = (root: string, files: readonly string[]) => Effect.all(files.map((relative) => read(root, relative)));
+
+it.effect(
+  'Core ACTION mode generates the contract, the Shell route and the client for a Core Action idempotently',
+  () =>
+    fixture((root) =>
+      Effect.gen(function* coreActionRoundTrip() {
+        yield* run(root);
+        const contract = yield* read(root, CONTRACT);
+        const browserApi = yield* read(root, BROWSER_API);
+        const serverApi = yield* read(root, SERVER_API);
+        const server = yield* read(root, SERVER);
+        const client = yield* read(root, CLIENT);
+
+        // The wire contract is the owner's own schemas, republished, never copied.
+        expect(contract).toContain('@generated by OntOS Codesmith Core Action HTTP v1');
+        expect(contract).toContain(`from '${UPLOAD_CONTRACT}'`);
+        expect(contract).toContain('Schema.toEncoded(UploadAssetPayloadSchema)');
+
+        // The route follows the Shell identity convention: its own group, the Idempotency-Key header, the Shell problems.
+        expect(browserApi).toMatch(
+          /import \{\s+UploadAssetPayloadSchema,\s+UploadAssetRequestSchema,\s+UploadAssetResultSchema,?\s+\} from '\.\/core-actions\/upload-asset\.ts';/u,
+        );
+        expect(browserApi.match(/HttpApiGroup\.make\('coreActionUploadAsset'\)/gu)).toHaveLength(1);
+        expect(browserApi).toContain("HttpApiEndpoint.post('executeUploadAsset', '/core/actions/upload-asset'");
+        expect(browserApi).toMatch(/headers: IdentityRequestHeadersSchema,\s+payload: UploadAssetRequestSchema,/u);
+        expect(serverApi).toContain('.add(ShellBrowserApi.groups.coreActionUploadAsset)');
+
+        // The handler authenticates, requires the key, and asks the Action runtime for the saved reply of a retry.
+        expect(server).toMatch(/HttpApiBuilder\.group\(\s+ShellAuthenticationApi,\s+'coreActionUploadAsset'/u);
+        expect(server).toContain('const idempotencyKey = yield* requiredIdempotencyKey(headers);');
+        expect(server).toContain('registration: uploadAssetAction,');
+        expect(server).toContain("savedReply: 'answer',");
+        expect(server).toContain('transport: { correlationId, idempotencyKey },');
+        expect(server).toContain('MediaUnavailable: shellCapabilityUnavailableProblem,');
+        expect(server).toContain('coreActionUploadAssetGroupLive,');
+        expect(server.match(/^import \{[^;]*\} from '@app\/core-runtime';/gmu)).toHaveLength(1);
+        expect(server).toMatch(/uploadAssetAction,\n\} from '@app\/core-runtime';/u);
+        expect(server).not.toContain('fixture-evidence');
+
+        // The client encodes the owner's payload, sends the key as the Shell identity operations do, and decodes the result.
+        expect(client).toContain('Schema.encodeUnknownEffect(UploadAssetPayloadSchema)(payload)');
+        expect(client).toContain('client.coreActionUploadAsset.executeUploadAsset({');
+        expect(client).toContain('headers: identityHeaders(options)');
+        expect(client).toContain('options: IdentityClientOptions,');
+
+        const files = [...roots, CONTRACT];
+        const before = yield* readAll(root, files);
+        yield* run(root);
+        expect(yield* readAll(root, files)).toEqual(before);
+      }),
+    ),
+);
+
+it.effect('Core ACTION mode composes a second Action without disturbing the first', () =>
+  fixture((root) =>
+    Effect.gen(function* composeCoreActions() {
+      yield* run(root);
+      yield* run(root, scopeFlags(RENAME_ACTION, RENAME_CONTRACT));
+      const browserApi = yield* read(root, BROWSER_API);
+      const server = yield* read(root, SERVER);
+      expect(browserApi.match(/HttpApiGroup\.make\('coreActionUploadAsset'\)/gu)).toHaveLength(1);
+      expect(browserApi.match(/HttpApiGroup\.make\('coreActionRenameDisplayFilename'\)/gu)).toHaveLength(1);
+      expect(server).toContain('registration: renameDisplayFilenameAction,');
+      expect(server.match(/^import \{[^;]*\} from '@app\/core-runtime';/gmu)).toHaveLength(1);
+      const client = yield* read(root, CLIENT);
+      expect(client).toContain('executeRenameDisplayFilename');
+      expect(client).toContain('executeUploadAsset');
+    }),
+  ),
+);
+
+it.effect(
+  'Core ACTION mode maps every domain error of the Action, with an owner statement where the name is silent',
+  () =>
+    fixture((root) =>
+      Effect.gen(function* coreActionDomainErrors() {
+        yield* run(root, confirmFlags);
+        const server = yield* read(root, SERVER);
+        for (const [tag, problem] of [
+          ['MediaAssetNotFound', 'shellTargetNotFoundProblem'],
+          ['MediaContentConflict', 'shellPolicyConflictProblem'],
+          ['MediaIngestUncertain', 'shellCapabilityUnavailableProblem'],
+          ['MediaIntegrityFailed', 'shellPolicyUnprocessableProblem'],
+          ['MediaNotReady', 'shellPolicyConflictProblem'],
+          ['MediaUnavailable', 'shellCapabilityUnavailableProblem'],
+        ] as const) {
+          expect(server).toContain(`${tag}: ${problem},`);
+        }
+        // A statement about a tag the Action does not declare is refused, never ignored.
+        const refused = yield* Effect.exit(
+          run(root, [...scopeFlags(CONFIRM_ACTION, UPLOAD_CONTRACT), DOMAIN_ERROR_KIND, 'Missing=conflict']),
+        );
+        expect(Exit.isFailure(refused)).toBe(true);
+      }),
+    ),
+);
+
+it.effect('Core ACTION mode calls an owner-written provider of the request-scoped service the Action needs', () =>
+  fixture((root) =>
+    Effect.gen(function* coreActionRequestServices() {
+      yield* Effect.promise(() =>
+        writeFile(
+          path.join(root, PROVIDER),
+          'export const provideFixtureEvidence = () => (effect: unknown) => effect;\n',
+        ),
+      );
+      yield* run(root, [...confirmFlags, REQUEST_SERVICES, './fixture-evidence.ts#provideFixtureEvidence']);
+      const server = yield* read(root, SERVER);
+      expect(server).toContain("import { provideFixtureEvidence } from './fixture-evidence.ts';");
+      expect(server).toContain('provideFixtureEvidence({ correlationId, payload, principal: resolved.principal })(');
+      // A provider the host does not have is refused before anything is written.
+      const before = yield* readAll(root, roots);
+      const missing = yield* Effect.exit(run(root, [...coreFlags, REQUEST_SERVICES, './absent.ts#provideNothing']));
+      expect(Exit.isFailure(missing)).toBe(true);
+      expect(yield* readAll(root, roots)).toEqual(before);
+    }),
+  ),
+);
+
+it.effect(
+  'Core ACTION mode refuses a contract that is not the registration, a foreign owner and a missing action',
+  () =>
+    fixture((root) =>
+      Effect.gen(function* refuseCoreActionDrift() {
+        const before = yield* readAll(root, roots);
+        const attempts: readonly (readonly string[])[] = [
+          // the rename contract does not carry the upload Action's schemas
+          scopeFlags(ACTION, RENAME_CONTRACT),
+          // a specifier that is not a published Core runtime export
+          scopeFlags(ACTION, '@app/core-runtime/nope'),
+          scopeFlags(ACTION, '../../escape'),
+          // another module than the Action's owner
+          scopeFlags(ACTION, UPLOAD_CONTRACT, 'core.identity'),
+          // an Action that does not exist, and traversal in the action name
+          scopeFlags('no-such-action', UPLOAD_CONTRACT),
+          scopeFlags('../escape', UPLOAD_CONTRACT),
+        ];
+        for (const flags of attempts) {
+          expect(Exit.isFailure(yield* Effect.exit(run(root, flags)))).toBe(true);
+        }
+        expect(yield* readAll(root, roots)).toEqual(before);
+        const created = yield* Effect.exit(Effect.tryPromise(() => access(path.join(root, CONTRACT))));
+        expect(Exit.isFailure(created)).toBe(true);
+      }),
+    ),
+);
+
+it.effect('Core ACTION mode rejects incompatible flags and a developer-edited contract without partial writes', () =>
+  fixture((root) =>
+    Effect.gen(function* rejectIncompatibleFlags() {
+      yield* run(root);
+      const contractPath = path.join(root, CONTRACT);
+      yield* Effect.promise(() => writeFile(contractPath, '// developer contract\n'));
+      const before = yield* readAll(root, roots);
+      const rejected: readonly (readonly string[])[] = [
+        coreFlags,
+        [...coreFlags, '--vertical', 'catalog'],
+        ['--scope', 'core', '--action', ACTION],
+        ['--scope', 'core', '--module', CORE_MODULE, '--action', ACTION],
+        [...coreFlags, '--proposal-only'],
+      ];
+      for (const flags of rejected) {
+        expect(Exit.isFailure(yield* Effect.exit(run(root, flags)))).toBe(true);
+      }
+      expect(yield* readAll(root, roots)).toEqual(before);
+      expect(yield* Effect.promise(() => readFile(contractPath, 'utf-8'))).toBe('// developer contract\n');
+    }),
+  ),
+);
+
+it.effect('Core ACTION mode refuses a root that lacks its insertion slot without writing anything', () =>
+  fixture((root) =>
+    Effect.gen(function* refuseMissingSlot() {
+      const target = path.join(root, SERVER_API);
+      const source = yield* Effect.promise(() => readFile(target, 'utf-8'));
+      yield* Effect.promise(() =>
+        writeFile(
+          target,
+          source.replaceAll('@ontos-codesmith-core-action-server-api-groups:start', 'removed-slot-start'),
+        ),
+      );
+      const before = yield* readAll(root, roots);
+      expect(Exit.isFailure(yield* Effect.exit(run(root)))).toBe(true);
+      expect(yield* readAll(root, roots)).toEqual(before);
+    }),
+  ),
+);
+
+const identity = (tag: string, code: string, kind: DomainErrorIdentity['kind']): DomainErrorIdentity => ({
+  code,
+  discriminator: '_tag',
+  kind,
+  tag,
+  value: tag,
+});
+
+it('resolves one Shell problem kind per domain error tag and refuses what it cannot decide', () => {
+  const errors = [
+    identity('NotThere', 'not_there', 'notFound'),
+    identity('Late', 'late', 'timeout'),
+    identity('Busy', 'busy', 'rateLimited'),
+    { ...identity('Mixed', 'a', 'conflict'), discriminator: 'reasonCode' as const, value: 'a' },
+    { ...identity('Mixed', 'a', 'ineligible'), discriminator: 'reasonCode' as const, value: 'b' },
+  ];
+  expect(resolveCoreDomainProblems(errors.slice(0, 1), [])).toEqual([{ kind: 'notFound', tag: 'NotThere' }]);
+  expect(resolveCoreDomainProblems(errors.slice(0, 1), ['NotThere=forbidden'])).toEqual([
+    { kind: 'forbidden', tag: 'NotThere' },
+  ]);
+  // The Shell has no problem for a timeout or a rate limit without a retry hint; the owner must choose.
+  expect(() => resolveCoreDomainProblems(errors.slice(1, 2), [])).toThrow(/no problem/u);
+  expect(() => resolveCoreDomainProblems(errors.slice(2, 3), [])).toThrow(/no problem/u);
+  expect(resolveCoreDomainProblems(errors.slice(1, 2), ['Late=unavailable'])).toEqual([
+    { kind: 'unavailable', tag: 'Late' },
+  ]);
+  expect(() => resolveCoreDomainProblems(errors.slice(3), [])).toThrow(/more than one problem kind/u);
+  expect(resolveCoreDomainProblems(errors.slice(3), ['Mixed=conflict'])).toEqual([{ kind: 'conflict', tag: 'Mixed' }]);
+  expect(() => resolveCoreDomainProblems(errors.slice(0, 1), ['NotThere=bogus'])).toThrow(/must be <Tag>=<kind>/u);
+  expect(() => resolveCoreDomainProblems(errors.slice(0, 1), ['Absent=conflict'])).toThrow(/not a domain error/u);
+  expect(() => resolveCoreDomainProblems(errors.slice(0, 1), ['NotThere=conflict', 'NotThere=forbidden'])).toThrow(
+    /twice/u,
+  );
+});
