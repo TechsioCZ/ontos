@@ -1,16 +1,23 @@
-import { Schema } from 'effect';
+import { Schema, SchemaGetter } from 'effect';
 
+import {
+  canonicalSourceProvisioningExpectedPolicy,
+  ProvisionSourceStockItemInputSchema,
+} from '../domain/source-provisioning.ts';
 import { SourceProvisioningUnavailable } from '../domain/source-provisioning-unavailable.ts';
 import { SourceStockItemProvisioningRejected } from '../domain/source-stock-item-provisioning-rejected.ts';
 
-/**
- * One committed ERP item: its exact Catalog selection and meaning, the ERP's own item key, and the provisioning policy
- * of the backend it comes from. The result names every provisioned ref.
- */
-export {
-  ProvisionSourceStockItemInputSchema as ProvisionSourceStockItemPayloadSchema,
-  SourceStockItemProvisioningSchema as ProvisionSourceStockItemResultSchema,
-} from '../domain/source-provisioning.ts';
+// Core hashes the encoded Action payload before calling Inventory. The receipt schema retains its original order.
+const canonicalTerms = SchemaGetter.transform(canonicalSourceProvisioningExpectedPolicy);
+export const ProvisionSourceStockItemPayloadSchema = ProvisionSourceStockItemInputSchema.mapFields(
+  (fields) => ({
+    ...fields,
+    expectedPolicy: fields.expectedPolicy.pipe(Schema.decode({ decode: canonicalTerms, encode: canonicalTerms })),
+  }),
+  // Only location order changes; the original same-tenant refinement remains valid.
+  { unsafePreserveChecks: true },
+);
+export { SourceStockItemProvisioningSchema as ProvisionSourceStockItemResultSchema } from '../domain/source-provisioning.ts';
 export type { ProvisionSourceStockItemInput as ProvisionSourceStockItemPayload } from '../domain/source-provisioning.ts';
 
 export const ProvisionSourceStockItemErrorSchema = Schema.Union([

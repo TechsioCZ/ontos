@@ -1,6 +1,8 @@
 import {
   SourceStockPositionResolutionRequestSchema,
   SourceStockPositionResolutionResponseSchema,
+  SourceStockPositionResolutionUnavailableProblemSchema,
+  SourceStockPositionResolutionForbiddenProblemSchema,
 } from '@app/inventory/api/source-stock-position-resolution';
 import type { SourceStockPositionResolutionResponse } from '@app/inventory/api/source-stock-position-resolution';
 import { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
@@ -9,7 +11,12 @@ import { Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
 
-import { SymmyClientIdempotencyKeySchema } from '../../api/symmy/contract.ts';
+import {
+  SymmyClientIdempotencyKeySchema,
+  SymmyStockDependencyNotReadyProblemSchema,
+  SymmyStockInputProblemSchema,
+  SymmyStockSourceUnavailableProblemSchema,
+} from '../../api/symmy/contract.ts';
 import { makeSymmyGovernedDispatch } from '../../api/symmy/governed-dispatch.ts';
 import type { SymmyIngressAdmission } from '../../api/symmy/transport.ts';
 
@@ -94,7 +101,12 @@ const assertion = (audience: string) => ({
   compositionRevision: revision,
 });
 const harness = (
-  options: { readonly response?: SourceStockPositionResolutionResponse; readonly route?: typeof route } = {},
+  options: {
+    readonly admissionConflict?: boolean;
+    readonly ownerStatus?: 403 | 503;
+    readonly response?: SourceStockPositionResolutionResponse;
+    readonly route?: typeof route;
+  } = {},
 ) => {
   const requests: Request[] = [];
   const acquisitions: { readonly audience: string; readonly legalEntityId?: string }[] = [];
@@ -111,11 +123,39 @@ const harness = (
     const request = new Request(input, init);
     requests.push(request);
     if (request.url.includes('/reads/source-stock-position-resolution')) {
+      if (options.ownerStatus !== undefined) {
+        const details = {
+          detail: 'Owner cannot serve this read.',
+          title: 'Owner read refused',
+          type: 'https://ontos.dev/problems/owner-read',
+        };
+        const problem =
+          options.ownerStatus === 503
+            ? SourceStockPositionResolutionUnavailableProblemSchema.make({ ...details, retryable: true, status: 503 })
+            : SourceStockPositionResolutionForbiddenProblemSchema.make({ ...details, status: 403 });
+        return Response.json(problem, {
+          headers: { 'content-type': 'application/problem+json' },
+          status: problem.status,
+        });
+      }
       const payload = await Schema.decodeUnknownPromise(SourceStockPositionResolutionRequestSchema)(
         await request.clone().json(),
       );
       return Response.json(
         Schema.encodeSync(SourceStockPositionResolutionResponseSchema)(options.response ?? resolved(payload.itemKey)),
+      );
+    }
+    if (options.admissionConflict === true) {
+      return Response.json(
+        {
+          _tag: 'AdmitSymmySyncActionConflictProblem',
+          code: 'symmy_sync_intent_conflict',
+          detail: 'The key records another intent.',
+          status: 409,
+          title: 'Conflict',
+          type: 'https://ontos.dev/problems/admit-symmy-sync-conflict',
+        },
+        { headers: { 'content-type': 'application/problem+json' }, status: 409 },
       );
     }
     return Response.json({
@@ -192,7 +232,7 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
         allowedOwnerOperations: [],
         replayIdempotencyDigest: 'c'.repeat(64),
       });
-      const h = harness({ route: replayRoute });
+      const h = harness({ ownerStatus: 503, route: replayRoute });
       yield* h.apply();
       expect(h.acquisitions).toEqual([]);
       expect(h.requests).toHaveLength(1);
@@ -202,13 +242,58 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
         Effect.flatMap(Schema.decodeUnknownEffect(syncPayloadSchema)),
       );
       expect(payload.stockFacts).toBeUndefined();
+      const divergent = harness({ admissionConflict: true, ownerStatus: 503, route: replayRoute });
+      expect(
+        yield* divergent
+          .apply(Schema.decodeUnknownSync(SymmyStockRowsSchema)([{ ...row('new-A'), revision: 'changed' }]))
+          .pipe(Effect.flip),
+      ).toMatchObject({ status: 409 });
+      expect(divergent.acquisitions).toEqual([]);
+      expect(divergent.requests).toHaveLength(1);
+    }),
+  );
+
+  it.effect('a configured saved key recovers without rereading revoked correlations or an unavailable owner', () =>
+    Effect.gen(function* test() {
+      const original = yield* harness().apply();
+      const retained = Schema.decodeUnknownSync(SymmyRouteContextResponseSchema)({
+        ...route,
+        allowedOwnerOperations: [],
+        replayIdempotencyDigest: 'c'.repeat(64),
+      });
+      for (const h of [
+        harness({ response: { _tag: 'UNRESOLVED', reason: 'ITEM_NOT_PROVISIONED' }, route: retained }),
+        harness({ ownerStatus: 503, route: retained }),
+      ]) {
+        expect(yield* h.apply()).toEqual(original);
+        expect(h.acquisitions).toEqual([]);
+        expect(h.requests).toHaveLength(1);
+        expect(h.requests[0]?.url).toContain('/actions/admit-symmy-sync');
+      }
+      const changed = harness({ admissionConflict: true, ownerStatus: 503, route: retained });
+      expect(
+        yield* changed
+          .apply(
+            Schema.decodeUnknownSync(SymmyStockRowsSchema)([
+              {
+                ...row('new-A'),
+                quantity: { amount: '999', unitRef },
+              },
+            ]),
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({ status: 409 });
+      expect(changed.acquisitions).toEqual([]);
+      expect(changed.requests).toHaveLength(1);
     }),
   );
 
   it.effect('unprovisioned stock remains retryable and causes no admission', () =>
     Effect.gen(function* test() {
       const h = harness({ response: { _tag: 'UNRESOLVED', reason: 'ITEM_NOT_PROVISIONED' } });
-      expect(yield* h.apply().pipe(Effect.flip)).toMatchObject({ retryable: true, status: 503 });
+      const failure = yield* h.apply().pipe(Effect.flip);
+      expect(Schema.is(SymmyStockDependencyNotReadyProblemSchema)(failure)).toBe(true);
+      expect(failure).toMatchObject({ reason: 'ITEM_NOT_PROVISIONED', retryable: true, status: 503 });
       expect(h.requests.every((request) => request.url.includes('/reads/'))).toBe(true);
     }),
   );
@@ -271,26 +356,70 @@ describe('public Symmy stock fresh-admission facts and replay', () => {
     }),
   );
 
-  it.effect('does not call Inventory for an unenrolled location or foreign unit', () =>
+  it.effect('answers actionable nonretryable input errors before calling Inventory', () =>
     Effect.gen(function* test() {
       yield* Effect.forEach(
         [
-          { ...row('new-A'), locationKey: 'foreign-warehouse' },
+          { reason: 'LOCATION_NOT_ENROLLED', row: { ...row('new-A'), locationKey: 'foreign-warehouse' } },
           {
-            ...row('new-A'),
-            quantity: { amount: '1', unitRef: { ...unitRef, resourceId: '33333333-3333-4333-8333-333333333334' } },
+            reason: 'UNIT_NOT_ENROLLED',
+            row: {
+              ...row('new-A'),
+              quantity: { amount: '1', unitRef: { ...unitRef, resourceId: '33333333-3333-4333-8333-333333333334' } },
+            },
           },
         ],
-        (invalid) =>
+        ({ reason, row: invalid }) =>
           Effect.gen(function* refuse() {
             const h = harness();
-            expect(
-              yield* h.apply(Schema.decodeUnknownSync(SymmyStockRowsSchema)([invalid])).pipe(Effect.flip),
-            ).toMatchObject({ status: 503 });
+            const failure = yield* h.apply(Schema.decodeUnknownSync(SymmyStockRowsSchema)([invalid])).pipe(Effect.flip);
+            expect(Schema.is(SymmyStockInputProblemSchema)(failure)).toBe(true);
+            expect(failure).toMatchObject({
+              itemKey: invalid.itemKey,
+              locationKey: invalid.locationKey,
+              reason,
+              status: 422,
+            });
+            expect('retryable' in failure && failure.retryable).not.toBe(true);
             expect(h.requests).toHaveLength(0);
           }),
         { concurrency: 1 },
       );
+    }),
+  );
+
+  it.effect('preserves owner authority and readiness reasons without blaming the caller', () =>
+    Effect.gen(function* test() {
+      for (const reason of [
+        'POLICY_NOT_FOUND',
+        'LOCATION_NOT_ALLOWED',
+        'ITEM_CORRELATION_AMBIGUOUS',
+        'POSITION_NOT_FOUND',
+      ] as const) {
+        const h = harness({ response: { _tag: 'UNRESOLVED', reason } });
+        const failure = yield* h.apply().pipe(Effect.flip);
+        expect(failure).toMatchObject({ reason, retryable: true, status: 503 });
+        expect(Schema.is(SymmyStockInputProblemSchema)(failure)).toBe(false);
+        expect(h.requests).toHaveLength(1);
+      }
+      const outage = yield* harness({ ownerStatus: 503 }).apply().pipe(Effect.flip);
+      expect(Schema.is(SymmyStockSourceUnavailableProblemSchema)(outage)).toBe(true);
+      expect(outage).toMatchObject({ reason: 'OWNER_UNAVAILABLE', status: 503 });
+      expect(yield* harness({ ownerStatus: 403 }).apply().pipe(Effect.flip)).toMatchObject({ status: 403 });
+      const foreignTenant = harness();
+      expect(
+        yield* foreignTenant
+          .apply(
+            Schema.decodeUnknownSync(SymmyStockRowsSchema)([
+              {
+                ...row('new-A'),
+                quantity: { amount: '1', unitRef: { ...unitRef, tenantId: legalEntityId } },
+              },
+            ]),
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: 'TENANT_SCOPE_MISMATCH', status: 503 });
+      expect(foreignTenant.requests).toEqual([]);
     }),
   );
 });

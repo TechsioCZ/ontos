@@ -26,7 +26,10 @@ import type { SourceProvisioningConflictRef } from '../../shared/domain/source-p
 import { SourceProvisioningPolicyRejected } from '../../shared/domain/source-provisioning-policy-rejected.ts';
 import type { SourceProvisioningUnavailable } from '../../shared/domain/source-provisioning-unavailable.ts';
 import { SourceStockItemProvisioningRejected } from '../../shared/domain/source-stock-item-provisioning-rejected.ts';
-import { SourceProvisioningPolicySchema } from '../../shared/domain/source-provisioning.ts';
+import {
+  canonicalSourceProvisioningExpectedPolicy,
+  SourceProvisioningPolicySchema,
+} from '../../shared/domain/source-provisioning.ts';
 import type {
   ProvisionSourceStockItemInput,
   ProvisioningDisposition,
@@ -51,6 +54,7 @@ import { sourceProvisioningUnavailable } from '../persistence/source-provisionin
 import type { StockLocationPersistenceRejected } from '../persistence/stock-location-persistence-rejected.ts';
 import type { StockLocationPersistence } from '../persistence/stock-location-repository.ts';
 import type { StockPositionPersistence } from '../persistence/stock-position-repository.ts';
+import { sameProvisionSourceStockItemInput } from '../domain/source-provisioning-input.ts';
 import { stockItemRegistration } from './stock-item-service.ts';
 import { stockPositionEstablishment } from './stock-position-service.ts';
 
@@ -223,14 +227,9 @@ const mapPolicyDefinitionFailure = (
   );
 
 const policyContent = (policy: Omit<SourceProvisioningPolicy, 'definedAt' | 'policyRef'>) => ({
-  customerConfigurationId: policy.customerConfigurationId,
+  ...canonicalSourceProvisioningExpectedPolicy(policy),
   effectiveFrom: policy.effectiveFrom,
-  externalScope: policy.externalScope,
-  issuer: policy.issuer,
-  locations: policy.locations.toSorted((left, right) => left.locationKey.localeCompare(right.locationKey)),
-  namespace: policy.namespace,
   ownerConfigurationRef: policy.ownerConfigurationRef,
-  unitRef: policy.unitRef,
 });
 
 const correlateAllowedLocation = Effect.fn('SourceProvisioningPolicy.correlateLocation')(function* correlateLocation(
@@ -587,9 +586,17 @@ export const provisionSourceStockItem = Effect.fn('SourceStockItemProvisioning.p
     }
     const policy = found.value;
     yield* ports.policies.lockOwnerConfiguration(policy.ownerConfigurationRef.resourceId);
+    if (
+      !sameValue(
+        canonicalSourceProvisioningExpectedPolicy(input.expectedPolicy),
+        canonicalSourceProvisioningExpectedPolicy(policy),
+      )
+    ) {
+      return yield* provisioningRejected('POLICY_TERMS_MISMATCH', input.policyRef);
+    }
     const original = yield* ports.receipts.findByInvocation(request.actionInvocationId);
     if (Option.isSome(original)) {
-      return sameValue(original.value.input, input)
+      return sameProvisionSourceStockItemInput(original.value.input, input)
         ? original.value.provisioning
         : yield* sourceProvisioningUnavailable('Provisioning invocation already records different input');
     }

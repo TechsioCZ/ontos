@@ -7,7 +7,7 @@ import {
 import type { GatewayInternalProblemSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { SymmyItemOutcomeSchema, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
-import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import { SymmyInternalExecutionPlanSchema, SymmyStockRowSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
 import { Schema, SchemaTransformation } from 'effect';
 import { HttpApiMiddleware } from 'effect/http-api';
@@ -30,6 +30,34 @@ const SymmyUnsupportedProblemSchema = makeProblemDetailsSchema('SymmyUnsupported
   ]),
 });
 export const SymmyUnavailableProblemSchema = makeRetryableProblemDetailsSchema('SymmyUnavailableProblem', 503);
+const stockRowProblemFields = {
+  itemKey: SymmyStockRowSchema.fields.itemKey,
+  locationKey: SymmyStockRowSchema.fields.locationKey,
+};
+export const SymmyStockInputProblemSchema = makeProblemDetailsSchema('SymmyStockInputProblem', 422, {
+  ...stockRowProblemFields,
+  reason: Schema.Literals(['LOCATION_NOT_ENROLLED', 'UNIT_NOT_ENROLLED']),
+});
+export const SymmyStockDependencyNotReadyProblemSchema = makeRetryableProblemDetailsSchema(
+  'SymmyStockDependencyNotReadyProblem',
+  503,
+  { ...stockRowProblemFields, reason: Schema.Literals(['ITEM_NOT_PROVISIONED', 'POSITION_NOT_FOUND']) },
+);
+export const SymmyStockSourceUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'SymmyStockSourceUnavailableProblem',
+  503,
+  {
+    ...stockRowProblemFields,
+    reason: Schema.Literals([
+      'POLICY_NOT_FOUND',
+      'LOCATION_NOT_ALLOWED',
+      'ITEM_CORRELATION_AMBIGUOUS',
+      'OWNER_RESOLUTION_MISMATCH',
+      'TENANT_SCOPE_MISMATCH',
+      'OWNER_UNAVAILABLE',
+    ]),
+  },
+);
 export const SymmyMethodNotAllowedProblemSchema = makeProblemDetailsSchema('SymmyMethodNotAllowedProblem', 405);
 
 export const symmyInvalidProblem = SymmyInvalidProblemSchema.make({
@@ -95,6 +123,9 @@ const ingressProblems = [
   GatewayRateLimitedProblemSchema,
   GatewayUnavailableProblemSchema,
   SymmyUnavailableProblemSchema,
+  SymmyStockInputProblemSchema,
+  SymmyStockDependencyNotReadyProblemSchema,
+  SymmyStockSourceUnavailableProblemSchema,
   SymmyInvalidProblemSchema,
   SymmyUnsupportedProblemSchema,
 ];

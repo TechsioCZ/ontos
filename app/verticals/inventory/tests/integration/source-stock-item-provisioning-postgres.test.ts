@@ -68,7 +68,10 @@ import {
   SourceStockPositionResolutionRequestSchema,
   SourceStockPositionResolutionResponseSchema,
 } from '../../shared/apis/source-stock-position-resolution.ts';
-import { ExternalStockKeySchema } from '../../shared/domain/external-stock-correlation.ts';
+import {
+  ExternalStockKeySchema,
+  makeExternalStockCorrelationLifecycle,
+} from '../../shared/domain/external-stock-correlation.ts';
 import { SourceStockItemProvisioningReceiptResponseSchema } from '../../shared/apis/source-stock-item-provisioning-receipt.ts';
 import { SourceStockItemProvisioningInvocationIdSchema } from '../../shared/domain/source-provisioning.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -394,6 +397,14 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
         },
       },
       exactSelectionMeaning: { id: `catalog-variant:${CATALOG_VARIANT_ID}`, kind: 'PRODUCT_VARIANT' },
+      expectedPolicy: {
+        customerConfigurationId,
+        externalScope: 'erp-company:main',
+        issuer,
+        locations,
+        namespace: 'erp-stock',
+        unitRef,
+      },
       itemKey: 'SKU-1',
       policyRef: defined.policy.policyRef,
     });
@@ -444,7 +455,11 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
     const first = race[firstIndex];
     const second = race[1 - firstIndex];
     assert(first !== undefined && second !== undefined);
-    expect(yield* provision(input, keys[firstIndex])).toEqual(first);
+    const reorderedInput = {
+      ...input,
+      expectedPolicy: { ...input.expectedPolicy, locations: EffectArray.reverse(input.expectedPolicy.locations) },
+    };
+    expect(yield* provision(reorderedInput, keys[firstIndex])).toEqual(first);
     const divergentInvocation = yield* provision(
       {
         ...input,
@@ -542,6 +557,46 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
         )
         .pipe(Effect.provide(ownerRuntimeLayer));
     const baseline = yield* observe();
+    for (const terms of [
+      { ...input.expectedPolicy, issuer: { ...issuer, backendId: 'different-erp' } },
+      { ...input.expectedPolicy, locations: input.expectedPolicy.locations.slice(1) },
+    ]) {
+      const candidate = yield* Schema.decodeUnknownEffect(ProvisionSourceStockItemPayloadSchema)({
+        ...input,
+        expectedPolicy: terms,
+      });
+      const failure = yield* provision(candidate).pipe(Effect.flip);
+      assert(Schema.is(ProvisionSourceStockItemActionIneligibleProblemSchema)(failure));
+      expect(failure.reason).toBe('POLICY_TERMS_MISMATCH');
+      expect(yield* observe()).toEqual(baseline);
+    }
+    const [receiptRow] = baseline.receipts;
+    assert(receiptRow !== undefined);
+    const forgedInvocationId = yield* nextId;
+    const forgedReceipt = yield* fixture
+      .prepareOwner((transaction) =>
+        transaction.insert(inventorySourceStockItemProvisionings).values({
+          ...receiptRow,
+          actionInvocationId: forgedInvocationId,
+          inputJson: {
+            ...receiptRow.inputJson,
+            expectedPolicy: {
+              ...receiptRow.inputJson.expectedPolicy,
+              locations: receiptRow.inputJson.expectedPolicy.locations.slice(1),
+            },
+          },
+        }),
+      )
+      .pipe(Effect.provide(ownerRuntimeLayer), Effect.flip);
+    expect(
+      Option.isSome(
+        findPostgresFailure(
+          forgedReceipt,
+          ({ code, constraint }) => code === '23514' && constraint === 'inventory_source_provisioning_manifest_ck',
+        ),
+      ),
+    ).toBe(true);
+    expect(yield* observe()).toEqual(baseline);
     const conflictingMeaning = yield* Schema.decodeUnknownEffect(ProvisionSourceStockItemPayloadSchema)({
       ...input,
       catalogSelection: {
@@ -650,10 +705,54 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
         findPostgresFailure(
           rlsFailure,
           ({ code, constraint }) =>
-            code === '42501' || (code === '23514' && constraint === 'inventory_source_provisioning_location_ck'),
+            code === '42501' || (code === '23514' && constraint === 'inventory_source_provisioning_manifest_ck'),
         ),
       ),
     ).toBe(true);
+    // Even a newly active matching LOCATION correlation cannot extend a previously declared set.
+    const late = yield* createLocation('ERP annex');
+    const lateKey = yield* Schema.decodeUnknownEffect(ExternalStockKeySchema)({
+      customerConfigurationId,
+      externalScope: input.expectedPolicy.externalScope,
+      externalValue: 'WH-ANNEX',
+      identifierKind: 'LOCATION',
+      issuer,
+      namespace: input.expectedPolicy.namespace,
+      tenantId,
+    });
+    const correlationId = yield* nextId;
+    yield* fixture
+      .prepareOwner((transaction, scope) =>
+        makeExternalStockCorrelationLifecycle(externalStockCorrelationPersistenceForScope(transaction, scope), {
+          makeCorrelationId: () => correlationId,
+        }).establish({
+          effectiveFrom: defined.policy.effectiveFrom,
+          externalKey: lateKey,
+          ownerEvidenceRef: 'annex',
+          target: { _tag: 'STOCK_LOCATION', ref: late.ref },
+        }),
+      )
+      .pipe(Effect.provide(ownerRuntimeLayer));
+    const beforeExpansion = yield* observe();
+    const expansion = yield* fixture
+      .prepareOwner((transaction) =>
+        transaction.insert(inventorySourceProvisioningPolicyLocations).values({
+          locationKey: lateKey.externalValue,
+          policyId: defined.policy.policyRef.resourceId,
+          stockLocationId: late.ref.resourceId,
+          tenantId,
+        }),
+      )
+      .pipe(Effect.provide(ownerRuntimeLayer), Effect.flip);
+    expect(
+      Option.isSome(
+        findPostgresFailure(
+          expansion,
+          ({ code, constraint }) => code === '23514' && constraint === 'inventory_source_provisioning_manifest_ck',
+        ),
+      ),
+    ).toBe(true);
+    expect(yield* observe()).toEqual(beforeExpansion);
     const immutableFailure = yield* fixture
       .prepareOwner((transaction) =>
         transaction.update(inventorySourceProvisioningPolicies).set({ externalScope: 'rewritten' }),
@@ -704,13 +803,17 @@ it.live('provisions one ERP item once, adopts it on every repeat, and resolves i
     assert(Schema.is(ProvisionSourceStockItemActionCommitIndeterminateProblemSchema)(lost));
     const receipt = yield* run(
       executeSourceStockItemProvisioningReceiptWithAuthorization(
-        { actionInvocationId: SourceStockItemProvisioningInvocationIdSchema.make(lost.invocationId), input },
+        {
+          actionInvocationId: SourceStockItemProvisioningInvocationIdSchema.make(lost.invocationId),
+          input: reorderedInput,
+        },
         yield* authorization(),
         yield* nextId,
         { baseUrl: 'https://inventory.ontos.test', compositionRevision: composition.composition.revision },
       ),
     );
     assert(Schema.is(SourceStockItemProvisioningReceiptResponseSchema.members[0])(receipt));
+    expect(receipt.receipt.input).toEqual(input);
     expect(receipt.receipt.provisioning.stockItem.ref).toEqual(first.stockItem.ref);
     expect(receipt.receipt.provisioning.positions.map(({ positionRef }) => positionRef)).toEqual(
       first.positions.map(({ positionRef }) => positionRef),

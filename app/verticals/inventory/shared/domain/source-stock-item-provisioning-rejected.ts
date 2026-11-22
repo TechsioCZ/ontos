@@ -11,6 +11,7 @@ export class SourceStockItemProvisioningRejected extends Schema.TaggedError<Sour
     reason: Schema.Literals([
       'TENANT_SCOPE_MISMATCH',
       'POLICY_NOT_FOUND',
+      'POLICY_TERMS_MISMATCH',
       /** The Catalog meaning already has a Stock Item in another Unit than the policy's. */
       'STOCK_UNIT_CONFLICT',
       /** The meaning id is registered with another selection kind. */

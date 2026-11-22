@@ -4,6 +4,7 @@ import { check, foreignKey, index, jsonb, primaryKey, text, timestamp, uniqueInd
 
 import type {
   ProvisionSourceStockItemInput,
+  SourceProvisioningPolicy,
   SourceStockItemProvisioning,
 } from '../../shared/domain/source-provisioning.ts';
 import { inventorySchema } from '../database/inventory-schema.ts';
@@ -16,6 +17,7 @@ export const inventorySourceProvisioningPolicies = inventorySchema.table.withRLS
   'source_provisioning_policies',
   {
     customerConfigurationId: text('customer_configuration_id').notNull(),
+    declaredLocations: jsonb('declared_locations').$type<SourceProvisioningPolicy['locations']>().notNull(),
     definedAt: timestamp('defined_at', { withTimezone: true }).defaultNow().notNull(),
     effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull(),
     externalScope: text('external_scope').notNull(),
@@ -46,6 +48,10 @@ export const inventorySourceProvisioningPolicies = inventorySchema.table.withRLS
     check(
       'inventory_source_provisioning_policies_text_ck',
       sql`length(btrim(${table.customerConfigurationId})) between 1 and 300 and ${table.issuerBackendKind} = 'external_business_system' and length(btrim(${table.issuerBackendId})) between 1 and 300 and length(btrim(${table.namespace})) between 1 and 300 and length(btrim(${table.externalScope})) between 1 and 300`,
+    ),
+    check(
+      'inventory_source_provisioning_declared_locations_ck',
+      sql`jsonb_typeof(${table.declaredLocations}) = 'array' and jsonb_array_length(${table.declaredLocations}) between 1 and 50`,
     ),
     ...tenantRlsPolicies('inventory_source_provisioning_policies_tenant', table.tenantId),
   ],
@@ -124,9 +130,13 @@ export const inventorySourceStockItemProvisionings = inventorySchema.table.withR
 
 export const inventorySourceProvisioningDatabaseContract = {
   immutableFunction: 'inventory.reject_source_provisioning_mutation()',
+  manifestFunction: 'inventory.enforce_source_provisioning_manifest()',
   scopeFunction: 'inventory.enforce_source_provisioning_scope()',
   tables: ['source_provisioning_policies', 'source_provisioning_policy_locations', 'source_stock_item_provisionings'],
   triggers: [
+    'inventory_source_provisioning_policies_manifest_trg',
+    'inventory_source_provisioning_policy_locations_manifest_trg',
+    'inventory_source_stock_item_provisionings_manifest_trg',
     'inventory_source_provisioning_policies_scope_trg',
     'inventory_source_provisioning_policies_no_mutation_trg',
     'inventory_source_provisioning_policy_locations_scope_trg',

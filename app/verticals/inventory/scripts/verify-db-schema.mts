@@ -258,6 +258,9 @@ const verification = Effect.gen(function* verifyDatabase() {
       join pg_catalog.pg_namespace n on n.oid = c.relnamespace
       where n.nspname = ${INVENTORY_SCHEMA_NAME} and not t.tgisinternal and t.tgenabled = 'O'
       and ((t.tgtype = 7 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.scopeFunction}))
+        or (t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.manifestFunction})
+          and ((t.tgtype = 5 and c.relname = 'source_provisioning_policies')
+            or (t.tgtype = 7 and c.relname in ('source_provisioning_policy_locations', 'source_stock_item_provisionings'))))
         or (t.tgtype = 27 and t.tgfoid = pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.immutableFunction})))
       and t.tgname in (${sql.join(
         inventorySourceProvisioningDatabaseContract.triggers.map((name) => sql`${name}`),
@@ -278,9 +281,11 @@ const verification = Effect.gen(function* verifyDatabase() {
       and c.relname in ('inventory_source_provisioning_policies_scope_id_uk', 'inventory_source_provisioning_policies_owner_uk',
         'inventory_source_provisioning_policies_qualification_uk', 'inventory_source_provisioning_policy_locations_location_uk')) as unique_index_count,
     has_function_privilege('ontos_runtime', ${inventorySourceProvisioningDatabaseContract.immutableFunction}, 'EXECUTE')
+      or has_function_privilege('ontos_runtime', ${inventorySourceProvisioningDatabaseContract.manifestFunction}, 'EXECUTE')
       or has_function_privilege('ontos_runtime', ${inventorySourceProvisioningDatabaseContract.scopeFunction}, 'EXECUTE') as private_functions_executable,
-    (select count(*) = 2 from pg_catalog.pg_proc p
+    (select count(*) = 3 from pg_catalog.pg_proc p
       where p.oid in (pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.immutableFunction}),
+        pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.manifestFunction}),
         pg_catalog.to_regprocedure(${inventorySourceProvisioningDatabaseContract.scopeFunction}))
       and not p.prosecdef and p.proconfig @> array['search_path=pg_catalog, pg_temp']
       and not exists(select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE')) as functions_hardened
@@ -289,7 +294,7 @@ const verification = Effect.gen(function* verifyDatabase() {
   );
   if (
     provisioning === undefined ||
-    provisioning.trigger_count !== 6 ||
+    provisioning.trigger_count !== inventorySourceProvisioningDatabaseContract.triggers.length ||
     provisioning.foreign_key_count !== 5 ||
     provisioning.unique_index_count !== 4 ||
     provisioning.private_functions_executable ||

@@ -1,18 +1,30 @@
-import { TrustedPrincipalContextSchema, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { TrustedPrincipalContextSchema, findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
 import type { SymmyPinnedEffect } from '../../shared/domain/symmy-job-execution.ts';
-import { SymmyFixtureExecutionPlanSchema, SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
-import { symmyImportJobs, symmyIntegrationRelations, symmyJobEffects, symmyJobRoutes } from '../../src/db/schema.ts';
+import {
+  SymmyFixtureExecutionPlanSchema,
+  SymmyPinnedEffectSchema,
+  SymmyPinnedJobPlanSchema,
+} from '../../shared/domain/symmy-job-execution.ts';
+import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
+import { AdmitSymmySyncPayloadSchema } from '../../shared/actions/admit-symmy-sync.ts';
+import {
+  symmyImportJobs,
+  symmyIntegrationRelations,
+  symmyJobEffects,
+  symmyJobRoutes,
+  symmySyncAdmissions,
+} from '../../src/db/schema.ts';
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 
@@ -38,6 +50,16 @@ const makeScope = (tenantId: string, principalId: string, legalEntityId?: string
     correlationId: 'durable-execution-ledger-fixture',
   };
 };
+const inventoryRefFor = (tenantId: string) => (kind: string) => ({
+  moduleId: 'commerce.inventory',
+  resourceId: crypto.randomUUID(),
+  resourceType: `commerce.inventory.${kind}`,
+  tenantId,
+});
+const sha256Digest = (value: string) =>
+  Effect.promise(async () =>
+    Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))).toString('hex'),
+  );
 
 /** The pinned effect with another command and, when given, the target it was resolved onto. */
 const pinnedWith = (effect: SymmyPinnedEffect, intent: Schema.Json, originalTarget: Schema.Json | null) => {
@@ -718,12 +740,7 @@ it.effect(
       const admin = yield* openDatabase(connections.admin.connectionString);
       const tenantId = crypto.randomUUID();
       const scope = makeScope(tenantId, crypto.randomUUID());
-      const inventoryRef = (kind: string) => ({
-        moduleId: 'commerce.inventory',
-        resourceId: crypto.randomUUID(),
-        resourceType: `commerce.inventory.${kind}`,
-        tenantId,
-      });
+      const inventoryRef = inventoryRefFor(tenantId);
       const policyRef = inventoryRef('source-provisioning-policy');
       const source = {
         customerConfigurationId: 'provisioning-fixture',
@@ -845,6 +862,14 @@ it.effect(
         payload: {
           catalogSelection: { productRef, variantRef },
           exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
+          expectedPolicy: {
+            customerConfigurationId: source.customerConfigurationId,
+            externalScope: source.externalScope,
+            issuer: source.issuer,
+            locations: source.locations,
+            namespace: source.namespace,
+            unitRef: source.unitRef,
+          },
           itemKey: 'unseen-SKU',
           policyRef,
         },
@@ -859,15 +884,14 @@ it.effect(
       // The original resolution survives a response loss; replay cannot choose another policy or native target.
       expect(yield* record(resolved)).toBe(true);
       const differentPolicy = inventoryRef('source-provisioning-policy');
-      expect(
-        yield* record(
-          pinnedWith(
-            provision,
-            { ...native, payload: { ...native.payload, policyRef: differentPolicy } },
-            differentPolicy,
-          ),
+      const policyTampering = yield* record(
+        pinnedWith(
+          provision,
+          { ...native, payload: { ...native.payload, policyRef: differentPolicy } },
+          differentPolicy,
         ),
-      ).toBe(false);
+      ).pipe(Effect.flip);
+      expect(Option.getOrThrow(findPostgresFailure(policyTampering))).toMatchObject({ code: '22023' });
       const refreshed = Option.getOrThrow(yield* scoped((_admission, execution) => execution.load(job.jobId)));
       const saved = refreshed.effects.find(({ effect }) => effect.ref.effectId === provision.ref.effectId);
       expect(Option.getOrUndefined(saved?.resolvedEffect ?? Option.none())).toMatchObject({
@@ -875,4 +899,238 @@ it.effect(
         ref: { originalTarget: policyRef },
       });
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
+
+it.effect(
+  'prioritizes retained stock keys on configured routes while preserving conflict, retention and caller scope',
+  () =>
+    Effect.gen(function* stockReplayContext() {
+      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      const admin = yield* openDatabase(connections.admin.connectionString);
+      const tenantId = crypto.randomUUID();
+      const scope = makeScope(tenantId, crypto.randomUUID());
+      const routeId = crypto.randomUUID();
+      const admissionId = crypto.randomUUID();
+      const key = Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema.fields.idempotencyKey)(
+        'configured-stock-replay',
+      );
+      const keyDigest = yield* sha256Digest(key);
+      const inventoryRef = inventoryRefFor(tenantId);
+      const unitRef = {
+        moduleId: 'commerce.catalog',
+        resourceId: crypto.randomUUID(),
+        resourceType: 'commerce.catalog.product-unit',
+        tenantId,
+      };
+      const fixturePlan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+        inventoryBackendId: 'backend',
+        inventorySource: {
+          customerConfigurationId: 'configuration',
+          externalScope: 'stock',
+          issuer: { backendId: 'backend', backendKind: 'external_business_system' },
+          locations: [{ locationKey: 'warehouse', stockLocationRef: inventoryRef('stock-location') }],
+          namespace: 'stock',
+          policyRef: inventoryRef('source-provisioning-policy'),
+          unitRef,
+        },
+        items: [
+          {
+            effects: [
+              {
+                effectKey: 'stock',
+                operation: {
+                  entrypointKey: 'commerce.inventory.import-source-assertion',
+                  moduleId: 'commerce.inventory',
+                  schemaVersion: '1',
+                },
+                originalTarget: inventoryRef('stock-position'),
+              },
+            ],
+            itemKey: 'stock',
+            source: {
+              entityKind: 'STOCK',
+              issuerId: 'fixture',
+              sourceNamespace: 'stock',
+              sourceRecordId: 'SKU',
+            },
+          },
+        ],
+      });
+      yield* Effect.addFinalizer(() =>
+        admin
+          .delete(symmySyncAdmissions)
+          .where(eq(symmySyncAdmissions.tenantId, tenantId))
+          .pipe(
+            Effect.andThen(admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.tenantId, tenantId))),
+            Effect.orDie,
+          ),
+      );
+      yield* admin.insert(symmyJobRoutes).values({
+        active: true,
+        fixtureIds: ['INTERNAL_C14'],
+        fixturePlan,
+        mappingVersion: 'v1',
+        principalId: scope.principalId,
+        routeId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      const [pinned] = yield* admin.execute<{ readonly plan: unknown }>(
+        sql`select symmy_integration.pin_symmy_fixture_plan(
+        ${JSON.stringify(Schema.encodeSync(SymmyFixtureExecutionPlanSchema)(fixturePlan))}::jsonb,
+        ${tenantId}::uuid, ${routeId}::uuid, 'r1', 'v1') as plan`,
+        'objects',
+      );
+      const plan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)(pinned?.plan);
+      yield* admin.insert(symmySyncAdmissions).values({
+        admissionId,
+        executionPlan: plan,
+        idempotencyDigest: keyDigest,
+        intentDigest: 'b'.repeat(64),
+        mappingVersion: 'v1',
+        principalId: scope.principalId,
+        routeId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      const context = (replayIdempotencyKey: string, caller = scope) =>
+        withScopedStores(connections.runtime.connectionString, caller, (store) =>
+          store.routeContext({ replayIdempotencyKey, routeKey: 'inventoryStockBatch' }),
+        );
+      // The actual producer supplies Shell's no-owner-read marker while the route is still configured.
+      expect(yield* context(key)).toMatchObject({ allowedOwnerOperations: [], replayIdempotencyDigest: keyDigest });
+      expect((yield* context('fresh-key')).replayIdempotencyDigest).toBeUndefined();
+      expect(yield* context(key, makeScope(tenantId, crypto.randomUUID())).pipe(Effect.flip)).toMatchObject({
+        code: 'route_denied',
+      });
+      const divergentRows = Schema.decodeUnknownSync(SymmyStockRowsSchema)([
+        {
+          businessObservedAt: '2026-01-01T00:00:00.000Z',
+          itemKey: 'different-SKU',
+          locationKey: 'warehouse',
+          quantity: { amount: '1', unitRef },
+          revision: '2',
+          sourceReference: 'different',
+        },
+      ]);
+      // Existing-key conflict is decided before fresh stockFacts, lifecycle setup or any Inventory lookup.
+      const conflict = yield* withScopedStores(connections.runtime.connectionString, scope, (store) =>
+        store.admitSync(
+          {
+            idempotencyKey: key,
+            routeKey: 'inventoryStockBatch',
+            stock: divergentRows,
+          },
+          crypto.randomUUID(),
+        ),
+      ).pipe(Effect.flip);
+      expect(conflict).toMatchObject({ code: 'idempotency_conflict' });
+      yield* admin
+        .update(symmySyncAdmissions)
+        .set({
+          retentionReceipt: {
+            authorityReceiptRef: 'purged',
+            authorityRevision: '1',
+            policyId: 'stock-retention',
+            purgedAt: '2026-01-01T00:00:00.000Z',
+            revision: '1',
+          },
+        })
+        .where(eq(symmySyncAdmissions.admissionId, admissionId));
+      expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect((yield* context('fresh-key')).replayIdempotencyDigest).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
+
+it.effect('pins eight unsupported product branches and still rejects nine or a foreign target', () =>
+  Effect.gen(function* pinUnsupportedBranches() {
+    const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const admin = yield* openDatabase(connections.admin.connectionString);
+    const tenantId = crypto.randomUUID();
+    const routeId = crypto.randomUUID();
+    const kinds = [
+      'CategoryHint',
+      'AttributeHint',
+      'MediaHint',
+      'VariantUpdateHint',
+      'DescriptiveHint',
+      'ClassificationHint',
+      'PriceHint',
+      'StockProvisioningHint',
+    ] as const;
+    const branches = kinds.map((kind) => ({ branchKey: kind, kind }));
+    const plan = {
+      items: [
+        {
+          effects: [
+            {
+              effectKey: 'create',
+              operation: {
+                entrypointKey: 'commerce.catalog.create-product',
+                moduleId: 'commerce.catalog',
+                schemaVersion: '2',
+              },
+            },
+          ],
+          itemKey: 'product',
+          source: {
+            entityKind: 'PRODUCT',
+            issuerId: 'fixture',
+            sourceNamespace: 'catalog',
+            sourceRecordId: 'product',
+          },
+          unsupportedBranches: branches,
+        },
+      ],
+    };
+    const pin = (value: typeof Schema.Json.Type) =>
+      admin.execute<{ readonly plan: unknown }>(
+        sql`select symmy_integration.pin_symmy_fixture_plan(
+          ${JSON.stringify(value)}::jsonb, ${tenantId}::uuid, ${routeId}::uuid, 'r1', 'v1') as plan`,
+        'objects',
+      );
+    const valid = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)(plan);
+    const [row] = yield* pin(
+      Schema.decodeUnknownSync(Schema.Json)(Schema.encodeSync(SymmyFixtureExecutionPlanSchema)(valid)),
+    );
+    const pinned = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)(row?.plan);
+    const actual = pinned.items[0]?.unsupportedBranches;
+    expect(actual?.map(({ branchKey, kind }) => ({ branchKey, kind }))).toEqual(branches);
+    expect(new Set(actual?.map(({ branchId }) => branchId)).size).toBe(8);
+
+    const [item] = plan.items;
+    assert.isDefined(item);
+    const nine = {
+      ...plan,
+      items: [{ ...item, unsupportedBranches: [...branches, { branchKey: 'TaxHint', kind: 'TaxHint' }] }],
+    };
+    const failure = yield* pin(nine).pipe(Effect.flip);
+    expect(Option.getOrThrow(findPostgresFailure(failure))).toMatchObject({ code: '22023' });
+
+    const [effect] = item.effects;
+    assert.isDefined(effect);
+    const foreign = {
+      ...plan,
+      items: [
+        {
+          ...item,
+          effects: [
+            {
+              ...effect,
+              originalTarget: {
+                moduleId: 'commerce.catalog',
+                resourceId: crypto.randomUUID(),
+                resourceType: 'commerce.catalog.product',
+                tenantId: crypto.randomUUID(),
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const scopeFailure = yield* pin(foreign).pipe(Effect.flip);
+    expect(Option.getOrThrow(findPostgresFailure(scopeFailure))).toMatchObject({ code: '22023' });
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
 );

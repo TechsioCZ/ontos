@@ -945,8 +945,8 @@ const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(fun
   return result;
 });
 /**
- * The context of a key's saved sync admission on a route whose plan is withdrawn or, for the customer groups route,
- * still configured: a group admission is answered from what it saved, never from a new owner read. A key whose
+ * The context of a key's saved sync admission, even while its route is still configured: a saved admission is
+ * answered from what it saved, never from a new owner read. A key whose
  * admission retention purged is refused here, as its admission refuses it, before any owner read.
  */
 const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRoute')(function* qualifyRetainedSyncRoute(
@@ -954,11 +954,7 @@ const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRou
   row: typeof symmyJobRoutes.$inferSelect,
   digest: string,
 ): Effect.fn.Return<Option.Option<ConfiguredRouteContext>, SymmyJobStoreError> {
-  if (
-    (row.fixturePlan !== null && row.routeKey !== 'customerGroupsBatch') ||
-    !isSyncAdmissionRoute(row.routeKey) ||
-    row.routeCode !== null
-  ) {
+  if (!isSyncAdmissionRoute(row.routeKey) || row.routeCode !== null) {
     return Option.none();
   }
   const [saved, duplicate] = yield* transaction
@@ -1615,10 +1611,10 @@ export const symmyJobStoreFactory = (
         )
         .limit(2)
         .pipe(Effect.mapError(unavailable));
-      // A group key that already has a saved admission resolves to it first, so its retry reads no owner.
+      // A saved sync key resolves before fresh owner facts, even on a still-configured route.
       const [groupRow, competingGroupRoute] = rows;
       if (
-        input.routeKey === 'customerGroupsBatch' &&
+        isSyncAdmissionRoute(input.routeKey) &&
         input.replayIdempotencyKey !== undefined &&
         groupRow !== undefined &&
         competingGroupRoute === undefined

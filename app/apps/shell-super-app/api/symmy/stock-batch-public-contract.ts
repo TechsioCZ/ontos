@@ -1,7 +1,7 @@
 import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
-import { SymmyStockRowSchema } from '@app/symmy-integration/symmy-internal-contracts';
+import { SymmyStockRowSchema, SymmyStockRowsSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyStockRows } from '@app/symmy-integration/symmy-internal-contracts';
-import { Array as EffectArray, DateTime, Schema } from 'effect';
+import { DateTime, Result, Schema } from 'effect';
 
 import type { SymmyStockBatchRequest } from './stock-batch-request-contract.ts';
 
@@ -25,7 +25,11 @@ export const SymmyStockBatchResponseSchema = Schema.Struct({
  * assertion identity, the receiving time or any scope fact: the enrollment and the admission derive those.
  */
 export const mapSymmyStockBatchRequest = ({ stock }: SymmyStockBatchRequest): SymmyStockRows =>
-  EffectArray.map<SymmyStockBatchRequest['stock'], SymmyStockRows[number]>((row) => ({
-    ...row,
-    businessObservedAt: DateTime.formatIso(row.businessObservedAt),
-  }))(stock);
+  Result.getOrThrow(
+    Schema.decodeUnknownResult(SymmyStockRowsSchema)(
+      stock.map((row) => ({
+        ...row,
+        businessObservedAt: DateTime.formatIso(row.businessObservedAt),
+      })),
+    ),
+  );

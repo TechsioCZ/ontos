@@ -63,12 +63,13 @@ const unsupportedBranchSchema = Schema.Struct({
     'DescriptiveHint',
     'ClassificationHint',
     'PriceHint',
+    'StockProvisioningHint',
     'IdentifierHint',
   ]),
 });
 const unsupportedBranches = Schema.optionalKey(
   Schema.Array(unsupportedBranchSchema).check(
-    Schema.isMaxLength(7),
+    Schema.isMaxLength(8),
     Schema.makeFilter(
       (branches) =>
         (new Set(branches.map(({ branchKey }) => branchKey)).size === branches.length &&
@@ -83,7 +84,7 @@ const pinnedUnsupportedBranches = Schema.optionalKey(
       ...unsupportedBranchSchema.fields,
       branchId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyUnsupportedBranchId')),
     }),
-  ).check(Schema.isMaxLength(7)),
+  ).check(Schema.isMaxLength(8)),
 );
 
 const effectDefinition = Schema.Struct({
@@ -348,6 +349,11 @@ const unsupportedBranchOutcomes = {
   MediaHint: { ...unsupportedCatalogMeaning, branchKind: 'MediaHint' },
   PriceHint: { branchKind: 'PriceHint', owner: 'commerce.pricing', reason: 'missing_context' },
   ReservedQuantityHint: { owner: 'commerce.inventory', reason: 'unsupported_meaning' },
+  StockProvisioningHint: {
+    branchKind: 'StockProvisioningHint',
+    owner: 'commerce.inventory',
+    reason: 'missing_context',
+  },
   TaxHint: { owner: 'commerce.tax', reason: 'owner_not_activated' },
   VariantUpdateHint: { ...unsupportedCatalogMeaning, branchKind: 'VariantUpdateHint', reason: 'missing_context' },
 } as const;

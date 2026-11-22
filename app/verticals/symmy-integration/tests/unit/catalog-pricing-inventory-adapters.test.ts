@@ -2225,8 +2225,8 @@ const provisionOperation = {
   moduleId: 'commerce.inventory',
   schemaVersion: '1',
 };
-const provisionEffectOf = () =>
-  dependentEffect(
+const provisionEffectOf = () => {
+  const provision = dependentEffect(
     {
       _tag: 'ProvisionSourceStockItem',
       itemKey: 'unseen-SKU',
@@ -2234,6 +2234,19 @@ const provisionEffectOf = () =>
     },
     provisionOperation,
   );
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...provision,
+    itemId: '10000000-0000-4000-8000-000000000071',
+    ref: { ...provision.ref, effectId: '10000000-0000-4000-8000-000000000072' },
+  });
+};
+const provisionPlan = (provision: SymmyPinnedEffect) =>
+  Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+    items: [
+      { effects: [effect], itemId: effect.itemId, itemKey: 'product-item' },
+      { effects: [provision], itemId: provision.itemId, itemKey: 'provision-item' },
+    ],
+  });
 
 describe('Symmy committed Catalog selection provisions Inventory through its public owner Action', () => {
   it.effect(
@@ -2245,6 +2258,7 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
           const adapter = yield* h.adapter;
           const outcome = yield* adapter.execute({
             ...h.input,
+            acceptedPlan: provisionPlan(h.input.effect),
             dependencies: [parentState],
             inventoryBackendId: 'native-backend-A',
           });
@@ -2256,6 +2270,14 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
             payload: {
               catalogSelection: { productRef, variantRef },
               exactSelectionMeaning: { id: `catalog-variant:${variantId}`, kind: 'PRODUCT_VARIANT' },
+              expectedPolicy: {
+                customerConfigurationId: provisioningSource.customerConfigurationId,
+                externalScope: provisioningSource.externalScope,
+                issuer: provisioningSource.issuer,
+                locations: provisioningSource.locations,
+                namespace: provisioningSource.namespace,
+                unitRef: provisioningSource.unitRef,
+              },
               itemKey: 'unseen-SKU',
               policyRef: provisioningSource.policyRef,
             },
@@ -2278,6 +2300,7 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
           const first = yield* Effect.exit(
             adapter.execute({
               ...h.input,
+              acceptedPlan: provisionPlan(h.input.effect),
               dependencies: [parentState],
               inventoryBackendId: 'native-backend-A',
               recordInvocationId: () => Effect.fail(symmyJobWorkerUnavailable()),
@@ -2295,6 +2318,8 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
           });
           const recovered = yield* adapter.recover({
             ...h.input,
+            acceptedPlan: provisionPlan(h.input.effect),
+            dependencies: [parentState],
             effect: resolved,
             inventoryBackendId: 'native-backend-A',
             originalAuthContextRef: authContextRef,
@@ -2315,6 +2340,153 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
     },
   );
 
+  it.effect('refuses corrupted resumed provisioning before a write or receipt read', () => {
+    const h = harness(false, provisionEffectOf());
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const acceptedPlan = provisionPlan(h.input.effect);
+        yield* adapter.execute({
+          ...h.input,
+          acceptedPlan,
+          dependencies: [parentState],
+          inventoryBackendId: 'native-backend-A',
+        });
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        const intent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[15])(resolved.intent);
+        const changedVariant = { ...variantRef, resourceId: '10000000-0000-4000-8000-000000000099' };
+        const corruptions = [
+          { ...intent, payload: { ...intent.payload, itemKey: 'other-SKU' } },
+          { ...intent, source: { ...intent.source, externalScope: 'other-scope' } },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              policyRef: { ...intent.payload.policyRef, resourceId: changedVariant.resourceId },
+            },
+          },
+          { ...intent, payload: { ...intent.payload, catalogSelection: { productRef, variantRef: changedVariant } } },
+          {
+            ...intent,
+            payload: { ...intent.payload, expectedPolicy: { ...intent.payload.expectedPolicy, namespace: 'other' } },
+          },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              expectedPolicy: {
+                ...intent.payload.expectedPolicy,
+                unitRef: { ...intent.payload.expectedPolicy.unitRef, resourceId: changedVariant.resourceId },
+              },
+            },
+          },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              expectedPolicy: {
+                ...intent.payload.expectedPolicy,
+                locations: intent.payload.expectedPolicy.locations.map((location) => ({
+                  ...location,
+                  locationKey: 'other-location',
+                })),
+              },
+            },
+          },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              exactSelectionMeaning: { ...intent.payload.exactSelectionMeaning, id: 'catalog-variant:other' },
+            },
+          },
+        ];
+        for (const corrupted of corruptions) {
+          const changed = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({ ...resolved, intent: corrupted });
+          const input = {
+            ...h.input,
+            acceptedPlan,
+            dependencies: [parentState],
+            effect: changed,
+            inventoryBackendId: 'native-backend-A',
+            originalAuthContextRef: authContextRef,
+            originalExecutorPrincipalId: executorId,
+            originalInvocationId: invocationId,
+            originalRequestHash: 'a'.repeat(64),
+          };
+          const before = h.requests.length;
+          expect(Exit.isFailure(yield* Effect.exit(adapter.execute(input)))).toBe(true);
+          expect(Exit.isFailure(yield* Effect.exit(adapter.recover(input)))).toBe(true);
+          expect(h.requests).toHaveLength(before);
+        }
+        const missingParent = {
+          ...h.input,
+          acceptedPlan,
+          dependencies: [],
+          effect: resolved,
+          inventoryBackendId: 'native-backend-A',
+        };
+        expect(Exit.isFailure(yield* Effect.exit(adapter.execute(missingParent)))).toBe(true);
+      }),
+    );
+  });
+
+  it.effect('rechecks the named further Variant receipt on resumed provisioning', () => {
+    const base = provisionEffectOf();
+    const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...base,
+      dependsOn: [productParent, variantParent],
+      intent: { ...base.intent, variantParent },
+    });
+    const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+      items: [
+        { effects: [effect], itemId: effect.itemId, itemKey: 'product-item' },
+        { effects: [dependentVariantEffect], itemId: dependentVariantEffect.itemId, itemKey: 'variant-item' },
+        { effects: [original], itemId: original.itemId, itemKey: 'provision-item' },
+      ],
+    });
+    const h = harness(false, original);
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        yield* adapter.execute({
+          ...h.input,
+          acceptedPlan,
+          dependencies: [parentState, variantParentState],
+          inventoryBackendId: 'native-backend-A',
+        });
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        expect(resolved.intent).toMatchObject({
+          payload: { catalogSelection: { productRef, variantRef: furtherVariantRef } },
+        });
+        const wrongReceipt = {
+          ...variantParentState,
+          ownerReceipt: Option.some(
+            Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[1])({
+              _tag: 'VariantCreated',
+              productRef,
+              variantRef,
+            }),
+          ),
+        };
+        const before = h.requests.length;
+        const exit = yield* Effect.exit(
+          adapter.execute({
+            ...h.input,
+            acceptedPlan,
+            dependencies: [parentState, wrongReceipt],
+            effect: resolved,
+            inventoryBackendId: 'native-backend-A',
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.requests).toHaveLength(before);
+      }),
+    );
+  });
+
   it.effect('refuses a missing Catalog commit or a foreign selected backend before Inventory sees a call', () =>
     Effect.gen(function* test() {
       for (const dependencies of [[], [parentState]]) {
@@ -2323,7 +2495,12 @@ describe('Symmy committed Catalog selection provisions Inventory through its pub
           Effect.gen(function* refusal() {
             const adapter = yield* h.adapter;
             const exit = yield* Effect.exit(
-              adapter.execute({ ...h.input, dependencies, inventoryBackendId: 'foreign-backend' }),
+              adapter.execute({
+                ...h.input,
+                acceptedPlan: provisionPlan(h.input.effect),
+                dependencies,
+                inventoryBackendId: 'foreign-backend',
+              }),
             );
             expect(Exit.isFailure(exit)).toBe(true);
             expect(h.requests).toHaveLength(0);

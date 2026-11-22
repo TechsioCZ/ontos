@@ -9,6 +9,7 @@ import {
 } from '@app/catalog/api/native-action-request-identity';
 import { CreateProductRecoveryRequestSchema } from '@app/catalog/api/create-product-recovery';
 import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/actions/provision-source-stock-item';
+import { SourceProvisioningExpectedPolicySchema } from '@app/inventory/source-provisioning';
 import type { SourceStockItemProvisioning } from '@app/inventory/source-provisioning';
 import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
 import { InventorySourceImportReceiptRequestSchema } from '@app/inventory/api/inventory-source-import-receipt';
@@ -721,12 +722,24 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
       input.inventoryBackendId === source.issuer.backendId
         ? requireCreatedVariant(input, intent, product).pipe(
             Effect.flatMap((variantRef) =>
-              Schema.decodeUnknownEffect(ProvisionSourceStockItemPayloadSchema)({
-                catalogSelection: { productRef, variantRef },
-                exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
-                itemKey,
-                policyRef: source.policyRef,
-              }),
+              Schema.decodeUnknownEffect(SourceProvisioningExpectedPolicySchema)({
+                customerConfigurationId: source.customerConfigurationId,
+                externalScope: source.externalScope,
+                issuer: source.issuer,
+                locations: source.locations,
+                namespace: source.namespace,
+                unitRef: source.unitRef,
+              }).pipe(
+                Effect.flatMap((expectedPolicy) =>
+                  Schema.decodeUnknownEffect(ProvisionSourceStockItemPayloadSchema)({
+                    catalogSelection: { productRef, variantRef },
+                    exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
+                    expectedPolicy,
+                    itemKey,
+                    policyRef: source.policyRef,
+                  }),
+                ),
+              ),
             ),
             Effect.map((payload) => ({
               intent: { _tag: 'InventoryProvision', payload, source },
@@ -844,6 +857,40 @@ const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDep
     Match.orElse(() => Effect.succeed(input)),
   );
 });
+
+/** A persisted provisioning command is evidence, not authority to choose a different SKU or Catalog selection. */
+const validateProvisioningResolution = Effect.fn('SymmyOwnerAdapters.validateProvisioningResolution')(
+  function* validate(input: SymmyEffectAdapterInput) {
+    if (!Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[15])(input.effect.intent)) {
+      return yield* Effect.void;
+    }
+    const originals = input.acceptedPlan?.items.flatMap(({ effects }) =>
+      effects.filter(({ ref }) => ref.effectId === input.effect.ref.effectId),
+    );
+    const [original] = originals ?? [];
+    if (originals?.length !== 1 || original === undefined) {
+      return yield* symmyJobWorkerInvalid();
+    }
+    const admitted = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema.members[11])(
+      original.intent,
+    ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+    if (!Schema.is(Schema.Struct({ _tag: Schema.Literal('ProvisionSourceStockItem') }))(admitted.request)) {
+      return yield* symmyJobWorkerInvalid();
+    }
+    const originalInput = { ...input, canExecuteNewEffects: true, effect: original };
+    const receipt = yield* requireCreatedProductParent(originalInput, admitted.parent);
+    const expected = yield* productDependentIntent(originalInput, admitted, receipt);
+    const reconstructed = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+      ...original,
+      intent: expected.intent,
+      ref: { ...original.ref, originalTarget: expected.target },
+    }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+    if (computeCanonicalValueHash(reconstructed) !== computeCanonicalValueHash(input.effect)) {
+      return yield* symmyJobWorkerInvalid();
+    }
+    return yield* Effect.void;
+  },
+);
 
 const recordCurrentNativeInvocation = Effect.fn('SymmyOwnerAdapters.recordCurrentNativeInvocation')(
   function* recordCurrent(input: SymmyEffectAdapterInput, contract: AdapterContract) {
@@ -2040,6 +2087,7 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
   execute: Effect.fn('SymmyOwnerAdapters.execute')(function* execute(originalInput) {
     const productInput = yield* resolveProductDependency(originalInput, contract, crypto);
     const input = yield* resolveGroupDependency(productInput, contract, crypto);
+    yield* validateProvisioningResolution(input);
     const intent = yield* checkedIntent(input);
     if (!Schema.is(Schema.Literal(contract.tag))(intent._tag)) {
       return yield* symmyJobWorkerInvalid();
@@ -2113,12 +2161,14 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
     SymmyOriginalEffectRecovery,
     ReturnType<typeof symmyJobWorkerUnavailable>
   > {
+    yield* validateProvisioningResolution(originalInput);
     const original = yield* readOriginalOwnerAttempt(originalInput);
     if (original.status !== 'committed') {
       return original;
     }
     const productInput = yield* resolveProductDependency(originalInput, contract, crypto);
     const input = yield* resolveGroupDependency(productInput, contract, crypto);
+    yield* validateProvisioningResolution(input);
     const intent = yield* checkedIntent(input);
     if (!Schema.is(Schema.Literal(contract.tag))(intent._tag)) {
       return yield* symmyJobWorkerInvalid();
