@@ -47,6 +47,20 @@ const portalAuthCommunicationRelayLive = PortalAuthCommunicationRelayLive.pipe(
       unconfiguredTrustedScopeLayer,
     ),
   ),
+  // An adopted relay that cannot start (an unreadable realm configuration, an unreachable Auth database) fails closed alone:
+  // it is logged once and no loop runs, every row stays due, and the host's other loops are not taken down with it.
+  Layer.catchTag(
+    ['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError', 'PlatformError'],
+    (failure) =>
+      Layer.effectDiscard(
+        Effect.annotateLogs(
+          Effect.logError('The Portal Auth communication relay could not start; nothing is relayed'),
+          {
+            reason: failure._tag,
+          },
+        ),
+      ),
+  ),
 );
 /** Composed only for a host that adopted the relay; any other host gets nothing. */
 const portalAuthCommunicationRelayDriverLive = Layer.unwrap(
