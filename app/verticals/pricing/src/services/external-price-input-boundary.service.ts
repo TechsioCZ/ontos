@@ -19,6 +19,21 @@ import type { PreparedPriceSourceEvidence } from './price-source-provenance.serv
 
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 
+// Native Unit and Price Group UUID columns render lowercase; exact JSON grants must use the same spelling.
+const authorityIdentityKeySchema = PriceIdentityKeySchema.check(
+  Schema.makeFilter(({ priceGroupSelector, unitBasis }) =>
+    unitBasis.unitRef.resourceId === unitBasis.unitRef.resourceId.toLowerCase() &&
+    (priceGroupSelector.kind === 'NO_GROUP' ||
+      priceGroupSelector.priceGroupRef.resourceId === priceGroupSelector.priceGroupRef.resourceId.toLowerCase())
+      ? undefined
+      : 'External Price authority requires canonical lowercase Unit and Price Group IDs',
+  ),
+);
+
+// PriceIdentityKeySchema requires every reference in the key to share the product Tenant.
+export const priceAuthorityKeyInTenant = (key: PriceIdentityKey, tenantId: string): boolean =>
+  Schema.is(authorityIdentityKeySchema)(key) && key.catalogSelection.productRef.tenantId === tenantId;
+
 /**
  * Pricing-owned proof that a source assertion is allowed to create one exact Price fact. The
  * transport/source-system identity is deliberately absent: delivery is not business authority.
@@ -29,7 +44,7 @@ export const ExternalPriceSourceAuthorityGrantSchema = Schema.Struct({
     effectiveFrom: PricingInstantSchema,
     effectiveTo: Schema.optionalKey(PricingInstantSchema),
   }),
-  exactIdentityKey: PriceIdentityKeySchema,
+  exactIdentityKey: authorityIdentityKeySchema,
   family: Schema.Literal('PRICE'),
   mapping: PriceSourceMappingSchema,
   ownerModuleId: Schema.Literal('commerce.pricing'),
@@ -156,13 +171,6 @@ const unavailable = (
   sourceAssertionId: sourceAssertion.sourceAssertionId,
 });
 
-const requestKeyBelongsToTenant = (request: ExternalPriceInputBoundaryRequest): boolean =>
-  request.identityKey.catalogSelection.productRef.tenantId === request.tenantId &&
-  request.identityKey.catalogSelection.variantRef.tenantId === request.tenantId &&
-  request.identityKey.unitBasis.unitRef.tenantId === request.tenantId &&
-  (request.identityKey.priceGroupSelector.kind === 'NO_GROUP' ||
-    request.identityKey.priceGroupSelector.priceGroupRef.tenantId === request.tenantId);
-
 const effectivePeriodAdmits = (
   effectivePeriod: ExternalPriceSourceAuthorityGrant['effectivePeriod'],
   verifiedAt: string,
@@ -193,7 +201,7 @@ const grantMatchesRequest = (
     grant.mapping.mappingContractRef !== sourceAssertion.mapping.mappingContractRef ||
     grant.mapping.mappingContractVersion !== sourceAssertion.mapping.mappingContractVersion ||
     !exactIdentityEquals(grant.exactIdentityKey, request.identityKey) ||
-    !requestKeyBelongsToTenant(request)
+    !priceAuthorityKeyInTenant(request.identityKey, request.tenantId)
   ) {
     return 'MAPPING_MISMATCH';
   }
@@ -247,7 +255,7 @@ export const policyCoversRequest = (
     policyUnit.resourceType !== keyUnit.resourceType ||
     policyUnit.tenantId !== keyUnit.tenantId ||
     !priceGroupCoverageAdmits(policy.priceGroupCoverage, identityKey.priceGroupSelector) ||
-    !requestKeyBelongsToTenant(request)
+    !priceAuthorityKeyInTenant(request.identityKey, request.tenantId)
   ) {
     return 'MAPPING_MISMATCH';
   }
@@ -281,6 +289,9 @@ export const makeExternalPriceInputBoundary = (
   authority: ExternalPriceSourceAuthorityPort,
 ): ExternalPriceInputBoundaryService => ({
   assess: Effect.fn('ExternalPriceInputBoundary.assess')(function* assessExternalPriceInput(request) {
+    if (!priceAuthorityKeyInTenant(request.identityKey, request.tenantId)) {
+      return invalid(request.sourceAssertion, 'MAPPING_REJECTED');
+    }
     const assessment = yield* authority.assess({
       exactIdentityKey: request.identityKey,
       sourceAssertion: request.sourceAssertion,

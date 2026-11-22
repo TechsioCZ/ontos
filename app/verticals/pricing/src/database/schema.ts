@@ -1120,6 +1120,9 @@ export const priceRevisions = pricingSchema.table.withRLS(
   ],
 );
 
+// Lowercase form of Schema.isUUID(): versions 1–8, nil, or max.
+const authorityUuidPattern = sql`'^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$'`;
+
 /** Pricing is the sole operational authority for external Price source and mapping grants. */
 export const externalPriceSourceAuthorityGrants = pricingSchema.table.withRLS(
   'external_price_source_authority_grants',
@@ -1161,6 +1164,14 @@ export const externalPriceSourceAuthorityGrants = pricingSchema.table.withRLS(
     check(
       'pricing_external_price_authority_period_ck',
       sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`,
+    ),
+    check(
+      'pricing_external_price_authority_exact_refs_ck',
+      sql`${table.sourceAuthorityRef} <> '*' and ${table.sourceAuthorityVersion} <> '*' and ${table.mappingContractRef} <> '*' and ${table.mappingContractVersion} <> '*'`,
+    ),
+    check(
+      'pricing_external_price_authority_resource_ids_ck',
+      sql`((${table.exactIdentityKey}#>>'{unitBasis,unitRef,resourceId}') collate "C" ~ ${authorityUuidPattern} and case ${table.exactIdentityKey}#>>'{priceGroupSelector,kind}' when 'NO_GROUP' then true when 'PRICE_GROUP' then (${table.exactIdentityKey}#>>'{priceGroupSelector,priceGroupRef,resourceId}') collate "C" ~ ${authorityUuidPattern} else false end) is true`,
     ),
     check(
       'pricing_external_price_authority_text_ck',
@@ -1228,6 +1239,11 @@ export const externalPriceSourcePolicies = pricingSchema.table.withRLS(
     check(
       'pricing_external_price_policies_exact_refs_ck',
       sql`${table.sourceAuthorityRef} <> '*' and ${table.sourceAuthorityVersion} <> '*' and ${table.mappingContractRef} <> '*' and ${table.mappingContractVersion} <> '*'`,
+    ),
+    // JS trim's exact character set, and JS length (supplementary code points count twice).
+    check(
+      'pricing_external_price_policies_verification_ref_ck',
+      sql`${table.verificationRef} = btrim(${table.verificationRef}, U&'\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF') and length(${table.verificationRef}) + regexp_count(${table.verificationRef} collate "C", U&'[\\+010000-\\+10FFFF]') <= 300`,
     ),
     check(
       'pricing_external_price_policies_text_ck',
