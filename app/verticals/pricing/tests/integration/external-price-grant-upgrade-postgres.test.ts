@@ -1,8 +1,9 @@
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
-import { Crypto, Effect, FileSystem } from 'effect';
+import type { PriceSourceAuthority, PriceSourceMapping } from '@app/pricing-contracts/domain/price-source-provenance';
+import { Crypto, Effect, FileSystem, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -67,11 +68,13 @@ const evidence = {
   verificationRef: 'historic-proof',
   verifiedAt: '2026-11-01T00:00:00.000Z',
 };
+const authority: PriceSourceAuthority = erpAuthority;
+const mapping: PriceSourceMapping = productMapping;
 const grant = (exactIdentityKey: PriceIdentityKey, verificationRef = evidence.verificationRef) => ({
   ...evidence,
-  authority: erpAuthority,
+  authority,
   exactIdentityKey,
-  mapping: productMapping,
+  mapping,
   verificationRef,
 });
 const databaseUrl = (connection: string, name: string) => {
@@ -117,7 +120,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           const upper = grant(key(11, true, true));
           const pairUpper = grant(key(12, true, true), 'first receipt');
           const pairLower = grant(key(12), 'second receipt');
-          for (const stored of [upper, pairUpper, pairLower]) {
+          const historicWildcards = [
+            { ...grant(key(21)), authority: { ...erpAuthority, sourceAuthorityRef: '*' } },
+            { ...grant(key(22)), authority: { ...erpAuthority, sourceAuthorityVersion: '*' } },
+            { ...grant(key(23)), mapping: { ...productMapping, mappingContractRef: '*' } },
+            { ...grant(key(24)), mapping: { ...productMapping, mappingContractVersion: '*' } },
+          ];
+          for (const stored of [upper, pairUpper, pairLower, ...historicWildcards]) {
             expect(yield* store(stored)).toEqual([{ payload: { outcome: 'STORED' } }]);
           }
           const policy = { ...evidence, ...policyTerms(world, { priceGroupCoverage: { kind: 'ANY_PRICE_GROUP' } }) };
@@ -127,8 +136,18 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
             ),
           ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
           const before = yield* historyRows;
-          expect(before).toHaveLength(3);
+          expect(before).toHaveLength(7);
           yield* migrate(admin, forward);
+          expect(yield* historyRows).toEqual(before);
+          expect(
+            yield* admin`select convalidated from pg_catalog.pg_constraint
+              where conrelid='pricing.external_price_source_authority_grants'::regclass
+                and conname='pricing_external_price_authority_exact_refs_ck'`,
+          ).toEqual([{ convalidated: false }]);
+          for (const historic of historicWildcards) {
+            const denied = yield* Effect.flip(store({ ...historic, exactIdentityKey: key(25) }));
+            expect(Option.getOrThrow(findPostgresFailure(denied)).code).toBe('23514');
+          }
           const assess = (exactIdentityKey: PriceIdentityKey, at = effectiveAt) => {
             const input = {
               exactIdentityKey,
@@ -148,6 +167,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant stora
           ]);
           const held = [{ payload: { outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' } }];
           expect(yield* assess(key(12))).toEqual(held);
+          for (const variant of [21, 22, 23, 24]) {
+            expect(yield* assess(key(variant))).toEqual(held);
+          }
           expect(yield* assess(key(11), evidence.effectivePeriod.effectiveTo)).toEqual(held);
           expect(yield* assess(key(13))).toMatchObject([{ payload: { outcome: 'AUTHORITY_COVERED_BY_POLICY' } }]);
           for (const retry of [upper, grant(key(11)), pairUpper, pairLower]) {

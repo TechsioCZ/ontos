@@ -1,4 +1,6 @@
-ALTER TABLE "pricing"."external_price_source_authority_grants" ADD CONSTRAINT "pricing_external_price_authority_exact_refs_ck" CHECK ("source_authority_ref" <> '*' and "source_authority_version" <> '*' and "mapping_contract_ref" <> '*' and "mapping_contract_version" <> '*');--> statement-breakpoint
+-- Earlier supported stores accepted these exact literal references. Keep immutable historical
+-- evidence unchanged, while enforcing the restriction on every future insert or update.
+ALTER TABLE "pricing"."external_price_source_authority_grants" ADD CONSTRAINT "pricing_external_price_authority_exact_refs_ck" CHECK ("source_authority_ref" <> '*' and "source_authority_version" <> '*' and "mapping_contract_ref" <> '*' and "mapping_contract_version" <> '*') NOT VALID;--> statement-breakpoint
 ALTER TABLE "pricing"."external_price_source_policies" ADD CONSTRAINT "pricing_external_price_policies_verification_ref_ck" CHECK ("verification_ref" = btrim("verification_ref", U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF') and length("verification_ref") + regexp_count("verification_ref" collate "C", U&'[\+010000-\+10FFFF]') <= 300);
 --> statement-breakpoint
 CREATE OR REPLACE FUNCTION pricing.assess_external_price_source_authority_v1(
