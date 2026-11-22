@@ -10,6 +10,7 @@ import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { installOperationalScope, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
+import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/api/provision-source-stock-item-action';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
@@ -744,6 +745,46 @@ it.effect('records the company ICO resolved onto the profile of its own item, an
       originalTarget: profileRef,
     };
     const resolved = pinnedWith(ico, resolution.intent, resolution.originalTarget);
+    const resolvedJson = Schema.encodeSync(SymmyPinnedEffectSchema)(resolved);
+    for (const malformedIntent of [undefined, {}, { _tag: null }, null, 'not-an-object', { _tag: 'UnknownIntent' }]) {
+      const bad = { ...resolvedJson, intent: malformedIntent };
+      const failure = yield* admin
+        .transaction((transaction) =>
+          Effect.gen(function* malformedResolution() {
+            yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+            return yield* transaction.execute(
+              sql`select * from symmy_integration.record_symmy_resolved_effect(
+                ${tenantId}::uuid, ${job.jobId}::uuid, ${ico.ref.effectId}::uuid,
+                ${token}::uuid, ${claim.version}::integer, ${JSON.stringify(bad)}::jsonb)`,
+              'objects',
+            );
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(Option.getOrThrow(findPostgresFailure(failure))).toMatchObject({ code: '22023' });
+    }
+    for (const malformedIntent of [{}, { _tag: null }, null, 'not-an-object', { _tag: 'UnknownIntent' }]) {
+      const failure = yield* admin
+        .transaction((transaction) =>
+          Effect.gen(function* malformedOriginal() {
+            yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+            yield* transaction.execute(
+              sql`update symmy_integration.job_effects
+                set effect = jsonb_set(effect, '{intent}', ${JSON.stringify(malformedIntent)}::jsonb)
+                where tenant_id = ${tenantId}::uuid and effect_id = ${ico.ref.effectId}::uuid`,
+              'objects',
+            );
+            return yield* transaction.execute(
+              sql`select * from symmy_integration.record_symmy_resolved_effect(
+                ${tenantId}::uuid, ${job.jobId}::uuid, ${ico.ref.effectId}::uuid,
+                ${token}::uuid, ${claim.version}::integer, ${JSON.stringify(resolvedJson)}::jsonb)`,
+              'objects',
+            );
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(Option.getOrThrow(findPostgresFailure(failure))).toMatchObject({ code: '22023' });
+    }
     const record = (effect: SymmyPinnedEffect) =>
       scoped((_admission, execution) =>
         execution.recordResolvedEffect(job.jobId, ico.ref.effectId, token, claim.version, effect),
@@ -787,7 +828,10 @@ it.effect(
         customerConfigurationId: 'provisioning-fixture',
         externalScope: 'source-scope',
         issuer: { backendId: 'fixture-backend', backendKind: 'external_business_system' },
-        locations: [{ locationKey: 'warehouse-1', stockLocationRef: inventoryRef('stock-location') }],
+        locations: [
+          { locationKey: 'warehouse', stockLocationRef: inventoryRef('stock-location') },
+          { locationKey: 'outlet', stockLocationRef: inventoryRef('stock-location') },
+        ],
         namespace: 'fixture-namespace',
         policyRef,
         unitRef: {
@@ -900,27 +944,55 @@ it.effect(
         .where(eq(symmyJobEffects.effectId, provision.ref.effectId));
       const native = {
         _tag: 'InventoryProvision',
-        payload: {
-          catalogSelection: { productRef, variantRef },
-          exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
-          expectedPolicy: {
-            customerConfigurationId: source.customerConfigurationId,
-            externalScope: source.externalScope,
-            issuer: source.issuer,
-            locations: source.locations,
-            namespace: source.namespace,
-            unitRef: source.unitRef,
-          },
-          itemKey: 'unseen-SKU',
-          policyRef,
-        },
+        payload: Schema.encodeSync(ProvisionSourceStockItemPayloadSchema)(
+          Schema.decodeUnknownSync(ProvisionSourceStockItemPayloadSchema)({
+            catalogSelection: { productRef, variantRef },
+            exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
+            expectedPolicy: {
+              customerConfigurationId: source.customerConfigurationId,
+              externalScope: source.externalScope,
+              issuer: source.issuer,
+              locations: source.locations,
+              namespace: source.namespace,
+              unitRef: source.unitRef,
+            },
+            itemKey: 'unseen-SKU',
+            policyRef,
+          }),
+        ),
         source,
       };
+      expect(source.locations.map(({ locationKey }) => locationKey)).toEqual(['warehouse', 'outlet']);
+      expect(native.payload.expectedPolicy.locations.map(({ locationKey }) => locationKey)).toEqual([
+        'outlet',
+        'warehouse',
+      ]);
       const resolved = pinnedWith(provision, native, policyRef);
       const record = (effect: SymmyPinnedEffect) =>
         scoped((_admission, execution) =>
           execution.recordResolvedEffect(job.jobId, provision.ref.effectId, token, claim.version, effect),
         );
+      for (const locations of [
+        native.payload.expectedPolicy.locations.slice(1),
+        native.payload.expectedPolicy.locations.flatMap((location, index) =>
+          index === 0 ? [location, location] : [location],
+        ),
+        native.payload.expectedPolicy.locations.map((location, index) =>
+          index === 0 ? { ...location, stockLocationRef: inventoryRef('stock-location') } : location,
+        ),
+      ]) {
+        const failure = yield* record(
+          pinnedWith(
+            provision,
+            {
+              ...native,
+              payload: { ...native.payload, expectedPolicy: { ...native.payload.expectedPolicy, locations } },
+            },
+            policyRef,
+          ),
+        ).pipe(Effect.flip);
+        expect(Option.getOrThrow(findPostgresFailure(failure))).toMatchObject({ code: '22023' });
+      }
       expect(yield* record(resolved)).toBe(true);
       // The original resolution survives a response loss; replay cannot choose another policy or native target.
       expect(yield* record(resolved)).toBe(true);
