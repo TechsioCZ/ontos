@@ -82,7 +82,8 @@ export const patchCoreRuntimeImport = (source: string, value: string): string =>
   if (members === undefined || found.index === undefined) {
     return raiseScaffoldFailure('Core read cannot patch Shell Core runtime import');
   }
-  if (new RegExp(`\\b${value}\\b`, 'u').test(members)) {
+  // Already imported, from the Core runtime or from another published Core entry: a second binding would not compile.
+  if (new RegExp(`import\\s+(?:type\\s+)?\\{[^}]*\\b${value}\\b[^}]*\\}\\s+from`, 'u').test(source)) {
     return source;
   }
   const replacement = `import {${members.trimEnd()}\n  ${value},\n} from '@app/core-runtime';`;
