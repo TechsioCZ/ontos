@@ -904,7 +904,8 @@ jobs:
           # A sweep runs through the hook too: lefthook cuts the list into command lines of contiguous files, so no
           # linter process holds every type program at once. One `pnpm lint` over every file did, beside the
           # workspace typecheck, and lost its 16 GB runner.
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
+          # CI checks the worktree against HEAD below; parallel hook jobs must not share writes to Git's index.
+          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed' \
             <"$files"
           # Effect's tsgolint emits no Effect language-service diagnostics.
           if [[ "$LINT_ROW" == 1 ]]; then
