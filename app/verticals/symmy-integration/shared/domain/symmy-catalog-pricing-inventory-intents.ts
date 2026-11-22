@@ -8,7 +8,7 @@ import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
-import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/actions/provision-source-stock-item';
+import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/api/provision-source-stock-item-action';
 import { ImportSourceAssertionPayloadSchema } from '@app/inventory/source-import';
 import { CreatePriceGroupPayloadSchema } from '@app/price-group-catalog/actions/create-price-group';
 import { PriceGroupOperationReceiptSchema } from '@app/price-group-catalog/apis/price-group-result-lookup';

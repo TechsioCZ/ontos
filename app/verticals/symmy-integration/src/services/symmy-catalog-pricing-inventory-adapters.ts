@@ -8,7 +8,7 @@ import {
   updateProductRequestIdentity,
 } from '@app/catalog/api/native-action-request-identity';
 import { CreateProductRecoveryRequestSchema } from '@app/catalog/api/create-product-recovery';
-import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/actions/provision-source-stock-item';
+import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/api/provision-source-stock-item-action';
 import { SourceProvisioningExpectedPolicySchema } from '@app/inventory/source-provisioning';
 import type { SourceStockItemProvisioning } from '@app/inventory/source-provisioning';
 import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
