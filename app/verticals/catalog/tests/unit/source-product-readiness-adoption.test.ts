@@ -357,6 +357,38 @@ const readyFixture = Effect.fn('sourceReadiness.readyFixture')(function* readyFi
 });
 
 describe('exact source Product readiness adoption', () => {
+  it.effect('matches the same source Product and Variant UUIDs independently of letter case', () =>
+    Effect.gen(function* canonicalSourceUuids() {
+      const originalProductId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const originalVariantId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const source = yield* sourceProductIntentFixture({
+        principalId,
+        productId: originalProductId,
+        tenantId,
+        variantId: originalVariantId,
+      });
+      const transaction = {
+        select: () => ({ from: () => ({ where: () => query([source.correlation]) }) }),
+      };
+      const matches = (productUuid: string, variantUuid: string) =>
+        // @ts-expect-error Focused read-only Drizzle source-intent seam.
+        catalogSourceProductIntentMatches(transaction, scope, {
+          productRef: { ...productRef, resourceId: productUuid },
+          sourceProduct: source.sourceProduct,
+          variantRef: { ...variantRef, resourceId: variantUuid },
+        });
+      for (const productUuid of [originalProductId, originalProductId.toUpperCase()]) {
+        for (const variantUuid of [originalVariantId, originalVariantId.toUpperCase()]) {
+          expect(yield* matches(productUuid, variantUuid)).toBe(true);
+        }
+      }
+      expect(yield* matches(otherId, originalVariantId)).toBe(false);
+      expect(yield* matches(originalProductId, otherId)).toBe(false);
+      expect(source.correlation.productId).toBe(originalProductId);
+      expect(source.correlation.variantId).toBe(originalVariantId);
+    }),
+  );
+
   it.effect('reports fresh ordinary Variant confirmation and divisibility writes as changes', () =>
     Effect.gen(function* freshDecisions() {
       const draft = {

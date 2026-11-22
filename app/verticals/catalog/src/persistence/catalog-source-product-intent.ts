@@ -52,8 +52,8 @@ const matchesSourceRow = (
   row.recordNamespace === expected.source.recordNamespace &&
   row.recordId === expected.source.recordId &&
   row.mappingRevision === expected.source.mappingRevision &&
-  row.productId === expected.productRef.resourceId &&
-  (expected.variantRef === undefined || row.variantId === expected.variantRef.resourceId);
+  row.productId === expected.productRef.resourceId.toLowerCase() &&
+  (expected.variantRef === undefined || row.variantId === expected.variantRef.resourceId.toLowerCase());
 
 /** A source witness authorizes only adoption of an identical decision, never a stale mutation. */
 export const catalogSourceProductIntentMatches = Effect.fn('CatalogSourceProductIntent.matches')(

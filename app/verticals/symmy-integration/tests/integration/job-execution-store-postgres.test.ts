@@ -968,6 +968,7 @@ it.effect(
         'warehouse',
       ]);
       const resolved = pinnedWith(provision, native, policyRef);
+      const resolvedJson = Schema.encodeSync(SymmyPinnedEffectSchema)(resolved);
       const record = (effect: SymmyPinnedEffect) =>
         scoped((_admission, execution) =>
           execution.recordResolvedEffect(job.jobId, provision.ref.effectId, token, claim.version, effect),
@@ -981,16 +982,27 @@ it.effect(
           index === 0 ? { ...location, stockLocationRef: inventoryRef('stock-location') } : location,
         ),
       ]) {
-        const failure = yield* record(
-          pinnedWith(
-            provision,
-            {
-              ...native,
-              payload: { ...native.payload, expectedPolicy: { ...native.payload.expectedPolicy, locations } },
-            },
-            policyRef,
-          ),
-        ).pipe(Effect.flip);
+        // Malformed inputs deliberately cross the SQL boundary without the public codec rejecting them first.
+        const bad = {
+          ...resolvedJson,
+          intent: {
+            ...native,
+            payload: { ...native.payload, expectedPolicy: { ...native.payload.expectedPolicy, locations } },
+          },
+        };
+        const failure = yield* admin
+          .transaction((transaction) =>
+            Effect.gen(function* malformedProvisioningResolution() {
+              yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantId}, true)`, 'objects');
+              return yield* transaction.execute(
+                sql`select * from symmy_integration.record_symmy_resolved_effect(
+                  ${tenantId}::uuid, ${job.jobId}::uuid, ${provision.ref.effectId}::uuid,
+                  ${token}::uuid, ${claim.version}::integer, ${JSON.stringify(bad)}::jsonb)`,
+                'objects',
+              );
+            }),
+          )
+          .pipe(Effect.flip);
         expect(Option.getOrThrow(findPostgresFailure(failure))).toMatchObject({ code: '22023' });
       }
       expect(yield* record(resolved)).toBe(true);
