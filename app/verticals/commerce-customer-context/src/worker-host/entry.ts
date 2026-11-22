@@ -19,7 +19,7 @@ import {
   portalAuthCommunicationRelayAdopted,
   portalAuthCommunicationRelayAdoption,
 } from '../portal-auth/communications/request-relay.ts';
-import { unconfiguredTrustedScopeLayer } from '../portal-auth/communications/trusted-scope.ts';
+import { configuredTrustedScopeLayer } from '../portal-auth/communications/trusted-scope.ts';
 import { CommercePortalAuthCommunicationStoreLive } from '../portal-auth/persistence/portal-auth-communication-store.ts';
 import { CommercePortalAuthDatabaseLive } from '../portal-auth/persistence/portal-auth-database.ts';
 import {
@@ -33,8 +33,8 @@ import {
  * The Portal Auth communication relay (#1406 D1) over Auth's own store and pool and the production relay transport. The sweep
  * of the Auth-local outbox runs here, beside the source worker it feeds, never in a request-serving API process.
  *
- * OPEN (Auth owner adoption seam): the realm's trusted Tenant has no production source yet, so the relay is composed with the
- * fail-closed unconfigured scope and relays nothing until the owner supplies one.
+ * The realm's trusted Tenant is the deployment's reviewed `COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID`; while it is unset or
+ * malformed the relay relays nothing and reports the typed configuration error (fail closed).
  */
 const portalAuthCommunicationRelayLive = PortalAuthCommunicationRelayLive.pipe(
   Layer.provide(
@@ -44,7 +44,7 @@ const portalAuthCommunicationRelayLive = PortalAuthCommunicationRelayLive.pipe(
         Layer.provide(CommercePortalAuthConfigLive),
       ),
       PortalAuthRelayTransportLive,
-      unconfiguredTrustedScopeLayer,
+      configuredTrustedScopeLayer,
     ),
   ),
   // An adopted relay that cannot start (an unreadable realm configuration, an unreachable Auth database) fails closed alone:

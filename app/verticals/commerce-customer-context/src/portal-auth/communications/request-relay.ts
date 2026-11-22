@@ -13,6 +13,7 @@ import { CommercePortalAuthCommunicationStore } from './communication-store.ts';
 import type { ClaimedCommunicationRequest } from './communication-store.ts';
 import { requestOfStored } from './request.ts';
 import { CommercePortalAuthTrustedScope } from './trusted-scope.ts';
+import type { PortalAuthTrustedScopeUnavailable } from './trusted-scope-unavailable.ts';
 
 /**
  * The relay of the Auth-local outbox (D1). Auth's user-triggered flows only COMMIT an issuance together with its Communication
@@ -266,8 +267,9 @@ export const relayReleaseApproved = (
  * realm's trusted scope. It is the scoped maintenance loop of this module's Outbox Worker entry (the sweep of the Auth-local
  * outbox belongs to the worker host, never to a request-serving API process). Every tick first clears the protected values of
  * expired issuances (`sweepExpiredProtectedValues`), admitted or not. A tick relays only while `admitted` says the approved
- * release is this build, logging one refusal per change; a realm without a trusted scope relays nothing (fail closed). A tick
- * that moved something is logged with counts only, never a request.
+ * release is this build, logging one refusal per change; a realm without a usable trusted scope relays nothing (fail closed)
+ * and reports its typed, value-free configuration error once per change. A tick that moved something is logged with counts
+ * only, never a request.
  */
 export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boolean>) =>
   Layer.effectDiscard(
@@ -277,13 +279,34 @@ export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boo
       const leaseOwner = `portal-auth-relay:${process}`;
       /** Whether the previous tick was admitted, so a refused release is logged once per change. */
       const wasAdmitted = yield* Ref.make(true);
+      /** The reason the previous tick had no trusted scope, so a configuration error is reported once per change. */
+      const scopeRefusal = yield* Ref.make(Option.none<PortalAuthTrustedScopeUnavailable['reason']>());
+      const unscoped = (failure: PortalAuthTrustedScopeUnavailable) =>
+        Ref.getAndSet(scopeRefusal, Option.some(failure.reason)).pipe(
+          Effect.flatMap((previously) =>
+            Option.contains(previously, failure.reason)
+              ? Effect.void
+              : Effect.annotateLogs(
+                  Effect.logError('The Portal Auth realm has no usable trusted Tenant; nothing is relayed'),
+                  { failure: failure._tag, reason: failure.reason },
+                ),
+          ),
+        );
       const relay = trustedScope.current.pipe(
-        Effect.flatMap(({ tenantId }) => relayCommunicationRequests({ ...RELAY_DEFAULTS, leaseOwner, tenantId })),
-        Effect.tap((result) =>
-          result.claimed === 0
-            ? Effect.void
-            : Effect.annotateLogs(Effect.logInfo('The Portal Auth communication relay tick completed'), { ...result }),
-        ),
+        Effect.matchEffect({
+          onFailure: unscoped,
+          onSuccess: ({ tenantId }) =>
+            Ref.set(scopeRefusal, Option.none()).pipe(
+              Effect.andThen(relayCommunicationRequests({ ...RELAY_DEFAULTS, leaseOwner, tenantId })),
+              Effect.tap((result) =>
+                result.claimed === 0
+                  ? Effect.void
+                  : Effect.annotateLogs(Effect.logInfo('The Portal Auth communication relay tick completed'), {
+                      ...result,
+                    }),
+              ),
+            ),
+        }),
         Effect.ignore,
       );
       const refused = Effect.logWarning(
