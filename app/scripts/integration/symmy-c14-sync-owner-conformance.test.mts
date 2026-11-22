@@ -176,7 +176,12 @@ const captureShell = <A, E, R>(diagnostic: Effect.Effect<A, E, R>) =>
     }),
   );
 
-const productJobDiagnosticStage = Schema.Literals(['provisioning-witness-not-observed', 'native-effects-not-accepted']);
+const productJobDiagnosticStage = Schema.Literals([
+  'provisioning-witness-not-observed',
+  'native-effects-not-accepted',
+  'native-effects-timeout',
+  'native-outbox-timeout',
+]);
 const preserveProductJobDiagnostics = Effect.fn('InternalC14Sync.productJobDiagnostics')(
   function* productJobDiagnostics(input: {
     readonly admin: Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>['admin'];
@@ -804,7 +809,18 @@ it.live(
               until: (rows) => rows.length === effectCount && rows.every(({ state }) => state === 'settled'),
             }),
             Effect.timeout(Duration.seconds(60)),
-            Effect.tapError(() => activeWorker.diagnostic.pipe(Effect.flatMap(Effect.logError))),
+            Effect.tapError(() =>
+              preserveProductJobDiagnostics({
+                admin,
+                jobId,
+                key,
+                ownerDiagnostics,
+                shell,
+                stage: 'native-effects-timeout',
+                tenantId,
+                workerDiagnostic: activeWorker.diagnostic,
+              }).pipe(Effect.ignoreCause),
+            ),
           );
           yield* admin`
             select d.status from core.outbox_deliveries d
@@ -822,7 +838,18 @@ it.live(
               until: (rows) => rows.length === 1 && rows[0]?.status === 'done',
             }),
             Effect.timeout(Duration.seconds(60)),
-            Effect.tapError(() => activeWorker.diagnostic.pipe(Effect.flatMap(Effect.logError))),
+            Effect.tapError(() =>
+              preserveProductJobDiagnostics({
+                admin,
+                jobId,
+                key,
+                ownerDiagnostics,
+                shell,
+                stage: 'native-outbox-timeout',
+                tenantId,
+                workerDiagnostic: activeWorker.diagnostic,
+              }).pipe(Effect.ignoreCause),
+            ),
           );
           yield* activeWorker.child.kill();
           yield* activeWorker.child.exitCode;
