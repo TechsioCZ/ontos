@@ -8,7 +8,7 @@ import {
   ActiveApplicationCompositionUnavailableError,
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
-import { ConfigProvider, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -133,7 +133,8 @@ describe('The Portal Auth relay Action (#1406 D1)', () => {
     Effect.gen(function* queued() {
       const request = yield* requestOf('pa-transport-1');
       const { material, result } = yield* relay({ request });
-      expect(result).toMatchObject({ _tag: 'Success', success: { outcome: 'RELAYED' } });
+      expect(Result.isSuccess(result)).toBe(true);
+      expect(result).toMatchObject({ success: { outcome: 'RELAYED' } });
       expect(material.domainEvents.map(({ eventType }) => eventType)).toStrictEqual([TOPIC]);
       expect(material.outboxMessages).toHaveLength(1);
       expect(material.outboxMessages[0]?.message.topic).toBe(TOPIC);

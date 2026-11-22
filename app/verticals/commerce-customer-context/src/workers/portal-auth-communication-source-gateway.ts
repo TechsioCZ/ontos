@@ -20,6 +20,11 @@ const configuration = Config.schema(GatewayHttpUrlSchema, 'ONTOS_COMMUNICATIONS_
  * there. The Shell seals this module as the verified caller of that exact delivery, which is what Communications binds the
  * request's claimed source to. The idempotency key is the request's own replay identity, so a redelivery lands on the stored
  * decision. A failure keeps only its safe kind; the request itself is secret-free by construction.
+ *
+ * OPEN (owner review): the module does not yet declare this registered-workload call, because the Shell admits it only when
+ * the reviewed caller table names this module for `communications.core.request-source` and the Communications Action
+ * publishes a declaration for that workload; until both exist the Shell refuses the assertion and the delivery stays retryable
+ * (fail closed), never sent another way.
  */
 export interface PortalAuthCommunicationSourceGatewayService {
   readonly submit: (
