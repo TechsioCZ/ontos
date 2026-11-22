@@ -1,5 +1,20 @@
 import { randomUUID } from 'node:crypto';
 
+import { nativeServices } from '@app/communications/testing/source-owner-world';
+import type { PrivacyOwnerTransport } from '@app/communications/testing/source-owner-world';
+import {
+  EnrollmentActionInvocationIdSchema,
+  EnrollmentAttemptIdSchema,
+  EnrollmentTenantIdSchema,
+  PORTAL_AUTH_EMAIL_FLOWS,
+  PORTAL_AUTH_RESOURCE_TYPE,
+  PreVerificationPrivacyBindingUnavailable,
+  portalAuthCommunicationPurposeOf,
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
+import type {
+  PortalAuthEmailFlow,
+  PreVerificationPrivacyTransportService,
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
 import {
   makePreVerificationPrivacyNative,
   preVerificationPrivacyDatabaseLive,
@@ -8,25 +23,6 @@ import type { PreVerificationPrivacyNative } from '@app/privacy/testing/pre-veri
 import { Deferred, Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import {
-  EnrollmentActionInvocationIdSchema,
-  EnrollmentAttemptIdSchema,
-  EnrollmentTenantIdSchema,
-} from '../../verticals/commerce-customer-context/shared/enrollment-contracts.ts';
-import {
-  PORTAL_AUTH_EMAIL_FLOWS,
-  PORTAL_AUTH_RESOURCE_TYPE,
-  portalAuthCommunicationPurposeOf,
-} from '../../verticals/commerce-customer-context/shared/portal-auth-communications.ts';
-import type { PortalAuthEmailFlow } from '../../verticals/commerce-customer-context/shared/portal-auth-communications.ts';
-import { privacyPreVerificationBindingLayer } from '../../verticals/commerce-customer-context/src/portal-auth/communications/pre-verification-privacy-binding.ts';
-import { CommercePortalAuthPreVerificationPrivacyTransport } from '../../verticals/commerce-customer-context/src/portal-auth/communications/pre-verification-privacy-transport.ts';
-import { PreVerificationPrivacyBindingUnavailable } from '../../verticals/commerce-customer-context/src/portal-auth/communications/privacy-binding-unavailable.ts';
-import { actionOwnerCall, underOwnerCall } from '../../verticals/communications/src/integrations/owner-call.ts';
-import { privacyProcessingEligibilityGateOver } from '../../verticals/communications/src/integrations/privacy-eligibility-gate.ts';
-import { nativeServices } from '../../verticals/communications/tests/support/persistence.fixture.ts';
-import { TEST_GATE_CHECK_TIMEOUT } from '../../verticals/communications/tests/unit/support/recipient-fixtures.ts';
 import { historyReads, textOf } from './support/auth-communications-checks.spec.mts';
 import {
   PASSWORD,
@@ -36,6 +32,7 @@ import {
   makePostgresRealm,
   signUp,
 } from './support/auth-communications-realms.spec.mts';
+import type { PostgresRealm } from './support/auth-communications-realms.spec.mts';
 import {
   FICTIONAL_COPY,
   authWorld,
@@ -103,7 +100,8 @@ const realPrivacyWorld = Effect.fn('PrivacyPositiveE2E.world')(function* makeWor
   const callAs = (callerAppId: string) => ({ callerAppId, principalId, tenantId: tenantRef.current });
   const asked: unknown[] = [];
   const bindings: string[] = [];
-  const authTransport = Layer.succeed(CommercePortalAuthPreVerificationPrivacyTransport, {
+  // Auth's REAL binding asks Privacy's bind Action body as the verified calling module `commerce-customer-context`
+  const binding: PreVerificationPrivacyTransportService = {
     bind: (payload) =>
       Deferred.await(seam).pipe(
         Effect.tap(() => Effect.sync(() => asked.push(payload))),
@@ -118,20 +116,18 @@ const realPrivacyWorld = Effect.fn('PrivacyPositiveE2E.world')(function* makeWor
             }),
         ),
       ),
-  });
-  const world = yield* authWorld({
-    binding: privacyPreVerificationBindingLayer.pipe(Layer.provide(authTransport)),
-    mode: 'B',
-    privacyGate: privacyProcessingEligibilityGateOver({ checkTimeout: TEST_GATE_CHECK_TIMEOUT }, (question) => {
-      asked.push(question.request);
-      return question.kind === 'PRE_VERIFICATION'
-        ? Deferred.await(seam).pipe(
-            Effect.flatMap((privacy) => privacy.eligibility(callAs('communications'), question.request)),
-            Effect.mapError((cause) => ({ cause, status: 503 })),
-          )
-        : Effect.fail({ status: 503 });
-    }),
-  });
+  };
+  // Communications' REAL Privacy gate asks Privacy's eligibility Read body as the verified calling module `communications`
+  const privacyGate: PrivacyOwnerTransport = (question) => {
+    asked.push(question.request);
+    return question.kind === 'PRE_VERIFICATION'
+      ? Deferred.await(seam).pipe(
+          Effect.flatMap((privacy) => privacy.eligibility(callAs('communications'), question.request)),
+          Effect.mapError((cause) => ({ cause, status: 503 })),
+        )
+      : Effect.fail({ status: 503 });
+  };
+  const world = yield* authWorld({ binding, mode: 'B', privacyGate });
   tenantRef.current = world.tenantId;
   const privacy = yield* makePreVerificationPrivacyNative(
     withPolicies ? PORTAL_AUTH_EMAIL_FLOWS.map((flow) => fictionalPolicy(world.tenantId, flow)) : [],
@@ -140,23 +136,15 @@ const realPrivacyWorld = Effect.fn('PrivacyPositiveE2E.world')(function* makeWor
   return { asked, bindings, callAs, privacy, world };
 });
 
-/** The handoff step runs as the pre-handoff worker would: under the authority of an operation in progress. */
-const handoffOf = (world: AuthWorld, intentId: string) =>
-  step(world, world.messageHandoff, intentId).pipe(
-    underOwnerCall(
-      actionOwnerCall({
-        ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-          authBindingId: randomUUID(),
-          authContextRef: 'fixture:pre-handoff-worker',
-          authenticationNamespaceId: 'core.staff',
-          authMethod: 'session',
-          principalId: randomUUID(),
-          tenantId: world.tenantId,
-        }),
-        correlationId: 'fixture:pre-handoff-worker',
-      }),
-    ),
-  );
+/** The handoff step of an intent, as the pre-handoff worker runs it (the world runs it under an operation in progress). */
+const handoffOf = (world: AuthWorld, intentId: string) => step(world, world.messageHandoff, intentId);
+
+/** The user asks for a reset; the issuance commits with its request, and one relay tick submits it. */
+const requestReset = (realm: PostgresRealm) =>
+  Effect.promise(
+    async () =>
+      await realm.auth.api.requestPasswordReset({ body: { email: realm.email }, headers: headersOf(realm.ip) }),
+  ).pipe(Effect.tap(() => realm.relay));
 
 const onlyIntentOf = (world: AuthWorld, flow: PortalAuthEmailFlow) => {
   const [intentId] = world.submissions
@@ -197,6 +185,8 @@ describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract 
         password: Redacted.make(PASSWORD),
         tenantId: decodeTenant(randomUUID()),
       });
+      // the creation committed the account, the issuance and its request; one relay tick submits what it committed
+      yield* world.relay;
       // Privacy bound the subject before anything was decided, and the decision asked Privacy about exactly that subject
       expect(bindings).toHaveLength(1);
       expect(world.submissions[0]?.submission).toMatchObject({
@@ -219,10 +209,7 @@ describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract 
       const { asked, bindings, world } = yield* realPrivacyWorld(true);
       const realm = yield* makePostgresRealm(world, 'reset');
       yield* signUp(realm);
-      yield* Effect.promise(
-        async () =>
-          await realm.auth.api.requestPasswordReset({ body: { email: realm.email }, headers: headersOf(realm.ip) }),
-      );
+      yield* requestReset(realm);
       expect(bindings.length).toBeGreaterThan(0);
       expect((yield* handoffOf(world, yield* onlyIntentOf(world, RESET))).kind).toBe('HANDED_OFF');
       const mail = world.mailbox.find(({ flow }) => flow === RESET);
@@ -243,8 +230,12 @@ describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract 
       yield* Effect.promise(
         async () => await realm.auth.api.sendTwoFactorOTP({ body: { trustDevice: false }, headers: challenge.headers }),
       );
+      // the provider may run the code callback in the background: relay until its committed request has been submitted
       for (let attempt = 0; attempt < POLL_LIMIT && world.submissions.length <= before; attempt += 1) {
-        yield* Effect.sleep(POLL_MS);
+        yield* world.relay;
+        if (world.submissions.length <= before) {
+          yield* Effect.sleep(POLL_MS);
+        }
       }
       expect(bindings.length).toBeGreaterThan(0);
       expect((yield* handoffOf(world, yield* onlyIntentOf(world, 'otp'))).kind).toBe('HANDED_OFF');
@@ -264,10 +255,7 @@ describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract 
         const { bindings, callAs, privacy, world } = yield* realPrivacyWorld(true);
         const realm = yield* makePostgresRealm(world, 'reset');
         yield* signUp(realm);
-        yield* Effect.promise(
-          async () =>
-            await realm.auth.api.requestPasswordReset({ body: { email: realm.email }, headers: headersOf(realm.ip) }),
-        );
+        yield* requestReset(realm);
         const intentId = yield* onlyIntentOf(world, RESET);
         for (const bindingRef of new Set(bindings)) {
           yield* privacy.withdraw(callAs('privacy'), { bindingRef, evidenceRef: 'fictional-dsr-case' });
@@ -286,10 +274,7 @@ describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract 
       const { asked, bindings, world } = yield* realPrivacyWorld(false);
       const realm = yield* makePostgresRealm(world, 'reset');
       yield* signUp(realm);
-      yield* Effect.promise(
-        async () =>
-          await realm.auth.api.requestPasswordReset({ body: { email: realm.email }, headers: headersOf(realm.ip) }),
-      );
+      yield* requestReset(realm);
       expect(bindings).toHaveLength(0);
       // Auth asked Privacy to bind and Privacy refused; the eligibility Read was never asked without a binding
       expect(asked.length).toBeGreaterThan(0);

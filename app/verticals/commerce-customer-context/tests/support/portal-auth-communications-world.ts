@@ -1,7 +1,8 @@
+import { BindPreVerificationSubjectResultSchema } from '@app/privacy/actions/bind-pre-verification-subject';
 import { NodeCrypto } from '@effect/platform-node';
 import { splitSetCookieHeader, applySetCookies } from 'better-auth/cookies';
 import { and, eq, inArray, isNotNull, like } from 'drizzle-orm';
-import { Config, Context, Crypto, Effect, Layer, Option, Redacted, Ref } from 'effect';
+import { Config, Context, Crypto, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
 import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -40,8 +41,11 @@ import {
 } from '../../src/portal-auth/communications/owner-completion.ts';
 import {
   CommercePortalAuthPreVerificationPrivacyBinding,
+  privacyPreVerificationBindingLayer,
   unsupportedPreVerificationPrivacyBindingLayer,
 } from '../../src/portal-auth/communications/pre-verification-privacy-binding.ts';
+import { CommercePortalAuthPreVerificationPrivacyTransport } from '../../src/portal-auth/communications/pre-verification-privacy-transport.ts';
+import type { PreVerificationPrivacyTransportService } from '../../src/portal-auth/communications/pre-verification-privacy-transport.ts';
 import {
   CommercePortalAuthProtectedHandoff,
   protectedHandoffLayer,
@@ -76,9 +80,12 @@ import {
  * its sealed values in Auth's own PostgreSQL store (D2), the Auth-local outbox and its relay (D1), the owner-slot completion and
  * the enrollment gateway. It knows no Communications code: the relay submits through whatever submitter the suite hands it.
  *
- * LABELLED DOUBLE: with `evidencing` (the default) the pre-verification Privacy binding is the double of the Privacy path that
- * does not exist yet and yields a FICTIONAL binding, never Privacy evidence; `evidencing: false` is Auth's real production
- * composition (no supported path, so no scope is declared).
+ * The pre-verification Privacy binding is composed in one of three ways:
+ * - `privacyTransport`: Auth's REAL production binding (Privacy's public bind Action, read with Privacy's published result
+ *   schema) over the transport the suite hands it, so the suite can put the REAL Privacy owner behind it;
+ * - LABELLED DOUBLE (the default, `evidencing` true): a FICTIONAL binding in the shape of Privacy's published bind result,
+ *   never Privacy evidence;
+ * - `evidencing: false`: Auth's composition without a transport to Privacy (D1), so no scope is declared.
  */
 
 export { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-auth/provider/account-creation-unavailable.ts';
@@ -106,6 +113,8 @@ export type {
   PortalAuthSubmission,
 } from '../../src/portal-auth/communications/communication-request-submitter.ts';
 export { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
+export type { PreVerificationPrivacyTransportService } from '../../src/portal-auth/communications/pre-verification-privacy-transport.ts';
+export { PreVerificationPrivacyBindingUnavailable } from '../../src/portal-auth/communications/privacy-binding-unavailable.ts';
 export {
   issuanceSourceStateOf,
   maskedAddressOf,
@@ -146,10 +155,53 @@ const realmConfiguration = Effect.gen(function* configuration() {
 const realmDatabaseLayer = (configuration: typeof CommercePortalAuthConfig.Service) =>
   CommercePortalAuthDatabaseLive.pipe(Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration)));
 
+/** The FICTIONAL binding the labelled double answers with, in the shape of Privacy's published bind result. */
+const fictionalPrivacyBinding = (tenantId: string) => ({
+  bindingRef: '00000000-0000-4000-8000-00000000b1d0',
+  policy: { policyRef: 'fictional-policy', revision: 'fictional-r1' },
+  scope: {
+    controllerRef: 'fictional-controller',
+    dataCategoryRefs: ['fictional:contact'],
+    operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
+    processingScopeRef: { scopeId: 'fictional-scope', scopeType: 'privacy.processing-scope' },
+    purposeRef: 'fictional-purpose',
+    purposeVersionId: 'fictional-v1',
+    recipientRefs: ['fictional.communications'],
+    subjectRef: {
+      moduleId: 'privacy.core',
+      resourceId: '00000000-0000-4000-8000-00000000b1d0',
+      resourceType: 'privacy.core.privacy-subject',
+      tenantId,
+    },
+  },
+  status: 'ACTIVE',
+  validUntil: '2099-01-01T00:00:00.000Z',
+});
+
+/** The pre-verification Privacy binding of a source: Auth's real one over a transport, the labelled double, or none. */
+const bindingLayerOf = (options: PortalAuthSourceOptions) => {
+  if (options.privacyTransport !== undefined) {
+    return privacyPreVerificationBindingLayer.pipe(
+      Layer.provide(Layer.succeed(CommercePortalAuthPreVerificationPrivacyTransport, options.privacyTransport)),
+    );
+  }
+  return options.evidencing === false
+    ? unsupportedPreVerificationPrivacyBindingLayer
+    : Layer.succeed(CommercePortalAuthPreVerificationPrivacyBinding, {
+        // LABELLED DOUBLE of Privacy's bind Action: a FICTIONAL binding in Privacy's answer shape, never Privacy evidence
+        bind: () =>
+          Schema.decodeUnknownEffect(BindPreVerificationSubjectResultSchema)(
+            fictionalPrivacyBinding(options.tenantId),
+          ).pipe(Effect.orDie),
+      });
+};
+
 export interface PortalAuthSourceOptions {
-  /** Whether the double of the missing pre-verification Privacy path evidences a binding. Default: yes (labelled double). */
+  /** Whether the labelled double of Privacy's bind Action evidences a binding. Default: yes. Ignored with `privacyTransport`. */
   readonly evidencing?: boolean | undefined;
   readonly ledgerProbe?: IssuanceLedgerProbe | undefined;
+  /** The transport to Privacy's bind Action that Auth's REAL production binding runs over. Default: none (see `evidencing`). */
+  readonly privacyTransport?: PreVerificationPrivacyTransportService | undefined;
   /** The Tenant the realm, its delivery and its relay serve. */
   readonly tenantId: string;
 }
@@ -223,20 +275,7 @@ export const makePortalAuthSource = Effect.fn('PortalAuthCommunicationsSource.ma
     ),
     Effect.asVoid,
   );
-  const binding = yield* CommercePortalAuthPreVerificationPrivacyBinding.pipe(
-    Effect.provide(
-      options.evidencing === false
-        ? unsupportedPreVerificationPrivacyBindingLayer
-        : Layer.succeed(CommercePortalAuthPreVerificationPrivacyBinding, {
-            // LABELLED DOUBLE of the Privacy path that does not exist: a FICTIONAL binding, never Privacy evidence
-            bind: (issuance) =>
-              Effect.succeed({
-                bindingRef: `fictional-binding:${issuance.issuanceRef}`,
-                purposeVersion: 'fictional-v1',
-              }),
-          }),
-    ),
-  );
+  const binding = yield* CommercePortalAuthPreVerificationPrivacyBinding.pipe(Effect.provide(bindingLayerOf(options)));
 
   /** The realm's real recovery store, set once its realm exists: the delivery reads Auth's stored expiry and one-time code challenge from it. */
   const recoveryStore = yield* Ref.make(Option.none<CommercePortalAuthRecoveryStore>());

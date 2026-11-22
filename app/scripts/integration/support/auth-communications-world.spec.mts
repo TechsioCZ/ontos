@@ -24,6 +24,7 @@ import type {
   CommunicationRequestEncoded,
   MessagingAdapterDouble,
   PinnedHandoff,
+  PrivacyOwnerTransport,
   ProviderEvidenceCase,
 } from '@app/communications/testing/source-owner-world';
 import {
@@ -45,6 +46,7 @@ import type {
   PortalAuthEmailFlow,
   PortalAuthIntentSummary,
   PortalAuthSubmission,
+  PreVerificationPrivacyTransportService,
 } from '@app/commerce-customer-context/testing/portal-auth-communications';
 import { Effect, Option, Schema } from 'effect';
 import type { Redacted } from 'effect';
@@ -56,10 +58,12 @@ import type { Redacted } from 'effect';
  * committed outbox row. Everything on the Communications side is the REAL owner code (see the source-owner seam).
  *
  * LABELLED DOUBLES (each stands at the edge of ANOTHER owner and proves how that edge is READ, never that it answers so):
- * - the Privacy gate answers ALLOWED/NOT_ALLOWED/INDETERMINATE by script. The Privacy owner has no supported path to bind the
- *   subject of an unverified Portal Auth account yet (see the #1406 report), so a positive answer here is NOT Privacy evidence;
- * - the pre-verification Privacy binding is the double of that missing path: `evidencing: true` yields a FICTIONAL binding;
- *   `false` is Auth's real production composition (no supported path, so no scope is declared);
+ * - the Privacy gate answers ALLOWED/NOT_ALLOWED/INDETERMINATE by script, so a positive answer here is NOT Privacy evidence
+ *   (the real Privacy pre-verification contract is proven in `auth-communications-privacy-blocked.test.mts`);
+ * - the pre-verification Privacy binding is a double of Privacy's bind Action: `evidencing: true` yields a FICTIONAL binding
+ *   in Privacy's answer shape; `false` is Auth's composition without a transport to Privacy (D1, so no scope is declared).
+ *   A suite that proves the positive path against the REAL Privacy owner passes `binding` and `privacyGate` instead: Auth's
+ *   REAL binding and Communications' REAL Privacy-gate adapter then run, and only their transports to Privacy are the suite's;
  * - the trusted recipient language is scripted; Auth publishes no trusted locale source yet;
  * - the relay's transport to the public Action is in process: the request is decided by the REAL handler under the sealed
  *   registered-source-worker principal of `commerce.customer-context` (the carrier the production Outbox Worker obtains), with
@@ -90,11 +94,18 @@ export interface Mail {
 }
 
 export interface AuthWorldOptions {
-  /** Whether the double of the missing pre-verification Privacy path evidences a binding. Default: yes (labelled double). */
+  /**
+   * The transport to Privacy's bind Action, when a suite composes Auth's REAL pre-verification Privacy binding over it.
+   * Default: the labelled double below, or Auth's fail-closed composition with `evidencing: false`.
+   */
+  readonly binding?: PreVerificationPrivacyTransportService;
+  /** Whether the double of Privacy's bind Action evidences a binding. Default: yes (labelled double). */
   readonly evidencing?: boolean;
   readonly languages?: readonly ('cs' | 'en')[];
   readonly ledgerProbe?: IssuanceLedgerProbe;
   readonly mode?: 'A' | 'B';
+  /** The transport to Privacy's Reads, when a suite composes Communications' REAL Privacy gate over it. Default: scripted. */
+  readonly privacyGate?: PrivacyOwnerTransport;
   /** Approved types overriding the production catalog (a fictional recovery limit, for example). Default: production. */
   readonly types?: typeof approvedMessageTypes;
 }
@@ -120,6 +131,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
   const owner = yield* makeSourceOwnerWorld(yield* makeRuntimeDatabase(), {
     languages: options.languages ?? ['cs', 'en'],
     mode: options.mode,
+    privacyOwner: options.privacyGate,
     revisionOf: fictionalRevisionOf,
     types,
   });
@@ -127,6 +139,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
   const auth = yield* makePortalAuthSource({
     evidencing: options.evidencing,
     ledgerProbe: options.ledgerProbe,
+    privacyTransport: options.binding,
     tenantId,
   });
 
@@ -176,7 +189,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
         }),
     },
     scopeDeclaration: {
-      declare: ({ binding: recipientBinding, request, type }) =>
+      declare: ({ request, type }) =>
         Effect.gen(function* declareScope() {
           const issuance = yield* auth.handoff
             .issuanceOf(decodeIssuanceRef(request.occurrence.occurrenceId))
@@ -184,30 +197,21 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
           if (Option.isNone(issuance)) {
             return yield* new ProcessingScopeUndeclared({ reason: 'NO_DECLARATION' });
           }
-          const { bindingRef, purposeVersion } = yield* auth.binding
+          // the source declares the scope PRIVACY bound for this issuance: Privacy's subject and its policy's dimensions
+          const bound = yield* auth.binding
             .bind(issuance.value)
             .pipe(Effect.mapError(() => new ProcessingScopeUndeclared({ reason: 'NO_DECLARATION' })));
           return decodeScope({
             catalogPurposeRef: type.privacyPurposeRefs[0],
             channel: 'email',
-            controllerRef: 'fictional-controller',
-            dataCategoryRefs: ['fictional:contact'],
-            operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
-            processingScopeRef: { scopeId: bindingRef, scopeType: 'fictional.processing-scope' },
-            purposeRef: 'fictional-purpose',
-            purposeVersionId: purposeVersion,
-            recipientRefs: ['fictional.communications'],
-            subject: {
-              kind: 'SOURCE_ASSERTED',
-              source: {
-                issuer: 'fictional:portal-auth',
-                namespace: 'fictional-issuances',
-                occurrenceId: bindingRef,
-                recordId: recipientBinding.recipientRef.resourceId,
-                recordType: 'fictional-portal-account',
-                routeRef: 'fictional:route',
-              },
-            },
+            controllerRef: bound.scope.controllerRef,
+            dataCategoryRefs: bound.scope.dataCategoryRefs,
+            operation: bound.scope.operation,
+            processingScopeRef: bound.scope.processingScopeRef,
+            purposeRef: bound.scope.purposeRef,
+            purposeVersionId: bound.scope.purposeVersionId,
+            recipientRefs: bound.scope.recipientRefs,
+            subject: { bindingRef: bound.bindingRef, kind: 'PRIVACY_BINDING' },
           });
         }),
     },

@@ -1,6 +1,7 @@
 import type { CommunicationRequest } from '@app/communications-contracts/communication-request';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Layer, Match, Option, Ref, Result } from 'effect';
+import { Effect, Layer, Match, Option, Ref, Result, Schema } from 'effect';
 
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import { deliveryAttempts, messageIntents } from '../../src/database/schema.ts';
@@ -20,6 +21,9 @@ import { RecipientCurrentGate } from '../../src/domain/recipient/current-gate.ts
 import type { RecipientCurrentGateService } from '../../src/domain/recipient/current-gate.ts';
 import { HandoffStoreUnavailable, processIntentHandoff } from '../../src/handoff/process-intent-handoff.ts';
 import type { ScopedRunner } from '../../src/handoff/process-intent-handoff.ts';
+import { actionOwnerCall, underOwnerCall } from '../../src/integrations/owner-call.ts';
+import { privacyProcessingEligibilityGateOver } from '../../src/integrations/privacy-eligibility-gate.ts';
+import type { PrivacyOwnerTransport } from '../../src/integrations/privacy-eligibility-gate.ts';
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
 import { loadRequestHistory } from '../../src/services/message-history.service.ts';
 import { privacyAllowed } from '../unit/support/privacy-fixtures.ts';
@@ -40,7 +44,10 @@ import { actorFor, domainFor, fictionalDraft, identity } from './template-fixtur
  * pre-handoff step and the authorized history Reads), with the source owner's answers plugged in as plain values.
  *
  * LABELLED DOUBLES (each stands at the edge of ANOTHER owner and proves how that edge is READ, never that it answers so):
- * - the Privacy gate answers by script per recipient (ALLOWED unless a test sets another answer); it is NOT Privacy evidence;
+ * - the Privacy gate answers by script per recipient (ALLOWED unless a test sets another answer); it is NOT Privacy evidence.
+ *   A suite that proves an answer of the REAL Privacy owner passes `privacyOwner` instead: the world then runs the REAL
+ *   Communications Privacy-gate adapter (the request it builds, the decoding of the answer and the verdict) and only the
+ *   transport to Privacy's published Read is the suite's;
  * - the trusted recipient language is scripted through `languageRef`;
  * - the document owner is the in-memory double of `document-owner-double.ts`;
  * - the Messaging Adapter is `messagingAdapterDouble`, which only records the handoffs and answers what the test scripts;
@@ -58,6 +65,7 @@ export type { TransactionalMessageType } from '../../src/domain/catalog/message-
 export { buildMessageTypeRegistry, findMessageTypeByPurpose } from '../../src/domain/catalog/registry.ts';
 export { CommunicationPurposeKeySchema, SourceStateKeySchema } from '../../src/domain/catalog/vocabulary.ts';
 export type { PinnedHandoff, ProviderEvidenceCase } from '../../src/domain/handoff/message-handoff.ts';
+export type { PrivacyOwnerQuestion, PrivacyOwnerTransport } from '../../src/integrations/privacy-eligibility-gate.ts';
 export { ProcessingScopeUndeclared } from '../../src/domain/intake/scope-declaration-errors.ts';
 export { SourceOccurrenceUnavailable } from '../../src/domain/intake/source-authority-errors.ts';
 export { ProcessingScopeSchema } from '../../src/domain/privacy/processing-scope.ts';
@@ -78,6 +86,11 @@ export interface SourceOwnerWorldOptions {
   readonly languages: readonly ('cs' | 'en')[];
   /** The Tenant language mode to set, or none to keep the default. */
   readonly mode?: 'A' | 'B' | undefined;
+  /**
+   * The transport to the REAL Privacy owner's published Reads, under which the REAL Communications Privacy-gate adapter
+   * runs; none keeps the scripted gate (`privacyAnswers`, `privacyQueries`).
+   */
+  readonly privacyOwner?: PrivacyOwnerTransport | undefined;
   /** The FICTIONAL revision of a type in a language, or none when the suite seeds no copy for that type. */
   readonly revisionOf: (type: TransactionalMessageType, language: 'cs' | 'en') => Option.Option<FictionalRevision>;
   /** The approved types the catalog of the world serves. */
@@ -149,12 +162,27 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
   const privacyAnswers = new Map<string, PrivacyAnswer>();
   const privacyQueries: ProcessingEligibilityQuery[] = [];
   const languageLayer = Layer.succeed(RecipientLanguageAuthority, { languageOf: () => Ref.get(languageRef) });
-  const privacyLayer = Layer.succeed(ProcessingEligibilityGate, {
-    check: (query) => {
-      privacyQueries.push(query);
-      return (privacyAnswers.get(query.recipient.recipientRef.resourceId) ?? privacyAllowed)(query);
-    },
-    checkTimeout: TEST_GATE_CHECK_TIMEOUT,
+  const privacyLayer =
+    options.privacyOwner === undefined
+      ? Layer.succeed(ProcessingEligibilityGate, {
+          check: (query) => {
+            privacyQueries.push(query);
+            return (privacyAnswers.get(query.recipient.recipientRef.resourceId) ?? privacyAllowed)(query);
+          },
+          checkTimeout: TEST_GATE_CHECK_TIMEOUT,
+        })
+      : privacyProcessingEligibilityGateOver({ checkTimeout: TEST_GATE_CHECK_TIMEOUT }, options.privacyOwner);
+  /** The step runs as the pre-handoff worker would: under the authority of an operation in progress of the Tenant. */
+  const preHandoffCall = Effect.gen(function* preHandoffCall() {
+    const scope = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      authBindingId: yield* nextId,
+      authContextRef: 'fixture:pre-handoff-worker',
+      authenticationNamespaceId: 'core.staff',
+      authMethod: 'session',
+      principalId: yield* nextId,
+      tenantId,
+    }).pipe(Effect.orDie);
+    return actionOwnerCall({ ...scope, correlationId: 'fixture:pre-handoff-worker' });
   });
   const documents = documentOwnerDouble();
 
@@ -190,7 +218,12 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
         runner.submit(tenantId, request, undefined, sourceModule),
       /** One delivery of the pre-handoff step of an intent, with the given Messaging Adapter double (the REAL worker step). */
       step: (handoff: MessagingAdapterDouble, intentId: string) =>
-        processIntentHandoff({ intentId: MessageIntentIdSchema.make(intentId), tenantId }, scopedRunner).pipe(
+        preHandoffCall.pipe(
+          Effect.flatMap((call) =>
+            processIntentHandoff({ intentId: MessageIntentIdSchema.make(intentId), tenantId }, scopedRunner).pipe(
+              underOwnerCall(call),
+            ),
+          ),
           Effect.provide(Layer.mergeAll(portsFor(options.types), handoff.layer, NodeCrypto.layer)),
         ),
     };
