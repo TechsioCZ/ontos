@@ -221,7 +221,7 @@ const catalogContractFor = (hosted: DelegationCase['hostedRequirement']) => {
         intrinsic: [],
         operations: [
           {
-            callers: [{ kind: 'person', legalEntityScope: 'tenant' }],
+            callers: [{ kind: 'person', legalEntityScope: 'subject' }],
             condition: 'commerce.catalog.condition.core-media-current',
             entrypointKey: 'commerce.catalog.api.catalog-document-current',
             evidence: ['core.media.asset'],
@@ -587,6 +587,9 @@ it.effect('relays the requester to the Shell deployment for a Core operation the
     );
     expect(verified.payload['ver']).toBe(3);
     expect(verified.payload['principal']).toEqual(delegationUnitPrincipal);
+    // The requester's selected company travels with them (the hosted requirement relays the `subject`): it is what
+    // lets Core narrow the Current answer to the company's own assets (decision 7).
+    expect(verified.payload['principal']).toHaveProperty('legalEntityId', delegationUnitPrincipal.legalEntityId);
     expect(verified.payload['act']).toEqual({
       appId: 'catalog',
       buildMarker: 'catalog-build',
