@@ -42,6 +42,7 @@ describe('Decide Product Type unnecessary Action contract', () => {
 
   it('records only a partial decision outcome, not overall Catalog readiness', () => {
     const result = Schema.decodeUnknownSync(DecideProductTypeUnnecessaryResultSchema)({
+      changed: true,
       decisionRevision: 1,
       decisionState: 'CONFIRMED',
       productRef,

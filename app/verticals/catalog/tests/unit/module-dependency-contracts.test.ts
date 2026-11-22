@@ -101,7 +101,18 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(20);
+    expect(safe.operationContracts).toHaveLength(25);
+    expect(safe.operationContracts).toEqual(
+      expect.arrayContaining(
+        [
+          'govern-variant-axes-recovery',
+          'confirm-variant-combination-recovery',
+          'set-product-localized-facts-recovery',
+          'set-product-unit-target-divisibility-recovery',
+          'decide-product-type-unnecessary-recovery',
+        ].map((apiKey) => expect.objectContaining({ apiKey: `commerce.catalog.${apiKey}` })),
+      ),
+    );
     for (const contract of safe.operationContracts) {
       expect(contract.entrypoint.moduleKey).toBe('commerce.catalog');
       expect(['1', '2']).toContain(contract.schemaVersion);

@@ -35,7 +35,6 @@ export {
   ProvisionSourceStockItemErrorSchema,
   ProvisionSourceStockItemResultSchema,
 } from '../../shared/actions/provision-source-stock-item.ts';
-export { ProvisionSourceStockItemPayloadSchema } from '../../shared/domain/source-provisioning.ts';
 
 const ACTION_KEY = 'commerce.inventory.provision-source-stock-item';
 const MODULE_KEY = 'commerce.inventory';

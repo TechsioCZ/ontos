@@ -103,6 +103,7 @@ export const handleConfirmVariantCombination = Effect.fn('ConfirmVariantCombinat
       Match.exhaustive,
     );
     const decoded = yield* Schema.decodeEffect(ConfirmVariantCombinationResultSchema)({
+      changed: confirmed.changed,
       combinationAxisRevision: confirmed.combinationAxisRevision,
       combinationKey: confirmed.combinationKey,
       variant: confirmed.variant,

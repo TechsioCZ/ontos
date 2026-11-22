@@ -28,6 +28,7 @@ export const DecideProductTypeUnnecessaryPayloadSchema = Schema.Struct({
 export type DecideProductTypeUnnecessaryPayload = typeof DecideProductTypeUnnecessaryPayloadSchema.Type;
 
 export const DecideProductTypeUnnecessaryResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
   decisionRevision: ProductRevisionSchema,
   decisionState: DecisionStateSchema,
   productRef: ProductRefSchema,

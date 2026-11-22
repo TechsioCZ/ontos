@@ -260,7 +260,7 @@ export const productTypeUntypedDecisionPersistenceForScope = Effect.fn('productT
             variantRevisionTokens,
           })
         ) {
-          return { decisionRevision, decisionState: payload.decisionState, productRef };
+          return { changed: false, decisionRevision, decisionState: payload.decisionState, productRef };
         }
         if (decisionRevision !== payload.expectedDecisionRevision) {
           return yield* rejected('Current decision basis is stale');
@@ -285,7 +285,7 @@ export const productTypeUntypedDecisionPersistenceForScope = Effect.fn('productT
             variantRevisionTokens,
           })
           .pipe(Effect.mapError(unavailable));
-        return { decisionRevision: nextRevision, decisionState: payload.decisionState, productRef };
+        return { changed: true, decisionRevision: nextRevision, decisionState: payload.decisionState, productRef };
       }),
     };
   },
