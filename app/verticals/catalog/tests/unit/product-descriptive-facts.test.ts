@@ -2,6 +2,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
 import {
+  CatalogLocaleSchema,
   ProductDescriptiveFactsSchema,
   hasCatalogTextMinimum,
   lookupProductLocalizedFacts,
@@ -17,6 +18,22 @@ const productRef = {
 const decode = Schema.decodeUnknownSync(ProductDescriptiveFactsSchema);
 
 describe('Catalog Product descriptive facts', () => {
+  it('accepts only canonical locale tags within the localized persistence boundary', () => {
+    for (const locale of [
+      'x',
+      'cs-cz',
+      ' cs-CZ',
+      'cs-CZ ',
+      'en_US',
+      'en-a-12345678-12345678-12345678-12345678-12345678-12345678-12345678',
+    ]) {
+      expect(Schema.is(CatalogLocaleSchema)(locale)).toBe(false);
+    }
+    for (const locale of ['cs', 'cs-CZ', 'en-US', 'zh-Hant-TW']) {
+      expect(Schema.decodeUnknownSync(CatalogLocaleSchema)(locale)).toBe(locale);
+    }
+  });
+
   it('allows an incomplete draft and needs one nonblank name, not a long description', () => {
     expect(hasCatalogTextMinimum(decode({ localized: [], productRef }))).toBe(false);
     const facts = decode({ localized: [{ locale: 'cs-CZ', name: '  Police Alfa  ' }], productRef });

@@ -154,16 +154,25 @@ const readinessResolvedIntentSchema = Schema.Union([
   Schema.TaggedStruct('CatalogReadinessUnit', {}),
   Schema.TaggedStruct('CatalogReadinessUntyped', {}),
 ]);
-const readinessEffectInPlan = (input: SymmyEffectAdapterInput) =>
-  input.acceptedPlan?.items.some(({ effects }) =>
-    effects.some(({ intent }) =>
-      Schema.is(
-        Schema.TaggedStruct('CatalogProductDependentEffect', {
-          request: Schema.TaggedStruct('CatalogReadiness', {}),
-        }),
-      )(intent),
-    ),
-  ) === true;
+const readinessEffectInPlan = (input: SymmyEffectAdapterInput) => {
+  const item = input.acceptedPlan?.items.find(({ itemId }) => itemId === input.effect.itemId);
+  return (
+    item !== undefined &&
+    input.acceptedPlan?.items.some(({ effects }) =>
+      effects.some(({ intent }) =>
+        Schema.is(
+          Schema.TaggedStruct('CatalogProductDependentEffect', {
+            parent: Schema.Struct({
+              effectKey: Schema.Literal(input.effect.effectKey),
+              itemKey: Schema.Literal(item.itemKey),
+            }),
+            request: Schema.TaggedStruct('CatalogReadiness', {}),
+          }),
+        )(intent),
+      ),
+    ) === true
+  );
+};
 
 const provisioningOutcome = (
   input: SymmyEffectAdapterInput,
@@ -1191,6 +1200,10 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
         if (variants.length !== 1 || initialVariant === undefined) {
           return yield* symmyJobWorkerUnavailable();
         }
+        const needsReadiness = readinessEffectInPlan(input);
+        if (needsReadiness && result.initialVariantRevision === undefined) {
+          return Option.none<string>();
+        }
         let actionInvocationId = result.businessOriginalCreateInvocationId;
         if (actionInvocationId === undefined) {
           if (expectedInvocationId !== undefined) {
@@ -1208,14 +1221,14 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
           initialVariantRef: initialVariant.variantRef,
           productRef: result.product.productRef,
         };
-        if (readinessEffectInPlan(input) && result.initialVariantRevision !== undefined) {
+        if (needsReadiness) {
           Object.assign(receipt, {
             productRevision: result.product.revision,
             variantRevision: result.initialVariantRevision,
           });
         }
         yield* input.recordOwnerReceipt(receipt);
-        return actionInvocationId;
+        return Option.some(actionInvocationId);
       }),
     ),
     Match.orElse(() => Effect.fail(symmyJobWorkerInvalid())),
@@ -1374,7 +1387,10 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
         const businessOriginalCreateId = yield* captureCreatedProduct(input, result, contract, crypto, invocationId);
-        return createdSourceOutcome(input, invocationId, businessOriginalCreateId);
+        if (Option.isNone(businessOriginalCreateId)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        return createdSourceOutcome(input, invocationId, businessOriginalCreateId.value);
       }),
       CatalogCreateVariant: Effect.fn('SymmyOwnerAdapters.CatalogCreateVariant')(function* CatalogCreateVariant() {
         const result = yield* executeCreateVariantRecoveryWithAuthorization(
@@ -1463,7 +1479,7 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        if (readinessEffectInPlan(input)) {
+        if (input.effect.effectKey === readinessActivateKey) {
           yield* input.recordOwnerReceipt({ _tag: 'ReadinessProduct', productRevision: result.product.revision });
         }
         return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
@@ -1744,7 +1760,10 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           }
           const currentInvocationId = yield* recordCurrentNativeInvocation(input, contract);
           const businessOriginalCreateId = yield* captureCreatedProduct(input, result, contract, crypto);
-          return createdSourceOutcome(input, currentInvocationId, businessOriginalCreateId);
+          if (Option.isNone(businessOriginalCreateId)) {
+            return safeOutcome(input, 'unresolved');
+          }
+          return createdSourceOutcome(input, currentInvocationId, businessOriginalCreateId.value);
         },
       ),
       CatalogCreateVariant: Effect.fn('SymmyOwnerAdapters.CatalogCreateVariant')(
@@ -1856,7 +1875,7 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           if (!('changed' in result)) {
             return safeOutcome(input, 'unresolved');
           }
-          if (readinessEffectInPlan(input)) {
+          if (input.effect.effectKey === readinessActivateKey) {
             yield* input.recordOwnerReceipt({ _tag: 'ReadinessProduct', productRevision: result.product.revision });
           }
           return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');

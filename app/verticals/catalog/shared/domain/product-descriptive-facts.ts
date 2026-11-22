@@ -5,9 +5,16 @@ import { ProductNameSchema } from './product.ts';
 
 /** A locale identifies the language of the supplied fact; it is not a Product identity. */
 export const CatalogLocaleSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(100),
+  Schema.isMinLength(2),
+  Schema.isMaxLength(64),
   Schema.isTrimmed(),
+  Schema.makeFilter((locale) => {
+    try {
+      return Intl.getCanonicalLocales(locale)[0] === locale || 'A Catalog locale must be a canonical locale tag';
+    } catch {
+      return 'A Catalog locale must be a canonical locale tag';
+    }
+  }),
 );
 export type CatalogLocale = typeof CatalogLocaleSchema.Type;
 

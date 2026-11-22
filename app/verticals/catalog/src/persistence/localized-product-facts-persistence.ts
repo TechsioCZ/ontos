@@ -7,6 +7,7 @@ import { DateTime, Effect, Equal, Schema } from 'effect';
 import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import type { CreateProductPayload } from '../../shared/actions/create-product.ts';
+import { CatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
 import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 import {
   productLocalizedFactRevisions,
@@ -66,16 +67,7 @@ const unavailable = (cause?: unknown) => {
   return failure;
 };
 const uuid = (value: string) => Schema.is(Schema.String.check(Schema.isUUID()))(value);
-const canonicalLocale = (value: string) => {
-  if (value.length < 2 || value.length > 64 || value !== value.trim()) {
-    return false;
-  }
-  try {
-    return Intl.getCanonicalLocales(value)[0] === value;
-  } catch {
-    return false;
-  }
-};
+const canonicalLocale = Schema.is(CatalogLocaleSchema);
 const validText = (value: string | undefined, limit: number) =>
   value === undefined || (value.length > 0 && value.length <= limit && value === value.trim());
 const validChange = (input: Change) => {
