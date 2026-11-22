@@ -1,14 +1,23 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
-import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
+import {
+  PriceSourceAssertionInputSchema,
+  PriceSourceFactFingerprintBasisSchema,
+  PriceSourceFactFingerprintSchema,
+  PriceSourcePreTaxNormalizationSchema,
+  priceSourceFactFingerprintBasisFrom,
+} from '@app/pricing-contracts/domain/price-source-provenance';
 import type {
   PriceSourceAssertionInput,
   PriceSourceEvidence,
 } from '@app/pricing-contracts/domain/price-source-provenance';
 import type { PriceRef } from '@app/pricing-contracts/resources/price';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { sql } from 'drizzle-orm';
 import { DateTime, Effect, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -27,6 +36,8 @@ import { pricePersistenceForScope } from '../../src/services/price-persistence.s
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
 import { priceGroupSourcePricesPersistenceForScope } from '../../src/persistence/price-group-source-prices-persistence.ts';
 import type { PriceGroupSourcePricesRequest } from '../../shared/apis/price-group-source-prices.ts';
+import { PriceResultLookupResponseSchema } from '../../shared/apis/price-result-lookup.ts';
+import { PriceSourceResultLookupResponseSchema } from '../../shared/apis/price-source-result-lookup.ts';
 
 const tenantId = 'e7600000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7600000-0000-4000-8000-000000000002';
@@ -154,16 +165,17 @@ const defineCommand = (input: {
 const withPersistence = <Value, Failure>(
   database: PricingTestDatabase,
   operation: (persistence: PricePersistence & PriceActionResultLookupPersistence) => Effect.Effect<Value, Failure>,
+  selectedScope: OperationalScope = scope,
 ) =>
   database.transaction((transaction: PricingTransaction) =>
     Effect.gen(function* scopedPricePersistence() {
       yield* transaction.execute(
-        sql`select set_config('ontos.tenant_id', ${tenantId}, true),
-                   set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+        sql`select set_config('ontos.tenant_id', ${selectedScope.tenantId}, true),
+                   set_config('ontos.legal_entity_id', ${selectedScope.legalEntityId ?? ''}, true)`,
         'objects',
       );
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
-      const persistence = yield* pricePersistenceForScope(ownerTransaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, selectedScope);
+      const persistence = yield* pricePersistenceForScope(ownerTransaction, selectedScope);
       return yield* operation(persistence);
     }),
   );
@@ -221,6 +233,218 @@ const cleanup = (admin: PricingTestDatabase) =>
       yield* transaction.execute(sql`delete from pricing.prices where tenant_id = ${tenantId}::uuid`);
     }),
   );
+
+// Reconstruct the INITIAL producer's reference contract before f059acb2a8, not today's write ingress.
+const previousSourceReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
+const previousSourceAuthoritySchema = Schema.Struct({
+  sourceAuthorityRef: previousSourceReference,
+  sourceAuthorityVersion: previousSourceReference,
+});
+const previousSourceFields = {
+  mapping: Schema.Struct({
+    mappingContractRef: previousSourceReference,
+    mappingContractVersion: previousSourceReference,
+  }),
+  preTaxNormalization: Schema.optionalKey(
+    Schema.Struct({
+      ...PriceSourcePreTaxNormalizationSchema.fields,
+      authority: previousSourceAuthoritySchema,
+    }),
+  ),
+  sourceAuthority: previousSourceAuthoritySchema,
+};
+const previousInitialSourceAssertionSchema = Schema.Struct({
+  ...PriceSourceAssertionInputSchema.fields,
+  ...previousSourceFields,
+  lineage: Schema.Struct({ kind: Schema.Literal('INITIAL') }),
+});
+const previousSourceFingerprintBasisSchema = Schema.Struct({
+  ...PriceSourceFactFingerprintBasisSchema.fields,
+  ...previousSourceFields,
+});
+
+const sourcePriceHistory = (admin: PricingTestDatabase) =>
+  admin.execute<{
+    readonly payload: unknown;
+    readonly relation: string;
+    readonly rowVersion: string;
+  }>(
+    sql`${sql.join(
+      [
+        'prices',
+        'price_revisions',
+        'price_schedule_revisions',
+        'price_schedule_entries',
+        'price_schedule_heads',
+        'price_schedule_acknowledgements',
+        'price_invocation_receipts',
+        'price_source_assertions',
+        'price_source_assertion_deliveries',
+        'price_fee_action_invocation_claims',
+        'price_fee_action_result_receipts',
+        'price_candidate_set_roots',
+        'price_candidate_set_revisions',
+        'price_candidate_set_heads',
+        'quantity_tier_set_roots',
+        'quantity_tier_set_revisions',
+        'quantity_tier_set_heads',
+      ].map(
+        (relation) =>
+          sql`select ${relation}::text as relation, to_jsonb(history) as payload,
+                     history.xmin::text as "rowVersion"
+                from ${sql.identifier('pricing')}.${sql.identifier(relation)} as history
+               where history.tenant_id = ${tenantId}::uuid`,
+      ),
+      sql` union all `,
+    )} order by relation, payload`,
+    'objects',
+  );
+
+it.live('recovers a seeded previous-contract Price source receipt without rewriting native history', () =>
+  Effect.scoped(
+    Effect.gen(function* previousContractSourceReceiptRecovery() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      yield* cleanup(admin);
+      yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
+
+      const actionInvocationId = 'e7600000-0000-4000-8000-000000000060';
+      const original = sourceAssertion({
+        importedAt: '2026-09-27T10:01:00.000Z',
+        sourceAssertionId: 'e7600000-0000-4000-8000-000000000061',
+      });
+      const historicalAssertion = yield* Schema.decodeUnknownEffect(previousInitialSourceAssertionSchema)({
+        ...original,
+        mapping: { mappingContractRef: '*', mappingContractVersion: '*' },
+        originalAssertion: {
+          ...original.originalAssertion,
+          monetaryAmount: { amount: '121.000000000', currencyCode: 'CZK' },
+          monetaryBoundary: 'TAX_INCLUSIVE',
+        },
+        preTaxNormalization: {
+          authority: { sourceAuthorityRef: '*', sourceAuthorityVersion: '*' },
+          normalizedMonetaryAmount: { amount: '100.000000000', currencyCode: 'CZK' },
+        },
+        sourceAuthority: { sourceAuthorityRef: '*', sourceAuthorityVersion: '*' },
+      });
+      expect(Schema.is(PriceSourceAssertionInputSchema)(historicalAssertion)).toBe(false);
+      const fingerprintBasis = yield* Schema.encodeEffect(Schema.fromJsonString(previousSourceFingerprintBasisSchema))(
+        priceSourceFactFingerprintBasisFrom(historicalAssertion),
+      );
+      const historicalEvidence: PriceSourceEvidence = {
+        lineage: historicalAssertion.lineage,
+        recordedAt: '2026-09-27T10:02:00.000Z',
+        sourceAssertion: historicalAssertion,
+        sourceFactFingerprint: yield* Schema.decodeEffect(PriceSourceFactFingerprintSchema)(
+          Hex.encode(sha256(utf8ToBytes(fingerprintBasis))),
+        ),
+        tenantId,
+      };
+      const command = defineCommand({
+        actionInvocationId,
+        evidence: historicalEvidence,
+        priceId: canonicalPriceId,
+        requestCorrelationId: 'price-source:seeded-previous-contract',
+      });
+      const serializedCommand = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(command);
+
+      // Truthful historical seeding: the real native writer creates its own rows and receipt from
+      // the previous producer's validated command/hash shape. No old Action producer ran here, and
+      // no approval or Core COMMITTED evidence is invented. Seeding is below today's TS write ingress;
+      // native owner validation and receipt writing remain intact.
+      const seededRows = yield* runtime.transaction((transaction) =>
+        Effect.gen(function* seedPreviousContractOwnerCommand() {
+          yield* transaction.execute(
+            sql`select set_config('ontos.tenant_id', ${tenantId}, true),
+                       set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+            'objects',
+          );
+          yield* installOperationalScope(transaction, scope);
+          return yield* transaction.execute<{ readonly payload: unknown }>(
+            sql`select payload from pricing.define_price_v3(
+              ${tenantId}::uuid, ${legalEntityId}::uuid, ${serializedCommand}::jsonb
+            )`,
+            'objects',
+          );
+        }),
+      );
+      expect(seededRows).toHaveLength(1);
+      const seededResult = seededRows[0]?.payload;
+      expect(seededResult).toMatchObject({
+        outcome: 'CREATED',
+        provenance: { evidence: historicalEvidence },
+      });
+      const before = yield* sourcePriceHistory(admin);
+      expect(
+        before.filter(({ relation }) => relation === 'price_fee_action_result_receipts').map(({ payload }) => payload),
+      ).toEqual([
+        expect.objectContaining({
+          acting_principal_id: principalId,
+          action_invocation_id: actionInvocationId,
+          action_kind: 'DEFINE_PRICE',
+          legal_entity_id: legalEntityId,
+          request_payload: expect.objectContaining({
+            actingPrincipalId: principalId,
+            actionInvocationId,
+            sourceEvidence: historicalEvidence,
+          }),
+          result_payload: seededResult,
+          tenant_id: tenantId,
+        }),
+      ]);
+      expect(
+        before.filter(({ relation }) => relation === 'price_source_assertions').map(({ payload }) => payload),
+      ).toEqual([
+        expect.objectContaining({
+          action_invocation_id: actionInvocationId,
+          mapping_contract_ref: '*',
+          mapping_contract_version: '*',
+          recorded_by_principal_id: principalId,
+          source_authority_ref: '*',
+          source_authority_version: '*',
+          source_fact_fingerprint: historicalEvidence.sourceFactFingerprint,
+        }),
+      ]);
+      expect(
+        before.filter(({ relation }) => relation === 'price_source_assertion_deliveries').map(({ payload }) => payload),
+      ).toEqual([
+        expect.objectContaining({
+          action_invocation_id: actionInvocationId,
+          delivered_evidence: historicalEvidence,
+          recorded_by_principal_id: principalId,
+        }),
+      ]);
+
+      const expected = { actionInvocationId, outcome: 'PRICE_ACTION_RESULT_FOUND', result: seededResult };
+      for (const attempt of [1, 2]) {
+        const recovered = yield* withPersistence(runtime, (persistence) =>
+          persistence.lookupResult({ actionInvocationId }),
+        );
+        expect(recovered, `Recovery attempt ${attempt} must return the exact original CREATED receipt`).toEqual(
+          expected,
+        );
+        expect(yield* Schema.encodeEffect(PriceResultLookupResponseSchema)(recovered)).toEqual(expected);
+        expect(yield* Schema.encodeEffect(PriceSourceResultLookupResponseSchema)(recovered)).toEqual(expected);
+      }
+      expect(
+        yield* withPersistence(runtime, (persistence) => persistence.lookupResult({ actionInvocationId }), {
+          ...scope,
+          principalId: 'e7600000-0000-4000-8000-000000000062',
+        }),
+      ).toEqual({ actionInvocationId, outcome: 'PRICE_ACTION_RESULT_ABSENT' });
+      const otherInvocationId = 'e7600000-0000-4000-8000-000000000063';
+      expect(
+        yield* withPersistence(runtime, (persistence) =>
+          persistence.lookupResult({ actionInvocationId: otherInvocationId }),
+        ),
+      ).toEqual({ actionInvocationId: otherInvocationId, outcome: 'PRICE_ACTION_RESULT_ABSENT' });
+      // Include row versions, not just counts: recovery must neither append nor rewrite the rows.
+      expect(yield* sourcePriceHistory(admin)).toEqual(before);
+      return null;
+    }),
+  ),
+);
 
 it.live('binds one exact canonical revision to one stable owner fact and retains every delivery', () =>
   Effect.scoped(
