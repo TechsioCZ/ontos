@@ -211,5 +211,24 @@ describe('Price source provenance service', () => {
         },
       }),
     ).toBe(false);
+    for (const changed of [
+      {
+        ...sourceAssertion,
+        sourceRecord: { ...sourceAssertion.sourceRecord, sourceChangeCorrelation: 'different-source-change' },
+      },
+      {
+        ...sourceAssertion,
+        sourceAuthority: { ...sourceAssertion.sourceAuthority, sourceAuthorityVersion: '8' },
+      },
+      { ...sourceAssertion, mapping: { ...sourceAssertion.mapping, mappingContractVersion: '3' } },
+    ]) {
+      const changedEvidence = prepare(changed);
+      if (changedEvidence.outcome !== 'READY_FOR_CANONICAL_WRITE') {
+        throw new Error('Expected prepared evidence for a different source fact');
+      }
+      expect(
+        acceptedPriceSourceProvenanceMatches({ definition, expectedEvidence: changedEvidence.evidence, provenance }),
+      ).toBe(false);
+    }
   });
 });

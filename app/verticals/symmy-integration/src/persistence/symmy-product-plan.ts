@@ -328,7 +328,8 @@ const buildPriceItem = Effect.fn('SymmyProductPlan.price')(function* buildPriceI
                 sourceAssertionId: occurrenceId,
                 sourceAuthority: priceSource.sourceAuthority,
                 sourceRecord: {
-                  sourceChangeCorrelation: occurrenceId,
+                  // Version 1 is the initial source fact, not this delivery's occurrence.
+                  sourceChangeCorrelation: `initial:${record}`,
                   sourceRecordRef: recordId,
                   sourceRecordVersion: '1',
                   sourceSystem,

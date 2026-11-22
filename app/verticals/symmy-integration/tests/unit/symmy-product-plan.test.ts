@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 
+import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { Cause, DateTime, Effect, Exit, Match, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { priceSourceFactFingerprint } from '../../../pricing/src/services/price-source-provenance.service.ts';
 import { AdmitSymmyJobPayloadSchema, AdmitSymmyJobRejected } from '../../shared/domain/symmy-job-admission.ts';
 import { mapAdmitSymmyJobBusinessProblem } from '../../shared/domain/admit-symmy-job-business-problems.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -96,6 +98,7 @@ const build = (
   overrides: {
     readonly groups?: SymmyProductPriceGroupFacts;
     readonly idempotencyKey?: string;
+    readonly receivedAt?: DateTime.Utc;
     readonly template?: SymmyFixtureExecutionPlan;
     readonly withoutLegalEntity?: boolean;
   } = {},
@@ -105,7 +108,7 @@ const build = (
     idempotencyKey: overrides.idempotencyKey ?? 'product-key-1',
     legalEntityId: overrides.withoutLegalEntity === true ? undefined : legalEntityId,
     priceGroups: overrides.groups ?? [],
-    receivedAt: DateTime.makeUnsafe('2026-01-01T12:00:00.000Z'),
+    receivedAt: overrides.receivedAt ?? DateTime.makeUnsafe('2026-01-01T12:00:00.000Z'),
     route: { mappingVersion: 'route-mapping', routeId },
     rows,
     template: overrides.template ?? template,
@@ -385,6 +388,70 @@ describe('Symmy product plan from the public rows', () => {
       expect(effectOf(again, 'product-0-variant-1', 'variant-create').intent).toEqual(
         effectOf(first, 'product-0-variant-1', 'variant-create').intent,
       );
+    }),
+  );
+
+  it.effect('keeps one native Price source fact across new-key deliveries without reusing request identities', () =>
+    Effect.gen(function* replaysPriceSourceFact() {
+      const rows = rowsOf(
+        product({ identifier: { type: 'erpId', value: 'P-1' } }, [
+          variant({
+            identifier: { type: 'variantId', value: 'V-1' },
+            prices: [price({ effectiveFrom: '2026-01-01T10:00:00.000Z' })],
+          }),
+        ]),
+      );
+      const first = Option.getOrThrow(yield* build(rows));
+      const again = Option.getOrThrow(
+        yield* build(rows, {
+          idempotencyKey: 'another-key',
+          receivedAt: DateTime.makeUnsafe('2026-01-02T12:00:00.000Z'),
+        }),
+      );
+      const original = priceRequestOf(effectOf(first, 'product-0-variant-0-price-0', 'price-define'));
+      const replay = priceRequestOf(effectOf(again, 'product-0-variant-0-price-0', 'price-define'));
+      if (original === undefined || replay === undefined) {
+        return yield* Effect.die('Expected both admitted Price requests');
+      }
+      const originalAssertion = yield* Schema.decodeUnknownEffect(PriceSourceAssertionInputSchema)(
+        original.sourceAssertion,
+      );
+      const replayAssertion = yield* Schema.decodeUnknownEffect(PriceSourceAssertionInputSchema)(
+        replay.sourceAssertion,
+      );
+
+      expect(replay.priceRef).not.toEqual(original.priceRef);
+      expect(replayAssertion.sourceAssertionId).not.toBe(originalAssertion.sourceAssertionId);
+      expect(replayAssertion.timing.importedAt).not.toBe(originalAssertion.timing.importedAt);
+      expect(replayAssertion.sourceRecord).toEqual(originalAssertion.sourceRecord);
+      expect(priceSourceFactFingerprint(replayAssertion)).toBe(priceSourceFactFingerprint(originalAssertion));
+      expect(replayAssertion).toEqual({
+        ...originalAssertion,
+        sourceAssertionId: replayAssertion.sourceAssertionId,
+        timing: { ...originalAssertion.timing, importedAt: replayAssertion.timing.importedAt },
+      });
+      // A real source change is not a delivery replay, even when it names the same native Price.
+      for (const changed of [
+        { ...replayAssertion, sourceAuthority: { ...replayAssertion.sourceAuthority, sourceAuthorityVersion: '2' } },
+        { ...replayAssertion, mapping: { ...replayAssertion.mapping, mappingContractVersion: 'mapping-v2' } },
+        {
+          ...replayAssertion,
+          sourceRecord: {
+            ...replayAssertion.sourceRecord,
+            sourceSystem: { ...replayAssertion.sourceRecord.sourceSystem, sourceSystemRef: 'OTHER_PRICES' },
+          },
+        },
+        {
+          ...replayAssertion,
+          originalAssertion: {
+            ...replayAssertion.originalAssertion,
+            monetaryAmount: { ...replayAssertion.originalAssertion.monetaryAmount, amount: '26' },
+          },
+        },
+      ]) {
+        expect(priceSourceFactFingerprint(changed)).not.toBe(priceSourceFactFingerprint(originalAssertion));
+      }
+      return yield* Effect.void;
     }),
   );
 
