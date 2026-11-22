@@ -1,5 +1,11 @@
-import { Crypto, DateTime, Duration, Effect, Layer, Option, Result, Schedule, Schema } from 'effect';
+import {
+  ActiveApplicationCompositionService,
+  loadActiveApplicationComposition,
+} from '@app/core-runtime/modules/active-application-composition';
+import { Config, Crypto, DateTime, Duration, Effect, Layer, Option, Ref, Result, Schedule, Schema } from 'effect';
 
+import { portalAuthRealmConfigured } from '../../../api/portal-auth/provider/config.ts';
+import { ultramodernApiMarker } from '../../../shared/ultramodern-build.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from './communication-request-submitter.ts';
 import type { PortalAuthTransportAnswer } from './communication-request-submitter.ts';
 import type { PortalAuthCommunicationUnavailable } from './communication-unavailable.ts';
@@ -217,25 +223,111 @@ const RELAY_DEFAULTS = {
   retryMillis: 1000,
 } as const;
 
+const RELAY_MODULE_ID = 'commerce.customer-context';
+
+/** The approved modules of a composition, as far as the relay reads them. */
+interface ApprovedModules {
+  readonly composition: {
+    readonly modules: readonly {
+      readonly deployment: { readonly appId: string; readonly buildMarker: string };
+      readonly moduleId: string;
+    }[];
+  };
+}
+
+/** Whether the approved release of `commerce.customer-context` in the composition is exactly this build. */
+export const relayReleaseApproved = (
+  deployment: { readonly appId: string; readonly buildMarker: string },
+  snapshot: ApprovedModules,
+): boolean =>
+  snapshot.composition.modules.some(
+    (module) =>
+      module.moduleId === RELAY_MODULE_ID &&
+      module.deployment.appId === deployment.appId &&
+      module.deployment.buildMarker === deployment.buildMarker,
+  );
+
 /**
  * The relay loop for the lifetime of the layer's scope, under a lease owner unique to this process, for the Tenant of the
- * realm's trusted scope. A realm without a trusted scope relays nothing (fail closed). A tick that moved something is logged
- * with counts only, never a request.
+ * realm's trusted scope. It is the scoped maintenance loop of this module's Outbox Worker entry (the sweep of the Auth-local
+ * outbox belongs to the worker host, never to a request-serving API process). A tick relays only while `admitted` says the
+ * approved release is this build, logging one refusal per change; a realm without a trusted scope relays nothing (fail
+ * closed). A tick that moved something is logged with counts only, never a request.
  */
-export const PortalAuthCommunicationRelayLive = Layer.effectDiscard(
-  Effect.gen(function* startPortalAuthCommunicationRelay() {
-    const trustedScope = yield* CommercePortalAuthTrustedScope;
-    const process = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
-    const leaseOwner = `portal-auth-relay:${process}`;
-    const tick = trustedScope.current.pipe(
-      Effect.flatMap(({ tenantId }) => relayCommunicationRequests({ ...RELAY_DEFAULTS, leaseOwner, tenantId })),
-      Effect.tap((result) =>
-        result.claimed === 0
-          ? Effect.void
-          : Effect.annotateLogs(Effect.logInfo('The Portal Auth communication relay tick completed'), { ...result }),
-      ),
-      Effect.ignore,
+export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boolean>) =>
+  Layer.effectDiscard(
+    Effect.gen(function* startPortalAuthCommunicationRelay() {
+      const trustedScope = yield* CommercePortalAuthTrustedScope;
+      const process = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+      const leaseOwner = `portal-auth-relay:${process}`;
+      /** Whether the previous tick was admitted, so a refused release is logged once per change. */
+      const wasAdmitted = yield* Ref.make(true);
+      const relay = trustedScope.current.pipe(
+        Effect.flatMap(({ tenantId }) => relayCommunicationRequests({ ...RELAY_DEFAULTS, leaseOwner, tenantId })),
+        Effect.tap((result) =>
+          result.claimed === 0
+            ? Effect.void
+            : Effect.annotateLogs(Effect.logInfo('The Portal Auth communication relay tick completed'), { ...result }),
+        ),
+        Effect.ignore,
+      );
+      const refused = Effect.logWarning(
+        'The Portal Auth communication relay awaits an approved commerce.customer-context release',
+      );
+      const tick = admitted.pipe(
+        Effect.flatMap((admission) =>
+          Ref.getAndSet(wasAdmitted, admission).pipe(
+            Effect.flatMap((previously) => {
+              if (admission) {
+                return relay;
+              }
+              return previously ? refused : Effect.void;
+            }),
+          ),
+        ),
+      );
+      yield* Effect.forkScoped(tick.pipe(Effect.repeat(Schedule.spaced(RELAY_INTERVAL))));
+    }),
+  );
+
+/** The relay loop admitted by the worker entry's active Application Composition: it relays only for this approved build. */
+export const PortalAuthCommunicationRelayLive = Layer.unwrap(
+  Effect.gen(function* portalAuthCommunicationRelay() {
+    const authority = yield* ActiveApplicationCompositionService;
+    const admitted = loadActiveApplicationComposition(authority).pipe(
+      Effect.map((snapshot) => relayReleaseApproved(ultramodernApiMarker, snapshot)),
+      Effect.orElseSucceed(() => false),
     );
-    yield* Effect.forkScoped(tick.pipe(Effect.repeat(Schedule.spaced(RELAY_INTERVAL))));
+    return makePortalAuthCommunicationRelayLive(admitted);
   }),
 );
+
+/** What a worker host's deployment says about adopting the relay. */
+export interface PortalAuthCommunicationRelayAdoption {
+  readonly realmConfigured: boolean;
+  readonly relayCredentialNamed: boolean;
+}
+
+/**
+ * The relay is opt-in: a worker host relays only when its deployment opted in to the Portal Auth realm AND named the relay
+ * credential. Read once, when the worker entry's layer is built.
+ */
+export const portalAuthCommunicationRelayAdoption: Effect.Effect<PortalAuthCommunicationRelayAdoption> = Effect.all(
+  {
+    realmConfigured: portalAuthRealmConfigured,
+    relayCredentialNamed: Config.Redacted('COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY').pipe(
+      Config.option,
+      Effect.map(Option.isSome),
+      Effect.orElseSucceed(() => false),
+    ),
+  },
+  { concurrency: 1 },
+);
+
+/**
+ * Whether a worker host composes the relay loop. Any other host composes nothing: no loop, no Auth pool, and no other hosted
+ * loop changed. The realm's API composition is never touched, so a deployment without Communications keeps the direct
+ * e-mail delivery.
+ */
+export const portalAuthCommunicationRelayAdopted = (adoption: PortalAuthCommunicationRelayAdoption): boolean =>
+  adoption.realmConfigured && adoption.relayCredentialNamed;

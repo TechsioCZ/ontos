@@ -22,7 +22,7 @@ import { CommercePortalAuthCommunicationStore } from '../../src/portal-auth/comm
 import { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
 import type { PortalAuthIssuance } from '../../src/portal-auth/communications/issuance.ts';
 import {
-  PortalAuthCommunicationRelayLive,
+  makePortalAuthCommunicationRelayLive,
   relayCommunicationRequests,
 } from '../../src/portal-auth/communications/request-relay.ts';
 import { PortalAuthRelayTransportLive } from '../../src/portal-auth/communications/relay-transport.ts';
@@ -298,7 +298,7 @@ describe('The relay loop and the production relay transport (#1406 D1)', () => {
         yield* Effect.scoped(
           Effect.gen(function* running() {
             yield* Layer.build(
-              PortalAuthCommunicationRelayLive.pipe(
+              makePortalAuthCommunicationRelayLive(Effect.succeed(true)).pipe(
                 Layer.provide(
                   Layer.mergeAll(
                     Layer.succeed(CommercePortalAuthCommunicationStore, store.service),

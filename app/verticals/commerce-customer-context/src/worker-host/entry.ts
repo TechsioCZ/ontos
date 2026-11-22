@@ -2,7 +2,7 @@
 // @ontos-outbox-worker-host-owner commerce.customer-context
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Layer } from 'effect';
+import { Effect, Layer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
@@ -12,6 +12,16 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
+import { CommercePortalAuthConfigLive } from '../../api/portal-auth/provider/config.ts';
+import { PortalAuthRelayTransportLive } from '../portal-auth/communications/relay-transport.ts';
+import {
+  PortalAuthCommunicationRelayLive,
+  portalAuthCommunicationRelayAdopted,
+  portalAuthCommunicationRelayAdoption,
+} from '../portal-auth/communications/request-relay.ts';
+import { unconfiguredTrustedScopeLayer } from '../portal-auth/communications/trusted-scope.ts';
+import { CommercePortalAuthCommunicationStoreLive } from '../portal-auth/persistence/portal-auth-communication-store.ts';
+import { CommercePortalAuthDatabaseLive } from '../portal-auth/persistence/portal-auth-database.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
@@ -19,24 +29,57 @@ import {
   outboxWorkerRepositoryLive,
 } from './layer.ts';
 
+/**
+ * The Portal Auth communication relay (#1406 D1) over Auth's own store and pool and the production relay transport. The sweep
+ * of the Auth-local outbox runs here, beside the source worker it feeds, never in a request-serving API process.
+ *
+ * OPEN (Auth owner adoption seam): the realm's trusted Tenant has no production source yet, so the relay is composed with the
+ * fail-closed unconfigured scope and relays nothing until the owner supplies one.
+ */
+const portalAuthCommunicationRelayLive = PortalAuthCommunicationRelayLive.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      CommercePortalAuthCommunicationStoreLive.pipe(
+        Layer.provide(CommercePortalAuthDatabaseLive),
+        Layer.provide(CommercePortalAuthConfigLive),
+      ),
+      PortalAuthRelayTransportLive,
+      unconfiguredTrustedScopeLayer,
+    ),
+  ),
+);
+/** Composed only for a host that adopted the relay; any other host gets nothing. */
+const portalAuthCommunicationRelayDriverLive = Layer.unwrap(
+  portalAuthCommunicationRelayAdoption.pipe(
+    Effect.map((adoption) =>
+      portalAuthCommunicationRelayAdopted(adoption) ? portalAuthCommunicationRelayLive : Layer.empty,
+    ),
+  ),
+);
+
 /** The combined Outbox Worker host polls this entry in its own runtime under its own claim owner. */
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: 'commerce.customer-context-outbox-worker',
   expectedDeployment: ultramodernApiMarker,
-  layer: Layer.merge(
-    ActiveApplicationCompositionConfigLive.pipe(
-      Layer.provide(
-        ActiveApplicationCompositionSourceLive.pipe(
+  // The opt-in Portal Auth communication relay (#1406 D1) is this entry's one scoped maintenance loop: it lives exactly as
+  // long as the entry's layer scope and reads the entry's active Application Composition to relay only for this release.
+  layer: portalAuthCommunicationRelayDriverLive.pipe(
+    Layer.provideMerge(
+      Layer.merge(
+        ActiveApplicationCompositionConfigLive.pipe(
           Layer.provide(
-            FetchHttpClient.layer.pipe(
-              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+            ActiveApplicationCompositionSourceLive.pipe(
+              Layer.provide(
+                FetchHttpClient.layer.pipe(
+                  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+                ),
+              ),
             ),
           ),
         ),
+        outboxWorkerDefinitionLayer,
       ),
     ),
-    outboxWorkerDefinitionLayer,
-  ).pipe(
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
