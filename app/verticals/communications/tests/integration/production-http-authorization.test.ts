@@ -43,7 +43,7 @@ import { MessageHistoryListResultSchema } from '../../shared/message-history-rea
 import { communicationRequest, originalRecipient } from '../support/intake-fixtures.ts';
 import { decided, intakeWorld } from '../support/intake-world.ts';
 import { makeRuntimeDatabase } from '../support/persistence.fixture.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
 /*
  * Q-AUTHZ (#1408, E01/E10/E12/E17): Communications Actions and Reads through the PRODUCTION HTTP assembly of the module
@@ -89,16 +89,26 @@ const makeGateway = Effect.fnUntraced(function* makeGateway() {
 
 const digest = (value: string) => createHash('sha256').update(value, 'utf-8').digest('hex');
 
-/** One composition module from an actual Codesmith deployment artifact of this workspace; nothing is fabricated. */
+const ContractDocumentSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
+
+/**
+ * One composition module from the actual Codesmith deployment artifact of this workspace. Its deployment identity is the
+ * release under test: these source-mode runtime layers always run as the workspace build marker, while the generator stamps
+ * a promotable release marker whenever the Git tree is clean, so the approved release is pinned to the runtime's own.
+ */
 const publishedModule = Effect.fnUntraced(function* publishedModule(
   manifestPath: URL,
   requiredShellAbi: ApplicationComposition['modules'][number]['requiredShellAbi'],
 ) {
   const filesystem = yield* FileSystem.FileSystem;
-  const document = yield* filesystem.readFileString(manifestPath.pathname);
-  const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
-    document,
+  const generated = yield* Schema.decodeUnknownEffect(ContractDocumentSchema)(
+    yield* filesystem.readFileString(manifestPath.pathname),
   );
+  const contract = {
+    ...generated,
+    deployment: { ...generated.deployment, buildMarker: ultramodernDeliveryUnit.buildMarker },
+  };
+  const document = yield* Schema.encodeEffect(ContractDocumentSchema)(contract);
   return {
     allowedContributions: [],
     backend: { baseUrl: `https://${contract.deployment.appId}.native-tests.example/`, transport: 'node-http' },
