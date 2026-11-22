@@ -51,6 +51,8 @@
     "./install/stage-accounts-file": "./src/install/stage-accounts-file.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
     "./media/edge": "./src/media/edge.ts",
+    "./media/rename-contract": "./src/media/rename-contract.ts",
+    "./media/upload-contract": "./src/media/upload-contract.ts",
     "./module-entrypoint": "./src/modules/module-entrypoint.ts",
     "./modules/active-application-composition": "./src/modules/active-application-composition.ts",
     "./modules/active-application-composition-source": {

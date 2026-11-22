@@ -39,7 +39,14 @@ const markers = {
 const marker = (name: string, edge: 'end' | 'start') => `// @ontos-codesmith-${name}:${edge}`;
 const comparable = (value: string) => value.replaceAll(/\s+/gu, '').replaceAll(/,(?<closing>[})\]])/gu, '$<closing>');
 
-const patchSlot = (source: string, name: string, identity: string, contribution: string): string => {
+export const patchSlot = (
+  source: string,
+  name: string,
+  identity: string,
+  contribution: string,
+  /** Which generator owns the entries of the slot: the entry tag is the ownership proof a re-run checks. */
+  owner: 'core-action' | 'core-read' = 'core-read',
+): string => {
   const start = marker(name, 'start');
   const end = marker(name, 'end');
   if (source.split(start).length !== 2 || source.split(end).length !== 2) {
@@ -51,21 +58,21 @@ const patchSlot = (source: string, name: string, identity: string, contribution:
     return raiseScaffoldFailure(`reversed Core read insertion slot: ${name}`);
   }
   const body = source.slice(startIndex, endIndex);
-  const tag = `// @ontos-core-read ${identity}`;
+  const tag = `// @ontos-${owner} ${identity}`;
   if (body.includes(tag)) {
     if (!comparable(body).includes(comparable(contribution))) {
       return raiseScaffoldFailure(`Core read insertion slot drift: ${name} / ${identity}`);
     }
     return source;
   }
-  if (body.trim().length > 0 && !body.includes('// @ontos-core-read ')) {
+  if (body.trim().length > 0 && !body.includes(`// @ontos-${owner} `)) {
     return raiseScaffoldFailure(`unsupported content in Core read insertion slot: ${name}`);
   }
   const insertion = `\n${tag}\n${contribution}\n`;
   return `${source.slice(0, endIndex)}${insertion}${source.slice(endIndex)}`;
 };
 
-const patchCoreRuntimeImport = (source: string, value: string): string => {
+export const patchCoreRuntimeImport = (source: string, value: string): string => {
   const imports = [...source.matchAll(/import \{(?<members>[^}]*)\} from '@app\/core-runtime';/gu)];
   if (imports.length !== 1 || imports[0]?.groups?.['members'] === undefined) {
     return raiseScaffoldFailure('Core read requires one canonical Shell Core runtime import');
@@ -75,10 +82,10 @@ const patchCoreRuntimeImport = (source: string, value: string): string => {
   if (members === undefined || found.index === undefined) {
     return raiseScaffoldFailure('Core read cannot patch Shell Core runtime import');
   }
-  if (new RegExp(`\\b${value}Read\\b`, 'u').test(members)) {
+  if (new RegExp(`\\b${value}\\b`, 'u').test(members)) {
     return source;
   }
-  const replacement = `import {${members.trimEnd()}\n  ${value}Read,\n} from '@app/core-runtime';`;
+  const replacement = `import {${members.trimEnd()}\n  ${value},\n} from '@app/core-runtime';`;
   return `${source.slice(0, found.index)}${replacement}${source.slice(found.index + found[0].length)}`;
 };
 
@@ -216,10 +223,11 @@ const renderClientOperation = (type: string) => `export const execute${type} = (
 ): Effect.Effect<${type}Response, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.coreRead${type}.execute${type}({ payload }));`;
 
-const readAndPatch = Effect.fn('CoreReadScaffold.patch')(function* readAndPatch(
+export const readAndPatch = Effect.fn('CoreReadScaffold.patch')(function* readAndPatch(
   path: string,
-  slots: readonly [string, string, string][],
+  slots: readonly (readonly [string, string, string])[],
   coreImport?: string,
+  owner: 'core-action' | 'core-read' = 'core-read',
 ) {
   const fs = yield* FileSystem.FileSystem;
   const current = yield* fs
@@ -229,7 +237,7 @@ const readAndPatch = Effect.fn('CoreReadScaffold.patch')(function* readAndPatch(
   for (const [slot, identity, entry] of slots) {
     const currentSource = next;
     next = yield* tryScaffold(`failed to patch Core read slot ${slot}`, () =>
-      patchSlot(currentSource, slot, identity, entry),
+      patchSlot(currentSource, slot, identity, entry, owner),
     );
   }
   if (coreImport !== undefined) {
@@ -303,7 +311,7 @@ export const planCoreReadScaffold = Effect.fn('CoreReadScaffold.plan')(function*
         [markers.serverGroups, name, renderServerGroup(type, value)],
         [markers.serverLayers, name, `coreRead${type}GroupLive,`],
       ],
-      value,
+      `${value}Read`,
     ),
     readAndPatch(clientRoot, [
       [

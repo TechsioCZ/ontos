@@ -8,6 +8,7 @@ import type { GeneratorContext } from '@modern-js/codesmith';
 import { Console, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Argument, CliConfig, Command, Flag, GlobalFlag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import coreActionHttpGenerator from './action-http/core.mts';
 import actionHttpGenerator from './action-http/scaffold.mts';
 import { actionHttpProposalGenerator } from './action-http/proposal.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
@@ -36,6 +37,8 @@ import type {
   ActionHttpScaffoldResult,
   ActionServiceScaffoldConfig,
   ActionServiceScaffoldResult,
+  CoreActionHttpScaffoldConfig,
+  CoreActionHttpScaffoldResult,
   ExternalHttpAdapterScaffoldConfig,
   ExternalHttpAdapterScaffoldResult,
   ModuleContractScaffoldConfig,
@@ -85,6 +88,9 @@ const scaffoldCommandValues = [
 ] as const;
 
 const DOMAIN_PROBLEM_FLAG = 'domain-problem';
+const DOMAIN_ERROR_KIND_FLAG = 'domain-error-kind';
+const CONTRACT_MODULE_FLAG = 'contract-module';
+const REQUEST_SERVICES_FLAG = 'request-services';
 const SCHEMA_MODULE_FLAG = 'schema-module';
 const RESULT_SCHEMA_FLAG = 'result-schema';
 const LEGAL_ENTITY_SCOPE_FLAG = 'legal-entity-scope';
@@ -94,6 +100,8 @@ const ACCESS_SELECTORS_FLAG = 'access-selectors';
 const ACCESS_WORKLOAD_FLAG = 'access-workload';
 const ACCESS_WORKLOAD_KEYS_FLAG = 'access-workload-keys';
 const PROPOSAL_ONLY_FLAG = 'proposal-only';
+/** The `scaffold:action-http` flags that may repeat; their values join with commas. */
+const REPEATABLE_ACTION_HTTP_FLAGS: ReadonlySet<string> = new Set([DOMAIN_PROBLEM_FLAG, DOMAIN_ERROR_KIND_FLAG]);
 
 export const ScaffoldCommandSchema = Schema.Literals(scaffoldCommandValues);
 export type ScaffoldCommand = typeof ScaffoldCommandSchema.Type;
@@ -106,6 +114,7 @@ export class ScaffoldingError extends Schema.TaggedError<ScaffoldingError>()('Sc
 type GeneratorResult =
   | ActionBoundaryScaffoldResult
   | ActionHttpScaffoldResult
+  | CoreActionHttpScaffoldResult
   | ActionScaffoldResult
   | ActionServiceScaffoldResult
   | ExternalHttpAdapterScaffoldResult
@@ -122,6 +131,7 @@ type GeneratorResult =
 type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
   | ActionHttpScaffoldConfig
+  | CoreActionHttpScaffoldConfig
   | ActionScaffoldConfig
   | ActionServiceScaffoldConfig
   | ExternalHttpAdapterScaffoldConfig
@@ -164,7 +174,9 @@ interface ParsedScaffoldFlags {
   readonly accessWorkloadKeys: string | undefined;
   readonly action: string | undefined;
   readonly authorizationMode: string | undefined;
+  readonly contractModule: string | undefined;
   readonly core: boolean;
+  readonly domainErrorKind: string | undefined;
   readonly domainProblem: string | undefined;
   readonly kind: string | undefined;
   readonly legalEntityScope: string | undefined;
@@ -177,6 +189,7 @@ interface ParsedScaffoldFlags {
   readonly proposalOnly: boolean;
   readonly provider: string | undefined;
   readonly requestFilters: string | undefined;
+  readonly requestServices: string | undefined;
   readonly resource: string | undefined;
   readonly resultSchema: string | undefined;
   readonly schemaModule: string | undefined;
@@ -294,10 +307,18 @@ const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorR
  * `scaffold:action-http` selects its mode explicitly: the full scaffold stays the default for a fresh
  * endpoint, and `--proposal-only` runs the surgical proposal upgrade instead.
  */
-const actionHttpGeneratorEntry: LocalGenerator<ActionHttpScaffoldConfig, ActionHttpScaffoldResult> = (context, core) =>
-  context.config.proposalOnly === true
-    ? actionHttpProposalGenerator(context, core)
-    : actionHttpGenerator(context, core);
+const actionHttpGeneratorEntry: LocalGenerator<
+  ActionHttpScaffoldConfig | CoreActionHttpScaffoldConfig,
+  ActionHttpScaffoldResult | CoreActionHttpScaffoldResult
+> = (context, core) => {
+  const { config } = context;
+  if ('scope' in config) {
+    return coreActionHttpGenerator({ ...context, config }, core);
+  }
+  return config.proposalOnly === true
+    ? actionHttpProposalGenerator({ ...context, config }, core)
+    : actionHttpGenerator({ ...context, config }, core);
+};
 
 const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
   Effect.gen(function* defaultRouteRefreshEffect() {
@@ -434,6 +455,80 @@ const requireReadAuthorization = (
 
 const isSearchLegalEntityScope = Schema.is(Schema.Literals(['required', 'optional']));
 
+/** The Shell HTTP transport of a Core Action: the flags that only a vertical route understands are refused. */
+const coreActionHttpConfig = (
+  flags: ParsedScaffoldFlags,
+  scope: string,
+  module: string | undefined,
+): Effect.Effect<CoreActionHttpScaffoldConfig, ScaffoldingError> =>
+  Effect.gen(function* coreActionHttpConfigEffect() {
+    if (scope !== 'core') {
+      return yield* failScaffolding('--scope must be core');
+    }
+    if (module === undefined) {
+      return yield* failScaffolding('--module is required for Core Action ownership');
+    }
+    if (flags.contractModule === undefined) {
+      return yield* failScaffolding('--contract-module is required for Core Action ownership');
+    }
+    if (
+      flags.proposalOnly ||
+      flags.domainProblem !== undefined ||
+      flags.schemaModule !== undefined ||
+      flags.resultSchema !== undefined
+    ) {
+      return yield* failScaffolding(
+        'a Core Action transport takes no --proposal-only, --domain-problem, --schema-module or --result-schema',
+      );
+    }
+    return {
+      action: flags.action ?? '',
+      contractModule: flags.contractModule,
+      domainErrorKinds: flags.domainErrorKind?.split(','),
+      module,
+      requestServices: flags.requestServices,
+      scope,
+    };
+  });
+
+/** The vertical's own HTTP transport: the Core-only flags are refused. */
+const verticalActionHttpConfig = (
+  flags: ParsedScaffoldFlags,
+  vertical: string,
+): Effect.Effect<ActionHttpScaffoldConfig, ScaffoldingError> =>
+  Effect.gen(function* verticalActionHttpConfigEffect() {
+    if (
+      flags.scope !== undefined ||
+      flags.module !== undefined ||
+      flags.contractModule !== undefined ||
+      flags.domainErrorKind !== undefined ||
+      flags.requestServices !== undefined
+    ) {
+      return yield* failScaffolding(
+        '--vertical is mutually exclusive with --scope, --module, --contract-module, --domain-error-kind and --request-services',
+      );
+    }
+    const config = { action: flags.action ?? '', proposalOnly: flags.proposalOnly, vertical };
+    if (flags.domainProblem !== undefined) {
+      Object.assign(config, { domainProblems: flags.domainProblem.split(',') });
+    }
+    if (flags.schemaModule !== undefined) {
+      Object.assign(config, { schemaModule: flags.schemaModule });
+    }
+    if (flags.resultSchema !== undefined) {
+      Object.assign(config, { resultSchema: flags.resultSchema });
+    }
+    if (
+      flags.proposalOnly &&
+      (flags.domainProblem !== undefined || flags.schemaModule !== undefined || flags.resultSchema !== undefined)
+    ) {
+      return yield* failScaffolding(
+        '--proposal-only upgrades only the parked-proposal transport and takes no --domain-problem, --schema-module or --result-schema',
+      );
+    }
+    return config;
+  });
+
 const commandDefinitions = {
   action: defineCommand({
     flags: [
@@ -526,15 +621,35 @@ Options:
       }),
   }),
   'action-http': defineCommand({
-    flags: ['action', PROPOSAL_ONLY_FLAG, 'vertical', SCHEMA_MODULE_FLAG, RESULT_SCHEMA_FLAG, DOMAIN_PROBLEM_FLAG],
+    flags: [
+      'action',
+      PROPOSAL_ONLY_FLAG,
+      'vertical',
+      SCHEMA_MODULE_FLAG,
+      RESULT_SCHEMA_FLAG,
+      DOMAIN_PROBLEM_FLAG,
+      'scope',
+      'module',
+      CONTRACT_MODULE_FLAG,
+      DOMAIN_ERROR_KIND_FLAG,
+      REQUEST_SERVICES_FLAG,
+    ],
     generator: actionHttpGeneratorEntry,
-    help: `Usage: pnpm scaffold:action-http -- --vertical <vertical> --action <action> [--proposal-only]
+    help: `Usage:
+  pnpm scaffold:action-http -- --vertical <vertical> --action <action> [--proposal-only]
+  pnpm scaffold:action-http -- --scope core --module <core.module> --action <action> --contract-module <@app/core-runtime/export> [--domain-error-kind <Tag=kind>] [--request-services <./file.ts#export>]
 
-Generate one explicit, typed public HTTP transport for an existing MicroVertical Action.
+Generate one explicit, typed public HTTP transport for an existing Action: a MicroVertical Action on its own
+API, or a Core-owned Action on the Shell host (\`POST /core/actions/<action>\`, the Shell's Idempotency-Key header).
 
 Required flags:
   --action <action>      Existing Action name (lower-kebab-case)
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case); exclusive with Core ownership
+  --scope core           Core ownership; forbidden with --vertical
+  --module <core.module> Stable core.* module key that owns the Action; required with --scope core
+  --contract-module <specifier>
+                         Core only: the published browser-safe @app/core-runtime/<export> that carries the
+                         Action's <Type>PayloadSchema and <Type>ResultSchema; they must be the registration's own
 
 Options:
   --proposal-only        Upgrade only the parked-proposal transport of an existing endpoint: the 202
@@ -546,31 +661,23 @@ Options:
   --domain-problem <Tag=shared/module.ts#Schema#Mapper> Preserve a typed domain Problem (repeatable)
   --schema-module <path> Adopt canonical schema exports from an owner shared/ module
   --result-schema <name> Result schema export (requires --schema-module)
+  --domain-error-kind <Tag=kind> Core only: state the problem kind of a domain error the name heuristic cannot
+                         decide (conflict, forbidden, ineligible, notFound or unavailable; repeatable)
+  --request-services <./file.ts#export> Core only: an owner-written provider, under apps/shell-super-app/api, of the
+                         request-scoped service the Action needs and no host layer can supply
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action', 'vertical'],
-    toConfig: (flags) =>
-      Effect.gen(function* actionHttpConfigEffect() {
-        const config = { action: flags.action ?? '', proposalOnly: flags.proposalOnly, vertical: flags.vertical ?? '' };
-        if (flags.domainProblem !== undefined) {
-          Object.assign(config, { domainProblems: flags.domainProblem.split(',') });
-        }
-        if (flags.schemaModule !== undefined) {
-          Object.assign(config, { schemaModule: flags.schemaModule });
-        }
-        if (flags.resultSchema !== undefined) {
-          Object.assign(config, { resultSchema: flags.resultSchema });
-        }
-        if (
-          flags.proposalOnly &&
-          (flags.domainProblem !== undefined || flags.schemaModule !== undefined || flags.resultSchema !== undefined)
-        ) {
-          return yield* failScaffolding(
-            '--proposal-only upgrades only the parked-proposal transport and takes no --domain-problem, --schema-module or --result-schema',
-          );
-        }
-        return config;
-      }),
+    requiredFlags: ['action'],
+    toConfig: (flags) => {
+      const { module, scope, vertical } = flags;
+      if (vertical !== undefined) {
+        return verticalActionHttpConfig(flags, vertical);
+      }
+      if (scope === undefined) {
+        return failScaffolding('missing required flag --vertical');
+      }
+      return coreActionHttpConfig(flags, scope, module);
+    },
   }),
   'action-service': defineCommand({
     flags: ['service', 'vertical'],
@@ -1033,14 +1140,14 @@ const parseFlagPair = (
     if (!allowed.has(name)) {
       return yield* failScaffolding(`unknown flag --${name} for scaffold:${command}`);
     }
-    if (parsed.has(name) && !(command === 'action-http' && name === DOMAIN_PROBLEM_FLAG)) {
+    if (parsed.has(name) && !(command === 'action-http' && REPEATABLE_ACTION_HTTP_FLAGS.has(name))) {
       return yield* failScaffolding(`flag --${name} may be supplied only once`);
     }
     if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
       return yield* failScaffolding(`flag --${name} requires one non-empty value`);
     }
     const previous = parsed.get(name);
-    parsed.set(name, name === DOMAIN_PROBLEM_FLAG && previous !== undefined ? `${previous},${value}` : value);
+    parsed.set(name, REPEATABLE_ACTION_HTTP_FLAGS.has(name) && previous !== undefined ? `${previous},${value}` : value);
     return yield* Effect.void;
   });
 
@@ -1093,7 +1200,9 @@ const parseFlags = (
       accessWorkloadKeys: parsed.get(ACCESS_WORKLOAD_KEYS_FLAG),
       action: parsed.get('action'),
       authorizationMode: parsed.get('authorization'),
+      contractModule: parsed.get(CONTRACT_MODULE_FLAG),
       core,
+      domainErrorKind: parsed.get(DOMAIN_ERROR_KIND_FLAG),
       domainProblem: parsed.get(DOMAIN_PROBLEM_FLAG),
       kind: parsed.get('kind'),
       legalEntityScope: parsed.get(LEGAL_ENTITY_SCOPE_FLAG),
@@ -1106,6 +1215,7 @@ const parseFlags = (
       proposalOnly,
       provider: parsed.get('provider'),
       requestFilters: parsed.get(REQUEST_FILTERS_FLAG),
+      requestServices: parsed.get(REQUEST_SERVICES_FLAG),
       resource: parsed.get('resource'),
       resultSchema: parsed.get(RESULT_SCHEMA_FLAG),
       schemaModule: parsed.get(SCHEMA_MODULE_FLAG),
@@ -1146,7 +1256,12 @@ const cliFlags = {
   accessWorkloadKeys: optionalTextFlag(ACCESS_WORKLOAD_KEYS_FLAG),
   action: optionalTextFlag('action'),
   authorization: optionalTextFlag('authorization'),
+  contractModule: optionalTextFlag(CONTRACT_MODULE_FLAG),
   core: Flag.Boolean('core').pipe(Flag.withDefault(false)),
+  domainErrorKind: Flag.String(DOMAIN_ERROR_KIND_FLAG).pipe(
+    Flag.atLeast(0),
+    Flag.map((values) => (values.length === 0 ? Option.none<string>() : Option.some(values.join(',')))),
+  ),
   domainProblem: Flag.String(DOMAIN_PROBLEM_FLAG).pipe(
     Flag.atLeast(0),
     Flag.map((values) => (values.length === 0 ? Option.none<string>() : Option.some(values.join(',')))),
@@ -1162,6 +1277,7 @@ const cliFlags = {
   proposalOnly: Flag.Boolean(PROPOSAL_ONLY_FLAG).pipe(Flag.withDefault(false)),
   provider: optionalTextFlag('provider'),
   requestFilters: optionalTextFlag(REQUEST_FILTERS_FLAG),
+  requestServices: optionalTextFlag(REQUEST_SERVICES_FLAG),
   resource: optionalTextFlag('resource'),
   resultSchema: optionalTextFlag(RESULT_SCHEMA_FLAG),
   schemaModule: optionalTextFlag(SCHEMA_MODULE_FLAG),
