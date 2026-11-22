@@ -292,6 +292,7 @@ it('rejects actual private business effects with discarded native hash or codec 
 });
 
 const canonicalCodecDeclaration = 'const canonicalValueCodec =';
+const contextOwnerPath = 'packages/codec-fixture';
 const contextCodecFile = 'packages/codec-fixture/src/codec.ts';
 const contextPackageFile = 'packages/codec-fixture/package.json';
 const contextPackage = JSON.stringify({ exports: { '.': './src/codec.ts' }, name: '@app/codec-fixture' });
@@ -397,7 +398,7 @@ it('admits only same-package helper callables and rejects Any decoding and forge
     provesPublicDataCodecExport(`${source} `, 'codec', {
       filename,
       isImmutableContractSource: () => true,
-      ownerPath: 'packages/codec-fixture',
+      ownerPath: contextOwnerPath,
       sources: snapshot,
     }),
   ).toBe(false);
@@ -585,11 +586,64 @@ it('proves only genuine service-free schema exports with the same closed depende
       provesServiceFreeSchemaExport(source, 'Codec', {
         filename: contextCodecFile,
         isImmutableContractSource: () => true,
-        ownerPath: 'packages/codec-fixture',
+        ownerPath: contextOwnerPath,
         sources: snapshot,
       }),
     ).toBe(expected);
   }
+});
+
+const canonicalLocaleValidator = `try {
+  return Intl.getCanonicalLocales(locale)[0] === locale || 'Expected a canonical locale';
+} catch {
+  return 'Expected a canonical locale';
+}`;
+const localeParseCall = 'getCanonicalLocales(locale)';
+const localeCodecSource = (validator: string): string => `${nativeImports}
+const Locale = Schema.String.check(Schema.makeFilter((locale) => { ${validator} }));
+export const Codec = Schema.Struct({ locale: Locale });
+export const codec = (input: { locale: string }) => Schema.decodeUnknownEffect(Codec)(input);`;
+const localeCodecProofs = (source: string): readonly boolean[] => {
+  const context = {
+    filename: contextCodecFile,
+    isImmutableContractSource: () => true,
+    ownerPath: contextOwnerPath,
+    sources: new Map([
+      [contextPackageFile, contextPackage],
+      [contextCodecFile, source],
+    ]),
+  };
+  return [
+    provesServiceFreeSchemaExport(source, 'Codec', context),
+    provesPublicDataCodecExport(source, 'codec', context),
+  ];
+};
+
+it('proves a closed string locale validator with terminal pure try/catch returns', () => {
+  expect(localeCodecProofs(localeCodecSource('return true;'))).toEqual([true, true]);
+  expect(localeCodecProofs(localeCodecSource(canonicalLocaleValidator))).toEqual([true, true]);
+});
+
+it('rejects side effects and unproved exception flow in locale validators', () => {
+  for (const validator of [
+    canonicalLocaleValidator.replace('Intl.getCanonicalLocales(locale)[0]', 'fetch(locale)'),
+    canonicalLocaleValidator.replace("return 'Expected a canonical locale';", 'return fetch(locale);'),
+    canonicalLocaleValidator.replace(localeParseCall, 'getCanonicalLocales({ toString() { return fetch(locale); } })'),
+    canonicalLocaleValidator.replace(localeParseCall, 'getCanonicalLocales(42)'),
+    canonicalLocaleValidator.replace(localeParseCall, 'getCanonicalLocales(locale, fetch(locale))'),
+    `${canonicalLocaleValidator} finally { fetch(locale); }`,
+    canonicalLocaleValidator
+      .replace('catch {', 'catch (error) {')
+      .replace("return 'Expected a canonical locale';", 'return error;'),
+    canonicalLocaleValidator
+      .replace('return Intl.', 'const parsed = Intl.')
+      .replace("[0] === locale || 'Expected a canonical locale';", '[0];'),
+  ]) {
+    expect(localeCodecProofs(localeCodecSource(validator)), validator).toEqual([false, false]);
+  }
+  const mutatedIntrinsic = `${localeCodecSource(canonicalLocaleValidator)}
+function mutate() { Intl.getCanonicalLocales = foreign; }`;
+  expect(localeCodecProofs(mutatedIntrinsic)).toEqual([false, false]);
 });
 
 it('keeps literal capture arguments inert when unrelated native initialization facts are unavailable', () => {
@@ -637,6 +691,14 @@ const identityFiles = [
   partyIdentityFile,
   commerceIdentityFile,
 ];
+it('rejects IO substituted into the actual Catalog locale validator dependency', () => {
+  const filename = 'verticals/catalog/shared/domain/product-descriptive-facts.ts';
+  const source = sources.get(filename) ?? '';
+  const parser = 'Intl.getCanonicalLocales(locale)';
+  expect(source).toContain(parser);
+  const snapshot = new Map([...sources, [filename, source.replace(parser, 'fetch(locale)')]]);
+  expect(contextualProof(identityFiles[0], 'setVariantLocalizedFactsRequestIdentity', snapshot)).toBe(false);
+});
 it('proves every published native request metadata codec in the owner inventory', () => {
   let count = 0;
   for (const file of identityFiles) {

@@ -2421,6 +2421,25 @@ class DataFactoryProof {
         const error = this.expression(node.argument, model, env);
         if (error.native !== 'tagged-error' || !isClosedData(error)) return 'bad';
         return 'returns';
+      } else if (
+        node.type === 'TryStatement' &&
+        node.handler !== null && node.handler.param === null && node.finalizer === null &&
+        node.block.body.length === 1 && node.block.body[0].type === 'ReturnStatement' &&
+        node.handler.body.body.length === 1 && node.handler.body.body[0].type === 'ReturnStatement'
+      ) {
+        // A bounded validator may turn native parse rejection into data. Prove both terminal
+        // arms; never treat a failed proof as a caught exception or carry validation across it.
+        const baselineValidation = new Set(this.validatedInputs);
+        const branches: Value[] = [];
+        const attempted = this.block(node.block.body, model, new Map(env), branches);
+        this.validatedInputs.clear();
+        for (const token of baselineValidation) this.validatedInputs.add(token);
+        const caught = this.block(node.handler.body.body, model, new Map(env), branches);
+        this.validatedInputs.clear();
+        for (const token of baselineValidation) this.validatedInputs.add(token);
+        if (attempted !== 'returns' || caught !== 'returns' || !branches.every(isClosedData)) return 'bad';
+        returns.push(...branches);
+        return 'returns';
       } else if (node.type === 'IfStatement') {
         const test = this.expression(node.test, model, env);
         if (!this.controlData(test)) return 'bad';
@@ -2985,6 +3004,8 @@ class DataFactoryProof {
     if (name === 'global:Number' && args.length === 1 && args.every(isData)) return { kind: 'data', native: 'number' };
     if (name === 'global:String' && args.length === 1 && args.every(isData)) return DATA;
     if (name === 'global:Intl.supportedValuesOf' && args.length === 1 && args.every(isData)) return array(DATA);
+    if (name === 'global:Intl.getCanonicalLocales' && args.length === 1 && isClosedString(args[0]))
+      return array({ kind: 'data', stringData: true });
     if (name.startsWith('map:')) {
       const owner = callee.payload ?? BAD;
       const entries = owner.payload ?? BAD;
