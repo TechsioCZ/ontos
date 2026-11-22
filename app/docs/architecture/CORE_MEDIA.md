@@ -31,6 +31,22 @@ The generated descriptors are in `topology/authorization-catalog.json` (`pnpm au
 
 Each stored object is addressed by its derived key only; the key, provider id, version reference and any URL never reach a response, log or error. A new upload is always a new Media Asset id.
 
+## S3 provider configuration
+
+The adapter is provider-neutral S3 (SigV4, path or virtual-host addressing) in `media/s3-object-storage.ts`, behind the `ObjectStorage` port. Keys (names only; values come from the platform secret and configuration path, never the repository): `CORE_MEDIA_S3_ENDPOINT`, `CORE_MEDIA_S3_BUCKET`, `CORE_MEDIA_S3_REGION`, `CORE_MEDIA_S3_ADDRESSING_STYLE` (`path` or `virtual-host`), `CORE_MEDIA_S3_CONDITIONAL_CREATE` (`supported` or `unsupported`), `CORE_MEDIA_S3_ACCESS_KEY_ID`, `CORE_MEDIA_S3_SECRET_ACCESS_KEY`, and optional `CORE_MEDIA_S3_PART_SIZE_BYTES`, `CORE_MEDIA_S3_REQUEST_TIMEOUT_MS`. The endpoint must be an `https` origin (`http` only on a loopback host). Configuration that fails to parse falls back to an object store that refuses every operation. Credentials are redacted values and appear in no error or log. No retry, backoff or timeout default exists; the timeout applies only when configured.
+
+## Measured limits (facts, not product caps)
+
+No product size limit, MIME allowlist or retry policy is defined by Core Media. Facts and their sources:
+
+| Fact                            | Value                                                                                  | Source                                              |
+| ------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| S3 multipart structure          | minimum part 5 MiB, at most 10,000 parts, all parts but the last equal                 | S3 protocol; `s3-config.ts`, `s3-object-storage.ts` |
+| Adapter memory (node, emulator) | peak growth about 114 MiB for 64 MiB and for 1 GiB objects (bounded, not proportional) | measured 2026-11-20, MinIO emulator                 |
+| Cloudflare R2 limits            | documented upstream (for example 1 write per second per key, multipart rules)          | provider documentation only; no R2 run              |
+
 ## Known gaps
 
+- **No run against Cloudflare R2 or Wasabi.** Credentials were not supplied; every provider behaviour was executed only against the MinIO S3-compatible emulator, which is never evidence for R2.
 - **Existing environments do not receive the capabilities** because the published authorization release is pinned and no code publishes a later one; a fresh database does. This is out of scope for D20 and is raised as its own issue (draft: `release-adoption-issue-draft.md` in the plan folder, not filed).
+- **Other owners (UNVERIFIED, nothing here is claimed as checked):** production Privacy and retention assessment and physical deletion belong to their owners. Provider-side backup or replication (Wasabi is the probable backup target) needs a named operations owner; a backup copy extends retention beyond the primary object; and the Privacy owner must define, before production, what erasure means for the primary object and for every backup copy. None of this was configured, run or verified in D20.
