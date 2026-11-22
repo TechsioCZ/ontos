@@ -10,6 +10,7 @@ import { withCause } from '../problems-support.ts';
 import { normalizeCommercePortalAuthEmail } from '../../../src/portal-auth/email-normalization.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
 import { CommercePortalAuthVerificationReplay } from '../../../src/portal-auth/communications/verification-replay.ts';
+import type { VerificationReplayUnavailable } from '../../../src/portal-auth/communications/verification-replay-unavailable.ts';
 import { COMMERCE_PORTAL_ACCOUNT_CORRELATION_HEADERS, CommercePortalAuthInstance } from './auth.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
 import type { CommercePortalAuthAccountCreationGateway } from './account-creation-gateway-service.ts';
@@ -44,6 +45,14 @@ const BetterAuthAccountCreateResponseSchema = Schema.Struct({
   user: Schema.Struct({ id: Schema.String }),
 });
 const UNUSABLE_ACCOUNT_RESPONSE_REASON = 'Better Auth returned an unusable account response';
+/** Why an enrollment replay sent nothing, as the account creation reports it. */
+const replayUnavailableReason = {
+  OUTCOME_UNAVAILABLE: 'Commerce portal account creation could not establish the previous verification message',
+  PREVIOUS_ISSUANCE_EXPIRED:
+    'Commerce portal account creation found the previous verification link expired before it could be sent and does not reissue it',
+  PREVIOUS_ISSUANCE_STOPPED:
+    'Commerce portal account creation found the previous verification message stopped and does not repair it',
+} as const satisfies Record<VerificationReplayUnavailable['reason'], string>;
 
 /** Private service input. The password must already be redacted by the owner boundary. */
 export const CommercePortalAccountCreateInputSchema = Schema.Struct({
@@ -239,10 +248,7 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
               Effect.mapError((cause) =>
                 withCause(
                   new CommercePortalAuthAccountCreationUnavailable({
-                    reason:
-                      cause.reason === 'PREVIOUS_ISSUANCE_STOPPED'
-                        ? 'Commerce portal account creation found the previous verification message stopped and does not repair it'
-                        : 'Commerce portal account creation could not establish the previous verification message',
+                    reason: replayUnavailableReason[cause.reason],
                   }),
                   cause,
                 ),

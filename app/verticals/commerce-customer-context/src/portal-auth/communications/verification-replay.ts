@@ -1,4 +1,4 @@
-import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import type { PlatformError } from 'effect';
 
 import { withCause } from '../../../api/portal-auth/problems-support.ts';
@@ -16,7 +16,11 @@ import { VerificationReplayUnavailable } from './verification-replay-unavailable
  *
  * - NOT_SUBMITTED: Communications has NO request for the issuance (any ADMITTED request is never NOT_SUBMITTED, whatever the
  *   caller saw: a timeout does not un-admit it) and Auth holds no issuance for it, so nothing was ever sent; the same
- *   issuance is issued. A held issuance has a committed request in the Auth-local outbox: owed, not NOT_SUBMITTED;
+ *   issuance is issued. A held issuance has a committed request in the Auth-local outbox: owed, not NOT_SUBMITTED, while
+ *   it is usable. A held issuance that EXPIRED while Communications still holds no request for it can never be sent any
+ *   more (the relay closes its row EXPIRED unsubmitted, and Communications stops any handoff past the request's
+ *   `validUntil`), so the replay stops truthfully instead of claiming a message is owed; it never issues the same
+ *   deterministic issuance again (that identity is already spent);
  * - IN_PROGRESS, ACCEPTED, UNCERTAIN, NON_ACCEPTANCE_PROVEN: a message exists or is being continued under the approved
  *   recovery rule of the SAME intent; the replay sends nothing and issues nothing (an uncertain effect is reconciled, a
  *   proven non-acceptance continues the same intent, never a new link);
@@ -101,9 +105,15 @@ export const makeVerificationReplay = Effect.fn('CommercePortalAuthVerificationR
           // submits it (or already has, with a lost answer that `NOT_SUBMITTED` cannot yet show). That is a request owed to the
           // previous issuance, never proof that nothing was submitted.
           const held = yield* handoff.issuanceOf(issuanceRef).pipe(Effect.mapError(unavailable));
-          return Option.isSome(held)
-            ? NO_NEW_ISSUANCE
-            : yield* reserve({ issuanceRef, ownerInvocationId, providerSubjectId });
+          if (Option.isNone(held)) {
+            return yield* reserve({ issuanceRef, ownerInvocationId, providerSubjectId });
+          }
+          const now = yield* DateTime.now;
+          if (!DateTime.isGreaterThan(held.value.expiresAt, now)) {
+            // never submitted and no longer usable: nothing is owed and nothing can be sent for it any more
+            return yield* new VerificationReplayUnavailable({ reason: 'PREVIOUS_ISSUANCE_EXPIRED' });
+          }
+          return NO_NEW_ISSUANCE;
         }
         if (outcome === 'STOPPED') {
           // nothing leaves for this issuance and a replay never repairs it: the Attempt stays retryable, truthfully unfinished

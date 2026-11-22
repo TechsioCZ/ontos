@@ -1,5 +1,6 @@
 import { DateTime, Effect, Layer, Option, Redacted } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import {
@@ -118,6 +119,41 @@ describe('The enrollment verification issuance and its replay (#1406)', () => {
         expect(decision).toBe('NO_NEW_ISSUANCE');
         expect(Option.isNone(yield* handoff.takeReservation('verify-email', SUBJECT))).toBe(true);
       }).pipe(Effect.provide(replayWith('NOT_SUBMITTED')), Effect.provide(commercePortalAuthPlatformCryptoLive)),
+  );
+
+  it.effect(
+    'A2: a held issuance that expired while Communications holds no request for it stops truthfully: nothing owed, nothing issued',
+    () =>
+      Effect.gen(function* expiredUnsubmitted() {
+        const handoff = yield* CommercePortalAuthProtectedHandoff;
+        const replay = yield* CommercePortalAuthVerificationReplay;
+        const issuanceRef = yield* enrollmentVerificationIssuanceRef(INVOCATION);
+        const issuedAt = DateTime.makeUnsafe('2026-11-19T10:00:00.000Z');
+        const expiresAt = DateTime.add(issuedAt, { hours: 1 });
+        yield* holdWithRequest(
+          handoff,
+          {
+            endpoint: Redacted.make('fictional@example.test'),
+            issuance: { expiresAt, flow: 'verify-email', issuanceRef, issuedAt, providerSubjectId: SUBJECT },
+            secret: Redacted.make('https://fictional.example.test/verify'),
+          },
+          true,
+        );
+        const begin = replay.begin({ ownerInvocationId: INVOCATION, providerSubjectId: SUBJECT, replay: true });
+        // while usable, the committed request is still owed: no second link
+        yield* TestClock.setTime(DateTime.subtract(expiresAt, { minutes: 1 }).epochMilliseconds);
+        expect(yield* begin).toBe('NO_NEW_ISSUANCE');
+        // expired and never admitted by Communications (the relay closed its row EXPIRED unsubmitted)
+        yield* TestClock.setTime(expiresAt.epochMilliseconds);
+        const stopped = yield* Effect.flip(begin);
+        expect(stopped).toMatchObject({ reason: 'PREVIOUS_ISSUANCE_EXPIRED' });
+        // the spent deterministic issuance is never reserved again
+        expect(Option.isNone(yield* handoff.takeReservation('verify-email', SUBJECT))).toBe(true);
+      }).pipe(
+        Effect.provide(replayWith('NOT_SUBMITTED')),
+        Effect.provide(commercePortalAuthPlatformCryptoLive),
+        Effect.provide(TestClock.layer()),
+      ),
   );
 
   for (const outcome of ['IN_PROGRESS', 'ACCEPTED', 'UNCERTAIN', 'NON_ACCEPTANCE_PROVEN'] as const) {
