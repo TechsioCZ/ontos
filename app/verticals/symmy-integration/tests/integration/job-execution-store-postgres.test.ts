@@ -1,12 +1,20 @@
-import { TrustedPrincipalContextSchema, findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
-import type { OperationalScope } from '@app/core-runtime';
-import { installOperationalScope } from '@app/core-runtime/testing/actions';
+import {
+  TrustedPrincipalContextSchema,
+  defineAction,
+  defineTenantModuleEntrypoint,
+  findPostgresFailure,
+  loadDatabaseConnectionPair,
+  runAction,
+} from '@app/core-runtime';
+import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { installOperationalScope, makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -16,17 +24,20 @@ import {
   SymmyPinnedEffectSchema,
   SymmyPinnedJobPlanSchema,
 } from '../../shared/domain/symmy-job-execution.ts';
-import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
-import { AdmitSymmySyncPayloadSchema } from '../../shared/actions/admit-symmy-sync.ts';
+import { SymmyStockPositionFactsSchema, SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
+import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
 import {
   symmyImportJobs,
   symmyIntegrationRelations,
   symmyJobEffects,
   symmyJobRoutes,
+  symmySyncAdmissionAttempts,
   symmySyncAdmissions,
 } from '../../src/db/schema.ts';
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
-import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
+import { SymmyJobStoreError, symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
+import { makeTestOperationOwner } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import { buildSymmyStockPlan, stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
 
 const openDatabase = (connectionString: string) =>
   PgClient.makeClient({ url: Redacted.make(connectionString) }).pipe(
@@ -70,6 +81,36 @@ const pinnedWith = (effect: SymmyPinnedEffect, intent: Schema.Json, originalTarg
 
 type ExecutionStore = ReturnType<typeof symmyJobExecutionStore>;
 type AdmissionStore = Effect.Success<ReturnType<typeof symmyJobStoreFactory>>;
+
+const retiredReceiptProbeKey = 'integration.symmy.test-retired-stock-receipt';
+const retiredReceiptProbe = defineAction(
+  {
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: `${retiredReceiptProbeKey}.access.v1` },
+    actionKey: retiredReceiptProbeKey,
+    auditProfile: 'standard',
+    domainErrorSchema: SymmyJobStoreError,
+    domainEvents: {},
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'protected' },
+      entrypointKey: retiredReceiptProbeKey,
+      moduleKey: 'integration.symmy',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'optional',
+    owningModuleKey: 'integration.symmy',
+    payloadSchema: AdmitSymmySyncPayloadSchema,
+    policies: [],
+    resultSchema: AdmitSymmySyncResultSchema,
+    schemaVersion: '1',
+  },
+  (
+    payload: typeof AdmitSymmySyncPayloadSchema.Type,
+    context: ActionHandlerContext<Record<never, never>, AdmissionStore>,
+  ) => context.services.admitSync(payload, context.actionInvocationId),
+  symmyJobStoreFactory,
+);
 
 const withScopedStores = <A, E>(
   connectionString: string,
@@ -1042,6 +1083,342 @@ it.effect(
       expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
       expect((yield* context('fresh-key')).replayIdempotencyDigest).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
+
+it.live(
+  'recovers seeded committed stock history from an inactive legacy stockScope route without executing new work',
+  () =>
+    Effect.gen(function* retiredStockHistory() {
+      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      const admin = yield* openDatabase(connections.admin.connectionString);
+      const owner = makeTestOperationOwner({ actions: [retiredReceiptProbe], moduleId: 'integration.symmy' });
+      const fixture = yield* Effect.acquireRelease(
+        makeLiveOperationFixture({
+          access: 'allowed',
+          actionKeys: [retiredReceiptProbeKey],
+          adminConnectionString: Redacted.make(connections.admin.connectionString),
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+          authenticationSubjectTypes: ['user', 'api_key'],
+          compositionRevision: 'c'.repeat(64),
+          managerAuthenticationMethod: 'api_key',
+          moduleKeys: ['integration.symmy'],
+          ownerRegistration: owner.ownerRegistration,
+          runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+        }),
+        (value) => value.close().pipe(Effect.orDie),
+      );
+      const { tenantId } = fixture;
+      const caller: OperationalScope = {
+        ...fixture.manager,
+        audience: 'symmy-integration',
+        correlationId: 'retired-stock-history',
+      };
+      const inventoryRef = inventoryRefFor(tenantId);
+      const positionRef = inventoryRef('stock-position');
+      const locationRef = inventoryRef('stock-location');
+      const unitRef = {
+        moduleId: 'commerce.catalog',
+        resourceId: crypto.randomUUID(),
+        resourceType: 'commerce.catalog.product-unit',
+        tenantId,
+      };
+      const routeId = crypto.randomUUID();
+      const admissionId = crypto.randomUUID();
+      const importInvocationId = crypto.randomUUID();
+      const key = Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema.fields.idempotencyKey)('retired-native-stock');
+      const rows = Schema.decodeUnknownSync(SymmyStockRowsSchema)([
+        {
+          businessObservedAt: '2026-01-01T00:00:00.000Z',
+          itemKey: 'legacy-SKU',
+          locationKey: 'warehouse',
+          quantity: { amount: '12', unitRef },
+          revision: '1',
+          sourceReference: 'legacy-native-row',
+        },
+      ]);
+      const qualification = {
+        customerConfigurationId: 'legacy-configuration',
+        externalScope: 'legacy-scope',
+        issuer: { backendId: 'legacy-backend', backendKind: 'external_business_system' },
+        namespace: 'legacy-stock',
+      };
+      const template = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+        inventoryBackendId: 'legacy-backend',
+        inventorySource: {
+          ...qualification,
+          locations: [{ locationKey: 'warehouse', stockLocationRef: locationRef }],
+          policyRef: inventoryRef('source-provisioning-policy'),
+          unitRef,
+        },
+        items: [
+          {
+            effects: [{ effectKey: 'stock', operation: stockOperation }],
+            itemKey: 'stock',
+            source: {
+              entityKind: 'STOCK',
+              issuerId: 'legacy-source',
+              sourceNamespace: 'legacy',
+              sourceRecordId: 'enrollment',
+            },
+          },
+        ],
+      });
+      const facts = Schema.decodeUnknownSync(SymmyStockPositionFactsSchema)([
+        {
+          request: { ...qualification, itemKey: 'legacy-SKU', locationKey: 'warehouse' },
+          resolution: {
+            _tag: 'RESOLVED',
+            policyRef: template.inventorySource?.policyRef,
+            positionRef,
+            stockItemRef: inventoryRef('stock-item'),
+            stockLocationRef: locationRef,
+          },
+        },
+      ]);
+      const originalPlan = Option.getOrThrow(
+        yield* buildSymmyStockPlan({
+          digest: sha256Digest,
+          facts,
+          idempotencyKey: key,
+          receivedAt: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
+          rows,
+          template,
+        }),
+      );
+      // Preserve the retired wire shape in storage. Neither public retry is allowed to decode it as current enrollment.
+      const legacyTemplate = {
+        inventoryBackendId: 'legacy-backend',
+        items: template.items,
+        stockScope: [
+          {
+            customerConfigurationId: qualification.customerConfigurationId,
+            issuerBackendId: 'legacy-backend',
+            itemKey: 'legacy-SKU',
+            locationKey: 'warehouse',
+            namespace: qualification.namespace,
+            positionRef,
+            scope: qualification.externalScope,
+            unitRef,
+          },
+        ],
+      };
+      yield* admin.insert(symmyJobRoutes).values({
+        active: false,
+        fixtureIds: ['INTERNAL_C14'],
+        fixturePlan: sql`${JSON.stringify(legacyTemplate)}::jsonb`,
+        mappingVersion: 'v1',
+        principalId: fixture.manager.principalId,
+        routeId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      const [pinned] = yield* admin.execute<{ readonly plan: unknown }>(
+        sql`select symmy_integration.pin_symmy_fixture_plan(
+        ${JSON.stringify(Schema.encodeSync(SymmyFixtureExecutionPlanSchema)(originalPlan))}::jsonb,
+        ${tenantId}::uuid, ${routeId}::uuid, 'r1', 'v1') as plan`,
+        'objects',
+      );
+      const importRequestHash = 'a'.repeat(64);
+      const nativePlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)(pinned?.plan);
+      const savedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+        ...nativePlan,
+        items: nativePlan.items.map((item) => ({
+          ...item,
+          effects: item.effects.map((effect) => ({
+            ...effect,
+            authContextRef: fixture.manager.authContextRef,
+            executorBindingIncarnation: crypto.randomUUID(),
+            executorPrincipalId: fixture.manager.principalId,
+            requestHash: importRequestHash,
+          })),
+        })),
+      });
+      const { effectId } = savedPlan.items[0].effects[0].ref;
+      const keyDigest = yield* sha256Digest(key);
+      const intentDigest = yield* sha256Digest(
+        JSON.stringify([
+          'inventoryStockBatch',
+          null,
+          'INTERNAL_C14',
+          Schema.encodeSync(Schema.fromJsonString(SymmyStockRowsSchema))(rows),
+        ]),
+      );
+      // PG store/recovery proof: owner commit facts are seeded; Inventory execution and external key redemption are not.
+      yield* admin.execute(sql`insert into core.action_invocations
+      (action_invocation_id,tenant_id,principal_id,action_key,status,request_hash,auth_context_ref,idempotency_key)
+      values
+      (${admissionId}::uuid,${tenantId}::uuid,${fixture.manager.principalId}::uuid,
+        'integration.symmy.admit-symmy-sync','succeeded',${'b'.repeat(64)},${fixture.manager.authContextRef},'original-admission'),
+      (${importInvocationId}::uuid,${tenantId}::uuid,${fixture.manager.principalId}::uuid,
+        'commerce.inventory.import-source-assertion','succeeded',${importRequestHash},${fixture.manager.authContextRef},${effectId})`);
+      yield* admin.execute(sql`insert into core.source_execution_fences(tenant_id,admission_invocation_id,state)
+      values (${tenantId}::uuid,${admissionId}::uuid,'open')`);
+      yield* admin.insert(symmySyncAdmissions).values({
+        admissionId,
+        executionPlan: savedPlan,
+        idempotencyDigest: keyDigest,
+        intentDigest,
+        mappingVersion: 'v1',
+        principalId: fixture.manager.principalId,
+        routeId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* cleanupRetiredStock() {
+          yield* admin.delete(symmySyncAdmissionAttempts).where(eq(symmySyncAdmissionAttempts.tenantId, tenantId));
+          yield* admin.delete(symmySyncAdmissions).where(eq(symmySyncAdmissions.tenantId, tenantId));
+          yield* admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.tenantId, tenantId));
+        }).pipe(Effect.orDie),
+      );
+      const context = (replayIdempotencyKey: string, scope = caller) =>
+        withScopedStores(connections.runtime.connectionString, scope, (store) =>
+          store.routeContext({ replayIdempotencyKey, routeKey: 'inventoryStockBatch' }),
+        );
+      const consume = (payload: typeof AdmitSymmySyncPayloadSchema.Type) =>
+        runAction({
+          payload,
+          principal: fixture.manager,
+          registration: retiredReceiptProbe,
+          transport: {
+            correlationId: crypto.randomUUID(),
+            idempotencyKey: crypto.randomUUID(),
+            targetModuleKey: 'integration.symmy',
+          },
+        }).pipe(Effect.provide(fixture.layer));
+      const input = Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema)({
+        idempotencyKey: key,
+        routeKey: 'inventoryStockBatch',
+        stock: rows,
+      });
+      expect(yield* context(key)).toMatchObject({
+        allowedOwnerOperations: [],
+        replayIdempotencyDigest: keyDigest,
+        routeId,
+      });
+      const recovered = yield* consume(input);
+      assert('plan' in recovered);
+      expect(recovered).toMatchObject({ admissionId, replayed: true, tenantId });
+      expect(recovered.plan.items[0].effects[0]).toMatchObject({
+        originalInvocationId: importInvocationId,
+        originalInvocationStatus: 'succeeded',
+        ref: { effectId, originalTarget: positionRef },
+      });
+      const denied = (payload: typeof input) => consume(payload).pipe(Effect.flip);
+      expect(yield* context('fresh-key').pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(
+        yield* denied(
+          Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema)({
+            ...input,
+            idempotencyKey: 'fresh-key',
+          }),
+        ),
+      ).toMatchObject({ code: 'route_denied' });
+      expect(
+        yield* denied(
+          Schema.decodeUnknownSync(AdmitSymmySyncPayloadSchema)({
+            ...input,
+            stock: [{ ...rows[0], revision: 'different' }],
+          }),
+        ),
+      ).toMatchObject({ code: 'idempotency_conflict' });
+      for (const foreign of [
+        makeScope(tenantId, crypto.randomUUID()),
+        makeScope(crypto.randomUUID(), fixture.manager.principalId),
+        makeScope(tenantId, fixture.manager.principalId, fixture.legalEntityId),
+        { ...caller, authMethod: 'session' as const },
+      ]) {
+        expect(yield* context(key, foreign).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+        expect(
+          yield* withScopedStores(connections.runtime.connectionString, foreign, (store) =>
+            store.admitSync(input, crypto.randomUUID()),
+          ).pipe(Effect.flip),
+        ).toMatchObject({ code: 'route_denied' });
+      }
+      // A logical key cannot select between two historical enrollments, even if their payload digests match.
+      const competingRouteId = crypto.randomUUID();
+      const competingAdmissionId = crypto.randomUUID();
+      yield* admin.insert(symmyJobRoutes).values({
+        active: false,
+        fixtureIds: ['INTERNAL_C14'],
+        fixturePlan: sql`${JSON.stringify(legacyTemplate)}::jsonb`,
+        mappingVersion: 'v1',
+        principalId: fixture.manager.principalId,
+        routeId: competingRouteId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      yield* admin.insert(symmySyncAdmissions).values({
+        admissionId: competingAdmissionId,
+        executionPlan: savedPlan,
+        idempotencyDigest: keyDigest,
+        intentDigest,
+        mappingVersion: 'v1',
+        principalId: fixture.manager.principalId,
+        routeId: competingRouteId,
+        routeKey: 'inventoryStockBatch',
+        routeRevision: 'r1',
+        tenantId,
+      });
+      expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+      yield* admin.delete(symmySyncAdmissions).where(eq(symmySyncAdmissions.admissionId, competingAdmissionId));
+      yield* admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.routeId, competingRouteId));
+      yield* admin
+        .update(symmyJobRoutes)
+        .set({ mappingVersion: 'replaced' })
+        .where(eq(symmyJobRoutes.routeId, routeId));
+      expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+      yield* admin.update(symmyJobRoutes).set({ mappingVersion: 'v1' }).where(eq(symmyJobRoutes.routeId, routeId));
+      // An open admission fence is not enough to execute an effect which never committed.
+      yield* admin.execute(
+        sql`update core.action_invocations set status='running' where action_invocation_id=${importInvocationId}::uuid`,
+      );
+      expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+      yield* admin.execute(
+        sql`update core.action_invocations set status='succeeded' where action_invocation_id=${importInvocationId}::uuid`,
+      );
+      yield* admin.execute(
+        sql`update core.source_execution_fences set state='cancelled' where admission_invocation_id=${admissionId}::uuid`,
+      );
+      expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+      yield* admin
+        .update(symmySyncAdmissions)
+        .set({
+          retentionReceipt: {
+            authorityReceiptRef: 'purged',
+            authorityRevision: '1',
+            policyId: 'legacy-stock',
+            purgedAt: '2026-01-01T00:00:00.000Z',
+            revision: '1',
+          },
+        })
+        .where(eq(symmySyncAdmissions.admissionId, admissionId));
+      expect(yield* context(key).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(yield* denied(input)).toMatchObject({ code: 'route_denied' });
+      const [counts] = yield* admin.execute<{
+        readonly active: boolean;
+        readonly admissions: number;
+        readonly effects: number;
+        readonly imports: number;
+        readonly writers: number;
+      }>(
+        sql`select
+      (select active from symmy_integration.job_routes where route_id=${routeId}::uuid) as active,
+      (select count(*)::integer from symmy_integration.sync_admissions where tenant_id=${tenantId}::uuid) as admissions,
+      (select count(*)::integer from symmy_integration.job_effects where tenant_id=${tenantId}::uuid) as effects,
+      (select count(*)::integer from core.action_invocations where tenant_id=${tenantId}::uuid
+        and action_key='commerce.inventory.import-source-assertion') as imports,
+      (select count(*)::integer from core.access_workload_bindings where tenant_id=${tenantId}::uuid
+        and workload_key='commerce.inventory.source-write' and status='active') as writers`,
+        'objects',
+      );
+      expect(counts).toEqual({ active: false, admissions: 1, effects: 0, imports: 1, writers: 0 });
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, Reactivity.layer))),
 );
 
 it.effect('pins eight unsupported product branches and still rejects nine or a foreign target', () =>
