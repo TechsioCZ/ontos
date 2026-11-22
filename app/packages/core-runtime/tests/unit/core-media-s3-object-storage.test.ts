@@ -253,14 +253,39 @@ it.layer(NodeCrypto.layer)('the S3 object storage adapter against a scripted pro
     }),
   );
 
-  suite.effect('reports a version only when the provider returns a version id, never an ETag', () =>
+  suite.effect('pins the provider version id, or the ETag where the provider has none, and nothing else', () =>
     Effect.gen(function* versioned() {
-      const none = storageOn(configWith(), () => ok({ 'content-length': '3', etag: '"abc"' }));
-      expect(yield* (yield* none.storage).stat(key)).toStrictEqual({ byteSize: 3 });
-      const suspended = storageOn(configWith(), () => ok({ 'content-length': '3', 'x-amz-version-id': 'null' }));
-      expect(yield* (yield* suspended.storage).stat(key)).toStrictEqual({ byteSize: 3 });
-      const real = storageOn(configWith(), () => ok({ 'content-length': '3', 'x-amz-version-id': 'v-123' }));
+      const bare = storageOn(configWith(), () => ok({ 'content-length': '3' }));
+      expect(yield* (yield* bare.storage).stat(key)).toStrictEqual({ byteSize: 3 });
+      // No version id (an unversioned bucket, or the literal `null` of a suspended one): the ETag is the pin.
+      const unversioned = storageOn(configWith(), () => ok({ 'content-length': '3', etag: '"abc"' }));
+      expect(yield* (yield* unversioned.storage).stat(key)).toStrictEqual({ byteSize: 3, versionRef: 'etag:"abc"' });
+      const suspended = storageOn(configWith(), () =>
+        ok({ 'content-length': '3', etag: '"abc"', 'x-amz-version-id': 'null' }),
+      );
+      expect(yield* (yield* suspended.storage).stat(key)).toStrictEqual({ byteSize: 3, versionRef: 'etag:"abc"' });
+      // A real version id wins: it already changes with every write of the key.
+      const real = storageOn(configWith(), () =>
+        ok({ 'content-length': '3', etag: '"abc"', 'x-amz-version-id': 'v-123' }),
+      );
       expect(yield* (yield* real.storage).stat(key)).toStrictEqual({ byteSize: 3, versionRef: 'v-123' });
+      // Only a printable-ASCII token travels into a pin.
+      const unsafe = storageOn(configWith(), () => ok({ 'content-length': '3', etag: '"a b\u00E9"' }));
+      expect(yield* (yield* unsafe.storage).stat(key)).toStrictEqual({ byteSize: 3 });
+    }),
+  );
+
+  suite.effect('gives a read and a stat of the same stored object the same pin, and a rewritten object another', () =>
+    Effect.gen(function* samePin() {
+      const answers = ['"first"', '"first"', '"second"'];
+      const served = storageOn(configWith(), () => ok({ 'content-length': '3', etag: answers.shift() ?? '"gone"' }));
+      const storage = yield* served.storage;
+      const opened = yield* storage.get(key);
+      const same = yield* storage.stat(key);
+      const rewritten = yield* storage.stat(key);
+      expect(opened.stat.versionRef).toBe('etag:"first"');
+      expect(same.versionRef).toBe(opened.stat.versionRef);
+      expect(rewritten.versionRef).toBe('etag:"second"');
     }),
   );
 
