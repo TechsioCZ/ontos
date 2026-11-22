@@ -1,7 +1,7 @@
 import { DateTime } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { noSuppliedPrivacyReferences } from '../../shared/privacy-owner/inventory.ts';
+import { INPUT_OWNER, noSuppliedPrivacyReferences } from '../../shared/privacy-owner/inventory.ts';
 import type { SuppliedCategoryPrivacyReference } from '../../shared/privacy-owner/inventory.ts';
 import { evaluateCommunicationsRetention } from '../../shared/privacy-owner/retention-evaluation.ts';
 import type { BusinessStartObservation, RetentionFinding } from '../../shared/privacy-owner/retention-evaluation.ts';
@@ -39,6 +39,7 @@ const finding = (findings: readonly RetentionFinding[], category: RetentionFindi
   findings.find((candidate) => candidate.category === category);
 
 const evaluatedAt = at('2027-06-01T00:00:00.000Z');
+const findingKeys = (findings: readonly RetentionFinding[]) => new Set(findings.flatMap((item) => Object.keys(item)));
 
 /**
  * [#1410 PRIV-COM-05/06/09/15/17, AC-03/AC-05/AC-12, BDD "Retention vyzaduje exact schvalene pravidlo a nespousti destrukci"]
@@ -254,5 +255,145 @@ describe('Non-destructive Retention Evaluation hook (#588)', () => {
       gaps: [{ input: 'LEGAL_HOLD_APPLICABILITY', owner: 'LEGAL' }],
       kind: 'CONFIGURATION_GAP',
     });
+  });
+});
+
+/**
+ * [#1408 S07] "The retention period has ended, keep it honest." Every instant, rule and reference below is FICTIONAL: the
+ * business start is placed so far in the past that ANY plausible period would have ended, without this owner ever
+ * knowing or inventing a period. The hook must neither pretend the data is gone nor dispose of it: it records the gap or
+ * hands an open obligation to Privacy with a traceable owner and next step, and the observed records stay untouched.
+ */
+describe('[#1408 S07] Retention period ended: the evaluation stays honest and non-destructive', () => {
+  /** FICTIONAL business start, far in the past on purpose; it is not a real record or a real retention boundary. */
+  const FICTIONAL_ANCIENT_START = at('1970-01-01T00:00:00.000Z');
+  /** FICTIONAL TEST RULE: a reference shape only; no period is known here, Privacy alone evaluates a due instant. */
+  const FICTIONAL_TEST_RULE = {
+    applicabilityDecisionRef: 'FICTIONAL TEST RULE applicability',
+    ruleRef: 'FICTIONAL TEST RULE',
+    ruleVersion: 1,
+  } as const;
+  /** FICTIONAL due instant as Privacy's own evaluation would report it; already passed at `evaluatedAt`. */
+  const FICTIONAL_PRIVACY_DUE = {
+    dueAt: at('1971-01-01T00:00:00.000Z'),
+    evaluationRef: 'FICTIONAL TEST RULE evaluation',
+    ruleRef: FICTIONAL_TEST_RULE.ruleRef,
+    ruleVersion: FICTIONAL_TEST_RULE.ruleVersion,
+  } as const;
+  const persistedWithRecords = ['REQUEST_DECISION_INTENT', 'ORIGINAL_RECIPIENT_ENDPOINT'] as const;
+  /** Frozen observations: any attempt by the hook to change, drop or reorder a stored record throws. */
+  const ancientStarts = (): readonly BusinessStartObservation[] =>
+    Object.freeze(
+      persistedWithRecords.map((category, index) =>
+        Object.freeze(start(category, FICTIONAL_ANCIENT_START, requestRef(`fictional-ancient-${String(index)}`))),
+      ),
+    );
+  /** Nothing in a report may claim an executed, scheduled or achieved disposal, or that no data exists. */
+  const settledVocabulary = /DELETE|ANONYMI[SZ]|PURGE|ERASE|REMOVED|NO_DATA|ACHIEVED|DONE|SCHEDULED|EXECUTED/u;
+
+  it('[#1408 S07] with no approved Retention Rule an ended-looking period is a CONFIGURATION GAP with owners and a next step, never deleted or NO_DATA', () => {
+    const businessStarts = ancientStarts();
+    const before = JSON.stringify(businessStarts);
+    const report = evaluateCommunicationsRetention({
+      businessStarts,
+      evaluatedAt,
+      supplied: noSuppliedPrivacyReferences,
+    });
+
+    expect(report.destructiveActionPerformed).toBe(false);
+    expect(Object.keys(report).toSorted((left, right) => left.localeCompare(right))).toEqual([
+      'destructiveActionPerformed',
+      'evaluatedAt',
+      'findings',
+    ]);
+    for (const category of persistedWithRecords) {
+      const found = finding(report.findings, category);
+      expect(found).toMatchObject({
+        kind: 'CONFIGURATION_GAP',
+        nextStep: 'SUPPLY_MISSING_PRIVACY_INPUTS',
+        pendingReview: true,
+        responsible: { gateOwners: ['LEGAL', 'PRIVACY_OWNER', 'PRODUCT_OWNER'] },
+      });
+      // the gap names the missing approved rule and who owes it, so the obligation is traceable
+      expect(found).toMatchObject({
+        gaps: expect.arrayContaining([
+          { input: 'RETENTION_RULE_IDENTITY_VERSION', owner: INPUT_OWNER.RETENTION_RULE_IDENTITY_VERSION },
+        ]),
+      });
+    }
+    expect(JSON.stringify(report)).not.toMatch(settledVocabulary);
+    expect(
+      [...findingKeys(report.findings)].filter((key) => /schedul|execut|perform|measure|action/iu.test(key)),
+    ).toEqual([]);
+    // the observed records are exactly what they were: nothing was changed, dropped or reordered
+    expect(JSON.stringify(businessStarts)).toBe(before);
+  });
+
+  it('[#1408 S07] every other input supplied but the Retention Rule: the only gap is the rule, owned by its approver', () => {
+    const everythingButTheRule = { ...complete([FICTIONAL_TEST_RULE]), retentionRules: [] };
+    const report = evaluateCommunicationsRetention({
+      businessStarts: ancientStarts(),
+      evaluatedAt,
+      supplied: { REQUEST_DECISION_INTENT: everythingButTheRule },
+    });
+    expect(finding(report.findings, 'REQUEST_DECISION_INTENT')).toEqual({
+      category: 'REQUEST_DECISION_INTENT',
+      gaps: [{ input: 'RETENTION_RULE_IDENTITY_VERSION', owner: INPUT_OWNER.RETENTION_RULE_IDENTITY_VERSION }],
+      kind: 'CONFIGURATION_GAP',
+      nextStep: 'SUPPLY_MISSING_PRIVACY_INPUTS',
+      pendingReview: true,
+      responsible: { gateOwners: [INPUT_OWNER.RETENTION_RULE_IDENTITY_VERSION] },
+    });
+    expect(report.destructiveActionPerformed).toBe(false);
+  });
+
+  it('[#1408 S07] with a FICTIONAL TEST RULE but no Privacy due instant, Communications concludes nothing ended: it hands the ancient start to Privacy', () => {
+    const report = evaluateCommunicationsRetention({
+      businessStarts: ancientStarts(),
+      evaluatedAt,
+      supplied: { REQUEST_DECISION_INTENT: complete([FICTIONAL_TEST_RULE]) },
+    });
+    const found = finding(report.findings, 'REQUEST_DECISION_INTENT');
+    expect(found).toEqual({
+      category: 'REQUEST_DECISION_INTENT',
+      earliestBusinessStartAt: FICTIONAL_ANCIENT_START,
+      kind: 'HANDED_TO_PRIVACY_EVALUATION',
+      nextStep: 'PRIVACY_RETENTION_EVALUATION_DECIDES_DUE_DATE',
+      responsible: { gateOwners: ['PRIVACY_OWNER'] },
+      rule: FICTIONAL_TEST_RULE,
+    });
+    // no period and no due instant is computed or defaulted here, however old the start is
+    expect(Object.keys(found ?? {})).not.toContain('dueAt');
+    expect(JSON.stringify(report)).not.toMatch(settledVocabulary);
+  });
+
+  it('[#1408 S07] a FICTIONAL TEST RULE whose Privacy due instant has passed is an OPEN obligation awaiting human disposition, never an executed measure', () => {
+    const businessStarts = ancientStarts();
+    const before = JSON.stringify(businessStarts);
+    const input = {
+      businessStarts,
+      privacyEvaluatedDue: [FICTIONAL_PRIVACY_DUE],
+      supplied: { REQUEST_DECISION_INTENT: complete([FICTIONAL_TEST_RULE]) },
+    } as const;
+    const report = evaluateCommunicationsRetention({ ...input, evaluatedAt });
+    const open = {
+      category: 'REQUEST_DECISION_INTENT',
+      dueAt: FICTIONAL_PRIVACY_DUE.dueAt,
+      earliestBusinessStartAt: FICTIONAL_ANCIENT_START,
+      kind: 'OBLIGATION_OPEN',
+      nextStep: 'PRIVACY_DISPOSITION_DECISION_AND_HUMAN_CONFIRMED_OWNER_ACTION',
+      responsible: { gateOwners: ['PRIVACY_OWNER', 'PRODUCT_OWNER'] },
+      rule: FICTIONAL_TEST_RULE,
+    } as const;
+    expect(finding(report.findings, 'REQUEST_DECISION_INTENT')).toEqual(open);
+    expect(report.destructiveActionPerformed).toBe(false);
+    expect(JSON.stringify(report)).not.toMatch(settledVocabulary);
+    // decades later the same obligation is still open: an elapsed boundary never settles itself
+    const muchLater = evaluateCommunicationsRetention({ ...input, evaluatedAt: at('2099-01-01T00:00:00.000Z') });
+    expect(finding(muchLater.findings, 'REQUEST_DECISION_INTENT')).toEqual(open);
+    expect(muchLater.destructiveActionPerformed).toBe(false);
+    // the category without a supplied rule stays a gap beside it; one category's obligation settles no other
+    expect(finding(report.findings, 'ORIGINAL_RECIPIENT_ENDPOINT')?.kind).toBe('CONFIGURATION_GAP');
+    expect(JSON.stringify(businessStarts)).toBe(before);
   });
 });
