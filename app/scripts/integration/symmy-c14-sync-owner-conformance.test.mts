@@ -40,6 +40,7 @@ import { Reactivity } from 'effect/reactivity';
 
 import { nameGroupDefinitionRouteReader } from './support/symmy-c14-group-definition-reader.mts';
 import { prepareInternalSyncAuthority } from './support/symmy-c14-sync-authority.mts';
+import { assertInternalSyncCatalog } from './support/symmy-c14-sync-catalog-facts.mts';
 import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 import {
   assertInternalSyncPrices,
@@ -744,14 +745,34 @@ it.live(
           key: 'INTERNAL_C14_NEW_STOCK_PRODUCTS_A',
           path: productsPath,
         });
+        const catalogEvidence = {
+          authority,
+          sourceRouteId: stockLogicalRouteId,
+          unitRef: unitResult.unit,
+        };
+        const firstCatalog = yield* assertInternalSyncCatalog({
+          ...catalogEvidence,
+          adoption: false,
+          jobId: firstProductJobId,
+          keys: [internalStockItemKeys[0]],
+        });
         expect(yield* configuredRoutes).toEqual(initialRoutes);
-        yield* runSourceJob({
+        const secondProductJobId = yield* runSourceJob({
           body: makeInternalSyncProducts([internalStockItemKeys[1]], priceEffectiveFrom),
           effectCount: 10,
           interrupted: false,
           key: 'INTERNAL_C14_NEW_STOCK_PRODUCTS_B',
           path: productsPath,
         });
+        const secondCatalog = yield* assertInternalSyncCatalog({
+          ...catalogEvidence,
+          adoption: false,
+          jobId: secondProductJobId,
+          keys: [internalStockItemKeys[1]],
+        });
+        const originalCatalog = [...firstCatalog, ...secondCatalog];
+        expect(new Set(originalCatalog.map(({ state }) => state.productRef.resourceId)).size).toBe(2);
+        expect(new Set(originalCatalog.map(({ state }) => state.variantRef.resourceId)).size).toBe(2);
         expect(yield* configuredRoutes).toEqual(initialRoutes);
         const originalPrices = yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId });
         const provisioningCount =
@@ -777,14 +798,44 @@ it.live(
           (yield* exactProductReplay.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(jobReceipt)))).jobId,
         ).toBe(firstProductJobId);
         expect(yield* provisioningInvocations).toBe(beforeExactProductReplay);
+        // The same logical key retains the exact owner invocations and their immutable result snapshots.
+        expect(
+          yield* assertInternalSyncCatalog({
+            ...catalogEvidence,
+            adoption: false,
+            jobId: firstProductJobId,
+            keys: [internalStockItemKeys[0]],
+          }),
+        ).toEqual(firstCatalog);
         // A new key is a distinct adoption admission, not the exact-key replay above.
-        yield* runSourceJob({
+        const adoptionJobId = yield* runSourceJob({
           body: makeInternalSyncProducts(internalStockItemKeys, priceEffectiveFrom),
           effectCount: 20,
           interrupted: false,
           key: 'INTERNAL_C14_REPLAY_STOCK_PRODUCTS',
           path: productsPath,
         });
+        expect(adoptionJobId).not.toBe(firstProductJobId);
+        expect(adoptionJobId).not.toBe(secondProductJobId);
+        const adoptedCatalog = yield* assertInternalSyncCatalog({
+          ...catalogEvidence,
+          adoption: true,
+          jobId: adoptionJobId,
+          keys: internalStockItemKeys,
+        });
+        // Fresh native no-change results must retain the original Products, Variants, readiness revisions and sources.
+        expect(adoptedCatalog.map(({ key, state }) => ({ key, state }))).toEqual(
+          originalCatalog.map(({ key, state }) => ({ key, state })),
+        );
+        const originalReadinessInvocations = new Set(
+          originalCatalog.flatMap(({ invocations }) => invocations.map(({ invocationId }) => invocationId)),
+        );
+        expect(originalReadinessInvocations.size).toBe(12);
+        const adoptionInvocations = adoptedCatalog.flatMap(({ invocations }) =>
+          invocations.map(({ invocationId }) => invocationId),
+        );
+        expect(new Set(adoptionInvocations).size).toBe(12);
+        expect(adoptionInvocations.some((invocationId) => originalReadinessInvocations.has(invocationId))).toBe(false);
         expect(yield* assertInternalSyncPrices({ authority, sourceRouteId: stockLogicalRouteId })).toEqual(
           originalPrices,
         );
