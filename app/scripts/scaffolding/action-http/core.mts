@@ -226,6 +226,8 @@ const parseRequestServices = (value: string | undefined) => {
   return Option.some({ export: exported, module: groups?.['module'] });
 };
 
+const HOST_LAYER_PATTERN = /^[A-Za-z][A-Za-z0-9]*Live$/u;
+
 const readText = Effect.fn('CoreActionHttpScaffold.readText')(function* readText(path: string, label: string) {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs
@@ -313,6 +315,10 @@ export const planCoreActionHttpScaffold = Effect.fn('CoreActionHttpScaffold.plan
   const requestServices = yield* tryScaffold('request services are invalid', () =>
     parseRequestServices(config.requestServices),
   );
+  const { hostLayer } = config;
+  if (hostLayer !== undefined && !HOST_LAYER_PATTERN.test(hostLayer)) {
+    return yield* scaffoldFailure('--host-layer must name a <name>Live layer that api/index.ts defines');
+  }
   const type = toPascalCase(action);
   const value = toCamelCase(action);
   const coreRoot = yield* tryScaffold('invalid Core path', () =>
@@ -348,6 +354,13 @@ export const planCoreActionHttpScaffold = Effect.fn('CoreActionHttpScaffold.plan
     const declaration = providerModule === undefined ? '(?:export )?(?:const|function)' : 'export (?:const|function)';
     if (!new RegExp(`${declaration} ${exported}\\b`, 'u').test(source)) {
       return yield* scaffoldFailure(`${providerModule ?? 'api/index.ts'} does not define ${exported}`);
+    }
+  }
+
+  if (hostLayer !== undefined) {
+    const source = yield* readText(serverRoot, 'host root');
+    if (!new RegExp(`const ${hostLayer}\\b`, 'u').test(source)) {
+      return yield* scaffoldFailure(`api/index.ts does not define ${hostLayer}`);
     }
   }
 
@@ -412,7 +425,13 @@ export const planCoreActionHttpScaffold = Effect.fn('CoreActionHttpScaffold.plan
             ),
           ),
         ],
-        [markers.serverLayers, action, `coreAction${type}GroupLive,`],
+        [
+          markers.serverLayers,
+          action,
+          hostLayer === undefined
+            ? `coreAction${type}GroupLive,`
+            : `coreAction${type}GroupLive.pipe(Layer.provide(${hostLayer})),`,
+        ],
       ],
       `${value}Action`,
     ),

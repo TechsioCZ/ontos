@@ -190,6 +190,11 @@ export interface CoreActionHttpScaffoldConfig {
   readonly contractModule: string;
   /** `Tag=kind` overrides for a domain error whose status the name heuristic cannot decide. */
   readonly domainErrorKinds?: readonly string[] | undefined;
+  /**
+   * A layer `apps/shell-super-app/api/index.ts` defines and the route's Action needs from the host at run time (for
+   * example the object store of a Core Media Action). The route's group is provided with it where it is composed.
+   */
+  readonly hostLayer?: string | undefined;
   readonly module: string;
   /**
    * `./file.ts#exportName` under `apps/shell-super-app/api`: an owner-written provider of the request-scoped
