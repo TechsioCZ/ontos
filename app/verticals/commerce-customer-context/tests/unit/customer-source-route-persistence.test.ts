@@ -50,10 +50,20 @@ it('counts no writer the company gate refuses in the legal entity, so the routin
 it('counts no reader the company gate refuses in the legal entity, nor a principal of another kind', () => {
   expect(
     customerSourceRouteEnrollment({
-      readers: [holder('integration', reader, 'none'), holder('system', otherReader, 'binding')],
+      readers: [holder('integration', reader, 'none'), holder('human', otherReader, 'binding')],
       requestedReaders: [reader, otherReader, writer],
       writer: enrolledWriter,
       writers: [holder('system', writer, 'binding')],
     }).enrolledReaderPrincipalIds,
   ).toEqual([]);
+});
+
+it('admits a native SYSTEM source reader only through that exact workload binding in the company', () => {
+  for (const registration of ['binding', 'other_binding', 'none'] as const) {
+    const result = customerSourceRouteEnrollment({
+      readers: [holder('system', reader, registration)], requestedReaders: [reader],
+      writer: enrolledWriter, writers: [holder('system', writer, 'binding')],
+    });
+    expect(result.enrolledReaderPrincipalIds).toEqual(registration === 'binding' ? [reader] : []);
+  }
 });

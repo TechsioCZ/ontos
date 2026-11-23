@@ -122,7 +122,8 @@ export interface CustomerSourceRouteServices {
  * workloads read with that legal entity. A route belongs to one legal entity, and Core's company gate admits a workload
  * there only through an active registration for it (D6): the enrolled writer, which runs source writes as a verified
  * gateway workload, through the registration of that very source-write binding; a requested reader, an integration
- * principal that reads directly, through one of any of its active bindings. Anyone else is not enrolled, so the
+ * principal that reads directly, through one of any of its active bindings; a native SYSTEM reader, like the writer,
+ * only through its exact source-read binding registered for this company. Anyone else is not enrolled, so the
  * routine answers PRINCIPAL_INELIGIBLE.
  */
 export const customerSourceRouteEnrollment = (input: {
@@ -136,8 +137,9 @@ export const customerSourceRouteEnrollment = (input: {
     input.readers.some(
       (holder) =>
         holder.principalId === principalId.toLowerCase() &&
-        holder.kind === 'integration' &&
-        (holder.companyRegistration === 'binding' || holder.companyRegistration === 'other_binding'),
+        ((holder.kind === 'integration' &&
+          (holder.companyRegistration === 'binding' || holder.companyRegistration === 'other_binding')) ||
+          (holder.kind === 'system' && holder.companyRegistration === 'binding')),
     ),
   ),
   enrolledWriterPrincipalId: input.writer.pipe(
