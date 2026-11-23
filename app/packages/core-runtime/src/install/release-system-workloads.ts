@@ -34,7 +34,11 @@ export class ReleaseSystemWorkloadEnrollmentError extends Schema.TaggedError<Rel
   'ReleaseSystemWorkloadEnrollmentError',
   { reason: Schema.String },
 ) {}
-const refused = (reason: string) => new ReleaseSystemWorkloadEnrollmentError({ reason });
+const refused = (reason: string, cause?: unknown) => {
+  const error = new ReleaseSystemWorkloadEnrollmentError({ reason });
+  if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause, enumerable: false });
+  return error;
+};
 
 export interface ReleaseSystemWorkloadInput {
   /** Genuine candidate/reviewed module artifact, loaded by the trusted installer, not an installed-catalog override. */
@@ -87,11 +91,11 @@ export const enrollReleaseSystemWorkload = Effect.fn('ReleaseSystemWorkloads.enr
     const releases = yield* AccessReleaseStore;
     yield* releases.ensureReleaseActor({
       displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: actorId, tenantId,
-    }).pipe(Effect.mapError(() => refused('The platform release actor could not be ensured')));
+    }).pipe(Effect.mapError((cause) => refused('The platform release actor could not be ensured', cause)));
     const resolver = yield* SystemPrincipalContextResolverFromCoreDatabase;
     const resolved = yield* resolver.resolve({
       principalId: actorId, tenantId, registration: releaseJob, runReference: input.runReference,
-    }).pipe(Effect.mapError(() => refused('The platform release actor could not act')));
+    }).pipe(Effect.mapError((cause) => refused('The platform release actor could not act', cause)));
     const scope: OperationalScope = preserveSystemPrincipalContextTrust(resolved, {
       ...resolved, correlationId: `release-system-workloads:${input.runReference}`,
     });
@@ -142,6 +146,6 @@ export const enrollReleaseSystemWorkload = Effect.fn('ReleaseSystemWorkloads.enr
         'reason' in cause ? String(cause.reason) : 'Native SYSTEM enrollment could not be persisted',
         cause,
       ))),
-    ).pipe(Effect.mapError((cause) => refused(cause.reason)));
+    ).pipe(Effect.mapError((cause) => refused(cause.reason, cause)));
   },
 );

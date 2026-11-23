@@ -13,6 +13,7 @@
     "commerce.customer-context.organization-ico-facts.read",
     "commerce.customer-context.source-read",
     "commerce.customer-context.source-write",
+    "commerce.inventory.source-provision",
     "commerce.inventory.source-read",
     "commerce.inventory.source-write",
     "commerce.market-catalog.source-read",

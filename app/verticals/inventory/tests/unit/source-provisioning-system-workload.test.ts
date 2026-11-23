@@ -1,4 +1,6 @@
 import { expect, it } from 'effect-rstest';
+import { readFileSync } from 'node:fs';
+import { Schema } from 'effect';
 
 import { declaresSystemWorkload } from '../../../../packages/core-runtime/src/access/workloads/system-workload-enrollment.ts';
 import { provisionSourceStockItemAction } from '../../src/actions/provision-source-stock-item.action.ts';
@@ -7,6 +9,15 @@ import { inventoryManifest } from '../../vertical.manifest.ts';
 import { inventorySourceProvisionSystemWorkload } from '../../src/source-provision-system-workload.ts';
 
 const workloadKey = 'commerce.inventory.source-provision';
+
+it('ships the actual provisioning receiver in the reviewed workload vocabulary', () => {
+  const artifact = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({
+    declaredWorkloadKeys: Schema.Array(Schema.String),
+  })))(readFileSync(
+    new URL('../../../../topology/authorization-catalog.json', import.meta.url), 'utf8',
+  ));
+  expect(artifact.declaredWorkloadKeys).toContain(workloadKey);
+});
 
 it('publishes the exact native SYSTEM workload accepted by Core enrollment for source provisioning', () => {
   // The deployment contract generator serializes these registrations to their job keys.

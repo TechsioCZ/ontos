@@ -24,7 +24,7 @@ export class SymmyDemoInventoryAuthorityError extends Schema.TaggedError<SymmyDe
 ) {}
 const unavailable = (reason: string) => new SymmyDemoInventoryAuthorityError({ reason });
 
-const RuntimeLive = Layer.unwrap(Effect.gen(function* runtime() {
+export const SymmyDemoInventoryAuthorityLive = Layer.unwrap(Effect.gen(function* runtime() {
   const [runtime, admin] = yield* Effect.all([
     Config.Redacted('DATABASE_URL'), Config.Redacted('DATABASE_ADMIN_URL'),
   ]);
@@ -67,7 +67,7 @@ export const bootstrapSymmyDemoInventoryAuthority = Effect.gen(function* bootstr
 if (import.meta.main) {
   const command = Effect.gen(function* runStageEnrollment() {
     yield* requireSymmyDemoStage(yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'));
-    return yield* bootstrapSymmyDemoInventoryAuthority.pipe(Effect.provide(RuntimeLive));
+    return yield* bootstrapSymmyDemoInventoryAuthority.pipe(Effect.provide(SymmyDemoInventoryAuthorityLive));
   });
   NodeRuntime.runMain(command.pipe(
     Effect.flatMap(({ outcome }) => Console.log(`[symmy-demo-inventory-authority] ${outcome}`)),
