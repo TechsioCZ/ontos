@@ -177,31 +177,6 @@ it.effect('leaves ordinary exact-context authorization closed when no demo polic
   }),
 );
 
-it.effect('authorizes only the enrolled Party business-name export as distinct synthetic processing', () =>
-  Effect.gen(function* test() {
-    const exportRequest = {
-      ...request,
-      consumerModuleId: 'party.registry' as const,
-      operation: 'ORGANIZATION_BUSINESS_NAME_EXPORT',
-    };
-    const result = yield* evaluateSourceProcessingEligibility(exportRequest, scope, services(), at);
-    expect(result.outcome).toBe('ALLOWED');
-    if (result.outcome === 'ALLOWED' && '_tag' in result.evidence) {
-      expect(result.evidence._tag).toBe('DEMO_TEST_DATA_SOURCE_POLICY');
-      expect('subjectRef' in result.evidence).toBe(false);
-    }
-    expect((yield* evaluateSourceProcessingEligibility(exportRequest, scope, services(true), at)).outcome).toBe(
-      'DENIED',
-    );
-    expect(
-      demoSourceProcessingPolicyMatches(policy, { ...exportRequest, consumerModuleId: 'integration.symmy' }, scope),
-    ).toBe(false);
-    expect(
-      demoSourceProcessingPolicyMatches(policy, { ...exportRequest, operation: 'ORGANIZATION_BUSINESS_UPDATE' }, scope),
-    ).toBe(false);
-  }),
-);
-
 it('separates group intake records from owner membership records on the same enrolled route', () => {
   const matches = (
     consumerModuleId: 'integration.symmy' | 'commerce.customer-context',

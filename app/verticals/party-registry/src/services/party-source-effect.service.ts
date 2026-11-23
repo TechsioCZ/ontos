@@ -96,8 +96,7 @@ export const preparePartySourceEffect = Effect.fn('PartySourceEffect.prepare')(f
     });
   }
 
-  const findTarget =
-    organizationBusiness?.kind === 'organization_business' ? findPartySourceTargetMetadata : findPartySourceDecision;
+  const findTarget = organizationBusiness === true ? findPartySourceTargetMetadata : findPartySourceDecision;
   const correlation = yield* findTarget(transaction, input.tenantId, assertion, false);
   if (correlation?.partyId !== input.partyId) {
     return yield* new PartyEvidenceInsufficient({
@@ -133,7 +132,7 @@ export const preparePartySourceEffect = Effect.fn('PartySourceEffect.prepare')(f
     return yield* conflict();
   }
   return {
-    organizationBusiness: organizationBusiness?.kind === 'organization_business',
+    organizationBusiness: organizationBusiness === true,
     sourceOccurrenceHash,
     requestHash,
     receipt,

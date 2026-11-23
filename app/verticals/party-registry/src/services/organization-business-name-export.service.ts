@@ -14,7 +14,6 @@ import type { PartyTransaction } from '../db/types.ts';
 import {
   authorizePartyClientSourceReferenceWithProjection,
   requirePartyClientSourceEnrollment,
-  permitsQualifiedOrganizationSource,
 } from './party-client-source-evidence.service.ts';
 import { readOrganizationRecordFacts } from './organization-record-facts.service.ts';
 import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
@@ -80,10 +79,7 @@ export const isOrganizationBusinessNameExportAllowed = Effect.fn('OrganizationBu
     return yield* authorizePartyClientSourceReferenceWithProjection(input.sourceReference, scope, {
       operation: 'ORGANIZATION_BUSINESS_NAME_EXPORT',
       target: { kind: 'PARTY', partyId: input.partyRef.resourceId },
-    }).pipe(
-      Effect.map(permitsQualifiedOrganizationSource),
-      Effect.catchTag('PartyEvidenceInsufficient', () => Effect.succeed(false)),
-    );
+    }).pipe(Effect.catchTag('PartyEvidenceInsufficient', () => Effect.succeed(false)));
   },
 );
 
@@ -101,7 +97,7 @@ export const readOrganizationBusinessNameExport = Effect.fn('OrganizationBusines
     operation: 'ORGANIZATION_BUSINESS_NAME_EXPORT',
     target: { kind: 'PARTY', partyId: input.partyRef.resourceId },
   }).pipe(Effect.mapError(unavailable));
-  if (!permitsQualifiedOrganizationSource(approvedProjection)) {
+  if (!approvedProjection) {
     return yield* unavailable();
   }
   yield* lockTenantIdentityWrites(transaction, scope.tenantId);

@@ -114,7 +114,6 @@ const demoOperations: Readonly<Record<SourceProcessingEligibilityRequest['consum
     'RECOVER_CREATE',
     'EVIDENCE_READ',
     'PROFILE_EXPORT',
-    'ORGANIZATION_BUSINESS_NAME_EXPORT',
     'ONBOARD_COUNTERPARTY_CUSTOMER',
     'ADD_CONTACT_POINT',
   ],

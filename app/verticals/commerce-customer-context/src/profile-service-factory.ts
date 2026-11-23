@@ -25,11 +25,6 @@ import { CreateCounterpartyPurchasingProfileRejected } from '../shared/actions/c
 import { accessPortalWritesForTransaction } from '@app/core-runtime/access/portal';
 import type { AccessPortalTransaction, AccessPortalWrites } from '@app/core-runtime/access/portal';
 import { Crypto, Effect, Option, Schema } from 'effect';
-import {
-  syntheticSourceProcessingSelected,
-  acquireSyntheticSourceProcessingPermit,
-} from './integrations/synthetic-source-processing.ts';
-import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CommerceSourceProcessingEligibility } from './integrations/source-processing-eligibility.ts';
 import type {
   CommerceSourceProcessingRejected,
@@ -134,7 +129,6 @@ const sourceProfileDependencies = (
     return requireModuleOperation(requirement).pipe(
       Effect.flatMap(() => sourcePrivacy.value.check(scope, request, requirement)),
       Effect.mapError(sourceDependencyFailure),
-      Effect.asVoid,
     );
   },
   resolveSourceRetailParty: (
@@ -433,48 +427,6 @@ const profileServicesFor = (
         partySourceReference: CustomerProfilePartySourceReference,
         payload: CreateCounterpartyPurchasingProfilePayload,
       ) {
-        if (yield* syntheticSourceProcessingSelected.pipe(Effect.mapError(sourceDependencyFailure))) {
-          if (Option.isNone(sourcePrivacy) || Option.isNone(sourceProof))
-            return yield* sourceDependencyFailure('Missing native synthetic processing dependencies');
-          const witness = payload.sourceOrganizationWitness;
-          if (
-            witness !== undefined &&
-            (witness.semanticProjectionVersion !== ORGANIZATION_PROFILE_SOURCE_CREATE_TEMPLATE_VERSION ||
-              witness.effectId !== source.effectId ||
-              witness.originalAdmissionInvocationId !== readVerifiedGatewayWorkload(scope)?.admissionInvocationId)
-          )
-            return yield* sourceDependencyFailure('Synthetic processing requires the genuine admitted source witness');
-          const roleKey = 'commerce.customer-context.requirement.create-counterparty-profile-source-role';
-          yield* requireModuleOperation(roleKey).pipe(Effect.mapError(sourceDependencyFailure));
-          const role = yield* sourceProof.value.counterparty(
-            scope,
-            input.counterpartyResourceId,
-            source,
-            partySourceReference,
-            roleKey,
-          );
-          if (role.outcome !== 'ELIGIBLE' || role.partyResourceId === undefined) return role;
-          const requirement = 'commerce.customer-context.requirement.create-counterparty-profile-source-privacy';
-          yield* requireModuleOperation(requirement).pipe(Effect.mapError(sourceDependencyFailure));
-          const syntheticTestPermit = yield* acquireSyntheticSourceProcessingPermit(
-            scope,
-            sourcePrivacy.value,
-            {
-              operation: 'customer-profile-source.write',
-              source: {
-                issuer: source.issuer,
-                namespace: source.namespace,
-                recordType: source.recordType,
-                routeRef: source.route.id,
-                recordId: source.recordId,
-                occurrenceId: source.occurrenceId,
-              },
-              target: { kind: 'PARTY', resourceId: role.partyResourceId },
-            },
-            requirement,
-          ).pipe(Effect.mapError(sourceDependencyFailure));
-          return role.outcome === 'ELIGIBLE' ? { ...role, syntheticTestPermit } : role;
-        }
         if (payload.sourceOrganizationWitness !== undefined) {
           if (
             Option.isNone(organizationBusiness) ||

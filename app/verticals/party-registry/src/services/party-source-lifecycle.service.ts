@@ -28,7 +28,6 @@ import { CustomerOnboardFoundSchema, onboardCounterpartyCustomerRecord } from '.
 import type { CustomerOnboardInput } from './counterparty-persistence.service.ts';
 import {
   authorizePartyClientSourceReferenceWithProjection,
-  permitsQualifiedOrganizationSource,
   requirePartySourceReferenceForWorkload,
 } from './party-client-source-evidence.service.ts';
 import {
@@ -223,7 +222,7 @@ const prepareLifecycle = Effect.fn('PartySourceLifecycle.prepare')(function* pre
       ? { operation: 'EVIDENCE_READ', target: { kind: 'PARTY', partyId } }
       : { operation: input.operation, partyId },
   );
-  if (permitsQualifiedOrganizationSource(sourceProjection) && !permitsQualifiedOrganizationSource(targetProjection)) {
+  if (sourceProjection && !targetProjection) {
     return yield* denied('client_source_current_organization_projection_required');
   }
   if (
@@ -272,11 +271,7 @@ const prepareLifecycle = Effect.fn('PartySourceLifecycle.prepare')(function* pre
     requestHash,
     partyId,
     reference,
-    qualifiedOrganizationSource:
-      permitsQualifiedOrganizationSource(sourceProjection) &&
-      permitsQualifiedOrganizationSource(targetProjection) &&
-      (sourceProjection.kind === 'organization_business' ||
-        (input.operation === 'ONBOARD_COUNTERPARTY_CUSTOMER' && input.payload.sourceOrganizationWitness !== undefined)),
+    organizationBusiness: sourceProjection && targetProjection,
   };
 });
 
@@ -445,7 +440,7 @@ export const onboardCounterpartyCustomerSourceRecord = Effect.fn('PartySourceLif
         ).pipe(Effect.mapError(unavailable)),
       });
     }
-    if (prepared?.qualifiedOrganizationSource === true) {
+    if (prepared?.organizationBusiness === true) {
       const strictPayload = yield* Schema.decodeUnknownEffect(Schema.toType(OrganizationBusinessOnboardInputSchema), {
         onExcessProperty: 'error',
       })(payload).pipe(Effect.mapError(unavailable));
