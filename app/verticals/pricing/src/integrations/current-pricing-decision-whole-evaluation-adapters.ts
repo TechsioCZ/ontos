@@ -112,6 +112,7 @@ import {
 import { PricingPromotionUnavailable } from '../services/pricing-promotion-unavailable.ts';
 import type { PriceGroupInterpretationService as PriceGroupInterpretationPort } from '../services/price-group-interpretation.service.ts';
 import { makePriceGroupInterpretationService } from '../services/price-group-interpretation.service.ts';
+import { unitPriceGroupAbsenceEvidence } from '../services/unit-price-material-evidence.service.ts';
 import type { ExactPriceCandidateSetPersistence, PricePersistence } from '../services/price-persistence.service.ts';
 import { pricePersistenceForScope } from '../services/price-persistence.service.ts';
 import type { QuantityTierPersistence } from '../services/quantity-tier-persistence.service.ts';
@@ -692,7 +693,16 @@ const tierReaderFor = (
           return yield* failure('UNVERIFIABLE', 'pricing-price:schedule', 'Exact Price schedule is not Current');
         }
         const exactPriceEffect = {
-          path: { priceGroupSelector: usedPrice.request.exactKey.priceGroupSelector, requiredAbsenceEvidence: [] },
+          path: {
+            priceGroupSelector: usedPrice.request.exactKey.priceGroupSelector,
+            // The no-group Price used after proven Group absence must carry that absence proof into the Tier path.
+            requiredAbsenceEvidence: Match.value(exactPrice.path).pipe(
+              Match.tag('NO_GROUP_AFTER_PROVEN_GROUP_ABSENCE', ({ groupAbsence }) => [
+                unitPriceGroupAbsenceEvidence(groupAbsence),
+              ]),
+              Match.orElse(() => []),
+            ),
+          },
           price: priceSchedule.schedule.current,
           scheduleRevision: priceSchedule.schedule.scheduleRevision,
         };
@@ -1010,11 +1020,10 @@ const makeDiscountReader = (
       function* resolveRevisionProgram(input: {
         readonly assigned: NonNullable<DiscountDescriptor['assigned']>;
         readonly basePricePath: Exclude<DiscountDescriptor['basePricePath'], null>;
-        readonly currentSet: DiscountCurrentSet;
         readonly revision: DiscountCurrentSet['currentDiscounts'][number];
         readonly unitPrice: DiscountDescriptor['unitPrice'];
       }) {
-        const { assigned, basePricePath, currentSet, revision, unitPrice } = input;
+        const { assigned, basePricePath, revision, unitPrice } = input;
         const currentResolution = yield* resolveCurrentPricingDiscountRevisions(
           revision.definition.identityKey,
           [revision],
@@ -1035,7 +1044,9 @@ const makeDiscountReader = (
               basis: revision.definition.identityKey.basis,
               commercialScope: request.decision.commercialScope,
               currencyCode: request.decision.currencyCode,
-              observedAt: currentSet.authority.observedAt,
+              // Applicability is judged at the decision instant, like the Current resolution and Currency Support
+              // it is bound to; the owner's own observation time stays in the Current-set receipt.
+              observedAt: request.decision.operationTime,
             },
             basePricePath,
             evidence: assigned.evidence,
@@ -1068,7 +1079,7 @@ const makeDiscountReader = (
           .pipe(Effect.mapError(unavailable(DISCOUNT_OWNER_REF, 'Contractual Discount authority is unavailable')));
         const applicabilityInputs = yield* Effect.forEach(
           currentSet.currentDiscounts,
-          (revision) => resolveRevision({ assigned, basePricePath, currentSet, revision, unitPrice }),
+          (revision) => resolveRevision({ assigned, basePricePath, revision, unitPrice }),
           { concurrency: 16 },
         );
         return { applicabilityInputs, currentSets: [currentSet] };

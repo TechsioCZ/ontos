@@ -4,6 +4,7 @@ import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  unitPriceGroupAbsenceEvidence,
   unitPriceGroupAbsencePredicateRef,
   validateUnitPriceMaterialEvidence,
 } from '../../src/services/unit-price-material-evidence.service.ts';
@@ -179,6 +180,15 @@ describe('Pricing Unit Price material evidence gate #778', () => {
       if (absence === undefined) {
         throw new Error('Fallback fixture must preserve Group-price absence evidence');
       }
+      // The production Tier reader derives this proof with the shared builder; it must equal the retained evidence.
+      const groupAbsence = Match.value(fallbackAttempt.exactPrice.path).pipe(
+        Match.tag('NO_GROUP_AFTER_PROVEN_GROUP_ABSENCE', (path) => path.groupAbsence),
+        Match.orElse(() => null),
+      );
+      if (groupAbsence === null) {
+        throw new Error('Fallback fixture must use the no-group Price after proven Group absence');
+      }
+      expect(unitPriceGroupAbsenceEvidence(groupAbsence)).toEqual(absence);
       const failure = yield* validateUnitPriceMaterialEvidence({
         ...fallbackAttempt,
         tierSelection: {

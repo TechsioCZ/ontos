@@ -24,8 +24,9 @@ import {
   PricingSourceEvidenceVerifiedAbsentSchema,
   PricingSourceEvidenceVerifiedPresentSchema,
 } from '@app/pricing-contracts/domain/source-revision-evidence';
-import { Context, Effect, Schema } from 'effect';
+import { Context, Effect, Result, Schema } from 'effect';
 
+import { canonicalizePricingAcceptedOrderHandoffJson } from './accepted-order-handoff-serializer.service.ts';
 import { assemblePricingMaterialEvidence } from './material-evidence-assembly.service.ts';
 
 const CATALOG_OWNER_MODULE_ID = 'commerce.catalog';
@@ -240,6 +241,55 @@ const changedAtFinalFence = (
 
 const sameSourceEvidence = Schema.toEquivalence(PricingSourceEvidenceResultSchema);
 
+// Two owner reads of one proof reference (one owner Revision and generation) are the same proof even though each read
+// observed the owner at its own statement time, as when two original occurrences of one Variant resolve one exact
+// Price, Tier set or Fee set. Only the instants an owner observed or revalidated may differ; the proof reference, owner
+// Revision, request, facts and every other field must match exactly, so a genuinely conflicting proof still fails.
+const OBSERVATION_INSTANT_KEYS: ReadonlySet<string> = new Set([
+  'evaluatedAt',
+  'observedAt',
+  'revalidatedAt',
+  'verifiedAt',
+]);
+
+const withoutObservationInstants = (value: Schema.Json): Schema.Json => {
+  if (Array.isArray(value)) {
+    return value.map(withoutObservationInstants);
+  }
+  if (
+    value === null ||
+    Schema.is(Schema.String)(value) ||
+    Schema.is(Schema.Finite)(value) ||
+    Schema.is(Schema.Boolean)(value)
+  ) {
+    return value;
+  }
+  const kept: [string, Schema.Json][] = [];
+  for (const [key, nested] of Object.entries(value)) {
+    if (!OBSERVATION_INSTANT_KEYS.has(key)) {
+      kept.push([key, withoutObservationInstants(nested)]);
+    }
+  }
+  return Object.fromEntries(kept);
+};
+
+const encodeVerifiedSourceJson = Schema.encodeUnknownResult(Schema.toCodecJson(PricingSourceEvidenceResultSchema));
+const encodeTypedSourceJson = Schema.encodeUnknownResult(
+  Schema.toCodecJson(PricingSetBackedMaterialEvidenceFenceSourceSchema),
+);
+
+const sameEncodedIgnoringObservation = (
+  left: Result.Result<Schema.Json, unknown>,
+  right: Result.Result<Schema.Json, unknown>,
+): boolean =>
+  Result.isSuccess(left) &&
+  Result.isSuccess(right) &&
+  canonicalizePricingAcceptedOrderHandoffJson(withoutObservationInstants(left.success)) ===
+    canonicalizePricingAcceptedOrderHandoffJson(withoutObservationInstants(right.success));
+
+const sameProofIgnoringObservation = (left: VerifiedSourceEvidence, right: VerifiedSourceEvidence): boolean =>
+  sameEncodedIgnoringObservation(encodeVerifiedSourceJson(left), encodeVerifiedSourceJson(right));
+
 const deduplicateVerifiedSourceEvidence = (
   candidateRef: string,
   sources: readonly PricingSourceEvidenceResult[],
@@ -293,7 +343,7 @@ const deduplicateVerifiedSourceEvidence = (
     if (
       retained !== undefined &&
       !(preservesCatalogOccurrence && sameCatalogOwner) &&
-      !sameSourceEvidence(retained, source)
+      !sameProofIgnoringObservation(retained, source)
     ) {
       return Effect.fail(
         unverifiable(
@@ -322,7 +372,12 @@ const verifiedExpectations = (
 
 type PricingSetBackedFenceSource = Extract<PricingMaterialEvidenceFenceSource, { readonly sourceEvidence: unknown }>;
 const isSetBackedFenceSource = Schema.is(PricingSetBackedMaterialEvidenceFenceSourceSchema);
-const sameSetBackedFenceSource = Schema.toEquivalence(PricingSetBackedMaterialEvidenceFenceSourceSchema);
+
+/** The same owner proof read twice: typed source material that differs only in owner observation instants. */
+const sameTypedProofIgnoringObservation = (
+  left: PricingSetBackedFenceSource,
+  right: PricingSetBackedFenceSource,
+): boolean => sameEncodedIgnoringObservation(encodeTypedSourceJson(left), encodeTypedSourceJson(right));
 
 const verifiedTypedAuthority = (
   candidateRef: string,
@@ -368,7 +423,7 @@ const verifiedTypedRequest = (
     const { verification } = completeness;
     const { verificationRef } = verification;
     const retained = byProof.get(verificationRef);
-    if (retained !== undefined && !sameSetBackedFenceSource(retained, source)) {
+    if (retained !== undefined && !sameTypedProofIgnoringObservation(retained, source)) {
       return Effect.fail(
         unverifiable(
           candidateRef,
@@ -389,7 +444,7 @@ const verifiedTypedRequest = (
         return true;
       }
       const matched = byProof.get(source.completeness.verification.verificationRef);
-      return matched === undefined || !sameSourceEvidence(matched.sourceEvidence, source);
+      return matched === undefined || !sameProofIgnoringObservation(matched.sourceEvidence, source);
     })
   ) {
     return Effect.fail(

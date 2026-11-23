@@ -412,10 +412,13 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
           ? [[source.sourceEvidence.completeness.verification.verificationRef, source] as const]
           : [],
       );
-      const typedByProof =
-        typedEntries === undefined
-          ? new Map<string, PricingMaterialEvidenceFenceSource>()
-          : new Map<string, PricingMaterialEvidenceFenceSource>(typedEntries);
+      // One proof read for several original occurrences keeps the first read, the one its expectation was built from.
+      const typedByProof = new Map<string, PricingMaterialEvidenceFenceSource>();
+      for (const [proofRef, typedSource] of typedEntries ?? []) {
+        if (!typedByProof.has(proofRef)) {
+          typedByProof.set(proofRef, typedSource);
+        }
+      }
       const ownerResults = yield* Effect.forEach(
         groups,
         ([ownerModuleId, ownerSources]): Effect.Effect<
