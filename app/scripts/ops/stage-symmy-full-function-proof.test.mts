@@ -16,6 +16,7 @@ import {
   makeSymmyProofNames,
   parseSymmyOperatorCookieJar,
   proveSymmyFullFunction,
+  proveSymmyProduct,
   readSymmyProofConfig,
   SymmyProofFailure,
   symmyProofFailureLine,
@@ -83,6 +84,51 @@ test('replay preserves item/effect identities, not just a successful HTTP respon
   assertReplayIdentity(original, replay, 'product-replay');
   const changed = assertAcceptedEffects(outcome('accepted_change', { effectId: itemId }), expected, 'product-replay');
   assert.throws(() => assertReplayIdentity(original, changed, 'product-replay'), /replay-identity/u);
+});
+
+test('one product job item carries all owner effects and retains its identity on replay', async (t) => {
+  const config = { ...readSymmyProofConfig({ SYMMY_API_KEY: 'synthetic-key' }), origin: 'https://proof.invalid' };
+  const effects = Array.from({ length: 10 }, (_, index) => ({
+    effectId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    owner: index === 8 ? 'commerce.pricing' : index === 9 ? 'commerce.inventory' : 'commerce.catalog',
+    status: 'accepted_change',
+  }));
+  const items = [{ itemId, outcome: 'accepted', effects }];
+  let pageReads = 0;
+  let writes = 0;
+  let prefix = '';
+  const ref = (resourceId: string, resourceType: string) => ({
+    moduleId: 'commerce.catalog', resourceId, resourceType, tenantId: config.input.unitRef.tenantId,
+  });
+  t.mock.method(globalThis, 'fetch', async (url: URL, init: RequestInit) => {
+    if (url.pathname === '/api/symmy/v1/admin/products') {
+      prefix = url.searchParams.get('q') ?? '';
+      if (pageReads++ === 0) return Response.json({ count: 0, products: [] });
+      return Response.json({ count: 1, products: [{
+        id: itemId, sourceRecordId: `product:erpId:${prefix}_PRODUCT`,
+        product: {
+          name: `${prefix}_PRODUCT`, productRef: ref(itemId, 'commerce.catalog.product'),
+          variants: [{ variantId: effectId, variantRef: ref(effectId, 'commerce.catalog.variant') }],
+        },
+        variantSources: [{ sourceRecordId: `variant:variantId:${prefix}_VARIANT`, variantId: effectId }],
+      }] });
+    }
+    if (url.pathname === '/api/symmy/v1/products/batch') {
+      assert.equal(init.method, 'POST');
+      writes++;
+      return writes === 1
+        ? Response.json({ jobId: itemId, status: 'queued' }, { status: 202 })
+        : Response.json({ items });
+    }
+    if (url.pathname === `/api/symmy/v1/jobs/${itemId}`) {
+      return Response.json({ jobId: itemId, status: 'completed_all', items });
+    }
+    throw new Error('Unexpected product proof request');
+  });
+  const result = await proveSymmyProduct(config);
+  assert.equal(result.names.prefix, prefix);
+  assert.equal(writes, 2);
+  assert.equal(pageReads, 3);
 });
 
 test('configuration keeps the environment key Redacted and uses only published stage refs', () => {

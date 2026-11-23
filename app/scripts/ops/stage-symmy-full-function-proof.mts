@@ -1357,7 +1357,7 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
   return client;
 }
 const PRODUCT_EFFECTS = {
-  effectsAtLeast: 3, itemsAtLeast: 3, owners: { 'commerce.catalog': 2, 'commerce.pricing': 1 },
+  effectsAtLeast: 3, itemsAtLeast: 1, owners: { 'commerce.catalog': 2, 'commerce.pricing': 1 },
 } satisfies EffectExpectation;
 export async function proveSymmyProduct(
   config: SymmyProofConfig,
