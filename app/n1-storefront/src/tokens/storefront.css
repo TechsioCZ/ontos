@@ -92,6 +92,28 @@
   --color-dialog-content-bg: var(--color-fill-hover);
 }
 
+/* N1 promo carousel 33:771 uses overlay arrows and outlined page indicators. */
+@utility n1-hero-carousel {
+  --size-action-icon-lg: var(--dimension-48);
+  --text-action-icon-lg: var(--dimension-32);
+  --width-carousel-indicator: var(--dimension-32);
+  --spacing-carousel-indicator: var(--dimension-4);
+  --color-carousel-navigation-bg: var(--color-transparent);
+  --color-carousel-navigation-bg-hover: var(--color-transparent);
+  --color-carousel-trigger-border: var(--color-transparent);
+  --color-carousel-trigger-fg-base: var(--color-fg-reverse);
+  --color-carousel-trigger-fg-hover: var(--color-fg-reverse);
+  --shadow-carousel-navigation: none;
+  --color-carousel-indicator-border-base: var(--color-fg-reverse);
+  --color-carousel-indicator-border-active: var(--color-primary);
+  --color-carousel-indicator-bg-base: var(--color-transparent);
+  --color-carousel-indicator-bg-active: var(--color-transparent);
+
+  & [data-part="indicator"][data-current] {
+    @apply bg-primary;
+  }
+}
+
 /* Footer logo/contact remains12px apart; its legal group uses8px. */
 @utility n1-footer-navigation {
   --spacing-footer-section-md: var(--dimension-8);

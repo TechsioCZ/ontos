@@ -1,6 +1,6 @@
 # N1 asset sources
 
-Original exports from the user-provided Figma file `gIHtMwCCl2OXhMAW9s9LIn`.
+Most assets are original exports from the user-provided Figma file `gIHtMwCCl2OXhMAW9s9LIn`.
 No temporary download URL is used by the application. These are individual brand
 images and icons, never page screenshots used as UI.
 
@@ -9,6 +9,8 @@ images and icons, never page screenshots used as UI.
 | `logo.png`              | `33:685` header logo        | 256 × 61     |
 | `logo-footer.png`       | `35:1131` footer logo       | 322 × 78     |
 | `hero.png`              | `33:772` promo banner image | 1440 × 423   |
+| `hero-northwave.webp`   | N1 reference, Northwave     | 1600 × 469   |
+| `hero-tallboy.webp`     | N1 reference, Tallboy       | 1600 × 469   |
 | `flag-cs.png`           | `170:2031`                  | 24 × 16      |
 | `flag-en.png`           | `170:2033`                  | 32 × 16      |
 | `web-revolution.png`    | `171:2178`                  | 32 × 17      |
@@ -30,6 +32,11 @@ images and icons, never page screenshots used as UI.
 | `promo-purevue.png`     | `33:863`                    | 256 × 256    |
 | `promo-ebikes.png`      | `33:868`                    | 256 × 256    |
 | `promo-shoes.png`       | `33:873`                    | 256 × 256    |
+
+The second and third carousel banners are the original
+[Northwave](https://n1-fe.netlify.app/_next/static/media/nw.a292723f.webp)
+and [Tallboy](https://n1-fe.netlify.app/_next/static/media/tallboy.57792392.webp)
+assets from the reference storefront.
 
 Benefit exports are individual static images downloaded again on 2026-11-02.
 Mobile Image wrappers follow current `34:983`, `34:988`, `34:994`, `34:999`
