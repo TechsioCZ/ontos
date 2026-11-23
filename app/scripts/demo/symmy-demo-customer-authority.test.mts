@@ -4,6 +4,7 @@ import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/aut
 
 import {
   buildSymmyDemoCustomerRoutes,
+  buildSymmyDemoSourceProcessingPolicy,
   SYMMY_DEMO_CUSTOMERS_READ_ROUTE,
   SYMMY_DEMO_CUSTOMERS_ROUTE,
   SYMMY_DEMO_CUSTOMER_COMPANY,
@@ -15,9 +16,12 @@ import {
   symmyDemoCustomerWriteKey,
   SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
   selectSymmyDemoSourceWriter,
+  symmyDemoReceiverCandidates,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
+  partyReaderId: '72000000-0000-4000-8000-000000000025',
+  privacyReceiverId: '72000000-0000-4000-8000-000000000026',
   commerceWriterId: '72000000-0000-4000-8000-000000000023',
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
@@ -150,7 +154,7 @@ it('replays deterministic selected routes without deriving a native group identi
 it('merges only exact tenant-local Party source bindings and never fabricates Privacy authority', () => {
   const first = symmyDemoCustomerEnvironment(identities);
   const entries = JSON.parse(first.ONTOS_PARTY_CLIENT_SOURCE_BINDINGS);
-  expect(entries).toHaveLength(3);
+  expect(entries).toHaveLength(4);
   expect(symmyDemoCustomerEnvironment(identities, entries)).toEqual(first);
   expect(Object.keys(first)).toEqual([
     'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
@@ -160,6 +164,7 @@ it('merges only exact tenant-local Party source bindings and never fabricates Pr
     identities.integrationPrincipalId,
     identities.partyWriterId,
     identities.commerceWriterId,
+    identities.partyReaderId,
   ]);
   expect(
     entries.every(
@@ -189,5 +194,33 @@ it.effect('reuses a native Action key after a lost response and separates change
       yield* symmyDemoCustomerWriteKey('privacy', '/privacy/actions/create-privacy-subject', '{"a":1}'),
     );
     expect(key.length).toBeLessThanOrEqual(200);
+  }),
+);
+
+it.effect('authorizes the actual switched Privacy receiver, not merely upstream source writers', () =>
+  Effect.gen(function* test() {
+    const policy = yield* buildSymmyDemoSourceProcessingPolicy(identities);
+    expect(policy.callers).toContainEqual({ authMethod: 'system', principalId: identities.privacyReceiverId });
+    expect(policy.callers).toHaveLength(4);
+  }),
+);
+
+it.effect('retires only explicitly identified duplicate aliases, preserving a unique legacy SYSTEM', () =>
+  Effect.gen(function* test() {
+    const alias = { ...legacyWriter, bindingId: '72000000-0000-4000-8000-000000000031' };
+    const other = {
+      ...legacyWriter,
+      principalId: identities.commerceWriterId,
+      bindingId: '72000000-0000-4000-8000-000000000032',
+    };
+    expect(yield* symmyDemoReceiverCandidates([alias, serviceWriter], [alias.bindingId])).toEqual([
+      alias,
+      serviceWriter,
+    ]);
+    expect(yield* symmyDemoReceiverCandidates([alias, other, serviceWriter], [alias.bindingId])).toEqual([
+      other,
+      serviceWriter,
+    ]);
+    expect(yield* symmyDemoReceiverCandidates([alias, other, serviceWriter], [])).toHaveLength(3);
   }),
 );

@@ -1,6 +1,7 @@
 absolute
 collapse
 fixed
+lowercase
 ordinal
 rounded
 table

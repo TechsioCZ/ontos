@@ -36,7 +36,10 @@ import { v5 } from 'uuid';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
-import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
+import {
+  revokeWorkloadBindingIn,
+  writeWorkloadBindings,
+} from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
 import { writeWorkloadCompanyBindings } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
 import { AccessWorkloadCompanyBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/company-store.ts';
 import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
@@ -82,12 +85,20 @@ const revision = 'v1';
 const recordType = 'CUSTOMER';
 const sourceWriter = 'commerce.customer-context.source-write';
 const partyWriter = 'party.registry.source-write';
+const customerReceiverWorkloads = [
+  'party.registry.source-read',
+  'commerce.customer-context.source-read',
+  'privacy.core.source-processing-check',
+  'privacy.core.organization-business-check',
+  'privacy.core.organization-profile-ico-check',
+  'commerce.customer-context.organization-ico-facts.read',
+  'integration.symmy.source-organization-facts.read',
+  'pricing.price-group-catalog.source-read',
+] as const;
 const integrationWorkloads = [
   'integration.symmy-admit',
   'integration.symmy-poll',
-  'commerce.customer-context.source-read',
-  'party.registry.source-read',
-  'privacy.core.source-processing-check',
+  ...customerReceiverWorkloads,
 ] as const;
 export const symmyDemoCustomerWorkloadRequirements = {
   integration: integrationWorkloads,
@@ -106,9 +117,12 @@ const IdentitySchema = Schema.Struct({
   commerceWriterId: Uuid,
   integrationPrincipalId: Uuid,
   partyWriterId: Uuid,
+  partyReaderId: Uuid,
+  privacyReceiverId: Uuid,
 });
 type Identities = typeof IdentitySchema.Type;
 const SourceWriterCandidateSchema = Schema.Struct({
+  bindingId: Schema.optional(Uuid),
   kind: Schema.Literals(['service', 'system']),
   legalEntityId: Schema.NullOr(Uuid),
   platformRole: Schema.NullOr(Schema.String),
@@ -116,6 +130,13 @@ const SourceWriterCandidateSchema = Schema.Struct({
   tenantId: Uuid,
   workloadKey: Schema.String,
 });
+
+export const symmyDemoReceiverCandidates = (input: unknown, excludedBindingIds: readonly string[]) =>
+  Effect.gen(function* receiverCandidates() {
+    const candidates = yield* Schema.decodeUnknownEffect(Schema.Array(SourceWriterCandidateSchema))(input);
+    if (candidates.filter(({ kind }) => kind === 'system').length <= 1) return candidates;
+    return candidates.filter(({ bindingId }) => bindingId === undefined || !excludedBindingIds.includes(bindingId));
+  });
 
 /**
  * Preserve the native tenant-wide system writer even before its company registration exists. Otherwise select
@@ -150,10 +171,10 @@ export const selectSymmyDemoSourceWriter = (workloadKey: string, input: unknown)
   });
 
 /** Active native bindings establish the candidate set; Core revalidates the selected identity as a trusted worker. */
-export const resolveSymmyDemoSourceWriter = (workloadKey: string) =>
+export const resolveSymmyDemoSourceWriter = (workloadKey: string, excludedBindingIds: readonly string[] = []) =>
   Effect.gen(function* resolveWriter() {
     const sql = yield* PgClient.PgClient;
-    const candidates = yield* sql`select distinct p.principal_id as "principalId", p.kind,
+    const candidates = yield* sql`select distinct b.binding_id as "bindingId", p.principal_id as "principalId", p.kind,
       p.platform_role as "platformRole", b.tenant_id as "tenantId",
       c.legal_entity_id as "legalEntityId", b.workload_key as "workloadKey"
       from core.access_workload_bindings b
@@ -166,7 +187,8 @@ export const resolveSymmyDemoSourceWriter = (workloadKey: string) =>
       where b.tenant_id=${tenantId} and b.workload_key=${workloadKey}
         and b.status='active' and p.status='active'
         and p.kind in ('system','service') and t.status='active' and l.status='active'`;
-    const principalId = yield* selectSymmyDemoSourceWriter(workloadKey, candidates);
+    const parsed = yield* symmyDemoReceiverCandidates(candidates, excludedBindingIds);
+    const principalId = yield* selectSymmyDemoSourceWriter(workloadKey, parsed);
     const executor = yield* makeWithDefaults({ relations: coreRelations });
     return yield* makeSystemPrincipalContextResolver({ executor }).resolve({
       principalId,
@@ -175,6 +197,30 @@ export const resolveSymmyDemoSourceWriter = (workloadKey: string) =>
       tenantId,
     });
   });
+export const symmyDemoObsoleteReceiverBindingIds = (partyId: string, commerceId: string, key: string) =>
+  [partyId, commerceId].map((principalId) => stageWorkloadBindingIds(tenantId, principalId, key).bindingId);
+
+const resolveSymmyDemoCustomerReceivers = (partyId: string, commerceId: string) =>
+  Effect.gen(function* resolveReceivers() {
+    const resolved = [];
+    for (const key of customerReceiverWorkloads) {
+      const principal = yield* resolveSymmyDemoSourceWriter(
+        key,
+        symmyDemoObsoleteReceiverBindingIds(partyId, commerceId, key),
+      );
+      resolved.push({ key, principalId: principal.principalId });
+    }
+    const partyReader = resolved.find(({ key }) => key === 'party.registry.source-read');
+    const privacyReceiver = resolved.find(({ key }) => key === 'privacy.core.source-processing-check');
+    if (partyReader === undefined || privacyReceiver === undefined)
+      return yield* fail('Native customer receiver enrollment is absent');
+    return {
+      partyReaderId: partyReader.principalId,
+      privacyReceiverId: privacyReceiver.principalId,
+      receivers: resolved,
+    };
+  });
+
 const GroupSchema = Schema.Struct({
   code: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9._-]{1,80}$/u)),
   groupId: Uuid,
@@ -189,6 +235,7 @@ export const buildSymmyDemoSourceProcessingPolicy = (identities: Identities) =>
       { authMethod: 'api_key', principalId: identities.integrationPrincipalId },
       { authMethod: 'system', principalId: identities.partyWriterId },
       { authMethod: 'system', principalId: identities.commerceWriterId },
+      { authMethod: 'system', principalId: identities.privacyReceiverId },
     ],
     customerRouteId: SYMMY_DEMO_CUSTOMERS_ROUTE,
     dataUse: 'DEMO_TEST_DATA_ONLY',
@@ -472,6 +519,7 @@ export const symmyDemoCustomerEnvironment = (
     { authMethod: 'api_key' as const, principalId: identities.integrationPrincipalId },
     { authMethod: 'system' as const, principalId: identities.partyWriterId },
     { authMethod: 'system' as const, principalId: identities.commerceWriterId },
+    { authMethod: 'system' as const, principalId: identities.partyReaderId },
   ].map((identity) => ({
     ...identity,
     issuer,
@@ -535,7 +583,9 @@ export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnviron
     [resolveSymmyDemoSourceWriter(partyWriter), resolveSymmyDemoSourceWriter(sourceWriter)],
     { concurrency: 1 },
   );
+  const receiverIdentities = yield* resolveSymmyDemoCustomerReceivers(party.principalId, commerce.principalId);
   const identities = yield* Schema.decodeUnknownEffect(IdentitySchema)({
+    ...receiverIdentities,
     commerceWriterId: commerce.principalId,
     integrationPrincipalId: integration.principalId,
     partyWriterId: party.principalId,
@@ -596,7 +646,9 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       [resolveSymmyDemoSourceWriter(partyWriter), resolveSymmyDemoSourceWriter(sourceWriter)],
       { concurrency: 1 },
     );
+    const receiverIdentities = yield* resolveSymmyDemoCustomerReceivers(party.principalId, commerce.principalId);
     const identities = yield* Schema.decodeUnknownEffect(IdentitySchema)({
+      ...receiverIdentities,
       commerceWriterId: commerce.principalId,
       integrationPrincipalId: existing.principalId,
       partyWriterId: party.principalId,
@@ -613,18 +665,31 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     )(owners);
     const scope = yield* stageScopeOf({ principalId: owner.principalId, tenantId });
     const database = { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor };
+    // Remove only duplicate executor aliases this bootstrap previously created. Unique legacy SYSTEM stays.
+    for (const key of customerReceiverWorkloads) {
+      const systems = yield* sql`select b.binding_id as "bindingId" from core.access_workload_bindings b
+        join core.principals p on p.tenant_id=b.tenant_id and p.principal_id=b.principal_id
+        where b.tenant_id=${tenantId} and b.workload_key=${key} and b.status='active'
+          and p.kind='system' and p.status='active'`;
+      if (systems.length <= 1) continue;
+      for (const principalId of [party.principalId, commerce.principalId]) {
+        const ids = stageWorkloadBindingIds(tenantId, principalId, key);
+        if (!systems.some((row) => row.bindingId === ids.bindingId)) continue;
+        if (mode === 'apply') {
+          yield* revokeWorkloadBindingIn(executor, scope, {
+            bindingId: AccessWorkloadBindingIdSchema.make(ids.bindingId),
+            revokedAt: new Date(),
+          });
+        } else {
+          return yield* fail(`Duplicate obsolete bootstrap receiver binding remains for ${key}; run apply`);
+        }
+      }
+    }
     const grants = [
       ...integrationWorkloads.map((key) => ({ key, principalId: existing.principalId })),
-      ...[partyWriter, 'privacy.core.source-processing-check', 'privacy.core.organization-business-check'].map(
-        (key) => ({ key, principalId: party.principalId }),
-      ),
-      ...[
-        sourceWriter,
-        'privacy.core.source-processing-check',
-        'privacy.core.organization-business-check',
-        'party.registry.source-read',
-        'commerce.customer-context.source-read',
-      ].map((key) => ({ key, principalId: commerce.principalId })),
+      { key: partyWriter, principalId: party.principalId },
+      { key: sourceWriter, principalId: commerce.principalId },
+      ...receiverIdentities.receivers,
     ];
     for (const { key, principalId } of grants) {
       const workloadKey = yield* Schema.decodeUnknownEffect(WorkloadKeySchema)(key);
@@ -703,7 +768,10 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
           yield* sql`insert into privacy.demo_source_processing_policies
           (tenant_id,legal_entity_id,policy_id,policy_record)
           values(${tenantId},${legalEntityId},${demoPolicy.policyId},${sql.json(encodedDemoPolicy)})
-          on conflict do nothing`;
+          on conflict (tenant_id,legal_entity_id,policy_id) do update
+          set policy_record=jsonb_set(privacy.demo_source_processing_policies.policy_record,'{callers}',
+            excluded.policy_record->'callers')
+          where privacy.demo_source_processing_policies.policy_record-'callers'=excluded.policy_record-'callers'`;
         }),
       );
     }

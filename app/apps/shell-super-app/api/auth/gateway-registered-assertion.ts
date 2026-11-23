@@ -3,6 +3,7 @@ import { recoverSqlTransactionError } from '@app/core-runtime';
 import type { ModuleEntrypointAccess } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
 import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { sql } from 'drizzle-orm';
@@ -173,6 +174,61 @@ const admittedSourceMatchesBinding = (
   evidence.compositionRevision === binding.compositionRevision &&
   evidence.compositionRevision === installed.composition.revision;
 
+const customerChainWorkloads: ReadonlySet<string> = new Set([
+  'party.registry.source-write',
+  'party.registry.source-read',
+  'commerce.customer-context.source-write',
+  'commerce.customer-context.source-read',
+  'commerce.customer-context.organization-ico-facts.read',
+  'privacy.core.source-processing-check',
+  'privacy.core.organization-business-check',
+  'privacy.core.organization-profile-ico-check',
+  'integration.symmy.source-organization-facts.read',
+  'pricing.price-group-catalog.source-read',
+]);
+
+/** Installed registered-call rules still constrain every edge; this only identifies its actual enrolled executor. */
+export const registeredAssertionPrincipalEligibility = (input: {
+  readonly side: 'receiver' | 'source';
+  readonly tenantId: string;
+  readonly workloadKey: string;
+  readonly legalEntityId: string | undefined;
+}) => {
+  const principal = sql.raw(input.side === 'receiver' ? 'receiver_principal' : 'source_principal');
+  const binding = sql.raw(input.side === 'receiver' ? 'receiver' : 'current_source');
+  const systemCount = sql`(
+    select count(*) from core.access_workload_bindings legacy_binding
+    join core.principals legacy_principal
+      on legacy_principal.tenant_id=legacy_binding.tenant_id
+      and legacy_principal.principal_id=legacy_binding.principal_id
+      and legacy_principal.kind='system' and legacy_principal.status='active'
+    where legacy_binding.tenant_id=${input.tenantId}::uuid
+      and legacy_binding.workload_key=${input.workloadKey} and legacy_binding.status='active'
+  )`;
+  const legacy = sql`(${principal}.kind='system' and ${systemCount}=1)`;
+  if (input.legalEntityId === undefined || !customerChainWorkloads.has(input.workloadKey)) {
+    return legacy;
+  }
+  const principalId = internalWorkloadPrincipalId({
+    tenantId: input.tenantId,
+    legalEntityId: input.legalEntityId,
+    workloadKey: input.workloadKey,
+  });
+  return sql`(${legacy} or (
+    ${systemCount}=0 and ${principal}.kind='service'
+    and ${principal}.platform_role='internal_workload'
+    and ${principal}.principal_id=${principalId}::uuid
+    and exists (
+      select 1 from core.access_workload_company_bindings company_binding
+      join core.legal_entities company on company.tenant_id=company_binding.tenant_id
+        and company.legal_entity_id=company_binding.legal_entity_id and company.status='active'
+      where company_binding.tenant_id=${binding}.tenant_id
+        and company_binding.workload_binding_id=${binding}.binding_id
+        and company_binding.legal_entity_id=${input.legalEntityId}::uuid and company_binding.status='active'
+    )
+  ))`;
+};
+
 /** A verified owner request can obtain only an explicitly enrolled downstream workload operation. */
 export const admitRegisteredAssertionWorkload = Effect.fn('GatewayDelegation.admitRegisteredAssertion')(
   function* registeredAssertion(input: {
@@ -255,12 +311,25 @@ export const admitRegisteredAssertionWorkload = Effect.fn('GatewayDelegation.adm
               sql`
         select receiver.principal_id as "principalId", receiver.incarnation as "bindingIncarnation", ${ownerBindingExpression} as "ownerBindingIncarnation"
         from core.access_workload_bindings receiver
-        join core.principals receiver_principal on receiver_principal.tenant_id=receiver.tenant_id and receiver_principal.principal_id=receiver.principal_id and receiver_principal.kind='system' and receiver_principal.status='active'
+        join core.principals receiver_principal on receiver_principal.tenant_id=receiver.tenant_id and receiver_principal.principal_id=receiver.principal_id and receiver_principal.status='active'
         join core.tenants t on t.tenant_id=receiver.tenant_id and t.status='active'
         ${originalAuthority}
-        join core.principals source_principal on source_principal.tenant_id=t.tenant_id and source_principal.principal_id=${sourcePrincipal.principalId}::uuid and source_principal.kind='system' and source_principal.status='active'
+        join core.principals source_principal on source_principal.tenant_id=t.tenant_id and source_principal.principal_id=${sourcePrincipal.principalId}::uuid and source_principal.status='active'
         join core.access_workload_bindings current_source on current_source.tenant_id=t.tenant_id and current_source.principal_id=${sourcePrincipal.principalId}::uuid and current_source.workload_key=${workload.workloadKey} and current_source.incarnation=${workload.bindingIncarnation}::uuid and current_source.status='active'
         where receiver.tenant_id=${sourcePrincipal.tenantId}::uuid and receiver.workload_key=${rule.workloadKey} and receiver.status='active'
+          and ${registeredAssertionPrincipalEligibility({
+            side: 'receiver',
+            tenantId: sourcePrincipal.tenantId,
+            workloadKey: rule.workloadKey,
+            // The installed rule may project to a tenant-only read; executor enrollment remains in the source company.
+            legalEntityId: workload.legalEntityId,
+          })}
+          and ${registeredAssertionPrincipalEligibility({
+            side: 'source',
+            tenantId: sourcePrincipal.tenantId,
+            workloadKey: workload.workloadKey,
+            legalEntityId: workload.legalEntityId,
+          })}
           and (${workload.sourceMode} <> 'worker' or trust.registered_workload_delivery_is_active(${workload.runReference}::uuid, ${workload.claimId ?? ''}, ${workload.workerKey ?? ''}, ${workload.workerModuleKey ?? ''}, ${sourcePrincipal.tenantId}::uuid))
           and (${workload.legalEntityId ?? null}::uuid is null or exists(select 1 from core.legal_entities l where l.tenant_id=t.tenant_id and l.legal_entity_id=${workload.legalEntityId ?? null}::uuid and l.status='active'))
         limit 2

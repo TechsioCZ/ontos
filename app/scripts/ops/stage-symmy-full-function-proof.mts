@@ -168,6 +168,7 @@ type FailureCode =
   | 'http-status' | 'job-identity' | 'job-terminal' | 'item-count' | 'effect-count'
   | 'effect-outcome' | 'effect-owner' | 'replay-identity' | 'readback' | 'not-unseen'
   | 'missing-wiring' | 'unsafe-path' | 'unexpected'
+  | 'lane-failed'
   | 'read-auth-required' | 'read-auth-scope' | 'read-permission' | 'read-auth-expired';
 const SAFE_PROBLEM_TAGS = new Set([
   'GatewayAuthenticationRequiredProblem', 'GatewayForbiddenProblem', 'GatewayUnavailableProblem',
@@ -203,6 +204,7 @@ const SAFE_PROBLEM_CODES = new Set([
 ]);
 type EffectStatus = typeof EffectSchema.Type.status;
 export type SymmySafeFailureBody =
+  | { readonly kind: 'lanes'; readonly failed: readonly SymmyProofLaneName[] }
   | { readonly kind: 'non-json' | 'empty' | 'unrecognized-problem' }
   | {
       readonly kind: 'problem'; readonly tag?: string; readonly code?: string;
@@ -586,7 +588,8 @@ export interface SymmyCustomerFixture {
   };
   readonly purposes: readonly ['BILLING', 'DELIVERY'];
 }
-export interface SymmyFullProofContext extends SymmyCommerceProof {
+export interface SymmyFullProofContext {
+  readonly names: SymmyProofNames;
   readonly customers: readonly [SymmyCustomerProof, SymmyCustomerProof];
   readonly address: SymmyCustomerFixture;
 }
@@ -599,8 +602,9 @@ const CUSTOMER_EFFECTS = {
   effectsAtLeast: 11, itemsAtLeast: 8, owners: { 'party.registry': 7, 'commerce.customer-context': 4 },
 } satisfies EffectExpectation;
 async function proveCustomers(
-  config: SymmyProofConfig, client: SymmyProofClient, proof: SymmyCommerceProof,
+  config: SymmyProofConfig, client: SymmyProofClient, names: SymmyProofNames,
 ): Promise<SymmyFullProofContext> {
+  const proof = { names };
   const address: SymmyCustomerFixture = {
     label: `${proof.names.prefix}_ADDRESS`,
     postalAddress: {
@@ -664,7 +668,7 @@ async function proveCustomers(
   ), CUSTOMER_EFFECTS, 'customer-replay');
   assertReplayIdentity(original, replay, 'customer-replay');
   ensure(isDeepStrictEqual(page, await read()), 'customer-replay', 'readback');
-  return { ...proof, address, customers };
+  return { names, address, customers };
 }
 const OrderSchema = Schema.Struct({
   id: text, number: text, currencyCode: text, totalMinor: Schema.Int, totalVatMinor: Schema.Int,
@@ -767,7 +771,7 @@ const NativeCatalogReadSchema = Schema.Struct({
 });
 async function proveNativeCatalog(
   config: SymmyProofConfig, client: SymmyProofClient, names: SymmyProofNames,
-): Promise<void> {
+): Promise<SymmyNativeProofResult> {
   const tenantId = config.input.unitRef.tenantId;
   const legalEntityId = config.legalEntityId ?? STAGE_LEGAL_ENTITY;
   const initial = decode(SymmyDemoCatalogRevisionResponseSchema,
@@ -820,6 +824,11 @@ async function proveNativeCatalog(
     entry.id === category.item.entityId && entry.name === names.category && entry.slug === slugOf(names.category),
   ).length === 1, 'category-readback', 'readback');
   ensure(stored.images?.filter((image) => image === media.item.image).length === 1, 'image-readback', 'readback');
+  return {
+    sku: names.variant, productId: stored.id, slug: slugOf(names.product),
+    categoryId: category.item.entityId, categorySlug: slugOf(names.category),
+    imageId: media.item.image.slice('media:'.length),
+  };
 }
 async function proveOwnerStock(
   config: SymmyProofConfig, client: SymmyProofClient, context: SymmyCommerceProof,
@@ -932,11 +941,47 @@ export interface SymmyStageProofOptions {
   /** Optional known existing order IDs; otherwise prove up to three actual IDs returned by the public list. */
   readonly expectedOrderIds?: readonly string[];
 }
+export type SymmyProofLaneName = 'commerce' | 'customers' | 'native-catalog' | 'orders';
+export interface SymmyNativeProofResult {
+  readonly sku: string;
+  readonly productId: string;
+  readonly slug: string;
+  readonly categoryId: string;
+  readonly categorySlug: string;
+  readonly imageId: string;
+}
+export function symmyNativeResultLine(result: SymmyNativeProofResult): string {
+  const safe = {
+    sku: result.sku, productId: result.productId, slug: result.slug,
+    categoryId: result.categoryId, categorySlug: result.categorySlug, imageId: result.imageId,
+  };
+  ensure(Object.values(safe).every((value) => /^[A-Za-z0-9._:-]{1,300}$/u.test(value)),
+    'image-readback', 'readback');
+  return `RESULT native-catalog ${JSON.stringify(safe)}`;
+}
+/** Starts every disjoint lane, reports each settlement, and never rejects while another lane is still running. */
+export async function runSymmyProofLanes(
+  lanes: readonly { readonly name: SymmyProofLaneName; readonly run: () => Promise<void> }[],
+  report: (line: string) => void,
+): Promise<void> {
+  const settled = await Promise.allSettled(lanes.map(async (lane) => {
+    try {
+      await lane.run();
+      report(`PASS lane:${lane.name}`);
+    } catch (error) {
+      report(`FAIL lane:${lane.name} ${symmyProofFailureLine(error)}`);
+      throw error;
+    }
+  }));
+  const failed = lanes.filter((_lane, index) => settled[index]?.status === 'rejected').map((lane) => lane.name);
+  if (failed.length > 0) throw new SymmyProofFailure('full-proof', 'lane-failed', undefined, { kind: 'lanes', failed });
+}
 /** Complete executable stage proof: all writes use public Symmy bodies, all extra owner calls are registered Reads. */
 export async function proveSymmyFullFunction(
   config: SymmyProofConfig,
   options: SymmyStageProofOptions = {},
   pass: (boundary: ProofBoundary) => void = (boundary) => { process.stdout.write(`PASS ${boundary}\n`); },
+  report: (line: string) => void = (line) => { process.stdout.write(`${line}\n`); },
 ): Promise<void> {
   decode(SymmyProofInputSchema, config.input, 'configuration');
   decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, 'configuration');
@@ -951,57 +996,74 @@ export async function proveSymmyFullFunction(
   const ids = options.expectedOrderIds ?? actualOrders.slice(0, 3).map((order) => order.id);
   const [first, ...rest] = ids;
   ensure(first !== undefined, 'order-export', 'readback');
-  await proveSymmyOrderExport(client, {
+  const orderWiring: SymmyOrderExportWiring = {
     collectionPath: `${PREFIX}/orders?limit=100&offset=0`,
     detailPath: (id) => `${PREFIX}/orders/${encodeURIComponent(id)}`, expectedOrderIds: [first, ...rest],
-  });
-  pass('order-export');
+  };
   await client.ownerRead('merchandise/records', {
     view: { limit: 0, ordersLimit: 0, summary: true },
   }, 'category-readback');
-  const commerce = await proveSymmyProductStockList(config, client);
-  pass('product-replay');
-  pass('list-price-readback');
-  const sku = decode(SkuLookupResponseSchema, await client.ownerRead(
-    'catalog/sku-lookup', { code: commerce.names.variant }, 'sku-readback',
-  ), 'sku-readback');
-  ensure(
-    sku._tag === 'found' && sku.state === 'CURRENT' && sku.displayCode === commerce.names.variant &&
-    sku.target.kind === 'VARIANT' && sku.target.variantId === commerce.variantRef.resourceId &&
-    sku.target.tenantId === commerce.variantRef.tenantId,
-    'sku-readback', 'readback',
-  );
-  pass('sku-readback');
-  await proveOwnerStock(config, client, commerce);
-  pass('stock-readback');
-  const context = await proveCustomers(config, client, commerce);
-  pass('customer-replay');
-  await proveOwnerAddresses(client, context);
-  pass('address-readback');
-  await proveOwnerGroups(client, context);
-  pass('group-replay');
-  await proveNativeCatalog(config, client, commerce.names);
-  pass('category-readback');
-  pass('image-readback');
-  // Catalog page pricing evaluates the owner's current instant; do not mistake a scheduled future Price for absence.
-  await client.waitUntil(commerce.effectiveFrom, 'base-price-readback');
-  const prices = decode(CatalogPagePricesResponseSchema, await client.ownerRead('pricing/catalog-page-prices', {
-    ...config.input.commercialScope, currencyCode: config.input.currencyCode,
-    items: [{
-      catalogSelection: { productRef: commerce.productRef, variantRef: commerce.variantRef },
-      unitBasis: { quantity: '1', unitRef: config.input.unitRef },
-    }],
-  }, 'base-price-readback'), 'base-price-readback');
-  ensure(prices._tag === 'CATALOG_PAGE_PRICED' && prices.prices.length === 1, 'base-price-readback', 'readback');
-  const [price] = prices.prices;
-  ensure(
-    price?._tag === 'PRICE_FOUND' && price.priceGroupSelector.kind === 'NO_GROUP' &&
-    decimalEqual(price.priceRevision.monetaryAmount.amount, commerce.baseAmount) &&
-    price.priceRevision.monetaryAmount.currencyCode === config.input.currencyCode &&
-    isDeepStrictEqual(price.catalogSelection, { productRef: commerce.productRef, variantRef: commerce.variantRef }),
-    'base-price-readback', 'readback',
-  );
-  pass('base-price-readback');
+  await runSymmyProofLanes([
+    { name: 'commerce', run: async () => {
+        const commerce = await proveSymmyProductStockList(config, client);
+        report(`RESULT commerce ${JSON.stringify({ sku: commerce.names.variant })}`);
+        pass('product-replay');
+        pass('list-price-readback');
+        const sku = decode(SkuLookupResponseSchema, await client.ownerRead(
+          'catalog/sku-lookup', { code: commerce.names.variant }, 'sku-readback',
+        ), 'sku-readback');
+        ensure(
+          sku._tag === 'found' && sku.state === 'CURRENT' && sku.displayCode === commerce.names.variant &&
+          sku.target.kind === 'VARIANT' && sku.target.variantId === commerce.variantRef.resourceId &&
+          sku.target.tenantId === commerce.variantRef.tenantId,
+          'sku-readback', 'readback',
+        );
+        pass('sku-readback');
+        await proveOwnerStock(config, client, commerce);
+        pass('stock-readback');
+        // Catalog page pricing evaluates the owner's current instant; do not mistake a scheduled future Price for absence.
+        await client.waitUntil(commerce.effectiveFrom, 'base-price-readback');
+        const prices = decode(CatalogPagePricesResponseSchema, await client.ownerRead('pricing/catalog-page-prices', {
+          ...config.input.commercialScope, currencyCode: config.input.currencyCode,
+          items: [{
+            catalogSelection: { productRef: commerce.productRef, variantRef: commerce.variantRef },
+            unitBasis: { quantity: '1', unitRef: config.input.unitRef },
+          }],
+        }, 'base-price-readback'), 'base-price-readback');
+        ensure(prices._tag === 'CATALOG_PAGE_PRICED' && prices.prices.length === 1, 'base-price-readback', 'readback');
+        const [price] = prices.prices;
+        ensure(
+          price?._tag === 'PRICE_FOUND' && price.priceGroupSelector.kind === 'NO_GROUP' &&
+          decimalEqual(price.priceRevision.monetaryAmount.amount, commerce.baseAmount) &&
+          price.priceRevision.monetaryAmount.currencyCode === config.input.currencyCode &&
+          isDeepStrictEqual(price.catalogSelection, { productRef: commerce.productRef, variantRef: commerce.variantRef }),
+          'base-price-readback', 'readback',
+        );
+        pass('base-price-readback');
+    } },
+    { name: 'customers', run: async () => {
+      const context = await proveCustomers(config, client, makeSymmyProofNames());
+      pass('customer-replay');
+      await proveOwnerAddresses(client, context);
+      pass('address-readback');
+      await proveOwnerGroups(client, context);
+      pass('group-replay');
+    } },
+    { name: 'native-catalog', run: async () => {
+      const result = await proveNativeCatalog(config, client, makeSymmyProofNames());
+      const line = symmyNativeResultLine(result);
+      ensure(!line.includes(Redacted.value(config.apiKey)) &&
+        (config.operatorCookie === undefined || !line.includes(Redacted.value(config.operatorCookie))),
+        'image-readback', 'readback');
+      report(line);
+      pass('category-readback');
+      pass('image-readback');
+    } },
+    { name: 'orders', run: async () => {
+      await proveSymmyOrderExport(client, orderWiring);
+      pass('order-export');
+    } },
+  ], report);
   pass('full-proof');
 }
 

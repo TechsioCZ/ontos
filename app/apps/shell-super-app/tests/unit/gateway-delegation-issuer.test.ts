@@ -531,6 +531,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
   let signingAttempts = 0;
   const reservedSourceKeys: string[] = [];
   const resolvedScopes: ResolvedScopeRequest[] = [];
+  const scopeResolver = yield* scopeResolverFor(input, resolvedScopes);
   const registrar = capturingScopeGrantRegistrar();
   const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
   const catalogEnrolment = {
@@ -565,18 +566,6 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     loadConfig: input.signerUnavailable === true ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration),
   }).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar.registrar)));
   const moduleStates = moduleStatesFor(installedModulesOf(snapshot.composition.modules, input), input.moduleState);
-  const provider = ConfigProvider.fromUnknown({
-    ONTOS_GATEWAY_ISSUER: issuer,
-    ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-      {
-        compositionRevision: input.bindingRevision ?? revision,
-        providerKeyId: sourceKeyId,
-        sourceAppId: 'catalog',
-        sourceBuildMarker: 'catalog-build',
-      },
-    ]),
-    ONTOS_GATEWAY_PUBLIC_JWKS: input.verificationUnavailable === true ? '{"keys":[]}' : publicJwks,
-  });
   const callerKeyId = input.providerKeyId ?? sourceKeyId;
   const callerKind = input.callerKind ?? 'service';
   const result = yield* Effect.exit(
@@ -848,10 +837,21 @@ it.effect('refuses the Shell deployment as an audience unless the source release
       { hostedRequirement: 'none' },
       // Asynchronous work is never relayed to the Shell host.
       { hostedRequirement: 'person', originator: 'ok' },
-      // The tenant never installed the hosting module.
-      { hostedRequirement: 'person', withoutCoreMedia: true },
     ] as const) {
       assertDenied(yield* delegationCase({ ...input, target: shellTarget }), 'forbidden');
+    }
+    const missingHost = yield* delegationCase({
+      hostedRequirement: 'person',
+      withoutCoreMedia: true,
+      target: shellTarget,
+    });
+    assertDenied(missingHost, 'module_not_installed');
+    if (Exit.isFailure(missingHost.result)) {
+      const failure = Cause.squash(missingHost.result.cause);
+      expect(Schema.is(GatewayDelegationError)(failure)).toBe(true);
+      if (Schema.is(GatewayDelegationError)(failure)) {
+        expect(failure.reason).toBe('audience_module_not_installed');
+      }
     }
     // The same declaration admits no other app that is not installed.
     assertDenied(
@@ -860,8 +860,6 @@ it.effect('refuses the Shell deployment as an audience unless the source release
     );
   }),
 );
-
-const namedCompany = '30000000-0000-4000-8000-000000000009';
 
 it.effect('names the company of work a workload started in the tenant context, resolved for the calling module', () =>
   Effect.gen(function* originatorNamesCompany() {

@@ -24,6 +24,8 @@ import {
   symmyNativeMediaPayload,
   symmyOwnerReadEnvelope,
   sanitizeSymmyFailureBody,
+  runSymmyProofLanes,
+  symmyNativeResultLine,
 } from './stage-symmy-full-function-proof.mts';
 import {
   SymmyDemoCategoriesBatchRequestSchema,
@@ -240,6 +242,53 @@ test('HTTP failure diagnostics retain only closed contract metadata, never detai
     _tag: 'SymmyUnavailableProblem', code: 'POLICY_NOT_FOUND',
   }, Redacted.make('POLICY_NOT_FOUND'));
   assert.equal(JSON.stringify(collision).includes('POLICY_NOT_FOUND'), false);
+});
+
+test('independent lanes start together and drain all work after an early failure, reporting only sanitized failures', async () => {
+  const gates = Array.from({ length: 4 }, () => Promise.withResolvers<void>());
+  const names = ['commerce', 'customers', 'native-catalog', 'orders'] satisfies readonly import('./stage-symmy-full-function-proof.mts').SymmyProofLaneName[];
+  const started: string[] = [];
+  const reports: string[] = [];
+  let finished = false;
+  const work = runSymmyProofLanes(names.map((name, index) => ({
+    name, run: async () => {
+      started.push(name);
+      await gates[index]?.promise;
+    },
+  })), (line) => reports.push(line)).then(
+    () => { finished = true; return undefined; },
+    (error: unknown) => { finished = true; return error; },
+  );
+  assert.deepEqual(started, names);
+  gates[0]?.reject(new Error('secret-token customer@example.invalid'));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(finished, false);
+  for (const gate of gates.slice(1)) gate.resolve();
+  const error = await work;
+  assert.ok(error instanceof SymmyProofFailure);
+  assert.equal(error.code, 'lane-failed');
+  assert.deepEqual(error.safeBody, { kind: 'lanes', failed: ['commerce'] });
+  assert.equal(reports.length, 4);
+  assert.equal(reports.filter((line) => line.startsWith('PASS lane:')).length, 3);
+  assert.ok(reports.includes('FAIL lane:commerce FAIL full-proof:unexpected'));
+  assert.equal(reports.join('\n').includes('secret-token'), false);
+  assert.equal(reports.join('\n').includes('customer@'), false);
+});
+
+test('synthetic storefront result exposes only the requested safe identifiers', () => {
+  const result = {
+    sku: 'SP_TEST_VARIANT', productId: 'product-123', slug: 'sp-test-product',
+    categoryId: 'category:123', categorySlug: 'sp-test-category',
+    imageId: '11111111-1111-4111-8111-111111111111',
+    token: 'never-output-this',
+  };
+  const line = symmyNativeResultLine(result);
+  assert.ok(line.startsWith('RESULT native-catalog '));
+  assert.equal(line.includes('never-output-this'), false);
+  assert.ok(line.includes('"productId":"product-123"'));
+  assert.ok(line.includes('"categorySlug":"sp-test-category"'));
+  assert.throws(() => symmyNativeResultLine({ ...result, productId: 'customer@example.invalid' }), /readback/u);
 });
 
 test('readback requires exactly one record matching both identity and value', () => {
