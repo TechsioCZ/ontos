@@ -155,6 +155,21 @@ const priceRequestOf = (effect: Effect_) =>
     ),
   );
 const requestTagOf = (effect: Effect_) => dependentOf(effect)?.request._tag;
+const textRequestOf = (effect: Effect_) =>
+  Option.getOrUndefined(
+    Match.value(dependentOf(effect)?.request).pipe(
+      Match.when({ _tag: 'SetProductLocalizedFacts' }, ({ payload }) => payload),
+      Match.when({ _tag: 'SetVariantLocalizedFacts' }, ({ payload }) => payload),
+      Match.option,
+    ),
+  );
+const skuRequestOf = (effect: Effect_) =>
+  Option.getOrUndefined(
+    Match.value(dependentOf(effect)?.request).pipe(
+      Match.when({ _tag: 'AssignVariantSku' }, ({ payload }) => payload),
+      Match.option,
+    ),
+  );
 
 it.effect('pins source Categories after Product creation and makes every Price wait for their assignments', () =>
   Effect.gen(function* categoryPlan() {
@@ -248,6 +263,49 @@ it.effect('plans readiness only for explicit ACTIVE under an enrolled axis-free 
     }
     expect(itemOf(draft.value, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
     return yield* Effect.void;
+  }),
+);
+
+it.effect('orders readiness after every explicit product text, including the readiness locale', () =>
+  Effect.gen(function* localizedReadinessOrder() {
+    const readyTemplate = decodeTemplate({
+      ...templateInput(priceDefaults),
+      catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
+      items: [enroll('PRODUCT', 'enrolled-product', createProduct, ...readinessOperations)],
+    });
+    for (const localized of [
+      [
+        { description: 'Zdrojový popis', locale: 'cs-CZ', name: 'Zdrojová židle' },
+        { locale: 'en', name: 'Source chair' },
+      ],
+      [{ description: 'Pouze zdrojový popis', locale: 'cs-CZ' }],
+    ]) {
+      const plan = Option.getOrThrow(
+        yield* build(rowsOf(product({ lifecycle: 'ACTIVE', localized })), { template: readyTemplate }),
+      );
+      const axes = effectOf(plan, 'product-0', 'readiness-axes');
+      for (const [index, text] of localized.entries()) {
+        const effectKey = `product-facts-${index}`;
+        expect(axes.dependsOn).toContainEqual({ effectKey, itemKey: 'product-0' });
+        expect(textRequestOf(effectOf(plan, 'product-0', effectKey))).toMatchObject({
+          facts: {
+            ...('name' in text ? { name: text.name } : {}),
+            ...('description' in text ? { description: text.description } : {}),
+          },
+          locale: text.locale,
+        });
+      }
+      // Every later readiness step waits for AXES, so NAME and activation cannot bypass a pending source text.
+      for (const step of ['confirm', 'name', 'activate', 'unit', 'untyped']) {
+        expect(effectOf(plan, 'product-0', `readiness-${step}`).dependsOn).toContainEqual({
+          effectKey: 'readiness-axes',
+          itemKey: 'product-0',
+        });
+      }
+      expect(effectOf(plan, 'product-0', 'readiness-name').intent).toMatchObject({
+        request: { locale: 'cs-CZ', name: 'Chair', step: 'NAME' },
+      });
+    }
   }),
 );
 
@@ -661,6 +719,18 @@ describe('Symmy product plan from the public rows', () => {
       expect(requestTagOf(effectOf(plan, 'product-0', 'product-update'))).toBe('UpdateProduct');
       expect(requestTagOf(effectOf(plan, 'product-0-variant-0', 'variant-facts-0'))).toBe('SetVariantLocalizedFacts');
       expect(requestTagOf(effectOf(plan, 'product-0-variant-0-price-0', 'price-define'))).toBe('DefinePrice');
+    }),
+  );
+
+  it.effect('plans one product and its initial variant without localized texts or prices', () =>
+    Effect.gen(function* noProductTexts() {
+      for (const extra of [{}, { localized: [] }]) {
+        const plan = Option.getOrThrow(yield* build(rowsOf(product(extra))));
+        expect(itemKeys(plan)).toEqual(['product-0']);
+        expect(itemOf(plan, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual(['product-create']);
+        expect(createPayloadOf(effectOf(plan, 'product-0', 'product-create'))?.name).toBe('Chair');
+        expect(Result.isSuccess(Schema.decodeUnknownResult(SymmyFixtureExecutionPlanSchema)(plan))).toBe(true);
+      }
     }),
   );
 

@@ -124,8 +124,11 @@ interface SizedProduct {
  * variant, one SKU effect per variant that names its SKU and one define per price. A source record belongs to one
  * item, so the product, each variant that has its own effects and each price is an item.
  */
-export const symmyProductPlanSize = ({ categories, lifecycle, variants }: SizedProduct) => {
-  const texts = variants.reduce((total, variant) => total + (variant.localized?.length ?? 0), 0);
+export const symmyProductPlanSize = ({ categories, lifecycle, localized: productTexts, variants }: SizedProduct) => {
+  const texts = variants.reduce(
+    (total, variant) => total + (variant.localized?.length ?? 0),
+    productTexts?.length ?? 0,
+  );
   const prices = variants.reduce((total, variant) => total + (variant.prices?.length ?? 0), 0);
   const skus = variants.filter((variant) => variant.sku !== undefined).length;
   const variantItems = variants.filter(
@@ -138,6 +141,7 @@ export const symmyProductPlanSize = ({ categories, lifecycle, variants }: SizedP
       (lifecycle === 'ACTIVE' || lifecycle === 'RETIRED' ? 1 : 0) +
       (variants.length - 1) +
       texts +
+      skus +
       prices,
     items: 1 + variantItems + prices,
   };

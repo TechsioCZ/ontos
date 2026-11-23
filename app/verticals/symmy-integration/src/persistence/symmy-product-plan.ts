@@ -553,6 +553,26 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const variantItems = variants.map((variant, position) =>
     buildVariantItem({ ...facts, enrollment, evidenceRefs, parent, position, productRecord, variant }),
   );
+  // The Product's own texts, one per locale, each the localized facts of the Product the create settled on: a text
+  // the owner already holds is reported as unchanged, any other one is written at the owner's current revision.
+  const productTexts = (row.localized ?? []).map((text, textIndex) => ({
+    dependsOn: [productCreateKey],
+    effectKey: `product-facts-${textIndex}`,
+    intent: {
+      _tag: 'CatalogProductDependentEffect',
+      parent,
+      request: {
+        _tag: 'SetProductLocalizedFacts',
+        payload: {
+          evidenceRefs,
+          facts: { ...present('description', text.description), ...present('name', text.name) },
+          locale: text.locale,
+          reason: SYMMY_PRODUCT_REASON,
+        },
+      },
+    },
+    operation: productFactsOperation,
+  }));
   const readinessIneligible = readinessIneligibleFor(row, enrollment.catalogReadiness);
   const updates = !readinessIneligible && (row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
   const ready = row.lifecycle === 'ACTIVE' && !readinessIneligible ? enrollment.catalogReadiness : undefined;
@@ -580,7 +600,12 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
     updates && ready === undefined
       ? [
           {
-            dependsOn: [productCreateKey, ...variantItems.flatMap(({ created }) => created)],
+            // An activation needs a current localized name, so the lifecycle waits for the Product's texts.
+            dependsOn: [
+              productCreateKey,
+              ...productTexts.map(({ effectKey }) => effectKey),
+              ...variantItems.flatMap(({ created }) => created),
+            ],
             effectKey: productUpdateKey,
             intent: {
               _tag: 'CatalogProductDependentEffect',
