@@ -86,6 +86,7 @@ import { StockSharingEligibilityResolutionApi } from './shared/apis/stock-sharin
 import { stockSharingEligibilityResourceDescriptor } from './shared/resources/stock-sharing-eligibility.ts';
 // </generated-module-manifest-imports>
 import { inventoryMcpContribution } from './shared/mcp/contribution.ts';
+import { inventorySourceProvisionSystemWorkload } from './src/source-provision-system-workload.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -115,6 +116,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
+  systemWorkloads: [inventorySourceProvisionSystemWorkload],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>

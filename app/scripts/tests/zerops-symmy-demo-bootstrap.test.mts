@@ -18,6 +18,7 @@ import { SymmyDemoCustomerAuthorityError } from '../demo/symmy-demo-customer-aut
 import { workspaceRoot } from '../zerops/hosted-units.mts';
 
 const SCRIPTS = [
+  ['scripts/demo/symmy-demo-inventory-authority.mts'],
   ['scripts/demo/symmy-demo-source-policies.mts'],
   ['scripts/demo/symmy-demo-customer-authority.mts', '--mode', 'apply'],
   ['scripts/demo/symmy-demo-exchange-authority.mts'],
@@ -103,7 +104,7 @@ const fixture = (failAt = 0, exitCode = 7) =>
     return { calls, output, run };
   });
 
-it.live('runs all three idempotent commands on every stage boot with only supervisor bootstrap settings', () =>
+it.live('enrolls the native receiver before all source bootstraps with only supervisor bootstrap settings', () =>
   Effect.gen(function* repeatedStageBoots() {
     const { calls, output, run } = yield* fixture();
     yield* run(STAGE);
@@ -119,6 +120,7 @@ it.live('runs all three idempotent commands on every stage boot with only superv
       });
       expect(command.options.env).toEqual({
         ...(command.args.length > 1 ? CUSTOMER_SETTINGS : {}),
+        ...(command.args[0] === SCRIPTS[0][0] ? { DATABASE_URL: CUSTOMER_SETTINGS.DATABASE_URL } : {}),
         DATABASE_ADMIN_URL: ADMIN_URL,
         NODE_COMPILE_CACHE: expect.any(String),
         ONTOS_DATABASE_POOL_SHARED: 'false',
@@ -126,7 +128,7 @@ it.live('runs all three idempotent commands on every stage boot with only superv
       });
     }
     const lines = (yield* output.logLines).map(String);
-    for (const kind of ['source-policies', 'customer-authority', 'exchange-authority']) {
+    for (const kind of ['inventory-authority', 'source-policies', 'customer-authority', 'exchange-authority']) {
       const timings = lines.filter((line) => line.startsWith(`[boot-timing] stage=host.symmy-demo.${kind} `));
       expect(timings).toHaveLength(2);
       for (const timing of timings) {
@@ -148,9 +150,10 @@ it.live('does nothing outside stage, even without bootstrap credentials', () =>
 );
 
 for (const [failAt, kind] of [
-  [1, 'source-policies'],
-  [2, 'customer-authority'],
-  [3, 'exchange-authority'],
+  [1, 'inventory-authority'],
+  [2, 'source-policies'],
+  [3, 'customer-authority'],
+  [4, 'exchange-authority'],
 ] as const) {
   it.live(`stops before publication and logs two sanitized lines when command ${failAt} fails`, () =>
     Effect.gen(function* failedBootstrap() {
@@ -214,7 +217,7 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
     expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
     const errors = yield* output.errorLines;
     expect(errors).toEqual([
-      '[app-host] stage Symmy source-policies bootstrap failed category=spawn',
+      '[app-host] stage Symmy inventory-authority bootstrap failed category=spawn',
       '[app-host] stage Symmy demo bootstrap failed; composition not published',
     ]);
     const logs = JSON.stringify([...(yield* output.logLines), ...errors]);
@@ -224,7 +227,7 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
   }),
 );
 
-it.live('identifies customer configuration failure without starting that child or publishing secrets', () =>
+it.live('identifies native receiver configuration failure before starting a child or publishing secrets', () =>
   Effect.gen(function* missingCustomerRuntime() {
     const { calls, output, run } = yield* fixture();
     const problem = yield* run({
@@ -232,9 +235,9 @@ it.live('identifies customer configuration failure without starting that child o
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
     }).pipe(Effect.flip);
     expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
-    expect(calls.map(({ args }) => args)).toEqual([SCRIPTS[0]]);
+    expect(calls).toEqual([]);
     expect(yield* output.errorLines).toEqual([
-      '[app-host] stage Symmy customer-authority bootstrap failed category=config',
+      '[app-host] stage Symmy inventory-authority bootstrap failed category=config',
       '[app-host] stage Symmy demo bootstrap failed; composition not published',
     ]);
     const logs = JSON.stringify([...(yield* output.logLines), ...(yield* output.errorLines)]);

@@ -650,6 +650,7 @@ const runChild = (
 
 /** Stage supervisor commands, in dependency order; none runs inside an owner process. */
 export const STAGE_SYMMY_DEMO_BOOTSTRAPS = [
+  { kind: 'inventory-authority', script: 'scripts/demo/symmy-demo-inventory-authority.mts', args: [] },
   { kind: 'source-policies', script: 'scripts/demo/symmy-demo-source-policies.mts', args: [] },
   {
     kind: 'customer-authority',
@@ -685,8 +686,10 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
   for (const { kind, script, args } of STAGE_SYMMY_DEMO_BOOTSTRAPS) {
     const childSettings = yield* Effect.gen(function* bootstrapSettings() {
       const selected: Record<string, string> = { ...settings };
-      if (kind === 'customer-authority') {
+      if (kind === 'customer-authority' || kind === 'inventory-authority') {
         selected.DATABASE_URL = Redacted.value(yield* Config.Redacted('DATABASE_URL'));
+      }
+      if (kind === 'customer-authority') {
         for (const key of SYMMY_DEMO_CUSTOMER_SETTINGS) {
           const value = yield* Config.option(Config.String(key));
           if (Option.isSome(value)) {
