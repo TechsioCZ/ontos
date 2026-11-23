@@ -22,6 +22,7 @@ import type {
   OutboxRuntimeService,
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
@@ -44,6 +45,10 @@ import {
   validateOwnerExecutionAuthorityResult,
 } from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import {
+  OutboxPayloadSchema as PrivacyMeasureDispatchedSchema,
+  outboxTopic as privacyMeasureDispatchedTopic,
+} from '@app/privacy/outbox/privacy-measure-dispatched';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import {
@@ -51,6 +56,7 @@ import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GatewayDelegatedContextRequestSchema,
+  PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
   privacyDispatchConsumers,
 } from '@app/shared-contracts';
 import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
@@ -75,7 +81,7 @@ import { NetAddress } from 'effect/net';
 import { Reactivity } from 'effect/reactivity';
 import { describe, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-import type { CryptoKey, JWK } from 'jose';
+import type { CryptoKey, JWK, JWTPayload } from 'jose';
 
 import { applicationCompositionAuthority, coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
@@ -333,6 +339,20 @@ interface DelegatedActor {
   readonly principalId: string;
 }
 
+/** Signs one Shell-shaped assertion for Communications under a fresh JTI and the exact assertion lifetime. */
+const signAssertion = (gateway: Gateway, claims: JWTPayload, subject: string, issuedAt: number) =>
+  Effect.promise(() =>
+    new SignJWT(claims)
+      .setProtectedHeader({ alg: 'EdDSA', kid: KEY_ID, typ: 'JWT' })
+      .setIssuer(ISSUER)
+      .setAudience('communications')
+      .setSubject(subject)
+      .setIssuedAt(issuedAt)
+      .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
+      .setJti(randomUUID())
+      .sign(gateway.privateKey),
+  );
+
 /**
  * A fresh Shell-shaped staff assertion (new JTI, staff namespace) for exactly this principal and company selection; with an
  * actor it is the delegated form a calling module presents for its verified requester.
@@ -358,17 +378,72 @@ const assertionFor = Effect.fnUntraced(function* assertionFor(
     targetBuildMarker: ultramodernApiMarker.buildMarker,
     ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
   };
-  return yield* Effect.promise(() =>
-    new SignJWT(actor === undefined ? external : { ...external, act: actor, ver: DELEGATED_GATEWAY_ASSERTION_VERSION })
-      .setProtectedHeader({ alg: 'EdDSA', kid: KEY_ID, typ: 'JWT' })
-      .setIssuer(ISSUER)
-      .setAudience('communications')
-      .setSubject(principal.principalId)
-      .setIssuedAt(issuedAt)
-      .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
-      .setJti(randomUUID())
-      .sign(gateway.privateKey),
+  return yield* signAssertion(
+    gateway,
+    actor === undefined ? external : { ...external, act: actor, ver: DELEGATED_GATEWAY_ASSERTION_VERSION },
+    principal.principalId,
+    issuedAt,
   );
+});
+
+/** The native Core rows of one human Privacy dispatch that the receipt carrier names. */
+interface NativeDispatch {
+  readonly deliveryId: string;
+  readonly dispatchInvocationId: string;
+  readonly domainEventId: string;
+  readonly messageId: string;
+}
+
+/**
+ * The Shell-issued durable receipt carrier (version 5): Privacy reads the receipt of ONE dispatch it delivered, as the
+ * ORIGINAL dispatching human in the governance company, with no worker claim (`sourceMode: 'dispatch'`). Signed here in
+ * the shape the Shell's issuance produces; the Shell's own native admission of it is proven by the Shell's
+ * `privacy-dispatch-continuation-native` suite, not here.
+ */
+const receiptCarrierFor = Effect.fnUntraced(function* receiptCarrierFor(input: {
+  readonly actor: DelegatedActor;
+  readonly attempt: number;
+  readonly compositionRevision: string;
+  readonly dispatch: NativeDispatch;
+  readonly dispatcher: Principal;
+  readonly gateway: Gateway;
+  readonly governanceLegalEntityId: string;
+  readonly handoff: PrivacyMeasureHandoff;
+}) {
+  const { attempt, dispatch, dispatcher, handoff } = input;
+  const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
+  const claims = {
+    act: input.actor,
+    compositionRevision: input.compositionRevision,
+    principal: {
+      authBindingId: dispatcher.authBindingId,
+      authContextRef: dispatcher.authContextRef,
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      authMethod: dispatcher.authMethod,
+      legalEntityId: input.governanceLegalEntityId,
+      principalId: dispatcher.principalId,
+      tenantId: dispatcher.tenantId,
+    },
+    privacyDispatch: {
+      deliveryId: dispatch.deliveryId,
+      dispatchInvocationId: dispatch.dispatchInvocationId,
+      domainEventId: dispatch.domainEventId,
+      governanceLegalEntityId: input.governanceLegalEntityId,
+      handoffHash: computeCanonicalValueHash(handoff),
+      measureId: handoff.measureId,
+      messageId: dispatch.messageId,
+      operation: 'CommunicationsReceipt',
+      principalId: dispatcher.principalId,
+      // the Shell binds the exact Read request: this attempt of this handoff, and nothing else
+      requestHash: computeCanonicalValueHash({ attempt, handoff }),
+      sourceMode: 'dispatch',
+      taskId: handoff.taskId,
+      tenantId: dispatcher.tenantId,
+    },
+    targetBuildMarker: ultramodernApiMarker.buildMarker,
+    ver: PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
+  };
+  return yield* signAssertion(input.gateway, claims, dispatcher.principalId, issuedAt);
 });
 
 /** Exactly the public request bodies this suite sends. */
@@ -393,11 +468,12 @@ const post = Effect.fnUntraced(function* post(
   body: RequestBody,
   idempotent: boolean,
 ) {
+  const correlationId = `communications-production-http-${randomUUID()}`;
   const headers = new Headers({
     authorization: `Bearer ${token}`,
     'content-type': 'application/json',
     origin: ORIGIN,
-    'x-correlation-id': `communications-production-http-${randomUUID()}`,
+    'x-correlation-id': correlationId,
   });
   if (idempotent) {
     headers.set('idempotency-key', randomUUID());
@@ -406,7 +482,7 @@ const post = Effect.fnUntraced(function* post(
     runtime.handler(new Request(`${ORIGIN}${path}`, { body: JSON.stringify(body), headers, method: 'POST' })),
   );
   const text = yield* Effect.promise(() => response.text());
-  return { body: yield* Schema.decodeUnknownEffect(ReplyBodySchema)(text), status: response.status };
+  return { body: yield* Schema.decodeUnknownEffect(ReplyBodySchema)(text), correlationId, status: response.status };
 });
 
 /** Sends one public request as exactly this staff principal, under a fresh assertion each time. */
@@ -634,6 +710,9 @@ const COVERAGE_READ = 'communications.core.privacy-owner-coverage.read';
 const RECEIPT_READ = 'communications.core.privacy-owner-execution-outcome.read';
 const EVIDENCE_RECORD = 'communications.core.owner-execution-evidence.record';
 const PRIVACY_CAPABILITIES = [COVERAGE_READ, RECEIPT_READ, EVIDENCE_RECORD];
+const DISPATCH_ACTION = 'privacy.core.dispatch-privacy-measure';
+const DISPATCH_CAPABILITY = 'privacy.core.privacy-measure.dispatch';
+const RECEIVE_WORKER = 'communications.core.receive-privacy-measure';
 const lookup = {
   _tag: 'SUBJECT_REFERENCE' as const,
   lookupRef: 'lookup-customer-1',
@@ -846,6 +925,74 @@ const deliverContinuationCycle = (input: {
       ),
     );
   }).pipe(Effect.scoped);
+
+/**
+ * The native Core rows of ONE human Privacy dispatch of `handoff` to Communications, as Privacy's dispatch Action leaves
+ * them: the dispatcher's succeeded invocation in the governance company, its domain event and message, and the
+ * Communications delivery Core's own matcher creates for it, settled long ago (no claim left). These are exactly the rows
+ * Core's gate proves live for a durable receipt carrier.
+ */
+const recordNativeDispatch = Effect.fnUntraced(function* recordNativeDispatch(input: {
+  readonly compositionRevision: string;
+  readonly core: Effect.Success<ReturnType<typeof publishComposition>>['core'];
+  readonly dispatcher: Principal;
+  readonly governanceLegalEntityId: string;
+  readonly handoff: PrivacyMeasureHandoff;
+  readonly outbox: OutboxRuntimeService;
+}) {
+  const { core, dispatcher, governanceLegalEntityId, handoff } = input;
+  const dispatchInvocationId = randomUUID();
+  const domainEventId = randomUUID();
+  const messageId = randomUUID();
+  const payload = Schema.encodeSync(PrivacyMeasureDispatchedSchema)({ handoff });
+  const payloadJson = JSON.stringify(payload);
+  yield* core.transaction((transaction) =>
+    Effect.gen(function* insertDispatch() {
+      yield* transaction.execute(
+        sql`insert into core.action_invocations (action_invocation_id, tenant_id, legal_entity_id, principal_id, auth_method,
+              auth_binding_id, auth_context_ref, action_key, status, request_hash, started_at, completed_at)
+            values (${dispatchInvocationId}::uuid, ${dispatcher.tenantId}::uuid, ${governanceLegalEntityId}::uuid,
+              ${dispatcher.principalId}::uuid, ${dispatcher.authMethod}, ${dispatcher.authBindingId}::uuid,
+              ${dispatcher.authContextRef}, ${DISPATCH_ACTION}, 'succeeded', ${computeCanonicalValueHash(payload)},
+              now() - interval '1 day', now() - interval '1 day')`,
+        'objects',
+      );
+      yield* transaction.execute(
+        sql`insert into core.domain_events (domain_event_id, tenant_id, legal_entity_id, action_invocation_id,
+              producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id, payload_json)
+            values (${domainEventId}::uuid, ${dispatcher.tenantId}::uuid, ${governanceLegalEntityId}::uuid,
+              ${dispatchInvocationId}::uuid, 'privacy.core', ${privacyMeasureDispatchedTopic}, 'privacy.core', 'privacy.core.privacy-measure',
+              ${handoff.measureId}, ${payloadJson}::jsonb)`,
+        'objects',
+      );
+      yield* transaction.execute(
+        sql`insert into core.outbox_messages (outbox_message_id, tenant_id, domain_event_id, producer_module_key, topic,
+              payload_json)
+            values (${messageId}::uuid, ${dispatcher.tenantId}::uuid, ${domainEventId}::uuid, 'privacy.core', ${privacyMeasureDispatchedTopic},
+              ${payloadJson}::jsonb)`,
+        'objects',
+      );
+    }),
+  );
+  yield* input.outbox.matchMessages({ compositionRevision: input.compositionRevision });
+  // the take-over report happened long ago: the original Communications delivery is settled and holds no claim
+  const settled = yield* core.transaction((transaction) =>
+    transaction.execute<{ readonly delivery: string }>(
+      sql`update core.outbox_deliveries set status = 'done', claimed_by = null, claim_expires_at = null
+           where outbox_message_id = ${messageId}::uuid and worker_key = ${RECEIVE_WORKER}
+       returning outbox_delivery_id::text as delivery`,
+      'objects',
+    ),
+  );
+  const [delivery, ...extra] = settled;
+  expect(extra).toEqual([]);
+  return {
+    deliveryId: Option.getOrThrow(Option.fromNullishOr(delivery?.delivery)),
+    dispatchInvocationId,
+    domainEventId,
+    messageId,
+  } satisfies NativeDispatch;
+});
 
 describe('Communications templates, Privacy owner Reads and the owner evidence loop with the real authorization engine', () => {
   it.live(
@@ -1344,6 +1491,103 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           ).toEqual([2, 3]);
           expect(secondPush.delegations).toHaveLength(2);
           expect(yield* pendingContinuationWork).toEqual([]);
+
+          // ---- The Shell-issued durable receipt carrier (#1406) ----
+          // Privacy reads the receipt of a dispatch it delivered under the Shell's version-5 carrier: the ORIGINAL
+          // dispatching human in the governance company, `sourceMode: 'dispatch'`, the exact request bound by its hash.
+          // Core's gate then decides THIS registered Read declaration on that carrier: the dispatch is live, the
+          // dispatcher still holds the dispatch grant in the governance company, and holds the receipt capability
+          // Tenant-wide. A regression of the Read's declaration that Core's gate refuses for this carrier fails here.
+
+          // A dispatch exists only where Privacy is installed, and only then are its capabilities projected for the Tenant.
+          yield* core.transaction((transaction) =>
+            transaction.execute(
+              sql`insert into core.tenant_module_states (tenant_id, module_key, state)
+                  values (${tenant.tenantId}::uuid, 'privacy.core', 'active')
+                  on conflict (tenant_id, module_key) do update set state = excluded.state`,
+              'objects',
+            ),
+          );
+          const dispatchRole = yield* roles.capabilityRole([DISPATCH_CAPABILITY]);
+          yield* dispatchRole.grant();
+          const nativeDispatch = yield* recordNativeDispatch({
+            compositionRevision: revision,
+            core,
+            dispatcher: reader,
+            governanceLegalEntityId: tenant.legalEntityId,
+            handoff,
+            outbox,
+          });
+          const readThroughCarrier = Effect.fnUntraced(function* readThroughCarrier() {
+            const token = yield* receiptCarrierFor({
+              actor: privacyActor,
+              attempt: pushed.attempt,
+              compositionRevision: revision,
+              dispatch: nativeDispatch,
+              dispatcher: reader,
+              gateway,
+              governanceLegalEntityId: tenant.legalEntityId,
+              handoff,
+            });
+            return yield* post(
+              runtime,
+              token,
+              '/reads/privacy-owner-execution-outcome',
+              { attempt: pushed.attempt, handoff: Schema.encodeSync(PrivacyMeasureHandoffSchema)(handoff) },
+              false,
+            );
+          });
+          /** The one decision Core's gate recorded for exactly this request. */
+          const carrierDecision = (correlationId: string) =>
+            core.transaction((transaction) =>
+              transaction.execute<{
+                readonly actor: string;
+                readonly capability: string;
+                readonly delegate: string | null;
+                readonly outcome: string;
+                readonly reasons: unknown;
+              }>(
+                sql`select actor_principal_id::text as actor, capability_key as capability, delegate_app_id as delegate,
+                           outcome, reasons_json as reasons
+                      from core.access_decision_logs
+                     where tenant_id = ${tenant.tenantId}::uuid and correlation_id = ${correlationId}`,
+                'objects',
+              ),
+            );
+          // DENIED: the dispatch grant alone does not read the receipt; the receipt capability is rechecked Tenant-wide
+          const ungranted = yield* readThroughCarrier();
+          expect(ungranted.status, JSON.stringify(ungranted.body)).toBe(403);
+          expect(yield* carrierDecision(ungranted.correlationId)).toMatchObject([
+            { actor: reader.principalId, capability: RECEIPT_READ, delegate: 'privacy', outcome: 'DENIED' },
+          ]);
+          // ALLOWED on the grant: the very receipt the Privacy-delegated Read answers for the same attempt
+          const carrierReceiptRole = yield* roles.capabilityRole([RECEIPT_READ]);
+          yield* carrierReceiptRole.grant();
+          const carried = yield* readThroughCarrier();
+          expect(carried.status, JSON.stringify(carried.body)).toBe(200);
+          const carriedReceipt = Option.getOrThrow(
+            Schema.decodeUnknownSync(PrivacyOwnerExecutionOutcomeResponseSchema)(carried.body),
+          );
+          const delegatedReceipt = Option.getOrThrow((yield* receipt(manager, pushed.attempt)).receipt);
+          expect(carriedReceipt.handoffFingerprint).toBe(fingerprint);
+          // identical but for the moment each Read observed it
+          expect(carriedReceipt).toEqual({
+            ...delegatedReceipt,
+            outcome: { ...delegatedReceipt.outcome, recordedAt: carriedReceipt.outcome.recordedAt },
+          });
+          expect(yield* carrierDecision(carried.correlationId)).toMatchObject([
+            {
+              actor: reader.principalId,
+              capability: RECEIPT_READ,
+              delegate: 'privacy',
+              outcome: 'ALLOWED',
+              reasons: [expect.objectContaining({ code: 'allow.granted' })],
+            },
+          ]);
+          // REVOKED: the next carried Read is refused again
+          yield* carrierReceiptRole.revoke();
+          expect((yield* readThroughCarrier()).status).toBe(403);
+          yield* dispatchRole.revoke();
         }),
       ).pipe(Effect.provide(services)),
     180_000,
