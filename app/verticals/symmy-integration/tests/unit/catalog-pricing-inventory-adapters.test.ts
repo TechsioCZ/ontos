@@ -635,7 +635,12 @@ const pricingOwnerMock = (
     : undefined;
 };
 
-const sourceLookupResponse = (request: Request, lookupProductId: string) =>
+interface LocaleProjection {
+  readonly description?: string;
+  readonly name?: string;
+  readonly revision: number;
+}
+const sourceLookupResponse = (request: Request, lookupProductId: string, localized: () => LocaleProjection) =>
   request
     .clone()
     .json()
@@ -649,12 +654,12 @@ const sourceLookupResponse = (request: Request, lookupProductId: string) =>
           productRef: owned,
           variants: result.product.variants.map((variant) => ({ ...variant, productRef: owned })),
         },
-        source: sourceCorrelation,
+        source: { ...Struct.omit(sourceCorrelation, ['sourceOccurrenceId']), recordId: body.recordId },
         variantId: body.recordId === furtherVariantRecordId ? furtherVariantId : variantId,
         variantSources: [],
       };
       if (body.locale !== undefined) {
-        Object.assign(item, { localized: currentSourceText });
+        Object.assign(item, { localized: localized() });
       }
       return Response.json({ items: [item], outcome: 'FOUND' });
     });
@@ -685,7 +690,7 @@ const skuAssignmentResponse = (request: Request) =>
  * The Catalog source lookup (with the record's current text when it names a locale), the localized facts writes and
  * recoveries, which answer one new revision of the text, and the SKU assignment.
  */
-const catalogOwnerMock = (request: Request, lookupProductId: string) => {
+const catalogOwnerMock = (request: Request, lookupProductId: string, localized: () => LocaleProjection) => {
   if (request.url.includes('/actions/assign-sku')) {
     return { event: 'owner-write', response: skuAssignmentResponse(request) };
   }
@@ -699,7 +704,7 @@ const catalogOwnerMock = (request: Request, lookupProductId: string) => {
     };
   }
   return request.url.includes('/reads/catalog-source-products')
-    ? { event: 'owner-source-read', response: sourceLookupResponse(request, lookupProductId) }
+    ? { event: 'owner-source-read', response: sourceLookupResponse(request, lookupProductId, localized) }
     : undefined;
 };
 
@@ -817,6 +822,7 @@ const harness = (
   definitionGroup = priceGroupA,
   reviseProblem?: ReviseProblem,
   readinessWire?: ReadinessWire,
+  localized = (): LocaleProjection => currentSourceText,
 ) => {
   const requests: Request[] = [];
   const events: string[] = [];
@@ -884,7 +890,7 @@ const harness = (
       events.push('owner-price-recovery');
       return Promise.resolve(Response.json(priceWire.receipt));
     }
-    const catalogMock = catalogOwnerMock(request, lookupProductId);
+    const catalogMock = catalogOwnerMock(request, lookupProductId, localized);
     if (catalogMock !== undefined) {
       events.push(catalogMock.event);
       return catalogMock.response;
@@ -3384,6 +3390,58 @@ const readinessCreatePlan = () => {
   );
 };
 
+const readinessNameFixture = () => {
+  const dependencies = [
+    readinessState(productParent.effectKey, {
+      _tag: 'ProductCreated',
+      actionInvocationId: invocationId,
+      initialVariantRef: variantRef,
+      productRef,
+      productRevision: 1,
+      variantRevision: 1,
+    }),
+    readinessState('readiness-axes', { _tag: 'ReadinessAxes', axisRevision: 1 }),
+    readinessState('readiness-confirm', { _tag: 'ReadinessVariant', variantRevision: 2 }),
+  ];
+  const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...dependentEffect(
+      {
+        _tag: 'CatalogReadiness',
+        step: 'NAME',
+        kind: 'AXIS_FREE_UNTYPED',
+        divisible: false,
+        evidenceRefs: ['symmy-product:source'],
+        locale: 'cs-CZ',
+        name: 'Fallback',
+        unitRef,
+      },
+      productFactsOperation,
+    ),
+    effectKey: 'readiness-name',
+    ref: { ...effect.ref, operation: productFactsOperation, effectId: '10000000-0000-4000-8000-000000000072' },
+    dependsOn: dependencies.map(({ effect: parent }) => ({
+      effectKey: parent.effectKey,
+      itemKey: productParent.itemKey,
+    })),
+  });
+  const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+    items: [
+      {
+        effects: [
+          ...dependencies.map(({ effect: entry }, index) => ({
+            ...entry,
+            ref: { ...entry.ref, effectId: `10000000-0000-4000-8000-00000000008${index}` },
+          })),
+          original,
+        ],
+        itemId: original.itemId,
+        itemKey: productParent.itemKey,
+      },
+    ],
+  });
+  return { dependencies, original, acceptedPlan };
+};
+
 describe('Symmy Product readiness', () => {
   for (const code of GovernVariantAxesActionConflictProblemSchema.fields.code.literals) {
     it.effect(`preserves the native axes conflict and records only its finite code: ${code}`, () => {
@@ -3734,6 +3792,164 @@ describe('Symmy Product readiness', () => {
     }),
   );
 
+  for (const [scenario, initial] of [
+    ['explicit localized name', { name: 'Explicit', description: 'Source text', revision: 4 }],
+    ['description only', { description: 'Source text', revision: 3 }],
+    ['absent locale', { revision: 0 }],
+  ] as const) {
+    it.effect(`readiness NAME preserves ${scenario} and never overwrites a name on replay`, () =>
+      Effect.gen(function* readinessName() {
+        const { dependencies, original, acceptedPlan } = readinessNameFixture();
+        let current: LocaleProjection = initial;
+        const h = harness(
+          false,
+          original,
+          productId,
+          priceGroupA,
+          false,
+          undefined,
+          undefined,
+          undefined,
+          priceGroupA,
+          undefined,
+          undefined,
+          () => current,
+        );
+        yield* h.provide(
+          Effect.gen(function* run() {
+            const adapter = yield* h.adapter;
+            const input = { ...h.input, acceptedPlan, dependencies };
+            const named = current.name !== undefined;
+            expect((yield* adapter.execute(input)).status).toBe(named ? 'accepted_no_change' : 'accepted_change');
+            const writes = h.requests.filter((r) => r.url.includes('/actions/'));
+            expect(writes).toHaveLength(named ? 0 : 1);
+            expect(yield* lookupLocales(h.requests)).toContain('cs-CZ');
+            const [resolved] = h.resolvedEffects;
+            assert.isDefined(resolved);
+            if (named) {
+              expect(h.events.some((event) => event.startsWith('executor:') || event.startsWith('invocation:'))).toBe(
+                false,
+              );
+            } else {
+              const facts = {
+                name: 'Fallback',
+                ...(current.description === undefined ? {} : { description: current.description }),
+              };
+              const [write] = writes;
+              assert.isDefined(write);
+              expect(yield* Effect.promise(() => write.clone().json())).toMatchObject({
+                expectedRevision: current.revision,
+                facts,
+                locale: 'cs-CZ',
+                productRef,
+              });
+              expect(resolved.intent).toMatchObject({ payload: { expectedRevision: current.revision, facts } });
+            }
+            current = { name: 'Subsequent explicit text', revision: initial.revision + 1 };
+            expect((yield* adapter.execute({ ...input, effect: resolved })).status).toBe('accepted_no_change');
+            expect(h.requests.filter((r) => r.url.includes('/actions/'))).toHaveLength(writes.length);
+            expect(h.receipts).toEqual([]);
+            if (!named) {
+              const proof = yield* originalProof({ ...input, effect: resolved });
+              const pinned = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema)(resolved.intent);
+              if (pinned._tag !== 'CatalogReadinessName') return yield* Effect.die('Expected a pinned NAME write');
+              const altered = {
+                ...resolved,
+                intent: { ...pinned, payload: { ...pinned.payload, expectedRevision: 99 } },
+              };
+              const failed = yield* Effect.exit(
+                adapter.recover({ ...proof, effect: altered, originalInvocationId: invocationId }),
+              );
+              expect(Exit.isFailure(failed)).toBe(true);
+              const start = h.requests.length;
+              const recovered = yield* adapter.recover({
+                ...proof,
+                originalInvocationId: invocationId,
+                canExecuteNewEffects: false,
+              });
+              expect(recovered).toMatchObject({ status: 'settled', outcome: { status: 'accepted_change' } });
+              expect(
+                h.requests
+                  .slice(start)
+                  .filter((r) => r.url.includes('/reads/'))
+                  .map((r) => new URL(r.url).pathname),
+              ).toEqual(['/catalog-api/reads/set-product-localized-facts-recovery']);
+            }
+          }),
+        );
+      }),
+    );
+  }
+
+  it.effect('refuses a NAME projection for another source record even on the same Product', () => {
+    const { dependencies, original, acceptedPlan } = readinessNameFixture();
+    const h = harness(
+      false,
+      original,
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      undefined,
+      {
+        action: 'catalog-source-products',
+        response: {
+          outcome: 'FOUND',
+          items: [
+            {
+              source: { ...Struct.omit(sourceCorrelation, ['sourceOccurrenceId']), recordId: 'other-product' },
+              localized: currentSourceText,
+              originalActionInvocationId: invocationId,
+              product: result.product,
+              variantId,
+              variantSources: [],
+              entityKind: 'PRODUCT',
+            },
+          ],
+        },
+      },
+    );
+    return h.provide(
+      Effect.gen(function* foreignName() {
+        const adapter = yield* h.adapter;
+        expect(Exit.isFailure(yield* Effect.exit(adapter.execute({ ...h.input, dependencies, acceptedPlan })))).toBe(
+          true,
+        );
+        expect(h.requests.some((r) => r.url.includes('/actions/'))).toBe(false);
+        expect(h.receipts).toEqual([]);
+      }),
+    );
+  });
+
+  it.effect('does not overwrite a description changed after NAME resolution', () => {
+    const { dependencies, original, acceptedPlan } = readinessNameFixture();
+    let revision = 1;
+    const h = harness(
+      false,
+      original,
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      undefined,
+      undefined,
+      () => ({ description: `description ${revision}`, revision: revision++ }),
+    );
+    return h.provide(
+      Effect.gen(function* staleFallback() {
+        const adapter = yield* h.adapter;
+        expect((yield* adapter.execute({ ...h.input, dependencies, acceptedPlan })).status).toBe('stale');
+        expect(h.events.some((event) => event === 'owner-write' || event.startsWith('executor:'))).toBe(false);
+      }),
+    );
+  });
+
   it.effect('uses owner revisions to materialize every remaining readiness command', () =>
     Effect.gen(function* ownerRevisions() {
       const parent = {
@@ -3754,11 +3970,6 @@ describe('Symmy Product readiness', () => {
       const activated = readinessState('readiness-activate', { _tag: 'ReadinessProduct', productRevision: 5 });
       const cases = [
         ['CONFIRM', 'confirm-variant-combination', { expectedAxisRevision: 3, expectedVariantRevision: 7 }],
-        [
-          'NAME',
-          'set-product-localized-facts',
-          { expectedRevision: 0, facts: { name: 'Real source name' }, locale: 'cs-CZ' },
-        ],
         ['ACTIVATE', 'update-product', { expectedRevision: 4, targetLifecycle: 'ACTIVE' }],
         [
           'UNIT',
