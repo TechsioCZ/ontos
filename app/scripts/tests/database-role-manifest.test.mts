@@ -31,6 +31,22 @@ const rolesWhere = (matches: (identity: (typeof DATABASE_IDENTITIES)[number]) =>
     Order.String,
   );
 
+it('lets the Party request identity verify native registered executor identity without reading personal fields', () => {
+  const entry = manifestEntryForRole('party_registry_runtime');
+  expect(entry?.kind).toBe('explicit');
+  if (entry?.kind !== 'explicit') return;
+  const grants = entry.grants.tables.filter(({ table }) => table === 'core.principals');
+  const readable = new Set(grants.flatMap((grant) => grant.columns?.select ?? []));
+  for (const column of ['tenant_id', 'principal_id', 'kind', 'status', 'platform_role']) {
+    expect(readable.has(column), `registeredGatewayExecutorEligibility reads ${column}`).toBe(true);
+  }
+  for (const grant of grants) {
+    expect(grant.privileges).toEqual(['select']);
+    expect(grant.columns?.select).toBeDefined();
+  }
+  expect(readable.has('display_name')).toBe(false);
+});
+
 it('keeps Shell runtime composition inside its declaration root and uses package contracts for other owners', () => {
   const shellRoot = fileURLToPath(new URL('../../apps/shell-super-app/', import.meta.url));
   const entry = path.join(shellRoot, 'api/index.ts');

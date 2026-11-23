@@ -88,9 +88,10 @@ export const ACCESS_DECISION_REQUEST_GRANTS: readonly DatabaseTableGrant[] = Obj
     table: 'core.access_scope_fences',
   },
   {
-    columns: { select: ['kind', 'principal_id', 'tenant_id'] },
+    columns: { select: ['kind', 'platform_role', 'principal_id', 'status', 'tenant_id'] },
     privileges: ['select'],
-    reason: 'Core access/enforcement/actor.ts reads the acting principal kind before the engine is asked',
+    reason:
+      'Core access/enforcement/actor.ts reads the acting principal kind; registered gateway workload admission verifies active native executor status and the platform-owned internal workload marker',
     table: 'core.principals',
   },
   {
