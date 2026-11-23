@@ -20,6 +20,7 @@ import type { CatalogSourceProductPageRequest } from '../../shared/apis/catalog-
 import type { CatalogSourceProductsRequest } from '../../shared/apis/catalog-source-products.ts';
 import { catalogPersistenceWithCurrentSelectionEvidenceForScope } from './catalog-persistence.ts';
 import { catalogProductCreateFingerprint as fingerprint } from './catalog-source-product-intent.ts';
+import { localizedFactsReadsForScope } from './localized-facts-reads.ts';
 
 const sourceCorrelationConflict = () =>
   new ProductPersistenceConflict({
@@ -48,6 +49,23 @@ const businessSourcePayload = <Payload extends { readonly sourceCorrelation?: Ca
   payload.sourceCorrelation === undefined
     ? payload
     : { ...payload, sourceCorrelation: businessSourceCorrelation(payload.sourceCorrelation) };
+
+/**
+ * The create intent with the Product text the original create stated. The legacy name and description are not part
+ * of a source record's identity: a source that re-sends an imported record with another text asks for the same
+ * Product, and changes its text through the localized facts.
+ */
+const withOriginalText = (payload: CreateProductPayload, original: CreateProductResult['product']) => {
+  const { description: _description, name: _name, ...intent } = payload;
+  const restated: CreateProductPayload = { ...intent };
+  if (original.name !== undefined) {
+    Object.assign(restated, { name: original.name });
+  }
+  if (original.description !== undefined) {
+    Object.assign(restated, { description: original.description });
+  }
+  return restated;
+};
 
 const variantFingerprint = (payload: CreateVariantPayload) =>
   Schema.encodeEffect(Schema.fromJsonString(CreateVariantPayloadSchema))(businessSourcePayload(payload)).pipe(
