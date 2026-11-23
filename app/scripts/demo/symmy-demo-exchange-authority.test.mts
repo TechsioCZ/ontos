@@ -8,6 +8,7 @@ import {
   testSqlConnection,
 } from '../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../verticals/symmy-integration/shared/domain/symmy-job-execution.ts';
+import { demoCatalogRevisionOperation } from '../../verticals/merchandise/shared/apis/demo-catalog-revision.ts';
 import {
   bootstrapSymmyDemoExchangeAuthority,
   planSymmyDemoExchangeRoutes,
@@ -118,6 +119,57 @@ it.effect('discovers the actual adminProducts identity without changing revision
       expect(Exit.isFailure(yield* Effect.exit(planSymmyDemoExchangeRoutes(invalid)))).toBe(true);
     }
   }),
+);
+
+it.effect(
+  'upgrades an existing import-only enrollment with the exact catalog revision Read and its native workload',
+  () =>
+    Effect.gen(function* exactRevisionAuthorization() {
+      const original = originalConfiguration();
+      const importOnly = {
+        ...original,
+        items: [
+          {
+            ...original.items[0],
+            effects: [
+              ...(original.items[0]?.effects ?? []),
+              {
+                effectKey: 'existing-demo-import',
+                operation: {
+                  moduleId: 'demo.merchandise',
+                  entrypointKey: 'demo.merchandise.import-source-catalog',
+                  schemaVersion: '1',
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const patched = yield* symmyDemoExchangeConfiguration(importOnly, 'productsBatch');
+      const plan = yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(patched.configuration);
+      const operations = plan.items.flatMap(({ effects }) => effects.map(({ operation }) => operation));
+      expect(patched.changed).toBe(true);
+      expect(
+        operations.filter(({ entrypointKey }) => entrypointKey === 'demo.merchandise.api.demo-catalog-revision'),
+      ).toEqual([
+        {
+          moduleId: 'demo.merchandise',
+          entrypointKey: 'demo.merchandise.api.demo-catalog-revision',
+          schemaVersion: '1',
+        },
+      ]);
+      expect(
+        operations.filter(({ entrypointKey }) => entrypointKey === 'demo.merchandise.import-source-catalog'),
+      ).toHaveLength(1);
+      expect(demoCatalogRevisionOperation).toMatchObject({
+        moduleId: 'demo.merchandise',
+        entrypointKey: 'demo.merchandise.api.demo-catalog-revision',
+        schemaVersion: '1',
+        workloadKey: 'demo.merchandise.symmy-catalog-import',
+      });
+      expect(symmyDemoExchangeOperations.productsBatch.workloadKey).toBe(demoCatalogRevisionOperation.workloadKey);
+      expect((yield* symmyDemoExchangeConfiguration(patched.configuration, 'productsBatch')).changed).toBe(false);
+    }),
 );
 
 it.effect('refuses conflicting versions and effect keys rather than replacing existing authority', () =>

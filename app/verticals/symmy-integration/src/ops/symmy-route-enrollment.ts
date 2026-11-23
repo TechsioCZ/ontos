@@ -31,6 +31,7 @@ import { Option, Schema } from 'effect';
 import { SymmyRouteContextRequestSchema } from '../../shared/apis/symmy-route-context.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyJobIdSchema } from '../../shared/domain/symmy-job-identities.ts';
+import { symmyRetentionPolicyMatchesRoute } from '../../shared/domain/symmy-job-retention.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
 import {
   SymmyJobLifecyclePolicyRefSchema,
@@ -769,8 +770,13 @@ export const symmyRetentionRefusals = (
   }
   const matches = configured.filter(
     (policy) =>
-      policy.tenantId === request.tenantId &&
-      policy.routeId === request.routeId &&
+      symmyRetentionPolicyMatchesRoute(policy, {
+        fixturePlan: request.configuration,
+        legalEntityId: request.legalEntityId ?? null,
+        routeId: request.routeId,
+        routeKey: request.routeKey,
+        tenantId: request.tenantId,
+      }) &&
       policy.policyId === lifecyclePolicy.policyId &&
       policy.revision === lifecyclePolicy.revision &&
       Option.getOrUndefined(policy.targetLegalEntityId) === legalEntityId &&

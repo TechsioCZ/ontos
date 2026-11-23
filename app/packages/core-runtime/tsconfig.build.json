@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__core-runtime.build.tsbuildinfo"
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/testing",
+    "**/tests/**",
+    "**/*.test.*"
+  ]
+}

@@ -101,8 +101,12 @@ it.live('does nothing outside stage, even without bootstrap credentials', () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-for (const failAt of [1, 2, 3]) {
-  it.live(`stops before publication and logs only a sanitized line when command ${failAt} fails`, () =>
+for (const [failAt, kind] of [
+  [1, 'source-policies'],
+  [2, 'customer-authority'],
+  [3, 'exchange-authority'],
+] as const) {
+  it.live(`stops before publication and logs two sanitized lines when command ${failAt} fails`, () =>
     Effect.gen(function* failedBootstrap() {
       const { calls, output, run } = yield* fixture(failAt);
       let published = false;
@@ -117,9 +121,15 @@ for (const failAt of [1, 2, 3]) {
       expect(published).toBe(false);
       expect(calls).toHaveLength(failAt);
       expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
-      expect(yield* output.errorLines).toEqual([
+      const errors = yield* output.errorLines;
+      expect(errors).toEqual([
+        `[app-host] stage Symmy ${kind} bootstrap failed`,
         '[app-host] stage Symmy demo bootstrap failed; composition not published',
       ]);
+      const logs = JSON.stringify([...(yield* output.logLines), ...errors]);
+      for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this']) {
+        expect(logs).not.toContain(secret);
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 }
@@ -154,9 +164,15 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
       Effect.flip,
     );
     expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
-    expect(yield* output.errorLines).toEqual([
+    const errors = yield* output.errorLines;
+    expect(errors).toEqual([
+      '[app-host] stage Symmy source-policies bootstrap failed',
       '[app-host] stage Symmy demo bootstrap failed; composition not published',
     ]);
+    const logs = JSON.stringify([...(yield* output.logLines), ...errors]);
+    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this']) {
+      expect(logs).not.toContain(secret);
+    }
   }),
 );
 

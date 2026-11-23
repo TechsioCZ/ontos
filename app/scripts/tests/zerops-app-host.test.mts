@@ -358,6 +358,31 @@ describe('processEnvironment', () => {
     expect(processEnvironment(['crm'], secrets, derived).environment.ONTOS_GATEWAY_ISSUER).toBe(ORIGIN);
   });
 
+  it('keeps canonical stage customer and retention settings instead of stale owner copies', () => {
+    const old = {
+      ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: 'old-bindings',
+      ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED: 'false',
+      ONTOS_SYMMY_JOB_RETENTION_POLICIES: 'old-policies',
+    };
+    const current = {
+      ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: 'current-bindings',
+      ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED: 'true',
+    };
+    const { conflicts, environment } = processEnvironment(
+      ['privacy', PARTY_REGISTRY, 'symmy-integration'],
+      {
+        privacy: old,
+        [PARTY_REGISTRY]: { ...old, ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED: 'true' },
+        'symmy-integration': old,
+      },
+      { ...derived, ...current },
+    );
+    expect(conflicts).toEqual([]);
+    expect(environment.ONTOS_PARTY_CLIENT_SOURCE_BINDINGS).toBe(current.ONTOS_PARTY_CLIENT_SOURCE_BINDINGS);
+    expect(environment.ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED).toBe('true');
+    expect('ONTOS_SYMMY_JOB_RETENTION_POLICIES' in environment).toBe(false);
+  });
+
   it('reports keys that two owners of one process store with different values', () => {
     const secrets = {
       crm: { SHARED_KEY: 'one' },

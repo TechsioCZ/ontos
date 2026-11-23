@@ -464,7 +464,8 @@ Read \`GET /catalog/revision\` first and copy \`revision\` into \`expectedRevisi
 Use the write response's \`revision\` for the next write.
 \`priceMinor\` is an integer in minor currency units. \`categoryCode\` selects an imported ERP category;
 \`categoryId\` selects a native category ID. Do not send both. \`images\` holds up to 20 allowed image URL references,
-not base64 bytes. Shell does not fetch these URLs. Upload bytes with \`POST /products/media\`.
+not base64 bytes. Stage accepts \`https://www.akros.cz/data/\` URLs and explicitly configured image hosts;
+other hosts are refused. Shell does not fetch these URLs. Upload bytes with \`POST /products/media\`.
 The response's native product \`entityId\` is not a Catalog \`productRef\` or \`variantRef\`.`,
     requestExamples: {
       product: {

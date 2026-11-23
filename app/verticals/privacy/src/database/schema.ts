@@ -8,6 +8,8 @@ import {
   integer,
   jsonb,
   pgSchema,
+  pgPolicy,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -23,6 +25,7 @@ export const PRIVACY_TABLE_INVENTORY = [
   'applicability_policies',
   'consent_decisions',
   'consent_scope_bindings',
+  'demo_source_processing_policies',
   'disposition_decisions',
   'dsr_cases',
   'dsr_deadlines',
@@ -82,6 +85,29 @@ const scopeColumns = () => ({
   legalEntityId: uuid('legal_entity_id').notNull(),
   tenantId: uuid('tenant_id').notNull(),
 });
+
+/** Administrator-owned synthetic-test source policy. Runtime owners may read, never grant or change it. */
+export const demoSourceProcessingPolicies = privacySchema.table.withRLS(
+  'demo_source_processing_policies',
+  {
+    ...scopeColumns(),
+    policyId: text('policy_id').notNull(),
+    policyRecord: jsonb('policy_record').notNull(),
+    recordedAt: recordedAt(),
+    recordedBy: text('recorded_by')
+      .default(sql`current_user`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.legalEntityId, table.policyId] }),
+    pgPolicy('privacy_demo_source_processing_policies_select', {
+      for: 'select',
+      to: 'ontos_runtime',
+      using: sql`${table.tenantId}=nullif(current_setting('ontos.tenant_id',true),'')::uuid
+        and ${table.legalEntityId}=nullif(current_setting('ontos.legal_entity_id',true),'')::uuid`,
+    }),
+  ],
+);
 
 export const privacySubjects = privacySchema.table.withRLS(
   'privacy_subjects',
@@ -1381,6 +1407,7 @@ export const dsrResponses = privacySchema.table.withRLS(
 );
 
 export const PRIVACY_TABLES = [
+  demoSourceProcessingPolicies,
   antiResurrectionProtections,
   applicabilityDecisions,
   applicabilityPolicies,
@@ -1424,6 +1451,7 @@ export const PRIVACY_TABLES = [
 export const PRIVACY_GOVERNED_TABLES = PRIVACY_TABLES.filter((table) => table !== gatewayAssertionRedemptions);
 
 const privacyDatabaseSchema = {
+  demoSourceProcessingPolicies,
   antiResurrectionProtections,
   applicabilityDecisions,
   applicabilityPolicies,

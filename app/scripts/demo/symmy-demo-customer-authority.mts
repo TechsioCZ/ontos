@@ -12,10 +12,11 @@
  *
  * Required: ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage, DATABASE_URL, DATABASE_ADMIN_URL,
  * ONTOS_SYMMY_JOB_RETENTION_POLICIES. No published-composition URL is needed.
- * Personal-data processing additionally needs real ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS in Privacy and
- * ONTOS_PARTY_CLIENT_SOURCE_BINDINGS in Party. The exported environment builder supplies the latter, not the former.
+ * Synthetic imports use the migrated, administrator-owned demo source policy. Publish the environment builder's
+ * ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED and ONTOS_PARTY_CLIENT_SOURCE_BINDINGS before starting owners.
+ * Real-person processing remains on Privacy's ordinary exact-context/legal-basis path; no demo policy grants it.
  * A parent host must hand these environment additions to the owner processes; setting this child's environment
- * cannot reconfigure an already running owner. Missing personal authority is reported, never replaced by a bypass.
+ * cannot reconfigure an already running owner. This script does not claim an end-to-end owner smoke passed.
  */
 import { createHash } from 'node:crypto';
 
@@ -311,13 +312,13 @@ const configuration = (
 });
 
 /** Retention IDs are stable deployment configuration, not generated per boot. */
-export const symmyDemoCustomerRetentionRefs = (groups: readonly Group[]) => [
+export const symmyDemoCustomerRetentionRefs = () => [
   { policyId: 'akros-symmy-customers', revision, routeId: SYMMY_DEMO_CUSTOMERS_ROUTE },
-  ...groups.map(({ groupId }) => ({
+  {
     policyId: SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
     revision,
-    routeId: symmyDemoMembershipRouteId(groupId),
-  })),
+    routeId: SYMMY_DEMO_GROUPS_ROUTE,
+  },
 ];
 
 export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readonly Group[]) =>
@@ -638,20 +639,8 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     if (mode === 'apply') {
       yield* sql.withTransaction(
         Effect.gen(function* installDemoPolicy() {
-          yield* sql`select pg_advisory_xact_lock(hashtextextended('privacy:demo-source-processing-policy-ddl',0))`;
-          yield* sql`create table if not exists privacy.demo_source_processing_policies (
-          tenant_id uuid not null, legal_entity_id uuid not null, policy_id text not null,
-          policy_record jsonb not null, recorded_at timestamptz not null default clock_timestamp(),
-          recorded_by text not null default current_user,
-          primary key(tenant_id,legal_entity_id,policy_id))`;
-          yield* sql`alter table privacy.demo_source_processing_policies enable row level security`;
-          yield* sql`drop policy if exists demo_source_processing_scope on privacy.demo_source_processing_policies`;
-          yield* sql`create policy demo_source_processing_scope on privacy.demo_source_processing_policies
-          for select to ontos_runtime
-          using(tenant_id=nullif(current_setting('ontos.tenant_id',true),'')::uuid
-            and legal_entity_id=nullif(current_setting('ontos.legal_entity_id',true),'')::uuid)`;
-          yield* sql`revoke all on privacy.demo_source_processing_policies from public,ontos_runtime`;
-          yield* sql`grant select on privacy.demo_source_processing_policies to ontos_runtime`;
+          yield* sql`select pg_advisory_xact_lock(hashtextextended(
+            ${`${tenantId}:${legalEntityId}:demo-source-processing-policy`},0))`;
           yield* sql`insert into privacy.demo_source_processing_policies
           (tenant_id,legal_entity_id,policy_id,policy_record)
           values(${tenantId},${legalEntityId},${demoPolicy.policyId},${sql.json(encodedDemoPolicy)})
@@ -732,21 +721,9 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       if (Option.isNone(inventory)) {
         return yield* fail(`No production inventory for ${request.routeKey}`);
       }
-      const applicablePolicies =
-        request.routeKey === 'customerGroupCustomersBatch'
-          ? policies.map((policy) =>
-              policy.policyId === SYMMY_DEMO_MEMBERSHIP_POLICY_ID &&
-              policy.routeId === SYMMY_DEMO_GROUPS_ROUTE &&
-              policy.tenantId === tenantId &&
-              policy.governanceLegalEntityId === legalEntityId &&
-              Option.getOrUndefined(policy.targetLegalEntityId) === legalEntityId
-                ? { ...policy, routeId: request.routeId }
-                : policy,
-            )
-          : policies;
       const refusals = [
         ...symmyRouteRequestRefusals(request, inventory.value),
-        ...symmyRetentionRefusals(request, applicablePolicies),
+        ...symmyRetentionRefusals(request, policies),
       ];
       if (refusals.length > 0) {
         return yield* fail(refusals.map(({ code, detail }) => `${code}: ${detail}`).join('; '));
@@ -815,7 +792,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       exactPersonalDataContexts: personalContexts.length,
       readyForPersonalData: false,
       receipts,
-      retention: symmyDemoCustomerRetentionRefs(groups),
+      retention: symmyDemoCustomerRetentionRefs(),
     };
   },
 );

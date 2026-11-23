@@ -68,6 +68,10 @@ it('keeps every shared runtime exception within its exact owner privileges', () 
       table: 'privacy.gateway_assertion_redemptions',
     },
     {
+      privileges: ['select'],
+      table: 'privacy.demo_source_processing_policies',
+    },
+    {
       privileges: ['select', 'insert', 'delete'],
       table: 'tax.gateway_assertion_redemptions',
     },

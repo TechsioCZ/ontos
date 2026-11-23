@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__shared-contracts.build.tsbuildinfo"
+  },
+  "references": [
+    {
+      "path": "../core-runtime/tsconfig.build.json"
+    }
+  ]
+}

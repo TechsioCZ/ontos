@@ -6,6 +6,7 @@ import { Redacted } from 'effect';
 import {
   AKROS_STAGE_PROOF_INPUT,
   assertAcceptedEffects,
+  assertNativeApplied,
   assertOrderSnapshots,
   assertRecordReadback,
   assertReplayIdentity,
@@ -16,7 +17,17 @@ import {
   readSymmyProofConfig,
   SymmyProofFailure,
   symmyProofFailureLine,
+  symmyNativeCategoryPayload,
+  symmyNativeProductPayload,
+  symmyNativeMediaPayload,
+  symmyOwnerReadEnvelope,
 } from './stage-symmy-full-function-proof.mts';
+import { Schema } from 'effect';
+import {
+  SymmyDemoCategoriesBatchRequestSchema,
+  SymmyDemoProductsBatchRequestSchema,
+  SymmyDemoMediaUploadRequestSchema,
+} from '../../apps/shell-super-app/api/symmy/demo-catalog-contract.ts';
 
 const itemId = '11111111-1111-4111-8111-111111111111';
 const effectId = '22222222-2222-4222-8222-222222222222';
@@ -117,12 +128,63 @@ test('unexpected errors and schema failures never echo secret or customer input'
   }
 });
 
-test('full proof fails closed on missing endpoint wiring before creating an HTTP client or fixtures', async () => {
+test('full proof rejects an unsafe origin before any HTTP request or fixture creation', async () => {
   const config = readSymmyProofConfig({ SYMMY_API_KEY: 'not-a-live-key' });
   await assert.rejects(
-    Promise.resolve(Reflect.apply(proveSymmyFullFunction, undefined, [config, undefined])),
-    /FAIL configuration:missing-wiring/u,
+    proveSymmyFullFunction({ ...config, origin: 'http://example.invalid' }),
+    /FAIL configuration:input-contract/u,
   );
+});
+
+test('native category/product/image builders satisfy the actual public request schemas', () => {
+  const names = makeSymmyProofNames();
+  const strict = { onExcessProperty: 'error' } satisfies SchemaAST.ParseOptions;
+  Schema.decodeUnknownSync(SymmyDemoCategoriesBatchRequestSchema, strict)(symmyNativeCategoryPayload(names, 4));
+  Schema.decodeUnknownSync(SymmyDemoProductsBatchRequestSchema, strict)(symmyNativeProductPayload(names, 5));
+  const image = Schema.decodeUnknownSync(SymmyDemoMediaUploadRequestSchema, strict)(
+    symmyNativeMediaPayload(names, 'native-product-from-write-response', 6),
+  );
+  assert.equal(image.image.filename, `${names.image}.png`);
+  assert.equal(Buffer.from(image.image.full.contentBase64, 'base64').subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+});
+
+test('native APPLIED proof binds exact tenant, company, item and advancing revision, not HTTP 200 alone', () => {
+  const scope = {
+    tenantId: '11111111-1111-4111-8111-111111111111',
+    legalEntityId: '22222222-2222-4222-8222-222222222222',
+    previousRevision: 4,
+  };
+  const body = {
+    tenantId: scope.tenantId, legalEntityId: scope.legalEntityId, ownerModuleId: 'demo.merchandise',
+    revision: 5, items: [{ entityId: 'native-product', index: 0, outcome: 'APPLIED', revision: 5 }],
+  };
+  assert.equal(assertNativeApplied(body, scope, 'category-import').item.entityId, 'native-product');
+  for (const invalid of [
+    { ...body, legalEntityId: scope.tenantId }, { ...body, tenantId: scope.legalEntityId },
+    { ...body, revision: 4 }, { ...body, items: [] },
+    { ...body, items: [{ ...body.items[0], outcome: 'QUEUED' }] },
+    { ...body, items: [{ ...body.items[0], revision: 6 }] },
+  ]) {
+    assert.throws(() => assertNativeApplied(invalid, scope, 'category-import'), /FAIL category-import:/u);
+  }
+});
+
+test('owner relay uses documented read bodies and preserves required versus forbidden company scope', () => {
+  const company = '22222222-2222-4222-8222-222222222222';
+  assert.deepEqual(symmyOwnerReadEnvelope('catalog/sku-lookup', { code: 'ERP-1' }, company, 'sku-readback'), {
+    audience: 'catalog', legalEntityId: company, readName: 'sku-lookup', query: { code: 'ERP-1' },
+  });
+  const query = {
+    customerConfigurationId: 'akros', externalScope: 'akros', namespace: 'akros-erp',
+    issuer: { backendKind: 'external_business_system', backendId: 'akros-erp' },
+    itemKey: 'NEW-ERP-ITEM', locationKey: 'AKROS-SKLAD-1',
+  };
+  const stock = symmyOwnerReadEnvelope('inventory/source-stock-position-resolution', query, company, 'stock-readback');
+  assert.equal('legalEntityId' in stock, false);
+  assert.equal(stock.readName, 'source-stock-position-resolution');
+  assert.throws(() => symmyOwnerReadEnvelope(
+    'catalog/sku-lookup', { code: 'ERP-1', operation: 'WRITE' }, company, 'sku-readback',
+  ), /input-contract/u);
 });
 
 test('readback requires exactly one record matching both identity and value', () => {

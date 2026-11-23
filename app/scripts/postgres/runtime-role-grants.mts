@@ -35,6 +35,11 @@ export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
     table: 'privacy.gateway_assertion_redemptions',
   },
   {
+    privileges: ['select'],
+    reason: 'Only administrative stage provisioning may authorize synthetic demo source processing',
+    table: 'privacy.demo_source_processing_policies',
+  },
+  {
     privileges: ['select', 'insert', 'delete'],
     reason: 'Tax atomically redeems one-use assertions before Tenant scope without storing business data',
     table: 'tax.gateway_assertion_redemptions',

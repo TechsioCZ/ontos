@@ -116,6 +116,7 @@ const makeCatalog = () => {
             new Map<unknown, boolean>([
               ['trust', trustExists],
               ['catalog', true],
+              ['privacy', true],
               ['commerce_market_catalog', marketSchemaExists],
             ]).get(values[0]) === true,
         },
@@ -130,6 +131,7 @@ const makeCatalog = () => {
               ['trust.gateway_scope_grants', trustExists],
               ['trust.gateway_audience_roles', trustExists],
               ['catalog.gateway_assertion_redemptions', tableExists],
+              ['privacy.demo_source_processing_policies', true],
               ['commerce_market_catalog.market_retirement_admissions', marketTableExists],
             ]).get(values[0]) === true,
         },
@@ -175,6 +177,32 @@ const makeCatalog = () => {
   );
   return { catalog, client };
 };
+
+it.effect('keeps the demo policy runtime-read-only after initial and repeated shared role bootstrap', () =>
+  Effect.gen(function* demoPolicyRoleGrants() {
+    const { catalog, client: makeClient } = makeCatalog();
+    const client = yield* makeClient;
+    const [legacy] = legacySharedEntries;
+    if (legacy === undefined) {
+      return yield* Effect.die('The manifest must declare the shared runtime role');
+    }
+    for (const _repeat of [false, true]) {
+      catalog.statements.length = 0;
+      yield* grantSharedRuntimeRole(client, legacy);
+      const statements = catalog.statements;
+      const restricted = statements.filter((statement) =>
+        /^(?:grant|revoke) .* on table privacy\.demo_source_processing_policies /u.test(statement),
+      );
+      expect(restricted).toEqual([
+        'revoke all on table privacy.demo_source_processing_policies from public, ontos_runtime',
+        'grant select on table privacy.demo_source_processing_policies to ontos_runtime',
+      ]);
+      expect(statements.indexOf(restricted[0] ?? '')).toBeGreaterThan(
+        statements.indexOf('grant select, insert, update, delete on all tables in schema privacy to ontos_runtime'),
+      );
+    }
+  }),
+);
 
 it.effect(
   'normal and repeated bootstrap restore Catalog redemption and Market fence least grants without reviving withheld schemas',

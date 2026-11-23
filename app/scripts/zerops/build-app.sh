@@ -161,9 +161,9 @@ for unit in $units; do
 done
 
 if [ -n "$pending" ]; then
-  # The shared contract and design-token declarations every unit's declaration build references (as `pnpm build`).
+  # Source-only declarations: the ordinary configs retain the test/script programs for the CI gates.
   for project in packages/shared-contracts packages/shared-design-tokens; do
-    pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"
+    pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.build.json"
   done
   # xargs bounds the parallel builds (a POSIX shell cannot count its own background jobs from a subshell).
   # shellcheck disable=SC2086

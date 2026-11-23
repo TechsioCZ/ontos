@@ -25,7 +25,9 @@ const declaration = (name: string): string => {
 };
 
 const executable = stripTypeScriptTypes(
-  [declaration('EXPECTED_RUNTIME_ROUTINES'), declaration('sameStrings')].join('\n'),
+  [declaration('EXPECTED_RUNTIME_ROUTINES'), declaration('EXPECTED_TRIGGER_NAMES'), declaration('sameStrings')].join(
+    '\n',
+  ),
 );
 const executeDeclarations = (expression: string): string =>
   execFileSync(
@@ -97,4 +99,32 @@ it('rejects missing, duplicate, unexpected, and substituted runtime routines', (
   expect(compare(EffectArray.sort([sqlOrdered[1], ...sqlOrdered.slice(1)], Order.String))).toBe(false);
   expect(compare(EffectArray.sort([...sqlOrdered, 'unexpected_runtime_routine'], Order.String))).toBe(false);
   expect(compare(EffectArray.sort(['wrong_runtime_routine', ...sqlOrdered.slice(1)], Order.String))).toBe(false);
+});
+
+it('allows exactly the demo source-binding trigger while continuing to reject any unexpected trigger', () => {
+  const triggers = Schema.decodeUnknownSync(Schema.Array(Schema.String))(
+    JSON.parse(executeDeclarations('EXPECTED_TRIGGER_NAMES')),
+  );
+  expect(triggers).toHaveLength(48);
+  expect(new Set(triggers).size).toBe(triggers.length);
+  expect(triggers).toEqual(EffectArray.sort(triggers, Order.String));
+  expect(triggers).toContain('symmy_demo_group_membership_route');
+  expect(JSON.parse(executeDeclarations('sameStrings(EXPECTED_TRIGGER_NAMES, EXPECTED_TRIGGER_NAMES)'))).toBe(true);
+  for (const changed of [
+    triggers.filter((trigger) => trigger !== 'symmy_demo_group_membership_route'),
+    EffectArray.sort([...triggers, 'another_demo_trigger'], Order.String),
+    EffectArray.sort([...triggers, 'symmy_demo_group_membership_route'], Order.String),
+  ]) {
+    expect(JSON.parse(executeDeclarations(`sameStrings(${JSON.stringify(changed)}, EXPECTED_TRIGGER_NAMES)`))).toBe(
+      false,
+    );
+  }
+  expect(source).toContain("relation.relname = 'customer_group_definition_source_bindings'");
+  expect(source).toContain("routine_namespace.nspname = 'symmy_integration'");
+  expect(source).toContain("routine.proname = 'materialize_demo_group_membership_route'");
+  expect(source).toContain('trigger_record.tgtype = 21');
+  expect(source).toContain("trigger_record.tgenabled = 'O'");
+  expect(source).toContain("not has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')");
+  expect(source).toContain('!row.demo_membership_trigger_safe');
+  expect(source).toContain('!sameStrings(row.trigger_names, EXPECTED_TRIGGER_NAMES)');
 });

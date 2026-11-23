@@ -8,6 +8,10 @@ import {
   symmyRetentionTargetForPrivacyHandoff,
 } from '../../shared/domain/symmy-job-retention.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
+import {
+  SymmyRouteEnrollmentRequestSchema,
+  symmyRetentionRefusals,
+} from '../../src/ops/symmy-route-enrollment.ts';
 
 const id = '10000000-0000-4000-8000-000000000003';
 const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
@@ -161,6 +165,25 @@ it('authorizes new demo membership route IDs under one explicit source-family re
       routeId: '10000000-0000-4000-8000-000000000099',
     }),
   ).toBe(true);
+});
+
+it('uses the same family policy when bootstrapping or verifying a new membership route', () => {
+  const route = demoRoute();
+  const request = Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({
+    tenantId: route.tenantId,
+    legalEntityId: route.legalEntityId,
+    routeId: route.routeId,
+    routeKey: route.routeKey,
+    routeCode: 'created-after-boot',
+    principalId: '10000000-0000-4000-8000-000000000009',
+    lifecyclePolicy: { policyId: demo.policyId, revision: demo.revision },
+    routeRevision: demo.revision,
+    mappingVersion: demo.revision,
+    configuration: route.fixturePlan,
+  });
+  const policy = Schema.decodeUnknownSync(SymmyJobRetentionPolicySchema)(demoFamilyPolicy);
+  expect(symmyRetentionRefusals(request, [policy])).toEqual([]);
+  expect(symmyRetentionRefusals(request, [policy, policy])).toHaveLength(1);
 });
 
 it('does not extend family retention to another tenant, company, source, route kind or unselected group', () => {

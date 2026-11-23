@@ -304,6 +304,17 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
         );
       }
       const mutable = !IMMUTABLE_TABLE_SET.has(table.table_name);
+      if (table.table_name === 'demo_source_processing_policies') {
+        return (
+          table.owner_name !== connections.admin.user ||
+          !table.rls_enabled ||
+          !table.rls_forced ||
+          !table.can_select ||
+          table.can_insert ||
+          table.can_update ||
+          table.can_delete
+        );
+      }
       return (
         table.owner_name !== connections.admin.user ||
         !table.rls_enabled ||

@@ -72,12 +72,12 @@ it('replays deterministic selected routes without deriving a native group identi
   expect(symmyDemoMembershipRouteId(group.groupId)).toBe(symmyDemoMembershipRouteId(group.groupId));
   expect(symmyDemoMembershipRouteId(group.groupId)).not.toBe(group.groupId);
   expect(Schema.is(Schema.String.check(Schema.isUUID()))(symmyDemoMembershipRouteId(group.groupId))).toBe(true);
-  expect(symmyDemoCustomerRetentionRefs([group])).toEqual([
+  expect(symmyDemoCustomerRetentionRefs()).toEqual([
     { policyId: 'akros-symmy-customers', revision: 'v1', routeId: SYMMY_DEMO_CUSTOMERS_ROUTE },
     {
       policyId: SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
       revision: 'v1',
-      routeId: symmyDemoMembershipRouteId(group.groupId),
+      routeId: SYMMY_DEMO_GROUPS_ROUTE,
     },
   ]);
 });
@@ -88,7 +88,8 @@ it('merges only exact tenant-local Party source bindings and never fabricates Pr
   expect(entries).toHaveLength(3);
   expect(symmyDemoCustomerEnvironment(identities, entries)).toEqual(first);
   expect(Object.keys(first)).toEqual([
-    'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS', 'ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED',
+    'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
+    'ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED',
   ]);
   expect(entries.map((entry: { principalId: string }) => entry.principalId)).toEqual([
     identities.integrationPrincipalId,

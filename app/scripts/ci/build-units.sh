@@ -20,7 +20,7 @@ if [ "${#ids[@]}" -eq 0 ]; then
   exit 0
 fi
 for project in packages/shared-contracts packages/shared-design-tokens; do
-  pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.json"
+  pnpm exec ultramodern-create ultramodern typecheck --build "$project/tsconfig.build.json"
 done
 logs="$(mktemp -d)"
 served="$(node -e '
