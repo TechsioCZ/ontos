@@ -2,7 +2,7 @@
 /**
  * Live HTTP acceptance, not a seed. Importing this module does not perform I/O.
  * The parent supplies endpoint/env wiring and explicitly executes a runner to create scoped demo records.
- * No orders, invoices, mail, database access, native services, or cleanup deletes are performed here.
+ * No order placement, invoices, mail, database access, native services, or cleanup deletes are performed here.
  *
  * Public payload sources:
  * apps/shell-super-app/api/symmy/{products,customers,stock,price-lists-batch-upsert,
@@ -16,7 +16,44 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { Redacted, Schema } from 'effect';
+import { Option, Redacted, Schema } from 'effect';
+import { SymmyProductsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/products-batch-request-contract.ts';
+import { SymmyCustomersBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/customers-batch-request-contract.ts';
+import { SymmyCustomerGroupsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/customer-groups-batch-request-contract.ts';
+import { SymmyGroupCustomersBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/group-customers-batch-request-contract.ts';
+import { SymmyStockBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/stock-batch-request-contract.ts';
+import { SymmyPriceListsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/price-lists-batch-upsert-request-contract.ts';
+import { SymmyPriceListPricesBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/price-lists-prices-batch-request-contract.ts';
+import {
+  SymmyDemoCategoriesBatchRequestSchema,
+  SymmyDemoProductsBatchRequestSchema,
+  SymmyDemoMediaUploadRequestSchema,
+  SymmyDemoCatalogBatchResponseSchema,
+  SymmyDemoCatalogRevisionResponseSchema,
+} from '../../apps/shell-super-app/api/symmy/demo-catalog-contract.ts';
+import { SkuLookupRequestSchema, SkuLookupResponseSchema } from '../../verticals/catalog/shared/apis/sku-lookup.ts';
+import { CatalogPagePricesRequestSchema, CatalogPagePricesResponseSchema } from '@app/pricing-contracts/catalog-page-prices';
+import {
+  SourceStockPositionResolutionRequestSchema,
+  SourceStockPositionResolutionResponseSchema,
+} from '../../verticals/inventory/shared/apis/source-stock-position-resolution.ts';
+import {
+  CurrentStockEvidenceForAvailabilityRequestSchema,
+  CurrentStockEvidenceForAvailabilityResponseSchema,
+} from '../../verticals/inventory/shared/apis/current-stock-evidence-for-availability.ts';
+import {
+  SavedAddressListRequestSchema,
+  SavedAddressListResponseSchema,
+} from '../../verticals/commerce-customer-context/shared/apis/saved-address-list.ts';
+import {
+  EffectiveCustomerGroupMembershipsRequestSchema,
+  EffectiveCustomerGroupMembershipsResponseSchema,
+} from '../../verticals/commerce-customer-context/shared/apis/effective-customer-group-memberships.ts';
+import {
+  CustomerGroupDetailRequestSchema,
+  CustomerGroupDetailResponseSchema,
+} from '../../verticals/commerce-customer-context/shared/apis/customer-group-detail.ts';
+import { RecordsRequestSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 
 const text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const uuid = Schema.String.check(Schema.isUUID());
@@ -93,10 +130,27 @@ export const SymmyProofInputSchema = Schema.Struct({
   unitRef: RefSchema,
 });
 export type SymmyProofInput = typeof SymmyProofInputSchema.Type;
+const stockSourceFields = SourceStockPositionResolutionRequestSchema.fields;
+export const SymmyProofStockSourceSchema = Schema.Struct({
+  customerConfigurationId: stockSourceFields.customerConfigurationId,
+  externalScope: stockSourceFields.externalScope,
+  issuer: stockSourceFields.issuer,
+  namespace: stockSourceFields.namespace,
+});
+/** Qualification published in docs/integrations/symmy-akros-operator.md; override with current operator facts if changed. */
+export const AKROS_STAGE_STOCK_SOURCE = {
+  customerConfigurationId: 'akros',
+  externalScope: 'akros',
+  issuer: { backendId: 'akros-erp', backendKind: 'external_business_system' },
+  namespace: 'akros-erp',
+};
 export interface SymmyProofConfig {
   readonly origin: string;
   readonly apiKey: Redacted.Redacted<string>;
   readonly input: SymmyProofInput;
+  readonly legalEntityId?: string;
+  readonly stockSource?: typeof SymmyProofStockSourceSchema.Type;
+  readonly operatorCookie?: Redacted.Redacted<string>;
   /** Whole-run budget; all fetches and polling share it. Defaults to ten minutes. */
   readonly timeoutMs?: number;
   readonly pollMs?: number;
@@ -113,29 +167,111 @@ type FailureCode =
   | 'input-contract' | 'schema' | 'network' | 'timeout' | 'response-too-large' | 'redirect'
   | 'http-status' | 'job-identity' | 'job-terminal' | 'item-count' | 'effect-count'
   | 'effect-outcome' | 'effect-owner' | 'replay-identity' | 'readback' | 'not-unseen'
-  | 'missing-wiring' | 'unsafe-path' | 'unexpected';
+  | 'missing-wiring' | 'unsafe-path' | 'unexpected'
+  | 'read-auth-required' | 'read-auth-scope' | 'read-permission' | 'read-auth-expired';
+const SAFE_PROBLEM_TAGS = new Set([
+  'GatewayAuthenticationRequiredProblem', 'GatewayForbiddenProblem', 'GatewayUnavailableProblem',
+  'GatewayAudienceInvalidProblem', 'GatewayReloadRequiredProblem', 'GatewayRateLimitedProblem', 'GatewayInternalProblem',
+  'SymmyInvalidProblem', 'SymmyUnavailableProblem', 'SymmyUnsupportedProblem', 'SymmyIdempotencyRequiredProblem',
+  'SymmyFixtureIntentConflictProblem', 'SymmyFixtureJobNotFoundProblem', 'SymmyStockInputProblem',
+  'SymmyStockDependencyNotReadyProblem', 'SymmyStockSourceUnavailableProblem', 'SymmyDemoOrderNotFoundProblem',
+  ...[
+    'ImportSourceCatalogAction', 'SkuLookup', 'SourceStockPositionResolution', 'CurrentStockEvidenceForAvailability',
+    'SavedAddressList', 'EffectiveCustomerGroupMemberships', 'CustomerGroupDetail', 'CatalogPagePrices', 'Records',
+  ].flatMap((prefix) => [
+    'AuthenticationProblem', 'ForbiddenProblem', 'InvalidProblem', 'NotFoundProblem', 'ConflictProblem',
+    'PolicyProblem', 'PolicyConflictProblem', 'IneligibleProblem', 'PreconditionProblem', 'UnavailableProblem',
+    'InternalProblem', 'AlreadyCommittedProblem', 'CommitIndeterminateProblem',
+  ].map((suffix) => `${prefix}${suffix}`)),
+]);
+// Only closed contract codes may leave the process. Never retain detail/title, response previews, IDs or arbitrary reasons.
+const SAFE_PROBLEM_CODES = new Set([
+  'LOCATION_NOT_ENROLLED', 'UNIT_NOT_ENROLLED', 'ITEM_NOT_PROVISIONED', 'POSITION_NOT_FOUND', 'POLICY_NOT_FOUND',
+  'LOCATION_NOT_ALLOWED', 'ITEM_CORRELATION_AMBIGUOUS', 'OWNER_RESOLUTION_MISMATCH', 'TENANT_SCOPE_MISMATCH',
+  'OWNER_UNAVAILABLE', 'projection_not_configured', 'filter_not_supported', 'owner_field_not_supported', 'search_too_broad',
+  'action_approval_required', 'action_permission_denied', 'module_state_denied', 'operation_context_denied',
+  'operation_context_invalid', 'merchandise_permission_denied', 'merchandise_scope_mismatch',
+  'action_invocation_not_found', 'merchandise_not_found', 'action_request_hash_conflict',
+  'action_invocation_state_invalid', 'merchandise_category_slug_taken', 'merchandise_lifecycle_conflict',
+  'merchandise_offered_price_changed', 'merchandise_stock_reconciliation_required', 'merchandise_tier_base_price_required',
+  'merchandise_variant_bulk_price_unsupported', 'merchandise_variant_sku_required', 'merchandise_revision_conflict',
+  'action_policy_denied', 'merchandise_reference_ineligible', 'action_invocation_persistence_failed',
+  'action_permission_check_failed', 'action_policy_evaluation_failed', 'action_transaction_failed',
+  'module_state_check_unavailable', 'operation_context_unavailable', 'merchandise_persistence_unavailable',
+  'action_already_committed', 'action_commit_indeterminate', 'action_invocation_already_committed',
+  'read_handler_unavailable', 'key_provider_unavailable', 'issuer_unavailable', 'gateway_dispatch_failed',
+]);
+type EffectStatus = typeof EffectSchema.Type.status;
+export type SymmySafeFailureBody =
+  | { readonly kind: 'non-json' | 'empty' | 'unrecognized-problem' }
+  | {
+      readonly kind: 'problem'; readonly tag?: string; readonly code?: string;
+      readonly reason?: string; readonly retryable?: boolean;
+    }
+  | {
+      readonly kind: 'effects' | 'job'; readonly status?: typeof JobSchema.Type.status;
+      readonly items: number; readonly effects: Partial<Record<EffectStatus, number>>;
+    };
+const ProblemMetadataSchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.Unknown), code: Schema.optionalKey(Schema.Unknown),
+  reason: Schema.optionalKey(Schema.Unknown), retryable: Schema.optionalKey(Schema.Unknown),
+});
+export function sanitizeSymmyFailureBody(body: unknown, credential: Redacted.Redacted<string>): SymmySafeFailureBody {
+  const metadata = Option.getOrUndefined(Schema.decodeUnknownOption(ProblemMetadataSchema)(body));
+  if (metadata === undefined) return { kind: 'unrecognized-problem' };
+  const allowed = (value: unknown, values: ReadonlySet<string>): value is string =>
+    typeof value === 'string' && values.has(value) && !value.includes(Redacted.value(credential));
+  const tag = allowed(metadata._tag, SAFE_PROBLEM_TAGS) ? metadata._tag : undefined;
+  const code = allowed(metadata.code, SAFE_PROBLEM_CODES) ? metadata.code : undefined;
+  const reason = allowed(metadata.reason, SAFE_PROBLEM_CODES) ? metadata.reason : undefined;
+  if (tag === undefined && code === undefined && reason === undefined) return { kind: 'unrecognized-problem' };
+  return {
+    kind: 'problem',
+    ...(tag === undefined ? {} : { tag }),
+    ...(code === undefined ? {} : { code }),
+    ...(reason === undefined ? {} : { reason }),
+    ...(typeof metadata.retryable === 'boolean' ? { retryable: metadata.retryable } : {}),
+  };
+}
+function effectDiagnostic(items: readonly typeof ItemSchema.Type[]): SymmySafeFailureBody {
+  const counts: Partial<Record<EffectStatus, number>> = {};
+  for (const item of items) for (const effect of item.effects) counts[effect.status] = (counts[effect.status] ?? 0) + 1;
+  return { kind: 'effects', effects: counts, items: items.length };
+}
 
 /** Contains only fixed boundary/code strings and an optional numeric HTTP status, never a body or cause. */
 export class SymmyProofFailure extends Error {
   readonly boundary: ProofBoundary;
   readonly code: FailureCode;
   readonly status: number | undefined;
-  constructor(boundary: ProofBoundary, code: FailureCode, status?: number) {
-    super(`FAIL ${boundary}:${code}${status === undefined ? '' : `:${status}`}`);
+  readonly safeBody: SymmySafeFailureBody | undefined;
+  constructor(boundary: ProofBoundary, code: FailureCode, status?: number, safeBody?: SymmySafeFailureBody) {
+    super(`FAIL ${boundary}:${code}${status === undefined ? '' : `:${status}`}` +
+      (safeBody === undefined ? '' : ` body=${JSON.stringify(safeBody)}`));
     this.name = 'SymmyProofFailure';
     this.boundary = boundary;
     this.code = code;
     this.status = status;
+    this.safeBody = safeBody;
   }
 }
-function ensure(condition: unknown, boundary: ProofBoundary, code: FailureCode): asserts condition {
-  if (!condition) throw new SymmyProofFailure(boundary, code);
+function ensure(
+  condition: unknown, boundary: ProofBoundary, code: FailureCode, safeBody?: SymmySafeFailureBody,
+): asserts condition {
+  if (!condition) throw new SymmyProofFailure(boundary, code, undefined, safeBody);
 }
 function decode<A>(schema: Schema.ConstraintDecoder<A>, body: unknown, boundary: ProofBoundary): A {
   try {
     return Schema.decodeUnknownSync(schema)(body);
   } catch {
     throw new SymmyProofFailure(boundary, 'schema');
+  }
+}
+function validatePayload(schema: Schema.ConstraintDecoder<unknown>, body: unknown, boundary: ProofBoundary): void {
+  try {
+    Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(body);
+  } catch {
+    throw new SymmyProofFailure(boundary, 'input-contract');
   }
 }
 export interface EffectExpectation {
@@ -156,20 +292,21 @@ export function assertAcceptedEffects(
     boundary, 'input-contract',
   );
   const result = decode(ItemsSchema, body, boundary);
-  ensure(result.items.length >= expected.itemsAtLeast, boundary, 'item-count');
+  const diagnostic = effectDiagnostic(result.items);
+  ensure(result.items.length >= expected.itemsAtLeast, boundary, 'item-count', diagnostic);
   const effects = result.items.flatMap((item) => {
-    ensure(item.outcome === 'accepted', boundary, 'effect-outcome');
+    ensure(item.outcome === 'accepted', boundary, 'effect-outcome', diagnostic);
     return item.effects;
   });
-  ensure(effects.length >= expected.effectsAtLeast, boundary, 'effect-count');
+  ensure(effects.length >= expected.effectsAtLeast, boundary, 'effect-count', diagnostic);
   for (const effect of effects) {
     ensure(
       effect.status === 'accepted_change' || effect.status === 'accepted_no_change' || effect.status === 'duplicate',
-      boundary, 'effect-outcome',
+      boundary, 'effect-outcome', diagnostic,
     );
   }
   for (const [owner, count] of Object.entries(expected.owners)) {
-    ensure(effects.filter((effect) => effect.owner === owner).length >= count, boundary, 'effect-owner');
+    ensure(effects.filter((effect) => effect.owner === owner).length >= count, boundary, 'effect-owner', diagnostic);
   }
   return result;
 }
@@ -258,6 +395,7 @@ export async function proveSymmyProductStockList(
       sourceReference: `${proof.names.prefix}:stock:1`,
     }],
   };
+  validatePayload(SymmyStockBatchRequestSchema, stockBody, 'stock-import');
   const stockResult = await client.write(
     `${PREFIX}/inventory/stock/batch`, stockBody, `${proof.names.prefix}.stock`, 'stock-import',
   );
@@ -282,6 +420,7 @@ export async function proveSymmyProductStockList(
       purpose: 'Scoped Symmy HTTP acceptance price list',
     }],
   };
+  validatePayload(SymmyPriceListsBatchRequestSchema, listBody, 'price-list-import');
   await client.settle(await client.write(
     `${PREFIX}/price-lists/batch-upsert`, listBody, `${proof.names.prefix}.list`, 'price-list-import',
   ), { effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'pricing.price-group-catalog': 1 } }, 'price-list-import');
@@ -311,6 +450,7 @@ export async function proveSymmyProductStockList(
       unitBasis: { quantity: '1', unitRef: input.unitRef }, variantRef: proof.variantRef,
     }],
   };
+  validatePayload(SymmyPriceListPricesBatchRequestSchema, priceBody, 'list-price-import');
   const key = `${proof.names.prefix}.list-price`;
   const original = await client.settle(await client.write(
     `${PREFIX}/price-lists/prices/batch`, priceBody, key, 'list-price-import',
@@ -414,7 +554,13 @@ const CustomerPageSchema = Schema.Struct({
     partyRef: RefSchema,
     profile: Schema.Struct({ profileRef: Schema.Struct({
       ...RefSchema.fields, kind: Schema.Literals(['RETAIL', 'COUNTERPARTY']),
-    }) }),
+    }), subject: Schema.Union([
+      Schema.Struct({ kind: Schema.Literal('RETAIL'), partyRef: RefSchema, sellingLegalEntityRef: RefSchema }),
+      Schema.Struct({
+        kind: Schema.Literal('COUNTERPARTY'), counterpartyRef: RefSchema,
+        sellingLegalEntityRef: Schema.optionalKey(RefSchema),
+      }),
+    ]) }),
     party: Schema.Struct({
       outcome: Schema.Literal('AVAILABLE'),
       partyType: Schema.Literals(['PERSON', 'ORGANIZATION']),
@@ -429,6 +575,8 @@ export interface SymmyCustomerProof {
   readonly customerId: string;
   readonly partyRef: ProofRef;
   readonly profileId: string;
+  readonly profileRef: ProofRef;
+  readonly subject: typeof CustomerPageSchema.Type.customers[number]['profile']['subject'];
   readonly kind: 'PERSON' | 'ORGANIZATION';
 }
 export interface SymmyCustomerFixture {
@@ -442,41 +590,10 @@ export interface SymmyFullProofContext extends SymmyCommerceProof {
   readonly customers: readonly [SymmyCustomerProof, SymmyCustomerProof];
   readonly address: SymmyCustomerFixture;
 }
-type BasePriceField = 'productId' | 'variantId' | 'amount' | 'currencyCode' | 'priceGroupKind';
-type StockField = 'itemKey' | 'locationKey' | 'amount' | 'unitId';
-type AddressField = 'profileId' | 'label' | 'addressLine1' | 'city' | 'postalCode' | 'countryCode' | 'purposes';
-type MembershipField = 'profileId' | 'groupCode';
-export interface SymmyImportPlan {
-  readonly path: string;
-  readonly body: unknown;
-  readonly expected: EffectExpectation;
-}
-export interface SymmyFullProofWiring {
-  readonly skuRead: (context: SymmyCommerceProof) => SymmyRecordRead<'productId' | 'variantId' | 'sku'>;
-  readonly basePriceRead: (context: SymmyCommerceProof) => SymmyRecordRead<BasePriceField>;
-  readonly stockRead: (context: SymmyCommerceProof) => SymmyRecordRead<StockField>;
-  readonly addressRead: (
-    context: SymmyFullProofContext, customer: SymmyCustomerProof,
-  ) => SymmyRecordRead<AddressField>;
-  readonly membershipRead: (
-    context: SymmyFullProofContext, customer: SymmyCustomerProof,
-  ) => SymmyRecordRead<MembershipField>;
-  /** Bodies must come from the new worker's public schema, include this run's prefix, and contain no native seeds. */
-  readonly category: {
-    readonly plan: (context: SymmyFullProofContext) => SymmyImportPlan;
-    readonly read: (context: SymmyFullProofContext) => SymmyRecordRead<'productId' | 'categoryName'>;
-  };
-  readonly image: {
-    readonly sourceUrl: string;
-    readonly plan: (context: SymmyFullProofContext) => SymmyImportPlan;
-    readonly read: (context: SymmyFullProofContext) => SymmyRecordRead<'productId' | 'imageName' | 'sourceUrl'>;
-  };
-  readonly orders: {
-    readonly collectionPath: string;
-    readonly detailPath: (id: string) => string;
-    /** Existing order IDs supplied by the parent. No order is ever placed by this proof. */
-    readonly expectedOrderIds: readonly [string, ...string[]];
-  };
+export interface SymmyOrderExportWiring {
+  readonly collectionPath: string;
+  readonly detailPath: (id: string) => string;
+  readonly expectedOrderIds: readonly [string, ...string[]];
 }
 const CUSTOMER_EFFECTS = {
   effectsAtLeast: 11, itemsAtLeast: 8, owners: { 'party.registry': 7, 'commerce.customer-context': 4 },
@@ -506,6 +623,7 @@ async function proveCustomers(
       firstName: proof.names.prefix, kind: 'PERSON', lastName: 'Acceptance',
     },
   ] };
+  validatePayload(SymmyCustomersBatchRequestSchema, body, 'customer-import');
   const key = `${proof.names.prefix}.customers`;
   const original = await client.settle(await client.write(
     `${PREFIX}/customers/batch`, body, key, 'customer-import',
@@ -532,7 +650,11 @@ async function proveCustomers(
         (point) => point.type === contact.type && point.normalizedValue === contact.value,
       ).length === 1, 'customer-readback', 'readback');
     }
-    return { customerId: id, kind, partyRef: item.partyRef, profileId: item.profile.profileRef.resourceId };
+    const { kind: _profileKind, ...profileRef } = item.profile.profileRef;
+    return {
+      customerId: id, kind, partyRef: item.partyRef, profileId: profileRef.resourceId,
+      profileRef, subject: item.profile.subject,
+    };
   };
   const customers: SymmyFullProofContext['customers'] = [
     customer(proof.names.organization, 'ORGANIZATION'), customer(proof.names.person, 'PERSON'),
@@ -569,7 +691,7 @@ export function assertOrderSnapshots(body: unknown): readonly typeof OrderSchema
   return orders;
 }
 export async function proveSymmyOrderExport(
-  client: SymmyProofClient, wiring: SymmyFullProofWiring['orders'],
+  client: SymmyProofClient, wiring: SymmyOrderExportWiring,
 ): Promise<void> {
   ensure(
     wiring.expectedOrderIds.length > 0 &&
@@ -589,68 +711,173 @@ export async function proveSymmyOrderExport(
   }
 }
 
-/**
- * Full acceptance fails closed before ANY writes if a new worker boundary has not been wired.
- * The commerce helper remains independently callable while workers finish their public endpoints.
- */
-export async function proveSymmyFullFunction(
-  config: SymmyProofConfig, wiring: SymmyFullProofWiring,
-  pass: (boundary: ProofBoundary) => void = (boundary) => { process.stdout.write(`PASS ${boundary}\n`); },
-): Promise<void> {
+const PNG_ONE_PIXEL =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=';
+const slugOf = (name: string) => name.toLowerCase().replaceAll('_', '-');
+/** The real public demo contracts use native IDs and a revision fence, never engineered Catalog refs. */
+export function symmyNativeCategoryPayload(names: SymmyProofNames, expectedRevision: number) {
+  return {
+    categories: [{ code: names.category, name: names.category, published: true, slug: slugOf(names.category) }],
+    expectedRevision,
+  };
+}
+export function symmyNativeProductPayload(names: SymmyProofNames, expectedRevision: number) {
+  return {
+    expectedRevision,
+    products: [{
+      active: true, category: names.category, categoryCode: names.category,
+      description: `${names.prefix} scoped HTTP acceptance product`,
+      lowStockThreshold: 0, name: names.product, priceMinor: 12345, published: true,
+      sku: names.variant, slug: slugOf(names.product), stockTracked: false,
+      taxClassificationCode: 'cz.vat.standard', unit: 'ks',
+    }],
+  };
+}
+export function symmyNativeMediaPayload(names: SymmyProofNames, productId: string, expectedRevision: number) {
+  return {
+    expectedRevision,
+    image: { filename: `${names.image}.png`, full: { contentBase64: PNG_ONE_PIXEL, height: 1, width: 1 } },
+    productId,
+  };
+}
+export function assertNativeApplied(
+  body: unknown,
+  expected: { readonly tenantId: string; readonly legalEntityId: string; readonly previousRevision: number },
+  boundary: ProofBoundary,
+) {
+  const result = decode(SymmyDemoCatalogBatchResponseSchema, body, boundary);
+  const [item] = result.items;
   ensure(
-    wiring !== undefined && typeof wiring.skuRead === 'function' &&
-    typeof wiring.basePriceRead === 'function' && typeof wiring.stockRead === 'function' &&
-    typeof wiring.addressRead === 'function' && typeof wiring.membershipRead === 'function' &&
-    typeof wiring.category?.plan === 'function' && typeof wiring.category.read === 'function' &&
-    typeof wiring.image?.plan === 'function' && typeof wiring.image.read === 'function' &&
-    typeof wiring.orders?.detailPath === 'function' && typeof wiring.orders.collectionPath === 'string' &&
-    Array.isArray(wiring.orders.expectedOrderIds) && wiring.orders.expectedOrderIds.length > 0,
-    'configuration', 'missing-wiring',
+    result.ownerModuleId === 'demo.merchandise' && result.tenantId === expected.tenantId &&
+    result.legalEntityId === expected.legalEntityId && result.items.length === 1 &&
+    item !== undefined && item.index === 0 && item.outcome === 'APPLIED' &&
+    item.revision === result.revision && result.revision > expected.previousRevision,
+    boundary, 'readback',
   );
-  const origin = checkedOrigin(config.origin);
-  checkedPath(wiring.orders.collectionPath, origin, 'configuration');
-  try {
-    ensure(new URL(wiring.image.sourceUrl).protocol === 'https:', 'configuration', 'input-contract');
-  } catch {
-    throw new SymmyProofFailure('configuration', 'input-contract');
-  }
-  const client = createSymmyProofClient(config);
-  const verify = async <Field extends string>(
-    read: SymmyRecordRead<Field>, expected: Readonly<Record<Field, unknown>>,
-    boundary: ProofBoundary, decimals: readonly Field[] = [],
-  ) => assertRecordReadback(await client.read(read.path, boundary), read, expected, boundary, decimals);
-  const commerce = await proveSymmyProductStockList(config, client);
-  pass('product-replay');
-  pass('list-price-readback');
-  await verify(wiring.skuRead(commerce), {
-    productId: commerce.productRef.resourceId, variantId: commerce.variantRef.resourceId, sku: commerce.names.variant,
-  }, 'sku-readback');
-  pass('sku-readback');
-  await verify(wiring.basePriceRead(commerce), {
-    productId: commerce.productRef.resourceId, variantId: commerce.variantRef.resourceId,
-    amount: commerce.baseAmount, currencyCode: config.input.currencyCode, priceGroupKind: 'NO_GROUP',
-  }, 'base-price-readback', ['amount']);
-  pass('base-price-readback');
-  await verify(wiring.stockRead(commerce), {
-    itemKey: commerce.names.variant, locationKey: config.input.locationKey,
-    amount: commerce.stockAmount, unitId: config.input.unitRef.resourceId,
-  }, 'stock-readback', ['amount']);
-  pass('stock-readback');
-  const context = await proveCustomers(config, client, commerce);
-  pass('customer-replay');
+  return { item, revision: result.revision };
+}
+const NativeCatalogReadSchema = Schema.Struct({
+  categories: Schema.Array(Schema.Struct({ id: text, name: text, slug: text })),
+  products: Schema.Array(Schema.Struct({
+    active: Schema.Boolean, categoryId: text, currentPriceMinor: Schema.Int,
+    id: text, images: Schema.optionalKey(Schema.Array(text)), name: text,
+    published: Schema.Boolean, sku: text,
+  })),
+  revision: Schema.Int,
+});
+async function proveNativeCatalog(
+  config: SymmyProofConfig, client: SymmyProofClient, names: SymmyProofNames,
+): Promise<void> {
+  const tenantId = config.input.unitRef.tenantId;
+  const legalEntityId = config.legalEntityId ?? STAGE_LEGAL_ENTITY;
+  const initial = decode(SymmyDemoCatalogRevisionResponseSchema,
+    await client.read(`${PREFIX}/catalog/revision`, 'category-import'), 'category-import');
+  ensure(initial.tenantId === tenantId && initial.legalEntityId === legalEntityId, 'category-import', 'readback');
+  const categoryBody = symmyNativeCategoryPayload(names, initial.revision);
+  validatePayload(SymmyDemoCategoriesBatchRequestSchema, categoryBody, 'category-import');
+  const categoryResult = await client.write(
+    `${PREFIX}/categories/batch`, categoryBody, `${names.prefix}.native-category`, 'category-import',
+  );
+  ensure(categoryResult.status === 200, 'category-import', 'http-status');
+  const category = assertNativeApplied(categoryResult.body, {
+    tenantId, legalEntityId, previousRevision: initial.revision,
+  }, 'category-import');
+  const productBody = symmyNativeProductPayload(names, category.revision);
+  validatePayload(SymmyDemoProductsBatchRequestSchema, productBody, 'product-import');
+  const productResult = await client.write(
+    `${PREFIX}/catalog/products/batch`, productBody, `${names.prefix}.native-product`, 'product-import',
+  );
+  ensure(productResult.status === 200, 'product-import', 'http-status');
+  const product = assertNativeApplied(productResult.body, {
+    tenantId, legalEntityId, previousRevision: category.revision,
+  }, 'product-import');
+  const mediaBody = symmyNativeMediaPayload(names, product.item.entityId, product.revision);
+  validatePayload(SymmyDemoMediaUploadRequestSchema, mediaBody, 'image-import');
+  const mediaResult = await client.write(
+    `${PREFIX}/products/media`, mediaBody, `${names.prefix}.native-media`, 'image-import',
+  );
+  ensure(mediaResult.status === 200, 'image-import', 'http-status');
+  const media = assertNativeApplied(mediaResult.body, {
+    tenantId, legalEntityId, previousRevision: product.revision,
+  }, 'image-import');
+  ensure(
+    media.item.entityId === product.item.entityId && media.item.image !== undefined &&
+    /^media:[0-9a-f-]{36}$/u.test(media.item.image),
+    'image-import', 'readback',
+  );
+  const state = decode(NativeCatalogReadSchema, await client.ownerRead('merchandise/records', {
+    view: { includeCategories: true, limit: 1, ordersLimit: 0, productIds: [product.item.entityId] },
+  }, 'image-readback'), 'image-readback');
+  const [stored] = state.products;
+  ensure(state.products.length === 1 && stored !== undefined, 'product-readback', 'readback');
+  ensure(
+    stored.id === product.item.entityId && stored.name === names.product && stored.sku === names.variant &&
+    stored.currentPriceMinor === 12345 && stored.active && stored.published &&
+    stored.categoryId === category.item.entityId && state.revision >= media.revision,
+    'product-readback', 'readback',
+  );
+  ensure(state.categories.filter((entry) =>
+    entry.id === category.item.entityId && entry.name === names.category && entry.slug === slugOf(names.category),
+  ).length === 1, 'category-readback', 'readback');
+  ensure(stored.images?.filter((image) => image === media.item.image).length === 1, 'image-readback', 'readback');
+}
+async function proveOwnerStock(
+  config: SymmyProofConfig, client: SymmyProofClient, context: SymmyCommerceProof,
+): Promise<void> {
+  const source = decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, 'configuration');
+  const resolution = decode(SourceStockPositionResolutionResponseSchema, await client.ownerRead(
+    'inventory/source-stock-position-resolution',
+    { ...source, itemKey: context.names.variant, locationKey: config.input.locationKey },
+    'stock-readback',
+  ), 'stock-readback');
+  ensure(resolution._tag === 'RESOLVED', 'stock-readback', 'readback');
+  const { evidence } = decode(CurrentStockEvidenceForAvailabilityResponseSchema, await client.ownerRead(
+    'inventory/current-stock-evidence-for-availability', { positionRef: resolution.positionRef }, 'stock-readback',
+  ), 'stock-readback');
+  const onHand = evidence.position.onHand;
+  const sourceEvidence = evidence.sourceEvidence;
+  ensure(
+    evidence.position.lifecycle === 'CURRENT' &&
+    isDeepStrictEqual(evidence.position.ref, resolution.positionRef) &&
+    isDeepStrictEqual(evidence.binding.catalogSelection, {
+      productRef: context.productRef, variantRef: context.variantRef,
+    }) &&
+    isDeepStrictEqual(evidence.position.scope.stockLocationRef, resolution.stockLocationRef) &&
+    isDeepStrictEqual(evidence.position.scope.stockItemRef, resolution.stockItemRef) &&
+    onHand._tag === 'CURRENT' && decimalEqual(onHand.quantity.amount, context.stockAmount) &&
+    isDeepStrictEqual(onHand.quantity.unitRef, config.input.unitRef) &&
+    sourceEvidence._tag === 'EXTERNAL_SOURCE_ASSERTION' && sourceEvidence.evaluation._tag === 'DETERMINATE' &&
+    decimalEqual(sourceEvidence.evaluation.postEffectOnHand.amount, context.stockAmount),
+    'stock-readback', 'readback',
+  );
+}
+async function proveOwnerAddresses(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
   for (const customer of context.customers) {
-    await verify(wiring.addressRead(context, customer), {
-      profileId: customer.profileId, label: context.address.label,
-      ...context.address.postalAddress, purposes: context.address.purposes,
-    }, 'address-readback');
+    const profile = customer.subject.kind === 'COUNTERPARTY'
+      ? { kind: 'COUNTERPARTY', counterpartyRef: customer.subject.counterpartyRef, profileRef: customer.profileRef }
+      : { kind: 'RETAIL', profileRef: customer.profileRef };
+    const { addresses } = decode(SavedAddressListResponseSchema, await client.ownerRead(
+      'commerce-customer-context/saved-address-list', { profile }, 'address-readback',
+    ), 'address-readback');
+    const [address] = addresses;
+    ensure(
+      addresses.length === 1 && address !== undefined && address.label === context.address.label &&
+      address.lifecycle === 'ACTIVE' && address.origin.kind === 'COMMERCE_ONLY' &&
+      isDeepStrictEqual(address.origin.postalAddress, context.address.postalAddress) &&
+      isDeepStrictEqual(address.purposes.toSorted(), [...context.address.purposes].toSorted()) &&
+      isDeepStrictEqual(address.profile.profileRef, customer.profileRef),
+      'address-readback', 'readback',
+    );
   }
-  pass('address-readback');
+}
+async function proveOwnerGroups(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
   const groupBody = { customerGroups: [{
     businessCode: context.names.group, code: context.names.group, name: context.names.group,
     description: `${context.names.prefix} acceptance group`, meaningKey: `${context.names.prefix}.customers`,
     membershipCriteria: 'Explicit ERP assignment of scoped acceptance customers',
     purpose: 'Scoped Symmy HTTP acceptance group',
   }] };
+  validatePayload(SymmyCustomerGroupsBatchRequestSchema, groupBody, 'group-import');
   const groupExpected = { effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'commerce.customer-context': 1 } };
   const groupKey = `${context.names.prefix}.group`;
   const group = await client.settle(await client.write(
@@ -660,60 +887,173 @@ export async function proveSymmyFullFunction(
     `${PREFIX}/customer-groups/batch`, groupBody, groupKey, 'group-replay',
   ), groupExpected, 'group-replay');
   assertReplayIdentity(group, groupReplay, 'group-replay');
-  // Public worker contract: group-customers-batch-request-contract.ts, ERP IDs only, never profile refs.
-  const assignmentPath = `${PREFIX}/customer-groups/${encodeURIComponent(context.names.group)}/customers/batch`;
-  const assignmentBody = { customers: context.customers.map(({ customerId }) => ({ customerId })) };
-  const assignmentExpected = { effectsAtLeast: 2, itemsAtLeast: 2, owners: { 'commerce.customer-context': 2 } };
-  const assignmentKey = `${context.names.prefix}.assignment`;
-  const assignment = await client.settle(await client.write(
-    assignmentPath, assignmentBody, assignmentKey, 'group-assignment',
-  ), assignmentExpected, 'group-assignment');
+  const path = `${PREFIX}/customer-groups/${encodeURIComponent(context.names.group)}/customers/batch`;
+  const body = { customers: context.customers.map(({ customerId }) => ({ customerId })) };
+  validatePayload(SymmyGroupCustomersBatchRequestSchema, body, 'group-assignment');
+  const expected = { effectsAtLeast: 2, itemsAtLeast: 2, owners: { 'commerce.customer-context': 2 } };
+  const key = `${context.names.prefix}.assignment`;
+  const original = await client.settle(await client.write(path, body, key, 'group-assignment'), expected, 'group-assignment');
   const readMemberships = async () => {
+    const identities = [];
     for (const customer of context.customers) {
-      await verify(wiring.membershipRead(context, customer), {
-        profileId: customer.profileId, groupCode: context.names.group,
-      }, 'group-readback');
+      const profile = {
+        profileKind: customer.kind === 'PERSON' ? 'RETAIL' : 'COUNTERPARTY', profileRef: customer.profileRef,
+      };
+      const response = decode(EffectiveCustomerGroupMembershipsResponseSchema, await client.ownerRead(
+        'commerce-customer-context/effective-customer-group-memberships',
+        { asOf: new Date().toISOString(), profile }, 'group-readback',
+      ), 'group-readback');
+      const [membership] = response.items;
+      ensure(
+        response.items.length === 1 && membership !== undefined && membership.state === 'VALID' &&
+        isDeepStrictEqual(membership.profile.profileRef, customer.profileRef),
+        'group-readback', 'readback',
+      );
+      const { group: stored } = decode(CustomerGroupDetailResponseSchema, await client.ownerRead(
+        'commerce-customer-context/customer-group-detail', { groupRef: membership.groupRef }, 'group-readback',
+      ), 'group-readback');
+      ensure(
+        stored.businessCode === context.names.group && stored.currentDefinition.name === context.names.group &&
+        stored.currentState === 'ACTIVE',
+        'group-readback', 'readback',
+      );
+      identities.push({ membershipRef: membership.membershipRef, profileRef: customer.profileRef, groupRef: stored.groupRef });
     }
+    return identities;
   };
-  await readMemberships();
-  const assignmentReplay = await client.settle(await client.write(
-    assignmentPath, assignmentBody, assignmentKey, 'group-replay',
-  ), assignmentExpected, 'group-replay');
-  assertReplayIdentity(assignment, assignmentReplay, 'group-replay');
-  // A fresh request key with the SAME ERP customer IDs must not create duplicate memberships.
-  await client.settle(await client.write(
-    assignmentPath, assignmentBody, `${assignmentKey}.source-replay`, 'group-replay',
-  ), assignmentExpected, 'group-replay');
-  await readMemberships();
-  pass('group-replay');
-  for (const kind of ['category', 'image'] satisfies readonly ('category' | 'image')[]) {
-    const plan = wiring[kind].plan(context);
-    const boundary = kind === 'category' ? 'category-import' : 'image-import';
-    ensure(
-      JSON.stringify(plan.body)?.includes(context.names.prefix) &&
-      !/\/(?:orders?|invoices?|emails?|mail|checkout)(?:\/|$)/iu.test(plan.path) &&
-      plan.expected.effectsAtLeast > 0 && Object.keys(plan.expected.owners).length > 0,
-      boundary, 'input-contract',
-    );
-    await client.settle(await client.write(
-      plan.path, plan.body, `${context.names.prefix}.${kind}`, boundary,
-    ), plan.expected, boundary);
-  }
-  await verify(wiring.category.read(context), {
-    productId: context.productRef.resourceId, categoryName: context.names.category,
-  }, 'category-readback');
-  pass('category-readback');
-  await verify(wiring.image.read(context), {
-    productId: context.productRef.resourceId, imageName: context.names.image, sourceUrl: wiring.image.sourceUrl,
-  }, 'image-readback');
-  pass('image-readback');
-  await proveSymmyOrderExport(client, wiring.orders);
+  const before = await readMemberships();
+  const replay = await client.settle(await client.write(path, body, key, 'group-replay'), expected, 'group-replay');
+  assertReplayIdentity(original, replay, 'group-replay');
+  ensure(isDeepStrictEqual(before, await readMemberships()), 'group-replay', 'readback');
+  await client.settle(await client.write(path, body, `${key}.source-replay`, 'group-replay'), expected, 'group-replay');
+  ensure(isDeepStrictEqual(before, await readMemberships()), 'group-replay', 'readback');
+}
+export interface SymmyStageProofOptions {
+  /** Optional known existing order IDs; otherwise prove up to three actual IDs returned by the public list. */
+  readonly expectedOrderIds?: readonly string[];
+}
+/** Complete executable stage proof: all writes use public Symmy bodies, all extra owner calls are registered Reads. */
+export async function proveSymmyFullFunction(
+  config: SymmyProofConfig,
+  options: SymmyStageProofOptions = {},
+  pass: (boundary: ProofBoundary) => void = (boundary) => { process.stdout.write(`PASS ${boundary}\n`); },
+): Promise<void> {
+  decode(SymmyProofInputSchema, config.input, 'configuration');
+  decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, 'configuration');
+  const client = createSymmyProofClient(config);
+  ensure(Redacted.isRedacted(config.operatorCookie), 'configuration', 'read-auth-required');
+  // Verify the new endpoints, existing orders and staff read permission before the first test write.
+  decode(SymmyDemoCatalogRevisionResponseSchema,
+    await client.read(`${PREFIX}/catalog/revision`, 'category-import'), 'category-import');
+  const orderPage = decode(Schema.Struct({ orders: Schema.Array(Schema.Unknown) }),
+    await client.read(`${PREFIX}/orders?limit=100&offset=0`, 'order-export'), 'order-export');
+  const actualOrders = assertOrderSnapshots(orderPage.orders);
+  const ids = options.expectedOrderIds ?? actualOrders.slice(0, 3).map((order) => order.id);
+  const [first, ...rest] = ids;
+  ensure(first !== undefined, 'order-export', 'readback');
+  await proveSymmyOrderExport(client, {
+    collectionPath: `${PREFIX}/orders?limit=100&offset=0`,
+    detailPath: (id) => `${PREFIX}/orders/${encodeURIComponent(id)}`, expectedOrderIds: [first, ...rest],
+  });
   pass('order-export');
+  await client.ownerRead('merchandise/records', {
+    view: { limit: 0, ordersLimit: 0, summary: true },
+  }, 'category-readback');
+  const commerce = await proveSymmyProductStockList(config, client);
+  pass('product-replay');
+  pass('list-price-readback');
+  const sku = decode(SkuLookupResponseSchema, await client.ownerRead(
+    'catalog/sku-lookup', { code: commerce.names.variant }, 'sku-readback',
+  ), 'sku-readback');
+  ensure(
+    sku._tag === 'found' && sku.state === 'CURRENT' && sku.displayCode === commerce.names.variant &&
+    sku.target.kind === 'VARIANT' && sku.target.variantId === commerce.variantRef.resourceId &&
+    sku.target.tenantId === commerce.variantRef.tenantId,
+    'sku-readback', 'readback',
+  );
+  pass('sku-readback');
+  await proveOwnerStock(config, client, commerce);
+  pass('stock-readback');
+  const context = await proveCustomers(config, client, commerce);
+  pass('customer-replay');
+  await proveOwnerAddresses(client, context);
+  pass('address-readback');
+  await proveOwnerGroups(client, context);
+  pass('group-replay');
+  await proveNativeCatalog(config, client, commerce.names);
+  pass('category-readback');
+  pass('image-readback');
+  // Catalog page pricing evaluates the owner's current instant; do not mistake a scheduled future Price for absence.
+  await client.waitUntil(commerce.effectiveFrom, 'base-price-readback');
+  const prices = decode(CatalogPagePricesResponseSchema, await client.ownerRead('pricing/catalog-page-prices', {
+    ...config.input.commercialScope, currencyCode: config.input.currencyCode,
+    items: [{
+      catalogSelection: { productRef: commerce.productRef, variantRef: commerce.variantRef },
+      unitBasis: { quantity: '1', unitRef: config.input.unitRef },
+    }],
+  }, 'base-price-readback'), 'base-price-readback');
+  ensure(prices._tag === 'CATALOG_PAGE_PRICED' && prices.prices.length === 1, 'base-price-readback', 'readback');
+  const [price] = prices.prices;
+  ensure(
+    price?._tag === 'PRICE_FOUND' && price.priceGroupSelector.kind === 'NO_GROUP' &&
+    decimalEqual(price.priceRevision.monetaryAmount.amount, commerce.baseAmount) &&
+    price.priceRevision.monetaryAmount.currencyCode === config.input.currencyCode &&
+    isDeepStrictEqual(price.catalogSelection, { productRef: commerce.productRef, variantRef: commerce.variantRef }),
+    'base-price-readback', 'readback',
+  );
+  pass('base-price-readback');
   pass('full-proof');
+}
+
+const OPERATOR_SESSION_PATH = '/shell-super-app-api/auth/session';
+const OPERATOR_COMPOSITION_PATH = '/shell-super-app-api/shell/composition';
+const OPERATOR_GATEWAY_PATH = '/shell-super-app-api/auth/gateway-context';
+const STAGE_LEGAL_ENTITY = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
+const OWNER_READS = {
+  'catalog/sku-lookup': { audience: 'catalog', readName: 'sku-lookup', request: SkuLookupRequestSchema },
+  'pricing/catalog-page-prices': {
+    audience: 'pricing', readName: 'catalog-page-prices', request: CatalogPagePricesRequestSchema,
+  },
+  'inventory/source-stock-position-resolution': {
+    audience: 'inventory', readName: 'source-stock-position-resolution', request: SourceStockPositionResolutionRequestSchema,
+  },
+  'inventory/current-stock-evidence-for-availability': {
+    audience: 'inventory', readName: 'current-stock-evidence-for-availability',
+    request: CurrentStockEvidenceForAvailabilityRequestSchema,
+  },
+  'commerce-customer-context/saved-address-list': {
+    audience: 'commerce-customer-context', readName: 'saved-address-list', request: SavedAddressListRequestSchema,
+  },
+  'commerce-customer-context/effective-customer-group-memberships': {
+    audience: 'commerce-customer-context', readName: 'effective-customer-group-memberships',
+    request: EffectiveCustomerGroupMembershipsRequestSchema,
+  },
+  'commerce-customer-context/customer-group-detail': {
+    audience: 'commerce-customer-context', readName: 'customer-group-detail', request: CustomerGroupDetailRequestSchema,
+  },
+  'merchandise/records': { audience: 'merchandise', readName: 'records', request: RecordsRequestSchema },
+};
+export type SymmyOwnerRead = keyof typeof OWNER_READS;
+/** Pure plan for registered owner Reads. The operator gateway, not the proof, admits operation scope. */
+export function symmyOwnerReadEnvelope(
+  operation: SymmyOwnerRead, query: unknown, legalEntityId: string, boundary: ProofBoundary,
+) {
+  ensure(Object.hasOwn(OWNER_READS, operation), boundary, 'input-contract');
+  const read = OWNER_READS[operation];
+  validatePayload(read.request, query, boundary);
+  decode(uuid, legalEntityId, 'configuration');
+  return {
+    audience: read.audience,
+    ...(operation === 'inventory/source-stock-position-resolution' ? {} : { legalEntityId }),
+    readName: read.readName,
+    query,
+  };
 }
 type HttpResult = { readonly status: number; readonly body: unknown };
 export interface SymmyProofClient {
   read(path: string, boundary: ProofBoundary): Promise<unknown>;
+  ownerRead(operation: SymmyOwnerRead, query: unknown, boundary: ProofBoundary): Promise<unknown>;
+  waitUntil(instant: string, boundary: ProofBoundary): Promise<void>;
   write(path: string, body: unknown, key: string, boundary: ProofBoundary): Promise<HttpResult>;
   settle(result: HttpResult, expected: EffectExpectation, boundary: ProofBoundary): Promise<Items>;
 }
@@ -759,18 +1099,60 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
     ensure(ms > 0, boundary, 'timeout');
     return ms;
   };
+  type Authentication =
+    | { readonly kind: 'symmy' }
+    | { readonly kind: 'operator' }
+    | { readonly kind: 'owner'; readonly token: Redacted.Redacted<string>; readonly revision: string };
   const request = async (
     path: string, method: 'GET' | 'POST', body: unknown, key: string | undefined, boundary: ProofBoundary,
+    authentication: Authentication = { kind: 'symmy' },
   ): Promise<HttpResult> => {
-    const url = checkedPath(path, origin, boundary);
+    let url: URL;
+    if (authentication.kind === 'symmy') {
+      url = checkedPath(path, origin, boundary);
+    } else {
+      ensure(path.startsWith('/') && !path.startsWith('//') && !path.includes('?') && !path.includes('#'),
+        boundary, 'unsafe-path');
+      url = new URL(path, origin);
+      ensure(url.origin === origin.origin && !url.username && !url.password, boundary, 'unsafe-path');
+      if (authentication.kind === 'operator') {
+        ensure(
+          (method === 'GET' && [OPERATOR_SESSION_PATH, OPERATOR_COMPOSITION_PATH].includes(path)) ||
+          (method === 'POST' && path === OPERATOR_GATEWAY_PATH),
+          boundary, 'unsafe-path',
+        );
+      } else {
+        ensure(
+          method === 'POST' && /^\/shell-super-app-api\/module-api\/[^?#]+\/reads\/[A-Za-z0-9._-]+$/u.test(path),
+          boundary, 'unsafe-path',
+        );
+      }
+    }
+    let authenticationHeaders: Record<string, string>;
+    const secrets = [config.apiKey];
+    if (config.operatorCookie !== undefined) secrets.push(config.operatorCookie);
+    if (authentication.kind === 'symmy') {
+      authenticationHeaders = { 'x-api-key': Redacted.value(config.apiKey) };
+    } else if (authentication.kind === 'operator') {
+      ensure(config.operatorCookie !== undefined, boundary, 'read-auth-required');
+      authenticationHeaders = { cookie: Redacted.value(config.operatorCookie), origin: origin.origin };
+    } else {
+      secrets.push(authentication.token);
+      authenticationHeaders = {
+        authorization: `Bearer ${Redacted.value(authentication.token)}`,
+        'x-ontos-composition-revision': authentication.revision,
+      };
+    }
     try {
+      const encoded = method === 'POST' ? JSON.stringify(body) : undefined;
+      if (method === 'POST') ensure(encoded !== undefined, boundary, 'input-contract');
       const response = await fetch(url, {
-        body: method === 'POST' ? JSON.stringify(body) : undefined,
+        ...(encoded === undefined ? {} : { body: encoded }),
         headers: {
           accept: 'application/json',
           ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
           ...(key === undefined ? {} : { 'idempotency-key': key }),
-          'x-api-key': Redacted.value(config.apiKey),
+          ...authenticationHeaders,
         },
         method,
         redirect: 'manual',
@@ -780,13 +1162,19 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
         await response.body?.cancel();
         throw new SymmyProofFailure(boundary, 'redirect');
       }
-      if (![200, 202].includes(response.status)) {
-        await response.body?.cancel();
-        throw new SymmyProofFailure(boundary, 'http-status', response.status);
-      }
+      const success = [200, 202].includes(response.status);
+      const failure = (safeBody: SymmySafeFailureBody) => new SymmyProofFailure(
+        boundary,
+        authentication.kind !== 'symmy' && response.status === 401 ? 'read-auth-expired' :
+          authentication.kind !== 'symmy' && response.status === 403 ? 'read-permission' : 'http-status',
+        response.status, safeBody,
+      );
       const chunks: Uint8Array[] = [];
       let size = 0;
-      ensure(response.body !== null, boundary, 'schema');
+      if (response.body === null) {
+        if (!success) throw failure({ kind: 'empty' });
+        throw new SymmyProofFailure(boundary, 'schema', response.status);
+      }
       for await (const chunk of response.body) {
         size += chunk.byteLength;
         ensure(size <= MAX_RESPONSE_BYTES, boundary, 'response-too-large');
@@ -796,7 +1184,16 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
       try {
         parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch {
-        throw new SymmyProofFailure(boundary, 'schema');
+        if (!success) throw failure({ kind: 'non-json' });
+        throw new SymmyProofFailure(boundary, 'schema', response.status);
+      }
+      if (!success) {
+        // Scrub against every credential held by this run, including temporary owner assertions.
+        let safe = sanitizeSymmyFailureBody(parsed, config.apiKey);
+        for (const secret of secrets) {
+          if (JSON.stringify(safe).includes(Redacted.value(secret))) safe = { kind: 'unrecognized-problem' };
+        }
+        throw failure(safe);
       }
       return { status: response.status, body: parsed };
     } catch (error) {
@@ -808,11 +1205,60 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
       );
     }
   };
+  let operatorRevision: string | undefined;
+  const operatorState = async (boundary: ProofBoundary) => {
+    ensure(config.operatorCookie !== undefined, boundary, 'read-auth-required');
+    if (operatorRevision !== undefined) return operatorRevision;
+    const session = decode(Schema.Struct({
+      identity: Schema.Struct({ tenantId: uuid, legalEntityId: uuid }),
+      state: Schema.Literal('authenticated'),
+    }), (await request(OPERATOR_SESSION_PATH, 'GET', undefined, undefined, boundary, { kind: 'operator' })).body, boundary);
+    ensure(
+      session.identity.tenantId === config.input.unitRef.tenantId &&
+      session.identity.legalEntityId === (config.legalEntityId ?? STAGE_LEGAL_ENTITY),
+      boundary, 'read-auth-scope',
+    );
+    const composition = decode(Schema.Struct({
+      compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+      state: Schema.Literal('available'),
+    }), (await request(OPERATOR_COMPOSITION_PATH, 'GET', undefined, undefined, boundary, { kind: 'operator' })).body, boundary);
+    operatorRevision = composition.compositionRevision;
+    return operatorRevision;
+  };
   const client: SymmyProofClient = {
     async read(path, boundary) {
       const result = await request(path, 'GET', undefined, undefined, boundary);
       ensure(result.status === 200, boundary, 'http-status');
       return result.body;
+    },
+    async ownerRead(operation, query, boundary) {
+      const envelope = symmyOwnerReadEnvelope(operation, query, config.legalEntityId ?? STAGE_LEGAL_ENTITY, boundary);
+      const { query: ownerQuery, readName, ...scope } = envelope;
+      const compositionRevision = await operatorState(boundary);
+      const gateway = decode(Schema.Struct({
+        apiBaseUrl: Schema.String,
+        compositionRevision: Schema.String,
+        token: Schema.Redacted(Schema.String),
+      }), (await request(OPERATOR_GATEWAY_PATH, 'POST', {
+        ...scope, compositionRevision,
+      }, undefined, boundary, { kind: 'operator' })).body, boundary);
+      ensure(
+        gateway.compositionRevision === compositionRevision &&
+        gateway.apiBaseUrl.startsWith('/shell-super-app-api/module-api/') &&
+        !/[?#\\]|\/\.\.?\/|%/u.test(gateway.apiBaseUrl),
+        boundary, 'read-auth-scope',
+      );
+      const result = await request(`${gateway.apiBaseUrl}/reads/${readName}`, 'POST', ownerQuery, undefined, boundary, {
+        kind: 'owner', token: gateway.token, revision: compositionRevision,
+      });
+      ensure(result.status === 200, boundary, 'http-status');
+      return result.body;
+    },
+    async waitUntil(instant, boundary) {
+      const target = Date.parse(instant);
+      ensure(Number.isFinite(target), boundary, 'input-contract');
+      while (Date.now() < target) await sleep(Math.min(target - Date.now(), remaining(boundary)));
+      remaining(boundary);
     },
     write: (path, body, key, boundary) => {
       ensure(/^[A-Za-z0-9._-]{1,200}$/u.test(key), boundary, 'input-contract');
@@ -821,12 +1267,18 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
     async settle(result, expected, boundary) {
       if (result.status === 200) return assertAcceptedEffects(result.body, expected, boundary);
       const admission = decode(AdmissionSchema, result.body, boundary);
+      let lastJob: SymmySafeFailureBody | undefined;
       while (true) {
-        remaining(boundary);
+        if (Date.now() >= deadline) throw new SymmyProofFailure(boundary, 'timeout', 200, lastJob);
         const job = decode(JobSchema, await client.read(`${PREFIX}/jobs/${admission.jobId}`, boundary), boundary);
         ensure(job.jobId === admission.jobId, boundary, 'job-identity');
         if (job.status === 'completed_all') return assertAcceptedEffects(job, expected, boundary);
-        ensure(job.status !== 'completed_partial' && job.status !== 'completed_none', boundary, 'job-terminal');
+        const counts = effectDiagnostic(job.items ?? []);
+        ensure(counts.kind === 'effects', boundary, 'unexpected');
+        lastJob = { ...counts, kind: 'job', status: job.status };
+        if (job.status === 'completed_partial' || job.status === 'completed_none') {
+          throw new SymmyProofFailure(boundary, 'job-terminal', 200, lastJob);
+        }
         await sleep(Math.min(pollMs, remaining(boundary)));
       }
     },
@@ -859,6 +1311,7 @@ export async function proveSymmyProduct(
       }],
     }],
   };
+  validatePayload(SymmyProductsBatchRequestSchema, body, 'product-import');
   const key = `${names.prefix}.product`;
   const original = await client.settle(
     await client.write(`${PREFIX}/products/batch`, body, key, 'product-import'),
@@ -895,27 +1348,79 @@ export async function proveSymmyProduct(
 /** Environment values are consumed once; callers must not print config, fixtures, responses, or thrown causes. */
 export function readSymmyProofConfig(env: NodeJS.ProcessEnv): SymmyProofConfig {
   try {
-    const key = env.SYMMY_API_KEY;
-    const origin = env.SYMMY_PROOF_ORIGIN ?? 'https://ontos-stage-n1.web-revolution.cz';
-    const input: unknown = env.SYMMY_PROOF_INPUT_JSON === undefined
-      ? AKROS_STAGE_PROOF_INPUT : JSON.parse(env.SYMMY_PROOF_INPUT_JSON);
+    const key = env['SYMMY_API_KEY'];
+    const origin = env['SYMMY_PROOF_ORIGIN'] ?? 'https://ontos-stage.web-revolution.cz';
+    const input: unknown = env['SYMMY_PROOF_INPUT_JSON'] === undefined
+      ? AKROS_STAGE_PROOF_INPUT : JSON.parse(env['SYMMY_PROOF_INPUT_JSON']);
+    const stockSource: unknown = env['SYMMY_PROOF_STOCK_SOURCE_JSON'] === undefined
+      ? AKROS_STAGE_STOCK_SOURCE : JSON.parse(env['SYMMY_PROOF_STOCK_SOURCE_JSON']);
     ensure(key !== undefined && key.trim().length > 0 && origin !== undefined, 'configuration', 'input-contract');
     checkedOrigin(origin);
-    return { apiKey: Redacted.make(key), input: decode(SymmyProofInputSchema, input, 'configuration'), origin };
+    return {
+      apiKey: Redacted.make(key), input: decode(SymmyProofInputSchema, input, 'configuration'), origin,
+      legalEntityId: decode(uuid, env['SYMMY_PROOF_LEGAL_ENTITY_ID'] ?? STAGE_LEGAL_ENTITY, 'configuration'),
+      stockSource: decode(SymmyProofStockSourceSchema, stockSource, 'configuration'),
+    };
   } catch {
     throw new SymmyProofFailure('configuration', 'input-contract');
   }
 }
 
+/** Parses a curl Netscape jar without exposing it. Only live, secure, same-origin Shell-wide cookies are selected. */
+export function parseSymmyOperatorCookieJar(contents: string, origin: string, nowMs = Date.now()): Redacted.Redacted<string> {
+  const host = checkedOrigin(origin).hostname;
+  const selected: string[] = [];
+  for (let line of contents.split(/\r?\n/u)) {
+    if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length);
+    else if (line.startsWith('#') || line.trim().length === 0) continue;
+    const fields = line.split('\t');
+    ensure(fields.length === 7, 'configuration', 'input-contract');
+    const [domain, subdomains, path, secure, expires, name, value] = fields;
+    ensure(
+      domain !== undefined && subdomains !== undefined && path !== undefined && secure !== undefined &&
+      expires !== undefined && name !== undefined && value !== undefined,
+      'configuration', 'input-contract',
+    );
+    const normalizedDomain = domain.replace(/^\./u, '').toLowerCase();
+    const domainMatches = host === normalizedDomain || (subdomains === 'TRUE' && host.endsWith(`.${normalizedDomain}`));
+    const expiry = Number(expires);
+    ensure(Number.isFinite(expiry) && expiry >= 0, 'configuration', 'input-contract');
+    if (!domainMatches || (expiry !== 0 && expiry * 1000 <= nowMs)) continue;
+    // The same operator session is used for auth/session, shell/composition and auth/gateway-context.
+    if (!(path === '/' || path === '/shell-super-app-api' || path === '/shell-super-app-api/')) continue;
+    ensure(
+      (secure === 'TRUE' || secure === 'FALSE') &&
+      /^[!#$%&'*+.^_`|~\dA-Za-z-]+$/u.test(name) && value.length > 0 &&
+      !/[\u0000-\u0020;\u007f]/u.test(value),
+      'configuration', 'input-contract',
+    );
+    selected.push(`${name}=${value}`);
+  }
+  ensure(selected.length > 0, 'configuration', 'read-auth-required');
+  return Redacted.make(selected.join('; '));
+}
+
 /** The secret file is read only when the parent explicitly executes this loader/CLI. Never at module import. */
-export async function loadSymmyProofConfig(env: NodeJS.ProcessEnv): Promise<SymmyProofConfig> {
-  ensure(!(env.SYMMY_API_KEY && env.SYMMY_API_KEY_FILE), 'configuration', 'input-contract');
-  if (env.SYMMY_API_KEY_FILE === undefined) return readSymmyProofConfig(env);
+export async function loadSymmyProofConfig(
+  env: NodeJS.ProcessEnv, options: { readonly operatorReadback: boolean } = { operatorReadback: false },
+): Promise<SymmyProofConfig> {
+  ensure(!(env['SYMMY_API_KEY'] && env['SYMMY_API_KEY_FILE']), 'configuration', 'input-contract');
+  let config: SymmyProofConfig;
   try {
-    const key = (await readFile(env.SYMMY_API_KEY_FILE, 'utf8')).trim();
-    return readSymmyProofConfig({ ...env, SYMMY_API_KEY: key });
+    config = env['SYMMY_API_KEY_FILE'] === undefined ? readSymmyProofConfig(env) : readSymmyProofConfig({
+      ...env, SYMMY_API_KEY: (await readFile(env['SYMMY_API_KEY_FILE'], 'utf8')).trim(),
+    });
   } catch {
     throw new SymmyProofFailure('configuration', 'input-contract');
+  }
+  if (!options.operatorReadback) return config;
+  const file = env['SYMMY_PROOF_OPERATOR_COOKIE_FILE'];
+  ensure(file !== undefined && file.length > 0, 'configuration', 'read-auth-required');
+  try {
+    return { ...config, operatorCookie: parseSymmyOperatorCookieJar(await readFile(file, 'utf8'), config.origin) };
+  } catch (error) {
+    if (error instanceof SymmyProofFailure) throw error;
+    throw new SymmyProofFailure('configuration', 'read-auth-required');
   }
 }
 
@@ -923,13 +1428,40 @@ export function symmyProofFailureLine(error: unknown): string {
   return error instanceof SymmyProofFailure ? error.message : 'FAIL full-proof:unexpected';
 }
 
-// Explicit opt-in: `SYMMY_API_KEY_FILE=... node <this file> --commerce`.
-// This first-stage helper proves owner effects and list readback, NOT the later full-function boundary set.
+// Explicit opt-in: `SYMMY_API_KEY_FILE=... node <this file> --full` (or --commerce for the first-stage helper).
 if (import.meta.main) {
   try {
-    ensure(process.argv.length === 3 && process.argv[2] === '--commerce', 'configuration', 'input-contract');
-    await proveSymmyProductStockList(await loadSymmyProofConfig(process.env));
-    process.stdout.write('PASS product-stock-list:effects-and-list-readback\n');
+    const mode = process.argv[2];
+    ensure(
+      process.argv.length === 3 && (mode === '--commerce' || mode === '--full' || mode === '--help'),
+      'configuration', 'input-contract',
+    );
+    if (mode === '--help') {
+      process.stdout.write(
+        'Usage: SYMMY_API_KEY_FILE=<private-key-file> node stage-symmy-full-function-proof.mts --full|--commerce\n' +
+        'Alternative credential: SYMMY_API_KEY. Never supply both.\n' +
+        '--full requires SYMMY_PROOF_OPERATOR_COOKIE_FILE for operator-only readbacks; no integration grants are broadened.\n' +
+        'Optional: SYMMY_PROOF_ORIGIN, SYMMY_PROOF_INPUT_JSON, SYMMY_PROOF_LEGAL_ENTITY_ID,\n' +
+        'SYMMY_PROOF_STOCK_SOURCE_JSON (current Inventory qualification), SYMMY_PROOF_ORDER_IDS_JSON.\n',
+      );
+    } else {
+      const config = await loadSymmyProofConfig(process.env, { operatorReadback: mode === '--full' });
+      if (mode === '--commerce') {
+        await proveSymmyProductStockList(config);
+        process.stdout.write('PASS product-stock-list:effects-and-list-readback\n');
+      } else {
+        let options: SymmyStageProofOptions = {};
+        if (process.env['SYMMY_PROOF_ORDER_IDS_JSON'] !== undefined) {
+          try {
+            const ids: unknown = JSON.parse(process.env['SYMMY_PROOF_ORDER_IDS_JSON']);
+            options = { expectedOrderIds: decode(Schema.NonEmptyArray(text), ids, 'configuration') };
+          } catch {
+            throw new SymmyProofFailure('configuration', 'input-contract');
+          }
+        }
+        await proveSymmyFullFunction(config, options);
+      }
+    }
   } catch (error) {
     process.stderr.write(`${symmyProofFailureLine(error)}\n`);
     process.exitCode = 1;

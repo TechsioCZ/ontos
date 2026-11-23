@@ -47,6 +47,7 @@ import {
   coreRelations,
 } from '../../packages/core-runtime/src/db/schema.ts';
 import { stageScopeOf } from '../../packages/core-runtime/src/install/stage-context-bootstrap.ts';
+import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { SourceProcessingContextSchema } from '../../verticals/privacy/shared/apis/source-processing-eligibility.ts';
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/source-processing-eligibility/client';
 import { DemoSourceProcessingPolicySchema } from '../../verticals/privacy/shared/domain/demo-source-processing-policy.ts';
@@ -107,6 +108,73 @@ const IdentitySchema = Schema.Struct({
   partyWriterId: Uuid,
 });
 type Identities = typeof IdentitySchema.Type;
+const SourceWriterCandidateSchema = Schema.Struct({
+  kind: Schema.Literals(['service', 'system']),
+  legalEntityId: Schema.NullOr(Uuid),
+  platformRole: Schema.NullOr(Schema.String),
+  principalId: PrincipalIdSchema,
+  tenantId: Uuid,
+  workloadKey: Schema.String,
+});
+
+/**
+ * Preserve the native tenant-wide system writer even before its company registration exists. Otherwise select
+ * only Core's actual platform-marked, canonically identified service registration of this workload and company.
+ * Never use a tenant-wide first match: other companies have separate platform source-writer principals.
+ */
+export const selectSymmyDemoSourceWriter = (workloadKey: string, input: unknown) =>
+  Effect.gen(function* selectWriter() {
+    const candidates = yield* Schema.decodeUnknownEffect(Schema.Array(SourceWriterCandidateSchema))(input);
+    const scoped = candidates.filter(
+      (candidate) => candidate.tenantId === tenantId && candidate.workloadKey === workloadKey,
+    );
+    const systems = scoped.filter(({ kind }) => kind === 'system');
+    const eligible =
+      systems.length > 0
+        ? systems
+        : scoped.filter(
+            (candidate) =>
+              candidate.kind === 'service' &&
+              candidate.legalEntityId === legalEntityId &&
+              candidate.platformRole === 'internal_workload' &&
+              candidate.principalId === internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey }),
+          );
+    const principals = [...new Set(eligible.map(({ principalId }) => principalId))];
+    const [principalId] = principals;
+    if (principals.length !== 1 || principalId === undefined) {
+      return yield* fail(
+        `AKROS workload ${workloadKey} needs one native system writer or authentic company-bound service writer; no identity was inferred`,
+      );
+    }
+    return principalId;
+  });
+
+/** Active native bindings establish the candidate set; Core revalidates the selected identity as a trusted worker. */
+export const resolveSymmyDemoSourceWriter = (workloadKey: string) =>
+  Effect.gen(function* resolveWriter() {
+    const sql = yield* PgClient.PgClient;
+    const candidates = yield* sql`select distinct p.principal_id as "principalId", p.kind,
+      p.platform_role as "platformRole", b.tenant_id as "tenantId",
+      c.legal_entity_id as "legalEntityId", b.workload_key as "workloadKey"
+      from core.access_workload_bindings b
+      left join core.access_workload_company_bindings c
+        on c.tenant_id=b.tenant_id and c.workload_binding_id=b.binding_id
+        and c.legal_entity_id=${legalEntityId} and c.status='active'
+      join core.principals p on p.tenant_id=b.tenant_id and p.principal_id=b.principal_id
+      join core.tenants t on t.tenant_id=b.tenant_id
+      join core.legal_entities l on l.tenant_id=b.tenant_id and l.legal_entity_id=${legalEntityId}
+      where b.tenant_id=${tenantId} and b.workload_key=${workloadKey}
+        and b.status='active' and p.status='active'
+        and p.kind in ('system','service') and t.status='active' and l.status='active'`;
+    const principalId = yield* selectSymmyDemoSourceWriter(workloadKey, candidates);
+    const executor = yield* makeWithDefaults({ relations: coreRelations });
+    return yield* makeSystemPrincipalContextResolver({ executor }).resolve({
+      principalId,
+      registration: registerSystemWorkload({ allowServicePrincipal: true, jobKey: workloadKey }),
+      runReference: 'akros-demo-company-source-writer',
+      tenantId,
+    });
+  });
 const GroupSchema = Schema.Struct({
   code: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9._-]{1,80}$/u)),
   groupId: Uuid,
@@ -457,21 +525,16 @@ export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnviron
     return yield* fail('Customer authority bootstrap is restricted to stage');
   }
   const sql = yield* PgClient.PgClient;
-  const executor = yield* makeWithDefaults({ relations: coreRelations });
   const rows = yield* sql`select principal_id as "principalId" from symmy_integration.job_routes
     where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}
       and route_id=${SYMMY_DEMO_GROUPS_ROUTE} and route_key='customerGroupsBatch' and active=true`;
   const [integration] = yield* Schema.decodeUnknownEffect(
     Schema.Tuple([Schema.Struct({ principalId: PrincipalIdSchema })]),
   )(rows);
-  const resolver = makeSystemPrincipalContextResolver({ executor });
-  const resolve = (jobKey: string) =>
-    resolver.resolveEnrolled({
-      registration: registerSystemWorkload({ jobKey }),
-      runReference: 'akros-demo-customer-environment-discovery',
-      tenantId,
-    });
-  const [party, commerce] = yield* Effect.all([resolve(partyWriter), resolve(sourceWriter)], { concurrency: 1 });
+  const [party, commerce] = yield* Effect.all(
+    [resolveSymmyDemoSourceWriter(partyWriter), resolveSymmyDemoSourceWriter(sourceWriter)],
+    { concurrency: 1 },
+  );
   const identities = yield* Schema.decodeUnknownEffect(IdentitySchema)({
     commerceWriterId: commerce.principalId,
     integrationPrincipalId: integration.principalId,
@@ -529,14 +592,10 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     ) {
       return yield* fail('The existing AKROS group route does not name the declared Symmy source');
     }
-    const resolver = makeSystemPrincipalContextResolver({ executor });
-    const resolve = (jobKey: string) =>
-      resolver.resolveEnrolled({
-        registration: registerSystemWorkload({ jobKey }),
-        runReference: 'akros-demo-customer-authority-bootstrap',
-        tenantId,
-      });
-    const [party, commerce] = yield* Effect.all([resolve(partyWriter), resolve(sourceWriter)], { concurrency: 1 });
+    const [party, commerce] = yield* Effect.all(
+      [resolveSymmyDemoSourceWriter(partyWriter), resolveSymmyDemoSourceWriter(sourceWriter)],
+      { concurrency: 1 },
+    );
     const identities = yield* Schema.decodeUnknownEffect(IdentitySchema)({
       commerceWriterId: commerce.principalId,
       integrationPrincipalId: existing.principalId,

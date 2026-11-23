@@ -18,6 +18,7 @@ import {
   isShellHostedCoreProvider,
   tenantStatesAllowingAccess,
 } from '@app/core-runtime';
+import type { OperationContextError, TenantModuleState } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
@@ -321,13 +322,13 @@ const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function*
   admitted: {
     readonly actor: GatewayActorClaim;
     readonly caller: { readonly principalId: string };
-    readonly destination: { readonly manifest: { readonly module: { readonly id: string } } };
+    readonly destinationModules: readonly string[];
     readonly sourceContract: { readonly manifest: { readonly module: { readonly id: string } } };
     readonly subject: AdmittedSubject;
   },
 ) {
   const { payload } = input;
-  const { actor, caller, destination, sourceContract, subject } = admitted;
+  const { actor, caller, destinationModules, sourceContract, subject } = admitted;
   // `tenant` names no Legal Entity, so the context and its scope are issued for the tenant alone.
   const tenantOnly = payload.legalEntityScope === 'tenant';
   const principal = tenantOnly ? tenantScopedPrincipal(subject.principal) : subject.principal;
@@ -350,18 +351,20 @@ const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function*
     })
     .pipe(Effect.mapError(scopeFailure));
 
-  const moduleKeys = [sourceContract.manifest.module.id, destination.manifest.module.id];
+  const moduleKeys = [sourceContract.manifest.module.id, ...destinationModules];
   const states = yield* loadModuleStates(principal.tenantId, moduleKeys);
   yield* requireModuleStates(states, [{ access: 'read', moduleKey: sourceContract.manifest.module.id }]);
   // A calling module may read the refusal as "not installed" when the module it calls is absent for the tenant, or in a
   // lasting, deliberate state: switched off (`inactive`) or retired with its tenant (`archived`). One that is only
   // stopped for now (`suspended`, `quarantined`) is a plain refusal: an outage to the caller, never an answer.
   const readableStates: ReadonlySet<string> = new Set(tenantStatesAllowingAccess('read'));
-  const destinationState = states.find((state) => state.moduleKey === destination.manifest.module.id)?.state;
-  if (destinationState === undefined || !readableStates.has(destinationState)) {
-    return yield* destinationState === undefined || NOT_INSTALLED_STATES.has(destinationState)
-      ? new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_installed' })
-      : delegationForbidden('audience_module_not_active')();
+  for (const moduleKey of destinationModules) {
+    const destinationState = states.find((state) => state.moduleKey === moduleKey)?.state;
+    if (destinationState === undefined || !readableStates.has(destinationState)) {
+      return yield* destinationState === undefined || NOT_INSTALLED_STATES.has(destinationState)
+        ? new GatewayDelegationError({ code: 'module_not_installed', reason: 'audience_module_not_installed' })
+        : delegationForbidden('audience_module_not_active')();
+    }
   }
 
   const requestFingerprint = yield* fingerprintOf(
@@ -780,28 +783,21 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
   );
   yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(subject.principal.tenantId) }));
 
-    if (installed.composition.revision !== payload.compositionRevision) {
-      return yield* new GatewayDelegationError({ code: 'reload_required' });
-    }
-    const destinationModules = destinationModuleIds({ installed, payload, sourceContract });
-    if (
-      sourceContract?.deployment.buildMarker !== binding.sourceBuildMarker ||
-      binding.compositionRevision !== installed.composition.revision ||
-      destinationModules.length === 0
-    ) {
-      return yield* delegationForbidden();
-    }
-    // `tenant` names no Legal Entity, so the context and its scope are issued for the tenant alone.
-    const tenantOnly = payload.legalEntityScope === 'tenant';
-    const principal = tenantOnly ? tenantScopedPrincipal(subject.principal) : subject.principal;
-    const scopePrincipal = tenantOnly ? tenantScopedPrincipal(subject.scopePrincipal) : subject.scopePrincipal;
-    if (
-      // A delegated context names two parties, and the subject's authentication namespace must be explicit.
-      principal.principalId === caller.principalId ||
-      principal.authenticationNamespaceId === undefined
-    ) {
-      return yield* delegationForbidden();
-    }
+  if (installed.composition.revision !== payload.compositionRevision) {
+    return yield* new GatewayDelegationError({ code: 'reload_required', reason: 'release_changed' });
+  }
+  const destinationModules = destinationModuleIds({ installed, payload, sourceContract });
+  if (
+    sourceContract?.deployment.buildMarker !== binding.sourceBuildMarker ||
+    binding.compositionRevision !== installed.composition.revision
+  ) {
+    return yield* delegationForbidden('caller_build_not_installed')();
+  }
+  if (destinationModules.length === 0) {
+    return yield* delegationForbidden('audience_not_installed')();
+  }
+  return yield* issueForSubject(input, { actor, caller, destinationModules, sourceContract, subject });
+});
 
 /**
  * The calling module is the actor: its module credential's bound service principal goes in `act`, and only this
@@ -822,36 +818,20 @@ const issueWithin = Effect.fn('GatewayDelegation.issueWithin')(function* issueWi
   return yield* issueForBinding(input, binding, learned);
 });
 
-    const moduleStates = yield* TenantModuleStateService;
-    const moduleKeys = [sourceContract.manifest.module.id, ...destinationModules];
-    const states = yield* moduleStates
-      .getTenantModuleStates(principal.tenantId, moduleKeys)
-      .pipe(Effect.mapError(delegationUnavailable));
-    const readableStates = new Set(tenantStatesAllowingAccess('read'));
-    if (moduleKeys.some((key) => !states.some((state) => state.moduleKey === key && readableStates.has(state.state)))) {
-      return yield* delegationForbidden();
-    }
-
-    const ledger = yield* GatewayDelegationExchangeLedger;
-    const requestFingerprint = yield* exchangeFingerprint({
-      actor,
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal,
-      requestCorrelation: input.requestCorrelation,
-    }).pipe(Effect.mapError(delegationUnavailable));
-    yield* ledger
-      .reserve({
-        exchangeId: payload.exchangeId,
-        expiresAtEpochSeconds: subject.expiresAtEpochSeconds,
-        requestFingerprint,
-        sourceJti: subject.sourceKey,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
-            ? delegationForbidden(cause)
-            : delegationUnavailable(cause),
+/**
+ * Module-to-module capability issuance. Every refusal writes one warning with the step that refused it and what the
+ * issuer knew by then: the calling module once its key bound one, the subject's tenant once the subject was admitted.
+ */
+export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegation.issue')(
+  function* issueDelegatedGatewayContext(input: GatewayDelegationIssueInput) {
+    const learned = yield* Ref.make<RefusalContext>({});
+    const { audience } = input.payload;
+    return yield* issueWithin(input, learned).pipe(
+      Effect.tapErrorTag('GatewayDelegationError', (refusal) =>
+        Ref.get(learned).pipe(
+          Effect.flatMap((context) =>
+            logDelegationRefusal({ audience, context, reason: refusal.reason, status: refusal.code }),
+          ),
         ),
       ),
       Effect.tapErrorTag('GatewayIssuerError', (failure) =>

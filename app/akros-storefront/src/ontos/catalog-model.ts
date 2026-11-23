@@ -22,45 +22,6 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
     catalogData.products.map((product) => [product.slug, product] as const),
   );
 
-  const sidebarCategoryOrder = [
-    {
-      slug: "nerezovy-spojovaci-material",
-      children: [
-        "srouby",
-        "matice",
-        "podlozky",
-        "zavitove-tyce-a-svorniky",
-        "vruty",
-        "koliky",
-        "nyty",
-        "bezpecnostni-srouby-a-vruty",
-        "ostatni-spojovaci-material",
-        "lanaretezypantyjachtdopln",
-        "kotevni-technikalepidla",
-        "naradi-a-prislusenstvi",
-        "maziva",
-        "solar-system",
-        "nerez-cerny-design",
-      ],
-    },
-    {
-      slug: "nerezovy-hutni-material",
-      children: [
-        "plechy",
-        "trubky",
-        "profily",
-        "tyce",
-        "kolena",
-        "priruby",
-        "armatury-1",
-        "potravinarske-armatury",
-        "prislusenstvi",
-        "mazaci-hlavice",
-        "matice-km-a-podlozky-mb",
-      ],
-    },
-  ] as const;
-
   // Listing cards carry no variant records: a group's stock comes from the owner's variant summary.
   const summarizeProductStock = (product: CatalogProduct): CatalogProductSummary["stock"] => {
     const { variantSummary } = product;
@@ -141,15 +102,9 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
       categories.push(category);
     };
 
-    for (const section of sidebarCategoryOrder) {
-      const rootCategory = getCategoryBySlug(section.slug);
-      appendCategory(rootCategory);
-      if (!rootCategory) continue;
-
-      for (const childSlug of section.children) {
-        const child = getCategoryBySlug(childSlug);
-        if (child?.parentId === rootCategory.id) appendCategory(child);
-      }
+    for (const root of getCategories().filter((category) => category.parentId === null)) {
+      appendCategory(root);
+      for (const child of getChildCategories(root.id)) appendCategory(child);
     }
 
     const activeCategory = activeSlug ? getCategoryBySlug(activeSlug) : undefined;

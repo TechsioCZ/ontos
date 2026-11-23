@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 
 import {
   buildSymmyDemoCustomerRoutes,
@@ -13,6 +14,7 @@ import {
   symmyDemoMembershipRouteId,
   symmyDemoCustomerWriteKey,
   SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
+  selectSymmyDemoSourceWriter,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
@@ -25,6 +27,69 @@ const group = {
   groupId: '72000000-0000-4000-8000-000000000024',
   recordId: 'actual-erp-group-record',
 };
+const workloadKey = 'party.registry.source-write';
+const serviceWriter = {
+  kind: 'service',
+  legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY,
+  platformRole: 'internal_workload',
+  principalId: internalWorkloadPrincipalId({
+    legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY,
+    tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+    workloadKey,
+  }),
+  tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+  workloadKey,
+};
+const legacyWriter = { ...serviceWriter, kind: 'system', platformRole: null, principalId: identities.partyWriterId };
+
+it.effect('accepts the authentic release service writer without a legacy system identity', () =>
+  Effect.gen(function* test() {
+    expect(yield* selectSymmyDemoSourceWriter(workloadKey, [serviceWriter])).toBe(serviceWriter.principalId);
+  }),
+);
+
+it.effect('preserves a uniquely bound legacy writer independently of candidate order', () =>
+  Effect.gen(function* test() {
+    for (const candidates of [
+      [legacyWriter, serviceWriter],
+      [serviceWriter, legacyWriter],
+    ]) {
+      expect(yield* selectSymmyDemoSourceWriter(workloadKey, candidates)).toBe(legacyWriter.principalId);
+    }
+  }),
+);
+
+it.effect('preserves the native tenant-wide SYSTEM writer before any company registration exists', () =>
+  Effect.gen(function* test() {
+    const nativeSystem = { ...legacyWriter, legalEntityId: null };
+    expect(yield* selectSymmyDemoSourceWriter(workloadKey, [nativeSystem])).toBe(legacyWriter.principalId);
+    expect(yield* selectSymmyDemoSourceWriter(workloadKey, [serviceWriter, nativeSystem])).toBe(
+      legacyWriter.principalId,
+    );
+    expect(
+      (yield* selectSymmyDemoSourceWriter(workloadKey, [
+        {
+          ...serviceWriter,
+          legalEntityId: null,
+        },
+      ]).pipe(Effect.result))._tag,
+    ).toBe('Failure');
+  }),
+);
+
+it.effect('rejects foreign company, unmarked or falsely identified service writers and ambiguous legacy bindings', () =>
+  Effect.gen(function* test() {
+    for (const candidates of [
+      [{ ...serviceWriter, legalEntityId: '71000000-0000-4000-8000-000000000024' }],
+      [{ ...serviceWriter, platformRole: null }],
+      [{ ...serviceWriter, principalId: identities.commerceWriterId }],
+      [legacyWriter, { ...legacyWriter, principalId: identities.commerceWriterId }, serviceWriter],
+      [],
+    ]) {
+      expect((yield* selectSymmyDemoSourceWriter(workloadKey, candidates).pipe(Effect.result))._tag).toBe('Failure');
+    }
+  }),
+);
 
 it.effect('enrolls a complete PERSON and ORGANIZATION plan with real contact/address/ICO operations', () =>
   Effect.gen(function* test() {

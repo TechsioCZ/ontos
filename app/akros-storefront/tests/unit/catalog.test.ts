@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createCatalog } from "@/ontos/catalog-model";
 
 import { matchSearchVariants, searchHitPath } from "@/ontos/search-suggestions";
 import { fixtureCatalog, fixtureProducts } from "../support/catalog-fixture";
@@ -19,53 +20,40 @@ describe("catalog model", () => {
     ).toEqual(["nerezovy-spojovaci-material", "vruty", "vruty-do-dreva", "din-7997", "a-2-141"]);
   });
 
-  it("returns the published sidebar categories in the live navigation order", () => {
-    const categories = getSidebarCategories();
-    const roots = categories.filter((category) => category.parentId === null);
-    const fasteners = roots.find((category) => category.slug === "nerezovy-spojovaci-material");
-    const steel = roots.find((category) => category.slug === "nerezovy-hutni-material");
-
-    expect(roots.map((category) => category.slug)).toEqual([
-      "nerezovy-spojovaci-material",
-      "nerezovy-hutni-material",
-    ]);
-    expect(
-      categories.filter((category) => category.parentId === fasteners?.id).map(({ slug }) => slug),
-    ).toEqual([
-      "srouby",
-      "matice",
-      "podlozky",
-      "zavitove-tyce-a-svorniky",
-      "vruty",
-      "koliky",
-      "nyty",
-      "bezpecnostni-srouby-a-vruty",
-      "ostatni-spojovaci-material",
-      "lanaretezypantyjachtdopln",
-      "kotevni-technikalepidla",
-      "naradi-a-prislusenstvi",
-      "maziva",
-      "solar-system",
-      "nerez-cerny-design",
-    ]);
-    expect(
-      categories.filter((category) => category.parentId === steel?.id).map(({ slug }) => slug),
-    ).toEqual([
-      "plechy",
-      "trubky",
-      "profily",
-      "tyce",
-      "kolena",
-      "priruby",
-      "armatury-1",
-      "potravinarske-armatury",
-      "prislusenstvi",
-      "mazaci-hlavice",
-      "matice-km-a-podlozky-mb",
-    ]);
-    expect(categories.some((category) => category.slug === "specialni-spojovaci-material")).toBe(
-      false,
+  it("lists arbitrary published roots and children in owner position order", () => {
+    const node = (id: string, parentId: string | null, position: number) => ({
+      id,
+      parentId,
+      position,
+      slug: id,
+      name: id,
+      hasChildren: false,
+    });
+    const model = createCatalog(
+      { products: [], homepageFeaturedProductIds: [] },
+      {
+        categories: [
+          node("new-child-b", "new-root", 2),
+          node("other-root", null, 2),
+          node("new-root", null, 1),
+          node("new-child-a", "new-root", 1),
+          node("new-leaf", "new-child-a", 1),
+        ],
+      },
     );
+    expect(model.getSidebarCategories().map(({ id }) => id)).toEqual([
+      "new-root",
+      "new-child-a",
+      "new-child-b",
+      "other-root",
+    ]);
+    expect(model.getSidebarCategories("new-child-a").map(({ id }) => id)).toEqual([
+      "new-root",
+      "new-child-a",
+      "new-child-b",
+      "other-root",
+      "new-leaf",
+    ]);
   });
 
   it("returns sixteen distinct purchasable homepage products backed by source records", () => {

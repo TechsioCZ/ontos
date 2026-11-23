@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { Redacted } from 'effect';
+import { Redacted, Schema } from 'effect';
+import type { SchemaAST } from 'effect';
 
 import {
   AKROS_STAGE_PROOF_INPUT,
@@ -13,6 +14,7 @@ import {
   createSymmyProofClient,
   decimalEqual,
   makeSymmyProofNames,
+  parseSymmyOperatorCookieJar,
   proveSymmyFullFunction,
   readSymmyProofConfig,
   SymmyProofFailure,
@@ -21,8 +23,8 @@ import {
   symmyNativeProductPayload,
   symmyNativeMediaPayload,
   symmyOwnerReadEnvelope,
+  sanitizeSymmyFailureBody,
 } from './stage-symmy-full-function-proof.mts';
-import { Schema } from 'effect';
 import {
   SymmyDemoCategoriesBatchRequestSchema,
   SymmyDemoProductsBatchRequestSchema,
@@ -84,6 +86,7 @@ test('replay preserves item/effect identities, not just a successful HTTP respon
 test('configuration keeps the environment key Redacted and uses only published stage refs', () => {
   const secret = 'not-a-live-key-never-log-this';
   const config = readSymmyProofConfig({ SYMMY_API_KEY: secret });
+  assert.equal(config.origin, 'https://ontos-stage.web-revolution.cz');
   assert.equal(Redacted.value(config.apiKey), secret);
   assert.equal(String(config.apiKey).includes(secret), false);
   assert.deepEqual(config.input, AKROS_STAGE_PROOF_INPUT);
@@ -169,7 +172,7 @@ test('native APPLIED proof binds exact tenant, company, item and advancing revis
   }
 });
 
-test('owner relay uses documented read bodies and preserves required versus forbidden company scope', () => {
+test('operator owner-read plans use documented bodies and required versus forbidden company scope', () => {
   const company = '22222222-2222-4222-8222-222222222222';
   assert.deepEqual(symmyOwnerReadEnvelope('catalog/sku-lookup', { code: 'ERP-1' }, company, 'sku-readback'), {
     audience: 'catalog', legalEntityId: company, readName: 'sku-lookup', query: { code: 'ERP-1' },
@@ -185,6 +188,58 @@ test('owner relay uses documented read bodies and preserves required versus forb
   assert.throws(() => symmyOwnerReadEnvelope(
     'catalog/sku-lookup', { code: 'ERP-1', operation: 'WRITE' }, company, 'sku-readback',
   ), /input-contract/u);
+});
+
+test('full proof requires separate operator read authentication before any HTTP request', async () => {
+  const config = readSymmyProofConfig({ SYMMY_API_KEY: 'not-a-live-key' });
+  await assert.rejects(proveSymmyFullFunction(config), /FAIL configuration:read-auth-required/u);
+});
+
+test('Netscape operator jar parsing selects only live same-origin Shell cookies and keeps them Redacted', () => {
+  const now = 1_700_000_000_000;
+  const jar = [
+    '# Netscape HTTP Cookie File',
+    '#HttpOnly_ontos-stage-n1.web-revolution.cz\tFALSE\t/\tTRUE\t0\tsession\top-secret',
+    '.web-revolution.cz\tTRUE\t/\tTRUE\t1800000000\tshared\tshared-secret',
+    'unrelated.invalid\tFALSE\t/\tTRUE\t0\tforeign\tforeign-secret',
+    'ontos-stage-n1.web-revolution.cz\tFALSE\t/private\tTRUE\t0\tprivate\tprivate-secret',
+    'ontos-stage-n1.web-revolution.cz\tFALSE\t/\tTRUE\t1600000000\texpired\texpired-secret',
+  ].join('\n');
+  const parsed = parseSymmyOperatorCookieJar(jar, 'https://ontos-stage-n1.web-revolution.cz', now);
+  assert.equal(Redacted.value(parsed), 'session=op-secret; shared=shared-secret');
+  assert.equal(String(parsed).includes('op-secret'), false);
+  assert.throws(() => parseSymmyOperatorCookieJar(
+    'ontos-stage-n1.web-revolution.cz\tFALSE\t/\tTRUE\t0\tsession\tvalue;injected=secret',
+    'https://ontos-stage-n1.web-revolution.cz', now,
+  ), /FAIL configuration:input-contract/u);
+  assert.throws(() => parseSymmyOperatorCookieJar('', 'https://ontos-stage-n1.web-revolution.cz', now),
+    /read-auth-required/u);
+});
+
+test('HTTP failure diagnostics retain only closed contract metadata, never detail, token, cookie or customer values', () => {
+  const credential = Redacted.make('test-api-key-do-not-log');
+  const safe = sanitizeSymmyFailureBody({
+    _tag: 'SymmyStockDependencyNotReadyProblem', status: 503,
+    reason: 'ITEM_NOT_PROVISIONED', retryable: true,
+    detail: 'customer@example.invalid test-api-key-do-not-log session=cookie-value',
+    itemKey: 'private-erp-id', token: 'jwt-value',
+  }, credential);
+  assert.deepEqual(safe, {
+    kind: 'problem', tag: 'SymmyStockDependencyNotReadyProblem', reason: 'ITEM_NOT_PROVISIONED', retryable: true,
+  });
+  const error = new SymmyProofFailure('stock-import', 'http-status', 503, safe);
+  assert.match(symmyProofFailureLine(error), /^FAIL stock-import:http-status:503 body=/u);
+  assert.deepEqual(error.safeBody, safe);
+  for (const secret of ['customer@', 'test-api-key', 'cookie-value', 'private-erp-id', 'jwt-value']) {
+    assert.equal(symmyProofFailureLine(error).includes(secret), false);
+  }
+  assert.deepEqual(sanitizeSymmyFailureBody({
+    _tag: 'unrecognized-secret-tag', code: 'customer@example.invalid', detail: 'secret',
+  }, credential), { kind: 'unrecognized-problem' });
+  const collision = sanitizeSymmyFailureBody({
+    _tag: 'SymmyUnavailableProblem', code: 'POLICY_NOT_FOUND',
+  }, Redacted.make('POLICY_NOT_FOUND'));
+  assert.equal(JSON.stringify(collision).includes('POLICY_NOT_FOUND'), false);
 });
 
 test('readback requires exactly one record matching both identity and value', () => {

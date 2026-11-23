@@ -166,34 +166,9 @@ const governVariantAxesActionServices = Effect.fn('GovernVariantAxesAction.servi
       readonly population?: CartOpenSelectionPopulationPort | undefined;
       readonly scope: Parameters<ActionServiceFactory<never>>[1];
     },
-    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.catalog.govern-variant-axes.access.v1' },
-    accessWorkload: {
-      reason: 'Govern source-requested Product readiness',
-      workloads: ['commerce.catalog.symmy-product-import'],
-    },
-    actionKey,
-    auditEvidenceSchema: ProductAuditEvidenceSchema,
-    auditProfile: 'standard',
-    domainErrorSchema: Schema.Union([VariantAxisWriteConflict, CatalogPersistenceUnavailable]),
-    domainEvents,
-    entrypoint: defineTenantModuleEntrypoint({
-      access: 'write',
-      authorization: { kind: 'protected' },
-      entrypointKey: 'commerce.catalog.govern-variant-axes',
-      moduleKey: 'commerce.catalog',
-      role: 'action',
-    }),
-    idempotency: 'required',
-    legalEntityScope: 'forbidden',
-    owningModuleKey: moduleKey,
-    payloadSchema: GovernVariantAxesPayloadSchema,
-    policies: [],
-    resultSchema: GovernVariantAxesResultSchema,
-    schemaVersion: '1',
-  },
-  handleGovernVariantAxes,
-  Effect.fn('GovernVariantAxesAction.services')(function* makeGovernVariantAxesServices(transaction, scope) {
-    const openSelections = Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
+  ) {
+    const openSelections =
+      preparedPopulation ?? Option.getOrUndefined(yield* cartOpenSelectionPopulationForScope(scope));
     return {
       ...variantAxisPersistenceForScope(transaction, scope),
       assessOpenSelectionImpact: catalogOpenSelectionImpactForScope(transaction, scope, openSelections).assess,
@@ -255,6 +230,10 @@ export const governVariantAxesAction = defineAction(
       selectors: [],
     },
     accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'commerce.catalog.govern-variant-axes.access.v1' },
+    accessWorkload: {
+      reason: 'Govern source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-import'],
+    },
     actionKey,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',

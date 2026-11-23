@@ -51,10 +51,6 @@ export interface CatalogPage {
 
 /** Price/stock-bearing values may render only within this window; expired reads block on OntOS. */
 export const CATALOG_CACHE_MS = 10_000;
-/** Price-free category/navigation data can refresh in the background. */
-export const CATEGORY_CACHE_MS = 15 * 60_000;
-const CATEGORY_STALE_MS = 60 * 60_000;
-const CATEGORY_KEEP_MS = 24 * 60 * 60_000;
 /** Category listing page size. */
 export const CATEGORY_PAGE_SIZE = 24;
 // Kai's model shows 16 cards and skips placeholder groups (e.g. one named "AKCE"): read a few spares.
@@ -66,28 +62,6 @@ const productPages = catalogCache<ProductPage>({
   keepMs: CATALOG_CACHE_MS,
   limit: 100,
 });
-/** One navigation tree per market. */
-const categoryTrees = catalogCache<CatalogCategory[]>({
-  freshMs: CATEGORY_CACHE_MS,
-  staleMs: CATEGORY_STALE_MS,
-  keepMs: CATEGORY_KEEP_MS,
-  limit: 8,
-});
-/** Only price-free active-category/child content is retained for the navigation window. */
-const categoryContent = catalogCache<CatalogCategory[]>({
-  freshMs: CATEGORY_CACHE_MS,
-  staleMs: CATEGORY_STALE_MS,
-  keepMs: CATEGORY_KEEP_MS,
-  limit: 60,
-});
-/** The first category listing still expires strictly after ten seconds. */
-const categoryPages = catalogCache<CategoryPage>({
-  freshMs: CATALOG_CACHE_MS,
-  staleMs: CATALOG_CACHE_MS,
-  keepMs: CATALOG_CACHE_MS,
-  limit: 60,
-});
-
 /**
  * Every storefront catalog read is answered for one market: its offer and its currency. Without a market id
  * (no market exists yet, see market.ts) merchandise answers with the whole published CZK catalogue.
@@ -107,8 +81,6 @@ const readCatalog = async (
 };
 /** The request's market (resolved from the path locale; see active-market.ts). */
 const marketIdOf = async () => (await getActiveMarket()).marketId;
-/** Cache keys of market-dependent entries. */
-const marketKey = (marketId: string | undefined, key: string) => `${marketId ?? ""}\u0000${key}`;
 
 /** Drop unset keys (and the storefront-only `flag`, which OntOS rejects) so equal queries share a cache key. */
 const compact = (query: CatalogQuery): CatalogQuery =>
@@ -166,42 +138,28 @@ const firstCategoryPage = (categorySlug: string) => ({
 });
 const loadCategoryPage =
   (marketId: string | undefined, categorySlug: string) => async (): Promise<CategoryPage> => {
-    let firstPage: ProductPage | undefined;
-    const categories = await categoryContent.get(marketKey(marketId, categorySlug), async () => {
-      // On a content miss one bounded read supplies fresh prices and only the active branch's text/images.
-      // Never retain its products in the fifteen-minute content cache.
-      const body = await readCatalog(marketId, {
-        ...firstCategoryPage(categorySlug),
-        includeCategories: false,
-        includeCategoryContent: true,
-      });
-      firstPage = projectProducts(body);
-      return projectCategories(body);
+    const body = await readCatalog(marketId, {
+      ...firstCategoryPage(categorySlug),
+      includeCategories: false,
+      includeCategoryContent: true,
     });
-    return {
-      categories,
-      page:
-        firstPage ??
-        (await cachedProducts(productKey(marketId, firstCategoryPage(categorySlug), "card"))),
-    };
+    return { categories: projectCategories(body), page: projectProducts(body) };
   };
+
 /** The root tree with one category's own content and its children's content. */
 const withCategoryContent = (tree: CatalogCategory[], content: CatalogCategory[]) => {
   if (content.length === 0) return tree;
-  const byId = new Map(content.map((node) => [node.id, node]));
-  return tree.map((node) => byId.get(node.id) ?? node);
+  const byId = new Map(tree.map((node) => [node.id, node]));
+  for (const node of content) byId.set(node.id, node);
+  return [...byId.values()];
 };
 const cachedCategoryPage = cache(async (categorySlug: string): Promise<CategoryPage> => {
   const marketId = await marketIdOf();
-  return await categoryPages.get(
-    marketKey(marketId, categorySlug),
-    loadCategoryPage(marketId, categorySlug),
-  );
+  return await loadCategoryPage(marketId, categorySlug)();
 });
-const rootTree = async () => {
-  const marketId = await marketIdOf();
-  return await categoryTrees.get(marketId ?? "", loadRootTree(marketId));
-};
+// Category publication is request-time state, not a fifteen-minute process snapshot.
+// React cache joins equal tree reads within one render without hiding new categories on the next request.
+const rootTree = cache(async () => await loadRootTree(await marketIdOf())());
 
 /**
  * The navigation tree (navigation fields only, root categories with content). With `categorySlug` the
