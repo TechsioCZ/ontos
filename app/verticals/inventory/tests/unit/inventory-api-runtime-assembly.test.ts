@@ -1,4 +1,8 @@
 import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import {
+  OWNER_ACTION_APPROVAL_INSPECTION_PATH,
+  OWNER_ACTION_APPROVAL_PATH,
+} from '@app/core-runtime/access/approvals/owner-api';
 import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import { Effect, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -38,5 +42,17 @@ it.effect('assembles every declared Inventory HTTP group before serving readines
     expect(invalid.status).toBe(400);
     const body = yield* Effect.promise(() => invalid.json());
     expect(body).toMatchObject({ _tag: 'ProvisionSourceStockItemActionInvalidProblem' });
+    for (const path of [OWNER_ACTION_APPROVAL_INSPECTION_PATH, OWNER_ACTION_APPROVAL_PATH]) {
+      const approval = yield* Effect.promise(() =>
+        runtime.handler(new Request(`https://inventory.test${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        })),
+      );
+      expect(approval.status).toBe(400);
+      const problem = yield* Effect.promise(() => approval.json());
+      expect(problem).toMatchObject({ _tag: 'OwnerActionApprovalInvalid' });
+    }
   }).pipe(Effect.scoped),
 );
