@@ -1208,13 +1208,18 @@ export interface PublicPricingReadHarness {
   readonly makeRequest: (input: {
     readonly lines: readonly { readonly handoff: HarnessCatalogHandoff; readonly occurrenceId: string }[];
     readonly operationTime: string;
-    /** Guest by default; PROFILE selects the declared Price Group assignment and its Discount audience. */
-    readonly subject?: 'GUEST' | 'PROFILE';
+    /**
+     * Guest by default; PROFILE selects the declared Price Group assignment and its Discount audience;
+     * OTHER_GROUP_PROFILE is a Profile the declared Customer Context assigns to a different Price Group.
+     */
+    readonly subject?: 'GUEST' | 'OTHER_GROUP_PROFILE' | 'PROFILE';
   }) => HarnessEffect<typeof CurrentPricingDecisionRequestSchema.Type>;
   readonly managerPrincipalId: string;
   /** Requests the declared Commerce Market stand-in answered through the published contract. */
   readonly marketRequests: readonly PricingCurrentMarketEvidenceRequest[];
   readonly operationTime: string;
+  /** A Profile the declared Customer Context assigns to a DIFFERENT Price Group than `priceGroupRef`. */
+  readonly otherGroupProfileSubject: HarnessProfileSubject;
   readonly prepareFreshHandoff: (selection: HarnessCatalogSelection) => HarnessEffect<HarnessCatalogHandoff>;
   readonly priceComponents: readonly {
     readonly handoff: HarnessCatalogHandoff;
@@ -1635,15 +1640,24 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       },
       priceGroupRef,
     };
-    const profileSubject = {
-      authorizationSubject: { kind: 'RETAIL' as const },
-      kind: 'PROFILE' as const,
-      profileRef: {
-        moduleId: CUSTOMER_CONTEXT_MODULE,
-        resourceId: yield* nextId,
-        resourceType: 'commerce.customer-context.retail-customer-profile',
-        tenantId: fixture.tenantId,
-      },
+    const makeProfileSubject = Effect.fn('PublicPricingReadHarness.profileSubject')(function* makeProfileSubject() {
+      return {
+        authorizationSubject: { kind: 'RETAIL' as const },
+        kind: 'PROFILE' as const,
+        profileRef: {
+          moduleId: CUSTOMER_CONTEXT_MODULE,
+          resourceId: yield* nextId,
+          resourceType: 'commerce.customer-context.retail-customer-profile',
+          tenantId: fixture.tenantId,
+        },
+      };
+    });
+    const profileSubject = yield* makeProfileSubject();
+    // A second Profile, assigned by the declared Customer Context to a DIFFERENT Price Group, for audience controls.
+    const otherGroupProfileSubject = yield* makeProfileSubject();
+    const otherGroupIdentity: HarnessProfileIdentity = {
+      assignmentRef: { ...profileIdentity.assignmentRef, resourceId: yield* nextId },
+      priceGroupRef: { ...priceGroupRef, resourceId: yield* nextId },
     };
     const wholeAttempts: HarnessWholeAttemptObservation[] = [];
     const fenceCalls: HarnessFenceObservation[] = [];
@@ -1689,7 +1703,13 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
           );
           priceGroupRequests.push(decoded);
           return yield* HttpServerResponse.json(
-            yield* declaredCustomerPriceGroupResolution(decoded, profileIdentity, nativeClock),
+            yield* declaredCustomerPriceGroupResolution(
+              decoded,
+              decoded.profile.resourceId === otherGroupProfileSubject.profileRef.resourceId
+                ? otherGroupIdentity
+                : profileIdentity,
+              nativeClock,
+            ),
           );
         }
         if (url.pathname === `${priceGroupCatalogPath}/reads/validate-price-group-compatibility`) {
@@ -1862,10 +1882,15 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         readonly occurrenceId: string;
       }[];
       readonly operationTime: string;
-      readonly subject?: 'GUEST' | 'PROFILE';
+      readonly subject?: 'GUEST' | 'OTHER_GROUP_PROFILE' | 'PROFILE';
     }) {
-      const profile = input.subject === 'PROFILE';
-      const subject = profile ? profileSubject : guestSubject;
+      const profile = input.subject === 'PROFILE' || input.subject === 'OTHER_GROUP_PROFILE';
+      let subject: typeof guestSubject | HarnessProfileSubject = guestSubject;
+      if (input.subject === 'PROFILE') {
+        subject = profileSubject;
+      } else if (input.subject === 'OTHER_GROUP_PROFILE') {
+        subject = otherGroupProfileSubject;
+      }
       return yield* Schema.decodeUnknownEffect(CurrentPricingDecisionRequestSchema)({
         decision: {
           commercialScope: { ...HARNESS_MARKET, sellingLegalEntityId: fixture.legalEntityId },
@@ -1963,6 +1988,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       managerPrincipalId: fixture.manager.principalId,
       marketRequests,
       operationTime,
+      otherGroupProfileSubject,
       prepareFreshHandoff: (selection: Parameters<typeof prepareFreshHandoff>[0]) =>
         confine('prepare-fresh-handoff', prepareFreshHandoff(selection)),
       priceComponents,
