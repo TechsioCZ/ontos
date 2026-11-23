@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 import {
   GatewayContextV2ClaimsSchema,
   GatewayContextV9ClaimsSchema,
+  GatewayContextV10ClaimsSchema,
   SupportedGatewayContextClaimsSchema,
 } from '../../src/gateway-context.ts';
 
@@ -52,6 +53,30 @@ it('decodes a native synchronous Read without any fabricated invocation or exter
   expect(Schema.is(GatewayContextV9ClaimsSchema)(claims)).toBe(true);
   expect(Schema.is(SupportedGatewayContextClaimsSchema)(claims)).toBe(true);
   expect('admissionInvocationId' in claims.routeScope.nativeReadReceiver).toBe(false);
+});
+
+it('requires a distinct calling module on delegated native Reads without changing receiver or original identity rules', () => {
+  const delegated = {
+    ...claims,
+    act: {
+      appId: 'symmy-integration',
+      buildMarker: 'symmy-build',
+      principalId: '10000000-0000-4000-8000-000000000006',
+    },
+    ver: 10,
+  };
+  expect(Schema.is(GatewayContextV10ClaimsSchema)(delegated)).toBe(true);
+  const { act: _actor, ...withoutActor } = delegated;
+  for (const invalid of [
+    withoutActor,
+    { ...delegated, act: { ...delegated.act, principalId } },
+    { ...delegated, act: { ...delegated.act, principalId: originalPrincipalId } },
+    { ...delegated, principal: { ...delegated.principal, authMethod: 'api_key' } },
+    { ...delegated, principal: { ...delegated.principal, legalEntityId: companyId } },
+    { ...delegated, exp: delegated.exp + 1 },
+  ]) {
+    expect(Schema.is(GatewayContextV10ClaimsSchema)(invalid)).toBe(false);
+  }
 });
 
 it('rejects native Read evidence on old external claims, or a missing or mismatched receiver identity', () => {

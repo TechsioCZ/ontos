@@ -361,6 +361,22 @@ it.layer(NodeCrypto.layer)('registered workload operation context', (suite) => {
       expect(readVerifiedGatewayWorkload(scope)).toBeUndefined();
       expect(yield* decodeTrustedPrincipalContext(scope)).toBe(scope);
       expect(Schema.is(VerifiedGatewayPrincipalContextSchema)({ ...scope })).toBe(false);
+      const actor = {
+        appId: 'symmy-integration',
+        buildMarker: 'symmy-build',
+        principalId: '60000000-0000-4000-8000-000000000005',
+      };
+      const delegated = trustVerifiedGatewayPrincipalContext(
+        system, 'a'.repeat(64), undefined, actor, undefined, route,
+      );
+      const delegatedScope = yield* resolver.resolve({
+        correlationId: 'delegated-native-read-scope',
+        legalEntityScope: 'required',
+        principal: delegated,
+      });
+      expect(readVerifiedGatewayActor(delegatedScope)).toEqual(actor);
+      expect(readVerifiedGatewayRouteScope(delegatedScope)).toEqual(route);
+      expect(isTrustedSystemPrincipalContext(delegatedScope)).toBe(true);
       const foreign = yield* makeOperationalScopeResolver(
         { load: () => Effect.succeed({ ...active, legalEntityTenantId: 'another-tenant' }) },
         access('allowed'),

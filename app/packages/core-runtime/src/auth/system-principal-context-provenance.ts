@@ -364,7 +364,10 @@ const routeScopeMatchesPrincipal = (
   workload: RegisteredGatewayWorkload | undefined,
 ): boolean =>
   Schema.is(RegisteredGatewayRouteScopeSchema)(routeScope) &&
-  actor === undefined &&
+  (actor === undefined ||
+    (routeScope.nativeReadReceiver !== undefined &&
+      actor.principalId !== context.principalId &&
+      actor.principalId !== routeScope.nativeReadReceiver.originalPrincipalId)) &&
   workload === undefined &&
   (routeScope.nativeReadReceiver === undefined
     ? context.authMethod === 'api_key' &&

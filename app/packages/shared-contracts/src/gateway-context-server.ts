@@ -14,6 +14,7 @@ import {
   VerifiedGatewayPrincipalContextSchema,
   readVerifiedGatewayScopeAssertion,
   readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayOrganizationProcessingRead,
@@ -132,6 +133,10 @@ const PrivacyDispatchSourceSchema = Schema.Union([
   Schema.TaggedStruct('Assertion', { scope: VerifiedScopeSchema }),
 ]);
 export const GatewayDelegationSubjectSchema = Schema.Union([
+  Schema.TaggedStruct('NativeRouteRead', {
+    operationRequirementKey: GatewayCapabilityKeySchema,
+    scope: VerifiedScopeSchema,
+  }),
   Schema.TaggedStruct('OrganizationGovernanceRead', { requestHash: revisionString, scope: VerifiedScopeSchema }),
   Schema.TaggedStruct('PrivacyDispatch', {
     operation: GatewayPrivacyDispatchOperationSchema,
@@ -438,6 +443,21 @@ const subjectWireOf = (
   subject: GatewayDelegationSubject,
 ): Effect.Effect<WireSubjectRevision, GatewayDelegationSourceError> =>
   Match.value(subject).pipe(
+    Match.tag('NativeRouteRead', ({ scope, operationRequirementKey }) =>
+      assertionWire({ scope }).pipe(
+        Effect.flatMap((source) =>
+          Match.value(source.subject).pipe(
+            Match.tag('Assertion', (proof) => Effect.succeed({
+              compositionRevision: source.compositionRevision,
+              subject: { _tag: 'NativeRouteRead' as const, operationRequirementKey, sourceAssertion: proof.sourceAssertion },
+            })),
+            Match.orElse(() => Effect.fail(
+              new GatewayDelegationSourceError({ reason: 'A native route Read requires its original verified assertion' }),
+            )),
+          ),
+        ),
+      ),
+    ),
     Match.tag('OrganizationGovernanceRead', ({ requestHash, scope }: OrganizationGovernanceReadDelegationSubject) => {
       const assertion = readVerifiedGatewayScopeAssertion(scope);
       const compositionRevision = readVerifiedGatewayCompositionRevision(scope);
@@ -601,7 +621,7 @@ const ShellGatewayBaseUrl = shellGatewayBaseUrlConfig;
 const subjectTenantOf = (subject: GatewayDelegationSubject): string =>
   Match.value(subject).pipe(
     Match.tag('Originator', 'RegisteredAdmission', ({ tenantId }) => tenantId),
-    Match.tag('Assertion', 'OrganizationGovernanceRead', 'RegisteredAssertion', ({ scope }) => scope.tenantId),
+    Match.tag('Assertion', 'OrganizationGovernanceRead', 'RegisteredAssertion', 'NativeRouteRead', ({ scope }) => scope.tenantId),
     Match.tag('RegisteredWorkload', ({ context }) => context.tenantId),
     Match.tag('RegisteredRecovery', ({ source }) =>
       Match.value(source).pipe(
@@ -646,6 +666,27 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
       { concurrency: 1 },
     );
     yield* Match.value(request.subject).pipe(
+      Match.tag('NativeRouteRead', (subject) => Effect.gen(function* checkNativeReadRequirement() {
+        const route = readVerifiedGatewayRouteScope(subject.scope);
+        const fact = yield* readModuleOperationRequirement(subject.operationRequirementKey, subject.scope).pipe(
+          Effect.mapError((cause) => new GatewayDelegationSourceError({
+            cause, reason: 'A native route Read requires its active declared operation lease',
+          })),
+        );
+        if (
+          route === undefined || request.legalEntityScope !== 'subject' ||
+          fact.providerAppId !== request.audience ||
+          fact.compositionRevision !== readVerifiedGatewayCompositionRevision(subject.scope) ||
+          fact.tenantId !== subject.scope.tenantId ||
+          !route.operations.some((operation) =>
+            operation.entrypointKey === fact.consumerEntrypointKey &&
+            operation.schemaVersion === fact.consumerSchemaVersion)
+        ) {
+          return yield* new GatewayDelegationSourceError({
+            reason: 'A native route Read does not match the signed route and current declared operation',
+          });
+        }
+      })),
       Match.tag('OrganizationGovernanceRead', () =>
         request.audience === organizationGovernanceReadOperationContract().appId &&
         request.legalEntityScope === 'subject'

@@ -302,6 +302,23 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
         tenantId: fixture.tenantId,
         companyId: fixture.selectedCompanyId,
       });
+      const delegatedGrant = yield* nativeRouteGrant(fixture);
+      const actor = {
+        appId: 'symmy-integration',
+        buildMarker: 'symmy-build',
+        principalId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+      };
+      const delegatedAssertion = yield* syntheticNativeAssertion({ ...delegatedGrant.claims, act: actor, ver: 10 });
+      yield* makeGatewayScopeGrantRegistrar(issuer, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+        .register({ ...delegatedGrant.registration, assertion: delegatedAssertion });
+      // The DB matches the issuer's selected scope; actor signature/identity validation belongs to the verifier.
+      const [delegatedRow] = yield* party.withTransaction(Effect.gen(function* installDelegatedNativeScope() {
+        return yield* party.unsafe<{ established_legal_entity_id: string }>(
+          'select established_legal_entity_id::text from trust.establish_gateway_scope($1)',
+          [Redacted.value(delegatedAssertion)],
+        );
+      }));
+      expect(delegatedRow?.established_legal_entity_id).toBe(fixture.selectedCompanyId);
     }),
   );
 
@@ -322,7 +339,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
         { claims: { ...base.claims, routeScope: { ...fixture.routeScope, legalEntityId: undefined } }, registration: base.registration },
         { claims: { ...base.claims, routeScope: { ...fixture.routeScope, legalEntityId: 'not-a-uuid' } }, registration: base.registration },
         // Other versions must not acquire V9's derived company; this is not a JWT-version whitelist test.
-        ...[8, 10, 'nine'].map((ver) => ({ claims: { ...base.claims, ver }, registration: base.registration })),
+        ...[8, 11, 'nine'].map((ver) => ({ claims: { ...base.claims, ver }, registration: base.registration })),
       ];
       for (const attempt of invalid) {
         const assertion = yield* syntheticNativeAssertion(attempt.claims);

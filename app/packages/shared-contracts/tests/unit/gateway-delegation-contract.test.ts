@@ -542,6 +542,34 @@ it.effect('refuses conditional delegation outside the actual Core operation leas
   }),
 );
 
+it.effect('refuses a native route Read outside its actual declared operation lease before HTTP', () =>
+  Effect.gen(function* nativeReadLeaseRequired() {
+    yield* holdCallerKey;
+    const requests: Request[] = [];
+    const scope = trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
+      assertion: Redacted.make('fixture-signed-source-proof'),
+      audience: 'catalog',
+    });
+    const failure = yield* acquireDelegatedGatewayContext({
+      audience: 'privacy',
+      callingAppId: 'catalog',
+      legalEntityScope: 'subject',
+      requestCorrelation: 'native-read-outside-lease',
+      subject: {
+        _tag: 'NativeRouteRead',
+        scope,
+        operationRequirementKey: 'integration.symmy.requirement.customer-intake-privacy',
+      },
+    }, crypto).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, configuration),
+      Effect.provideService(FetchHttpClient.Fetch, recordingFetch(compositionRevision, requests)),
+      Effect.flip,
+    );
+    expect(Schema.is(GatewayDelegationSourceError)(failure)).toBe(true);
+    expect(requests).toHaveLength(0);
+  }),
+);
+
 it.effect('refuses conditional worker delegation outside its actual Core worker lease before HTTP', () =>
   Effect.gen(function* conditionalWorkerLeaseRequired() {
     yield* holdCallerKey;

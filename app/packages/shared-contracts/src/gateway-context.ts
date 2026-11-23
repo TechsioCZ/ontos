@@ -36,6 +36,7 @@ export const ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION = 6 as const;
 export const VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION = 7 as const;
 export const VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION = 8 as const;
 export const NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION = 9 as const;
+export const DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION = 10 as const;
 export const GATEWAY_ASSERTION_TTL_SECONDS = 300 as const;
 export const GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS = 30 as const;
 
@@ -466,6 +467,23 @@ export const GatewayContextV9ClaimsSchema = Schema.Struct({
   ]),
 );
 
+/** A declared module prerequisite keeps its actor beside the independently selected native Read receiver. */
+export const GatewayContextV10ClaimsSchema = Schema.Struct({
+  ...GatewayContextV9ClaimsSchema.fields,
+  act: GatewayActorClaimSchema,
+  ver: Schema.Literal(DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION),
+}).check(
+  Schema.makeFilter(({ act, ver: _version, ...claims }) => [
+    ...(Schema.is(GatewayContextV9ClaimsSchema)({ ...claims, ver: NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION })
+      ? []
+      : [{ issue: 'A delegated native Read retains the exact native receiver and original integration evidence', path: ['routeScope'] }]),
+    ...(act.principalId !== claims.sub &&
+      act.principalId !== claims.routeScope.nativeReadReceiver?.originalPrincipalId
+      ? []
+      : [{ issue: 'The module actor differs from both the native receiver and original integration', path: ['act'] }]),
+  ]),
+);
+
 export const SupportedGatewayContextClaimsSchema = Schema.Union([
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,
@@ -476,6 +494,7 @@ export const SupportedGatewayContextClaimsSchema = Schema.Union([
   GatewayContextV7ClaimsSchema,
   GatewayContextV8ClaimsSchema,
   GatewayContextV9ClaimsSchema,
+  GatewayContextV10ClaimsSchema,
 ]);
 export type SupportedGatewayContextClaims = typeof SupportedGatewayContextClaimsSchema.Type;
 export const decodeSupportedGatewayContextClaims = Schema.decodeUnknownEffect(SupportedGatewayContextClaimsSchema, {
@@ -543,6 +562,12 @@ export const GatewayRegisteredAssertionSubjectSchema = Schema.TaggedStruct('Regi
       : 'Processing and recovery request restrictions cannot be combined',
   ),
 );
+
+/** A declared synchronous prerequisite of a signed route, before any durable Action evidence is available. */
+export const GatewayNativeRouteReadSubjectSchema = Schema.TaggedStruct('NativeRouteRead', {
+  operationRequirementKey: GatewayCapabilityKeySchema,
+  sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
+});
 
 export const GatewayRegisteredAdmissionSubjectSchema = Schema.TaggedStruct('RegisteredAdmission', {
   actionInvocationId: ActionInvocationIdSchema,
@@ -646,6 +671,7 @@ export const GatewayRegisteredRecoverySubjectSchema = Schema.TaggedStruct('Regis
   source: GatewayRecoverySourceSchema,
 });
 export const GatewayDelegatedSubjectSchema = Schema.Union([
+  GatewayNativeRouteReadSubjectSchema,
   GatewayPrivacyDispatchSubjectSchema,
   GatewayOrganizationGovernanceReadSubjectSchema,
   GatewayRegisteredAssertionSubjectSchema,
