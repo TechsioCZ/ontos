@@ -1,6 +1,7 @@
 import { DECISION_REASON_CODES } from '@app/core-runtime/access/decision/contract';
-import { DateTime, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
+import { DateTime, Effect, Layer, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 
 import {
   AuthenticationUnavailableProblemSchema,
@@ -35,6 +36,46 @@ import { LegalEntityDetailResponseSchema } from '../../shared/core-reads/legal-e
 type TenantEndpoint =
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.availableTenants
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.switchTenant;
+
+it.effect('registers the served agent, people and connection handlers against the canonical server contract', () =>
+  Effect.gen(function* registerServedGroups() {
+    const unused = () => Effect.die('The contract registration proof must not execute a request');
+    yield* Layer.build(
+      Layer.mergeAll(
+        HttpApiBuilder.group(ShellServerApi, 'agentPlatform', (handlers) =>
+          handlers.handleAll({
+            submitAgentProposals: unused,
+            listOwnAgentProposals: unused,
+            agentQueue: unused,
+            agentDecide: unused,
+            agentRevert: unused,
+            agentActivity: unused,
+          }),
+        ),
+        HttpApiBuilder.group(ShellServerApi, 'peopleAdministration', (handlers) =>
+          handlers.handleAll({
+            requestPeopleSearchRebuild: unused,
+            invitePerson: unused,
+            listCompanyPeople: unused,
+            listTenantPeople: unused,
+            setPeopleCompanyMembership: unused,
+          }),
+        ),
+        HttpApiBuilder.group(ShellServerApi, 'oauthConnectionsAdmin', (handlers) =>
+          handlers.handleAll({
+            listMyConnections: unused,
+            listCompanyConnections: unused,
+            updateConnectionAccess: unused,
+            revokeConnection: unused,
+            listAgentEntities: unused,
+            manageAgentEntity: unused,
+            replaceAgentOperators: unused,
+          }),
+        ),
+      ),
+    );
+  }).pipe(Effect.scoped),
+);
 
 const statuses = (endpoint: TenantEndpoint) =>
   [...endpoint.error]
@@ -135,6 +176,11 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',
+    admitAccessMember: '/shell/access/people/admit-member',
+    agentActivity: '/agent-platform/activity',
+    agentDecide: '/agent-platform/decide',
+    agentQueue: '/agent-platform/queue',
+    agentRevert: '/agent-platform/revert',
     assetCurrent: '/core/operations/asset-current',
     assignAccessRole: '/shell/access/people/assign',
     attachMedia: '/shell/resource/media-attachment',
@@ -155,7 +201,10 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     currentSession: '/auth/session',
     decideAccessApproval: '/shell/access/approvals/decide',
     decideAccessChanges: '/shell/access/changes/decide',
+    demoAccountCapability: '/auth/identity/demo-accounts/capability',
+    documentContext: '/shell/document-context',
     downloadAsset: '/core/media/assets/:mediaAssetId/content',
+    endAccessMembership: '/shell/access/people/end-membership',
     executeAccessApproval: '/shell/access/approvals/execute',
     executeAssetMetadata: '/core/reads/asset-metadata',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
