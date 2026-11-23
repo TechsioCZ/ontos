@@ -222,7 +222,7 @@ export const symmyDemoCatalogReadinessConfiguration = (
   const product = yield* only(products, 'Catalog readiness requires exactly one approved PRODUCT source template');
   if (
     inventorySource.unitRef.tenantId !== symmyDemoPolicyScope.tenantId ||
-    inventorySource.issuer.backendId !== 'symmy-akros' ||
+    inventorySource.issuer.backendId !== configuration.inventoryBackendId ||
     inventorySource.namespace !== symmyDemoPolicyScope.namespace ||
     product.source.issuerId !== 'symmy-akros' ||
     product.source.sourceNamespace !== symmyDemoPolicyScope.namespace ||

@@ -38,7 +38,7 @@ const inventorySource = Schema.decodeUnknownSync(SymmyInventorySourceSchema)({
   customerConfigurationId: 'akros',
   externalScope: 'akros',
   namespace: 'akros-erp',
-  issuer: { backendKind: 'external_business_system', backendId: 'symmy-akros' },
+  issuer: { backendKind: 'external_business_system', backendId: 'akros-erp' },
   locations: [{
     locationKey: 'MAIN',
     stockLocationRef: {
@@ -61,7 +61,7 @@ const dimension = {
   unit_id: unitRef.resourceId, unit_quantity: '1', effective_from: '2026-11-01T00:00:00.000Z',
 };
 const fixture = (entityKind: 'PRODUCT' | 'STOCK') => ({
-  inventoryBackendId: 'symmy-akros',
+  inventoryBackendId: 'akros-erp',
   stockScope: [{ itemKey: 'ONLY-THE-OLD-SKU', locationKey: 'MAIN' }],
   items: [{
     itemKey: 'source',
@@ -135,6 +135,9 @@ test('enrolls native axis-free readiness idempotently and plans all six native s
   ok(!effects.some(({ effectKey }) => effectKey === 'product-update'));
   const foreign = { ...inventorySource, unitRef: { ...unitRef, tenantId: unitRef.resourceId } };
   ok(Exit.isFailure(await Effect.runPromiseExit(symmyDemoCatalogReadinessConfiguration(ready, foreign))));
+  ok(Exit.isFailure(await Effect.runPromiseExit(symmyDemoCatalogReadinessConfiguration({
+    ...ready, inventoryBackendId: 'another-backend',
+  }, inventorySource))));
   ok(Exit.isFailure(await Effect.runPromiseExit(symmyDemoCatalogReadinessConfiguration({
     ...ready, catalogReadiness: { ...ready.catalogReadiness, divisible: true },
   }, inventorySource))));
