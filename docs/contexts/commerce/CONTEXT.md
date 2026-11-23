@@ -714,6 +714,48 @@ basis. It distinguishes permitted quantity, known violated commercial conditions
 missing/conflicting/unverifiable inputs. It never silently changes the requested Quantity or creates
 Permission, Price, Availability or an Order.
 
+## Editorial Content
+
+**Content** — Tenant-scoped editorial material such as a page, article, banner, buying guide or
+marketing copy. A change to its title, public URL or translation preserves its identity. Catalog
+owns the Product's descriptive facts and classification.
+
+**Content Variant** — One expression of Content in its actual language, shared within the Tenant
+or intended for a stated Channel or Storefront. A missing translation stays missing.
+
+**Content Revision** — The exact wording, block order, editorial metadata and owner-qualified
+references of a Content Variant at one point in its editorial history. A later edit produces a
+distinguishable revision. A reference preserves the target's identity while its owner governs
+Current facts and Permission at use.
+
+**Content Block** — An editorial unit such as a paragraph, comparison table or ordered procedure.
+Its position and the relationships that give it meaning, such as which Product and unit belong to a
+comparison value, are part of the Content Revision. A separately selected block has its own variant
+and revision.
+
+**Content Variant Selection** — The Tenant's explicit choice of one Content Variant, or none, for a
+particular use, actual language and target scope. Several uses may select the same shared variant.
+An absent or unusable selection authorizes no substitution by language, scope or publication date.
+
+**Content Publication** — The authorized release of one exact Content Revision for its variant.
+At most one revision is published as Current per variant. A new draft leaves that revision in place. Public use also requires a matching Content Variant Selection.
+
+**Content Withdrawal** — The authorized end of public use of a variant's Current published
+revision. The earlier selection and historical revisions remain distinguishable within applicable
+retention rules. Reusing another revision or variant requires an explicit authorized choice.
+
+**Content Collection** — An editorially ordered list of independently referenced targets. Its order
+is part of the Content Revision. Customer-facing inclusion of a Product follows Assortment for the
+exact request context.
+
+**Content Media Reference** — The link from an editorial placement to a specific Media Asset,
+together with the placement's purpose and any Tenant-supplied alternative text or caption. Core
+Media governs access to the bytes. Catalog owns its separate Catalog Media Assignments.
+
+**Content Change Signal** — A notice that Content Publication, Content Withdrawal, a selection or
+another Content-owned change may affect a consumer's copy. The consumer establishes the Current
+result through an authorized read for the affected use and scope.
+
 ## Purchasing limits and approval
 
 **Purchase Payable Amount** — Commerce-owned derived Monetary Amount for one exact purchase in one
