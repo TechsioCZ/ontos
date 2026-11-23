@@ -37,6 +37,13 @@ const readRoutes: ReadonlySet<RouteRequest['routeKey']> = new Set([
   'adminRegions',
   'priceLists',
 ]);
+/** These routes already enroll the source-association Read as their exact list prerequisite. */
+export const requiresSymmyPriceGroupRouteProof = (
+  routeKey: RouteRequest['routeKey'] | undefined,
+  audience: string,
+): boolean =>
+  audience === 'price-group-catalog' &&
+  (routeKey === 'priceLists' || routeKey === 'priceListPricesBatch' || routeKey === 'productsBatch');
 interface RouteScopeFacts {
   readonly compositionRevision: string;
   readonly principal: TrustedPrincipalContext;
@@ -363,6 +370,14 @@ export const selectSymmyIntakePrivacyReceiver = Effect.fn('SymmyRouteScope.selec
  * required revision read. Enrollment and the installed owner's exact access/version remain mandatory.
  */
 const admissionOwnerOperations = [
+  ...(['priceListPricesBatch', 'productsBatch'] as const).map((routeKey) => ({
+    access: 'read' as const,
+    entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
+    moduleId: 'pricing.price-group-catalog',
+    requiresCompany: false,
+    routeKey,
+    schemaVersion: '1',
+  })),
   {
     access: 'read',
     entrypointKey: 'commerce.customer-context.api.customer-group-definition-source',
@@ -440,7 +455,9 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   const route = yield* readSymmyRouteScope(proof);
   const inventoryTenantRead =
     facts.sourcePurpose === 'admit' && facts.routeKey === 'inventoryStockBatch' && input.audience === 'inventory';
-  const nativeTenantRead = facts.sourcePurpose === 'read' && tenantOnlyNativeReads.some(
+  const nativeTenantRead =
+    (facts.sourcePurpose === 'read' || requiresSymmyPriceGroupRouteProof(facts.routeKey, input.audience)) &&
+    tenantOnlyNativeReads.some(
     ([audience, moduleId, entrypointKey]) => input.audience === audience &&
       route.allowedOwnerOperations.some((operation) => operation.moduleId === moduleId &&
         operation.entrypointKey === entrypointKey && operation.schemaVersion === '1'),

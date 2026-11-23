@@ -32,6 +32,7 @@ import {
   acquireSymmyRouteScopeProof,
   issueSymmyRouteScopeAssertion,
   readSymmyRouteScope,
+  requiresSymmyPriceGroupRouteProof,
 } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteScopeProof } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteContextRequestSchema } from '@app/symmy-integration/api/symmy-route-context';
@@ -2939,7 +2940,7 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
     if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
       return yield* Effect.fail(gatewayForbiddenProblem());
     }
-    const nativePriceGroupRead = selectedRoute?.routeKey === 'priceLists' && input.audience === 'price-group-catalog';
+    const nativePriceGroupRead = requiresSymmyPriceGroupRouteProof(selectedRoute?.routeKey, input.audience);
     if (input.legalEntityId === undefined && input.audience !== 'inventory' && !nativePriceGroupRead) {
       return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
     }

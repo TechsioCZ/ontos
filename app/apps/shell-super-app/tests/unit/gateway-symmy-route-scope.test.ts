@@ -617,13 +617,15 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
 it.effect('issues and redeems V9 only after current canonical source-read selection, never from copied issuer input', () =>
   Effect.gen(function* nativeSourceReads() {
     const cases = [
-      ['party-registry', 'party.registry', 'party.registry.api.source-profile-export', 'party.registry.source-read'],
-      ['commerce-customer-context', 'commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-page', 'commerce.customer-context.source-read'],
-      ['price-group-catalog', 'pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-source-associations', 'pricing.price-group-catalog.source-read'],
-      ['pricing', 'commerce.pricing', 'commerce.pricing.api.price-group-source-prices', 'commerce.pricing.source-read'],
-      ['catalog', 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page', 'commerce.catalog.symmy-product-read'],
+      ['party-registry', 'party.registry', 'party.registry.api.source-profile-export', 'party.registry.source-read', 'adminCustomers', 'read'],
+      ['commerce-customer-context', 'commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-page', 'commerce.customer-context.source-read', 'adminCustomers', 'read'],
+      ['price-group-catalog', 'pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-source-associations', 'pricing.price-group-catalog.source-read', 'priceLists', 'read'],
+      ['pricing', 'commerce.pricing', 'commerce.pricing.api.price-group-source-prices', 'commerce.pricing.source-read', 'priceLists', 'read'],
+      ['catalog', 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page', 'commerce.catalog.symmy-product-read', 'adminProducts', 'read'],
+      ['price-group-catalog', 'pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-source-associations', 'pricing.price-group-catalog.source-read', 'priceListPricesBatch', 'admit'],
+      ['price-group-catalog', 'pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-source-associations', 'pricing.price-group-catalog.source-read', 'productsBatch', 'admit'],
     ] as const;
-    for (const [audience, moduleId, entrypointKey, workloadKey] of cases) {
+    for (const [audience, moduleId, entrypointKey, workloadKey, routeKey, sourcePurpose] of cases) {
       const base = makeModuleContractFixture({ appId: audience, buildMarker: 'native-route-build', moduleId });
       const unrelatedKey = `${moduleId}.api.unrelated`;
       const snapshot = yield* makeCompositionSnapshot([{
@@ -646,13 +648,13 @@ it.effect('issues and redeems V9 only after current canonical source-read select
       const catalog = { ...(yield* buildApplicationCompositionCatalog(snapshot.composition)), composition: snapshot.composition };
       const tenantOnly = audience === 'price-group-catalog' || audience === 'catalog';
       const sourceRequest = {
-        ...request, compositionRevision: snapshot.composition.revision,
-        routeRequest: audience === 'price-group-catalog' || audience === 'pricing'
-          ? { routeKey: 'priceLists' as const } : request.routeRequest,
+        ...request, compositionRevision: snapshot.composition.revision, sourcePurpose,
+        routeRequest: { routeKey },
       };
+      const originalReadWorkload = sourcePurpose === 'admit' ? 'integration.symmy-admit' : 'integration.symmy-poll';
       for (const receiver of ['system', 'service'] as const) {
         const current = yield* fixture({
-          catalog, receiver, originalReadWorkload: 'integration.symmy-poll',
+          catalog, receiver, originalReadWorkload,
           allowedOwnerOperations: [entrypointKey, unrelatedKey].map((key) => ({ moduleId, entrypointKey: key, schemaVersion: '1' })),
         });
         yield* Effect.gen(function* issueNativeRead() {
@@ -676,7 +678,7 @@ it.effect('issues and redeems V9 only after current canonical source-read select
             operations: [{ entrypointKey, schemaVersion: '1' }],
             nativeReadReceiver: {
               workloadKey, bindingIncarnation: nativeBindingIncarnation, enrollmentLegalEntityId: legalEntityId,
-              originalPrincipalId: principal.principalId, originalWorkloadKey: 'integration.symmy-poll',
+              originalPrincipalId: principal.principalId, originalWorkloadKey: originalReadWorkload,
               originalWorkloadBindingIncarnation: originalReadIncarnation,
             },
           });
