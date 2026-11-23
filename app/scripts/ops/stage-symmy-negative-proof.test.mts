@@ -26,12 +26,22 @@ const page = {
     }],
   }],
 };
-const fixture = (statuses = [401, 401, 404, 200], body: unknown = page) => {
+const problemHeaders = { 'content-type': 'application/problem+json' };
+const challenge = 'ApiKey realm="ontos-gateway"';
+const authProblem = { _tag: 'GatewayAuthenticationRequiredProblem', status: 401,
+  type: 'https://ontos.dev/problems/gateway-authentication-required', title: 'Unauthorized', detail: 'Key required' };
+const missingProblem = { _tag: 'SymmyDemoOrderNotFoundProblem', status: 404,
+  type: 'https://ontos.dev/problems/symmy-order-not-found', title: 'Not found', detail: 'Order absent' };
+const fixture = (statuses = [401, 401, 404, 200], body: unknown = page, overrides: Record<number, Response> = {}) => {
   const calls: { readonly url: string; readonly init: RequestInit | undefined }[] = [];
   const lines: string[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     calls.push({ url: String(input), init });
-    return Response.json(body, { status: statuses[calls.length - 1] ?? 500 });
+    const index = calls.length - 1;
+    const status = statuses[index] ?? 500;
+    return overrides[index] ?? (index < 2
+      ? Response.json(authProblem, { status, headers: { ...problemHeaders, 'www-authenticate': challenge } })
+      : index === 2 ? Response.json(missingProblem, { status, headers: problemHeaders }) : Response.json(body, { status }));
   };
   return { calls, lines, fetch, newOrderId: () => missingId, writeLine: (line: string) => lines.push(line) };
 };
@@ -119,6 +129,25 @@ test('requires schema-valid nonempty persisted identifiers, not merely a 200 res
   ]) {
     await assert.rejects(runSymmyNegativeProof(config, fixture(undefined, body)), (error: unknown) =>
       /^FAIL orders-list status=200 reason=(response_invalid|orders_empty)$/u.test(symmyNegativeProofFailureLine(error)));
+  }
+});
+
+test('rejects unrelated 401/404 responses and a missing or foreign challenge without leaking their bodies', async () => {
+  for (const [index, response] of [
+    [0, Response.json(authProblem, { status: 401, headers: problemHeaders })],
+    [1, Response.json(authProblem, { status: 401, headers: { ...problemHeaders, 'www-authenticate': 'Bearer' } })],
+    [0, Response.json({ ...authProblem, _tag: 'Other', detail: secret }, {
+      status: 401, headers: { ...problemHeaders, 'www-authenticate': challenge },
+    })],
+    [2, new Response('Not found', { status: 404 })],
+    [2, Response.json({ ...missingProblem, _tag: 'Other', detail: secret }, { status: 404, headers: problemHeaders })],
+    [2, Response.json({ ...missingProblem, status: 401 }, { status: 404, headers: problemHeaders })],
+  ] as const) {
+    const current = fixture(undefined, page, { [index]: response });
+    const check = ['orders-unauthenticated', 'catalog-revision-unauthenticated', 'missing-order'][index];
+    await assert.rejects(runSymmyNegativeProof(config, current), (error: unknown) =>
+      symmyNegativeProofFailureLine(error) === `FAIL ${check} status=${response.status} reason=response_invalid`);
+    assert.equal(current.calls.length, index + 1);
   }
 });
 

@@ -26,8 +26,9 @@ const product = {
   imageSrc: input.galleryUrl,
 };
 const image = `<img src="/_next/image?url=${encodeURIComponent(input.galleryUrl)}&amp;w=480&amp;q=75">`;
-const detail = `<h1 id="product-title">Fresh &amp; real</h1><dl><dd>${input.sku}</dd></dl>${image}`;
-const listing = `<section aria-label="Produkty: New source"><a href="/cs/produkt/${input.productSlug}">Fresh product</a>${image}</section>`;
+const detail = `<section aria-labelledby="product-title"><div class="sf-product-detail__gallery">${image}</div><h1 id="product-title">Fresh &amp; real</h1><dl><dd>${input.sku}</dd></dl></section>`;
+const card = `<article><a class="sf-catalog-product-card__image-link" href="/cs/produkt/${input.productSlug}">${image}</a></article>`;
+const listing = `<section aria-label="Produkty: New source">${card}</section>`;
 const category = `<h1 id="category-title">New source</h1>${listing}`;
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGOQ9bvxHwAEEgJD6R8JuAAAAABJRU5ErkJggg==',
@@ -127,6 +128,20 @@ test('product SKU/title and actual category product-link/image are required outs
     () => assertSymmyStorefrontPages(input, product, detail, category.replace(image, '')),
     (error: unknown) => error instanceof SymmyStorefrontProofFailure && error.reason === 'gallery',
   );
+});
+
+test('gallery must belong to the product overview and the matching category card image link', () => {
+  for (const elsewhere of [
+    detail.replace(image, '') + `<aside>${image}</aside>`,
+    detail.replace(image, '').replace('</section>', `<div>${image}</div></section>`),
+  ]) assert.throws(() => assertSymmyStorefrontPages(input, product, elsewhere, category),
+    (error: unknown) => error instanceof SymmyStorefrontProofFailure && error.stage === 'product' && error.reason === 'gallery');
+  const otherCard = card.replace(input.productSlug, 'unrelated');
+  for (const misplaced of [
+    category.replace(card, card.replace(image, '') + otherCard),
+    category.replace(image, `</a><a href="/cs/produkt/unrelated">${image}`),
+  ]) assert.throws(() => assertSymmyStorefrontPages(input, product, detail, misplaced),
+    (error: unknown) => error instanceof SymmyStorefrontProofFailure && error.stage === 'category' && error.reason === 'gallery');
 });
 
 test('image HTTP status, empty bodies, incorrect MIME/signature and oversized downloads fail', async () => {

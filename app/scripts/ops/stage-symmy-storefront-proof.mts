@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** Public, read-only acceptance. Importing this module performs no I/O; it never creates records or accepts secrets. */
+import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
 import { Effect, Result, Schema } from 'effect';
 
@@ -57,43 +58,15 @@ const decode = <S extends Schema.Top>(schema: S, value: unknown, stage: string):
     throw fail(stage, 'invalid-contract');
   }
 };
-const entities = (value: string) =>
-  value.replace(/&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt|nbsp);/giu, (_whole, key: string) => {
-    if (key.startsWith('#')) {
-      const code = key[1]?.toLowerCase() === 'x' ? Number.parseInt(key.slice(2), 16) : Number(key.slice(1));
-      return code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
-    }
-    return (
-      new Map([
-        ['amp', '&'],
-        ['quot', '"'],
-        ['apos', "'"],
-        ['lt', '<'],
-        ['gt', '>'],
-        ['nbsp', ' '],
-      ]).get(key.toLowerCase()) ?? ''
-    );
-  });
-const visibleMarkup = (html: string) =>
-  html.replace(/<!--[\s\S]*?-->/gu, '').replace(/<(script|style|template)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, '');
-const textOf = (html: string) =>
-  entities(html.replace(/<[^>]*>/gu, ' '))
-    .replace(/\s+/gu, ' ')
-    .trim();
-const attribute = (tag: string, name: string) =>
-  entities(
-    new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'iu')
-      .exec(tag)
-      ?.slice(1)
-      .find((part) => part !== undefined) ?? '',
-  );
-const elements = (html: string, tag: string) => [
-  ...html.matchAll(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}\\s*>`, 'giu')),
-];
-const heading = (html: string, expectedId: string) =>
-  elements(html, 'h1').find(
-    ([element]) => attribute(element.slice(0, element.indexOf('>') + 1), 'id') === expectedId,
-  )?.[1];
+// Resolve the parser shipped with the storefront workspace. Fragments do not execute scripts or load resources.
+const storefrontRequire = createRequire(new URL('../../akros-storefront/package.json', import.meta.url));
+const visiblePage = (html: string): DocumentFragment => {
+  const { JSDOM }: { JSDOM: { fragment(source: string): DocumentFragment } } = storefrontRequire('jsdom');
+  const page = JSDOM.fragment(html);
+  for (const node of page.querySelectorAll('script, style, template, noscript, [hidden], aside, nav, [aria-labelledby="recommendations-title"]')) node.remove();
+  return page;
+};
+const textOf = (element: Element | null) => (element?.textContent ?? '').replace(/\s+/gu, ' ').trim();
 
 const canonicalPath = (value: string, input: SymmyStorefrontProofInput): string => {
   const url = URL.parse(value, input.origin);
@@ -117,11 +90,11 @@ const galleryPath = (input: SymmyStorefrontProofInput) => {
   ensure(url.search === '' && url.hash === '', 'configuration', 'image-url-query');
   return path;
 };
-const includesImage = (html: string, expected: string, input: SymmyStorefrontProofInput) =>
-  [...html.matchAll(/<img\b[^>]*>/giu)].some(([tag]) => {
+const includesImage = (container: Element, expected: string, input: SymmyStorefrontProofInput) =>
+  Array.from(container.querySelectorAll('img')).some((img) => {
     const sources = [
-      attribute(tag, 'src'),
-      ...attribute(tag, 'srcset')
+      img.getAttribute('src') ?? '',
+      ...(img.getAttribute('srcset') ?? '')
         .split(',')
         .map((entry) => entry.trim().split(/\s+/u)[0] ?? ''),
     ];
@@ -145,36 +118,32 @@ export const assertSymmyStorefrontPages = (
   productHtml: string,
   categoryHtml: string,
 ) => {
-  const detail = visibleMarkup(productHtml);
-  const category = visibleMarkup(categoryHtml);
-  const productTitle = heading(detail, 'product-title');
-  ensure(productTitle !== undefined && textOf(productTitle) === product.name, 'product', 'identity');
-  ensure(
-    elements(detail, 'dd').some(([, content]) => textOf(content ?? '') === input.sku),
-    'product',
-    'sku',
+  const detail = visiblePage(productHtml);
+  const productTitle = detail.querySelector('h1#product-title');
+  const overview = productTitle?.closest('section[aria-labelledby="product-title"]');
+  ensure(overview && textOf(productTitle) === product.name, 'product', 'identity');
+  ensure(Array.from(overview.querySelectorAll('dd')).some((dd) => textOf(dd) === input.sku), 'product', 'sku');
+  const expected = galleryPath(input);
+  const gallery = overview.querySelector('.sf-product-detail__gallery');
+  ensure(gallery && includesImage(gallery, expected, input), 'product', 'gallery');
+
+  const category = visiblePage(categoryHtml);
+  const title = textOf(category.querySelector('h1#category-title'));
+  ensure(title.length > 0, 'category', 'missing-category');
+  const listing = Array.from(category.querySelectorAll('section[aria-label]')).find(
+    (section) => section.getAttribute('aria-label') === `Produkty: ${title}`,
   );
-  ensure(includesImage(detail, galleryPath(input), input), 'product', 'gallery');
-  const categoryTitle = heading(category, 'category-title');
-  ensure(categoryTitle !== undefined && textOf(categoryTitle).length > 0, 'category', 'missing-category');
-  const title = textOf(categoryTitle);
-  const listing = elements(category, 'section').find(
-    ([section]) => attribute(section.slice(0, section.indexOf('>') + 1), 'aria-label') === `Produkty: ${title}`,
-  )?.[1];
-  ensure(listing !== undefined, 'category', 'missing-product-listing');
-  ensure(
-    [...listing.matchAll(/<a\b[^>]*>/giu)].some(([tag]) => {
-      const href = attribute(tag, 'href');
-      try {
-        return href.length > 0 && canonicalPath(href, input) === `/produkt/${product.slug}`;
-      } catch {
-        return false;
-      }
-    }),
-    'category',
-    'product-not-in-category',
-  );
-  ensure(includesImage(listing, galleryPath(input), input), 'category', 'gallery');
+  ensure(listing, 'category', 'missing-product-listing');
+  const links = Array.from(listing.querySelectorAll('article a.sf-catalog-product-card__image-link[href]')).filter((link) => {
+    try {
+      return canonicalPath(link.getAttribute('href') ?? '', input) === `/produkt/${product.slug}`;
+    } catch {
+      return false;
+    }
+  });
+  const [link] = links;
+  ensure(links.length === 1 && link, 'category', 'product-not-in-category');
+  ensure(includesImage(link, expected, input), 'category', 'gallery');
 };
 
 export const assertSymmyStorefrontImage = (mime: string, bytes: Uint8Array) => {

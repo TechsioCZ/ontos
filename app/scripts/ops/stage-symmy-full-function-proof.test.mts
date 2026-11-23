@@ -192,6 +192,46 @@ test('operator owner-read plans use documented bodies and required versus forbid
   ), /input-contract/u);
 });
 
+test('serialized operator gateway token authorizes the actual owner read', async (t) => {
+  const config = {
+    ...readSymmyProofConfig({ SYMMY_API_KEY: 'synthetic-key' }),
+    origin: 'https://proof.invalid',
+    legalEntityId: itemId,
+    operatorCookie: Redacted.make('synthetic-cookie'),
+  };
+  const base = '/shell-super-app-api/module-api/merchandise/test/merchandise-api';
+  const revision = 'a'.repeat(64);
+  const query = { view: { limit: 0, ordersLimit: 0, summary: true } };
+  const calls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: URL, init: RequestInit) => {
+    calls.push(input.pathname);
+    switch (input.pathname) {
+      case '/shell-super-app-api/auth/session':
+        return Response.json({ state: 'authenticated', identity: {
+          tenantId: config.input.unitRef.tenantId, legalEntityId: itemId,
+        } });
+      case '/shell-super-app-api/shell/composition':
+        return Response.json({ state: 'available', compositionRevision: revision });
+      case '/shell-super-app-api/auth/gateway-context':
+        return Response.json({ apiBaseUrl: base, compositionRevision: revision, token: 'synthetic-assertion' });
+      case `${base}/reads/records`: {
+        const headers = new Headers(init.headers);
+        assert.equal(headers.get('authorization'), 'Bearer synthetic-assertion');
+        assert.equal(headers.get('x-ontos-composition-revision'), revision);
+        assert.equal(headers.has('cookie') || headers.has('x-api-key'), false);
+        assert.equal(init.method, 'POST');
+        assert.deepEqual(JSON.parse(String(init.body)), query);
+        return Response.json({ revision: 7 });
+      }
+      default: throw new Error('Unexpected proof request');
+    }
+  });
+  assert.deepEqual(await createSymmyProofClient(config).ownerRead('merchandise/records', query, 'category-readback'),
+    { revision: 7 });
+  assert.equal(calls.length, 4);
+  assert.equal(calls.at(-1), `${base}/reads/records`);
+});
+
 test('full proof requires separate operator read authentication before any HTTP request', async () => {
   const config = readSymmyProofConfig({ SYMMY_API_KEY: 'not-a-live-key' });
   await assert.rejects(proveSymmyFullFunction(config), /FAIL configuration:read-auth-required/u);
@@ -325,9 +365,9 @@ test('JSON pointers decode escaped field names without traversing object prototy
 test('order export needs real nonempty persisted orders, lines and consistent monetary snapshots', () => {
   const order = {
     id: 'existing-order', number: 'ORDER-1', currencyCode: 'CZK',
-    totalMinor: 121, totalVatMinor: 21, totalNetMinor: 100,
+    pricesIncludeVat: false, totalMinor: 121, totalVatMinor: 21, totalNetMinor: 100,
     lines: [{ productId: 'existing-product', sku: 'ERP-1', unitPriceMinor: 100,
-      quantity: 1, totalMinor: 121, totalVatMinor: 21 }],
+      quantity: 1, vatRate: 21, totalMinor: 121, totalVatMinor: 21 }],
     contact: { email: 'never-log@example.invalid' },
   };
   const parsed = assertOrderSnapshots([order]);
@@ -335,9 +375,29 @@ test('order export needs real nonempty persisted orders, lines and consistent mo
   for (const body of [
     [], [order, order], [{ ...order, lines: [] }],
     [{ ...order, totalNetMinor: 99 }],
+    [{ ...order, totalMinor: 999, totalNetMinor: 978 }],
+    [{ ...order, lines: [{ ...order.lines[0], totalMinor: 1, totalVatMinor: 0 }] }],
     [{ ...order, lines: [{ ...order.lines[0], quantity: 0 }] }],
     [{ ...order, lines: [{ ...order.lines[0], productId: '' }] }],
   ]) {
     assert.throws(() => assertOrderSnapshots(body), /FAIL order-export:/u);
+  }
+});
+
+test('order reconciliation handles fractional quantities, net or gross unit prices, and gross shipping', () => {
+  for (const [pricesIncludeVat, lineGross, lineVat] of [[false, 184, 32], [true, 152, 26]] as const) {
+    const line = { productId: 'p', sku: 'SKU', quantity: 1.5, unitPriceMinor: 101, vatRate: 21,
+      totalMinor: lineGross, totalVatMinor: lineVat };
+    const order = { id: 'o', number: 'OBJ', currencyCode: 'CZK', pricesIncludeVat, lines: [line],
+      shipping: { method: 'PPL', label: 'PPL', priceMinor: 121, vatRate: 21 },
+      totalMinor: lineGross + 121, totalVatMinor: lineVat + 21, totalNetMinor: lineGross - lineVat + 100 };
+    assert.doesNotThrow(() => assertOrderSnapshots([order]));
+    for (const wrong of [
+      { ...order, pricesIncludeVat: !pricesIncludeVat },
+      { ...order, lines: [{ ...line, totalVatMinor: lineVat - 1 }] },
+      { ...order, shipping: { ...order.shipping, vatRate: 0 } },
+      { ...order, shipping: undefined },
+      { ...order, totalMinor: lineGross, totalVatMinor: lineVat, totalNetMinor: lineGross - lineVat },
+    ]) assert.throws(() => assertOrderSnapshots([wrong]), /FAIL order-export:/u);
   }
 });

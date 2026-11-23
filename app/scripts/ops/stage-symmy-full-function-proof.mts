@@ -54,6 +54,8 @@ import {
   CustomerGroupDetailResponseSchema,
 } from '../../verticals/commerce-customer-context/shared/apis/customer-group-detail.ts';
 import { RecordsRequestSchema } from '../../verticals/merchandise/shared/apis/records.ts';
+import { SymmyDemoOrderSchema } from '../../apps/shell-super-app/api/symmy/demo-orders-contract.ts';
+import { fullOrderTotals, lineGrossMinor, orderLineVatMinor, vatInGrossMinor } from '../../verticals/merchandise/shared/domain/order-totals.ts';
 
 const text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const uuid = Schema.String.check(Schema.isUUID());
@@ -670,12 +672,15 @@ async function proveCustomers(
   ensure(isDeepStrictEqual(page, await read()), 'customer-replay', 'readback');
   return { names, address, customers };
 }
+const orderFields = SymmyDemoOrderSchema.fields;
+const lineFields = orderFields.lines.value.fields;
 const OrderSchema = Schema.Struct({
-  id: text, number: text, currencyCode: text, totalMinor: Schema.Int, totalVatMinor: Schema.Int,
-  totalNetMinor: Schema.Int,
+  id: text, number: text, currencyCode: orderFields.currencyCode, pricesIncludeVat: orderFields.pricesIncludeVat,
+  shipping: orderFields.shipping, totalMinor: orderFields.totalMinor, totalVatMinor: orderFields.totalVatMinor,
+  totalNetMinor: orderFields.totalNetMinor,
   lines: Schema.NonEmptyArray(Schema.Struct({
-    productId: text, sku: text, unitPriceMinor: Schema.Int,
-    quantity: Schema.Finite, totalMinor: Schema.Int, totalVatMinor: Schema.Int,
+    productId: text, sku: text, unitPriceMinor: lineFields.unitPriceMinor, vatRate: lineFields.vatRate,
+    quantity: lineFields.quantity, totalMinor: lineFields.totalMinor, totalVatMinor: lineFields.totalVatMinor,
   })),
 });
 /** Pure check of persisted monetary snapshots; PII fields are deliberately not part of this decoder. */
@@ -683,12 +688,15 @@ export function assertOrderSnapshots(body: unknown): readonly typeof OrderSchema
   const orders = decode(Schema.Array(OrderSchema), body, 'order-export');
   ensure(orders.length > 0 && new Set(orders.map((order) => order.id)).size === orders.length, 'order-export', 'readback');
   for (const order of orders) {
+    const totals = fullOrderTotals(order);
     ensure(
-      order.totalMinor >= 0 && order.totalVatMinor >= 0 &&
-      order.totalNetMinor + order.totalVatMinor === order.totalMinor &&
-      order.lines.every((line) =>
-        line.quantity > 0 && line.unitPriceMinor >= 0 &&
-        line.totalMinor >= line.totalVatMinor && line.totalVatMinor >= 0),
+      order.totalMinor === totals.totalMinor && order.totalVatMinor === totals.totalVatMinor &&
+      order.totalNetMinor === totals.totalMinor - totals.totalVatMinor &&
+      order.lines.every((line) => {
+        const gross = lineGrossMinor(line, order.pricesIncludeVat);
+        const vat = order.pricesIncludeVat ? vatInGrossMinor(gross, line.vatRate) : orderLineVatMinor(line);
+        return line.totalMinor === gross && line.totalVatMinor === vat;
+      }),
       'order-export', 'readback',
     );
   }
@@ -1300,7 +1308,7 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
       const gateway = decode(Schema.Struct({
         apiBaseUrl: Schema.String,
         compositionRevision: Schema.String,
-        token: Schema.Redacted(Schema.String),
+        token: Schema.RedactedFromValue(Schema.NonEmptyString),
       }), (await request(OPERATOR_GATEWAY_PATH, 'POST', {
         ...scope, compositionRevision,
       }, undefined, boundary, { kind: 'operator' })).body, boundary);

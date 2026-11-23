@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import { Redacted, Schema } from 'effect';
-import { SymmyDemoOrdersResponseSchema } from '../../apps/shell-super-app/api/symmy/demo-orders-contract.ts';
+import { GatewayAuthenticationRequiredProblemSchema } from '@app/shared-contracts';
+import {
+  SymmyDemoOrderNotFoundProblemSchema, SymmyDemoOrdersResponseSchema,
+} from '../../apps/shell-super-app/api/symmy/demo-orders-contract.ts';
 
 /** Symmy is served by the shared stage Shell, not the AKROS storefront or the N1 application. */
 export const AKROS_SYMMY_STAGE_ORIGIN = 'https://ontos-stage.web-revolution.cz';
@@ -79,9 +82,9 @@ export const loadSymmyNegativeProofConfig = async (
   return { origin, apiKey: Redacted.make(key) };
 };
 
-const readBoundedJson = async (response: Response): Promise<unknown> => {
+const readBoundedJson = async (response: Response, check: Check): Promise<unknown> => {
   const reader = response.body?.getReader();
-  if (reader === undefined) return fail('orders-list', 'response_invalid', response.status);
+  if (reader === undefined) return fail(check, 'response_invalid', response.status);
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
@@ -91,7 +94,7 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
       size += part.value.byteLength;
       if (size > maxResponseBytes) {
         await reader.cancel();
-        return fail('orders-list', 'response_invalid', response.status);
+        return fail(check, 'response_invalid', response.status);
       }
       chunks.push(part.value);
     }
@@ -104,7 +107,7 @@ const readBoundedJson = async (response: Response): Promise<unknown> => {
     const decoded: unknown = JSON.parse(new TextDecoder().decode(bytes));
     return decoded;
   } catch {
-    return fail('orders-list', 'response_invalid', response.status);
+    return fail(check, 'response_invalid', response.status);
   } finally {
     reader.releaseLock();
   }
@@ -159,11 +162,21 @@ export const runSymmyNegativeProof = async (
     { check: 'missing-order', path: `/orders/${missingId}`, authenticated: true, status: 404 },
   ] satisfies readonly { readonly check: Check; readonly path: string; readonly authenticated: boolean; readonly status: number }[]) {
     const response = await request(check, path, authenticated, status);
-    await response.body?.cancel();
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (mime !== 'application/problem+json' ||
+        (!authenticated && response.headers.get('www-authenticate') !== 'ApiKey realm="ontos-gateway"')) {
+      await response.body?.cancel();
+      return fail(check, 'response_invalid', response.status);
+    }
+    const problem = await readBoundedJson(response, check);
+    const expectedProblem = check === 'missing-order' ? SymmyDemoOrderNotFoundProblemSchema : GatewayAuthenticationRequiredProblemSchema;
+    if (!Schema.is(expectedProblem)(problem)) {
+      return fail(check, 'response_invalid', response.status);
+    }
     writeLine(`PASS ${check} status=${String(response.status)}`);
   }
   const response = await request('orders-list', '/orders?limit=1&offset=0', true, 200);
-  const raw = await readBoundedJson(response);
+  const raw = await readBoundedJson(response, 'orders-list');
   let page: typeof SymmyDemoOrdersResponseSchema.Type;
   try {
     page = Schema.decodeUnknownSync(SymmyDemoOrdersResponseSchema)(raw);
