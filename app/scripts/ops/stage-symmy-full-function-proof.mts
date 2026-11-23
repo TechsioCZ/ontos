@@ -421,7 +421,7 @@ export async function proveSymmyProductStockList(
       businessCode: proof.names.list, code: proof.names.list,
       description: `${proof.names.prefix} acceptance price list`,
       effectiveFrom: startsAt, name: proof.names.list,
-      purpose: 'Scoped Symmy HTTP acceptance price list',
+      purpose: `Scoped Symmy HTTP acceptance price list ${proof.names.prefix}`,
     }],
   };
   validatePayload(SymmyPriceListsBatchRequestSchema, listBody, 'price-list-import');

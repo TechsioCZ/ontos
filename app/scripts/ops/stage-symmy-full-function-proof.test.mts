@@ -30,6 +30,7 @@ import {
   symmyNativeResultLine,
 } from './stage-symmy-full-function-proof.mts';
 import type { SymmyProofClient } from './stage-symmy-full-function-proof.mts';
+import { SymmyPriceListsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/price-lists-batch-upsert-request-contract.ts';
 import {
   SymmyDemoCategoriesBatchRequestSchema,
   SymmyDemoProductsBatchRequestSchema,
@@ -133,7 +134,7 @@ test('one product job item carries all owner effects and retains its identity on
   assert.equal(pageReads, 3);
 });
 
-test('price-list readback waits for the scheduled group to become current', async () => {
+test('a fresh price-list meaning becomes current before readback', async () => {
   const config = readSymmyProofConfig({ SYMMY_API_KEY: 'synthetic-key' });
   let productReads = 0;
   let prefix = '';
@@ -166,9 +167,14 @@ test('price-list readback waits for the scheduled group to become current', asyn
         variantSources: [{ sourceRecordId: `variant:variantId:${prefix}_VARIANT`, variantId: effectId }],
       }] };
     },
-    async write(path) {
+    async write(path, body) {
       if (path.endsWith('/inventory/stock/batch')) return result(['commerce.inventory']);
-      if (path.endsWith('/price-lists/batch-upsert')) return result(['pricing.price-group-catalog']);
+      if (path.endsWith('/price-lists/batch-upsert')) {
+        const request = Schema.decodeUnknownSync(SymmyPriceListsBatchRequestSchema)(body);
+        const [list] = request.priceLists;
+        assert.ok(list !== undefined && list.purpose.includes(prefix));
+        return result(['pricing.price-group-catalog']);
+      }
       return result(['commerce.catalog', 'commerce.catalog', 'commerce.pricing']);
     },
     async settle(response, expected, boundary) {
