@@ -21,6 +21,7 @@ import {
   gatewayRegisteredWorkerOperationContractAllows,
 } from './gateway-delegation-policy.ts';
 import type { GatewayModuleBinding, GatewayRegisteredWorkloadRule } from './gateway-delegation-policy.ts';
+import { registeredAssertionPrincipalEligibility } from './gateway-registered-assertion.ts';
 
 type RecoverySubject = Extract<GatewayDelegationRequestPayload['subject'], { readonly _tag: 'RegisteredRecovery' }>;
 type RecoverySource = RecoverySubject['source'];
@@ -67,6 +68,26 @@ const systemRowsSchema = Schema.Array(
     principalId: TrustedPrincipalContextSchema.fields.principalId,
   }),
 );
+
+/** Recovery uses the same native executor selection as fresh registered calls; it does not adopt arbitrary services. */
+export const registeredRecoveryReceiverStatement = (input: {
+  readonly tenantId: string;
+  readonly legalEntityId: string | undefined;
+  readonly workloadKey: string;
+}) => sql`
+        select receiver.principal_id as "principalId", receiver.incarnation as "bindingIncarnation"
+        from core.access_workload_bindings receiver
+        join core.principals receiver_principal
+          on receiver_principal.tenant_id=receiver.tenant_id
+          and receiver_principal.principal_id=receiver.principal_id and receiver_principal.status='active'
+        join core.tenants t on t.tenant_id=receiver.tenant_id and t.status='active'
+        where receiver.tenant_id=${input.tenantId}::uuid
+          and receiver.workload_key=${input.workloadKey} and receiver.status='active'
+          and (${input.legalEntityId ?? null}::uuid is null or exists(
+            select 1 from core.legal_entities l where l.tenant_id=t.tenant_id
+              and l.legal_entity_id=${input.legalEntityId ?? null}::uuid and l.status='active'))
+          and ${registeredAssertionPrincipalEligibility({ ...input, side: 'receiver' })}
+        limit 2`;
 
 type SourceRow = (typeof sourceRowsSchema.Type)[number];
 
@@ -426,14 +447,11 @@ export const admitRegisteredGatewayRecovery = Effect.fn('GatewayDelegation.admit
           }
           const systems = yield* transaction
             .execute(
-              sql`
-        select b.principal_id as "principalId", b.incarnation as "bindingIncarnation"
-        from core.access_workload_bindings b
-        join core.principals p on p.tenant_id=b.tenant_id and p.principal_id=b.principal_id and p.kind='system' and p.status='active'
-        join core.tenants t on t.tenant_id=b.tenant_id and t.status='active'
-        where b.tenant_id=${proof.tenantId}::uuid and b.workload_key=${rule.workloadKey} and b.status='active'
-          and (${proof.legalEntityId ?? null}::uuid is null or exists(select 1 from core.legal_entities l where l.tenant_id=t.tenant_id and l.legal_entity_id=${proof.legalEntityId ?? null}::uuid and l.status='active'))
-        limit 2`,
+              registeredRecoveryReceiverStatement({
+                tenantId: proof.tenantId,
+                legalEntityId: proof.legalEntityId,
+                workloadKey: rule.workloadKey,
+              }),
               'objects',
             )
             .pipe(
