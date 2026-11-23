@@ -635,6 +635,74 @@ const pricingOwnerMock = (
     : undefined;
 };
 
+const sourceLookupResponse = (request: Request, lookupProductId: string) =>
+  request
+    .clone()
+    .json()
+    .then((body: { readonly entityKind: string; readonly locale?: string; readonly recordId: string }) => {
+      const owned = { ...productRef, resourceId: lookupProductId };
+      const item = {
+        entityKind: body.entityKind,
+        originalActionInvocationId: invocationId,
+        product: {
+          ...result.product,
+          productRef: owned,
+          variants: result.product.variants.map((variant) => ({ ...variant, productRef: owned })),
+        },
+        source: sourceCorrelation,
+        variantId: body.recordId === furtherVariantRecordId ? furtherVariantId : variantId,
+        variantSources: [],
+      };
+      if (body.locale !== undefined) {
+        Object.assign(item, { localized: currentSourceText });
+      }
+      return Response.json({ items: [item], outcome: 'FOUND' });
+    });
+/** The SKU the Variant already holds, and the code another Variant of the Tenant holds. */
+const heldSku = 'DIN933-M8x40-ZN';
+const takenSku = 'TAKEN-1';
+/** Catalog's SKU assignment: a code the Variant holds is no change, a code another Variant holds is a conflict. */
+const skuAssignmentResponse = (request: Request) =>
+  request
+    .clone()
+    .json()
+    .then((body: { readonly code: string }) =>
+      body.code === takenSku
+        ? Response.json(
+            {
+              _tag: 'AssignSkuActionConflictProblem',
+              code: 'sku_action_conflict',
+              detail: 'The Action conflicts with current state.',
+              status: 409,
+              title: 'Action conflict',
+              type: 'https://ontos.dev/problems/action-conflict',
+            },
+            { headers: { 'content-type': 'application/problem+json' }, status: 409 },
+          )
+        : Response.json({ changed: body.code !== heldSku, revision: 1 }),
+    );
+/**
+ * The Catalog source lookup (with the record's current text when it names a locale), the localized facts writes and
+ * recoveries, which answer one new revision of the text, and the SKU assignment.
+ */
+const catalogOwnerMock = (request: Request, lookupProductId: string) => {
+  if (request.url.includes('/actions/assign-sku')) {
+    return { event: 'owner-write', response: skuAssignmentResponse(request) };
+  }
+  if (request.url.includes('/reads/assign-sku-recovery')) {
+    return { event: 'owner-recovery', response: Promise.resolve(Response.json({ changed: true, revision: 1 })) };
+  }
+  if (request.url.includes('localized-facts')) {
+    return {
+      event: request.url.includes('/reads/') ? 'owner-recovery' : 'owner-write',
+      response: Promise.resolve(Response.json({ changed: true, revision: currentSourceText.revision + 1 })),
+    };
+  }
+  return request.url.includes('/reads/catalog-source-products')
+    ? { event: 'owner-source-read', response: sourceLookupResponse(request, lookupProductId) }
+    : undefined;
+};
+
 const provisionRef = (resourceType: string, resourceId: string) => ({
   moduleId: 'commerce.inventory',
   resourceId,
@@ -927,10 +995,16 @@ const harness = (
   };
   const adapter = makeSymmyCatalogPricingInventoryAdapters.pipe(
     Effect.flatMap((adapters) => {
-      const found = adapters.find(
-        ({ operation }) => operation.entrypointKey === selectedEffect.ref.operation.entrypointKey,
+      const matches = adapters.filter(
+        ({ operation }) =>
+          operation.moduleId === selectedEffect.ref.operation.moduleId &&
+          operation.entrypointKey === selectedEffect.ref.operation.entrypointKey &&
+          operation.schemaVersion === selectedEffect.ref.operation.schemaVersion,
       );
-      return found === undefined ? Effect.die('Missing internal adapter') : Effect.succeed(found);
+      const [found] = matches;
+      return matches.length === 1 && found !== undefined
+        ? Effect.succeed(found)
+        : Effect.die('Expected one native owner adapter');
     }),
   );
   const provide = <A, E>(program: Effect.Effect<A, E, Crypto.Crypto>) =>
@@ -2504,6 +2578,36 @@ describe('Symmy commands on the Product the same job creates', () => {
     }),
   );
 
+  it.effect(
+    'recovers committed Product text and Variant SKU from the respective owner receipt without another write',
+    () =>
+      Effect.gen(function* recoverSourceCommands() {
+        const initial = yield* resolutionOf(skuEffectOf('ERP-NEW-SAMPLE'), [parentState]);
+        expect(Exit.isSuccess(initial.exit) && initial.exit.value.status).toBe('accepted_change');
+        const sku = initial.h.resolvedEffects[0];
+        if (sku === undefined) return yield* Effect.die('Missing resolved SKU');
+        for (const [selected, path] of [
+          [sku, '/reads/assign-sku-recovery'],
+          [resolvedProductTextOf({ name: 'Sample' }), '/reads/set-product-localized-facts-recovery'],
+        ] as const) {
+          const h = harness(false, selected);
+          yield* h.provide(
+            Effect.gen(function* recover() {
+              const adapter = yield* h.adapter;
+              const proof = yield* originalProof(h.input);
+              const recovered = yield* adapter.recover({
+                ...proof,
+                canExecuteNewEffects: false,
+                originalInvocationId: invocationId,
+              });
+              expect(recovered).toMatchObject({ status: 'settled', outcome: { status: 'accepted_change' } });
+              expect(h.requests.filter((request) => request.url.includes(path))).toHaveLength(1);
+              expect(h.events).not.toContain('owner-write');
+            }),
+          );
+        }
+      }),
+  );
   it.effect('reports the SKU the Variant holds as no change and a code another Variant holds as a conflict', () =>
     Effect.gen(function* skuOutcomes() {
       const unchanged = yield* resolutionOf(skuEffectOf(heldSku), [parentState]);

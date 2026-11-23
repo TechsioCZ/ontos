@@ -57,6 +57,43 @@ describe('Symmy finite internal owner intent contracts', () => {
       expect(encoded).toEqual(wire);
     }),
   );
+  it.effect('decodes only source-qualified Variant SKU assignments and evidenced Product text', () =>
+    Effect.gen(function* sourceCommands() {
+      const tenantId = '10000000-0000-4000-8000-000000000001';
+      const resourceId = '10000000-0000-4000-8000-000000000002';
+      const baseSku = {
+        code: 'ERP-SAMPLE',
+        evidenceRefs: ['symmy:product'],
+        expectedRevision: 0,
+        reason: 'ERP source',
+        target: { kind: 'VARIANT', tenantId, variantId: resourceId },
+      };
+      const sku = { _tag: 'CatalogAssignVariantSku', payload: { ...baseSku, sourceCorrelation } };
+      const text = {
+        _tag: 'CatalogSetProductLocalizedFacts',
+        payload: {
+          evidenceRefs: ['symmy:product'],
+          expectedRevision: 0,
+          facts: { name: 'Sample' },
+          locale: 'en',
+          productRef: { moduleId: 'commerce.catalog', resourceId, resourceType: 'commerce.catalog.product', tenantId },
+          reason: 'ERP source',
+        },
+      };
+      expect(yield* decode(sku)).toEqual(sku);
+      expect(yield* decode(text)).toEqual(text);
+      for (const invalid of [
+        { ...sku, payload: baseSku },
+        {
+          ...sku,
+          payload: { ...sku.payload, target: { kind: 'PACKAGE_OPTION', tenantId, packageDefinitionId: resourceId } },
+        },
+        { ...text, payload: { ...text.payload, evidenceRefs: [] } },
+      ]) {
+        expect(Exit.isFailure(yield* Effect.exit(decode(invalid)))).toBe(true);
+      }
+    }),
+  );
   it.effect('preserves explicit source Product and initial Variant identity without adding lifecycle defaults', () =>
     Effect.gen(function* test() {
       const result = yield* decode({

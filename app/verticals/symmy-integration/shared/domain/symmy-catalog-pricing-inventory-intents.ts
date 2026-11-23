@@ -240,5 +240,20 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('CatalogReadinessUnit', { payload: SetProductUnitTargetDivisibilityPayloadSchema }),
   Schema.TaggedStruct('CatalogReadinessUntyped', { payload: DecideProductTypeUnnecessaryPayloadSchema }),
   Schema.TaggedStruct('CatalogAddProductCategoryAssignment', { payload: AddProductCategoryAssignmentPayloadSchema }),
+  Schema.TaggedStruct('CatalogSetProductLocalizedFacts', {
+    payload: SetProductLocalizedFactsPayloadSchema.check(
+      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || localizedEvidenceRequired),
+    ),
+  }),
+  /** A Variant SKU from the source route: always for one Variant and always naming its source record. */
+  Schema.TaggedStruct('CatalogAssignVariantSku', {
+    payload: AssignSkuPayloadSchema.check(
+      Schema.makeFilter(
+        ({ sourceCorrelation, target }) =>
+          (sourceCorrelation !== undefined && target.kind === 'VARIANT') ||
+          'A source SKU names one Variant and its source record',
+      ),
+    ),
+  }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;
