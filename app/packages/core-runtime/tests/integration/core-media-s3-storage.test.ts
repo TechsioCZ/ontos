@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { NodeCrypto } from '@effect/platform-node';
-import { Config, ConfigProvider, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
 import type { Scope } from 'effect';
 import { Hex } from 'effect/encoding';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
@@ -18,12 +18,12 @@ import {
   ObjectStorageTimeout,
 } from '../../src/media/object-storage.ts';
 import type { ObjectStorageFailure, ObjectStorageService } from '../../src/media/object-storage.ts';
-import { ObjectStorageConfigError, loadS3ObjectStorageConfig } from '../../src/media/s3-config.ts';
 import type { S3ObjectStorageConfigValue } from '../../src/media/s3-config.ts';
 import { makeS3ObjectStorage } from '../../src/media/s3-object-storage.ts';
 import { EMPTY_PAYLOAD_SHA256, signS3Request } from '../../src/media/s3-signing.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { verifyStoredMediaObject } from '../../src/media/verification.ts';
+import { emulatorConfig } from '../support/s3-emulator-config.ts';
 import { loopbackOrigin, startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import type { S3FaultProxy } from '../support/s3-fault-proxy.ts';
 
@@ -36,41 +36,10 @@ import type { S3FaultProxy } from '../support/s3-fault-proxy.ts';
  * here proves R2: its rows stay NOT VERIFIED until a real endpoint is configured and run by its owner.
  */
 
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 /**
  * The settings of the emulator. With none supplied the test is SKIPPED (never passed); a supplied endpoint that is
  * not loopback fails the suite instead of being written to.
  */
-const configuredEndpoint = Config.schema(Schema.Trim, 'CORE_MEDIA_S3_ENDPOINT').pipe(
-  Config.option,
-  Config.map(Option.filter((value) => value.length > 0)),
-);
-
-const emulatorConfig = (ctx: { readonly skip: () => void }) =>
-  // Skipped only when no endpoint is configured at all. The loader reads its settings concurrently, so which missing
-  // setting it reports first is not stable; the endpoint is therefore judged here, and a partial or malformed
-  // configuration beside a configured endpoint fails the test.
-  configuredEndpoint.parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true })).pipe(
-    Effect.orDie,
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.sync(() => ctx.skip()).pipe(Effect.andThen(Effect.never)),
-        onSome: () =>
-          loadS3ObjectStorageConfig({
-            // The root environment file is deliberately not consulted: a test must never pick up a real provider.
-            envPath: '/nonexistent/core-media-s3-test.env',
-          }).pipe(
-            Effect.filterOrFail(
-              (settings) => LOOPBACK.has(settings.endpoint.hostname),
-              () =>
-                new ObjectStorageConfigError({ reason: 'The S3 integration suite writes only to a loopback emulator' }),
-            ),
-            Effect.orDie,
-          ),
-      }),
-    ),
-  );
-
 const MIB = 1024 * 1024;
 const encoder = new TextEncoder();
 const digestOf = (bytes: Uint8Array) => Hex.encode(sha256(bytes));
