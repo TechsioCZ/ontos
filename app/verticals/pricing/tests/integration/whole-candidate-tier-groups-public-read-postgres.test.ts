@@ -42,15 +42,21 @@ const catalogMaterialCount = (fences: readonly HarnessFenceObservation[], kind: 
     .flatMap(({ materialKinds }) => materialKinds)
     .filter((materialKind) => materialKind === kind).length;
 
+const pricePurchase = (
+  harness: PublicPricingReadHarness,
+  lines: Parameters<PublicPricingReadHarness['makeRequest']>[0]['lines'],
+  subject: NonNullable<Parameters<PublicPricingReadHarness['makeRequest']>[0]['subject']>,
+) =>
+  Effect.gen(function* pricePurchaseProgram() {
+    const operationTime = DateTime.formatIso(yield* DateTime.now);
+    const request = yield* harness.makeRequest({ lines, operationTime, subject });
+    return yield* harness.runRegisteredRead(request);
+  });
+
 const priceProfilePurchase = (
   harness: PublicPricingReadHarness,
   lines: Parameters<PublicPricingReadHarness['makeRequest']>[0]['lines'],
-) =>
-  Effect.gen(function* priceProfilePurchaseProgram() {
-    const operationTime = DateTime.formatIso(yield* DateTime.now);
-    const request = yield* harness.makeRequest({ lines, operationTime, subject: 'PROFILE' });
-    return yield* harness.runRegisteredRead(request);
-  });
+) => pricePurchase(harness, lines, 'PROFILE');
 
 it.live(
   'prices mixed and Tier-non-equivalent purchases through the registered public Read and refuses a stale Catalog proof',
@@ -123,6 +129,10 @@ it.live(
           expect(
             catalogMaterialCount(harness.fenceCalls.slice(fencesBeforeSameProduct), 'CATALOG_LINE_AUTHORITY'),
           ).toBe(2);
+          // Distinct exact Prices form two single-member Tier groups, so Catalog equivalence is never asked.
+          expect(
+            catalogMaterialCount(harness.fenceCalls.slice(fencesBeforeSameProduct), 'CATALOG_EQUIVALENCE_AUTHORITY'),
+          ).toBe(0);
           expect(publishedAmounts(sameProduct)).toEqual([
             ['P-variant-first', String(BASE_PRICE + FEE)],
             ['P-variant-second', String(BASE_PRICE - DISCOUNT + FEE)],
@@ -196,6 +206,61 @@ it.live(
           expect(harness.wholeAttempts.slice(attemptsBeforeFresh).map(({ kind }) => kind)).toEqual([
             'READY_FOR_FINAL_PUBLICATION',
           ]);
+        }).pipe(Effect.provideContext(context));
+      }),
+    ),
+  900_000,
+);
+
+// F1: every occurrence of one Variant carries the Price Group Discount, and the Tier pools the whole group.
+it.live(
+  'applies the Price Group Discount to each occurrence of a Tier-pooled equal-Variant group and only to that audience',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* perOccurrenceDiscount() {
+        const nativeClock = yield* Clock.Clock;
+        const context = yield* Layer.build(publicPricingReadHarnessServices);
+        yield* Effect.gen(function* scenario() {
+          const harness = yield* startPublicPricingReadHarness({ nativeClock });
+          const { p1 } = harness.handoffs;
+          yield* harness.produceCommercialFee({ amount: String(FEE), handoff: p1 });
+          yield* harness.produceContractualDiscount({ amount: String(DISCOUNT), handoff: p1 });
+          const lines = [
+            { handoff: p1, occurrenceId: 'P-first' },
+            { handoff: p1, occurrenceId: 'P-second' },
+          ];
+
+          const attemptsBefore = harness.wholeAttempts.length;
+          const discounted = yield* priceProfilePurchase(harness, lines);
+          // The owner evaluation's own attempt names a cause that the customer-safe projection hides.
+          expect(harness.wholeAttempts.slice(attemptsBefore)).toMatchObject([{ kind: 'READY_FOR_FINAL_PUBLICATION' }]);
+          const perOccurrence = TIER_PRICE - DISCOUNT + FEE;
+          expect(perOccurrence * 2).toBe(136);
+          expect(discounted).toMatchObject({
+            candidate: { occurrenceIds: ['P-first', 'P-second'] },
+            outcome: 'PRICE_RESOLVED',
+            result: { total: { amount: String(perOccurrence * 2), currencyCode: 'CZK' } },
+          });
+          expect(publishedAmounts(discounted)).toEqual([
+            ['P-first', String(perOccurrence)],
+            ['P-second', String(perOccurrence)],
+          ]);
+
+          // Audience controls: the same purchase for a Guest and for a Profile in another Price Group gets no Discount.
+          const withoutDiscount = TIER_PRICE + FEE;
+          for (const subject of ['GUEST', 'OTHER_GROUP_PROFILE'] as const) {
+            const control = yield* pricePurchase(harness, lines, subject);
+            expect(control).toMatchObject({
+              candidate: { occurrenceIds: ['P-first', 'P-second'] },
+              outcome: 'PRICE_RESOLVED',
+              result: { total: { amount: String(withoutDiscount * 2), currencyCode: 'CZK' } },
+            });
+          }
+          expect(
+            harness.priceGroupRequests.some(
+              ({ profile }) => profile.resourceId === harness.otherGroupProfileSubject.profileRef.resourceId,
+            ),
+          ).toBe(true);
         }).pipe(Effect.provideContext(context));
       }),
     ),
