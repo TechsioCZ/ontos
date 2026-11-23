@@ -1,6 +1,7 @@
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
+import { planAdditiveCompanyInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 
 import {
   buildSymmyDemoCustomerRoutes,
@@ -19,6 +20,7 @@ import {
   symmyDemoReceiverCandidates,
   symmyDemoReceiverWorkloadsForPhase,
   symmyDemoDiscoveryFailure,
+  symmyDemoCustomerInternalWorkloadDeclarations,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
@@ -28,6 +30,49 @@ const identities = {
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
 };
+
+it('plans exactly seven canonical AKROS company registrations without retiring unrelated platform jobs', () => {
+  const tenantId = SYMMY_DEMO_CUSTOMER_TENANT;
+  const legalEntityId = SYMMY_DEMO_CUSTOMER_COMPANY;
+  const foreignCompany = '72000000-0000-4000-8000-000000000099';
+  const plan = planAdditiveCompanyInternalWorkloads(
+    {
+      tenantId,
+      activeCompanies: new Set([legalEntityId, foreignCompany]),
+      activeModuleKeys: new Set(symmyDemoCustomerInternalWorkloadDeclarations.map(({ moduleKey }) => moduleKey)),
+      companyNames: new Map([[legalEntityId, 'AKROS']]),
+      registrations: [
+        {
+          principalId: identities.partyWriterId,
+          legalEntityId: foreignCompany,
+          workloadKey: 'demo.crm.party-intake',
+          principalStatus: 'active',
+          displayName: 'Existing CRM',
+          activeWorkloadBindingId: identities.partyWriterId,
+          activeCompanyBindingId: identities.partyReaderId,
+          companyBindingCount: 1,
+          workloadBindingCount: 1,
+          extraCompanyBindingIds: [],
+        },
+      ],
+    },
+    symmyDemoCustomerInternalWorkloadDeclarations,
+    legalEntityId,
+  );
+  expect(plan.registered).toBe(7);
+  expect(plan.retired).toBe(0);
+  for (const unit of plan.units) {
+    for (const step of unit.steps) {
+      expect(['create-principal', 'bind-workload', 'bind-company']).toContain(step.kind);
+      if (step.kind === 'create-principal') {
+        expect(step.legalEntityId).toBe(legalEntityId);
+        expect(step.principalId).toBe(
+          internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey: step.workloadKey }),
+        );
+      }
+    }
+  }
+});
 
 it('replaces all discovery causes with fixed phase codes and retains no raw cause', () => {
   for (const phase of ['integration-route', 'party-writer', 'commerce-writer', 'party-reader'] as const) {

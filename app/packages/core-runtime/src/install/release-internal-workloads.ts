@@ -528,3 +528,58 @@ export const registerReleaseInternalWorkloads = Effect.fn('ReleaseInternalWorklo
     { concurrency: 1 },
   );
 });
+
+/** Additive operator provisioning: no other tenant, company or workload participates in this plan. */
+export const planAdditiveCompanyInternalWorkloads = (
+  state: TenantWorkloadState,
+  declarations: readonly InternalWorkloadDeclaration[],
+  legalEntityId: string,
+) => {
+  const keys = new Set(declarations.map(({ workloadKey }) => workloadKey));
+  return planTenantInternalWorkloads(
+    {
+      ...state,
+      activeCompanies: new Set(state.activeCompanies.has(legalEntityId) ? [legalEntityId] : []),
+      registrations: state.registrations.filter(
+        (registration) => registration.legalEntityId === legalEntityId && keys.has(registration.workloadKey),
+      ),
+    },
+    declarations,
+  );
+};
+
+/** Uses the real release actor and writers, but never reconciles unrelated platform registrations. */
+export const registerAdditiveCompanyInternalWorkloads = Effect.fn('ReleaseInternalWorkloads.registerAdditiveCompany')(
+  function* registerAdditive(
+    database: AccessIntentDatabase,
+    input: {
+      readonly tenantId: string;
+      readonly legalEntityId: string;
+      readonly declarations: readonly InternalWorkloadDeclaration[];
+      readonly runReference: string;
+    },
+  ) {
+    const state = yield* readTenant(
+      input.tenantId,
+      input.declarations.map(({ workloadKey }) => workloadKey),
+    );
+    if (
+      !state.activeCompanies.has(input.legalEntityId) ||
+      input.declarations.some(({ moduleKey }) => !state.activeModuleKeys.has(moduleKey))
+    ) {
+      return yield* refusal('The requested company or owning module is not active');
+    }
+    const plan = planAdditiveCompanyInternalWorkloads(state, input.declarations, input.legalEntityId);
+    const scope = yield* releaseScopeOf(input.tenantId, input.runReference);
+    const writers = {
+      bindings: yield* AccessWorkloadBindingStore,
+      companies: yield* AccessWorkloadCompanyBindingStore,
+    };
+    const at = yield* DateTime.nowAsDate;
+    for (const unit of plan.units) {
+      const result = yield* performUnit(database, writers, scope, unit, at);
+      if (Result.isFailure(result)) return yield* result.failure;
+    }
+    return { registered: plan.registered, unchanged: plan.unchanged };
+  },
+);

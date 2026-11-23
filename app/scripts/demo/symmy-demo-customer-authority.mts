@@ -19,6 +19,7 @@
  * cannot reconfigure an already running owner. This script does not claim an end-to-end owner smoke passed.
  */
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
 import {
   makeSystemPrincipalContextResolver,
@@ -44,6 +45,12 @@ import { writeWorkloadCompanyBindings } from '../../packages/core-runtime/src/ac
 import { AccessWorkloadCompanyBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/company-store.ts';
 import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
+import { AccessReleaseStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
+import { AccessWorkloadBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
+import { AccessWorkloadCompanyBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
+import { CoreAdminDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { registerAdditiveCompanyInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import {
   accessWorkloadBindings,
   accessWorkloadCompanyBindings,
@@ -106,6 +113,50 @@ export const symmyDemoCustomerWorkloadRequirements = {
   integration: integrationWorkloads,
   existingSystemWriters: [partyWriter, sourceWriter],
 } as const;
+export const symmyDemoCustomerInternalWorkloadDeclarations = [
+  {
+    appId: 'party-registry',
+    moduleKey: 'party.registry',
+    workloadKey: 'party.registry.source-write',
+    label: 'Party source write',
+  },
+  {
+    appId: 'party-registry',
+    moduleKey: 'party.registry',
+    workloadKey: 'party.registry.source-read',
+    label: 'Party source read',
+  },
+  {
+    appId: 'privacy',
+    moduleKey: 'privacy.core',
+    workloadKey: 'privacy.core.source-processing-check',
+    label: 'Privacy source processing',
+  },
+  {
+    appId: 'privacy',
+    moduleKey: 'privacy.core',
+    workloadKey: 'privacy.core.organization-business-check',
+    label: 'Privacy organization business',
+  },
+  {
+    appId: 'privacy',
+    moduleKey: 'privacy.core',
+    workloadKey: 'privacy.core.organization-profile-ico-check',
+    label: 'Privacy organization ICO',
+  },
+  {
+    appId: 'commerce-customer-context',
+    moduleKey: 'commerce.customer-context',
+    workloadKey: 'commerce.customer-context.organization-ico-facts.read',
+    label: 'Commerce organization ICO facts',
+  },
+  {
+    appId: 'symmy-integration',
+    moduleKey: 'integration.symmy',
+    workloadKey: 'integration.symmy.source-organization-facts.read',
+    label: 'Symmy organization facts',
+  },
+] as const;
 
 export class SymmyDemoCustomerAuthorityError extends Schema.TaggedError<SymmyDemoCustomerAuthorityError>()(
   'SymmyDemoCustomerAuthorityError',
@@ -589,11 +640,61 @@ const AdminLive = Layer.unwrap(
 ).pipe(Layer.provide(Reactivity.layer));
 export const SymmyDemoCustomerAuthorityLive = AdminLive;
 
+const EnrollmentLive = Layer.unwrap(
+  Effect.gen(function* enrollmentLayer() {
+    const database = Layer.mergeAll(
+      CoreAdminDatabaseLive,
+      Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
+    );
+    return Layer.mergeAll(
+      database,
+      Layer.mergeAll(
+        AccessReleaseStoreLive,
+        AccessWorkloadBindingStoreLive,
+        AccessWorkloadCompanyBindingStoreLive,
+      ).pipe(Layer.provide(database)),
+    );
+  }),
+);
+
+/** Explicit additive administrative operation, restricted to the standing-approved AKROS stage source. */
+export const ensureSymmyDemoCustomerInternalWorkloads = Effect.gen(function* ensureWorkloads() {
+  if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage')
+    return yield* fail('Customer workload enrollment is restricted to stage');
+  const catalog = yield* Effect.tryPromise(() =>
+    readFile(new URL('../../topology/authorization-catalog.json', import.meta.url), 'utf8'),
+  ).pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Struct({ declaredWorkloadKeys: Schema.Array(Schema.String) })),
+      ),
+    ),
+  );
+  const declarations = [];
+  for (const declaration of symmyDemoCustomerInternalWorkloadDeclarations) {
+    if (!catalog.declaredWorkloadKeys.includes(declaration.workloadKey))
+      return yield* fail('Customer workload is absent from the reviewed authorization catalog');
+    const candidates = yield* readSymmyDemoSourceWriterCandidates(declaration.workloadKey);
+    const systems = candidates.filter(({ kind }) => kind === 'system');
+    if (systems.length > 1) return yield* fail('Customer workload has ambiguous legacy SYSTEM enrollment');
+    if (systems.length === 0) declarations.push(declaration);
+  }
+  const { executor } = yield* CoreDatabase;
+  return yield* registerAdditiveCompanyInternalWorkloads(
+    { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor },
+    { tenantId, legalEntityId, declarations, runReference: 'akros-stage-customer-enrollment' },
+  );
+}).pipe(
+  Effect.provide(EnrollmentLive),
+  Effect.mapError(() => fail('customer-workload-enrollment')),
+);
+
 /** Read this before starting Party. No composition, operator session, new identity or write is needed. */
 export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnvironment() {
   if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
     return yield* fail('Customer authority bootstrap is restricted to stage');
   }
+  yield* ensureSymmyDemoCustomerInternalWorkloads;
   const sql = yield* PgClient.PgClient;
   const [integration] = yield* sql`select principal_id as "principalId" from symmy_integration.job_routes
     where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}
@@ -637,6 +738,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
       return yield* fail('Customer authority bootstrap is restricted to stage');
     }
+    if (mode === 'apply') yield* ensureSymmyDemoCustomerInternalWorkloads;
     const { SymmyRouteExecutionConfigurationSchema, SymmyJobRetentionPolicySchema } = yield* Effect.tryPromise({
       catch: () => fail('The production Symmy source contracts could not be loaded'),
       try: () => import('@app/symmy-integration/symmy-internal-contracts'),
@@ -964,26 +1066,30 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
 
 const command = Command.make(
   'symmy-demo-customer-authority',
-  { mode: Flag.Literals('mode', ['apply', 'verify', 'environment']).pipe(Flag.withDefault('verify')) },
+  { mode: Flag.Literals('mode', ['apply', 'verify', 'environment', 'enroll']).pipe(Flag.withDefault('verify')) },
   ({ mode }) =>
-    mode === 'environment'
-      ? readSymmyDemoCustomerEnvironment.pipe(
-          Effect.flatMap(({ environment }) => Console.log(JSON.stringify(environment))),
+    mode === 'enroll'
+      ? ensureSymmyDemoCustomerInternalWorkloads.pipe(
+          Effect.flatMap((counts) => Console.log(JSON.stringify({ mode: 'enroll', ...counts }))),
         )
-      : bootstrapSymmyDemoCustomerAuthority(mode).pipe(
-          Effect.flatMap((result) =>
-            Console.log({
-              mode,
-              personalDataAuthority: result.personalDataAuthority,
-              routes: result.receipts.map(({ outcome, routeId, routeKey }) => ({ outcome, routeId, routeKey })),
-            }),
-          ),
-          Effect.mapError(() =>
-            fail(
-              'AKROS customer authority bootstrap did not converge; inspect retention, workloads and existing owner policy',
+      : mode === 'environment'
+        ? readSymmyDemoCustomerEnvironment.pipe(
+            Effect.flatMap(({ environment }) => Console.log(JSON.stringify(environment))),
+          )
+        : bootstrapSymmyDemoCustomerAuthority(mode).pipe(
+            Effect.flatMap((result) =>
+              Console.log({
+                mode,
+                personalDataAuthority: result.personalDataAuthority,
+                routes: result.receipts.map(({ outcome, routeId, routeKey }) => ({ outcome, routeId, routeKey })),
+              }),
+            ),
+            Effect.mapError(() =>
+              fail(
+                'AKROS customer authority bootstrap did not converge; inspect retention, workloads and existing owner policy',
+              ),
             ),
           ),
-        ),
 );
 
 if (import.meta.main) {

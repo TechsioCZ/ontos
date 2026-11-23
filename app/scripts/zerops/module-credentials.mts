@@ -51,6 +51,17 @@ export class ModuleCredentialHandoverError extends Schema.TaggedError<ModuleCred
  */
 export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> = new Map([
   ['crm', ['demo.crm.party-intake']],
+  ['party-registry', ['party.registry.source-write', 'party.registry.source-read']],
+  [
+    'privacy',
+    [
+      'privacy.core.source-processing-check',
+      'privacy.core.organization-business-check',
+      'privacy.core.organization-profile-ico-check',
+    ],
+  ],
+  ['commerce-customer-context', ['commerce.customer-context.organization-ico-facts.read']],
+  ['symmy-integration', ['integration.symmy.source-organization-facts.read']],
 ]);
 
 /**
@@ -60,6 +71,13 @@ export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> =
  */
 export const INTERNAL_WORKLOAD_LABELS: ReadonlyMap<string, string> = new Map([
   ['demo.crm.party-intake', 'CRM · zakládání klientů'],
+  ['party.registry.source-write', 'Party source write'],
+  ['party.registry.source-read', 'Party source read'],
+  ['privacy.core.source-processing-check', 'Privacy source processing'],
+  ['privacy.core.organization-business-check', 'Privacy organization business'],
+  ['privacy.core.organization-profile-ico-check', 'Privacy organization ICO'],
+  ['commerce.customer-context.organization-ico-facts.read', 'Commerce organization ICO facts'],
+  ['integration.symmy.source-organization-facts.read', 'Symmy organization facts'],
 ]);
 
 /**
