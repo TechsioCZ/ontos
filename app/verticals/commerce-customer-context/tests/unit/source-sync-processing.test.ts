@@ -36,8 +36,8 @@ const evidence = {
   operation: request.operation,
   source: request.source,
   target: request.target,
-  policyId: 'akros-symmy-source-sync',
-  policyRevision: 'v1',
+  policyId: 'akros-symmy-source-sync-v2',
+  policyRevision: 'v2',
   dataUse: 'SOURCE_CUSTOMER_SYNC',
   purpose: 'CUSTOMER_IMPORT',
   trustedDecisionTime: now,
@@ -47,7 +47,7 @@ const response = (change: Readonly<Record<string, unknown>> = {}, top: Readonly<
   Schema.decodeUnknownSync(SourceProcessingEligibilityResponseSchema)({
     outcome: 'ALLOWED',
     authorityIncarnation: evidence.policyId,
-    authorityRevision: 'v1',
+    authorityRevision: 'v2',
     evaluatedAt: now,
     evidence: { ...evidence, ...change },
     ...top,
@@ -149,7 +149,7 @@ for (const [name, alteredScope] of [
 }
 for (const [field, value] of [
   ['authorityIncarnation', 'different-policy'],
-  ['authorityRevision', 'v2'],
+  ['authorityRevision', 'v1'],
 ] as const) {
   it.effect(`rejects uncorrelated ${field}`, () =>
     Effect.gen(function* () {

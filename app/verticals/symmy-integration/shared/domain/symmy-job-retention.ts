@@ -9,11 +9,12 @@ import type { SymmyFixtureExecutionPlan } from './symmy-job-execution.ts';
 
 export const SYMMY_DEMO_MEMBERSHIP_RETENTION = {
   companyId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
+  enrollmentRouteId: 'f637a6ec-865b-43bc-9c28-57783757f367',
   issuer: 'symmy-akros',
   namespace: 'akros-erp',
   policyId: 'akros-symmy-memberships',
   revision: 'v1',
-  sourceRouteId: 'f637a6ec-865b-43bc-9c28-57783757f367',
+  sourceRouteId: '5a6fb39a-c26e-4186-9dc2-5e410210d36c',
   tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
 } as const;
 
@@ -32,7 +33,7 @@ export const SymmyJobRetentionPolicySchema = Schema.Struct({
     return (
       policy.routeFamily === undefined ||
       (policy.tenantId === demo.tenantId &&
-        policy.routeId === demo.sourceRouteId &&
+        policy.routeId === demo.enrollmentRouteId &&
         policy.governanceLegalEntityId === demo.companyId &&
         Option.getOrNull(policy.targetLegalEntityId) === demo.companyId &&
         policy.policyId === demo.policyId &&
@@ -62,7 +63,7 @@ export const symmyRetentionPolicyMatchesRoute = (policy: SymmyJobRetentionPolicy
   return (
     route.tenantId === demo.tenantId &&
     policy.tenantId === demo.tenantId &&
-    policy.routeId === demo.sourceRouteId &&
+    policy.routeId === demo.enrollmentRouteId &&
     route.legalEntityId === demo.companyId &&
     route.routeKey === 'customerGroupCustomersBatch' &&
     plan?.sourceRouteId === demo.sourceRouteId &&

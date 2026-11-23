@@ -20,6 +20,7 @@ import {
   SYMMY_DEMO_CUSTOMER_COMPANY,
   SYMMY_DEMO_CUSTOMER_TENANT,
   SYMMY_DEMO_GROUPS_ROUTE,
+  SYMMY_DEMO_GROUPS_SOURCE_ROUTE,
   symmyDemoCustomerEnvironment,
   symmyDemoNativeReaderNeedsEnrollment,
   symmyDemoCustomerRetentionRefs,
@@ -375,7 +376,7 @@ it.effect('enrolls a complete PERSON and ORGANIZATION plan with real contact/add
     expect(read?.configuration.sourceRouteId).toBe(SYMMY_DEMO_CUSTOMERS_ROUTE);
     expect(read?.lifecyclePolicy).toBeUndefined();
     const membership = routes.find(({ routeKey }) => routeKey === 'customerGroupCustomersBatch');
-    expect(membership?.configuration.sourceRouteId).toBe(SYMMY_DEMO_GROUPS_ROUTE);
+    expect(membership?.configuration.sourceRouteId).toBe(SYMMY_DEMO_GROUPS_SOURCE_ROUTE);
     expect(membership?.configuration.selector?.source.sourceRecordId).toBe(group.recordId);
     expect(membership?.configuration.selector?.target?.resourceId).toBe(group.groupId);
     expect(membership?.routeCode).toBe(group.code);
@@ -447,6 +448,10 @@ it.effect('authorizes the actual switched Privacy receiver, not merely upstream 
     const policy = yield* buildSymmySourceSyncProcessingPolicy(identities);
     expect(policy.callers).toContainEqual({ authMethod: 'system', principalId: identities.privacyReceiverId });
     expect(policy.callers).toHaveLength(4);
+    expect(policy.groupRouteId).toBe(SYMMY_DEMO_GROUPS_SOURCE_ROUTE);
+    expect(policy.groupRouteId).not.toBe(SYMMY_DEMO_GROUPS_ROUTE);
+    expect(policy.policyId).toBe('akros-symmy-source-sync-v2');
+    expect(policy.revision).toBe('v2');
   }),
 );
 

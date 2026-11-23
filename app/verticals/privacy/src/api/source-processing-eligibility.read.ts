@@ -894,7 +894,7 @@ export const sourceProcessingEligibilityRead = defineRead(
           and(
             eq(demoSourceProcessingPolicies.tenantId, scope.tenantId),
             eq(demoSourceProcessingPolicies.legalEntityId, scope.legalEntityId ?? ''),
-            eq(demoSourceProcessingPolicies.policyId, 'akros-symmy-source-sync'),
+            eq(demoSourceProcessingPolicies.policyId, 'akros-symmy-source-sync-v2'),
           ),
         )
         .pipe(Effect.mapError(sourceConfigurationUnavailable));

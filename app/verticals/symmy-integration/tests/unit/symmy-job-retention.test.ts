@@ -103,7 +103,7 @@ const demoFamilyPolicy = {
   retentionMs: 60_000,
   revision: demo.revision,
   routeFamily: 'DEMO_GROUP_MEMBERSHIP',
-  routeId: demo.sourceRouteId,
+  routeId: demo.enrollmentRouteId,
   targetLegalEntityId: demo.companyId,
   tenantId: demo.tenantId,
 };
@@ -165,6 +165,37 @@ it('authorizes new demo membership route IDs under one explicit source-family re
       routeId: '10000000-0000-4000-8000-000000000099',
     }),
   ).toBe(true);
+});
+
+it('keeps the physical retention policy while matching the enrolled logical group source', () => {
+  const policy = Schema.decodeUnknownSync(SymmyJobRetentionPolicySchema)(demoFamilyPolicy);
+  const route = demoRoute();
+  const logicalSource = '5a6fb39a-c26e-4186-9dc2-5e410210d36c';
+  const plan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+    ...route.fixturePlan,
+    sourceRouteId: logicalSource,
+    selector: {
+      ...route.fixturePlan.selector,
+      source: {
+        ...route.fixturePlan.selector?.source,
+        route: { integrationRouteId: logicalSource, tenantId: demo.tenantId },
+      },
+    },
+  });
+  expect(policy.routeId).toBe('f637a6ec-865b-43bc-9c28-57783757f367');
+  expect(symmyRetentionPolicyMatchesRoute(policy, { ...route, fixturePlan: plan })).toBe(true);
+  const physicalSourcePlan = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+    ...plan,
+    sourceRouteId: policy.routeId,
+    selector: {
+      ...plan.selector,
+      source: {
+        ...plan.selector?.source,
+        route: { integrationRouteId: policy.routeId, tenantId: demo.tenantId },
+      },
+    },
+  });
+  expect(symmyRetentionPolicyMatchesRoute(policy, { ...route, fixturePlan: physicalSourcePlan })).toBe(false);
 });
 
 it('uses the same family policy when bootstrapping or verifying a new membership route', () => {

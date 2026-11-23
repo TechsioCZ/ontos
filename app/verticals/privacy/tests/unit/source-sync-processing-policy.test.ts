@@ -27,14 +27,14 @@ const policy = Schema.decodeUnknownSync(SourceSyncProcessingPolicySchema)({
   customerRouteId: '5158ef08-7315-57e1-a9ed-b0fef8cd9ac1',
   dataUse: 'SOURCE_CUSTOMER_SYNC',
   effectiveFrom: '2026-11-23T00:00:00.000Z',
-  groupRouteId: 'f637a6ec-865b-43bc-9c28-57783757f367',
+  groupRouteId: '5a6fb39a-c26e-4186-9dc2-5e410210d36c',
   issuer: 'symmy-akros',
   legalEntityId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
   namespace: 'akros-erp',
-  policyId: 'akros-symmy-source-sync',
+  policyId: 'akros-symmy-source-sync-v2',
   purpose: 'CUSTOMER_IMPORT',
   reason: 'Operator-approved source synchronization',
-  revision: 'v1',
+  revision: 'v2',
   tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
   validUntil: '2026-12-23T00:00:00.000Z',
 });
@@ -377,3 +377,17 @@ it.effect('requires sealed intake actor, original admission, enrolled receiver a
     expect(yield* outcome(caller)).toBe('DENIED');
   }),
 );
+
+it('uses the enrolled logical group source and refuses the physical transport route as authority', () => {
+  const membership = Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema)({
+    ...request, consumerModuleId: 'commerce.customer-context', operation: 'customer-group-membership.write',
+    source: {
+      issuer: policy.issuer, namespace: policy.namespace, occurrenceId: 'new-membership',
+      recordId: 'source-membership', recordType: 'CUSTOMER_GROUP_MEMBERSHIP', routeRef: policy.groupRouteId,
+    },
+  });
+  expect(sourceSyncProcessingPolicyMatches(policy, membership, scope)).toBe(true);
+  expect(sourceSyncProcessingPolicyMatches(policy, {
+    ...membership, source: { ...membership.source, routeRef: 'f637a6ec-865b-43bc-9c28-57783757f367' },
+  }, scope)).toBe(false);
+});

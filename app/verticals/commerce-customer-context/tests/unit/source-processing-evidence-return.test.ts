@@ -47,8 +47,8 @@ const config = ConfigProvider.fromUnknown({ ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING
 const positive = (at: string) =>
   Schema.decodeUnknownSync(SourceProcessingEligibilityResponseSchema)({
     outcome: 'ALLOWED',
-    authorityIncarnation: 'akros-symmy-source-sync',
-    authorityRevision: 'v1',
+    authorityIncarnation: 'akros-symmy-source-sync-v2',
+    authorityRevision: 'v2',
     evaluatedAt: at,
     evidence: {
       _tag: 'SOURCE_SYNC_PROCESSING_POLICY',
@@ -56,8 +56,8 @@ const positive = (at: string) =>
       purpose: 'CUSTOMER_IMPORT',
       tenantId: scope.tenantId,
       legalEntityId: scope.legalEntityId,
-      policyId: 'akros-symmy-source-sync',
-      policyRevision: 'v1',
+      policyId: 'akros-symmy-source-sync-v2',
+      policyRevision: 'v2',
       consumerModuleId: 'commerce.customer-context',
       operation: request.operation,
       source: request.source,

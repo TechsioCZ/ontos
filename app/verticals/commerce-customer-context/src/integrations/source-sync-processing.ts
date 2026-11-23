@@ -51,8 +51,8 @@ export const requireSourceSyncProcessingPermit = (
     evidence.operation !== request.operation ||
     evidence.dataUse !== 'SOURCE_CUSTOMER_SYNC' ||
     evidence.purpose !== 'CUSTOMER_IMPORT' ||
-    evidence.policyId !== 'akros-symmy-source-sync' ||
-    evidence.policyRevision !== 'v1' ||
+    evidence.policyId !== 'akros-symmy-source-sync-v2' ||
+    evidence.policyRevision !== 'v2' ||
     evidence.policyId !== decision.authorityIncarnation ||
     evidence.policyRevision !== decision.authorityRevision ||
     evidence.trustedDecisionTime !== decision.evaluatedAt ||

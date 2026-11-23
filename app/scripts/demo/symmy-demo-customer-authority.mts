@@ -88,6 +88,8 @@ export const SYMMY_DEMO_CUSTOMER_COMPANY = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7
 export const SYMMY_DEMO_CUSTOMERS_ROUTE = '5158ef08-7315-57e1-a9ed-b0fef8cd9ac1';
 export const SYMMY_DEMO_CUSTOMERS_READ_ROUTE = '03f02f99-ec4a-56a1-8baa-9802207741b3';
 export const SYMMY_DEMO_GROUPS_ROUTE = 'f637a6ec-865b-43bc-9c28-57783757f367';
+/** The genuine logical group source named by that enrolled transport route, not its physical route id. */
+export const SYMMY_DEMO_GROUPS_SOURCE_ROUTE = '5a6fb39a-c26e-4186-9dc2-5e410210d36c';
 export const SYMMY_DEMO_MEMBERSHIP_POLICY_ID = 'akros-symmy-memberships';
 const issuer = 'symmy-akros';
 const namespace = 'akros-erp';
@@ -331,14 +333,14 @@ export const buildSymmySourceSyncProcessingPolicy = (identities: Identities) =>
     customerRouteId: SYMMY_DEMO_CUSTOMERS_ROUTE,
     dataUse: 'SOURCE_CUSTOMER_SYNC',
     effectiveFrom: '2026-11-23T00:00:00.000Z',
-    groupRouteId: SYMMY_DEMO_GROUPS_ROUTE,
+    groupRouteId: SYMMY_DEMO_GROUPS_SOURCE_ROUTE,
     issuer,
     legalEntityId,
     namespace,
-    policyId: 'akros-symmy-source-sync',
+    policyId: 'akros-symmy-source-sync-v2',
     purpose: 'CUSTOMER_IMPORT',
     reason: 'Operator-authorized AKROS customer source synchronization for the customer demonstration',
-    revision,
+    revision: 'v2',
     tenantId,
     validUntil: '2026-12-23T00:00:00.000Z',
   });
@@ -558,7 +560,7 @@ export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readon
       },
       ...groups.map(({ code, groupId, recordId }) => ({
         configuration: {
-          ...configuration(SYMMY_DEMO_GROUPS_ROUTE, 'CUSTOMER_GROUP', [
+          ...configuration(SYMMY_DEMO_GROUPS_SOURCE_ROUTE, 'CUSTOMER_GROUP', [
             operation('commerce.customer-context', 'commerce.customer-context.apply-customer-group-membership-source'),
           ]),
           selector: {
@@ -566,7 +568,7 @@ export const buildSymmyDemoCustomerRoutes = (principalId: string, groups: readon
             source: {
               entityKind: 'CUSTOMER_GROUP',
               issuerId: issuer,
-              route: { integrationRouteId: SYMMY_DEMO_GROUPS_ROUTE, tenantId },
+              route: { integrationRouteId: SYMMY_DEMO_GROUPS_SOURCE_ROUTE, tenantId },
               sourceNamespace: namespace,
               sourceRecordId: recordId,
             },
@@ -879,6 +881,9 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       ]),
     )(rows);
     if (
+      existing.configuration.sourceRouteId !== SYMMY_DEMO_GROUPS_SOURCE_ROUTE ||
+      existing.configuration.sourceRouteRevision !== revision ||
+      existing.configuration.sourceMappingVersion !== revision ||
       existing.configuration.items.some(
         ({ source }) => source.issuerId !== issuer || source.sourceNamespace !== namespace,
       )
@@ -1079,20 +1084,20 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
           yield* sql`insert into commerce_customer_context.customer_group_definition_source_routes
           (tenant_id,legal_entity_id,route_id,route_revision,mapping_revision,issuer,namespace,
             principal_id,active,source_reader_principal_ids)
-          values(${tenantId},${legalEntityId},${SYMMY_DEMO_GROUPS_ROUTE},${revision},${revision},
+          values(${tenantId},${legalEntityId},${SYMMY_DEMO_GROUPS_SOURCE_ROUTE},${revision},${revision},
             ${issuer},${namespace},${commerce.principalId},true,
             ARRAY[${existing.principalId},${receiverIdentities.commerceReaderId}]::uuid[])
           on conflict do nothing`;
           yield* sql`insert into commerce_customer_context.customer_group_membership_source_routes
           (tenant_id,legal_entity_id,route_id,route_revision,issuer,source_namespace,principal_id,active,allow_complete)
-          values(${tenantId},${legalEntityId},${SYMMY_DEMO_GROUPS_ROUTE},${revision},
+          values(${tenantId},${legalEntityId},${SYMMY_DEMO_GROUPS_SOURCE_ROUTE},${revision},
             ${issuer},${namespace},${commerce.principalId},true,false) on conflict do nothing`;
         }
         for (const [kind, id, table] of [
           ['PROFILE', SYMMY_DEMO_CUSTOMERS_ROUTE, sql`commerce_customer_context.customer_profile_source_routes`],
           [
             'GROUP_DEFINITION',
-            SYMMY_DEMO_GROUPS_ROUTE,
+            SYMMY_DEMO_GROUPS_SOURCE_ROUTE,
             sql`commerce_customer_context.customer_group_definition_source_routes`,
           ],
         ] as const) {
@@ -1140,7 +1145,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
           and route_revision=${revision} and mapping_revision=${revision} and issuer=${issuer} and namespace=${namespace}
           and record_type=${recordType} and principal_id=${commerce.principalId} and active=true) as address,
         exists(select 1 from commerce_customer_context.customer_group_membership_source_routes
-          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and route_id=${SYMMY_DEMO_GROUPS_ROUTE}
+          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and route_id=${SYMMY_DEMO_GROUPS_SOURCE_ROUTE}
           and route_revision=${revision} and issuer=${issuer} and source_namespace=${namespace}
           and principal_id=${commerce.principalId} and active=true and allow_complete=false) as membership`;
         yield* Schema.decodeUnknownEffect(
@@ -1161,7 +1166,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       from commerce_customer_context.customer_group_definition_source_bindings
       where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}
         and issuer=${issuer} and namespace=${namespace}
-        and source_intent #>> '{payload,source,route,id}'=${SYMMY_DEMO_GROUPS_ROUTE}`;
+        and source_intent #>> '{payload,source,route,id}'=${SYMMY_DEMO_GROUPS_SOURCE_ROUTE}`;
     const groups = yield* Schema.decodeUnknownEffect(Schema.Array(GroupSchema))(groupRows);
     const routes = yield* buildSymmyDemoCustomerRoutes(existing.principalId, groups);
     const policies = yield* Config.schema(
