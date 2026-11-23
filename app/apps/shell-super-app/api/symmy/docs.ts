@@ -53,6 +53,8 @@ This is the **Akros demo stage**. Everything on this page can be tried from the 
 
 Repeating a \`POST\` with the same \`idempotency-key\` and the same body is safe: it returns the saved result and
 writes nothing twice. A changed body needs a new key.
+For a timeout, lost response, \`429\` or \`503\`, retry the same body with the same key. Do not generate a new key
+just to retry an unfinished request.
 
 ## 2. First run
 
@@ -88,7 +90,7 @@ Every refusal is \`application/problem+json\` with \`title\`, \`status\` and \`d
 | 422 | A warehouse, unit or requested projection has no supported source mapping. |
 | 428 | \`idempotency-key\` is missing. |
 | 429 | Too many requests, retry later. |
-| 503 | Temporarily unavailable, retry the same body with a new key. |
+| 503 | Temporarily unavailable, retry the same body with the same \`idempotency-key\`. |
 
 ## 5. Choose the product model
 

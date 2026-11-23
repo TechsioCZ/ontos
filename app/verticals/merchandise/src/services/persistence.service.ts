@@ -2660,8 +2660,9 @@ export const prepareMerchandiseCommand = Effect.fn('Merchandise.prepareCommandRe
 
 // Storefront guests cannot know the revision; their command re-validates against the current rows.
 // An order edit carrying the order's own updatedAt conflicts only when that order changed.
-// A gallery change re-validates against the product's current gallery, so uploads never wait for a revision; a
-// `Set` saves a whole gallery draft and is refused when the catalog changed since the draft was read.
+// A staff gallery change re-validates against the product's current gallery, so uploads never wait for a revision;
+// source API-key uploads require the exact locked catalog head. A `Set` saves a whole gallery draft and is refused
+// when the catalog changed since the draft was read.
 // Market commands never touch catalog rows and guard their own market revision.
 /** The bootstrap playground: its import claims the head row and must find the company untouched. */
 const isPlaygroundCatalog = (store: StoreScope) =>
@@ -2779,6 +2780,14 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     ) {
       // The head row lock serializes every write of this company; reads never wait for it.
       const locked = yield* lockedHead(false);
+      if (
+        scope.authMethod === 'api_key' &&
+        Predicate.isTagged(command, 'ChangeProductImages') &&
+        Predicate.isTagged(command.change, 'Upload') &&
+        locked.revision !== expectedRevision
+      ) {
+        return yield* revisionConflict();
+      }
       if (!ownRevisionGuard(command) && !revisionMatches(locked, expectedRevision)) {
         return yield* revisionConflict();
       }

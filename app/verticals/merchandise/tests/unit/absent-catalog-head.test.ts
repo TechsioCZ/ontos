@@ -81,6 +81,12 @@ const harness = (options: { readonly concurrentWinner?: boolean; readonly initia
                     ],
               );
             }
+            if (
+              sql.startsWith('select') &&
+              /"demo_merchandise"\."(?:products|product_variants|price_tiers)"/u.test(sql)
+            ) {
+              return Effect.succeed([]);
+            }
             return Effect.die(`Unexpected SQL: ${sql}`);
           }),
         ),
@@ -211,3 +217,71 @@ it.effect('keeps the playground import in charge of creating its own head', () =
     expect(head()).toBeUndefined();
   }),
 );
+
+const uploadOnHead = (
+  db: Effect.Success<ReturnType<typeof harness>>['db'],
+  authMethod: 'api_key' | 'session',
+  expectedRevision: number,
+) =>
+  db.transaction((tx) =>
+    Effect.gen(function* uploadWrite() {
+      const scope: OperationalScope = {
+        ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+          authBindingId: randomUUID(),
+          authContextRef: `${authMethod}:source-gallery-revision`,
+          authMethod,
+          ...store,
+          principalId: randomUUID(),
+        }),
+        correlationId: 'source-gallery-revision',
+      };
+      const scoped = yield* installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([]));
+      const resourceId = randomUUID();
+      const payload = Schema.decodeSync(MerchandiseCommandPayloadSchema)({
+        command: {
+          _tag: 'ChangeProductImages',
+          change: {
+            _tag: 'Upload',
+            image: { filename: 'proof.png', full: { contentBase64: 'iVBORw0KGgo=' } },
+          },
+          id: 'product-1',
+        },
+        expectedRevision,
+      });
+      const services = yield* persistenceService(scoped, {
+        prepared: { actionInvocationId: resourceId, payload, tax: { fetched: undefined, refused: false } },
+        scope,
+      });
+      return yield* services.apply(payload.command, expectedRevision, resourceId);
+    }),
+  );
+
+it.effect('rejects a source Upload at the locked head before any gallery read or asset write', () =>
+  Effect.gen(function* staleSourceUpload() {
+    const { db, statements } = yield* harness({ initial: { checkpoint: null, revision: 7 } });
+    // A new invocation id cannot turn the same stale source write into another asset.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const failure = yield* uploadOnHead(db, 'api_key', 6).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseRevisionConflict)(failure)).toBe(true);
+    }
+    expect(lockedReads(statements)).toHaveLength(2);
+    expect(statements.some((sql) => sql.includes('"demo_merchandise"."products"'))).toBe(false);
+    expect(statements.some((sql) => /^(?:insert into|update|delete from)\b/u.test(sql))).toBe(false);
+  }),
+);
+
+for (const [authMethod, expectedRevision] of [
+  ['api_key', 7],
+  ['session', 6],
+] as const) {
+  it.effect(`${authMethod} Upload at revision ${expectedRevision} reaches the current product gallery`, () =>
+    Effect.gen(function* allowedGalleryRead() {
+      const { db, statements } = yield* harness({ initial: { checkpoint: null, revision: 7 } });
+      const failure = yield* uploadOnHead(db, authMethod, expectedRevision).pipe(Effect.flip);
+      // The empty scripted catalog has no product: matching source revisions and stale staff uploads still reach it.
+      expect(failure._tag).toBe('MerchandiseNotFound');
+      expect(lockedReads(statements)).toHaveLength(1);
+      expect(statements.some((sql) => sql.includes('"demo_merchandise"."products"'))).toBe(true);
+    }),
+  );
+}
