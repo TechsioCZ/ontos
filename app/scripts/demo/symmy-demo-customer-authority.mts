@@ -105,13 +105,10 @@ const customerReceiverWorkloads = [
   'integration.symmy.source-organization-facts.read',
   'pricing.price-group-catalog.source-read',
 ] as const;
+const obsoleteExternalExecutorWorkloads = [...customerReceiverWorkloads, partyWriter, sourceWriter] as const;
 export const symmyDemoReceiverWorkloadsForPhase = (phase: 'pre-owner' | 'post-registration'): readonly string[] =>
   phase === 'pre-owner' ? ['party.registry.source-read'] : customerReceiverWorkloads;
-const integrationWorkloads = [
-  'integration.symmy-admit',
-  'integration.symmy-poll',
-  ...customerReceiverWorkloads,
-] as const;
+const integrationWorkloads = ['integration.symmy-admit', 'integration.symmy-poll'] as const;
 export const symmyDemoCustomerWorkloadRequirements = {
   integration: integrationWorkloads,
   existingSystemWriters: [partyWriter, sourceWriter],
@@ -748,6 +745,39 @@ export const symmyDemoCompanyBindingNeedsCreate = (active: readonly { readonly l
     ? Effect.fail(fail('Existing workload company registration is ambiguous or names another company'))
     : Effect.succeed(active.length === 0);
 
+const ExternalReceiverAliasSchema = Schema.Struct({
+  bindingId: Uuid,
+  incarnation: Uuid,
+  principalId: Uuid,
+  tenantId: Uuid,
+  workloadKey: Schema.String,
+  kind: Schema.String,
+  status: Schema.String,
+  foreignCompany: Schema.Boolean,
+});
+export const symmyDemoExternalReceiverBindingsToRevoke = (integrationPrincipalId: string, input: unknown) =>
+  Schema.decodeUnknownEffect(Schema.Array(ExternalReceiverAliasSchema))(input).pipe(
+    Effect.flatMap((rows) => {
+      const owned = rows.filter((row) => {
+        const ids = stageWorkloadBindingIds(tenantId, integrationPrincipalId, row.workloadKey);
+        return (
+          row.tenantId === tenantId &&
+          row.principalId === integrationPrincipalId &&
+          row.kind === 'integration' &&
+          row.status === 'active' &&
+          obsoleteExternalExecutorWorkloads.some((key) => key === row.workloadKey) &&
+          row.bindingId === ids.bindingId &&
+          row.incarnation === ids.bindingIncarnation
+        );
+      });
+      return owned.some(({ foreignCompany }) => foreignCompany)
+        ? Effect.fail(
+            fail('Bootstrap-owned receiver alias unexpectedly names another company; no registration was revoked'),
+          )
+        : Effect.succeed(owned.map(({ bindingId }) => AccessWorkloadBindingIdSchema.make(bindingId)));
+    }),
+  );
+
 /** Read this before starting Party. No composition, operator session, new identity or write is needed. */
 export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnvironment() {
   if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
@@ -854,6 +884,24 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     const scope = yield* stageScopeOf({ principalId: owner.principalId, tenantId });
     const database = yield* symmyDemoCustomerBindingDatabase;
     const bindingStore = yield* AccessWorkloadBindingStore;
+    const externalAliases = yield* sql`select b.binding_id as "bindingId", b.incarnation,
+      b.principal_id as "principalId", b.tenant_id as "tenantId", b.workload_key as "workloadKey",
+      p.kind, b.status, exists(
+        select 1 from core.access_workload_company_bindings cb where cb.tenant_id=b.tenant_id
+          and cb.workload_binding_id=b.binding_id and cb.legal_entity_id<>${legalEntityId}
+      ) as "foreignCompany"
+      from core.access_workload_bindings b join core.principals p
+        on p.tenant_id=b.tenant_id and p.principal_id=b.principal_id
+      where b.tenant_id=${tenantId} and b.principal_id=${existing.principalId} and b.status='active'`;
+    const obsoleteExternalBindings = yield* symmyDemoExternalReceiverBindingsToRevoke(
+      existing.principalId,
+      externalAliases,
+    );
+    if (mode === 'verify' && obsoleteExternalBindings.length > 0)
+      return yield* fail('Bootstrap-owned receiver aliases remain on the external integration; run apply');
+    for (const bindingId of obsoleteExternalBindings) {
+      yield* bindingStore.revokeBinding(scope, { bindingId, revokedAt: new Date() });
+    }
     // Remove only duplicate executor aliases this bootstrap previously created. Unique legacy SYSTEM stays.
     for (const key of customerReceiverWorkloads) {
       const systems = yield* sql`select b.binding_id as "bindingId" from core.access_workload_bindings b

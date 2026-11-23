@@ -301,8 +301,8 @@ export const admitRegisteredAssertionWorkload = Effect.fn('GatewayDelegation.adm
               ? sql`
         join core.principals original on original.tenant_id=t.tenant_id and original.principal_id=${workload.originalPrincipalId}::uuid and original.kind='integration' and original.status='active'
         join core.access_workload_bindings admission on admission.tenant_id=t.tenant_id and admission.principal_id=original.principal_id and admission.workload_key=${workload.originalWorkloadKey} and admission.incarnation=${workload.originalWorkloadBindingIncarnation}::uuid and admission.status='active'
-        join core.access_workload_bindings owner on owner.tenant_id=t.tenant_id and owner.principal_id=original.principal_id and owner.workload_key=${rule.workloadKey} and owner.status='active'
-        join core.access_workload_bindings source_owner on source_owner.tenant_id=t.tenant_id and source_owner.principal_id=original.principal_id and source_owner.workload_key=${workload.workloadKey} and source_owner.incarnation=${workload.originalOwnerBindingIncarnation}::uuid and source_owner.status='active'
+        join core.access_workload_bindings owner on owner.tenant_id=t.tenant_id and owner.binding_id=receiver.binding_id and owner.principal_id=receiver.principal_id and owner.workload_key=${rule.workloadKey} and owner.status='active'
+        join core.access_workload_bindings source_owner on source_owner.tenant_id=t.tenant_id and source_owner.binding_id=current_source.binding_id and source_owner.principal_id=source_principal.principal_id and source_owner.workload_key=${workload.workloadKey} and source_owner.incarnation=${workload.originalOwnerBindingIncarnation}::uuid and source_owner.status='active'
           `
               : sql``;
           const ownerBindingExpression = workload.recovery === undefined ? sql`owner.incarnation` : sql`null::uuid`;
@@ -313,9 +313,9 @@ export const admitRegisteredAssertionWorkload = Effect.fn('GatewayDelegation.adm
         from core.access_workload_bindings receiver
         join core.principals receiver_principal on receiver_principal.tenant_id=receiver.tenant_id and receiver_principal.principal_id=receiver.principal_id and receiver_principal.status='active'
         join core.tenants t on t.tenant_id=receiver.tenant_id and t.status='active'
-        ${originalAuthority}
         join core.principals source_principal on source_principal.tenant_id=t.tenant_id and source_principal.principal_id=${sourcePrincipal.principalId}::uuid and source_principal.status='active'
         join core.access_workload_bindings current_source on current_source.tenant_id=t.tenant_id and current_source.principal_id=${sourcePrincipal.principalId}::uuid and current_source.workload_key=${workload.workloadKey} and current_source.incarnation=${workload.bindingIncarnation}::uuid and current_source.status='active'
+        ${originalAuthority}
         where receiver.tenant_id=${sourcePrincipal.tenantId}::uuid and receiver.workload_key=${rule.workloadKey} and receiver.status='active'
           and ${registeredAssertionPrincipalEligibility({
             side: 'receiver',

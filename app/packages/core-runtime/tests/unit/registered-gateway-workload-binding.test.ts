@@ -1,0 +1,79 @@
+import { PgDialect } from 'drizzle-orm/pg-core';
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import {
+  registeredGatewayExecutorEligibility,
+  registeredGatewayOriginalAdmission,
+} from '../../src/access/workloads/bindings.ts';
+import { PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
+import { internalWorkloadPrincipalId } from '../../src/auth/module-credentials.ts';
+import { RegisteredGatewayWorkloadSchema } from '../../src/auth/system-principal-context-provenance.ts';
+
+const tenantId = TenantIdSchema.make('10000000-0000-4000-8000-000000000001');
+const legalEntityId = '10000000-0000-4000-8000-000000000002';
+const workloadKey = 'party.registry.source-read';
+const principalId = PrincipalIdSchema.make(internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey }));
+const originalPrincipalId = '20000000-0000-4000-8000-000000000001';
+const bindingIncarnation = '30000000-0000-4000-8000-000000000001';
+const originalWorkloadBindingIncarnation = '30000000-0000-4000-8000-000000000002';
+const workload = Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema)({
+  admissionInvocationId: '40000000-0000-4000-8000-000000000001',
+  bindingIncarnation,
+  declarationKey: 'party.registry.source-read',
+  entrypointKey: 'party.registry.api.source-read',
+  jobKey: 'customer-source',
+  legalEntityId,
+  legalEntityScope: 'required',
+  originalOwnerBindingIncarnation: bindingIncarnation,
+  originalPrincipalId,
+  originalWorkloadBindingIncarnation,
+  originalWorkloadKey: 'integration.symmy-admit',
+  runReference: '40000000-0000-4000-8000-000000000001',
+  schemaVersion: '1',
+  sourceAppId: 'symmy-integration',
+  sourceBuildMarker: 'source-build',
+  sourceMode: 'admission',
+  workloadKey,
+});
+const dialect = new PgDialect();
+
+it('keeps the original integration admission live without requiring an external receiver alias', () => {
+  const query = dialect.sqlToQuery(registeredGatewayOriginalAdmission({ tenantId, principalId }, workload));
+  expect(query.sql).toContain("p.status='active' and p.kind='integration'");
+  expect(query.sql).toContain("b.status='active'");
+  expect(query.sql).toContain('"core"."access_workload_bindings"."incarnation"=');
+  expect(query.sql).not.toContain('ob.principal_id');
+  expect(query.params).toContain(originalPrincipalId);
+  expect(query.params).toContain('integration.symmy-admit');
+  expect(query.params).toContain(originalWorkloadBindingIncarnation);
+  expect(query.params).toContain(bindingIncarnation);
+  expect(query.params).not.toContain(workloadKey);
+});
+
+it('admits native SYSTEM and exact company-canonical SERVICE receivers, never an integration or arbitrary service', () => {
+  const query = dialect.sqlToQuery(registeredGatewayExecutorEligibility({ tenantId, principalId }, workload));
+  expect(query.sql).toContain("s.kind = 'system'");
+  expect(query.sql).toContain("s.kind = 'service' and s.platform_role = 'internal_workload'");
+  expect(query.sql).toContain("s.status = 'active'");
+  expect(query.sql).toContain("cb.status='active'");
+  expect(query.sql).toContain("le.status='active'");
+  expect(query.sql).toContain('cb.workload_binding_id="core"."access_workload_bindings"."binding_id"');
+  expect(query.params.filter((value) => value === principalId)).toHaveLength(2);
+  expect(query.params).toContain(legalEntityId);
+  expect(query.params).not.toContain(originalPrincipalId);
+});
+
+it('keeps a projected tenant-only receiver fenced to platform identity and its active native company registration', () => {
+  const { legalEntityId: _company, ...rest } = workload;
+  const tenantOnly = Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema)({
+    ...rest,
+    legalEntityScope: 'forbidden',
+  });
+  const query = dialect.sqlToQuery(registeredGatewayExecutorEligibility({ tenantId, principalId }, tenantOnly));
+  expect(query.sql).toContain("s.platform_role = 'internal_workload'");
+  expect(query.sql).toContain('cb.workload_binding_id="core"."access_workload_bindings"."binding_id"');
+  expect(query.sql).toContain("cb.status='active'");
+  expect(query.sql).toContain("le.status='active'");
+  expect(query.params).not.toContain(legalEntityId);
+});

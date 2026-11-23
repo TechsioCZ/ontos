@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'effect-rstest';
+import { Effect } from 'effect';
 
 import { admitsWorkloadKey } from '../../api/auth/platform-workload-key-admission.ts';
+import { readWorkloadPrincipal } from '../../api/auth/platform-workload-key-admission.service.ts';
 import { PLATFORM_KEY_OWNER } from '../../api/auth/platform-key-owner.ts';
+import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const input = {
   legalEntityId: '30000000-0000-4000-8000-000000000001',
@@ -24,6 +27,28 @@ const attestation = JSON.stringify({
 });
 
 describe('workload key admission', () => {
+  it.effect('queries only active associations while retaining the permanent platform marker', () =>
+    Effect.gen(function* test() {
+      for (const row of [
+        { internalBound: false, platformRole: null, expected: false },
+        { internalBound: true, platformRole: null, expected: true },
+        { internalBound: false, platformRole: 'internal_workload', expected: true },
+      ]) {
+        let principalReads = 0;
+        const database = yield* makeTestDatabase((statement) => {
+          if (!statement.includes('as "internalBound"')) return Effect.succeed([]);
+          principalReads++;
+          expect(statement).toContain("b.status = 'active'");
+          expect(statement).toContain("registered.status = 'active'");
+          expect(statement).toContain("platform.status = 'active'");
+          return Effect.succeed([{ internalBound: row.internalBound, platformRole: row.platformRole }]);
+        });
+        expect(yield* readWorkloadPrincipal(database, input)).toBe(row.expected);
+        expect(principalReads).toBe(1);
+      }
+    }),
+  );
+
   it('admits the key the platform key owner holds with an attestation for this principal and release', () => {
     expect(admitsWorkloadKey({ metadata: attestation, referenceId: PLATFORM_KEY_OWNER.id }, input, release)).toBe(true);
   });

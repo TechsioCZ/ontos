@@ -155,7 +155,7 @@ import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-
 const sourceApp = 'symmy-integration';
 const sourceModule = outboxProducerModuleKey;
 const sourceAction = 'integration.symmy.admit-fixture';
-const sourceWorkload = 'integration.fixture.admit';
+const sourceWorkload = 'integration.symmy-admit';
 const workerKey = 'integration.symmy.execute-fixture';
 const workerPartyRequirement = 'integration.symmy.requirement.worker-party';
 const admissionPartyRequirement = 'integration.symmy.requirement.admission-party';
@@ -1709,24 +1709,60 @@ it.live(
           true,
         );
         expect(yield* systemPrincipalDisableRefused(machinePrincipal)).toBe(true);
+        // A distinct ingress actor holds only admit/poll: receiver authority must come from the
+        // independently enrolled actors, not aliases on this external principal.
+        const ingressOnlyPrincipal = yield* crypto.randomUUIDv4();
+        const ingressOnlyBinding = yield* crypto.randomUUIDv4();
+        const ingressOnlyInvocation = yield* crypto.randomUUIDv4();
+        yield* insert(sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status)
+          values(${ingressOnlyPrincipal}::uuid,${tenantId}::uuid,'integration','Ingress only','active')`);
+        yield* insert(sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values
+          (${ingressOnlyBinding}::uuid,${tenantId}::uuid,${ingressOnlyPrincipal}::uuid,${sourceWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),
+          (${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${ingressOnlyPrincipal}::uuid,'integration.symmy-poll',${yield* crypto.randomUUIDv4()}::uuid,'active')`);
+        yield* insert(sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,auth_context_ref,action_key,status,request_hash,started_at,completed_at)
+          values(${ingressOnlyInvocation}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${ingressOnlyPrincipal}::uuid,'api_key','retired-ingress-key',${sourceAction},'succeeded',${'d'.repeat(64)},now(),now())`);
+        const ingressOnlyAdmission = {
+          ...admission,
+          actionInvocationId: ingressOnlyInvocation,
+          expectedAuthContextRef: `job:${workerKey}:run:${ingressOnlyInvocation}`,
+        };
+        const ingressOnly = yield* issue(ingressOnlyAdmission);
+        expect(ingressOnly.machineContext?.principalId).toBe(machinePrincipal);
+        const ingressPrincipal = yield* receive(ingressOnly.token);
+        const ingressScope = yield* receiverScopes.resolve({
+          audience: 'party-registry',
+          correlationId: 'native-ingress-only',
+          legalEntityScope: 'required',
+          principal: ingressPrincipal,
+        });
+        expect((yield* decide(ingressScope)).outcome).toBe('ALLOWED');
+        expect(readVerifiedGatewayWorkload(ingressScope)?.originalOwnerBindingIncarnation).toBe(machineIncarnation);
+        const ingressNested = { ...nestedSubject, sourceAssertion: ingressOnly.token };
+        expect((yield* issue(ingressNested, 'privacy', partyProviderKey)).machineContext?.principalId).toBe(privacyMachine);
+        expect(Exit.isFailure(yield* Effect.exit(issue({
+          ...ingressOnlyAdmission, legalEntityId: foreignLegalEntityId,
+        })))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(issue({
+          ...ingressOnlyAdmission, expectedPrincipalId: ingressOnlyPrincipal,
+        })))).toBe(true);
+        yield* insert(sql`update core.access_workload_bindings set status='revoked',revoked_at=now()
+          where binding_id=${ingressOnlyBinding}::uuid`);
+        expect(Exit.isFailure(yield* Effect.exit(issue(ingressOnlyAdmission)))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(issue(ingressNested, 'privacy', partyProviderKey)))).toBe(true);
+        expect((yield* decide(ingressScope)).outcome).toBe('DENIED');
+        // Revoking obsolete external aliases does not revoke the independently enrolled receivers.
         yield* insert(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${originalOwnerBinding}::uuid`,
         );
-        expect((yield* decide(scope)).outcome).toBe('DENIED');
-        expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey)))).toBe(true);
-        expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
-        const renewedOwnerBinding = yield* crypto.randomUUIDv4();
-        yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${renewedOwnerBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
-        );
-        yield* registerCompany(renewedOwnerBinding);
+        expect((yield* decide(scope)).outcome).toBe('ALLOWED');
+        yield* issue(nestedSubject, 'privacy', partyProviderKey);
         const renewedSource = yield* issue(admission);
         const renewedNestedSubject = { ...nestedSubject, sourceAssertion: renewedSource.token };
         yield* issue(renewedNestedSubject, 'privacy', partyProviderKey);
         yield* insert(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${privacyOriginalBinding}::uuid`,
         );
-        expect(Exit.isFailure(yield* Effect.exit(issue(renewedNestedSubject, 'privacy', partyProviderKey)))).toBe(true);
+        yield* issue(renewedNestedSubject, 'privacy', partyProviderKey);
         const eventId = yield* crypto.randomUUIDv4();
         const messageId = yield* crypto.randomUUIDv4();
         const deliveryId = yield* crypto.randomUUIDv4();
@@ -2236,10 +2272,13 @@ it.live(
           legalEntityScope: 'required',
           principal: beforePrincipal,
         });
+        const currentNested = { ...nestedSubject, sourceAssertion: beforeRevoke.token };
+        yield* issue(currentNested, 'privacy', partyProviderKey);
         yield* insert(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${machineBinding}::uuid`,
         );
         expect((yield* decide(beforeScope)).outcome).toBe('DENIED');
+        expect(Exit.isFailure(yield* Effect.exit(issue(currentNested, 'privacy', partyProviderKey)))).toBe(true);
         // The tenant now holds no active registration of the receiving workload: the declared call admits nothing.
         expect(yield* refusalOf(issue(admission))).toBe('workload_binding_not_active');
         // The ambiguous machine is registered again: a fresh binding, with its company.

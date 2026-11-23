@@ -297,7 +297,9 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
       join core.principals p on p.tenant_id = i.tenant_id and p.principal_id = i.principal_id
         and p.kind = 'integration' and p.status = 'active'
       join core.access_workload_bindings b on b.tenant_id = p.tenant_id and b.principal_id = p.principal_id and b.status = 'active'
-      join core.access_workload_bindings ob on ob.tenant_id = p.tenant_id and ob.principal_id = p.principal_id and ob.status = 'active' and ob.workload_key = ${rule.workloadKey}
+      join core.access_workload_bindings ob on ob.tenant_id = p.tenant_id
+        and ob.principal_id = ${row.principalId}::uuid and ob.incarnation = ${row.bindingIncarnation}::uuid
+        and ob.status = 'active' and ob.workload_key = ${rule.workloadKey}
       where i.tenant_id = ${subject.tenantId}::uuid and i.action_invocation_id = ${row.actionInvocationId}::uuid and i.status = 'succeeded'
     `,
               'objects',

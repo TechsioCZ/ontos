@@ -1,4 +1,6 @@
 import { readVerifiedGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
+import type { RegisteredGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
+import { internalWorkloadPrincipalId } from '../../auth/module-credentials.ts';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Layer } from 'effect';
 
@@ -43,6 +45,51 @@ export interface AccessWorkloadBindingDatabase {
 const readUnavailable = (cause?: unknown): AccessDecisionUnavailable =>
   accessDecisionUnavailable('The registered workloads of this actor could not be read', cause);
 
+/** The signed receiver is an active native executor, never the external integration's executor alias. */
+export const registeredGatewayExecutorEligibility = (
+  query: Pick<WorkloadBindingQuery, 'tenantId' | 'principalId'>,
+  workload: RegisteredGatewayWorkload,
+) => {
+  const canonical =
+    workload.legalEntityId === undefined
+      ? sql`true`
+      : sql`s.principal_id = ${internalWorkloadPrincipalId({
+          tenantId: query.tenantId,
+          legalEntityId: workload.legalEntityId,
+          workloadKey: workload.workloadKey,
+        })}::uuid`;
+  return sql`exists (
+    select 1 from core.principals s
+    where s.tenant_id = ${query.tenantId}::uuid and s.principal_id = ${query.principalId}::uuid
+      and s.status = 'active'
+      and (s.kind = 'system' or (
+        s.kind = 'service' and s.platform_role = 'internal_workload' and ${canonical}
+        and exists (
+          select 1 from core.access_workload_company_bindings cb
+          join core.legal_entities le on le.tenant_id=cb.tenant_id
+            and le.legal_entity_id=cb.legal_entity_id and le.status='active'
+          where cb.tenant_id=s.tenant_id
+            and cb.workload_binding_id=${accessWorkloadBindings.bindingId} and cb.status='active'
+            ${workload.legalEntityId === undefined ? sql`` : sql`and cb.legal_entity_id=${workload.legalEntityId}::uuid`}
+        )
+      ))
+  )`;
+};
+
+/** Original admission stays live; owner authority is the exact signed native receiver binding, not an alias. */
+export const registeredGatewayOriginalAdmission = (
+  query: Pick<WorkloadBindingQuery, 'tenantId' | 'principalId'>,
+  workload: RegisteredGatewayWorkload,
+) =>
+  sql`exists (
+    select 1 from core.principals p
+    join core.access_workload_bindings b on b.tenant_id=p.tenant_id and b.principal_id=p.principal_id
+    where p.tenant_id=${query.tenantId}::uuid and p.principal_id=${workload.originalPrincipalId}::uuid
+      and p.status='active' and p.kind='integration'
+      and b.workload_key=${workload.originalWorkloadKey}
+      and b.incarnation=${workload.originalWorkloadBindingIncarnation}::uuid and b.status='active'
+  ) and ${accessWorkloadBindings.incarnation}=${workload.originalOwnerBindingIncarnation}::uuid`;
+
 export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindingDatabase): AccessWorkloadBindings => ({
   readWorkloadAuthority: Effect.fn('AccessWorkloadBindings.readWorkloadAuthority')(
     function* readWorkloadAuthorityEffect(query: WorkloadBindingQuery, transaction?: CoreTransaction) {
@@ -83,9 +130,9 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
                   eq(accessWorkloadBindings.tenantId, query.tenantId),
                   eq(accessWorkloadBindings.principalId, query.principalId),
                   eq(accessWorkloadBindings.status, 'active'),
-                  // A verified gateway workload reads only the binding its assertion names, of an active system
+                  // A verified gateway workload reads only the binding its assertion names, of an active native
                   // principal, for a delivery still running when it is a worker's, and only while the original
-                  // integration's own bindings stay active; its keys and its companies are that binding's alone.
+                  // integration's admission stays active; its keys and companies are the receiver binding's alone.
                   ...(workload === undefined
                     ? []
                     : [
@@ -96,11 +143,9 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
                               sql`trust.registered_workload_delivery_is_active(${workload.runReference}::uuid, ${workload.claimId ?? ''}, ${workload.workerKey ?? ''}, ${workload.workerModuleKey ?? ''}, ${query.tenantId}::uuid)`,
                             ]
                           : []),
-                        sql`exists (select 1 from core.principals s where s.tenant_id = ${query.tenantId}::uuid and s.principal_id = ${query.principalId}::uuid and s.kind = 'system' and s.status = 'active')`,
+                        registeredGatewayExecutorEligibility(query, workload),
                         ...(workload.recovery === undefined
-                          ? [
-                              sql`exists (select 1 from core.principals p join core.access_workload_bindings b on b.tenant_id = p.tenant_id and b.principal_id = p.principal_id join core.access_workload_bindings ob on ob.tenant_id = p.tenant_id and ob.principal_id = p.principal_id and ob.workload_key = ${workload.workloadKey} and ob.incarnation = ${workload.originalOwnerBindingIncarnation}::uuid and ob.status = 'active' where p.tenant_id = ${query.tenantId}::uuid and p.principal_id = ${workload.originalPrincipalId}::uuid and p.status = 'active' and p.kind = 'integration' and b.workload_key = ${workload.originalWorkloadKey} and b.incarnation = ${workload.originalWorkloadBindingIncarnation}::uuid and b.status = 'active')`,
-                            ]
+                          ? [registeredGatewayOriginalAdmission(query, workload)]
                           : []),
                       ]),
                 ),

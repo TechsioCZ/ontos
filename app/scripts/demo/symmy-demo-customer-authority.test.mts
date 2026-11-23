@@ -10,6 +10,7 @@ import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/wo
 import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
 import { TenantIdSchema, PrincipalIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
+import { stageWorkloadBindingIds } from './register-stage-workloads.mts';
 
 import {
   buildSymmyDemoCustomerRoutes,
@@ -33,6 +34,8 @@ import {
   SymmyDemoCustomerAuthorityError,
   symmyDemoCustomerBindingDatabase,
   symmyDemoCompanyBindingNeedsCreate,
+  symmyDemoExternalReceiverBindingsToRevoke,
+  symmyDemoCustomerWorkloadRequirements,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
@@ -42,6 +45,75 @@ const identities = {
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
 };
+
+it.effect('external integrations keep admit/poll only and retire only exact bootstrap-owned receiver aliases', () =>
+  Effect.gen(function* test() {
+    expect(symmyDemoCustomerWorkloadRequirements.integration).toEqual([
+      'integration.symmy-admit',
+      'integration.symmy-poll',
+    ]);
+    const principalId = identities.integrationPrincipalId;
+    const workloadKey = 'party.registry.source-read';
+    const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, workloadKey);
+    const owned = {
+      bindingId: ids.bindingId,
+      incarnation: ids.bindingIncarnation,
+      principalId,
+      tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+      workloadKey,
+      kind: 'integration',
+      status: 'active',
+      foreignCompany: false,
+    };
+    expect(
+      yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [
+        owned,
+        { ...owned, kind: 'service' },
+        { ...owned, kind: 'system' },
+        { ...owned, principalId: identities.partyWriterId },
+        { ...owned, tenantId: identities.partyWriterId },
+        { ...owned, workloadKey: 'integration.symmy-admit' },
+        { ...owned, bindingId: identities.partyReaderId },
+        { ...owned, incarnation: identities.partyReaderId },
+        { ...owned, status: 'revoked' },
+      ]),
+    ).toEqual([ids.bindingId]);
+    expect(
+      (yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [{ ...owned, foreignCompany: true }]).pipe(
+        Effect.result,
+      ))._tag,
+    ).toBe('Failure');
+  }),
+);
+
+it.effect('retires exact bootstrap-owned source-writer aliases without touching foreign writer registrations', () =>
+  Effect.gen(function* test() {
+    const principalId = identities.integrationPrincipalId;
+    for (const workloadKey of symmyDemoCustomerWorkloadRequirements.existingSystemWriters) {
+      const ids = stageWorkloadBindingIds(SYMMY_DEMO_CUSTOMER_TENANT, principalId, workloadKey);
+      const owned = {
+        bindingId: ids.bindingId,
+        incarnation: ids.bindingIncarnation,
+        principalId,
+        tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+        workloadKey,
+        kind: 'integration',
+        status: 'active',
+        foreignCompany: false,
+      };
+      expect(
+        yield* symmyDemoExternalReceiverBindingsToRevoke(principalId, [
+          owned,
+          { ...owned, bindingId: identities.commerceWriterId },
+          { ...owned, incarnation: identities.commerceWriterId },
+          { ...owned, kind: 'system' },
+          { ...owned, kind: 'service' },
+          { ...owned, status: 'revoked' },
+        ]),
+      ).toEqual([ids.bindingId]);
+    }
+  }),
+);
 
 it.effect(
   'reuses a native active company epoch regardless of stage-derived ids and refuses foreign or ambiguous rows',

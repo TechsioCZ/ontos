@@ -24,9 +24,9 @@ type AuthExecutor = (typeof AuthDatabase)['Service']['executor'];
 
 /**
  * Whether the principal is an internal workload principal: the platform's marker, or a binding to a workload the
- * platform registers in this tenant (a principal someone bound to that workload by hand counts as one too).
+ * platform actively registers in this tenant (an active hand-made binding counts too; revoked history does not).
  */
-const readWorkloadPrincipal = (core: CoreExecutor, input: PlatformWorkloadKeyInput) =>
+export const readWorkloadPrincipal = (core: CoreExecutor, input: PlatformWorkloadKeyInput) =>
   core
     .transaction(
       Effect.fn('PlatformWorkloadKeyAdmission.readPrincipal')(function* readPrincipal(transaction) {
@@ -40,12 +40,14 @@ const readWorkloadPrincipal = (core: CoreExecutor, input: PlatformWorkloadKeyInp
                 from core.access_workload_bindings as b
                 where b.tenant_id = p.tenant_id
                   and b.principal_id = p.principal_id
+                  and b.status = 'active'
                   and b.workload_key in (
                     select registered.workload_key
                     from core.access_workload_bindings as registered
                     join core.principals as platform
                       on platform.tenant_id = registered.tenant_id and platform.principal_id = registered.principal_id
                     where registered.tenant_id = p.tenant_id and platform.platform_role = 'internal_workload'
+                      and registered.status = 'active' and platform.status = 'active'
                   )
               ) as "internalBound"
             from core.principals as p

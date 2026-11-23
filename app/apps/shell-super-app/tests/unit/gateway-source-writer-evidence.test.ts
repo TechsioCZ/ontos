@@ -15,6 +15,7 @@ const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '10000000-0000-4000-8000-000000000002';
 const legacyId = '10000000-0000-4000-8000-000000000003';
 const incarnation = '10000000-0000-4000-8000-000000000004';
+const receiverIncarnation = '10000000-0000-4000-8000-000000000006';
 const invocationId = '10000000-0000-4000-8000-000000000005';
 const workerKey = 'integration.symmy.execute-symmy-job';
 const actionKey = 'integration.symmy.admit-symmy-job';
@@ -153,7 +154,7 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
                   legalEntityId: input.originalCompany ?? (input.company === false ? null : legalEntityId),
                   workloadKey: 'integration.symmy-admit',
                   bindingIncarnation: incarnation,
-                  ownerBindingIncarnation: incarnation,
+                  ownerBindingIncarnation: receiverIncarnation,
                 },
               ]);
             if (sql.includes('core.access_workload_bindings'))
@@ -161,10 +162,10 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
                 sql.includes("p.kind = 'service'")
                   ? input.service === false
                     ? []
-                    : [{ principalId, bindingIncarnation: incarnation, actionInvocationId: invocationId }]
+                    : [{ principalId, bindingIncarnation: receiverIncarnation, actionInvocationId: invocationId }]
                   : Array.from({ length: input.systems ?? 0 }, () => ({
                       principalId: legacyId,
-                      bindingIncarnation: incarnation,
+                      bindingIncarnation: receiverIncarnation,
                       actionInvocationId: invocationId,
                     })),
               );
@@ -192,13 +193,23 @@ it.effect('executes durable worker admission for both canonical company source S
       if (result._tag === 'Success') {
         expect(result.success.principal.principalId).toBe(principalId);
         expect(result.success.workload).toMatchObject({
-          bindingIncarnation: incarnation,
+          bindingIncarnation: receiverIncarnation,
+          originalOwnerBindingIncarnation: receiverIncarnation,
+          originalWorkloadBindingIncarnation: incarnation,
           legalEntityId,
           claimId: 'claim-source-writer',
           originalPrincipalId: legacyId,
         });
       }
       const service = queries.find((q) => q.sql.includes("p.kind = 'service'"));
+      const original = queries.find((q) => q.sql.includes('core.action_invocations'));
+      expect(original?.sql).not.toContain('ob.principal_id = p.principal_id');
+      expect(original?.sql).toContain('ob.principal_id = $');
+      expect(original?.sql).toContain('ob.incarnation = $');
+      expect(original?.params).toContain(principalId);
+      expect(original?.params).toContain(receiverIncarnation);
+      expect(original?.sql).toContain("p.kind = 'integration' and p.status = 'active'");
+      expect(original?.sql).toContain("i.status = 'succeeded'");
       expect(service?.params).toContain(principalId);
       expect(service?.params).toContain(tenantId);
       expect(service?.params).toContain(legalEntityId);
