@@ -25,6 +25,7 @@ import {
   SymmyProofFailure,
   symmyProofFailureLine,
   symmyNativeCategoryPayload,
+  symmyCustomerGroupPayload,
   symmyNativeProductPayload,
   symmyNativeMediaPayload,
   symmyOwnerReadEnvelope,
@@ -33,6 +34,7 @@ import {
   symmyNativeResultLine,
 } from './stage-symmy-full-function-proof.mts';
 import type { SymmyProofClient, SymmyFullProofContext } from './stage-symmy-full-function-proof.mts';
+import { SymmyCustomerGroupsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/customer-groups-batch-request-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/price-lists-batch-upsert-request-contract.ts';
 import {
   SymmyDemoCategoriesBatchRequestSchema,
@@ -326,6 +328,18 @@ test('address readback uses the authorized source view, not buyer-only staff acc
   }
   current = { ...page, customers: page.customers.map((customer) => ({ ...customer, addresses: [] })) };
   await assert.rejects(proveOwnerAddresses(client, context), /address-readback:readback/u);
+});
+
+test('customer group acceptance payload obeys the real native meaning-key contract and remains unique', () => {
+  const first = symmyCustomerGroupPayload(makeSymmyProofNames());
+  const second = symmyCustomerGroupPayload(makeSymmyProofNames());
+  Schema.decodeUnknownSync(SymmyCustomerGroupsBatchRequestSchema, { onExcessProperty: 'error' })(first);
+  Schema.decodeUnknownSync(SymmyCustomerGroupsBatchRequestSchema, { onExcessProperty: 'error' })(second);
+  const a = first.customerGroups[0], b = second.customerGroups[0];
+  assert.ok(a !== undefined && b !== undefined);
+  assert.notEqual(a.meaningKey, b.meaningKey);
+  assert.equal(a.businessCode, a.code);
+  assert.match(a.meaningKey, /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u);
 });
 
 test('configuration keeps the environment key Redacted and uses only published stage refs', () => {

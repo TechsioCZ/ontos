@@ -930,13 +930,16 @@ export async function proveOwnerAddresses(client: SymmyProofClient, context: Sym
     );
   }
 }
-async function proveOwnerGroups(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
-  const groupBody = { customerGroups: [{
-    businessCode: context.names.group, code: context.names.group, name: context.names.group,
-    description: `${context.names.prefix} acceptance group`, meaningKey: `${context.names.prefix}.customers`,
+export function symmyCustomerGroupPayload(names: SymmyProofNames) {
+  return { customerGroups: [{
+    businessCode: names.group, code: names.group, name: names.group,
+    description: `${names.prefix} acceptance group`, meaningKey: `${names.prefix.toLowerCase().replaceAll('_', '-')}.customers`,
     membershipCriteria: 'Explicit ERP assignment of scoped acceptance customers',
     purpose: 'Scoped Symmy HTTP acceptance group',
   }] };
+}
+async function proveOwnerGroups(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
+  const groupBody = symmyCustomerGroupPayload(context.names);
   validatePayload(SymmyCustomerGroupsBatchRequestSchema, groupBody, 'group-import');
   const groupExpected = { effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'commerce.customer-context': 1 } };
   const groupKey = `${context.names.prefix}.group`;
