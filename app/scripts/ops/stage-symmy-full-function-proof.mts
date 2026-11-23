@@ -616,9 +616,9 @@ export interface SymmyOrderExportWiring {
   readonly expectedOrderIds: readonly [string, ...string[]];
 }
 const CUSTOMER_EFFECTS = {
-  effectsAtLeast: 11, itemsAtLeast: 8, owners: { 'party.registry': 7, 'commerce.customer-context': 4 },
-} satisfies EffectExpectation;
-async function proveCustomers(
+  effectsAtLeast: 11, owners: { 'party.registry': 7, 'commerce.customer-context': 4 },
+};
+export async function proveCustomers(
   config: SymmyProofConfig, client: SymmyProofClient, names: SymmyProofNames,
 ): Promise<SymmyFullProofContext> {
   const proof = { names };
@@ -644,11 +644,12 @@ async function proveCustomers(
       firstName: proof.names.prefix, kind: 'PERSON', lastName: 'Acceptance',
     },
   ] };
+  const expected = { ...CUSTOMER_EFFECTS, itemsAtLeast: body.customers.length } satisfies EffectExpectation;
   validatePayload(SymmyCustomersBatchRequestSchema, body, 'customer-import');
   const key = `${proof.names.prefix}.customers`;
   const original = await client.settle(await client.write(
     `${PREFIX}/customers/batch`, body, key, 'customer-import',
-  ), CUSTOMER_EFFECTS, 'customer-import');
+  ), expected, 'customer-import');
   const read = async () => decode(CustomerPageSchema, await client.read(
     `${PREFIX}/admin/customers?q=${encodeURIComponent(proof.names.prefix)}&limit=100`, 'customer-readback',
   ), 'customer-readback');
@@ -682,7 +683,7 @@ async function proveCustomers(
   ];
   const replay = await client.settle(await client.write(
     `${PREFIX}/customers/batch`, body, key, 'customer-replay',
-  ), CUSTOMER_EFFECTS, 'customer-replay');
+  ), expected, 'customer-replay');
   assertReplayIdentity(original, replay, 'customer-replay');
   ensure(isDeepStrictEqual(page, await read()), 'customer-replay', 'readback');
   return { names, address, customers };

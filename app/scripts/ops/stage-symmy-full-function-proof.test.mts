@@ -16,6 +16,7 @@ import {
   decimalEqual,
   makeSymmyProofNames,
   parseSymmyOperatorCookieJar,
+  proveCustomers,
   proveSymmyFullFunction,
   proveSymmyProduct,
   proveSymmyProductStockList,
@@ -190,6 +191,67 @@ test('a fresh price-list meaning becomes current before readback', async () => {
   };
   await assert.rejects(proveSymmyProductStockList(config, client), /Reached list read/u);
   assert.deepEqual(events, ['wait-list-start', 'read-list']);
+});
+
+test('two customer items retain all eleven owner effects and replay identities', async () => {
+  const config = readSymmyProofConfig({ SYMMY_API_KEY: 'synthetic-key' });
+  const names = makeSymmyProofNames();
+  const ref = (resourceId: string) => ({
+    moduleId: 'party.registry', resourceType: 'party', resourceId,
+    tenantId: config.input.unitRef.tenantId,
+  });
+  const effects = Array.from({ length: 11 }, (_, index) => ({
+    effectId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    owner: index < 7 ? 'party.registry' : 'commerce.customer-context',
+    status: 'accepted_change',
+  }));
+  const items = [
+    { itemId, outcome: 'accepted', effects: effects.slice(0, 6) },
+    { itemId: effectId, outcome: 'accepted', effects: effects.slice(6) },
+  ];
+  const page = { count: 2, customers: [
+    { kind: 'ORGANIZATION', id: names.organization, resourceId: itemId },
+    { kind: 'PERSON', id: names.person, resourceId: effectId },
+  ].map(({ kind, id, resourceId }) => ({
+    sourceRecordId: id, partyRef: ref(resourceId),
+    profile: {
+      profileRef: { ...ref(resourceId), kind: kind === 'PERSON' ? 'RETAIL' : 'COUNTERPARTY' },
+      subject: kind === 'PERSON'
+        ? { kind: 'RETAIL', partyRef: ref(resourceId), sellingLegalEntityRef: ref(itemId) }
+        : { kind: 'COUNTERPARTY', counterpartyRef: ref(resourceId) },
+    },
+    party: {
+      outcome: 'AVAILABLE', partyType: kind,
+      businessName: kind === 'ORGANIZATION' ? names.organization : null,
+      firstName: kind === 'PERSON' ? names.prefix : null,
+      lastName: kind === 'PERSON' ? 'Acceptance' : null,
+      contactPoints: [
+        { type: 'EMAIL', normalizedValue: `${id.toLowerCase()}@example.invalid` },
+        { type: 'PHONE', normalizedValue: '+12025550123' },
+      ],
+    },
+  })) };
+  let writes = 0;
+  const client: SymmyProofClient = {
+    async read() { return page; },
+    async write() { writes++; return { status: 200, body: { items } }; },
+    async settle(response, expected, boundary) {
+      const accepted = assertAcceptedEffects(response.body, expected, boundary);
+      assert.throws(() => assertAcceptedEffects({ items: [items[0]] }, expected, boundary), /item-count/u);
+      assert.throws(() => assertAcceptedEffects({ items: [
+        { ...items[0], effects: effects.slice(0, 5) }, items[1],
+      ] }, expected, boundary), /effect-count/u);
+      assert.throws(() => assertAcceptedEffects({ items: items.map((item) => ({
+        ...item, effects: item.effects.map((effect) => ({ ...effect, status: 'denied' })),
+      })) }, expected, boundary), /effect-outcome/u);
+      return accepted;
+    },
+    async waitUntil() { throw new Error('Unexpected wait'); },
+    async ownerRead() { throw new Error('Unexpected owner read'); },
+  };
+  const result = await proveCustomers(config, client, names);
+  assert.equal(result.customers.length, 2);
+  assert.equal(writes, 2);
 });
 
 test('configuration keeps the environment key Redacted and uses only published stage refs', () => {
