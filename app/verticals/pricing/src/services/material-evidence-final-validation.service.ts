@@ -374,7 +374,7 @@ type PricingSetBackedFenceSource = Extract<PricingMaterialEvidenceFenceSource, {
 const isSetBackedFenceSource = Schema.is(PricingSetBackedMaterialEvidenceFenceSourceSchema);
 
 /** The same owner proof read twice: typed source material that differs only in owner observation instants. */
-const sameTypedProofIgnoringObservation = (
+export const sameTypedProofIgnoringObservation = (
   left: PricingSetBackedFenceSource,
   right: PricingSetBackedFenceSource,
 ): boolean => sameEncodedIgnoringObservation(encodeTypedSourceJson(left), encodeTypedSourceJson(right));

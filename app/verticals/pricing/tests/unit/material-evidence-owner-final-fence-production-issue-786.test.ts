@@ -2,9 +2,10 @@ import type { PricingMaterialEvidenceFenceSource } from '@app/pricing-contracts/
 import {
   PricingOwnerMaterialEvidenceFenceGatewayRequestSchema,
   PricingMaterialEvidenceUnverifiableFailure,
+  PricingSetBackedMaterialEvidenceFenceSourceSchema,
 } from '@app/pricing-contracts/domain/material-evidence';
 import { PricingSourceEvidenceVerifiedPresentSchema } from '@app/pricing-contracts/domain/source-revision-evidence';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -14,6 +15,7 @@ import {
   PricingOwnerMaterialEvidenceFenceGatewayUnavailable,
   PricingPricingMaterialEvidenceFenceGateway,
   PricingPromotionMaterialEvidenceFenceGateway,
+  firstTypedSourceByProof,
   makePricingMaterialEvidenceOwnerFinalFence,
   makePricingMaterialEvidenceOwnerFinalFenceFromGateways,
 } from '../../src/integrations/material-evidence-owner-final-fence.ts';
@@ -25,6 +27,7 @@ import type {
 import {
   PricingMaterialEvidenceChangedAtFinalFence,
   PricingMaterialEvidenceOwnerFinalFence,
+  sameTypedProofIgnoringObservation,
   verifyPricingMaterialEvidenceOwnerFence,
 } from '../../src/services/material-evidence-final-validation.service.ts';
 import type {
@@ -838,5 +841,70 @@ it.effect('keeps mixed-owner raw proof collisions blocked with validated Catalog
     });
     expect(invoked).toBe(false);
     return yield* Effect.void;
+  }),
+);
+
+const isSetBackedSource = Schema.is(PricingSetBackedMaterialEvidenceFenceSourceSchema);
+
+it.effect('keeps the first typed read of one proof read for several original occurrences #1225', () =>
+  Effect.sync(() => {
+    const [first, second] = completeCatalogFixture1225().sources.filter(isSetBackedSource);
+    if (first === undefined || second === undefined) {
+      throw new Error('TEST fixture requires two set-backed sources');
+    }
+    const byProof = firstTypedSourceByProof([
+      ['proof:repeated', first],
+      ['proof:repeated', second],
+      ['proof:other', second],
+    ]);
+
+    expect(byProof.size).toBe(2);
+    expect(byProof.get('proof:repeated')).toBe(first);
+    expect(byProof.get('proof:other')).toBe(second);
+  }),
+);
+
+it.effect('treats typed material of one proof read at two observation instants as the same proof only #1225', () =>
+  Effect.gen(function* typedProofObservation() {
+    const source = completeCatalogFixture1225().sources.find(isSetBackedSource);
+    if (source === undefined) {
+      throw new Error('TEST fixture requires a set-backed source');
+    }
+    const later = '2026-09-28T10:00:09.000Z';
+    const { completeness } = source.sourceEvidence;
+    const readLater = yield* Schema.decodeUnknownEffect(PricingSetBackedMaterialEvidenceFenceSourceSchema)({
+      ...source,
+      sourceEvidence: {
+        ...source.sourceEvidence,
+        completeness: {
+          ...completeness,
+          completenessEvidence: { ...completeness.completenessEvidence, observedAt: later },
+          temporal: { ...completeness.temporal, evaluatedAt: later, observedAt: later },
+        },
+        currentFacts: Schema.is(PricingSourceEvidenceVerifiedPresentSchema)(source.sourceEvidence)
+          ? source.sourceEvidence.currentFacts.map((fact) => ({
+              ...fact,
+              temporal: { ...fact.temporal, evaluatedAt: later, observedAt: later },
+            }))
+          : [],
+      },
+    });
+    const otherMeaning = yield* Schema.decodeUnknownEffect(PricingSetBackedMaterialEvidenceFenceSourceSchema)({
+      ...source,
+      sourceEvidence: {
+        ...source.sourceEvidence,
+        completeness: { ...completeness, ownerSetRevisionRef: 'another-owner-set-revision' },
+      },
+    }).pipe(Effect.option);
+
+    expect(sameTypedProofIgnoringObservation(source, source)).toBe(true);
+    expect(sameTypedProofIgnoringObservation(source, readLater)).toBe(true);
+    // A different owner Revision is a different proof, never an observation difference.
+    expect(
+      Option.match(otherMeaning, {
+        onNone: () => false,
+        onSome: (changed) => sameTypedProofIgnoringObservation(source, changed),
+      }),
+    ).toBe(false);
   }),
 );
