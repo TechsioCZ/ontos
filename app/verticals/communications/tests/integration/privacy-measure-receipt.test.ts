@@ -64,13 +64,17 @@ const restriction = {
   kind: 'RESTRICT',
   requestedResult: 'restrict message metadata',
 } as const;
-/** A frozen picture of every owner table except the two append-only Privacy measure tables. */
+/**
+ * A frozen picture of every owner table except the two append-only Privacy measure tables and the gateway assertion
+ * redemption ledger, which is not Tenant-scoped and which other test files on the same database write concurrently.
+ */
 const ownerDataHash = (world: World) =>
   world.database.inTenant(world.tenantId, (transaction) =>
     Effect.all(
-      COMMUNICATIONS_TABLES.filter((table) => !getTableName(table).startsWith('privacy_')).map((table) =>
-        transaction.select().from(table),
-      ),
+      COMMUNICATIONS_TABLES.filter(
+        (table) =>
+          !getTableName(table).startsWith('privacy_') && getTableName(table) !== 'gateway_assertion_redemptions',
+      ).map((table) => transaction.select().from(table)),
     ).pipe(Effect.map((tables) => JSON.stringify(tables))),
   );
 
