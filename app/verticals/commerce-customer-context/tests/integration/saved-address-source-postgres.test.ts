@@ -40,6 +40,7 @@ import {
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import {
   commerceCustomerContextRelations,
+  customerProfileSourceRoutes,
   savedAddressSourceRoutes,
   savedAddressSourceReceipts,
   savedAddressSourceBindings,
@@ -311,6 +312,40 @@ it.live(
             Match.orElse(() => false),
           ),
         ).toBe(true);
+        // Exercise the native routine as the actual no-table-grants runtime, not an owner-admin read.
+        const adminSql = Context.get(adminContext, PgClient.PgClient);
+        const sourceReader = fixture.reader.principalId;
+        const nativeReaderCurrent = (input: SavedAddressSourceReceiptRequest) => adminSql.withTransaction(
+          Effect.gen(function* sourceReaderRoutine() {
+            yield* adminSql`set local role ontos_runtime`;
+            yield* adminSql`select set_config('ontos.tenant_id', ${fixture.tenantId}, true),
+              set_config('ontos.legal_entity_id', ${fixture.legalEntityId}, true)`;
+            const rows = yield* adminSql`select outcome, result from commerce_customer_context.read_saved_address_source_receipt(
+              ${fixture.tenantId}::uuid, ${fixture.legalEntityId}::uuid, ${sourceReader}::uuid,
+              ${sourceReader}::uuid, null::text, ${adminSql.json(input)}::jsonb)`;
+            return yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({
+              outcome: Schema.String, result: Schema.Unknown,
+            })))(rows);
+          }),
+        );
+        expect(yield* nativeReaderCurrent(currentInput)).toMatchObject([{ outcome: 'SOURCE_AUTHORITY_DENIED' }]);
+        yield* admin.insert(customerProfileSourceRoutes).values({
+          active: true, tenantId: fixture.tenantId, legalEntityId: fixture.legalEntityId,
+          principalId: fixture.manager.principalId, sourceReaderPrincipalIds: [sourceReader],
+          routeId: source.identity.routeRef, routeRevision: source.routeRevision,
+          mappingRevision: source.mappingRevision, issuer: source.identity.issuer,
+          namespace: source.identity.namespace, recordType: source.identity.recordType,
+        });
+        expect(yield* nativeReaderCurrent(currentInput)).toMatchObject([{
+          outcome: 'AVAILABLE', result: { _tag: 'CURRENT', savedAddressRef: added.address.savedAddressRef },
+        }]);
+        expect(yield* nativeReaderCurrent(receiptInput)).toMatchObject([{ outcome: 'SOURCE_AUTHORITY_DENIED' }]);
+        expect(yield* nativeReaderCurrent({
+          ...currentInput, source: { ...source, identity: { ...source.identity, routeRef: 'unregistered-route' } },
+        })).toMatchObject([{ outcome: 'SOURCE_AUTHORITY_DENIED' }]);
+        yield* admin.update(customerProfileSourceRoutes).set({ active: false })
+          .where(eq(customerProfileSourceRoutes.tenantId, fixture.tenantId));
+        expect(yield* nativeReaderCurrent(currentInput)).toMatchObject([{ outcome: 'SOURCE_AUTHORITY_DENIED' }]);
         const forgedRetailAsCounterparty = yield* Schema.decodeUnknownEffect(SavedAddressSourceReceiptRequestSchema)({
           ...currentInput,
           profile: {
