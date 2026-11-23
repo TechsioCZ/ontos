@@ -46,6 +46,10 @@ import { relayPortalAuthCommunicationRequestAction } from '../../src/actions/rel
 import type { PortalAuthIssuance } from '../../src/portal-auth/communications/issuance.ts';
 import { portalAuthCommunicationRequest } from '../../src/portal-auth/communications/request.ts';
 import { PortalAuthCommunicationSourceGatewayLive } from '../../src/workers/portal-auth-communication-source-gateway.ts';
+import { PortalAuthPreVerificationPrivacyGatewayLive } from '../../src/workers/portal-auth-pre-verification-privacy-gateway.ts';
+import type { PortalAuthSubmission } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import { CommercePortalAuthCommunicationDecisionReporter } from '../../src/portal-auth/communications/decision-report.ts';
+import { preVerificationBindPayloadOf } from '../../src/portal-auth/communications/pre-verification-privacy-binding.ts';
 import { submitPortalAuthCommunicationRequestWorker } from '../../src/workers/submit-portal-auth-communication-request.worker.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
@@ -71,6 +75,7 @@ const MODULE = 'commerce.customer-context';
 const TOPIC = 'commerce.customer-context.portal-auth-communication-requested.v1';
 const WORKER_KEY = 'commerce.customer-context.submit-portal-auth-communication-request';
 const SUBMIT_PATH = '/communications/actions/submit-communication-request';
+const BIND_PATH = '/privacy/actions/bind-pre-verification-subject';
 const DELEGATION_PATH = '/shell-super-app-api/auth/delegated/gateway-context';
 const SHELL_PREFIX = '/shell-super-app-api';
 
@@ -91,6 +96,7 @@ interface Received {
 }
 
 const JsonSchema = Schema.fromJsonString(Schema.Unknown);
+const CommunicationsAudienceSchema = Schema.Struct({ audience: Schema.Literal('communications') });
 const ClaimedSubjectSchema = Schema.Struct({
   subject: Schema.Struct({ claimId: Schema.String.pipe(Schema.brand('OutboxClaimId')) }),
 });
@@ -99,7 +105,12 @@ const ClaimedSubjectSchema = Schema.Struct({
  * The Shell and Communications as ONE loopback HTTP peer (labelled): the Shell issues a FICTIONAL delegated token for the
  * admitted release, and Communications answers 503 while `outage` says so, then one FICTIONAL stored decision.
  */
-const servePeers = Effect.fnUntraced(function* servePeers(compositionRevision: string, outage: Ref.Ref<number>) {
+const servePeers = Effect.fnUntraced(function* servePeers(
+  compositionRevision: string,
+  outage: Ref.Ref<number>,
+  tenantId: string,
+  refuse: boolean,
+) {
   const received = yield* Ref.make<readonly Received[]>([]);
   const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
   yield* server.serve(
@@ -125,10 +136,48 @@ const servePeers = Effect.fnUntraced(function* servePeers(compositionRevision: s
             token: 'fictional-delegated-workload-token',
           });
         }
+        if (path.endsWith(BIND_PATH)) {
+          // a FICTIONAL binding in the shape of Privacy's published bind result, never Privacy evidence
+          return yield* HttpServerResponse.json({
+            bindingRef: '00000000-0000-4000-8000-00000000b1d0',
+            policy: { policyRef: 'fictional-policy', revision: 'fictional-r1' },
+            scope: {
+              controllerRef: 'fictional-controller',
+              dataCategoryRefs: ['fictional:contact'],
+              operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
+              processingScopeRef: { scopeId: 'fictional-scope', scopeType: 'privacy.processing-scope' },
+              purposeRef: 'fictional-purpose',
+              purposeVersionId: 'fictional-v1',
+              recipientRefs: ['fictional.communications'],
+              subjectRef: {
+                moduleId: 'privacy.core',
+                resourceId: '00000000-0000-4000-8000-00000000b1d0',
+                resourceType: 'privacy.core.privacy-subject',
+                tenantId,
+              },
+            },
+            status: 'ACTIVE',
+            validUntil: '2099-01-01T00:00:00.000Z',
+          });
+        }
         if (path.endsWith(SUBMIT_PATH)) {
           const remaining = yield* Ref.getAndUpdate(outage, (left) => Math.max(0, left - 1));
           if (remaining > 0) {
             return HttpServerResponse.empty({ status: 503 });
+          }
+          if (refuse) {
+            // Communications' published final refusal: the same idempotency key already carried another request
+            return yield* HttpServerResponse.json(
+              {
+                _tag: 'SubmitCommunicationRequestActionConflictProblem',
+                code: 'action_request_hash_conflict',
+                detail: 'Fictional conflicting request',
+                status: 409,
+                title: 'Conflict',
+                type: 'about:blank',
+              },
+              { contentType: 'application/problem+json', status: 409 },
+            );
           }
           return yield* HttpServerResponse.json({
             decision: { kind: 'NO_MESSAGE', reason: 'FICTIONAL_STORED_DECISION' },
@@ -164,6 +213,8 @@ const frozenClock = (real: Clock.Clock, now: Date): Clock.Clock => {
 
 const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(function* scenario(input: {
   readonly outageCalls: number;
+  /** Communications refuses the request for good once it answers. */
+  readonly refuse?: boolean;
   readonly validForMinutes: number;
 }) {
   const fixture = makeNativeOutboxWorkerFixture(getVerticalRuntimeOutboxWorkers(commerceCustomerContextRegistration));
@@ -289,16 +340,27 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
       .pipe(Effect.result);
   };
   const outage = yield* Ref.make(input.outageCalls);
-  const peers = yield* servePeers(revision, outage);
+  const peers = yield* servePeers(revision, outage, tenantId, input.refuse === true);
   // the worker host's configuration: read when the gateway layer is built AND when each delegation is acquired
   const configuration = ConfigProvider.layer(
     ConfigProvider.fromUnknown({
       ONTOS_COMMUNICATIONS_API_BASE_URL: peers.origin,
       ONTOS_GATEWAY_MODULE_API_KEY: 'fictional-module-api-key',
+      ONTOS_PRIVACY_API_BASE_URL: peers.origin,
       ONTOS_SHELL_GATEWAY_BASE_URL: `${peers.origin}${SHELL_PREFIX}`,
     }),
   );
-  const gateway = PortalAuthCommunicationSourceGatewayLive.pipe(Layer.provideMerge(configuration));
+  // LABELLED double of the completion callback to Auth's store (its store write is proven by the outbox suite)
+  const reported = yield* Ref.make<readonly (PortalAuthSubmission | { readonly refused: string })[]>([]);
+  const reporter = Layer.succeed(CommercePortalAuthCommunicationDecisionReporter, {
+    decided: (_request, submission) => Ref.update(reported, (all) => [...all, submission]),
+    refused: (_request, code) => Ref.update(reported, (all) => [...all, { refused: code }]),
+  });
+  const gateway = Layer.mergeAll(
+    PortalAuthCommunicationSourceGatewayLive,
+    PortalAuthPreVerificationPrivacyGatewayLive,
+    reporter,
+  ).pipe(Layer.provideMerge(configuration));
   const outbox = makeOutboxRuntime(makeOutboxRepository(database, crypto));
   const registrations = [submitPortalAuthCommunicationRequestWorker];
   const realClock = yield* Clock.Clock;
@@ -340,6 +402,7 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
     peers,
     relayAs,
     relayPrincipalId,
+    reported,
     request,
     revision,
     startedAt: DateTime.toDateUtc(issuedAt),
@@ -399,8 +462,42 @@ it.live(
         expect(settled.attempts).toBeLessThanOrEqual(5);
         const received = yield* Ref.get(world.peers.received);
         const submissions = received.filter(({ path }) => path.endsWith(SUBMIT_PATH));
-        const delegations = received.filter(({ path }) => path === DELEGATION_PATH);
+        const binds = received.filter(({ path }) => path.endsWith(BIND_PATH));
+        const delegations = received.filter(
+          ({ body, path }) => path === DELEGATION_PATH && Schema.is(CommunicationsAudienceSchema)(body),
+        );
+        const privacyDelegations = received.filter(
+          ({ body, path }) => path === DELEGATION_PATH && !Schema.is(CommunicationsAudienceSchema)(body),
+        );
         expect(submissions).toHaveLength(8);
+        // D4: only the answered attempt reported Communications' stored decision back to Auth, exactly once
+        expect(yield* Ref.get(world.reported)).toMatchObject([
+          { decision: { kind: 'NO_MESSAGE', reason: 'FICTIONAL_STORED_DECISION' }, outcome: 'DECIDED' },
+        ]);
+        // #1406: every attempt first bound the pre-verification Privacy subject on the same delivery, through Privacy's public
+        // Action with a fresh registered-workload assertion of the bind declaration, and only then submitted the request
+        expect(binds).toHaveLength(8);
+        for (const bind of binds) {
+          expect(bind.body).toStrictEqual(preVerificationBindPayloadOf(world.issuance));
+          expect(bind.idempotencyKey).toBe(`portal-auth.pre-verification-bind.${world.issuance.issuanceRef}`);
+          expect(bind.authorization).toBe('Bearer fictional-delegated-workload-token');
+        }
+        expect(received.findIndex(({ path }) => path.endsWith(BIND_PATH))).toBeLessThan(
+          received.findIndex(({ path }) => path.endsWith(SUBMIT_PATH)),
+        );
+        expect(privacyDelegations).toHaveLength(8);
+        for (const delegation of privacyDelegations) {
+          expect(delegation.body).toMatchObject({
+            audience: 'privacy',
+            legalEntityScope: 'subject',
+            subject: {
+              _tag: 'RegisteredWorkload',
+              declarationKey: 'privacy.core.pre-verification-subject.bind',
+              deliveryId: settled.deliveryId,
+              workerKey: WORKER_KEY,
+            },
+          });
+        }
         // every attempt submitted the SAME request under the SAME idempotency key with the fresh delegated token
         for (const submission of submissions) {
           expect(submission.body).toStrictEqual(world.request);
@@ -446,6 +543,26 @@ it.live(
         expect(settled.status).toBe('dead');
         const received = yield* Ref.get(world.peers.received);
         expect(received.filter(({ path }) => path.endsWith(SUBMIT_PATH)).length).toBeGreaterThanOrEqual(5);
+      }),
+    ),
+  { timeout: 180_000 },
+);
+
+it.live(
+  'D5: a request Communications refuses for good is ended by the worker on its first delivery, never retried or dead-lettered',
+  () =>
+    native(
+      Effect.gen(function* refused() {
+        const world = yield* scenario({ outageCalls: 0, refuse: true, validForMinutes: 30 });
+        yield* world.relayAs(world.relayPrincipalId);
+        const settled = yield* settleDelivery(world, world.startedAt);
+        // one attempt, acknowledged: no retry, no deferral, no dead letter
+        expect(settled).toMatchObject({ attempts: 1, status: 'done' });
+        expect(settled.seen).not.toContain('dead');
+        const received = yield* Ref.get(world.peers.received);
+        expect(received.filter(({ path }) => path.endsWith(SUBMIT_PATH))).toHaveLength(1);
+        // the terminal outcome went back to Auth with Communications' closed code only
+        expect(yield* Ref.get(world.reported)).toStrictEqual([{ refused: 'action_request_hash_conflict' }]);
       }),
     ),
   { timeout: 180_000 },

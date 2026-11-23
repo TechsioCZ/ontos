@@ -22,6 +22,8 @@ import type { DomainEventContractMap } from '../../../../packages/core-runtime/s
 import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
 import { relayPortalAuthCommunicationRequestAction } from '../../src/actions/relay-portal-auth-communication-request.action.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import type { PortalAuthSubmission } from '../../src/portal-auth/communications/communication-request-submitter.ts';
+import { CommercePortalAuthCommunicationDecisionReporter } from '../../src/portal-auth/communications/decision-report.ts';
 import { CommercePortalAuthCommunicationStore } from '../../src/portal-auth/communications/communication-store.ts';
 import { PortalAuthCommunicationUnavailable } from '../../src/portal-auth/communications/communication-unavailable.ts';
 import type { PortalAuthIssuance } from '../../src/portal-auth/communications/issuance.ts';
@@ -29,11 +31,19 @@ import {
   makePortalAuthCommunicationRelayLive,
   relayCommunicationRequests,
 } from '../../src/portal-auth/communications/request-relay.ts';
+import {
+  PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES,
+  PortalAuthCommunicationRelayConfigurationError,
+  portalAuthCommunicationRelayConfiguration,
+  relayCredential,
+} from '../../src/portal-auth/communications/relay-configuration.ts';
 import { PortalAuthRelayTransportLive } from '../../src/portal-auth/communications/relay-transport.ts';
 import { CommercePortalAuthTrustedScope } from '../../src/portal-auth/communications/trusted-scope.ts';
 import { PortalAuthTrustedScopeUnavailable } from '../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import { portalAuthCommunicationRequest, storedRequestOf } from '../../src/portal-auth/communications/request.ts';
+import { PortalAuthCommunicationRequestRefused } from '../../src/workers/portal-auth-communication-request-refused.ts';
 import { PortalAuthCommunicationSourceGateway } from '../../src/workers/portal-auth-communication-source-gateway.ts';
+import { PortalAuthPreVerificationPrivacyGateway } from '../../src/workers/portal-auth-pre-verification-privacy-gateway.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from '../../src/workers/submit-portal-auth-communication-request-rejected.ts';
 import { handleSubmitPortalAuthCommunicationRequest } from '../../src/workers/submit-portal-auth-communication-request.worker.ts';
 import { makeCommunicationStoreDouble } from '../support/portal-auth-communication-store.double.ts';
@@ -120,17 +130,58 @@ const deliveryOf = (overrides: Partial<OutboxWorkerHandlerContext> = {}): Outbox
   ...overrides,
 });
 
+/** A FICTIONAL stored decision that leaves no message, in the shape of Communications' published answer. */
+const NO_MESSAGE_DECISION = {
+  decision: { kind: 'NO_MESSAGE', reason: 'FICTIONAL_NO_TYPE' },
+  decisionId: '5d000000-0000-4000-8000-0000000000c1',
+  outcome: 'DECIDED',
+  replayed: false,
+  requestId: '5d000000-0000-4000-8000-0000000000c2',
+} as const satisfies PortalAuthSubmission;
+
+/**
+ * The worker's collaborators as doubles: the Privacy bind, the Communications submission and the decision callback to Auth, in
+ * the order they were called.
+ */
 const gatewayDouble = (
-  answer: () => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected> = () => Effect.void,
+  answer: () => Effect.Effect<
+    PortalAuthSubmission,
+    PortalAuthCommunicationRequestRefused | SubmitPortalAuthCommunicationRequestRejected
+  > = () => Effect.succeed(NO_MESSAGE_DECISION),
+  privacyAnswer: () => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected> = () => Effect.void,
+  reportAnswer: () => Effect.Effect<void, PortalAuthCommunicationUnavailable> = () => Effect.void,
 ) => {
   const calls: { readonly context: OutboxWorkerHandlerContext; readonly request: CommunicationRequestEncoded }[] = [];
-  const layer = Layer.succeed(PortalAuthCommunicationSourceGateway, {
-    submit: (request, context) => {
-      calls.push({ context, request });
-      return answer();
-    },
-  });
-  return { calls, layer };
+  const order: string[] = [];
+  const reported: (PortalAuthSubmission | { readonly refused: string })[] = [];
+  const layer = Layer.mergeAll(
+    Layer.succeed(CommercePortalAuthCommunicationDecisionReporter, {
+      decided: (request, submission) => {
+        order.push(`report:${request.occurrence.occurrenceId}`);
+        reported.push(submission);
+        return reportAnswer();
+      },
+      refused: (request, code) => {
+        order.push(`refused:${request.occurrence.occurrenceId}`);
+        reported.push({ refused: code });
+        return reportAnswer();
+      },
+    }),
+    Layer.succeed(PortalAuthCommunicationSourceGateway, {
+      submit: (request, context) => {
+        calls.push({ context, request });
+        order.push(`submit:${request.occurrence.occurrenceId}`);
+        return answer();
+      },
+    }),
+    Layer.succeed(PortalAuthPreVerificationPrivacyGateway, {
+      bind: (request) => {
+        order.push(`bind:${request.occurrence.occurrenceId}`);
+        return privacyAnswer();
+      },
+    }),
+  );
+  return { calls, layer, order, reported };
 };
 
 describe('The Portal Auth relay Action (#1406 D1)', () => {
@@ -178,6 +229,40 @@ describe('The Portal Auth source worker (#1406 D1)', () => {
       yield* run;
       expect(gateway.calls.map((call) => call.request)).toStrictEqual([request, request]);
       expect(gateway.calls[0]?.context.workerKey).toBe(WORKER_KEY);
+      // the pre-verification Privacy subject is bound first, on the same delivery, every time
+      expect(gateway.order).toStrictEqual([
+        'bind:pa-transport-4',
+        'submit:pa-transport-4',
+        'report:pa-transport-4',
+        'bind:pa-transport-4',
+        'submit:pa-transport-4',
+        'report:pa-transport-4',
+      ]);
+      // D4: the stored decision itself went back to Auth both times (a replay-safe, idempotent report)
+      expect(gateway.reported).toStrictEqual([NO_MESSAGE_DECISION, NO_MESSAGE_DECISION]);
+    }),
+  );
+
+  it.effect('an unreachable Privacy stays retryable and submits nothing, so Communications never decides unbound', () =>
+    Effect.gen(function* privacyOutage() {
+      const request = yield* requestOf('pa-transport-privacy');
+      const gateway = gatewayDouble(
+        () => Effect.succeed(NO_MESSAGE_DECISION),
+        () =>
+          Effect.fail(
+            new SubmitPortalAuthCommunicationRequestRejected({
+              code: 'PRIVACY_UNAVAILABLE',
+              reason: 'fictional Privacy outage',
+              retryable: true,
+            }),
+          ),
+      );
+      const failure = yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(
+        Effect.provide(gateway.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ code: 'PRIVACY_UNAVAILABLE', retryable: true });
+      expect(gateway.order).toStrictEqual(['bind:pa-transport-privacy']);
     }),
   );
 
@@ -205,7 +290,7 @@ describe('The Portal Auth source worker (#1406 D1)', () => {
           Effect.flip,
         ),
       ).toMatchObject({ code: 'WORKER_CONTEXT_INVALID' });
-      expect(gateway.calls).toHaveLength(0);
+      expect(gateway.order).toHaveLength(0);
     }),
   );
 
@@ -317,6 +402,77 @@ describe('The Portal Auth source worker past its ordinary retry budget (#1406 D1
   );
 });
 
+/** Auth's own store cannot record the decision now. */
+const storeDown = () => Effect.fail(new PortalAuthCommunicationUnavailable({ operation: 'request-decision' }));
+
+describe('The Portal Auth source worker reports the decision back to Auth (#1406 D4)', () => {
+  it.effect('an unreachable Auth store keeps a usable issuance retryable, so the same decision is reported again', () =>
+    Effect.gen(function* usable() {
+      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+      const request = yield* requestOf('pa-transport-report-1');
+      const gateway = gatewayDouble(undefined, undefined, storeDown);
+      const failure = yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(
+        Effect.provide(gateway.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ code: 'AUTH_STORE_UNAVAILABLE', retryable: true });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect('past the issuance expiry the delivery is acknowledged: the sweep already cleared the value', () =>
+    Effect.gen(function* expired() {
+      yield* TestClock.setTime(DateTime.add(ISSUED_AT, { minutes: 31 }).epochMilliseconds);
+      const request = yield* requestOf('pa-transport-report-2');
+      const gateway = gatewayDouble(undefined, undefined, storeDown);
+      yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(Effect.provide(gateway.layer));
+      expect(gateway.order).toStrictEqual([
+        'bind:pa-transport-report-2',
+        'submit:pa-transport-report-2',
+        'report:pa-transport-report-2',
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
+describe('The Portal Auth source worker ends a request Communications refused for good (#1406 D5)', () => {
+  it.effect('records the terminal outcome and acknowledges the delivery, even on its last ordinary attempt', () =>
+    Effect.gen(function* refusedForGood() {
+      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+      const request = yield* requestOf('pa-transport-refused');
+      const gateway = gatewayDouble(() =>
+        Effect.fail(new PortalAuthCommunicationRequestRefused({ code: 'communication_request_source_mismatch' })),
+      );
+      for (const attemptNumber of [1, 5]) {
+        // acknowledged: neither retried nor deferred, so Core never dead-letters it
+        yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf({ attemptNumber })).pipe(
+          Effect.provide(gateway.layer),
+        );
+      }
+      expect(gateway.reported).toStrictEqual([
+        { refused: 'communication_request_source_mismatch' },
+        { refused: 'communication_request_source_mismatch' },
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect('keeps a usable issuance retryable only while Auth cannot record the refusal', () =>
+    Effect.gen(function* storeOutage() {
+      yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
+      const request = yield* requestOf('pa-transport-refused-store');
+      const gateway = gatewayDouble(
+        () => Effect.fail(new PortalAuthCommunicationRequestRefused({ code: 'action_request_hash_conflict' })),
+        undefined,
+        storeDown,
+      );
+      const failure = yield* handleSubmitPortalAuthCommunicationRequest({ request }, deliveryOf()).pipe(
+        Effect.provide(gateway.layer),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ code: 'AUTH_STORE_UNAVAILABLE', retryable: true });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
 describe('The relay over the production transport (#1406 D1)', () => {
   it.effect(
     'a RELAYED row is closed as RELAYED and keeps its protected value until Auth itself ends the issuance',
@@ -374,6 +530,9 @@ const unavailableComposition = Layer.succeed(
     ),
   ),
 );
+const trustedTenantScope = Layer.succeed(CommercePortalAuthTrustedScope, {
+  current: Effect.succeed({ tenantId: TENANT }),
+});
 const transportWith = (
   configuration: Record<string, string>,
   composition: Layer.Layer<ActiveApplicationCompositionService>,
@@ -381,7 +540,13 @@ const transportWith = (
   CommercePortalAuthCommunicationRequestSubmitter.pipe(
     Effect.provide(
       PortalAuthRelayTransportLive.pipe(
-        Layer.provide(Layer.merge(composition, ConfigProvider.layer(ConfigProvider.fromUnknown(configuration)))),
+        Layer.provide(
+          Layer.mergeAll(
+            composition,
+            trustedTenantScope,
+            ConfigProvider.layer(ConfigProvider.fromUnknown(configuration)),
+          ),
+        ),
       ),
     ),
   );
@@ -401,8 +566,18 @@ const recordingShell = Effect.gen(function* recordingShellEffect() {
 const configurationOf = (origin: string) => ({
   COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key',
   ONTOS_COMMERCE_CUSTOMER_CONTEXT_API_BASE_URL: origin,
+  ONTOS_COMMUNICATIONS_API_BASE_URL: `${origin}/communications-api`,
+  ONTOS_PRIVACY_API_BASE_URL: `${origin}/privacy-api`,
   ONTOS_SHELL_GATEWAY_BASE_URL: `${origin}/shell-super-app-api`,
 });
+const admittedComposition = Effect.map(
+  makeApplicationCompositionSnapshotFixture(['commerce-customer-context']),
+  (snapshot) =>
+    Layer.succeed(
+      ActiveApplicationCompositionService,
+      makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
+    ),
+);
 
 describe('The relay loop and the production relay transport (#1406 D1)', () => {
   it.effect(
@@ -519,16 +694,77 @@ describe('The relay loop and the production relay transport (#1406 D1)', () => {
         expect(yield* Ref.get(shell.received)).toBe(0);
         // CONTROL: the same configured transport with an admitted composition does reach the Shell, so the composition
         // gate alone is what kept the call above from leaving
-        const snapshot = yield* makeApplicationCompositionSnapshotFixture(['commerce-customer-context']);
-        const admitted = yield* transportWith(
-          configurationOf(shell.origin),
-          Layer.succeed(
-            ActiveApplicationCompositionService,
-            makeActiveApplicationCompositionService(Effect.succeed(snapshot)),
-          ),
-        );
+        const admitted = yield* transportWith(configurationOf(shell.origin), yield* admittedComposition);
         expect(Schema.is(PortalAuthCommunicationUnavailable)(yield* Effect.flip(admitted.submit(request)))).toBe(true);
         expect(yield* Ref.get(shell.received)).toBeGreaterThanOrEqual(1);
       }).pipe(Effect.scoped),
+  );
+});
+
+/** The relay configuration as an enabled relay reads it from the given deployment environment. */
+const readUnder = (environment: Record<string, string>) =>
+  Effect.result(portalAuthCommunicationRelayConfiguration).pipe(
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+  );
+
+describe('The relay configuration and its one key per Tenant (#1406)', () => {
+  it.live('presents the relay key only for a request of the realm trusted Tenant, and sends nothing for another', () =>
+    Effect.gen(function* oneKeyPerTenant() {
+      const shell = yield* recordingShell;
+      const transport = yield* transportWith(configurationOf(shell.origin), yield* admittedComposition);
+      const failure = yield* Effect.flip(transport.submit(yield* requestOf('pa-transport-foreign', OTHER_TENANT)));
+      expect(Schema.is(PortalAuthCommunicationUnavailable)(failure)).toBe(true);
+      expect(JSON.stringify(failure)).not.toContain('fictional-relay-key');
+      expect(yield* Ref.get(shell.received)).toBe(0);
+      // CONTROL: the trusted Tenant's own request does reach the Shell with the same key
+      yield* Effect.flip(transport.submit(yield* requestOf('pa-transport-own')));
+      expect(yield* Ref.get(shell.received)).toBeGreaterThanOrEqual(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect('requires all four values once the relay is enabled, naming the missing keys and never a value', () =>
+    Effect.gen(function* requiredKeys() {
+      const complete = configurationOf('https://fictional.example');
+      const configured = yield* readUnder(complete);
+      expect(Result.isSuccess(configured)).toBe(true);
+      for (const key of Object.values(PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES)) {
+        const { [key]: _omitted, ...withoutKey } = complete;
+        for (const environment of [withoutKey, { ...complete, [key]: '  ' }]) {
+          const read = yield* readUnder(environment);
+          expect(read).toStrictEqual(Result.fail(new PortalAuthCommunicationRelayConfigurationError({ keys: [key] })));
+        }
+      }
+      // a gateway URL carrying credentials or a query is malformed; nothing of the configured values is echoed
+      const malformed = yield* readUnder({
+        ...complete,
+        ONTOS_SHELL_GATEWAY_BASE_URL: 'https://user:fictional-secret@fictional.example/shell?x=1',
+      });
+      expect(malformed).toStrictEqual(
+        Result.fail(new PortalAuthCommunicationRelayConfigurationError({ keys: ['ONTOS_SHELL_GATEWAY_BASE_URL'] })),
+      );
+      expect(JSON.stringify(malformed)).not.toContain('fictional-secret');
+      expect(yield* readUnder({})).toStrictEqual(
+        Result.fail(
+          new PortalAuthCommunicationRelayConfigurationError({
+            keys: Object.values(PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect('treats a blank relay credential as no credential, so a deployment without the relay is not enabled', () =>
+    Effect.gen(function* blankCredential() {
+      for (const [environment, named] of [
+        [{}, false],
+        [{ COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: ' ' }, false],
+        [{ COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY: 'fictional-relay-key' }, true],
+      ] as const) {
+        const credential = yield* relayCredential.pipe(
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+        );
+        expect(Option.isSome(credential)).toBe(named);
+      }
+    }),
   );
 });

@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Layer, Ref, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit, Layer, Logger, Option, Ref, References, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -16,8 +16,11 @@ import {
 } from '../../src/portal-auth/communications/request-relay.ts';
 import {
   CommercePortalAuthTrustedScope,
+  configuredTrustedScopeLayer,
+  trustedScopeOfConfiguredTenant,
   unconfiguredTrustedScopeLayer,
 } from '../../src/portal-auth/communications/trusted-scope.ts';
+import { PortalAuthTrustedScopeUnavailable } from '../../src/portal-auth/communications/trusted-scope-unavailable.ts';
 import { makeCommunicationStoreDouble } from '../support/portal-auth-communication-store.double.ts';
 
 /**
@@ -38,10 +41,18 @@ const issuance = (name: string): PortalAuthIssuance => ({
   providerSubjectId: 'subject-relay-driver',
 });
 
+/** One log line the loop wrote: its message and the two annotations a refusal carries. */
+interface LoggedLine {
+  readonly failure: unknown;
+  readonly message: unknown;
+  readonly reason: unknown;
+}
+
 /** One committed row of the Tenant, and the loop run for two intervals over the given admission and trusted scope. */
 const runLoop = Effect.fn('PortalAuthRelayDriverTest.run')(function* runLoop(
   admitted: Effect.Effect<boolean>,
   trustedScope: Layer.Layer<CommercePortalAuthTrustedScope>,
+  logged: LoggedLine[] = [],
 ) {
   yield* TestClock.setTime(ISSUED_AT.epochMilliseconds);
   const store = makeCommunicationStoreDouble();
@@ -77,6 +88,15 @@ const runLoop = Effect.fn('PortalAuthRelayDriverTest.run')(function* runLoop(
       );
       yield* TestClock.adjust('2 seconds');
     }),
+  ).pipe(
+    Effect.provide(
+      Logger.layer([
+        Logger.make(({ fiber, message }) => {
+          const { failure, reason } = fiber.getRef(References.CurrentLogAnnotations);
+          logged.push({ failure, message, reason });
+        }),
+      ]),
+    ),
   );
   return { row: (yield* Ref.get(store.outbox)).get('pa-driver-1'), submitted };
 });
@@ -133,11 +153,86 @@ describe('The Portal Auth relay as the worker entry maintenance loop (#1406 D1)'
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect('relays nothing without a trusted Tenant (the production composition until the owner supplies one)', () =>
+  it.effect('relays nothing without a trusted Tenant', () =>
     Effect.gen(function* unconfiguredScope() {
       const { row, submitted } = yield* runLoop(Effect.succeed(true), unconfiguredTrustedScopeLayer);
       expect(submitted).toStrictEqual([]);
       expect(row?.state).toBe('PENDING');
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect('reports a realm without a usable trusted Tenant once, as a typed, value-free configuration error', () =>
+    Effect.gen(function* reportedScope() {
+      const logged: LoggedLine[] = [];
+      yield* runLoop(Effect.succeed(true), unconfiguredTrustedScopeLayer, logged);
+      const reported = logged.filter(({ failure }) => failure === 'PortalAuthTrustedScopeUnavailable');
+      // three ticks ran (t = 0, 1 s, 2 s), the unchanged refusal is reported once
+      expect(reported).toStrictEqual([
+        {
+          failure: 'PortalAuthTrustedScopeUnavailable',
+          message: ['The Portal Auth realm has no usable trusted Tenant; nothing is relayed'],
+          reason: 'NOT_CONFIGURED',
+        },
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
+/** The realm's trusted scope as the configured layer reads it from the given deployment environment. */
+const currentUnder = (environment: Record<string, string>) =>
+  CommercePortalAuthTrustedScope.pipe(
+    Effect.flatMap(({ current }) => Effect.exit(current)),
+    Effect.provide(
+      configuredTrustedScopeLayer.pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment)))),
+    ),
+  );
+
+describe('The trusted Tenant of the Portal Auth realm comes from reviewed deployment configuration (#1406)', () => {
+  it.effect(
+    'names the Tenant only from a configured Tenant id, failing closed when it is unset, blank or malformed',
+    () =>
+      Effect.gen(function* configuredValues() {
+        expect(yield* trustedScopeOfConfiguredTenant(Option.some(` ${TENANT} `))).toStrictEqual({ tenantId: TENANT });
+        for (const [configured, reason] of [
+          [Option.none(), 'NOT_CONFIGURED'],
+          [Option.some(''), 'NOT_CONFIGURED'],
+          [Option.some('   '), 'NOT_CONFIGURED'],
+          [Option.some('tenant.example'), 'INVALID'],
+          [Option.some(`${TENANT},${TENANT}`), 'INVALID'],
+        ] as const) {
+          const exit = yield* Effect.exit(trustedScopeOfConfiguredTenant(configured));
+          expect(exit).toStrictEqual(Exit.fail(new PortalAuthTrustedScopeUnavailable({ reason })));
+        }
+      }),
+  );
+
+  it.effect('reads COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID from the deployment and nothing a request could carry', () =>
+    Effect.gen(function* fromDeployment() {
+      expect(yield* currentUnder({ COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID: TENANT })).toStrictEqual(
+        Exit.succeed({ tenantId: TENANT }),
+      );
+      // a host, origin or forwarded header is never a Tenant source
+      expect(
+        yield* currentUnder({ COMMERCE_PORTAL_AUTH_URL: 'https://portal.example', HOST: 'portal.example' }),
+      ).toStrictEqual(Exit.fail(new PortalAuthTrustedScopeUnavailable({ reason: 'NOT_CONFIGURED' })));
+      expect(yield* currentUnder({ COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID: 'portal.example' })).toStrictEqual(
+        Exit.fail(new PortalAuthTrustedScopeUnavailable({ reason: 'INVALID' })),
+      );
+    }),
+  );
+
+  it.effect('relays the committed row of the configured Tenant through the configured scope', () =>
+    Effect.gen(function* configuredRelay() {
+      const { row, submitted } = yield* runLoop(
+        Effect.succeed(true),
+        configuredTrustedScopeLayer.pipe(
+          Layer.provide(
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ COMMERCE_PORTAL_AUTH_TRUSTED_TENANT_ID: TENANT })),
+          ),
+        ),
+      );
+      expect(submitted).toStrictEqual(['pa-driver-1']);
+      expect(row?.state).toBe('RELAYED');
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });

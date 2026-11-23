@@ -2,7 +2,7 @@ import {
   ActiveApplicationCompositionService,
   loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
-import { Config, Crypto, DateTime, Duration, Effect, Layer, Option, Ref, Result, Schedule, Schema } from 'effect';
+import { Crypto, DateTime, Duration, Effect, Layer, Option, Ref, Result, Schedule, Schema } from 'effect';
 
 import { portalAuthRealmConfigured } from '../../../api/portal-auth/provider/config.ts';
 import { ultramodernApiMarker } from '../../../shared/ultramodern-build.ts';
@@ -11,8 +11,10 @@ import type { PortalAuthTransportAnswer } from './communication-request-submitte
 import type { PortalAuthCommunicationUnavailable } from './communication-unavailable.ts';
 import { CommercePortalAuthCommunicationStore } from './communication-store.ts';
 import type { ClaimedCommunicationRequest } from './communication-store.ts';
+import { relayCredential } from './relay-configuration.ts';
 import { requestOfStored } from './request.ts';
 import { CommercePortalAuthTrustedScope } from './trusted-scope.ts';
+import type { PortalAuthTrustedScopeUnavailable } from './trusted-scope-unavailable.ts';
 
 /**
  * The relay of the Auth-local outbox (D1). Auth's user-triggered flows only COMMIT an issuance together with its Communication
@@ -98,13 +100,13 @@ const StoredOutcomeSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('RELAYED') }),
 ]);
 /** The safe summary a relayed row keeps: identities and closed codes, exactly as Communications answered them. */
-const encodeOutcome = (submission: PortalAuthTransportAnswer) =>
+export const encodeOutcome = (submission: PortalAuthTransportAnswer) =>
   Schema.decodeUnknownEffect(StoredOutcomeSchema)(submission).pipe(
     Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(StoredOutcomeSchema))),
   );
 
 /** Whether any message can still leave for this decision: a stop is final and is never repaired by reissuing. */
-const leavesNoMessage = (submission: PortalAuthTransportAnswer): boolean => {
+export const leavesNoMessage = (submission: PortalAuthTransportAnswer): boolean => {
   if (submission.outcome === 'RELAYED') {
     // not decided yet: the issuance keeps its protected value until it is settled, superseded or expires
     return false;
@@ -266,8 +268,9 @@ export const relayReleaseApproved = (
  * realm's trusted scope. It is the scoped maintenance loop of this module's Outbox Worker entry (the sweep of the Auth-local
  * outbox belongs to the worker host, never to a request-serving API process). Every tick first clears the protected values of
  * expired issuances (`sweepExpiredProtectedValues`), admitted or not. A tick relays only while `admitted` says the approved
- * release is this build, logging one refusal per change; a realm without a trusted scope relays nothing (fail closed). A tick
- * that moved something is logged with counts only, never a request.
+ * release is this build, logging one refusal per change; a realm without a usable trusted scope relays nothing (fail closed)
+ * and reports its typed, value-free configuration error once per change. A tick that moved something is logged with counts
+ * only, never a request.
  */
 export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boolean>) =>
   Layer.effectDiscard(
@@ -277,13 +280,34 @@ export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boo
       const leaseOwner = `portal-auth-relay:${process}`;
       /** Whether the previous tick was admitted, so a refused release is logged once per change. */
       const wasAdmitted = yield* Ref.make(true);
+      /** The reason the previous tick had no trusted scope, so a configuration error is reported once per change. */
+      const scopeRefusal = yield* Ref.make(Option.none<PortalAuthTrustedScopeUnavailable['reason']>());
+      const unscoped = (failure: PortalAuthTrustedScopeUnavailable) =>
+        Ref.getAndSet(scopeRefusal, Option.some(failure.reason)).pipe(
+          Effect.flatMap((previously) =>
+            Option.contains(previously, failure.reason)
+              ? Effect.void
+              : Effect.annotateLogs(
+                  Effect.logError('The Portal Auth realm has no usable trusted Tenant; nothing is relayed'),
+                  { failure: failure._tag, reason: failure.reason },
+                ),
+          ),
+        );
       const relay = trustedScope.current.pipe(
-        Effect.flatMap(({ tenantId }) => relayCommunicationRequests({ ...RELAY_DEFAULTS, leaseOwner, tenantId })),
-        Effect.tap((result) =>
-          result.claimed === 0
-            ? Effect.void
-            : Effect.annotateLogs(Effect.logInfo('The Portal Auth communication relay tick completed'), { ...result }),
-        ),
+        Effect.matchEffect({
+          onFailure: unscoped,
+          onSuccess: ({ tenantId }) =>
+            Ref.set(scopeRefusal, Option.none()).pipe(
+              Effect.andThen(relayCommunicationRequests({ ...RELAY_DEFAULTS, leaseOwner, tenantId })),
+              Effect.tap((result) =>
+                result.claimed === 0
+                  ? Effect.void
+                  : Effect.annotateLogs(Effect.logInfo('The Portal Auth communication relay tick completed'), {
+                      ...result,
+                    }),
+              ),
+            ),
+        }),
         Effect.ignore,
       );
       const refused = Effect.logWarning(
@@ -326,16 +350,13 @@ export interface PortalAuthCommunicationRelayAdoption {
 
 /**
  * The relay is opt-in: a worker host relays only when its deployment opted in to the Portal Auth realm AND named the relay
- * credential. Read once, when the worker entry's layer is built.
+ * credential (a blank value names none). Read once, when the worker entry's layer is built. An enabled relay then requires its
+ * whole configuration (`relay-configuration.ts`).
  */
 export const portalAuthCommunicationRelayAdoption: Effect.Effect<PortalAuthCommunicationRelayAdoption> = Effect.all(
   {
     realmConfigured: portalAuthRealmConfigured,
-    relayCredentialNamed: Config.Redacted('COMMERCE_PORTAL_AUTH_COMMUNICATION_RELAY_API_KEY').pipe(
-      Config.option,
-      Effect.map(Option.isSome),
-      Effect.orElseSucceed(() => false),
-    ),
+    relayCredentialNamed: relayCredential.pipe(Effect.map(Option.isSome)),
   },
   { concurrency: 1 },
 );

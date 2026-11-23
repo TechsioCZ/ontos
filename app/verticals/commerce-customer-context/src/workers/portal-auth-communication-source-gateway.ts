@@ -3,16 +3,25 @@ import { CommunicationRequestSchema } from '@app/communications-contracts/commun
 import { executeSubmitCommunicationRequestWithAuthorization } from '@app/communications/api/submit-communication-request-action/client';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Config, Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Config, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 
 import { withSafeCause } from '../../api/portal-auth/provider/safe-failure.ts';
-import { GatewayHttpUrlSchema } from '../portal-auth/communications/relay-transport.ts';
+import type { PortalAuthSubmission } from '../portal-auth/communications/communication-request-submitter.ts';
+import {
+  GatewayHttpUrlSchema,
+  PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES,
+} from '../portal-auth/communications/relay-configuration.ts';
+import { PortalAuthCommunicationRequestRefused } from './portal-auth-communication-request-refused.ts';
+import type { PortalAuthCommunicationRefusalCode } from './portal-auth-communication-request-refused.ts';
 import { SubmitPortalAuthCommunicationRequestRejected } from './submit-portal-auth-communication-request-rejected.ts';
 
 const COMMUNICATIONS_AUDIENCE = 'communications';
 const SUBMIT_DECLARATION_KEY = 'communications.core.communication-request.submit';
 
-const configuration = Config.schema(GatewayHttpUrlSchema, 'ONTOS_COMMUNICATIONS_API_BASE_URL');
+const configuration = Config.schema(
+  GatewayHttpUrlSchema,
+  PORTAL_AUTH_COMMUNICATION_RELAY_VARIABLES.communicationsBaseUrl,
+);
 
 /**
  * The last hop of the Portal Auth transport (#1406 D1): the module's own source worker, inside its genuine Core delivery,
@@ -27,10 +36,17 @@ const configuration = Config.schema(GatewayHttpUrlSchema, 'ONTOS_COMMUNICATIONS_
  * stays retryable (fail closed), never sent another way.
  */
 export interface PortalAuthCommunicationSourceGatewayService {
+  /**
+   * Communications' stored decision of the request (or the conflict it recorded), as its public Action answered it; or its
+   * final refusal of the request itself (`PortalAuthCommunicationRequestRefused`), which no redelivery can change.
+   */
   readonly submit: (
     request: CommunicationRequestEncoded,
     context: OutboxWorkerHandlerContext,
-  ) => Effect.Effect<void, SubmitPortalAuthCommunicationRequestRejected>;
+  ) => Effect.Effect<
+    PortalAuthSubmission,
+    PortalAuthCommunicationRequestRefused | SubmitPortalAuthCommunicationRequestRejected
+  >;
 }
 
 export class PortalAuthCommunicationSourceGateway extends Context.Service<
@@ -52,6 +68,24 @@ const unavailable = (cause: unknown) =>
 
 const decodeRequest = Schema.decodeUnknownEffect(CommunicationRequestSchema);
 
+/** Communications' answer that the request does not match its published contract. */
+const InvalidRequestProblemSchema = Schema.TaggedStruct('SubmitCommunicationRequestActionInvalidProblem', {});
+/** Communications' other answers that refuse the request itself for good, each with its closed code. */
+const CodedRefusalProblemSchema = Schema.Union([
+  Schema.TaggedStruct('SubmitCommunicationRequestActionForbiddenProblem', {
+    code: Schema.Literals(['communication_request_scope_mismatch', 'communication_request_source_mismatch']),
+  }),
+  Schema.TaggedStruct('SubmitCommunicationRequestActionConflictProblem', {
+    code: Schema.Literal('action_request_hash_conflict'),
+  }),
+  Schema.TaggedStruct('SubmitCommunicationRequestActionIneligibleProblem', {
+    code: Schema.Literal('action_policy_denied'),
+  }),
+]);
+const isInvalidRequestProblem = Schema.is(InvalidRequestProblemSchema);
+const decodeCodedRefusal = Schema.decodeUnknownOption(CodedRefusalProblemSchema);
+const refused = (code: PortalAuthCommunicationRefusalCode) => new PortalAuthCommunicationRequestRefused({ code });
+
 const makeGateway = (baseUrl: URL, crypto: Crypto.Crypto): PortalAuthCommunicationSourceGatewayService => ({
   submit: Effect.fn('PortalAuthCommunicationSourceGateway.submit')(function* submit(request, context) {
     const requestCorrelation = context.correlationId ?? context.messageId;
@@ -64,12 +98,28 @@ const makeGateway = (baseUrl: URL, crypto: Crypto.Crypto): PortalAuthCommunicati
       },
       crypto,
     ).pipe(Effect.mapError(unavailable));
-    const payload = yield* decodeRequest(request).pipe(Effect.mapError(unavailable));
-    yield* executeSubmitCommunicationRequestWithAuthorization(payload, issued.authorization, requestCorrelation, {
-      baseUrl,
-      compositionRevision: context.compositionRevision,
-      idempotencyKey: request.idempotency.key,
-    }).pipe(Effect.mapError(unavailable));
+    // a stored request that no longer decodes through the published contract can never be admitted
+    const payload = yield* decodeRequest(request).pipe(
+      Effect.mapError((cause) => withSafeCause(refused('communication_request_invalid'), cause)),
+    );
+    return yield* executeSubmitCommunicationRequestWithAuthorization(
+      payload,
+      issued.authorization,
+      requestCorrelation,
+      {
+        baseUrl,
+        compositionRevision: context.compositionRevision,
+        idempotencyKey: request.idempotency.key,
+      },
+    ).pipe(
+      Effect.mapError((cause) => {
+        // a refusal of the request itself is final; anything else (an outage, a missing registration) is delivered again
+        const code = isInvalidRequestProblem(cause)
+          ? Option.some('communication_request_invalid' as const)
+          : Option.map(decodeCodedRefusal(cause), (problem) => problem.code);
+        return Option.match(code, { onNone: () => unavailable(cause), onSome: refused });
+      }),
+    );
   }),
 });
 

@@ -27,11 +27,21 @@ export interface ClaimedCommunicationRequest {
 
 /**
  * How a relayed row ends: Communications DECIDED it (a stored decision, whatever it says), recorded a CONFLICT for it, the
- * transport RELAYED it to the module's source worker (queued in Core, decided later), or Auth itself saw the issuance EXPIRE
- * before its request could be submitted (nothing is submitted then).
+ * transport RELAYED it to the module's source worker (queued in Core, decided later), Communications REFUSED the request itself
+ * for good (reported back by the source worker; nothing is sent), or Auth itself saw the issuance EXPIRE before its request could
+ * be submitted (nothing is submitted then).
  */
-export const CommunicationRequestCompletionSchema = Schema.Literals(['CONFLICT', 'DECIDED', 'EXPIRED', 'RELAYED']);
+export const CommunicationRequestCompletionSchema = Schema.Literals([
+  'CONFLICT',
+  'DECIDED',
+  'EXPIRED',
+  'REFUSED',
+  'RELAYED',
+]);
 export type CommunicationRequestCompletion = typeof CommunicationRequestCompletionSchema.Type;
+
+/** How Communications itself ended a request the relay handed on, as the module's source worker reports it back. */
+export type CommunicationRequestDecision = Extract<CommunicationRequestCompletion, 'CONFLICT' | 'DECIDED' | 'REFUSED'>;
 
 export interface PortalAuthCommunicationStoreService {
   /**
@@ -77,6 +87,19 @@ export interface PortalAuthCommunicationStoreService {
     readonly supersede: boolean;
     readonly tenantId: string;
   }) => Effect.Effect<void, PortalAuthCommunicationUnavailable>;
+  /**
+   * Records how Communications ended a request the relay handed on, as the module's source worker reports it back (D4): a row
+   * that has not ended yet (pending, under any lease, or relayed) ends with the safe outcome summary, and the issuance's
+   * protected value is cleared when `forget`, every time. Answers whether the row changed: a repeated report changes nothing
+   * and an ended row keeps its first outcome.
+   */
+  readonly recordDecision: (input: {
+    readonly forget: boolean;
+    readonly issuanceRef: PortalAuthIssuanceRef;
+    readonly now: DateTime.Utc;
+    readonly outcome: Option.Option<string>;
+    readonly state: CommunicationRequestDecision;
+  }) => Effect.Effect<boolean, PortalAuthCommunicationUnavailable>;
   /** Returns a row the caller still leases to the due set at `availableAt`, recording a closed failure code. */
   readonly release: (input: {
     readonly availableAt: DateTime.Utc;

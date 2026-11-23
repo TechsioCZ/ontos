@@ -27,6 +27,7 @@ import { communicationIssuance, communicationRequestOutbox } from './portal-auth
  */
 
 const PENDING = 'PENDING';
+const RELAYED = 'RELAYED';
 const STORE_FLOW = 'stored-issuance';
 const decodeSettlement = Schema.decodeUnknownOption(IssuanceSettlementSchema);
 const decodeFlow = Schema.decodeUnknownEffect(PortalAuthEmailFlowSchema);
@@ -90,6 +91,27 @@ const leasedBy = (issuanceRef: PortalAuthIssuanceRef, leaseOwner: string) =>
     eq(communicationRequestOutbox.leaseOwner, leaseOwner),
     eq(communicationRequestOutbox.state, PENDING),
   );
+
+/** The values that end an outbox row: its safe outcome summary, no lease and no failure. */
+const endedRow = (outcome: Option.Option<string>, state: string, now: Date) => ({
+  lastFailure: null,
+  leaseExpiresAt: null,
+  leaseOwner: null,
+  outcome: Option.getOrNull(outcome),
+  state,
+  updatedAt: now,
+});
+
+/** Clears the issuance's protected value: nothing can complete its slot any more. */
+const clearProtectedValue = (
+  transaction: CommercePortalAuthDatabaseExecutor,
+  issuanceRef: PortalAuthIssuanceRef,
+  now: Date,
+) =>
+  transaction
+    .update(communicationIssuance)
+    .set({ protectedValue: null, updatedAt: now })
+    .where(eq(communicationIssuance.issuanceRef, issuanceRef));
 
 /** The claimed rows in claim order, each with its issuance's expiry (the foreign key guarantees the issuance). */
 const claimedRowsOf = (
@@ -277,30 +299,46 @@ export const makeCommercePortalAuthCommunicationStore = (
           function* completeTransaction(transaction) {
             const ended = yield* transaction
               .update(communicationRequestOutbox)
-              .set({
-                lastFailure: null,
-                leaseExpiresAt: null,
-                leaseOwner: null,
-                outcome: Option.getOrNull(input.outcome),
-                state: input.state,
-                updatedAt: now,
-              })
+              .set(endedRow(input.outcome, input.state, now))
               .where(leasedBy(input.issuanceRef, input.leaseOwner))
               .returning({ issuanceRef: communicationRequestOutbox.issuanceRef });
             if (ended.length === 0) {
               return false;
             }
             if (input.forget) {
-              yield* transaction
-                .update(communicationIssuance)
-                .set({ protectedValue: null, updatedAt: now })
-                .where(eq(communicationIssuance.issuanceRef, input.issuanceRef));
+              yield* clearProtectedValue(transaction, input.issuanceRef, now);
             }
             return true;
           },
         ),
       )
       .pipe(Effect.mapError(outboxUnavailable('request-complete')));
+  };
+
+  const recordDecision: PortalAuthCommunicationStoreService['recordDecision'] = (input) => {
+    const now = dateOf(input.now);
+    return database
+      .transaction(
+        Effect.fn('CommercePortalAuthCommunicationStore.recordDecision.transaction')(
+          function* recordDecisionTransaction(transaction) {
+            const ended = yield* transaction
+              .update(communicationRequestOutbox)
+              .set(endedRow(input.outcome, input.state, now))
+              .where(
+                and(
+                  eq(communicationRequestOutbox.issuanceRef, input.issuanceRef),
+                  inArray(communicationRequestOutbox.state, [PENDING, RELAYED]),
+                ),
+              )
+              .returning({ issuanceRef: communicationRequestOutbox.issuanceRef });
+            if (input.forget) {
+              yield* clearProtectedValue(transaction, input.issuanceRef, now);
+            }
+            return ended.length > 0;
+          },
+        ),
+      )
+      .pipe(Effect.mapError(outboxUnavailable('request-decision')));
   };
 
   const release: PortalAuthCommunicationStoreService['release'] = (input) =>
@@ -327,6 +365,7 @@ export const makeCommercePortalAuthCommunicationStore = (
     forget,
     forgetExpired,
     record,
+    recordDecision,
     release,
     settle: ({ issuanceRef, state }) => settle(issuanceRef, state),
   };

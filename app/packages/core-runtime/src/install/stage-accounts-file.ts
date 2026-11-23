@@ -72,6 +72,7 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'privacy.core.organization-ico-check',
   'privacy.core.organization-profile-ico-check',
   'privacy.core.organization-business-check',
+  'privacy.core.pre-verification-subject-source',
   'commerce.market-catalog.source-read',
   'party.registry.source-write',
   'party.registry.source-read',
