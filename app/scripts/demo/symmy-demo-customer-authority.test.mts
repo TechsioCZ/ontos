@@ -17,6 +17,7 @@ import {
   SYMMY_DEMO_MEMBERSHIP_POLICY_ID,
   selectSymmyDemoSourceWriter,
   symmyDemoReceiverCandidates,
+  symmyDemoReceiverWorkloadsForPhase,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
@@ -26,6 +27,15 @@ const identities = {
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
 };
+
+it('discovers only required receiver identities before owner startup, and the full chain after registration', () => {
+  expect(symmyDemoReceiverWorkloadsForPhase('pre-owner')).toEqual(['party.registry.source-read']);
+  const registered = symmyDemoReceiverWorkloadsForPhase('post-registration');
+  expect(registered).toHaveLength(8);
+  for (const key of symmyDemoReceiverWorkloadsForPhase('pre-owner')) expect(registered).toContain(key);
+  expect(registered).toContain('privacy.core.organization-profile-ico-check');
+  expect(registered).toContain('pricing.price-group-catalog.source-read');
+});
 const group = {
   code: 'B2B',
   groupId: '72000000-0000-4000-8000-000000000024',

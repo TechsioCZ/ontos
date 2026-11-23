@@ -95,6 +95,8 @@ const customerReceiverWorkloads = [
   'integration.symmy.source-organization-facts.read',
   'pricing.price-group-catalog.source-read',
 ] as const;
+export const symmyDemoReceiverWorkloadsForPhase = (phase: 'pre-owner' | 'post-registration'): readonly string[] =>
+  phase === 'pre-owner' ? ['party.registry.source-read'] : customerReceiverWorkloads;
 const integrationWorkloads = [
   'integration.symmy-admit',
   'integration.symmy-poll',
@@ -121,6 +123,10 @@ const IdentitySchema = Schema.Struct({
   privacyReceiverId: Uuid,
 });
 type Identities = typeof IdentitySchema.Type;
+type EnvironmentIdentities = Pick<
+  Identities,
+  'integrationPrincipalId' | 'partyWriterId' | 'commerceWriterId' | 'partyReaderId'
+>;
 const SourceWriterCandidateSchema = Schema.Struct({
   bindingId: Schema.optional(Uuid),
   kind: Schema.Literals(['service', 'system']),
@@ -200,10 +206,14 @@ export const resolveSymmyDemoSourceWriter = (workloadKey: string, excludedBindin
 export const symmyDemoObsoleteReceiverBindingIds = (partyId: string, commerceId: string, key: string) =>
   [partyId, commerceId].map((principalId) => stageWorkloadBindingIds(tenantId, principalId, key).bindingId);
 
-const resolveSymmyDemoCustomerReceivers = (partyId: string, commerceId: string) =>
+const resolveSymmyDemoCustomerReceivers = (
+  partyId: string,
+  commerceId: string,
+  phase: 'pre-owner' | 'post-registration',
+) =>
   Effect.gen(function* resolveReceivers() {
     const resolved = [];
-    for (const key of customerReceiverWorkloads) {
+    for (const key of symmyDemoReceiverWorkloadsForPhase(phase)) {
       const principal = yield* resolveSymmyDemoSourceWriter(
         key,
         symmyDemoObsoleteReceiverBindingIds(partyId, commerceId, key),
@@ -512,7 +522,7 @@ const PartyBindingSchema = Schema.Struct({
 
 /** Additive owner configuration. The parent publishes this to Party, never to another Tenant's owner scope. */
 export const symmyDemoCustomerEnvironment = (
-  identities: Identities,
+  identities: EnvironmentIdentities,
   existing: readonly (typeof PartyBindingSchema.Type)[] = [],
 ) => {
   const additions = [
@@ -583,9 +593,19 @@ export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnviron
     [resolveSymmyDemoSourceWriter(partyWriter), resolveSymmyDemoSourceWriter(sourceWriter)],
     { concurrency: 1 },
   );
-  const receiverIdentities = yield* resolveSymmyDemoCustomerReceivers(party.principalId, commerce.principalId);
-  const identities = yield* Schema.decodeUnknownEffect(IdentitySchema)({
-    ...receiverIdentities,
+  const reader = yield* resolveSymmyDemoSourceWriter(
+    'party.registry.source-read',
+    symmyDemoObsoleteReceiverBindingIds(party.principalId, commerce.principalId, 'party.registry.source-read'),
+  );
+  const identities = yield* Schema.decodeUnknownEffect(
+    Schema.Struct({
+      commerceWriterId: Uuid,
+      integrationPrincipalId: Uuid,
+      partyWriterId: Uuid,
+      partyReaderId: Uuid,
+    }),
+  )({
+    partyReaderId: reader.principalId,
     commerceWriterId: commerce.principalId,
     integrationPrincipalId: integration.principalId,
     partyWriterId: party.principalId,
@@ -646,13 +666,6 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       [resolveSymmyDemoSourceWriter(partyWriter), resolveSymmyDemoSourceWriter(sourceWriter)],
       { concurrency: 1 },
     );
-    const receiverIdentities = yield* resolveSymmyDemoCustomerReceivers(party.principalId, commerce.principalId);
-    const identities = yield* Schema.decodeUnknownEffect(IdentitySchema)({
-      ...receiverIdentities,
-      commerceWriterId: commerce.principalId,
-      integrationPrincipalId: existing.principalId,
-      partyWriterId: party.principalId,
-    });
     const owners = yield* sql`
       select m.principal_id as "principalId"
       from core.access_memberships m join core.access_scopes s using(tenant_id,scope_id)
@@ -685,6 +698,17 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
         }
       }
     }
+    const receiverIdentities = yield* resolveSymmyDemoCustomerReceivers(
+      party.principalId,
+      commerce.principalId,
+      'post-registration',
+    );
+    const identities = yield* Schema.decodeUnknownEffect(IdentitySchema)({
+      ...receiverIdentities,
+      commerceWriterId: commerce.principalId,
+      integrationPrincipalId: existing.principalId,
+      partyWriterId: party.principalId,
+    });
     const grants = [
       ...integrationWorkloads.map((key) => ({ key, principalId: existing.principalId })),
       { key: partyWriter, principalId: party.principalId },
