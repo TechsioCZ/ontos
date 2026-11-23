@@ -7,10 +7,12 @@ import { PrepareTemplateRevisionPayloadSchema, TemplateScopeSchema } from '../sh
 import { portalAuthCopyPreparePayloads, portalAuthCopyReview } from '../src/domain/catalog/portal-auth-copy-draft.ts';
 
 /**
- * `copy:portal-auth:review` — read-only. Prints the DRAFT Portal Auth e-mail copy with its placeholders visible and the
- * content digest each prepared revision must carry. With both `--scope` and `--reason` it also prints the six payloads of
- * the governed `prepare-template-revision` Action. It writes nothing, calls no Action and never activates anything: the
- * operator submits the payloads under their own authenticated session, which supplies the Tenant and the principal.
+ * `copy:portal-auth:review` — read-only. Prints the Portal Auth e-mail copy the product owner approved as the default
+ * text, with its placeholders visible and the content digest each prepared revision must carry. With both `--scope` and
+ * `--reason` it also prints the six payloads of the governed `prepare-template-revision` Action. It writes nothing,
+ * calls no Action and never activates anything: the operator submits the payloads under their own authenticated
+ * session, which supplies the Tenant and the principal, and only the Tenant's authorised user confirms a revision by
+ * activating it.
  */
 
 class PortalAuthCopyReviewInputInvalid extends Schema.TaggedError<PortalAuthCopyReviewInputInvalid>()(

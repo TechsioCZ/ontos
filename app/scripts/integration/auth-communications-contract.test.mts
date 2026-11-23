@@ -19,6 +19,7 @@ import {
   CommunicationPurposeKeySchema,
   findMessageTypeByPurpose,
   nativeServices,
+  PORTAL_AUTH_COPY_ACTIVATION,
   PORTAL_AUTH_COPY_DRAFT_APPROVAL,
   portalAuthCopyDraft,
   recoveryPolicyOf,
@@ -75,8 +76,9 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
     ).toBe(true);
   });
 
-  it("the DRAFT copy of Communications names, per flow and language, the approved type of that flow and Auth's own owner-rendered slot", () => {
-    expect(PORTAL_AUTH_COPY_DRAFT_APPROVAL).toBe('DRAFT-NOT-APPROVED');
+  it("the approved default copy of Communications names, per flow and language, the approved type of that flow and Auth's own owner-rendered slot", () => {
+    expect(PORTAL_AUTH_COPY_DRAFT_APPROVAL).toBe('APPROVED-DEFAULT-TEXT');
+    expect(PORTAL_AUTH_COPY_ACTIVATION).toBe('PENDING-TENANT-CONFIRMATION');
     for (const flow of PORTAL_AUTH_EMAIL_FLOWS) {
       const type = approvedMessageTypes.find(({ purpose }) => purpose === portalAuthCommunicationPurposeOf(flow));
       const drafts = portalAuthCopyDraft.filter((copy) => copy.flow === flow);

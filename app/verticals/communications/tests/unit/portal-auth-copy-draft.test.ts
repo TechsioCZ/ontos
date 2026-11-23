@@ -9,6 +9,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
 import { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 import {
+  PORTAL_AUTH_COPY_ACTIVATION,
   PORTAL_AUTH_COPY_DRAFT_APPROVAL,
   PORTAL_AUTH_COPY_DRAFT_VERSION,
   portalAuthCopyDraft,
@@ -22,9 +23,10 @@ import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts'
 import { makeInMemoryLanguagePolicyPort } from '../support/language-fixtures.ts';
 
 /**
- * #1398 / #1406: the DRAFT Portal Auth copy is ready for an approver and is nothing more. It is the reviewed text, it holds
- * only the owner-rendered secret slot, and preparing it through the governed Action leaves every revision a draft, so each
- * Portal Auth message still stops with its typed no-template reason until an approver activates a revision.
+ * #1398 / #1406: the Portal Auth copy is the text the product owner approved as the default, and nothing more. It is
+ * the reviewed text, it holds only the owner-rendered secret slot, and preparing it through the governed Action leaves
+ * every revision a draft, so each Portal Auth message still stops with its typed no-template reason until the Tenant's
+ * authorised user confirms a revision by activating it.
  */
 
 const FLOW_SLOTS = [
@@ -33,8 +35,9 @@ const FLOW_SLOTS = [
   ['otp', 'otp_code'],
 ] as const;
 /**
- * The reviewed draft (2026-11-22), pinned as subject and Template Revision content digest per flow and language: the very
- * digest the prepare Action returns and the review script prints, so a changed word fails here and needs a new review.
+ * The reviewed text (2026-11-22), approved by the product owner as the default, pinned as subject and Template Revision
+ * content digest per flow and language: the very digest the prepare Action returns and the review script prints, so a
+ * changed word fails here and needs a new approval.
  */
 const REVIEWED = [
   {
@@ -120,16 +123,17 @@ const sourceFiles = (directory: string): string[] =>
     return /\.m?ts$/u.test(file) ? [file] : [];
   });
 
-describe('The DRAFT Portal Auth e-mail copy (#1398, #1406)', () => {
-  it('is marked DRAFT-NOT-APPROVED, versioned, and holds exactly one Czech and one English text per Auth flow', () => {
-    expect(PORTAL_AUTH_COPY_DRAFT_APPROVAL).toBe('DRAFT-NOT-APPROVED');
+describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
+  it('is marked an approved default text whose activation awaits Tenant confirmation, versioned, and holds exactly one Czech and one English text per Auth flow', () => {
+    expect(PORTAL_AUTH_COPY_DRAFT_APPROVAL).toBe('APPROVED-DEFAULT-TEXT');
+    expect(PORTAL_AUTH_COPY_ACTIVATION).toBe('PENDING-TENANT-CONFIRMATION');
     expect(PORTAL_AUTH_COPY_DRAFT_VERSION).toBe(1);
     expect(portalAuthCopyDraft.map(({ flow, language }) => `${flow}/${language}`)).toEqual(
       REVIEWED.map(({ flow, language }) => `${flow}/${language}`),
     );
   });
 
-  it.effect('is the reviewed draft wording, word for word', () =>
+  it.effect('is the approved default wording, word for word', () =>
     Effect.gen(function* reviewed() {
       expect(portalAuthCopyDraft.map(({ subject }) => subject)).toEqual(REVIEWED.map(({ subject }) => subject));
       const review = yield* portalAuthCopyReview();
@@ -140,7 +144,11 @@ describe('The DRAFT Portal Auth e-mail copy (#1398, #1406)', () => {
       for (const copy of portalAuthCopyDraft) {
         expect(review).toContain(`Subject: ${copy.subject}\nBody:\n${copy.body}`);
       }
-      expect(review.startsWith('# Portal Auth e-mail copy, version 1: DRAFT-NOT-APPROVED')).toBe(true);
+      expect(
+        review.startsWith(
+          '# Portal Auth e-mail copy, version 1: APPROVED-DEFAULT-TEXT, activation PENDING-TENANT-CONFIRMATION',
+        ),
+      ).toBe(true);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 

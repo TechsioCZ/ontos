@@ -5,18 +5,23 @@ import type { TemplateScope } from '../../../shared/template-revision.ts';
 import { templateContentDigest } from '../../services/template-revision-domain.service.ts';
 
 /**
- * DRAFT Czech and English copy of the three Portal Auth e-mails (#1398, #1406), kept next to the approved message types it
- * is written for. It is NOT approved copy: nothing in code submits, activates or sends it. An operator prepares it per
- * Tenant through the governed `prepare-template-revision` Action (see `portalAuthCopyPreparePayloads`), which leaves each
- * revision a draft; only an authorised approver's explicit `activate-template-revision` Action can make it usable. Until
- * then Communications keeps stopping every Portal Auth message with its typed no-template reason.
+ * Czech and English DEFAULT copy of the three Portal Auth e-mails (#1398, #1406), kept next to the approved message
+ * types it is written for. The product owner approved this TEXT as the default wording. That approval is not an
+ * activation: nothing in code submits, activates or sends it. An operator prepares it per Tenant through the governed
+ * `prepare-template-revision` Action (see `portalAuthCopyPreparePayloads`), which leaves each revision a draft; only
+ * the Tenant's own authorised user confirms it, by an explicit `activate-template-revision` Action under their own
+ * session. Until then Communications keeps stopping every Portal Auth message of that Tenant with its typed no-template
+ * reason.
  *
- * Each text carries exactly one placeholder: the secret slot Auth renders itself (`portalAuthOwnerRenderedSlotOf` in the
- * Portal Auth vocabulary; the end-to-end contract suite asserts both agree). No validity period, brand or sender name and
- * no support contact is part of the text: those are product values the approver has not decided.
+ * Each text carries exactly one placeholder: the secret slot Auth renders itself (`portalAuthOwnerRenderedSlotOf` in
+ * the Portal Auth vocabulary; the end-to-end contract suite asserts both agree). No validity period, brand or sender
+ * name and no support contact is part of the text: those are product values the product owner has not decided.
  */
-export const PORTAL_AUTH_COPY_DRAFT_APPROVAL = 'DRAFT-NOT-APPROVED';
-/** Version of this catalog's wording. Any change of a text is a new version and a new review. */
+/** Approval of the TEXT: the product owner approved this wording as the Portal Auth default. */
+export const PORTAL_AUTH_COPY_DRAFT_APPROVAL = 'APPROVED-DEFAULT-TEXT';
+/** Activation is per Tenant and still pending: only the Tenant's authorised user confirms it by activating a revision. */
+export const PORTAL_AUTH_COPY_ACTIVATION = 'PENDING-TENANT-CONFIRMATION';
+/** Version of this catalog's wording. Any change of a text is a new version and needs a new product-owner approval. */
 export const PORTAL_AUTH_COPY_DRAFT_VERSION = 1;
 
 const PortalAuthCopyFlowSchema = Schema.Literals(['verify-email', 'reset-password', 'otp']);
@@ -110,10 +115,10 @@ export const portalAuthCopyDraft: readonly PortalAuthCopyEntry[] = [
 const decodePayloads = Schema.decodeUnknownEffect(Schema.Array(PrepareTemplateRevisionPayloadSchema));
 
 /**
- * The six `prepare-template-revision` Action payloads of this draft for one Template scope. The scope and the reason are
- * the operator's inputs and have no default. The Tenant and the acting principal are NOT part of a payload: the governed
- * Action takes both from the operator's own authenticated operation context, so a payload can never name another Tenant
- * or approver. Each revision it prepares stays a draft until an approver activates it.
+ * The six `prepare-template-revision` Action payloads of this default copy for one Template scope. The scope and the
+ * reason are the operator's inputs and have no default. The Tenant and the acting principal are NOT part of a payload:
+ * the governed Action takes both from the operator's own authenticated operation context, so a payload can never name
+ * another Tenant or approver. Each revision it prepares stays a draft until the Tenant's authorised user activates it.
  */
 export const portalAuthCopyPreparePayloads = (input: { readonly reason: string; readonly scope: TemplateScope }) =>
   decodePayloads(
@@ -131,9 +136,9 @@ export const portalAuthCopyPreparePayloads = (input: { readonly reason: string; 
   );
 
 /**
- * The read-only review text of this draft: per flow and language the exact subject and body with the placeholder visible,
- * and the content digest the `prepare-template-revision` Action returns for exactly that text. The approver compares the
- * digest of each prepared revision with this one before activating it.
+ * The read-only review text of this default copy: per flow and language the exact subject and body with the placeholder
+ * visible, and the content digest the `prepare-template-revision` Action returns for exactly that text. The Tenant's
+ * authorised user compares the digest of each prepared revision with this one before confirming it by activation.
  */
 export const portalAuthCopyReview = Effect.fn('PortalAuthCopyDraft.review')(function* review() {
   const sections = yield* Effect.forEach(
@@ -153,7 +158,7 @@ export const portalAuthCopyReview = Effect.fn('PortalAuthCopyDraft.review')(func
     { concurrency: 1 },
   );
   return [
-    `# Portal Auth e-mail copy, version ${PORTAL_AUTH_COPY_DRAFT_VERSION}: ${PORTAL_AUTH_COPY_DRAFT_APPROVAL}`,
+    `# Portal Auth e-mail copy, version ${PORTAL_AUTH_COPY_DRAFT_VERSION}: ${PORTAL_AUTH_COPY_DRAFT_APPROVAL}, activation ${PORTAL_AUTH_COPY_ACTIVATION}`,
     'Czech (cs) is the default language while no trusted recipient locale exists.',
     ...sections,
   ].join('\n\n');

@@ -61,6 +61,7 @@ export { CommunicationRequestSchema } from '@app/communications-contracts/commun
 export type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
 export { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 export {
+  PORTAL_AUTH_COPY_ACTIVATION,
   PORTAL_AUTH_COPY_DRAFT_APPROVAL,
   portalAuthCopyDraft,
 } from '../../src/domain/catalog/portal-auth-copy-draft.ts';
