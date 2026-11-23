@@ -3,6 +3,13 @@ import { expect, it } from 'effect-rstest';
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { planAdditiveCompanyInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import { ReleaseInternalWorkloadError } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
+import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
+import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
+import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
+import { TenantIdSchema, PrincipalIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
+import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 
 import {
   buildSymmyDemoCustomerRoutes,
@@ -24,6 +31,8 @@ import {
   symmyDemoCustomerInternalWorkloadDeclarations,
   safeSymmyDemoEnrollmentFailure,
   SymmyDemoCustomerAuthorityError,
+  symmyDemoCustomerBindingDatabase,
+  symmyDemoCompanyBindingNeedsCreate,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
@@ -33,6 +42,74 @@ const identities = {
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
 };
+
+it.effect(
+  'reuses a native active company epoch regardless of stage-derived ids and refuses foreign or ambiguous rows',
+  () =>
+    Effect.gen(function* test() {
+      expect(yield* symmyDemoCompanyBindingNeedsCreate([])).toBe(true);
+      expect(yield* symmyDemoCompanyBindingNeedsCreate([{ legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }])).toBe(false);
+      for (const active of [
+        [{ legalEntityId: '72000000-0000-4000-8000-000000000099' }],
+        [{ legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }, { legalEntityId: SYMMY_DEMO_CUSTOMER_COMPANY }],
+      ])
+        expect((yield* symmyDemoCompanyBindingNeedsCreate(active).pipe(Effect.result))._tag).toBe('Failure');
+    }),
+);
+
+it.effect(
+  'Core binding provisioning succeeds through the enrolled runtime connection and rejects admin scope authority',
+  () =>
+    Effect.gen(function* test() {
+      const scope = {
+        ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+          tenantId: SYMMY_DEMO_CUSTOMER_TENANT,
+          principalId: identities.integrationPrincipalId,
+          authMethod: 'session',
+          authBindingId: identities.partyReaderId,
+          authContextRef: 'bootstrap-runtime-regression',
+        }),
+        correlationId: 'bootstrap-runtime-regression',
+      };
+      for (const role of ['ontos_runtime', 'postgres']) {
+        let inserted = false;
+        const executor = yield* makeTestDatabase(
+          (sql) => {
+            if (sql.includes("set_config('ontos.tenant_id'"))
+              return Effect.succeed([
+                {
+                  role,
+                  tenant_id: scope.tenantId,
+                  legal_entity_id: '',
+                  operation_at: new Date('2026-11-23T00:00:00Z'),
+                },
+              ]);
+            if (sql.startsWith('insert into')) inserted = true;
+            return Effect.succeed([]);
+          },
+          { currentRole: role },
+        );
+        const database = yield* symmyDemoCustomerBindingDatabase.pipe(
+          Effect.provideService(CoreDatabase, { executor }),
+        );
+        expect(database.executor).toBe(executor);
+        const result = yield* writeWorkloadBindings(database, scope, {
+          bindings: [
+            {
+              bindingId: AccessWorkloadBindingIdSchema.make(identities.partyReaderId),
+              incarnation: AccessWorkloadBindingIdSchema.make(identities.partyWriterId),
+              principalId: PrincipalIdSchema.make(identities.integrationPrincipalId),
+              tenantId: TenantIdSchema.make(scope.tenantId),
+              createdAt: new Date('2026-11-23T00:00:00Z'),
+              workloadKey: WorkloadKeySchema.make('party.registry.source-read'),
+            },
+          ],
+        }).pipe(Effect.result);
+        expect(result._tag).toBe(role === 'ontos_runtime' ? 'Success' : 'Failure');
+        expect(inserted).toBe(role === 'ontos_runtime');
+      }
+    }),
+);
 
 it('retains only typed fixed enrollment categories and strips arbitrary reasons and raw causes', () => {
   for (const error of [

@@ -37,13 +37,13 @@ import { v5 } from 'uuid';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
-import {
-  revokeWorkloadBindingIn,
-  writeWorkloadBindings,
-} from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
+import { writeWorkloadBindings } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
 import { writeWorkloadCompanyBindings } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
 import { AccessWorkloadCompanyBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/company-store.ts';
-import { AccessWorkloadBindingIdSchema } from '../../packages/core-runtime/src/access/workloads/store.ts';
+import {
+  AccessWorkloadBindingIdSchema,
+  AccessWorkloadBindingStore,
+} from '../../packages/core-runtime/src/access/workloads/store.ts';
 import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 import { AccessReleaseStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
 import { AccessWorkloadBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
@@ -737,6 +737,17 @@ export const ensureSymmyDemoCustomerInternalWorkloads = Effect.gen(function* ens
   );
 }).pipe(Effect.provide(EnrollmentLive), Effect.mapError(safeSymmyDemoEnrollmentFailure));
 
+/** Core scoped writers use the enrolled runtime connection; raw administrator SQL is a separate capability. */
+export const symmyDemoCustomerBindingDatabase = CoreDatabase.pipe(
+  Effect.map(({ executor }) => ({ enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor })),
+);
+
+/** Native registrations need not use stage bootstrap ids. Reuse the exact live company epoch, never replace it. */
+export const symmyDemoCompanyBindingNeedsCreate = (active: readonly { readonly legalEntityId: string }[]) =>
+  active.length > 1 || active.some((binding) => binding.legalEntityId !== legalEntityId)
+    ? Effect.fail(fail('Existing workload company registration is ambiguous or names another company'))
+    : Effect.succeed(active.length === 0);
+
 /** Read this before starting Party. No composition, operator session, new identity or write is needed. */
 export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnvironment() {
   if ((yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) !== 'stage') {
@@ -841,7 +852,8 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       Schema.Tuple([Schema.Struct({ principalId: PrincipalIdSchema })]),
     )(owners);
     const scope = yield* stageScopeOf({ principalId: owner.principalId, tenantId });
-    const database = { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor };
+    const database = yield* symmyDemoCustomerBindingDatabase;
+    const bindingStore = yield* AccessWorkloadBindingStore;
     // Remove only duplicate executor aliases this bootstrap previously created. Unique legacy SYSTEM stays.
     for (const key of customerReceiverWorkloads) {
       const systems = yield* sql`select b.binding_id as "bindingId" from core.access_workload_bindings b
@@ -853,7 +865,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
         const ids = stageWorkloadBindingIds(tenantId, principalId, key);
         if (!systems.some((row) => row.bindingId === ids.bindingId)) continue;
         if (mode === 'apply') {
-          yield* revokeWorkloadBindingIn(executor, scope, {
+          yield* bindingStore.revokeBinding(scope, {
             bindingId: AccessWorkloadBindingIdSchema.make(ids.bindingId),
             revokedAt: new Date(),
           });
@@ -895,6 +907,17 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       const ids = stageWorkloadBindingIds(tenantId, principalId, key);
       const bindingId = AccessWorkloadBindingIdSchema.make(live?.bindingId ?? ids.bindingId);
       const companyIds = stageWorkloadCompanyIds(tenantId, bindingId, legalEntityId);
+      const activeCompanies = yield* executor
+        .select({ legalEntityId: accessWorkloadCompanyBindings.legalEntityId })
+        .from(accessWorkloadCompanyBindings)
+        .where(
+          and(
+            eq(accessWorkloadCompanyBindings.tenantId, tenantId),
+            eq(accessWorkloadCompanyBindings.workloadBindingId, bindingId),
+            eq(accessWorkloadCompanyBindings.status, 'active'),
+          ),
+        );
+      const createCompanyBinding = yield* symmyDemoCompanyBindingNeedsCreate(activeCompanies);
       if (mode === 'apply') {
         if (live === undefined) {
           yield* writeWorkloadBindings(database, scope, {
@@ -910,18 +933,19 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
             ],
           });
         }
-        yield* writeWorkloadCompanyBindings(database, scope, {
-          bindings: [
-            {
-              companyBindingId: AccessWorkloadCompanyBindingIdSchema.make(companyIds.companyBindingId),
-              createdAt: new Date(),
-              incarnation: AccessWorkloadCompanyBindingIdSchema.make(companyIds.companyIncarnation),
-              legalEntityId,
-              tenantId,
-              workloadBindingId: bindingId,
-            },
-          ],
-        });
+        if (createCompanyBinding)
+          yield* writeWorkloadCompanyBindings(database, scope, {
+            bindings: [
+              {
+                companyBindingId: AccessWorkloadCompanyBindingIdSchema.make(companyIds.companyBindingId),
+                createdAt: new Date(),
+                incarnation: AccessWorkloadCompanyBindingIdSchema.make(companyIds.companyIncarnation),
+                legalEntityId,
+                tenantId,
+                workloadBindingId: bindingId,
+              },
+            ],
+          });
       }
       const bindings = yield* executor
         .select()
@@ -1110,6 +1134,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
       retention: symmyDemoCustomerRetentionRefs(),
     };
   },
+  Effect.provide(EnrollmentLive),
 );
 
 const command = Command.make(
