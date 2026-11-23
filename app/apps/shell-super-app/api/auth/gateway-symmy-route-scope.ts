@@ -1,7 +1,9 @@
 import { LegalEntityContext, recoverSqlTransactionError } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
 import { RegisteredGatewayRouteScopeSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
   SymmyRouteContextRequestSchema,
@@ -9,14 +11,19 @@ import {
 } from '@app/symmy-integration/api/symmy-route-context';
 import { executeSymmyRouteContextWithAuthorization } from '@app/symmy-integration/api/symmy-route-context/client';
 import { sql } from 'drizzle-orm';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Crypto, Effect, Option, Predicate, Schema } from 'effect';
 
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { resolveSymmyOwnerReleaseBase } from '../symmy/owner-release-transport.ts';
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { gatewayPublishedOperationAccess } from './gateway-delegation-policy.ts';
-import { issueRouteScopedGatewayContextAssertion, issueSymmyGatewayContextAssertion } from './gateway-issuer.ts';
+import {
+  gatewayIssuerRefusalReason,
+  issueNativeReadRouteScopedGatewayContextAssertion,
+  issueRouteScopedGatewayContextAssertion,
+  issueSymmyGatewayContextAssertion,
+} from './gateway-issuer.ts';
 
 const symmyAudience = 'symmy-integration';
 type Route = typeof SymmyRouteContextResponseSchema.Type;
@@ -203,12 +210,148 @@ export const readSymmyRouteScope = Effect.fn('SymmyRouteScope.read')(function* r
 });
 
 type InstalledContract = ShellInstalledCatalog['contracts'][number];
+
+const nativeReadOperations = [
+  ['party.registry', 'party.registry.api.source-profile-export', 'party.registry.source-read'],
+  ['party.registry', 'party.registry.api.source-party-search', 'party.registry.source-read'],
+  ['party.registry', 'party.registry.api.organization-business-name-export', 'party.registry.source-read'],
+  ['commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-page', 'commerce.customer-context.source-read'],
+  ['commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-parties', 'commerce.customer-context.source-read'],
+  ['commerce.customer-context', 'commerce.customer-context.api.customer-profile-ico', 'commerce.customer-context.source-read'],
+  ['commerce.customer-context', 'commerce.customer-context.api.organization-customer-profile-ico', 'commerce.customer-context.source-read'],
+  ['commerce.customer-context', 'commerce.customer-context.api.customer-group-definition-source', 'commerce.customer-context.source-read'],
+  ['pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-definition', 'pricing.price-group-catalog.source-read'],
+  ['pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-source-associations', 'pricing.price-group-catalog.source-read'],
+  ['commerce.pricing', 'commerce.pricing.api.price-group-source-prices', 'commerce.pricing.source-read'],
+  ['commerce.catalog', 'commerce.catalog.api.catalog-source-product-page', 'commerce.catalog.symmy-product-read'],
+  ['commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution', 'commerce.inventory.source-read'],
+] as const;
+const tenantOnlyNativeReads = [
+  ['catalog', 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page'],
+  ['price-group-catalog', 'pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-definition'],
+  ['price-group-catalog', 'pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-source-associations'],
+] as const;
+
+interface NativeReadEvidence {
+  readonly audience: string;
+  readonly compositionRevision: string;
+  readonly principal: TrustedPrincipalContext;
+  readonly routeScope: RegisteredGatewayRouteScope;
+}
+const nativeReadMintKey = Object.freeze({ kind: 'symmy_native_route_read' });
+class AdmittedSymmyNativeReadValue {
+  readonly #evidence: NativeReadEvidence | undefined;
+  constructor(key: typeof nativeReadMintKey, evidence: NativeReadEvidence) {
+    this.#evidence = key === nativeReadMintKey
+      && evidence.routeScope.nativeReadReceiver !== undefined
+      ? Object.freeze({
+          ...evidence,
+          principal: Object.freeze({ ...evidence.principal }),
+          routeScope: Object.freeze({
+            ...evidence.routeScope,
+            nativeReadReceiver: Object.freeze({ ...evidence.routeScope.nativeReadReceiver }),
+            operations: Object.freeze(evidence.routeScope.operations.map((operation) => Object.freeze({ ...operation }))),
+          }),
+        })
+      : undefined;
+    Object.freeze(this);
+  }
+  static read(witness: AdmittedSymmyNativeReadValue): NativeReadEvidence | undefined {
+    return #evidence in witness ? witness.#evidence : undefined;
+  }
+}
+export type AdmittedSymmyNativeRead = AdmittedSymmyNativeReadValue;
+const nativeReadWitnessSchema = Schema.instanceOf(AdmittedSymmyNativeReadValue);
+/** Only complete current route and native enrollment proof can request the private V9 issuer path. */
+export const readAdmittedSymmyNativeRead = (witness: AdmittedSymmyNativeRead): NativeReadEvidence | undefined =>
+  Schema.is(nativeReadWitnessSchema)(witness) ? AdmittedSymmyNativeReadValue.read(witness) : undefined;
+
+const nativeReadRowSchema = Schema.Struct({
+  bindingIncarnation: Schema.String.check(Schema.isUUID()),
+  originalWorkloadBindingIncarnation: Schema.String.check(Schema.isUUID()),
+  originalWorkloadKey: Schema.Literals(['integration.symmy-admit', 'integration.symmy-poll']),
+  principalId: TrustedPrincipalContextSchema.fields.principalId,
+});
+const selectNativeReadReceiver = Effect.fn('SymmyRouteScope.selectNativeReadReceiver')(function* select(
+  facts: RouteScopeFacts,
+  route: Route,
+  workloadKey: string,
+) {
+  const database = yield* CoreDatabase;
+  const systemCount = sql`(
+    select count(*) from core.access_workload_bindings sb
+    join core.principals sp on sp.tenant_id=sb.tenant_id and sp.principal_id=sb.principal_id
+      and sp.kind='system' and sp.status='active'
+    where sb.tenant_id=${facts.principal.tenantId}::uuid and sb.workload_key=${workloadKey} and sb.status='active'
+  )`;
+  const service = route.legalEntityId === undefined ? sql`false` : sql`
+    receiver.kind='service' and receiver.platform_role='internal_workload'
+    and receiver.principal_id=${internalWorkloadPrincipalId({
+      tenantId: facts.principal.tenantId, legalEntityId: route.legalEntityId, workloadKey,
+    })}::uuid
+    and exists (
+      select 1 from core.access_workload_company_bindings cb
+      join core.legal_entities le on le.tenant_id=cb.tenant_id and le.legal_entity_id=cb.legal_entity_id and le.status='active'
+      where cb.tenant_id=b.tenant_id and cb.workload_binding_id=b.binding_id and cb.status='active'
+        and cb.legal_entity_id=${route.legalEntityId}::uuid
+    )`;
+  const rows = yield* database.executor.transaction(
+    Effect.fn('SymmyRouteScope.nativeReadEvidence')(function* nativeReadEvidence(transaction) {
+      yield* transaction.execute(
+        sql`select set_config('ontos.tenant_id', ${facts.principal.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
+        'objects',
+      );
+      return yield* transaction.execute(sql`
+        select receiver.principal_id as "principalId", b.incarnation as "bindingIncarnation",
+          original_binding.workload_key as "originalWorkloadKey",
+          original_binding.incarnation as "originalWorkloadBindingIncarnation"
+        from core.access_workload_bindings b
+        join core.tenants t on t.tenant_id=b.tenant_id and t.status='active'
+        join core.principals receiver on receiver.tenant_id=b.tenant_id and receiver.principal_id=b.principal_id and receiver.status='active'
+        join core.principals original on original.tenant_id=t.tenant_id and original.principal_id=${facts.principal.principalId}::uuid
+          and original.kind='integration' and original.status='active'
+        join core.principal_auth_bindings original_auth on original_auth.tenant_id=original.tenant_id
+          and original_auth.principal_id=original.principal_id
+          and original_auth.principal_auth_binding_id=${facts.principal.authBindingId}::uuid
+          and original_auth.status='active' and original_auth.revoked_at is null
+          and original_auth.provider='better_auth' and original_auth.subject_type='api_key'
+          and original_auth.provider_subject_id=${facts.principal.authContextRef?.slice('better-auth-api-key:'.length) ?? ''}
+          and original_auth.authentication_namespace_id=${facts.principal.authenticationNamespaceId ?? ''}
+        join core.access_workload_bindings original_binding on original_binding.tenant_id=original.tenant_id
+          and original_binding.principal_id=original.principal_id and original_binding.status='active'
+          and (original_binding.workload_key='integration.symmy-admit' or (
+            ${facts.sourcePurpose}='read' and original_binding.workload_key='integration.symmy-poll'
+            and not exists(select 1 from core.access_workload_bindings preferred
+              where preferred.tenant_id=original.tenant_id and preferred.principal_id=original.principal_id
+                and preferred.workload_key='integration.symmy-admit' and preferred.status='active')
+          ))
+        where b.tenant_id=${facts.principal.tenantId}::uuid and b.workload_key=${workloadKey} and b.status='active'
+          and ((receiver.kind='system' and ${systemCount}=1) or (${systemCount}=0 and ${service}))
+          and (${route.legalEntityId ?? null}::uuid is null or exists(
+            select 1 from core.legal_entities company where company.tenant_id=t.tenant_id
+              and company.legal_entity_id=${route.legalEntityId ?? null}::uuid and company.status='active'))
+        limit 2`, 'objects');
+    }),
+  ).pipe(
+    recoverSqlTransactionError,
+    Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
+    Effect.flatMap((rows) => Schema.decodeUnknownEffect(Schema.Array(nativeReadRowSchema))(rows).pipe(
+      Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
+    )),
+  );
+  const [receiver] = rows;
+  if (rows.length !== 1 || receiver === undefined) {
+    return yield* delegationForbidden('symmy_route_not_admitted')();
+  }
+  return receiver;
+});
 /**
- * The one owner read an admission route makes before it admits: the customer groups route reads Commerce's
- * definition of each group code it names, or Inventory’s current position of a stock key pair. Other admission routes reach no owner read.
+ * Finite owner operations of admission routes: pre-admission source reads and the demo catalog import with its
+ * required revision read. Enrollment and the installed owner's exact access/version remain mandatory.
  */
-const admissionOwnerReads = [
+const admissionOwnerOperations = [
   {
+    access: 'read',
     entrypointKey: 'commerce.customer-context.api.customer-group-definition-source',
     moduleId: 'commerce.customer-context',
     requiresCompany: true,
@@ -216,37 +359,50 @@ const admissionOwnerReads = [
     schemaVersion: '1',
   },
   {
+    access: 'read',
     entrypointKey: 'commerce.inventory.api.source-stock-position-resolution',
     moduleId: 'commerce.inventory',
     requiresCompany: false,
     routeKey: 'inventoryStockBatch',
     schemaVersion: '1',
   },
+  {
+    access: 'write',
+    entrypointKey: 'demo.merchandise.import-source-catalog',
+    moduleId: 'demo.merchandise',
+    requiresCompany: true,
+    routeKey: 'productsBatch',
+    schemaVersion: '1',
+  },
+  {
+    access: 'read',
+    entrypointKey: 'demo.merchandise.api.demo-catalog-revision',
+    moduleId: 'demo.merchandise',
+    requiresCompany: true,
+    routeKey: 'productsBatch',
+    schemaVersion: '1',
+  },
 ] as const;
 /**
- * The owner reads of the destination that an assertion for this route proof may name. A read proof names every
- * enrolled, published read. An admission proof names only its exact configured pre-admission read, once however many enrollment
- * items name it, requiring a company only for Commerce’s company-scoped definition read, and
- * only where the destination publishes it as a current read.
+ * Read proofs name enrolled published reads. Admission proofs name only the finite operations above, once however
+ * many enrollment items name them, with the declared company requirement and exact published access.
  */
-const ownerReadOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
+const ownerRouteOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
   if (facts.sourcePurpose === 'admit') {
-    const read = admissionOwnerReads.find(({ routeKey }) => routeKey === facts.routeKey);
-    if (read === undefined) {
-      return [];
-    }
-    const { entrypointKey, moduleId, requiresCompany, schemaVersion } = read;
-    return (!requiresCompany || route.legalEntityId !== undefined) &&
-      destination.manifest.module.id === moduleId &&
-      route.allowedOwnerOperations.some(
-        (operation) =>
-          operation.moduleId === moduleId &&
-          operation.entrypointKey === entrypointKey &&
-          operation.schemaVersion === schemaVersion,
-      ) &&
-      gatewayPublishedOperationAccess(destination, entrypointKey, schemaVersion) === 'read'
-      ? [{ entrypointKey, schemaVersion }]
-      : [];
+    return admissionOwnerOperations.flatMap(({ access, entrypointKey, moduleId, requiresCompany, routeKey, schemaVersion }) =>
+      routeKey === facts.routeKey &&
+        (!requiresCompany || route.legalEntityId !== undefined) &&
+        destination.manifest.module.id === moduleId &&
+        route.allowedOwnerOperations.some(
+          (operation) =>
+            operation.moduleId === moduleId &&
+            operation.entrypointKey === entrypointKey &&
+            operation.schemaVersion === schemaVersion,
+        ) &&
+        gatewayPublishedOperationAccess(destination, entrypointKey, schemaVersion) === access
+        ? [{ entrypointKey, schemaVersion }]
+        : [],
+    );
   }
   return route.allowedOwnerOperations.flatMap((operation) => {
     if (operation.moduleId !== destination.manifest.module.id) {
@@ -271,9 +427,14 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   const route = yield* readSymmyRouteScope(proof);
   const inventoryTenantRead =
     facts.sourcePurpose === 'admit' && facts.routeKey === 'inventoryStockBatch' && input.audience === 'inventory';
-  const receiverCompany = inventoryTenantRead ? undefined : route.legalEntityId;
+  const nativeTenantRead = facts.sourcePurpose === 'read' && tenantOnlyNativeReads.some(
+    ([audience, moduleId, entrypointKey]) => input.audience === audience &&
+      route.allowedOwnerOperations.some((operation) => operation.moduleId === moduleId &&
+        operation.entrypointKey === entrypointKey && operation.schemaVersion === '1'),
+  );
+  const receiverCompany = inventoryTenantRead || nativeTenantRead ? undefined : route.legalEntityId;
   if (input.legalEntityId !== receiverCompany) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('symmy_route_not_admitted')();
   }
   yield* validateCompany(route, principal.tenantId);
   const catalog = yield* ShellInstalledModuleCatalog;
@@ -283,7 +444,7 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   }
   if (input.audience !== symmyAudience) {
     const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
-    if (destination === undefined || ownerReadOperations(destination, route, facts).length === 0) {
+    if (destination === undefined || ownerRouteOperations(destination, route, facts).length === 0) {
       return yield* delegationForbidden('symmy_route_not_admitted')();
     }
   }
@@ -326,7 +487,7 @@ const routeScopeOperations = (destination: InstalledContract, route: Route, fact
         : [],
     );
   }
-  return ownerReadOperations(destination, route, facts);
+  return ownerRouteOperations(destination, route, facts);
 };
 
 /**
@@ -347,7 +508,7 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
       compositionRevision: facts.compositionRevision,
       principal,
       principalKind: 'integration',
-    }).pipe(Effect.mapError(delegationUnavailable));
+    }).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
   }
   const route = yield* readSymmyRouteScope(proof);
   const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
@@ -369,11 +530,57 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     sourceRouteRevision: route.sourceRouteRevision,
     tenantId: principal.tenantId,
   };
-  if (principal.legalEntityId !== undefined) {
-    Object.assign(routeScopeInput, { legalEntityId: principal.legalEntityId });
+  if (input.legalEntityId !== undefined) {
+    Object.assign(routeScopeInput, { legalEntityId: input.legalEntityId });
   }
   if (route.replayIdempotencyDigest !== undefined) {
     Object.assign(routeScopeInput, { replayIdempotencyDigest: route.replayIdempotencyDigest });
+  }
+  if (input.audience !== symmyAudience &&
+      routeScopeInput.operations.every(({ entrypointKey, schemaVersion }) =>
+        gatewayPublishedOperationAccess(destination, entrypointKey, schemaVersion) === 'read')) {
+    const mapped = routeScopeInput.operations.flatMap((operation) => {
+      const approved = nativeReadOperations.find(([moduleId, entrypointKey]) =>
+        moduleId === destination.manifest.module.id && entrypointKey === operation.entrypointKey &&
+        operation.schemaVersion === '1');
+      return approved === undefined ? [] : [{ operation, workloadKey: approved[2] }];
+    });
+    const workloadKeys = new Set(mapped.map(({ workloadKey }) => workloadKey));
+    const [workloadKey] = workloadKeys;
+    if (workloadKeys.size > 1) return yield* delegationForbidden('symmy_route_not_admitted')();
+    if (workloadKey !== undefined) {
+      const receiver = yield* selectNativeReadReceiver(facts, route, workloadKey);
+      const readAttemptId = yield* (yield* Crypto.Crypto).randomUUIDv4().pipe(
+        Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
+      );
+      const nativePrincipal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+        authMethod: 'system',
+        authContextRef: `job:integration.symmy.route-read:run:${readAttemptId}`,
+        principalId: receiver.principalId,
+        tenantId: principal.tenantId,
+      }).pipe(Effect.mapError(delegationForbidden('symmy_route_not_admitted')));
+      const nativeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
+        ...routeScopeInput,
+        operations: mapped.map(({ operation }) => operation),
+        principalId: receiver.principalId,
+        nativeReadReceiver: {
+          bindingIncarnation: receiver.bindingIncarnation,
+          workloadKey,
+          originalPrincipalId: facts.principal.principalId,
+          originalWorkloadKey: receiver.originalWorkloadKey,
+          originalWorkloadBindingIncarnation: receiver.originalWorkloadBindingIncarnation,
+          ...(route.legalEntityId === undefined ? {} : { enrollmentLegalEntityId: route.legalEntityId }),
+        },
+      }).pipe(Effect.mapError(delegationUnavailable('symmy_route_unavailable')));
+      return yield* issueNativeReadRouteScopedGatewayContextAssertion(
+        new AdmittedSymmyNativeReadValue(nativeReadMintKey, {
+          audience: input.audience,
+          compositionRevision: facts.compositionRevision,
+          principal: nativePrincipal,
+          routeScope: nativeScope,
+        }),
+      ).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
+    }
   }
   const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)(routeScopeInput).pipe(
     Effect.mapError(delegationUnavailable('symmy_route_unavailable')),

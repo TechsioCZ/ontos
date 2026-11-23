@@ -2939,7 +2939,8 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
     if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
       return yield* Effect.fail(gatewayForbiddenProblem());
     }
-    if (input.legalEntityId === undefined && input.audience !== 'inventory') {
+    const nativePriceGroupRead = selectedRoute?.routeKey === 'priceLists' && input.audience === 'price-group-catalog';
+    if (input.legalEntityId === undefined && input.audience !== 'inventory' && !nativePriceGroupRead) {
       return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
     }
     if (selectedRoute === undefined) {

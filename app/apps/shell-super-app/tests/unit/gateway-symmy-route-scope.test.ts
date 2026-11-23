@@ -1,5 +1,6 @@
 import {
   AccessWorkloadSchema,
+  AccessDeclarationSchema,
   buildApplicationCompositionCatalog,
   makeActiveApplicationCompositionLayer,
   defineTenantModuleEntrypoint,
@@ -11,6 +12,8 @@ import {
   readVerifiedGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
+import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
+import { NodeCrypto } from '@effect/platform-node';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
@@ -20,15 +23,22 @@ import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import { decodeSupportedGatewayContextClaims, NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 
-import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
+import {
+  issueGatewayContextAssertion,
+  issueRouteScopedGatewayContextAssertion,
+  issueNativeReadRouteScopedGatewayContextAssertion,
+  makeGatewayIssuerLayer,
+} from '../../api/auth/gateway-issuer.ts';
 import {
   acquireSymmyRouteScopeProof,
   issueSymmyRouteScopeAssertion,
   projectSymmyRouteScopePrincipal,
   readSymmyRouteScope,
+  readAdmittedSymmyNativeRead,
 } from '../../api/auth/gateway-symmy-route-scope.ts';
-import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
+import { capturingScopeGrantRegistrar, scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import type { ShellInstalledCatalog } from '../../api/modules/installed-module-catalog.ts';
 import {
@@ -46,6 +56,9 @@ const principal = {
   tenantId: '50000000-0000-4000-8000-000000000001',
 };
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
+const nativePrincipalId = '90000000-0000-4000-8000-000000000001';
+const nativeBindingIncarnation = '90000000-0000-4000-8000-000000000002';
+const originalReadIncarnation = '90000000-0000-4000-8000-000000000003';
 const response = {
   allowedOwnerOperations: [
     { entrypointKey: 'party.registry.api.source-profile-export', moduleId: 'party.registry', schemaVersion: '1' },
@@ -77,6 +90,9 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   readonly companyless?: boolean;
   readonly replayIdempotencyDigest?: string;
   readonly responseTenant?: string;
+  readonly receiver?: 'system' | 'service' | 'missing' | 'ambiguous';
+  readonly originalReadActive?: boolean;
+  readonly originalReadWorkload?: 'integration.symmy-admit' | 'integration.symmy-poll';
 }) {
   const { privateKey, publicKey } = yield* Effect.promise(() =>
     generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
@@ -104,8 +120,26 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     }
     return Response.json(ownerResponse);
   };
-  const connection = testSqlConnection((statement, parameters) =>
-    Effect.succeed(
+  const nativeQueries: { statement: string; parameters: readonly unknown[] }[] = [];
+  const connection = testSqlConnection((statement, parameters) => {
+    if (statement.includes('as "originalWorkloadKey"')) {
+      nativeQueries.push({ statement, parameters });
+      const workloadKey = parameters.find((parameter) => typeof parameter === 'string' &&
+        ['party.registry.source-read', 'commerce.customer-context.source-read', 'pricing.price-group-catalog.source-read',
+          'commerce.pricing.source-read', 'commerce.catalog.symmy-product-read', 'commerce.inventory.source-read'].includes(parameter));
+      if (typeof workloadKey !== 'string' || options.receiver === 'missing' || options.originalReadActive === false) {
+        return Effect.succeed([]);
+      }
+      const principalId = options.receiver === 'service'
+        ? internalWorkloadPrincipalId({ tenantId: principal.tenantId, legalEntityId, workloadKey })
+        : nativePrincipalId;
+      return Effect.succeed(Array.from({ length: options.receiver === 'ambiguous' ? 2 : 1 }, () => ({
+        principalId, bindingIncarnation: nativeBindingIncarnation,
+        originalWorkloadKey: options.originalReadWorkload ?? 'integration.symmy-admit',
+        originalWorkloadBindingIncarnation: originalReadIncarnation,
+      })));
+    }
+    return Effect.succeed(
       statement.includes('from core.principals p') &&
         options.activeBinding !== false &&
         parameters.includes(principal.authBindingId) &&
@@ -113,11 +147,12 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
         parameters.includes(principal.authenticationNamespaceId)
         ? [{ principal_id: principal.principalId }]
         : [],
-    ),
-  );
+    );
+  });
   const database = Layer.effect(CoreDatabase, testCoreDatabase.pipe(Effect.map((executor) => ({ executor })))).pipe(
     Layer.provide(scriptedPgClientLayer(Effect.succeed(connection)).pipe(Layer.provide(Reactivity.layer))),
   );
+  const grants = capturingScopeGrantRegistrar();
   const issuer = makeGatewayIssuerLayer({
     currentTimeSeconds: Effect.succeed(1_700_000_000),
     generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
@@ -126,6 +161,11 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
         ['commerce-customer-context', 'native-route-build'],
         ['symmy-integration', 'native-route-build'],
         ['inventory', 'native-route-build'],
+        ['merchandise', 'native-route-build'],
+        ['party-registry', 'native-route-build'],
+        ['price-group-catalog', 'native-route-build'],
+        ['pricing', 'native-route-build'],
+        ['catalog', 'native-route-build'],
       ]),
       revision: options.catalog?.composition.revision ?? compositionRevision,
     }),
@@ -141,7 +181,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
         x: jwk.x ?? '',
       },
     }),
-  }).pipe(Layer.provide(scopeGrantRegistrarLayer()));
+  }).pipe(Layer.provide(scopeGrantRegistrarLayer(grants.registrar)));
   const company = Layer.succeed(LegalEntityContext, {
     listActiveForTenant: () => Effect.succeed([{ legalEntityId, legalName: 'Route company' }]),
     validateSelection: (tenant, companyId) => {
@@ -158,10 +198,220 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   });
   return {
     calls,
-    layer: Layer.mergeAll(database, issuer, company, catalog, Layer.succeed(FetchHttpClient.Fetch, fakeFetch)),
+    nativeQueries,
+    grantInputs: grants.inputs,
+    layer: Layer.mergeAll(database, issuer, company, catalog, NodeCrypto.layer, Layer.succeed(FetchHttpClient.Fetch, fakeFetch)),
     publicKey,
   };
 });
+
+it.effect('issues and redeems V9 only after current canonical source-read selection, never from copied issuer input', () =>
+  Effect.gen(function* nativeSourceReads() {
+    const cases = [
+      ['party-registry', 'party.registry', 'party.registry.api.source-profile-export', 'party.registry.source-read'],
+      ['commerce-customer-context', 'commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-page', 'commerce.customer-context.source-read'],
+      ['price-group-catalog', 'pricing.price-group-catalog', 'pricing.price-group-catalog.api.price-group-source-associations', 'pricing.price-group-catalog.source-read'],
+      ['pricing', 'commerce.pricing', 'commerce.pricing.api.price-group-source-prices', 'commerce.pricing.source-read'],
+      ['catalog', 'commerce.catalog', 'commerce.catalog.api.catalog-source-product-page', 'commerce.catalog.symmy-product-read'],
+    ] as const;
+    for (const [audience, moduleId, entrypointKey, workloadKey] of cases) {
+      const base = makeModuleContractFixture({ appId: audience, buildMarker: 'native-route-build', moduleId });
+      const unrelatedKey = `${moduleId}.api.unrelated`;
+      const snapshot = yield* makeCompositionSnapshot([{
+        ...base,
+        manifest: {
+          ...base.manifest,
+          publicSurface: {
+            ...base.manifest.publicSurface,
+            api: [{ key: `${moduleId}.api.source`, operationKeys: ['source.execute', 'unrelated.execute'] }],
+            operationContracts: [entrypointKey, unrelatedKey].map((key, index) => ({
+              apiKey: `${moduleId}.api.source`, operationKey: index === 0 ? 'source.execute' : 'unrelated.execute',
+              schemaVersion: '1',
+              entrypoint: defineTenantModuleEntrypoint({
+                access: 'read', authorization: { kind: 'protected' }, entrypointKey: key, moduleKey: moduleId, role: 'api',
+              }),
+            })),
+          },
+        },
+      }]);
+      const catalog = { ...(yield* buildApplicationCompositionCatalog(snapshot.composition)), composition: snapshot.composition };
+      const tenantOnly = audience === 'price-group-catalog' || audience === 'catalog';
+      const sourceRequest = {
+        ...request, compositionRevision: snapshot.composition.revision,
+        routeRequest: audience === 'price-group-catalog' || audience === 'pricing'
+          ? { routeKey: 'priceLists' as const } : request.routeRequest,
+      };
+      for (const receiver of ['system', 'service'] as const) {
+        const current = yield* fixture({
+          catalog, receiver, originalReadWorkload: 'integration.symmy-poll',
+          allowedOwnerOperations: [entrypointKey, unrelatedKey].map((key) => ({ moduleId, entrypointKey: key, schemaVersion: '1' })),
+        });
+        yield* Effect.gen(function* issueNativeRead() {
+          const proof = yield* acquireSymmyRouteScopeProof(sourceRequest);
+          const signed = yield* issueSymmyRouteScopeAssertion(proof,
+            tenantOnly ? { audience, principal } : { audience, principal, legalEntityId });
+          const verified = yield* Effect.promise(() => jwtVerify(signed.token, current.publicKey, {
+            algorithms: ['EdDSA'], audience, issuer: 'https://shell.test', currentDate: new Date(1_700_000_001_000),
+          }));
+          const claims = yield* decodeSupportedGatewayContextClaims(verified.payload);
+          expect(claims.ver).toBe(NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION);
+          if (claims.ver !== NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION) return yield* Effect.die('Expected native Read V9');
+          const expectedPrincipal = receiver === 'system' ? nativePrincipalId :
+            internalWorkloadPrincipalId({ tenantId: principal.tenantId, legalEntityId, workloadKey });
+          expect(claims.principal).toMatchObject({ authMethod: 'system', principalId: expectedPrincipal, tenantId: principal.tenantId });
+          expect(claims.principal.legalEntityId).toBeUndefined();
+          expect(claims.principal.authenticationNamespaceId).toBeUndefined();
+          expect(claims.principal.authContextRef).toMatch(/^job:integration\.symmy\.route-read:run:[0-9a-f-]{36}$/u);
+          expect(claims.routeScope).toMatchObject({
+            routeKey: sourceRequest.routeRequest.routeKey,
+            operations: [{ entrypointKey, schemaVersion: '1' }],
+            nativeReadReceiver: {
+              workloadKey, bindingIncarnation: nativeBindingIncarnation, enrollmentLegalEntityId: legalEntityId,
+              originalPrincipalId: principal.principalId, originalWorkloadKey: 'integration.symmy-poll',
+              originalWorkloadBindingIncarnation: originalReadIncarnation,
+            },
+          });
+          expect(claims.routeScope.legalEntityId).toBe(tenantOnly ? undefined : legalEntityId);
+          expect('workload' in claims).toBe(false);
+          const publicJwk = yield* Effect.promise(() => exportJWK(current.publicKey));
+          const redeemed = yield* bindGatewayPrincipalVerifier(audience, base.deployment).verifyAndRedeem(
+            Redacted.make(`Bearer ${signed.token}`), {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment: {
+                ONTOS_GATEWAY_ISSUER: 'https://shell.test',
+                ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }] }),
+              },
+              redemption: { consume: () => Effect.void },
+            },
+          ).pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
+          expect(readVerifiedGatewayRouteScope(redeemed)?.nativeReadReceiver?.workloadKey).toBe(workloadKey);
+          const raw = { audience, compositionRevision: snapshot.composition.revision, principal: claims.principal, routeScope: claims.routeScope };
+          expect(yield* issueGatewayContextAssertion(raw).pipe(Effect.flip)).toMatchObject({ stage: 'principal' });
+          expect(yield* issueRouteScopedGatewayContextAssertion(raw).pipe(Effect.flip)).toMatchObject({ stage: 'principal' });
+          const copied = Object.assign(Object.create(null), raw);
+          expect(readAdmittedSymmyNativeRead(copied)).toBeUndefined();
+          expect(yield* issueNativeReadRouteScopedGatewayContextAssertion(copied).pipe(Effect.flip)).toMatchObject({ stage: 'principal' });
+        }).pipe(Effect.provide(current.layer));
+        expect(current.grantInputs.at(-1)?.legalEntityId).toBe(tenantOnly ? undefined : legalEntityId);
+        expect(JSON.parse(current.calls[0]?.body ?? '{}')).toEqual(sourceRequest.routeRequest);
+        const query = current.nativeQueries[0];
+        expect(query?.parameters).toContain(workloadKey);
+        expect(query?.parameters).toContain(legalEntityId);
+        expect(query?.statement).toContain("receiver.platform_role='internal_workload'");
+        expect(query?.statement).toContain("cb.status='active'");
+        expect(query?.statement).toContain("original.kind='integration' and original.status='active'");
+      }
+      for (const options of [
+        { receiver: 'missing' as const }, { receiver: 'ambiguous' as const }, { originalReadActive: false },
+      ]) {
+        const current = yield* fixture({ catalog, ...options, allowedOwnerOperations: [{ entrypointKey, moduleId, schemaVersion: '1' }] });
+        const failure = yield* Effect.gen(function* rejectedNativeRead() {
+          const proof = yield* acquireSymmyRouteScopeProof(sourceRequest);
+          return yield* issueSymmyRouteScopeAssertion(proof,
+            tenantOnly ? { audience, principal } : { audience, principal, legalEntityId });
+        }).pipe(Effect.flip, Effect.provide(current.layer));
+        expect(failure).toMatchObject({ code: 'forbidden', reason: 'symmy_route_not_admitted' });
+      }
+    }
+  }),
+);
+
+it.effect('signs only the exact enrolled company catalog import and revision operations on productsBatch', () =>
+  Effect.gen(function* demoCatalogAdmission() {
+    const moduleId = 'demo.merchandise';
+    const importKey = 'demo.merchandise.import-source-catalog';
+    const revisionKey = 'demo.merchandise.api.demo-catalog-revision';
+    const otherKey = 'demo.merchandise.unrelated-write';
+    const base = makeModuleContractFixture({ appId: 'merchandise', buildMarker: 'native-route-build', moduleId });
+    const publish = (revisionAccess: 'read' | 'historical_read' = 'read', importVersion = '1') =>
+      Effect.gen(function* publishCatalog() {
+        const snapshot = yield* makeCompositionSnapshot([{
+          ...base,
+          manifest: {
+            ...base.manifest,
+            publicSurface: {
+              ...base.manifest.publicSurface,
+              actions: [importKey, otherKey].map((actionKey) => ({
+                actionKey, auditProfile: 'standard' as const, idempotency: 'required' as const,
+                legalEntityScope: 'required' as const, owningModuleId: moduleId,
+                schemaVersion: actionKey === importKey ? importVersion : '1',
+                accessWorkload: { reason: 'Enrolled catalog import', workloads: ['demo.merchandise.symmy-catalog-import'] },
+                entrypoint: defineTenantModuleEntrypoint({
+                  access: 'write', authorization: { kind: 'protected' }, entrypointKey: actionKey,
+                  moduleKey: moduleId, role: 'action',
+                }),
+              })),
+              api: [{ key: 'demo.merchandise.api.revision', operationKeys: ['revision.execute'] }],
+              operationContracts: [{
+                apiKey: 'demo.merchandise.api.revision', operationKey: 'revision.execute', schemaVersion: '1',
+                entrypoint: defineTenantModuleEntrypoint({
+                  access: revisionAccess, authorization: { kind: 'protected' }, entrypointKey: revisionKey,
+                  moduleKey: moduleId, role: 'api',
+                }),
+              }],
+            },
+          },
+        }]);
+        return { ...(yield* buildApplicationCompositionCatalog(snapshot.composition)), composition: snapshot.composition };
+      });
+    const issue = (input: {
+      readonly catalog: ShellInstalledCatalog;
+      readonly operations: typeof response.allowedOwnerOperations;
+      readonly routeKey?: 'productsBatch' | 'customersBatch';
+      readonly companyless?: boolean;
+      readonly company?: string;
+    }) => Effect.gen(function* signCatalogRoute() {
+      const current = yield* fixture({
+        catalog: input.catalog, allowedOwnerOperations: input.operations,
+        companyless: input.companyless === true,
+      });
+      const signed = yield* Effect.gen(function* exactCatalogProof() {
+        const proof = yield* acquireSymmyRouteScopeProof({
+          ...request, compositionRevision: input.catalog.composition.revision,
+          routeRequest: { routeKey: input.routeKey ?? 'productsBatch' }, sourcePurpose: 'admit',
+        });
+        const target = { audience: 'merchandise', principal };
+        return yield* issueSymmyRouteScopeAssertion(proof,
+          input.companyless === true ? target : { ...target, legalEntityId: input.company ?? legalEntityId });
+      }).pipe(Effect.provide(current.layer));
+      return yield* Effect.promise(() => jwtVerify(signed.token, current.publicKey, {
+        algorithms: ['EdDSA'], audience: 'merchandise', issuer: 'https://shell.test',
+        currentDate: new Date(1_700_000_001_000),
+      }));
+    });
+    const enrolled = (key: string, schemaVersion = '1') => ({ moduleId, entrypointKey: key, schemaVersion });
+    const catalog = yield* publish();
+    const operations = [enrolled(importKey), enrolled(revisionKey), enrolled(otherKey), enrolled(revisionKey)];
+    const signed = yield* issue({ catalog, operations });
+    expect(signed.payload['routeScope']).toMatchObject({
+      routeKey: 'productsBatch', legalEntityId, tenantId: principal.tenantId, principalId: principal.principalId,
+      operations: [
+        { entrypointKey: importKey, schemaVersion: '1' },
+        { entrypointKey: revisionKey, schemaVersion: '1' },
+      ],
+    });
+    const revisionOnly = yield* issue({ catalog, operations: [enrolled(revisionKey)] });
+    expect(revisionOnly.payload['routeScope']).toMatchObject({
+      operations: [{ entrypointKey: revisionKey, schemaVersion: '1' }],
+    });
+    const importOnly = yield* issue({ catalog, operations: [enrolled(importKey)] });
+    expect(importOnly.payload['routeScope']).toMatchObject({
+      operations: [{ entrypointKey: importKey, schemaVersion: '1' }],
+    });
+    for (const input of [
+      { catalog, operations, routeKey: 'customersBatch' as const },
+      { catalog, operations: [enrolled(otherKey)] },
+      { catalog, operations: [{ ...enrolled(importKey), moduleId: 'unrelated.owner' }] },
+      { catalog, operations: [enrolled(importKey, '2'), enrolled(revisionKey, '2')] },
+      { catalog, operations, companyless: true },
+      { catalog, operations, company: '90000000-0000-4000-8000-000000000001' },
+      { catalog: yield* publish('historical_read'), operations: [enrolled(revisionKey)] },
+      { catalog: yield* publish('read', '2'), operations: [enrolled(importKey)] },
+    ]) {
+      expect(yield* issue(input).pipe(Effect.flip)).toMatchObject({ code: 'forbidden' });
+    }
+  }),
+);
 
 it.effect('obtains route scope from the protected generated owner Read and refuses reflective or copied proofs', () =>
   Effect.gen(function* actualRouteRead() {
@@ -495,7 +745,7 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
     expect(signed.payload['routeScope']).toMatchObject({
       legalEntityId,
       operations: [{ entrypointKey: definitionRead, schemaVersion: '1' }],
-      principalId: principal.principalId,
+      principalId: nativePrincipalId,
       routeKey: 'customerGroupsBatch',
       tenantId: principal.tenantId,
     });
@@ -564,13 +814,19 @@ it.effect(
         reason: 'Inventory source reads',
         workloads: [workload],
       });
+      const accessDeclaration = yield* Schema.decodeUnknownEffect(AccessDeclarationSchema)({
+        key: 'commerce.inventory.source-position.read', kind: 'read', modes: ['run'],
+        placement: { group: 'source', level: 'basic' }, risk: 'routine', selectors: [],
+      });
       const gate = makeAccessDecisionService({
         authorityFor: ports.intent.authorityFor,
         check: ports.check,
         decisionLog: ports.decisionLog,
         legalEntities: ports.candidates,
-        principalKinds: { readKind: () => Effect.succeedSome('integration') },
-        workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set([workload])) },
+        principalKinds: { readKind: () => Effect.succeedSome('system') },
+        workloadBindings: {
+          readWorkloadAuthority: () => Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set([workload]) }),
+        },
       });
       yield* Effect.forEach(
         [true, false],
@@ -615,7 +871,10 @@ it.effect(
             expect(scope.legalEntityId).toBeUndefined();
             const decide = (key: string, schemaVersion: string) =>
               gate.decide({
-                carrier: { accessWorkload, entrypoint: { entrypointKey: key }, schemaVersion },
+                carrier: {
+                  accessDeclaration,
+                  accessWorkload, entrypoint: { entrypointKey: key }, schemaVersion,
+                },
                 legalEntityScope: 'forbidden',
                 now: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
                 scope,
