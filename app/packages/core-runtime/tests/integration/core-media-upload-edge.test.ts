@@ -63,7 +63,6 @@ import { confirmAssetAction } from '../../src/modules/actions/confirm-asset.acti
 import { uploadAssetAction } from '../../src/modules/actions/upload-asset.action.ts';
 import { bindAccessGate } from '../../src/operations/access-gate.ts';
 import type { AccessEnforcementPorts } from '../../src/operations/access-gate.ts';
-import { ObjectStorageConfigError, loadS3ObjectStorageConfig } from '../../src/media/s3-config.ts';
 import { makeS3ObjectStorage } from '../../src/media/s3-object-storage.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
@@ -73,6 +72,7 @@ import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestPgClient } from '../support/database.ts';
+import { emulatorConfig } from '../support/s3-emulator-config.ts';
 import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
@@ -913,22 +913,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
  * none of it proves R2, whose rows stay NOT VERIFIED until a real endpoint is configured and run by its owner. The
  * suite runs only when CORE_MEDIA_S3_* points at a LOOPBACK server; with none supplied it is skipped.
  */
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MIB = 1024 * 1024;
-
-const emulatorConfig = (ctx: { readonly skip: () => void }) =>
-  loadS3ObjectStorageConfig({ envPath: '/nonexistent/core-media-s3-test.env' }).pipe(
-    Effect.catchTag('ObjectStorageConfigError', (failure) =>
-      failure.reason === 'CORE_MEDIA_S3_ENDPOINT is required'
-        ? Effect.sync(() => ctx.skip()).pipe(Effect.andThen(Effect.never))
-        : Effect.fail(failure),
-    ),
-    Effect.filterOrFail(
-      (settings) => LOOPBACK.has(settings.endpoint.hostname),
-      () => new ObjectStorageConfigError({ reason: 'The S3 integration suite writes only to a loopback emulator' }),
-    ),
-    Effect.orDie,
-  );
 
 /** Deterministic bytes, so a multi-part object needs no stored fixture. */
 const patternedBytes = (totalBytes: number, seed: number): Uint8Array => {
