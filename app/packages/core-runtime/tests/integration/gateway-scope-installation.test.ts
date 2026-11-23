@@ -1,7 +1,8 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { inArray, sql } from 'drizzle-orm';
-import { Crypto, Effect, Predicate, Schema } from 'effect';
+import { Clock, Crypto, Effect, Predicate, Redacted, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -13,7 +14,13 @@ import type { OperationalScope } from '../../src/operations/context.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
 import { CoreSearchProjectionStore, createCoreSearchQueryRuntime } from '../../src/search/projection.ts';
-import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import {
+  RegisteredGatewayRouteScopeSchema,
+  preserveSystemPrincipalContextTrust,
+  trustVerifiedGatewayPrincipalContext,
+} from '../../src/auth/system-principal-context-provenance.ts';
+import { LegalEntityIdSchema } from '../../src/access/ids.ts';
+import { makeGatewayScopeGrantRegistrar } from '../../src/auth/gateway-scope-grant.ts';
 import {
   addTestGatewayScopeGrantCleanup,
   registerTestGatewayScopeGrant,
@@ -125,6 +132,7 @@ const insertGrantFixture = Effect.fn('GatewayScopeInstallationTest.insertGrantFi
     tenantId: string,
     otherTenantId: string,
     principalId: string,
+    principalKind: 'human' | 'system' = 'human',
   ) {
     const tenants = [tenantId, otherTenantId];
     yield* Effect.addFinalizer(() =>
@@ -142,8 +150,8 @@ const insertGrantFixture = Effect.fn('GatewayScopeInstallationTest.insertGrantFi
       [tenantId, `gateway-${tenantId}`, otherTenantId, `gateway-${otherTenantId}`],
     );
     yield* admin.unsafe(
-      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, 'human', 'Gateway principal', 'active')`,
-      [principalId, tenantId],
+      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, $3, 'Gateway principal', 'active')`,
+      [principalId, tenantId, principalKind],
     );
   },
 );
@@ -163,7 +171,172 @@ const installAndReadTrustedTenant = Effect.fn('GatewayScopeInstallationTest.inst
   },
 );
 
+const nativeRouteFixture = Effect.fn('GatewayScopeInstallationTest.nativeRouteFixture')(function* fixture(
+  admin: PgClient.PgClient,
+) {
+  const crypto = yield* Crypto.Crypto;
+  const tenantId = yield* crypto.randomUUIDv4();
+  const otherTenantId = yield* crypto.randomUUIDv4();
+  const principalId = yield* crypto.randomUUIDv4();
+  const originalPrincipalId = yield* crypto.randomUUIDv4();
+  const selectedCompanyId = yield* crypto.randomUUIDv4();
+  const enrollmentCompanyId = yield* crypto.randomUUIDv4();
+  const foreignCompanyId = yield* crypto.randomUUIDv4();
+  yield* insertGrantFixture(admin, tenantId, otherTenantId, principalId, 'system');
+  yield* Effect.addFinalizer(() =>
+    admin.unsafe('delete from core.legal_entities where tenant_id = any($1::uuid[])', [[tenantId, otherTenantId]])
+      .pipe(Effect.orDie),
+  );
+  // LIFO cleanup: grants precede companies; the original fixture removes principals and tenants last.
+  yield* addTestGatewayScopeGrantCleanup(admin, [tenantId, otherTenantId]);
+  yield* admin.unsafe(
+    `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
+     values ($1, $2, 'integration', 'Original integration', 'active')`,
+    [originalPrincipalId, tenantId],
+  );
+  for (const company of [
+    { id: selectedCompanyId, tenant: tenantId },
+    { id: enrollmentCompanyId, tenant: tenantId },
+    { id: foreignCompanyId, tenant: otherTenantId },
+  ]) {
+    yield* admin.unsafe(
+      `insert into core.legal_entities
+       (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+       values ($1, $2, 'Gateway scope company', 'CZ', $3, 'active')`,
+      [company.id, company.tenant, `gateway-${company.id}`],
+    );
+  }
+  const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+    authContextRef: `job:integration.symmy.route-read:run:${yield* crypto.randomUUIDv4()}`,
+    authMethod: 'system',
+    principalId,
+    tenantId,
+  });
+  const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
+    legalEntityId: selectedCompanyId,
+    nativeReadReceiver: {
+      bindingIncarnation: yield* crypto.randomUUIDv4(),
+      enrollmentLegalEntityId: enrollmentCompanyId,
+      originalPrincipalId,
+      originalWorkloadBindingIncarnation: yield* crypto.randomUUIDv4(),
+      originalWorkloadKey: 'integration.symmy-admit',
+      workloadKey: 'party.registry.source-read',
+    },
+    operations: [{ entrypointKey: 'party.registry.api.source-profile-export', schemaVersion: '1' }],
+    principalId,
+    routeId: yield* crypto.randomUUIDv4(),
+    routeKey: 'adminCustomers',
+    routeRevision: 'v1',
+    sourceRouteId: yield* crypto.randomUUIDv4(),
+    sourceRouteRevision: 'v1',
+    tenantId,
+  });
+  return { principal, routeScope, tenantId, otherTenantId, principalId, originalPrincipalId, selectedCompanyId, enrollmentCompanyId, foreignCompanyId };
+});
+
+const nativeRouteGrant = Effect.fn('GatewayScopeInstallationTest.nativeRouteGrant')(function* grant(
+  fixture: Effect.Success<ReturnType<typeof nativeRouteFixture>>,
+) {
+  const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const expiresAtEpochSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000) + 300;
+  return {
+    claims: {
+      aud: audience,
+      exp: expiresAtEpochSeconds,
+      jti,
+      principal: fixture.principal,
+      routeScope: fixture.routeScope,
+      sub: fixture.principalId,
+      ver: 9,
+    },
+    registration: {
+      audience,
+      expiresAtEpochSeconds,
+      jti,
+      legalEntityId: fixture.selectedCompanyId,
+      principalId: fixture.principalId,
+      tenantId: fixture.tenantId,
+    },
+  };
+});
+
+/** The issuer DB role is already trusted. This exercises payload/argument matching, not JWT signature verification. */
+const syntheticNativeAssertion = Effect.fn('GatewayScopeInstallationTest.syntheticNativeAssertion')(
+  function* encode(claims: unknown) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(claims);
+    return Redacted.make(`${Base64Url.encode('{"alg":"none","typ":"ontos-test-gateway"}')}.${Base64Url.encode(encoded)}.${Base64Url.encode('synthetic-test-signature')}`);
+  },
+);
+
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope installation', (suite) => {
+  suite.effect('installs V9 selected company, not its distinct enrollment company, through the real issuer and request roles', () =>
+    Effect.gen(function* nativeV9CompanyScope() {
+      const { admin, issuer, party } = yield* gatewayScopeClients;
+      const fixture = yield* nativeRouteFixture(admin);
+      const grant = yield* nativeRouteGrant(fixture);
+      const assertion = yield* syntheticNativeAssertion(grant.claims);
+      yield* makeGatewayScopeGrantRegistrar(issuer, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+        .register({ ...grant.registration, assertion });
+      const principal = trustVerifiedGatewayPrincipalContext(
+        fixture.principal, compositionRevision, { assertion, audience }, undefined, undefined, fixture.routeScope,
+      );
+      const scope: OperationalScope = preserveSystemPrincipalContextTrust(principal, {
+        ...principal,
+        correlationId: 'native-v9-company-scope',
+        legalEntityId: LegalEntityIdSchema.make(fixture.selectedCompanyId),
+      });
+      const database = yield* makeTestDatabaseFromClient(party, coreRelations);
+      const installed = yield* database.transaction((transaction) =>
+        Effect.gen(function* installNativeCompanyScope() {
+          const executor = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+          const [row] = yield* transaction.execute<{ tenant_id: string; legal_entity_id: string }>(
+            sql`select trust.current_tenant_id()::text as tenant_id, trust.current_legal_entity_id()::text as legal_entity_id`,
+            'objects',
+          );
+          return { scope: executor.scope, tenantId: row?.tenant_id, companyId: row?.legal_entity_id };
+        }),
+      );
+      expect(fixture.selectedCompanyId).not.toBe(fixture.enrollmentCompanyId);
+      expect(installed).toEqual({
+        scope: { tenantId: fixture.tenantId, legalEntityId: fixture.selectedCompanyId },
+        tenantId: fixture.tenantId,
+        companyId: fixture.selectedCompanyId,
+      });
+    }),
+  );
+
+  suite.effect('refuses V9 grant argument mismatches and malformed derived-company claims without creating grants', () =>
+    Effect.gen(function* rejectInvalidNativeV9Grants() {
+      const { admin, issuer } = yield* gatewayScopeClients;
+      const fixture = yield* nativeRouteFixture(admin);
+      const registrar = makeGatewayScopeGrantRegistrar(issuer, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+      const base = yield* nativeRouteGrant(fixture);
+      const invalid = [
+        { claims: base.claims, registration: { ...base.registration, legalEntityId: fixture.enrollmentCompanyId } },
+        { claims: base.claims, registration: { ...base.registration, tenantId: fixture.otherTenantId } },
+        { claims: base.claims, registration: { ...base.registration, principalId: fixture.originalPrincipalId } },
+        { claims: { ...base.claims, routeScope: { ...fixture.routeScope, principalId: fixture.originalPrincipalId } }, registration: base.registration },
+        { claims: { ...base.claims, routeScope: { ...fixture.routeScope, tenantId: fixture.otherTenantId } }, registration: base.registration },
+        { claims: { ...base.claims, routeScope: { ...fixture.routeScope, legalEntityId: fixture.foreignCompanyId } }, registration: { ...base.registration, legalEntityId: fixture.foreignCompanyId } },
+        { claims: { ...base.claims, routeScope: { ...fixture.routeScope, nativeReadReceiver: null } }, registration: base.registration },
+        { claims: { ...base.claims, routeScope: { ...fixture.routeScope, legalEntityId: undefined } }, registration: base.registration },
+        { claims: { ...base.claims, routeScope: { ...fixture.routeScope, legalEntityId: 'not-a-uuid' } }, registration: base.registration },
+        // Other versions must not acquire V9's derived company; this is not a JWT-version whitelist test.
+        ...[8, 10, 'nine'].map((ver) => ({ claims: { ...base.claims, ver }, registration: base.registration })),
+      ];
+      for (const attempt of invalid) {
+        const assertion = yield* syntheticNativeAssertion(attempt.claims);
+        const failure = yield* registrar.register({ ...attempt.registration, assertion }).pipe(Effect.flip);
+        expect(Predicate.isTagged(failure, 'GatewayScopeGrantUnavailableError')).toBe(true);
+      }
+      const [remaining] = yield* admin.unsafe<{ count: number }>(
+        'select count(*)::int as count from trust.gateway_scope_grants where tenant_id = any($1::uuid[])',
+        [[fixture.tenantId, fixture.otherTenantId]],
+      );
+      expect(remaining?.count).toBe(0);
+    }),
+  );
+
   suite.effect('installs only the tenant scope that a registered grant names', () =>
     Effect.gen(function* gatewayScopeInstallation() {
       const { admin, issuer, party } = yield* gatewayScopeClients;
