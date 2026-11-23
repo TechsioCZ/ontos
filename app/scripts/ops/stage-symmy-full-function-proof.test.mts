@@ -340,6 +340,10 @@ test('customer group acceptance payload obeys the real native meaning-key contra
   assert.notEqual(a.meaningKey, b.meaningKey);
   assert.equal(a.businessCode, a.code);
   assert.match(a.meaningKey, /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u);
+  const nativeBusinessMeaning = (group: typeof a) => JSON.stringify(
+    [group.purpose, group.membershipCriteria].map((value) => value.trim().replace(/\s+/gu, ' ').toLowerCase()),
+  );
+  assert.notEqual(nativeBusinessMeaning(a), nativeBusinessMeaning(b));
 });
 
 test('configuration keeps the environment key Redacted and uses only published stage refs', () => {

@@ -935,7 +935,7 @@ export function symmyCustomerGroupPayload(names: SymmyProofNames) {
     businessCode: names.group, code: names.group, name: names.group,
     description: `${names.prefix} acceptance group`, meaningKey: `${names.prefix.toLowerCase().replaceAll('_', '-')}.customers`,
     membershipCriteria: 'Explicit ERP assignment of scoped acceptance customers',
-    purpose: 'Scoped Symmy HTTP acceptance group',
+    purpose: `Scoped Symmy HTTP acceptance group ${names.prefix}`,
   }] };
 }
 async function proveOwnerGroups(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
