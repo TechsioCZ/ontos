@@ -3,9 +3,9 @@ import { Effect, Redacted, Schema } from 'effect';
 import {
   DemoOrderExportRequestSchema,
   demoOrderExportOperation,
-} from '../../../../verticals/merchandise/shared/apis/demo-order-export.ts';
-import type { DemoOrderExportResponse } from '../../../../verticals/merchandise/shared/apis/demo-order-export.ts';
-import { executeDemoOrderExportWithAuthorization } from '../../../../verticals/merchandise/src/api/demo-order-export-client.ts';
+} from '@app/merchandise/apis/demo-order-export';
+import type { DemoOrderExportResponse } from '@app/merchandise/apis/demo-order-export';
+import { executeDemoOrderExportWithAuthorization } from '@app/merchandise/apis/demo-order-export/client';
 import { symmyInvalidProblem, symmyUnavailableProblem } from './contract.ts';
 import type { SymmyIngressProblem } from './contract.ts';
 import type { SymmyIngressAdmission } from './transport.ts';

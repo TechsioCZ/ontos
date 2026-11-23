@@ -368,6 +368,7 @@ export const merchandiseRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
   reads: [
     // <generated-module-registration-reads>
     agentReviewRead,
+    demoCatalogRevisionRead,
     demoOrderExportRead,
     mediaRead,
     recordsRead,

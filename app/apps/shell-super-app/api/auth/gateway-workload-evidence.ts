@@ -1,6 +1,7 @@
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { OntosModuleIdSchema, recoverSqlTransactionError } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
 import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { sql } from 'drizzle-orm';
@@ -123,7 +124,7 @@ const completeWorkload = (
   );
 };
 
-/** Independently proves a current durable delivery, exact source/destination contract and one enrolled system actor. */
+/** Independently proves a current durable delivery, exact source/destination contract and one enrolled workload actor. */
 export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admitRegisteredWorkload')(
   function* admitRegisteredWorkload(input: {
     readonly audience: string;
@@ -217,7 +218,7 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
             ),
             Match.exhaustive,
           );
-          const systems = yield* transaction
+          let systems = yield* transaction
             .execute(
               sql`
       select b.incarnation as "bindingIncarnation", p.principal_id as "principalId", ${actionInvocationId} as "actionInvocationId"
@@ -238,6 +239,45 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
                 ),
               ),
             );
+          if (
+            systems.length === 0 &&
+            subject.legalEntityId !== undefined &&
+            (rule.workloadKey === 'party.registry.source-write' ||
+              rule.workloadKey === 'commerce.customer-context.source-write')
+          ) {
+            const principalId = internalWorkloadPrincipalId({
+              tenantId: subject.tenantId,
+              legalEntityId: subject.legalEntityId,
+              workloadKey: rule.workloadKey,
+            });
+            systems = yield* transaction
+              .execute(
+                sql`
+      select b.incarnation as "bindingIncarnation", p.principal_id as "principalId", ${actionInvocationId} as "actionInvocationId"
+      from core.access_workload_bindings b
+      join core.tenants t on t.tenant_id = b.tenant_id and t.status = 'active'
+      join core.principals p on p.tenant_id = b.tenant_id and p.principal_id = b.principal_id
+        and p.kind = 'service' and p.platform_role = 'internal_workload' and p.status = 'active'
+      join core.access_workload_company_bindings cb on cb.tenant_id = b.tenant_id
+        and cb.workload_binding_id = b.binding_id and cb.status = 'active'
+      join core.legal_entities le on le.tenant_id = cb.tenant_id
+        and le.legal_entity_id = cb.legal_entity_id and le.status = 'active'
+      where b.tenant_id = ${subject.tenantId}::uuid and b.workload_key = ${rule.workloadKey} and b.status = 'active'
+        and p.principal_id = ${principalId}::uuid and cb.legal_entity_id = ${subject.legalEntityId}::uuid
+      limit 2
+    `,
+                'objects',
+              )
+              .pipe(
+                recoverSqlTransactionError,
+                Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
+                Effect.flatMap((rows) =>
+                  Schema.decodeUnknownEffect(Schema.Array(RowSchema))(rows).pipe(
+                    Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
+                  ),
+                ),
+              );
+          }
           const [row] = systems;
           if (
             systems.length !== 1 ||

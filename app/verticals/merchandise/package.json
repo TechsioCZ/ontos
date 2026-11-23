@@ -22,6 +22,7 @@
     "./contracts/place-storefront-order": "./shared/actions/place-storefront-order.ts",
     "./contracts/records": "./shared/apis/records.ts",
     "./domain/market-offers": "./shared/domain/market-offers.ts",
+    "./domain/order-totals": "./shared/domain/order-totals.ts",
     "./domain/merchandise-model": "./shared/domain/merchandise-model.ts",
     "./outbox/demo-merchandise-search-rebuild-requested-v1": "./shared/outbox/demo-merchandise-search-rebuild-requested-v1.ts",
     "./outbox/demo-merchandise-search-refresh-requested-v1": "./shared/outbox/demo-merchandise-search-refresh-requested-v1.ts",

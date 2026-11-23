@@ -5,6 +5,8 @@ import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { CatalogPagePricesApi } from './shared/apis/catalog-page-prices.ts';
+import { catalogPagePricesRead } from './src/api/catalog-page-prices.read.ts';
 import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
 import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
@@ -57,26 +59,14 @@ import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
 import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
+import { quantityTierResultLookupRead } from './src/api/quantity-tier-result-lookup.read.ts';
+import { quotationResultLookupRead } from './src/api/quotation-result-lookup.read.ts';
+import { zeroFloorAuthorizationResultLookupRead } from './src/api/zero-floor-authorization-result-lookup.read.ts';
 // </generated-module-manifest-imports>
 import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing-commercial-fee-read.ts';
 import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
 import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
 import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
-import { PriceSourceResultLookupApi } from './shared/apis/price-source-result-lookup.ts';
-import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
-import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
-import { quantityTierResultLookupRead } from './src/api/quantity-tier-result-lookup.read.ts';
-import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
-import { quotationResultLookupRead } from './src/api/quotation-result-lookup.read.ts';
-import { QuotationVerificationApi } from './shared/apis/quotation-verification.ts';
-import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
-import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
-import { revisePriceAction } from './src/actions/revise-price.action.ts';
-import { RevisePriceActionApi } from './shared/apis/revise-price-action.ts';
-import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
-import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
-import { zeroFloorAuthorizationResultLookupRead } from './src/api/zero-floor-authorization-result-lookup.read.ts';
-// </generated-module-manifest-imports>
 import { pricingMcpContribution } from './shared/mcp/contribution.ts';
 import { pricingRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 

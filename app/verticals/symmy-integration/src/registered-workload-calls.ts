@@ -4,7 +4,6 @@ const commerceCustomerContext = 'commerce-customer-context';
 const commerceCatalogAssignSku = 'commerce.catalog.assign-sku';
 const commerceCatalogCreateProduct = 'commerce.catalog.create-product';
 const commerceCatalogCreateVariant = 'commerce.catalog.create-variant';
-const commerceCatalogSetProductLocalizedFacts = 'commerce.catalog.set-product-localized-facts';
 const commerceCatalogSetVariantLocalizedFacts = 'commerce.catalog.set-variant-localized-facts';
 const commerceCatalogSymmyProductImport = 'commerce.catalog.symmy-product-import';
 const commerceCatalogSymmyProductRead = 'commerce.catalog.symmy-product-read';
@@ -632,16 +631,6 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
   },
   {
     audience: 'catalog',
-    declarationKey: 'commerce.catalog.product-localized-facts.set',
-    entrypointKey: commerceCatalogSetProductLocalizedFacts,
-    jobKey: integrationSymmyExecuteSymmyJob,
-    legalEntityScope: 'forbidden',
-    schemaVersion: '1',
-    workerKey: integrationSymmyExecuteSymmyJob,
-    workloadKey: 'commerce.catalog.symmy-product-localized-facts',
-  },
-  {
-    audience: 'catalog',
     declarationKey: 'commerce.catalog.sku.assign',
     entrypointKey: commerceCatalogAssignSku,
     jobKey: integrationSymmyExecuteSymmyJob,
@@ -709,17 +698,6 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     schemaVersion: '1',
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: 'commerce.catalog.symmy-variant-localized-facts-recovery',
-  },
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.set-product-localized-facts-recovery.read',
-    entrypointKey: 'commerce.catalog.api.set-product-localized-facts-recovery',
-    jobKey: integrationSymmyExecuteSymmyJob,
-    legalEntityScope: 'forbidden',
-    recoveryOf: { actionKey: commerceCatalogSetProductLocalizedFacts, jobKey: integrationSymmyExecuteSymmyJob },
-    schemaVersion: '1',
-    workerKey: integrationSymmyExecuteSymmyJob,
-    workloadKey: 'commerce.catalog.symmy-product-localized-facts-recovery',
   },
   {
     audience: 'catalog',

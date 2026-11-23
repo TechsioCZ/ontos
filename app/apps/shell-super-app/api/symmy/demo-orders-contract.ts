@@ -2,13 +2,13 @@ import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details'
 import { MarketCurrencySchema } from '@app/merchandise/domain/market-offers';
 import { DateTime, Schema, Struct } from 'effect';
 
-import { DemoOrderExportOrderSchema } from '../../../../verticals/merchandise/shared/apis/demo-order-export.ts';
-import type { DemoOrderExportResponse } from '../../../../verticals/merchandise/shared/apis/demo-order-export.ts';
+import { DemoOrderExportOrderSchema } from '@app/merchandise/apis/demo-order-export';
+import type { DemoOrderExportResponse } from '@app/merchandise/apis/demo-order-export';
 import {
   lineGrossMinor,
   orderLineVatMinor,
   vatInGrossMinor,
-} from '../../../../verticals/merchandise/shared/domain/order-totals.ts';
+} from '@app/merchandise/domain/order-totals';
 
 export const SymmyDemoOrdersQuerySchema = Schema.Struct({
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
