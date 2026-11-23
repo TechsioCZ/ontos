@@ -494,6 +494,61 @@ it.live('a FAILED deploy fails at the first poll', () =>
   }),
 );
 
+it.live('terminal app-version failures fail the waiter even while its native process still says RUNNING', () =>
+  Effect.gen(function* failedCandidate() {
+    for (const status of [
+      'DEPLOY_FAILED', 'BUILD_FAILED', 'PREPARING_RUNTIME_FAILED', 'BUILD_VALIDATION_FAILED', 'CANCELLED',
+    ]) {
+      const result = yield* runPush(() => ({
+        body: JSON.stringify({
+          id: 'process-1', status: 'RUNNING', appVersion: { id: 'version-1', status },
+        }),
+        status: 200,
+      }), { DEPLOY_LIMIT_SECONDS: '0' });
+      expect(result.status).toBe(1);
+      expect(result.polls).toBe(1);
+      expect(result.stderr).toContain(`app version version-1 ${status}`);
+      expect(result.stderr).toContain('Native process process-1 was not canceled');
+      expect(result.stdout).not.toContain(DEPLOYED);
+      expect(writes(result.calls)).toEqual(ONE_EACH);
+    }
+  }),
+);
+
+it.live('native build and deploy queue states remain pending and are logged without any supersession mutation', () =>
+  Effect.gen(function* nativeQueue() {
+    const phases = ['WAITING_TO_BUILD', 'BUILDING', 'PREPARING_RUNTIME', 'WAITING_TO_DEPLOY', 'DEPLOYING', 'ACTIVE'];
+    const result = yield* runPush((call) => ({
+      body: JSON.stringify({
+        id: 'process-1', status: call === phases.length ? 'FINISHED' : 'RUNNING',
+        appVersion: { id: 'version-1', status: phases[call - 1] },
+      }),
+      status: 200,
+    }), { DEPLOY_POLL_SECONDS: '0' });
+    expect(result.status).toBe(0);
+    expect(result.polls).toBe(phases.length);
+    for (const phase of phases) expect(result.stdout).toContain(`app version state: ${phase}`);
+    expect(writes(result.calls)).toEqual(ONE_EACH);
+  }),
+);
+
+it.live('another app version failing never classifies this candidate as failed', () =>
+  Effect.gen(function* foreignCandidate() {
+    const result = yield* runPush((call) => ({
+      body: JSON.stringify({
+        id: 'process-1', status: call === 1 ? 'RUNNING' : 'FINISHED',
+        appVersion: { id: 'other-version', status: 'DEPLOY_FAILED' },
+      }),
+      status: 200,
+    }), { DEPLOY_POLL_SECONDS: '0' });
+    expect(result.status).toBe(0);
+    expect(result.polls).toBe(2);
+    expect(result.stdout).not.toContain('app version state:');
+    expect(result.stderr).not.toContain('DEPLOY_FAILED');
+    expect(writes(result.calls)).toEqual(ONE_EACH);
+  }),
+);
+
 it.live('a deploy still running at its deadline fails and names the service', () =>
   Effect.gen(function* deadline() {
     const result = yield* runPush(() => processState('BUILDING'), { DEPLOY_LIMIT_SECONDS: '0' });
