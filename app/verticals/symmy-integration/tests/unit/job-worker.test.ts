@@ -424,6 +424,34 @@ const harness = () => {
 };
 
 describe('Symmy durable execution and original-effect recovery', () => {
+  it.effect('finishes a terminal denied remainder without dispatching owners or repeating accepted siblings', () =>
+    Effect.gen(function* terminalDeniedRemainder() {
+      const fixture = harness();
+      fixture.replaceJob({
+        ...initialJob,
+        effects: initialJob.effects.map((saved): SymmyExecutionJob['effects'][number] =>
+          saved.state === 'settled' ? saved : {
+            ...saved,
+            state: 'settled',
+            outcome: Option.some({
+              effectId: saved.effect.ref.effectId,
+              owner: saved.effect.ref.operation.moduleId,
+              status: 'denied',
+            }),
+            version: saved.version + 1,
+          },
+        ),
+      });
+      fixture.originalEligible(false);
+      yield* (yield* fixture.makeWorker([])).execute({ jobId }, context);
+      expect(fixture.executed).toEqual([]);
+      expect(fixture.recovered).toEqual([]);
+      expect(fixture.job().effects[0]).toEqual(initialJob.effects[0]);
+      const projection = yield* projectSymmyExecutionJob(fixture.job());
+      expect(projection.phase).toBe('completed_partial');
+      expect(projection.items[0]?.effects.map(({ status }) => status)).toEqual(['accepted_change', 'denied']);
+    }),
+  );
   it.effect('refuses an absent stored job before any owner effect or notification', () =>
     Effect.gen(function* absentStoredJob() {
       const fixture = harness();
