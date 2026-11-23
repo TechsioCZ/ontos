@@ -428,6 +428,7 @@ export async function proveSymmyProductStockList(
   await client.settle(await client.write(
     `${PREFIX}/price-lists/batch-upsert`, listBody, `${proof.names.prefix}.list`, 'price-list-import',
   ), { effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'pricing.price-group-catalog': 1 } }, 'price-list-import');
+  await client.waitUntil(startsAt, 'price-list-readback');
   const findList = async (boundary: 'price-list-readback' | 'list-price-readback') => {
     // Public GET /price-lists has no code/q filter. Bound the scan; never dump existing price/customer data.
     for (let offset = 0; offset < 2000; offset += 100) {

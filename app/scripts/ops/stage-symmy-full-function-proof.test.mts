@@ -17,6 +17,7 @@ import {
   parseSymmyOperatorCookieJar,
   proveSymmyFullFunction,
   proveSymmyProduct,
+  proveSymmyProductStockList,
   readSymmyProofConfig,
   SymmyProofFailure,
   symmyProofFailureLine,
@@ -28,6 +29,7 @@ import {
   runSymmyProofLanes,
   symmyNativeResultLine,
 } from './stage-symmy-full-function-proof.mts';
+import type { SymmyProofClient } from './stage-symmy-full-function-proof.mts';
 import {
   SymmyDemoCategoriesBatchRequestSchema,
   SymmyDemoProductsBatchRequestSchema,
@@ -129,6 +131,58 @@ test('one product job item carries all owner effects and retains its identity on
   assert.equal(result.names.prefix, prefix);
   assert.equal(writes, 2);
   assert.equal(pageReads, 3);
+});
+
+test('price-list readback waits for the scheduled group to become current', async () => {
+  const config = readSymmyProofConfig({ SYMMY_API_KEY: 'synthetic-key' });
+  let productReads = 0;
+  let prefix = '';
+  const events: string[] = [];
+  const result = (owners: readonly string[]) => ({ status: 200, body: { items: [{
+    itemId, outcome: 'accepted',
+    effects: owners.map((owner, index) => ({
+      effectId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      owner, status: 'accepted_change',
+    })),
+    itemKey: `${prefix}_VARIANT`, locationKey: config.input.locationKey,
+  }] } });
+  const ref = (resourceId: string, resourceType: string) => ({
+    moduleId: 'commerce.catalog', resourceId, resourceType, tenantId: config.input.unitRef.tenantId,
+  });
+  const client: SymmyProofClient = {
+    async read(path) {
+      if (path.startsWith('/api/symmy/v1/price-lists?')) {
+        events.push('read-list');
+        throw new Error('Reached list read');
+      }
+      prefix = new URL(path, config.origin).searchParams.get('q') ?? '';
+      if (productReads++ === 0) return { count: 0, products: [] };
+      return { count: 1, products: [{
+        id: itemId, sourceRecordId: `product:erpId:${prefix}_PRODUCT`,
+        product: {
+          name: `${prefix}_PRODUCT`, productRef: ref(itemId, 'commerce.catalog.product'),
+          variants: [{ variantId: effectId, variantRef: ref(effectId, 'commerce.catalog.variant') }],
+        },
+        variantSources: [{ sourceRecordId: `variant:variantId:${prefix}_VARIANT`, variantId: effectId }],
+      }] };
+    },
+    async write(path) {
+      if (path.endsWith('/inventory/stock/batch')) return result(['commerce.inventory']);
+      if (path.endsWith('/price-lists/batch-upsert')) return result(['pricing.price-group-catalog']);
+      return result(['commerce.catalog', 'commerce.catalog', 'commerce.pricing']);
+    },
+    async settle(response, expected, boundary) {
+      return assertAcceptedEffects(response.body, expected, boundary);
+    },
+    async waitUntil(instant, boundary) {
+      assert.equal(boundary, 'price-list-readback');
+      assert.ok(Date.parse(instant) > Date.now());
+      events.push('wait-list-start');
+    },
+    async ownerRead() { throw new Error('Unexpected owner read'); },
+  };
+  await assert.rejects(proveSymmyProductStockList(config, client), /Reached list read/u);
+  assert.deepEqual(events, ['wait-list-start', 'read-list']);
 });
 
 test('configuration keeps the environment key Redacted and uses only published stage refs', () => {
