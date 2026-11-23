@@ -141,14 +141,8 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                 />
               </Header.ActionItem>
             </div>
-            <div className="n1-header-favorite flex items-center">
-              <Button
-                aria-label={`${d.favorites}: ${d.featureUnavailable}`}
-                disabled
-                size="current"
-                theme="borderless"
-                variant="tertiary"
-              >
+            <Header.ActionItem className="flex items-center">
+              <Link aria-label={d.favorites} as={NextLink} href={`/${locale}/oblibene`}>
                 <Image
                   alt=""
                   as={NextImage}
@@ -157,8 +151,8 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                   src="/brand/heart.svg"
                   width={24}
                 />
-              </Button>
-            </div>
+              </Link>
+            </Header.ActionItem>
             <MiniLogin
               dictionary={d}
               locale={locale}

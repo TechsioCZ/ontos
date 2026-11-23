@@ -60,7 +60,8 @@ describe("owner price labels", () => {
     expect(result).toEqual({ amountLabel: "€1,199.00", state: "known" });
   });
   it("does not present multiple same-priced sizes as a price range", () => {
-    expect(priceProps({ ...product, priceFrom: true, variantCount: 8 }, copy, "cs")).toEqual({
+    const grouped = { ...product, priceFrom: true, variantCount: 8 };
+    expect(priceProps(grouped, copy, "cs")).toEqual({
       amountLabel: "1\u00A0199\u00A0Kč",
       state: "known",
     });

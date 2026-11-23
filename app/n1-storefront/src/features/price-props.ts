@@ -33,7 +33,7 @@ export const formatMarketAmount = (
 
 /** Display the owner amount in the Figma price slot; variant count is not proof of a price range. */
 export const priceProps = (
-  product: ProductCardModel,
+  product: Pick<ProductCardModel, "currency" | "priceFrom" | "priceMinor">,
   d: Pick<Dictionary, "priceExcludingVat" | "priceUnavailable">,
   locale: string,
   priceExcludingVatMinor: number | null = null,

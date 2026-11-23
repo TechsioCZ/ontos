@@ -116,6 +116,19 @@ describe("card variant intent read", () => {
       });
     }),
   );
+  it.effect("returns current cards for active exact variants only when details are requested", () =>
+    Effect.gen(function* projectFavorites() {
+      const result = yield* readCardVariants({ ...query, details: "true" }, readReadyCatalog);
+      expect(result).toMatchObject({
+        productId: query.productId,
+        state: "ready",
+        variants: [
+          { favoriteCard: { priceMinor: 100, sku: "XL" }, id: "first", name: "XL" },
+          { favoriteCard: { priceMinor: 100, sku: "SM" }, id: "second", name: "SM" },
+        ],
+      });
+    }),
+  );
   it.effect("does not invent missing names from variant count or card previews", () =>
     Effect.gen(function* keepMissingNames() {
       expect(yield* readCardVariants(query, readWithoutNames)).toEqual({

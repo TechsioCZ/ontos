@@ -21,6 +21,7 @@ import { ProductVariants } from "./product-variants";
 import { selectProductDetail } from "./product-selection";
 import { useDesktopProduct } from "./product-viewport";
 import { productShareHref, productShareOrigin } from "./product-share";
+import { FavoriteToggle } from "./favorite-toggle";
 
 const emptyCategories: CatalogModel["categories"] = [];
 const galleryItems = (images: readonly string[], imageAlt: string) =>
@@ -244,20 +245,7 @@ export const ProductView = ({
           </div>
           <div aria-hidden="true" className="order-7 hidden h-px bg-border-primary md:block" />
           <div className="order-8 flex flex-col items-start gap-6 md:mt-4 md:flex-row md:flex-wrap md:items-center md:gap-x-4 md:gap-y-2">
-            <div className="flex items-center gap-2">
-              <div className="hidden md:block">
-                <Icon color="secondary" icon="icon-[mdi--heart-outline]" size="md" />
-              </div>
-              <Link
-                aria-label={`${d.addToFavorites}: ${d.featureUnavailable}`}
-                as="button"
-                disabled
-                title={d.featureUnavailable}
-                type="button"
-              >
-                {d.addToFavorites}
-              </Link>
-            </div>
+            <FavoriteToggle dictionary={d} product={product} variantId={variant?.id} />
             <div className="flex items-center gap-2">
               <div className="hidden md:block">
                 <Icon color="secondary" icon="icon-[mdi--paw-outline]" size="md" />

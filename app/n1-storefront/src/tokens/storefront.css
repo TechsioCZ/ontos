@@ -239,12 +239,6 @@
   --padding-badge-sm: var(--dimension-0);
 }
 
-/* The unavailable header favorite stays transparent on the dark N1 header.
- * Borderless disabled treatment consumes this same supported surface role. */
-@utility n1-header-favorite {
-  --color-button-bg-borderless-base: var(--color-transparent);
-}
-
 /* Desktop PDP39:2022: only the availability label changes; mobile stays native. */
 @utility n1-product-stock-desktop {
   --text-availability-status-label-size: var(--dimension-18);
