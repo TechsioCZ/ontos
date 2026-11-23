@@ -103,16 +103,20 @@ Quantity Tier, Pricing-owned Discount, Pricing Commercial Fee, ZERO_FLOOR Author
 canonical Pricing monetary result.
 _Avoid_: Storefront price list, Storefront price override, frontend-owned monetary calculation.
 
-**Storefront Client** — Tenant-bound service Principal and rotatable credential identifying one
-Storefront Application, never the browsing customer or acting customer Principal.
+**Storefront Client** — Tenant-bound service Principal identifying the backend of one Storefront
+Application. Its own rotatable credentials authenticate the application. A protected customer
+operation separately establishes the acting Principal, the target and the required Current
+Permissions.
 
-**Commerce Storefront API** — Thin Channel edge that authenticates the Storefront Client and
-Commerce Portal Account or Guest context independently, resolves trusted Commerce Purchasing
-Context, authorizes, translates contracts, aggregates bounded reads, and invokes public Actions. It
-owns no canonical facts or durable workflows.
+**Commerce Storefront API** — Native server-to-server Channel edge for the backend of a Storefront
+Application. It verifies the Storefront Client, establishes the acting Principal or Guest context
+required by the operation, resolves trusted Commerce Purchasing Context, and exposes explicitly
+approved public owner reads and Actions. The Storefront Application owns its browser-facing boundary.
+Each owner retains its canonical facts and business effects. The edge owns no durable business workflows.
 
-**Medusa Store Compatibility Facade** — Temporary translation surface for required legacy Store API
-shapes. It is not a Medusa runtime, canonical contract, commerce foundation, or fact owner.
+**Medusa Store Compatibility Facade** — Optional legacy translation surface described by ADR-0017.
+The approved native Commerce Storefront API excludes this facade. Its public contract and
+versioning apply to native OntOS operations.
 
 **Commerce Operations** — Purpose-built staff application for permissioned Commerce workflows and
 Assisted Support over public module contracts. It is not Shell/Core or a fact owner.
@@ -163,10 +167,24 @@ authenticated Retail Portal Principal.
 Assortment, Pricing, Availability, ordering, approval, and history require explicit Current
 Permissions.
 
-**Guest Purchase Context** — Bounded anonymous B2C context for browsing, Cart, and Checkout. It is
-not a Principal, Commerce Portal Account, durable-history entitlement, Retail Portal Profile
-Binding, or Counterparty authority. At Accepted Order time the purchase is attributable to a Party,
-which may still be sparse or Unresolved under Party Registry rules.
+**Guest** — Visitor acting without authentication to a Commerce Portal Account. Public B2C browsing
+can start without a pre-existing Guest session. Product disclosure still requires Assortment
+authority for the applicable context.
+
+**Guest session** — Technical continuity for an unauthenticated visit. A purchasing capability can
+require Current, owner-verifiable evidence of this continuity for a particular operation. It confers
+no Commerce Portal identity, Retail Portal Permission Grant or Counterparty Commerce Permission.
+
+**Guest Purchase Context** — Bounded anonymous B2C commercial context for a specific browse or
+purchase operation. The owner determines which facts it must verify, including Guest session
+evidence where applicable. It is distinct from the acting Guest and the Commerce Portal Session and
+confers no profile binding, Counterparty access or history entitlement.
+
+**Guest Checkout** — B2C purchase through to an Accepted Order without requiring registration or
+sign-in to a Commerce Portal Account. At acceptance the purchase is attributable to a Party, which
+may still be sparse or Unresolved under Party Registry rules, and to the applicable Commerce Retail
+Customer Profile and Selling Legal Entity. The purchase grants no automatic profile access, order
+history or Guest Order Claim.
 
 **Retail Customer** — Party buying or considering a purchase through a B2C Channel. It is not a
 profile, account, Principal, or `B2C/B2B` discriminator.
