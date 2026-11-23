@@ -156,7 +156,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
     '[S1.2 S1.4 outline] trusted English with an approved English revision but no usable Czech one: stopped in B, pinned in A',
     () =>
       Effect.gen(function* outline() {
-        const modeB = yield* setup({ languages: ['en'], mode: 'B' });
+        const modeB = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
         yield* Ref.set(modeB.world.languageRef, { kind: 'trusted', language: 'en' });
         yield* sendCode(modeB.world, modeB.realm, modeB.challenge.headers);
         expect(modeB.world.mailbox).toHaveLength(0);
@@ -165,7 +165,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
           'CZECH_REVISION_REQUIRED_BY_MODE_B',
         ]);
 
-        const modeA = yield* setup({ languages: ['en'], mode: 'A' });
+        const modeA = yield* setup({ languages: ['en'], mode: 'A', retiredLanguages: ['cs'] });
         yield* Ref.set(modeA.world.languageRef, { kind: 'trusted', language: 'en' });
         yield* sendCode(modeA.world, modeA.realm, modeA.challenge.headers);
         yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));

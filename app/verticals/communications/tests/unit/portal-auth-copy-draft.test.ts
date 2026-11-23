@@ -9,24 +9,28 @@ import { describe, expect, it } from 'effect-rstest';
 import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
 import { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 import {
-  PORTAL_AUTH_COPY_ACTIVATION,
-  PORTAL_AUTH_COPY_DRAFT_APPROVAL,
-  PORTAL_AUTH_COPY_DRAFT_VERSION,
-  portalAuthCopyDraft,
+  PORTAL_AUTH_DEFAULT_COPY_ACTIVATION,
+  PORTAL_AUTH_DEFAULT_COPY_APPROVAL,
+  PORTAL_AUTH_DEFAULT_COPY_APPROVED_ON,
+  PORTAL_AUTH_DEFAULT_COPY_VERSION,
+  portalAuthDefaultCopy,
   portalAuthCopyPreparePayloads,
   portalAuthCopyReview,
 } from '../../src/domain/catalog/portal-auth-copy-draft.ts';
 import { decideMessageLanguage } from '../../src/services/language-selection.service.ts';
-import { extractPlaceholders, resolveTemplatePin } from '../../src/services/template-revision-domain.service.ts';
+import {
+  extractPlaceholders,
+  resolveTemplatePin,
+  templateContentDigest,
+} from '../../src/services/template-revision-domain.service.ts';
 import { communicationsRegistration } from '../../vertical.registration.ts';
 import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts';
 import { makeInMemoryLanguagePolicyPort } from '../support/language-fixtures.ts';
 
 /**
- * #1398 / #1406: the Portal Auth copy is the text the product owner approved as the default, and nothing more. It is
- * the reviewed text, it holds only the owner-rendered secret slot, and preparing it through the governed Action leaves
- * every revision a draft, so each Portal Auth message still stops with its typed no-template reason until the Tenant's
- * authorised user confirms a revision by activating it.
+ * #1398 / #1406: the Portal Auth copy is the text the product owner approved on 2026-11-23 as the default, ACTIVE BY
+ * DEFAULT for every Tenant that has not replaced it. It is the reviewed text with its pinned digest, it holds only the
+ * owner-rendered secret slot, and a Tenant that prepares it through the governed Action stores an ordinary draft.
  */
 
 const FLOW_SLOTS = [
@@ -124,36 +128,39 @@ const sourceFiles = (directory: string): string[] =>
   });
 
 describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
-  it('is marked an approved default text whose activation awaits Tenant confirmation, versioned, and holds exactly one Czech and one English text per Auth flow', () => {
-    expect(PORTAL_AUTH_COPY_DRAFT_APPROVAL).toBe('APPROVED-DEFAULT-TEXT');
-    expect(PORTAL_AUTH_COPY_ACTIVATION).toBe('PENDING-TENANT-CONFIRMATION');
-    expect(PORTAL_AUTH_COPY_DRAFT_VERSION).toBe(1);
-    expect(portalAuthCopyDraft.map(({ flow, language }) => `${flow}/${language}`)).toEqual(
+  it('is marked an approved default text, active by default, versioned, and holds exactly one Czech and one English text per Auth flow', () => {
+    expect(PORTAL_AUTH_DEFAULT_COPY_APPROVAL).toBe('APPROVED-DEFAULT-TEXT');
+    expect(PORTAL_AUTH_DEFAULT_COPY_APPROVED_ON).toBe('2026-11-23');
+    expect(PORTAL_AUTH_DEFAULT_COPY_ACTIVATION).toBe('ACTIVE-BY-DEFAULT');
+    expect(PORTAL_AUTH_DEFAULT_COPY_VERSION).toBe(1);
+    expect(portalAuthDefaultCopy.map(({ flow, language }) => `${flow}/${language}`)).toEqual(
       REVIEWED.map(({ flow, language }) => `${flow}/${language}`),
     );
   });
 
   it.effect('is the approved default wording, word for word', () =>
     Effect.gen(function* reviewed() {
-      expect(portalAuthCopyDraft.map(({ subject }) => subject)).toEqual(REVIEWED.map(({ subject }) => subject));
+      expect(portalAuthDefaultCopy.map(({ subject }) => subject)).toEqual(REVIEWED.map(({ subject }) => subject));
       const review = yield* portalAuthCopyReview();
       for (const { digest, flow, language } of REVIEWED) {
         expect(review).toContain(`## ${flow} / ${language}`);
         expect(review).toContain(`Content digest: ${digest}`);
       }
-      for (const copy of portalAuthCopyDraft) {
+      for (const copy of portalAuthDefaultCopy) {
         expect(review).toContain(`Subject: ${copy.subject}\nBody:\n${copy.body}`);
+        // the digest the catalog keeps is the computed digest of exactly this text
+        expect(copy.contentDigest).toBe(yield* templateContentDigest(copy.subject, copy.body));
       }
       expect(
         review.startsWith(
-          '# Portal Auth e-mail copy, version 1: APPROVED-DEFAULT-TEXT, activation PENDING-TENANT-CONFIRMATION',
+          '# Portal Auth e-mail copy, version 1: APPROVED-DEFAULT-TEXT (product owner, 2026-11-23), ACTIVE-BY-DEFAULT',
         ),
       ).toBe(true);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it("belongs to the approved Portal Auth message type of its flow and carries exactly that flow's one owner-rendered slot", () => {
-    for (const copy of portalAuthCopyDraft) {
+    for (const copy of portalAuthDefaultCopy) {
       const type = approvedMessageTypes.find(({ typeId }) => typeId === copy.messageType);
       expect(type?.purpose).toBe(`commerce.customer-context.portal-auth.${copy.flow}`);
       expect(type?.sourceOwner).toBe('commerce.customer-context');
@@ -167,7 +174,7 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
   });
 
   it('contains no secret, address, link, number or other invented product value: only the placeholder stands for the secret', () => {
-    for (const copy of portalAuthCopyDraft) {
+    for (const copy of portalAuthDefaultCopy) {
       const text = `${copy.subject}\n${copy.body}`.replace(`{{${copy.ownerRenderedSlot}}}`, '');
       expect(text).not.toMatch(/[@{}<>]|:\/\/|www\.|\d/u);
     }
@@ -192,9 +199,9 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
             'subject',
           ]);
           expect(payload).toMatchObject({
-            body: portalAuthCopyDraft[index]?.body,
+            body: portalAuthDefaultCopy[index]?.body,
             optionalPlaceholders: [],
-            requiredPlaceholders: [portalAuthCopyDraft[index]?.ownerRenderedSlot],
+            requiredPlaceholders: [portalAuthDefaultCopy[index]?.ownerRenderedSlot],
             scope: tenantScope,
           });
         }
@@ -204,7 +211,7 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
   );
 
   it.effect(
-    'prepared through the governed Action, every revision stays a draft and nothing is active: no pin resolves and both languages stop with a typed reason',
+    'is in force from day one, and prepared by a Tenant through the governed Action it is only an own draft that changes nothing',
     () =>
       Effect.gen(function* preparedOnly() {
         const { memory, payloads, results } = yield* prepareDraftThroughAction;
@@ -214,9 +221,12 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
           memory.state.revisions.every(({ createdByPrincipalId }) => createdByPrincipalId === principal.principalId),
         ).toBe(true);
         expect(memory.state.activations).toEqual([]);
-        for (const payload of payloads) {
-          const failure = yield* Effect.flip(resolveTemplatePin(memory.port, payload));
-          expect(failure).toMatchObject({ code: 'template_no_active_revision' });
+        // drafts take nothing over: every identity still resolves to its built-in text, with that text's digest
+        for (const [index, payload] of payloads.entries()) {
+          expect(yield* resolveTemplatePin(memory.port, payload)).toMatchObject({
+            contentDigest: REVIEWED[index]?.digest,
+            source: 'BUILT_IN_DEFAULT',
+          });
         }
         const policies = makeInMemoryLanguagePolicyPort();
         for (const [flow] of FLOW_SLOTS) {
@@ -231,40 +241,35 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
               ownerPermittedLanguages: ['cs', 'en'],
               recipient,
             });
-          // the Czech default (no trusted locale exists) and a trusted English recipient both stop: nothing is active
-          expect(yield* decide({ kind: 'not-established' })).toMatchObject({
-            outcome: 'not-sent',
-            reason: 'czech_revision_unavailable',
+          // Czech by default (no trusted locale exists), English for a trusted English recipient
+          expect(yield* decide({ kind: 'not-established' })).toMatchObject({ language: 'cs', outcome: 'selected' });
+          expect(yield* decide({ kind: 'trusted', language: 'en' })).toMatchObject({
+            language: 'en',
+            outcome: 'selected',
           });
-          expect(yield* decide({ kind: 'trusted', language: 'en' })).toMatchObject({ outcome: 'not-sent' });
         }
       }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it('is activated only by the human confirm Action: nothing else that uses the copy reaches the activation rule', () => {
+  it('is read by the built-in lookup and the review script only, and the catalog itself activates and stores nothing', () => {
     const root = path.join(import.meta.dirname, '..', '..');
     const sources = ['src', 'shared', 'api', 'scripts'].flatMap((directory) => sourceFiles(path.join(root, directory)));
-    const relative = (file: string) => path.relative(root, file);
     const users = sources
       .filter((file) => !file.endsWith('portal-auth-copy-draft.ts'))
-      .filter((file) => readFileSync(file, 'utf-8').includes('portal-auth-copy-draft'));
-    // the review script prints the copy; the built-in default domain is the one confirm path
-    expect(users.map(relative)).toEqual([
+      .filter((file) => readFileSync(file, 'utf-8').includes('portal-auth-copy-draft'))
+      .map((file) => path.relative(root, file));
+    expect(users).toEqual([
+      'src/domain/catalog/built-in-template-defaults.ts',
       'src/services/built-in-template-default-domain.service.ts',
       'scripts/review-portal-auth-copy-draft.mts',
     ]);
     for (const file of [
-      path.join(root, 'scripts/review-portal-auth-copy-draft.mts'),
-      path.join(root, 'src/domain/catalog/portal-auth-copy-draft.ts'),
+      'src/domain/catalog/portal-auth-copy-draft.ts',
+      'src/domain/catalog/built-in-template-defaults.ts',
     ]) {
-      expect(readFileSync(file, 'utf-8')).not.toMatch(
-        /activateRevision|activate-template-revision\.action|ActivateTemplateRevision|confirmBuiltInTemplateDefault/u,
+      expect(readFileSync(path.join(root, file), 'utf-8')).not.toMatch(
+        /activateRevision|prepareRevision|appendRevision|appendActivation|ensureType/u,
       );
     }
-    // the confirm program is reached only from its own governed Action, never from a worker, a handoff or a Read
-    const confirmCallers = sources
-      .filter((file) => !file.endsWith('built-in-template-default-domain.service.ts'))
-      .filter((file) => /\bconfirmBuiltInTemplateDefault\b/u.test(readFileSync(file, 'utf-8')));
-    expect(confirmCallers.map(relative)).toEqual(['src/actions/confirm-built-in-template-default.action.ts']);
   });
 });

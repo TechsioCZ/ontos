@@ -71,6 +71,7 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
         mode: 'B',
         notice: TEMPLATE_PREVIEW_MARKER,
         revisionNumber: 3,
+        source: 'TENANT_REVISION',
       });
       expect(TEMPLATE_PREVIEW_NOTICE).toBe('template preview, not the exact sent e-mail');
       // no text of any template is representable: the pin has no body, subject or placeholder value field
@@ -80,6 +81,7 @@ describe('The history projection is a typed allow-list of safe metadata (#1409, 
         'mode',
         'notice',
         'revisionNumber',
+        'source',
       ]);
     }),
   );

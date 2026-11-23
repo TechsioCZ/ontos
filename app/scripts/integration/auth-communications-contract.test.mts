@@ -19,9 +19,9 @@ import {
   CommunicationPurposeKeySchema,
   findMessageTypeByPurpose,
   nativeServices,
-  PORTAL_AUTH_COPY_ACTIVATION,
-  PORTAL_AUTH_COPY_DRAFT_APPROVAL,
-  portalAuthCopyDraft,
+  PORTAL_AUTH_DEFAULT_COPY_ACTIVATION,
+  PORTAL_AUTH_DEFAULT_COPY_APPROVAL,
+  portalAuthDefaultCopy,
   recoveryPolicyOf,
   resendPolicyOf,
 } from '@app/communications/testing/source-owner-world';
@@ -77,13 +77,13 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
   });
 
   it("the approved default copy of Communications names, per flow and language, the approved type of that flow and Auth's own owner-rendered slot", () => {
-    expect(PORTAL_AUTH_COPY_DRAFT_APPROVAL).toBe('APPROVED-DEFAULT-TEXT');
-    expect(PORTAL_AUTH_COPY_ACTIVATION).toBe('PENDING-TENANT-CONFIRMATION');
+    expect(PORTAL_AUTH_DEFAULT_COPY_APPROVAL).toBe('APPROVED-DEFAULT-TEXT');
+    expect(PORTAL_AUTH_DEFAULT_COPY_ACTIVATION).toBe('ACTIVE-BY-DEFAULT');
     for (const flow of PORTAL_AUTH_EMAIL_FLOWS) {
       const type = approvedMessageTypes.find(({ purpose }) => purpose === portalAuthCommunicationPurposeOf(flow));
-      const drafts = portalAuthCopyDraft.filter((copy) => copy.flow === flow);
-      expect(drafts.map(({ language }) => language)).toEqual(['cs', 'en']);
-      for (const copy of drafts) {
+      const defaults = portalAuthDefaultCopy.filter((copy) => copy.flow === flow);
+      expect(defaults.map(({ language }) => language)).toEqual(['cs', 'en']);
+      for (const copy of defaults) {
         expect(copy.messageType).toBe(type?.typeId);
         expect(copy.ownerRenderedSlot).toBe(portalAuthOwnerRenderedSlotOf(flow));
         expect(copy.body.split(`{{${portalAuthOwnerRenderedSlotOf(flow)}}}`)).toHaveLength(2);

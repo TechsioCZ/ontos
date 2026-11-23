@@ -5,6 +5,7 @@ import { Schema } from 'effect';
 
 import { HistorySlotKeySchema, HistoryStatusSchema, MessageAttentionSchema } from './communication-history.ts';
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from './communication-intake.ts';
+import { TemplateTextSourceSchema } from './template-revision.ts';
 
 /**
  * Published, schema-only SAFE projection of the message history (#1409). This is the ONLY shape a history Read can
@@ -112,11 +113,16 @@ export const MessageHistoryRecipientSchema = Schema.Struct({
 
 /** The language and template pins the message was decided under. The notice marks them as a preview, never as the sent text. */
 export const MessageHistoryTemplateSchema = Schema.Struct({
+  /** The digest of the exact subject and body used (#1406); a fingerprint, never the text and never a secret. */
+  contentDigest: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
   language: Schema.Literals(['cs', 'en']),
   messageType: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(120))),
   mode: Schema.optionalKey(Schema.Literals(['A', 'B'])),
   notice: Schema.Literal(TEMPLATE_PREVIEW_MARKER),
+  /** The Tenant revision number, or the catalog version of the built-in default text. */
   revisionNumber: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  /** Which text the message used: the Tenant's own revision or the built-in default (#1398, #1406). */
+  source: TemplateTextSourceSchema,
 });
 
 /** What the facts PROVE about the message, and nothing stronger; the same vocabulary the source outcome feed uses. */

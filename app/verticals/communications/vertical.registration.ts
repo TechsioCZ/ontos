@@ -6,7 +6,6 @@ import { communicationsManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
 import { builtInTemplateDefaultsRead } from './src/api/built-in-template-defaults.read.ts';
-import { confirmBuiltInTemplateDefaultAction } from './src/actions/confirm-built-in-template-default.action.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
@@ -27,7 +26,6 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     activateTemplateRevisionAction,
-    confirmBuiltInTemplateDefaultAction,
     deactivateTemplateRevisionAction,
     invalidateTemplateRevisionAction,
     prepareTemplateRevisionAction,

@@ -24,10 +24,11 @@ const builtInTemplateDefaultsEntrypoint = defineTenantModuleEntrypoint({
 });
 
 /**
- * The review a Tenant's authorised user reads before confirming a built-in default: per Portal Auth message type and
- * language the Tenant's own revisions of exactly that identity plus the built-in default text as a marked candidate. It
- * reads and never writes. The text holds placeholder names only, never a recipient or any personal value, so no field
- * group masks part of it. The permission key is PROPOSED to the product owner and enters a Role only through ADR-0030.
+ * The review a Tenant's authorised user reads before replacing a built-in default (#1398, #1406): per Portal Auth
+ * message type and language the text in force now, the built-in default text with its version and digest, and the
+ * Tenant's own revisions of exactly that identity. Replacing is the ordinary prepare and activate Actions. It reads and
+ * never writes. The text holds placeholder names only, never a recipient or any personal value, so no field group masks
+ * part of it. The permission key is PROPOSED to the product owner and enters a Role only through ADR-0030 adoption.
  */
 export const builtInTemplateDefaultsRead = defineRead(
   {

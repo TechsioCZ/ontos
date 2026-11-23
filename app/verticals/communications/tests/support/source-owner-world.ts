@@ -24,12 +24,8 @@ import type { ScopedRunner } from '../../src/handoff/process-intent-handoff.ts';
 import { actionOwnerCall, underOwnerCall } from '../../src/integrations/owner-call.ts';
 import { privacyProcessingEligibilityGateOver } from '../../src/integrations/privacy-eligibility-gate.ts';
 import type { PrivacyOwnerTransport } from '../../src/integrations/privacy-eligibility-gate.ts';
-import {
-  confirmBuiltInTemplateDefault,
-  reviewBuiltInTemplateDefaults,
-} from '../../src/services/built-in-template-default-domain.service.ts';
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
-import type { TemplateRevisionPortContract } from '../../src/services/template-revision-port.service.ts';
+import { pinnedTemplateText } from '../../src/services/template-revision-domain.service.ts';
 import { loadRequestHistory } from '../../src/services/message-history.service.ts';
 import { privacyAllowed } from '../unit/support/privacy-fixtures.ts';
 import type { PrivacyAnswer } from '../unit/support/privacy-fixtures.ts';
@@ -66,9 +62,9 @@ export { CommunicationRequestSchema } from '@app/communications-contracts/commun
 export type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
 export { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 export {
-  PORTAL_AUTH_COPY_ACTIVATION,
-  PORTAL_AUTH_COPY_DRAFT_APPROVAL,
-  portalAuthCopyDraft,
+  PORTAL_AUTH_DEFAULT_COPY_ACTIVATION,
+  PORTAL_AUTH_DEFAULT_COPY_APPROVAL,
+  portalAuthDefaultCopy,
 } from '../../src/domain/catalog/portal-auth-copy-draft.ts';
 export { recoveryPolicyOf, resendPolicyOf } from '../../src/domain/catalog/message-type.ts';
 export type { TransactionalMessageType } from '../../src/domain/catalog/message-type.ts';
@@ -93,6 +89,10 @@ export interface FictionalRevision {
 }
 
 export interface SourceOwnerWorldOptions {
+  /**
+   * The languages whose FICTIONAL revision the Tenant prepares and activates. A Portal Auth type and language NOT listed
+   * keeps the built-in default text (#1398, #1406), which is active by default.
+   */
   readonly languages: readonly ('cs' | 'en')[];
   /** The Tenant language mode to set, or none to keep the default. */
   readonly mode?: 'A' | 'B' | undefined;
@@ -101,6 +101,11 @@ export interface SourceOwnerWorldOptions {
    * runs; none keeps the scripted gate (`privacyAnswers`, `privacyQueries`).
    */
   readonly privacyOwner?: PrivacyOwnerTransport | undefined;
+  /**
+   * The languages the Tenant TOOK OVER and then stopped: the FICTIONAL revision is activated and deactivated again, so the
+   * identity has no text in force and fails closed (no built-in fallback after a Tenant ended its own text).
+   */
+  readonly retiredLanguages?: readonly ('cs' | 'en')[];
   /** The FICTIONAL revision of a type in a language, or none when the suite seeds no copy for that type. */
   readonly revisionOf: (type: TransactionalMessageType, language: 'cs' | 'en') => Option.Option<FictionalRevision>;
   /** The approved types the catalog of the world serves. */
@@ -125,32 +130,6 @@ const allowedHistoryAccess: HistoryAccess = {
   'communications.core.message-history.read': 'allowed',
 };
 
-/** Reviews the built-in default candidates of the Tenant scope and confirms the reviewed digest of one of them. */
-const confirmReviewedDefault = Effect.fn('CommunicationsSourceOwnerWorld.confirmReviewedDefault')(function* confirm(
-  port: TemplateRevisionPortContract,
-  messageType: string,
-  language: 'cs' | 'en',
-) {
-  const reviewed = yield* reviewBuiltInTemplateDefaults(port, { kind: 'tenant' });
-  const candidate = reviewed.find(
-    (entry) => entry.identity.messageType === messageType && entry.identity.language === language,
-  );
-  if (candidate === undefined) {
-    return yield* Effect.die('no built-in default exists for this message type and language');
-  }
-  return yield* confirmBuiltInTemplateDefault(
-    port,
-    {
-      contentDigest: candidate.builtInDefault.contentDigest,
-      language,
-      messageType,
-      reason: 'Fictional confirmation of the approved default text',
-      scope: { kind: 'tenant' },
-    },
-    { ...actorFor(null), actionInvocationId: yield* nextId },
-  );
-});
-
 /**
  * One Tenant with the FICTIONAL approved revisions the suite supplies, over the real Communications persistence that the
  * suite's composition root opens with `makeRuntimeDatabase`. The intake is composed afterwards with `intakeWith`, once the
@@ -167,7 +146,7 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
       const domain = domainFor(templates);
       const actor = actorFor(null);
       for (const type of options.types) {
-        for (const language of options.languages) {
+        for (const language of [...options.languages, ...(options.retiredLanguages ?? [])]) {
           const revision = options.revisionOf(type, language);
           if (Option.isNone(revision)) {
             continue;
@@ -183,6 +162,9 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
             actor,
           );
           yield* domain.approve(prepared.revision.revisionId, actor);
+          if (options.retiredLanguages?.includes(language) === true) {
+            yield* domain.deactivate(prepared.revision.revisionId, 'Fictional retirement of the own text', actor);
+          }
         }
       }
       if (options.mode !== undefined) {
@@ -274,7 +256,7 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
     rendering: { readonly allowedOrigins: readonly string[]; readonly ownerSlot: string },
   ) =>
     database
-      .withPort(message.tenantId, (port) => port.loadRevision(message.template.revisionId))
+      .withPort(message.tenantId, (port) => pinnedTemplateText(port, message.template))
       .pipe(
         Effect.map(
           Option.flatMap((revision) =>
@@ -326,11 +308,32 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
   });
 
   /**
-   * The Tenant's authorised user confirming one built-in default text (#1398, #1406) the way the confirm Action does: it
-   * reviews the candidate first and confirms exactly the digest it reviewed, tenant-wide, with its own reason.
+   * The Tenant's authorised user REPLACING the text of one exact type and language, tenant-wide, the way the prepare and
+   * activate Actions do: a new own revision, prepared and activated under that person's principal.
    */
-  const confirmBuiltInDefault = (messageType: string, language: 'cs' | 'en') =>
-    database.withPort(tenantId, (port) => confirmReviewedDefault(port, messageType, language));
+  const replaceTemplate = (
+    messageType: string,
+    language: 'cs' | 'en',
+    revision: FictionalRevision,
+    principalId: string,
+  ) =>
+    database.withPort(tenantId, (port) =>
+      Effect.gen(function* replace() {
+        const domain = domainFor(port);
+        const actor = { ...actorFor(null), actionInvocationId: yield* nextId, principalId };
+        const prepared = yield* domain.prepare(
+          fictionalDraft({
+            ...identity({ channel: 'email', language, messageType, scope: { kind: 'tenant' } }),
+            body: revision.body,
+            optionalPlaceholders: [],
+            requiredPlaceholders: [...revision.requiredPlaceholders],
+            subject: revision.subject,
+          }),
+          actor,
+        );
+        return yield* domain.approve(prepared.revision.revisionId, actor);
+      }),
+    );
 
   return {
     /** The delivery attempts of the Tenant, as the runtime role reads them. */
@@ -339,7 +342,6 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
      * Every row of EVERY table of the `communications` schema (enumerated from the database catalog, so no table is left
      * out by a hand list) and of Core's real outbox tables, as the runtime role sees them for the Tenant.
      */
-    confirmBuiltInDefault,
     everyStoredRow: database.everyRowOf(tenantId, {
       schemas: ['communications'],
       tables: ['core.outbox_messages', 'core.outbox_deliveries'],
@@ -353,6 +355,7 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
     privacyAnswers,
     privacyQueries,
     renderPinned,
+    replaceTemplate,
     tenantId,
   };
 });

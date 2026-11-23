@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -10,6 +12,7 @@ import {
 } from '@app/commerce-customer-context/testing/portal-auth-communications';
 import {
   nativeServices,
+  portalAuthDefaultCopy,
   privacyIndeterminate,
   privacyNotAllowed,
 } from '@app/communications/testing/source-owner-world';
@@ -166,7 +169,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           mode: 'B',
         });
 
-        const czechOnly = yield* setup({ languages: ['cs'], mode: 'B' });
+        const czechOnly = yield* setup({ languages: ['cs'], mode: 'B', retiredLanguages: ['en'] });
         yield* Ref.set(czechOnly.world.languageRef, { kind: 'trusted', language: 'en' });
         yield* requestReset(czechOnly.realm);
         yield* step(czechOnly.world, czechOnly.world.messageHandoff, yield* onlyIntent(czechOnly.world));
@@ -178,7 +181,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
     '[S1.4 outline] trusted English with an approved English revision but no usable Czech one: stopped in B, pinned in A, nothing is sent in B',
     () =>
       Effect.gen(function* outline() {
-        const modeB = yield* setup({ languages: ['en'], mode: 'B' });
+        const modeB = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
         yield* Ref.set(modeB.world.languageRef, { kind: 'trusted', language: 'en' });
         yield* requestReset(modeB.realm);
         expect(pendingIntentsOf(modeB.world)).toHaveLength(0);
@@ -190,7 +193,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           status: 'SUPPRESSED',
         });
 
-        const modeA = yield* setup({ languages: ['en'], mode: 'A' });
+        const modeA = yield* setup({ languages: ['en'], mode: 'A', retiredLanguages: ['cs'] });
         yield* Ref.set(modeA.world.languageRef, { kind: 'trusted', language: 'en' });
         yield* requestReset(modeA.realm);
         yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));
@@ -204,7 +207,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
 
   it.live('[S1.6] without an approved Czech fallback revision and no trusted language nothing is sent', () =>
     Effect.gen(function* noFallback() {
-      const { realm, world } = yield* setup({ languages: ['en'], mode: 'B' });
+      const { realm, world } = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
       yield* requestReset(realm);
       expect(world.mailbox).toHaveLength(0);
       expect(pendingIntentsOf(world)).toHaveLength(0);
@@ -214,10 +217,55 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
   );
 
   it.live(
-    '[#1398] while the Tenant has no active revision at all (the DRAFT copy is not activated) nothing is sent, with a typed reason',
+    '[#1398 #1406] the approved built-in text is sent from day one, and a Tenant replacement through prepare + activate is used from then on',
     () =>
-      Effect.gen(function* nothingActive() {
+      Effect.gen(function* builtInDefault() {
+        const RESET = 'commerce.customer-context.portal-auth.reset-password-message';
+        const approved = portalAuthDefaultCopy.find((copy) => copy.messageType === RESET && copy.language === 'cs');
+        // no Tenant revision at all: the built-in default is in force
         const { realm, world } = yield* setup({ languages: [], mode: 'B' });
+        yield* requestReset(realm);
+        expect((yield* step(world, world.messageHandoff, yield* onlyIntent(world))).kind).toBe('HANDED_OFF');
+        const [dayOne] = world.mailbox;
+        expect(dayOne?.language).toBe('cs');
+        expect(dayOne?.subject).toBe(approved?.subject);
+        expect(textOf(dayOne)).toContain('/reset-password/');
+        expect(textOf(dayOne)).not.toContain('{{reset_link}}');
+        // history and audit name the text used, by source, version and digest, never by its content
+        const [first] = (yield* (yield* historyReads(world)).list()).items;
+        expect(first?.template).toMatchObject({
+          contentDigest: approved?.contentDigest,
+          language: 'cs',
+          revisionNumber: 1,
+          source: 'BUILT_IN_DEFAULT',
+        });
+        expect(JSON.stringify(first)).not.toContain(approved?.subject ?? 'unreachable');
+
+        // the Tenant's authorised user replaces the Czech text with an own FICTIONAL revision
+        const replacement = {
+          body: `${FICTIONAL_COPY} replaced reset\n\nOpen this: {{reset_link}}`,
+          requiredPlaceholders: ['reset_link'],
+          subject: `${FICTIONAL_COPY} replaced reset`,
+        };
+        const replaced = yield* world.replaceTemplate(RESET, 'cs', replacement, randomUUID());
+        yield* requestReset(realm);
+        const next = pendingIntentsOf(world).at(-1);
+        expect((yield* step(world, world.messageHandoff, next ?? '')).kind).toBe('HANDED_OFF');
+        expect(world.mailbox[1]?.subject).toBe(replacement.subject);
+        const [latest] = (yield* (yield* historyReads(world)).list()).items;
+        expect(latest?.template).toMatchObject({
+          contentDigest: replaced.revision.contentDigest,
+          revisionNumber: replaced.revision.revisionNumber,
+          source: 'TENANT_REVISION',
+        });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[#1398 #1406] once the Tenant took both texts over and stopped them nothing is sent, with a typed reason and no fallback',
+    () =>
+      Effect.gen(function* nothingInForce() {
+        const { realm, world } = yield* setup({ languages: [], mode: 'B', retiredLanguages: ['cs', 'en'] });
         yield* requestReset(realm);
         expect(world.mailbox).toHaveLength(0);
         expect(pendingIntentsOf(world)).toHaveLength(0);

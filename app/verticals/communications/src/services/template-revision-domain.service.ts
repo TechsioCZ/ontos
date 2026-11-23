@@ -15,6 +15,8 @@ import {
   TemplateResolutionFailed,
   TemplateRevisionNotFound,
 } from '../../shared/template-revision-errors.ts';
+import { builtInTemplateDefaultOf } from '../domain/catalog/built-in-template-defaults.ts';
+import type { BuiltInTemplateDefault } from '../domain/catalog/built-in-template-defaults.ts';
 import type {
   TemplateActivationRecord,
   TemplateReadPortContract,
@@ -91,7 +93,7 @@ export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')
  * An Action of one scope may only change a Template of exactly that scope: a tenant-wide Template needs a tenant-wide
  * operation, a Legal Entity Template needs that Legal Entity as the trusted operating scope.
  */
-export const assertOperatingScope = (scope: TemplateScope, legalEntityId: string | null) =>
+const assertOperatingScope = (scope: TemplateScope, legalEntityId: string | null) =>
   (scope.kind === 'tenant' ? legalEntityId === null : legalEntityId === scope.legalEntityId)
     ? Effect.void
     : refuse('template_scope_mismatch', 'The Template scope is not the trusted operating scope of this operation');
@@ -319,10 +321,46 @@ export const invalidateRevisionAsUnsafe = Effect.fn('TemplateRevision.invalidate
   return { endedActivation, invalidatedAt, revision };
 });
 
+const decodePin = Schema.decodeUnknownEffect(TemplatePinSchema);
+
+const NO_USABLE_ACTIVE_REVISION = 'No usable approved active revision exists for this exact Template identity';
+
+const noActiveRevision = (reason: string) =>
+  new TemplateResolutionFailed({ code: 'template_no_active_revision', reason });
+
 /**
- * Pin contract, step one: resolve the unambiguous revision active at the decision time for exactly one Template
- * identity. No active revision, or more than one, is an explicit failure: never a guess, never another scope,
- * language or brand. The Message Intent lane stores the returned pin at the first approved creation of an intent.
+ * The built-in default pin of an identity the Tenant never took over, or the explicit no-template failure when no
+ * built-in default exists for it. The pin records that the text is the built-in one, its version and its digest.
+ */
+const builtInPinOr = Effect.fn('TemplateRevision.builtInPin')(function* builtInPin(
+  identity: TemplateIdentity,
+  at: DateTime.Utc,
+  reason: string,
+) {
+  const builtIn = builtInTemplateDefaultOf(identity);
+  if (Option.isNone(builtIn)) {
+    return yield* noActiveRevision(reason);
+  }
+  return yield* decodePin({
+    ...identity,
+    contentDigest: builtIn.value.contentDigest,
+    decisionTime: iso(at),
+    revisionId: builtIn.value.revisionId,
+    revisionNumber: builtIn.value.version,
+    source: 'BUILT_IN_DEFAULT',
+    templateTypeId: builtIn.value.templateTypeId,
+  }).pipe(Effect.orDie);
+});
+
+/**
+ * Pin contract, step one: resolve the unambiguous text in force at the decision time for exactly one Template identity.
+ * The Tenant's own active revision always wins. Only for an identity the Tenant NEVER took over (no Type, or a Type none
+ * of whose revisions was ever activated) does resolution fall back, as its last step, to the built-in default text
+ * (#1398, #1406). Once the Tenant activated any own revision of the identity it owns it: a deactivated, replaced-then-
+ * ended or unsafe-invalidated own revision fails closed exactly as before, so no fallback re-enables text after a Tenant
+ * or a security action stopped it. No text at all, or more than one active revision, is an explicit failure: never a
+ * guess, never another scope, language or brand. The Message Intent lane stores the returned pin at the first approved
+ * creation of an intent.
  */
 export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(function* resolveTemplatePin(
   port: TemplateReadPortContract,
@@ -331,10 +369,11 @@ export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(funct
 ) {
   const type = yield* port.findType(identity);
   if (Option.isNone(type)) {
-    return yield* new TemplateResolutionFailed({
-      code: 'template_no_active_revision',
-      reason: 'No Template Type exists for this exact message type, channel, language and scope',
-    });
+    return yield* builtInPinOr(
+      identity,
+      decisionTime ?? (yield* port.clockNow),
+      'No Template Type exists for this exact message type, channel, language and scope',
+    );
   }
   // A decision time taken from the clock is taken under the shared Type lock, so no activation can later commit with a
   // start at or before it: the pin's decision time stays consistent with the end of the revision it pins.
@@ -351,25 +390,50 @@ export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(funct
     });
   }
   const [only] = active;
-  const [revision, invalidation] =
-    only === undefined
-      ? [Option.none(), Option.none()]
-      : yield* Effect.all([port.loadRevision(only.revisionId), port.findInvalidation(only.revisionId)], {
-          concurrency: 1,
-        });
-  if (Option.isNone(revision) || Option.isSome(invalidation)) {
-    return yield* new TemplateResolutionFailed({
-      code: 'template_no_active_revision',
-      reason: 'No usable approved active revision exists for this exact Template identity',
-    });
+  if (only === undefined) {
+    // never taken over: only drafts (or nothing) exist, so the built-in default is still the text in force
+    return Option.isNone(yield* port.latestActivityAt(type.value.templateTypeId))
+      ? yield* builtInPinOr(identity, at, NO_USABLE_ACTIVE_REVISION)
+      : yield* noActiveRevision(NO_USABLE_ACTIVE_REVISION);
   }
-  return yield* Schema.decodeUnknownEffect(TemplatePinSchema)({
+  const [revision, invalidation] = yield* Effect.all(
+    [port.loadRevision(only.revisionId), port.findInvalidation(only.revisionId)],
+    { concurrency: 1 },
+  );
+  if (Option.isNone(revision) || Option.isSome(invalidation)) {
+    return yield* noActiveRevision(NO_USABLE_ACTIVE_REVISION);
+  }
+  return yield* decodePin({
     ...type.value.identity,
+    contentDigest: revision.value.contentDigest,
     decisionTime: iso(at),
     revisionId: revision.value.revisionId,
     revisionNumber: revision.value.revisionNumber,
+    source: 'TENANT_REVISION',
     templateTypeId: type.value.templateTypeId,
   }).pipe(Effect.orDie);
+});
+
+/** The built-in text a built-in pin names, only while the catalog still holds exactly that version and text. */
+const builtInOfPin = (pin: TemplatePin): Option.Option<BuiltInTemplateDefault> =>
+  builtInTemplateDefaultOf(pin).pipe(
+    Option.filter(
+      (builtIn) =>
+        builtIn.revisionId === pin.revisionId &&
+        builtIn.templateTypeId === pin.templateTypeId &&
+        builtIn.version === pin.revisionNumber,
+    ),
+  );
+
+/** The exact subject, body and declared placeholders of the text a pin names, wherever that text lives. */
+export const pinnedTemplateText = Effect.fn('TemplateRevision.pinnedText')(function* pinnedText(
+  port: Pick<TemplateReadPortContract, 'loadRevision'>,
+  pin: TemplatePin,
+) {
+  const text: Option.Option<
+    Pick<TemplateRevisionRecord, 'body' | 'optionalPlaceholders' | 'requiredPlaceholders' | 'subject'>
+  > = pin.source === 'BUILT_IN_DEFAULT' ? builtInOfPin(pin) : yield* port.loadRevision(pin.revisionId);
+  return text;
 });
 
 /**
@@ -380,6 +444,17 @@ export const verifyTemplatePinForHandoff = Effect.fn('TemplateRevision.verifyPin
   port: TemplateReadPortContract,
   pin: TemplatePin,
 ) {
+  if (pin.source === 'BUILT_IN_DEFAULT') {
+    // a built-in text is gated by the catalog: a changed or withdrawn wording is a different text, never an upgrade
+    if (Option.isNone(builtInOfPin(pin))) {
+      return yield* new TemplatePinBlocked({
+        code: 'pinned_template_revision_unavailable',
+        reason: 'The pinned built-in default text is no longer available; nothing is upgraded silently',
+        revisionId: pin.revisionId,
+      });
+    }
+    return pin;
+  }
   const revision = yield* port.loadRevision(pin.revisionId);
   if (
     Option.isNone(revision) ||
@@ -464,6 +539,30 @@ export const describeTemplateUse = Effect.fn('TemplateRevision.describeUse')(fun
   port: TemplateRevisionPortContract,
   pin: TemplatePin,
 ) {
+  if (pin.source === 'BUILT_IN_DEFAULT') {
+    const builtIn = builtInOfPin(pin);
+    if (Option.isNone(builtIn)) {
+      return yield* new TemplateRevisionNotFound({
+        code: 'template_revision_not_found',
+        reason: 'The pinned built-in default text is unavailable',
+      });
+    }
+    const builtInAudit: TemplateUseAudit = yield* Schema.decodeUnknownEffect(TemplateUseAuditSchema)({
+      activations: [],
+      activeAtDecisionTime: true,
+      contentDigest: builtIn.value.contentDigest,
+      decisionTime: iso(pin.decisionTime),
+      identity: { channel: pin.channel, language: pin.language, messageType: pin.messageType, scope: pin.scope },
+      lifecycleState: 'active',
+      optionalPlaceholders: builtIn.value.optionalPlaceholders,
+      requiredPlaceholders: builtIn.value.requiredPlaceholders,
+      revisionId: pin.revisionId,
+      revisionNumber: pin.revisionNumber,
+      source: 'BUILT_IN_DEFAULT',
+      templateTypeId: pin.templateTypeId,
+    }).pipe(Effect.orDie);
+    return builtInAudit;
+  }
   const [revision, type, activations, invalidation] = yield* Effect.all(
     [
       port.loadRevision(pin.revisionId),
@@ -500,6 +599,7 @@ export const describeTemplateUse = Effect.fn('TemplateRevision.describeUse')(fun
     requiredPlaceholders: revision.value.requiredPlaceholders,
     revisionId: pin.revisionId,
     revisionNumber: revision.value.revisionNumber,
+    source: 'TENANT_REVISION',
     templateTypeId: pin.templateTypeId,
   }).pipe(Effect.orDie);
   return audit;

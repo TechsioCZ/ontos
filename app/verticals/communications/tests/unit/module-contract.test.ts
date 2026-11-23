@@ -2,11 +2,11 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { communicationsApiContract } from '../../shared/api.ts';
+import { builtInTemplateDefaultsOperation } from '../../shared/apis/built-in-template-defaults.ts';
 import { languagePolicyOperation } from '../../shared/apis/language-policy.ts';
 import { privacyOwnerCoverageOperation } from '../../shared/apis/privacy-owner-coverage.ts';
 import { privacyOwnerExecutionOutcomeOperation } from '../../shared/apis/privacy-owner-execution-outcome.ts';
 import { activateTemplateRevisionAction } from '../../src/actions/activate-template-revision.action.ts';
-import { confirmBuiltInTemplateDefaultAction } from '../../src/actions/confirm-built-in-template-default.action.ts';
 import { deactivateTemplateRevisionAction } from '../../src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from '../../src/actions/invalidate-template-revision.action.ts';
 import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
@@ -37,7 +37,6 @@ describe('Communications module contract', () => {
         .toSorted((left, right) => left.localeCompare(right)),
     ).toEqual([
       'communications.core.activate-template-revision',
-      'communications.core.confirm-built-in-template-default',
       'communications.core.deactivate-template-revision',
       'communications.core.invalidate-template-revision',
       'communications.core.prepare-template-revision',
@@ -62,6 +61,18 @@ describe('Communications module contract', () => {
       'privacyOwnerExecutionOutcome.execute',
     ]);
     expect(communicationsRegistration.moduleId).toBe('communications.core');
+  });
+
+  it('publishes the built-in template defaults review Read as a typed Core SDK operation of exactly this owner', () => {
+    expect(builtInTemplateDefaultsOperation).toMatchObject({
+      kind: 'read',
+      provider: {
+        entrypointKey: 'communications.core.api.built-in-template-defaults',
+        moduleId: 'communications.core',
+        schemaVersion: '1',
+      },
+      route: { path: '/reads/built-in-template-defaults' },
+    });
   });
 
   it('publishes the language mode Read as a typed Core SDK operation of exactly this owner', () => {
@@ -161,7 +172,6 @@ describe('Communications module contract', () => {
     // every public Action's own payload contract, checked to be exactly the published set so none escapes the scan
     const registrations = [
       activateTemplateRevisionAction,
-      confirmBuiltInTemplateDefaultAction,
       deactivateTemplateRevisionAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,

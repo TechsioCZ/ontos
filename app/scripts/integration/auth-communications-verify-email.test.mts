@@ -18,7 +18,7 @@ import {
 import {
   approvedMessageTypes,
   nativeServices,
-  portalAuthCopyDraft,
+  portalAuthDefaultCopy,
   privacyNotAllowed,
 } from '@app/communications/testing/source-owner-world';
 import {
@@ -130,17 +130,15 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
   );
 
   it.live(
-    '[#1398 #1406] once the Tenant confirms the built-in Czech default, the verification is prepared and sent with exactly that text',
+    '[#1398 #1406] with no Tenant revision the verification is prepared and sent with exactly the approved built-in Czech text',
     () =>
-      Effect.gen(function* confirmedDefault() {
+      Effect.gen(function* builtInDefault() {
         const VERIFY_EMAIL = 'commerce.customer-context.portal-auth.verify-email-message';
-        const approved = portalAuthCopyDraft.find(
+        const approved = portalAuthDefaultCopy.find(
           (copy) => copy.messageType === VERIFY_EMAIL && copy.language === 'cs',
         );
-        // no revision at all: nothing is active until the Tenant's authorised user confirms the default
+        // no revision at all: the built-in default is active by default, nothing is stored for it
         const { create, realm, world } = yield* setup({ languages: [], mode: 'B' });
-        const confirmed = yield* world.confirmBuiltInDefault(VERIFY_EMAIL, 'cs');
-        expect(confirmed.alreadyConfirmed).toBe(false);
         yield* create();
         expect((yield* step(world, world.messageHandoff, yield* onlyIntent(world))).kind).toBe('HANDED_OFF');
         const [mail] = world.mailbox;
@@ -158,7 +156,13 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         const page = yield* (yield* historyReads(world)).list();
         expect(page.items[0]).toMatchObject({
           headline: { providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
-          template: { language: 'cs', mode: 'B', revisionNumber: 1 },
+          template: {
+            contentDigest: approved?.contentDigest,
+            language: 'cs',
+            mode: 'B',
+            revisionNumber: 1,
+            source: 'BUILT_IN_DEFAULT',
+          },
         });
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
@@ -192,7 +196,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
     '[S1.2 S1.3 outline] language: trusted English is pinned in A without a usable Czech revision and stopped in B; with both approved it is English',
     () =>
       Effect.gen(function* languages() {
-        const modeB = yield* setup({ languages: ['en'], mode: 'B' });
+        const modeB = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
         yield* Ref.set(modeB.world.languageRef, { kind: 'trusted', language: 'en' });
         // D1: the account and its issuance commit with the request; Communications then decides that no message can leave,
         // and a replay of the creation reports that stop truthfully, as unavailable, and never repairs it
@@ -205,7 +209,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(yield* Effect.flip(modeB.create()))).toBe(true);
         expect(modeB.realm.issued.verification).toHaveLength(1);
 
-        const modeA = yield* setup({ languages: ['en'], mode: 'A' });
+        const modeA = yield* setup({ languages: ['en'], mode: 'A', retiredLanguages: ['cs'] });
         yield* Ref.set(modeA.world.languageRef, { kind: 'trusted', language: 'en' });
         yield* modeA.create();
         yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));

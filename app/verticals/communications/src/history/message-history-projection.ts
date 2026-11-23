@@ -72,11 +72,13 @@ interface ScopeDraft {
   storefrontRef?: MessageHistoryItem['source']['scope']['storefrontRef'];
 }
 interface TemplateDraft {
+  contentDigest?: string;
   readonly language: string;
   readonly messageType: string;
   mode?: string;
   readonly notice: typeof TEMPLATE_PREVIEW_MARKER;
   readonly revisionNumber: number;
+  readonly source: string;
 }
 interface HeadlineDraft {
   readonly attention: string;
@@ -159,9 +161,13 @@ const pinOf = (
     messageType: template.messageType,
     notice: TEMPLATE_PREVIEW_MARKER,
     revisionNumber: template.revisionNumber,
+    source: template.source,
   };
   if (language.mode !== undefined) {
     pin.mode = language.mode;
+  }
+  if (template.contentDigest !== undefined) {
+    pin.contentDigest = template.contentDigest;
   }
   return pin;
 };

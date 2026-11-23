@@ -41,11 +41,6 @@ export {
   executeRecordOwnerExecutionEvidenceWithAuthorization,
 } from './record-owner-execution-evidence-action-client.ts';
 export type { RecordOwnerExecutionEvidenceActionClientOptions } from './record-owner-execution-evidence-action-client.ts';
-export {
-  executeConfirmBuiltInTemplateDefault,
-  executeConfirmBuiltInTemplateDefaultWithAuthorization,
-} from './confirm-built-in-template-default-action-client.ts';
-export type { ConfirmBuiltInTemplateDefaultActionClientOptions } from './confirm-built-in-template-default-action-client.ts';
 // </generated-action-http-client-exports>
 
 export class CommunicationsApiClient extends Context.Service<

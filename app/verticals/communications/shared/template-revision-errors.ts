@@ -63,20 +63,3 @@ export const TemplatePinBlocked = Schema.TaggedError<typeof pinBlockedContract.T
   'TemplatePinBlocked',
   pinBlockedFields,
 );
-
-/** The built-in default cannot be confirmed: nothing was stored, activated or replaced. */
-const defaultRefusedFields = {
-  code: Schema.Literals([
-    'template_built_in_default_digest_mismatch',
-    'template_built_in_default_invalidated',
-    'template_built_in_default_requires_czech',
-    'template_built_in_default_unknown',
-    'template_tenant_revision_active',
-  ]),
-  reason: Schema.String,
-};
-const defaultRefusedContract = Schema.TaggedStruct('TemplateDefaultConfirmationRefused', defaultRefusedFields);
-export const TemplateDefaultConfirmationRefused = Schema.TaggedError<typeof defaultRefusedContract.Type>()(
-  'TemplateDefaultConfirmationRefused',
-  defaultRefusedFields,
-);

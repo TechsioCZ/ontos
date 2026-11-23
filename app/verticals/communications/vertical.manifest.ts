@@ -7,7 +7,6 @@ import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
 import { BuiltInTemplateDefaultsApi } from './shared/apis/built-in-template-defaults.ts';
 import { builtInTemplateDefaultsRead } from './src/api/built-in-template-defaults.read.ts';
-import { confirmBuiltInTemplateDefaultAction } from './src/actions/confirm-built-in-template-default.action.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { LanguagePolicyApi } from './shared/apis/language-policy.ts';
@@ -45,7 +44,6 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     actions: [
       // <generated-module-manifest-actions>
       activateTemplateRevisionAction,
-      confirmBuiltInTemplateDefaultAction,
       deactivateTemplateRevisionAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,

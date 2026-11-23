@@ -311,14 +311,17 @@ describe('Template revisions: identity, activation, single administrator (#1398)
         const serialized = JSON.stringify(rest);
         expect(serialized).not.toContain('FICTIONAL TEST COPY');
         expect(serialized).not.toContain('one_time_code');
+        // the pin records its source and a digest of the text (#1406), never the text itself
         expect(Object.keys(pin).toSorted((left, right) => left.localeCompare(right))).toEqual([
           'channel',
+          'contentDigest',
           'decisionTime',
           'language',
           'messageType',
           'revisionId',
           'revisionNumber',
           'scope',
+          'source',
           'templateTypeId',
         ]);
       }),

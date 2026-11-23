@@ -44,6 +44,7 @@ import type {
 } from '../domain/history/timeline.ts';
 import { FailureClassSchema } from '../domain/history/vocabulary.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
+import type { TemplateTextSource } from '../../shared/template-revision.ts';
 import { LanguageDecisionSchema } from '../domain/language/vocabulary.ts';
 import { HandoffStoreUnavailable } from '../handoff/process-intent-handoff.ts';
 
@@ -92,9 +93,11 @@ export interface IntentHistoryRecord {
   readonly slotKey: HistorySlotKey;
   readonly template:
     | {
+        readonly contentDigest: string | undefined;
         readonly messageType: string;
         readonly revisionId: string;
         readonly revisionNumber: number;
+        readonly source: TemplateTextSource;
         readonly templateTypeId: string;
       }
     | undefined;
@@ -396,9 +399,12 @@ const pinsOf = (intent: IntentRow): Pick<IntentHistoryRecord, 'language' | 'temp
       pin === undefined
         ? undefined
         : {
+            contentDigest: pin.contentDigest,
             messageType: pin.messageType,
             revisionId: pin.revisionId,
             revisionNumber: pin.revisionNumber,
+            // a pin stored before #1406 Option A carries no source: it always named a Tenant revision
+            source: pin.source ?? 'TENANT_REVISION',
             templateTypeId: pin.templateTypeId,
           },
   };

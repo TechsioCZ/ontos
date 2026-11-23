@@ -70,7 +70,8 @@ import type { Redacted } from 'effect';
  *   no HTTP gateway between them;
  * - the Messaging Adapter (step 22) renders the pinned revision with the REAL generic renderer, asks Auth's REAL owner-slot
  *   completion for the secret slot, and then "sends" into an in-memory mailbox with a scripted provider answer;
- * - the approved Czech and English COPY does not exist: every revision below is clearly FICTIONAL and labelled so.
+ * - every Tenant revision below is clearly FICTIONAL and labelled so; a Portal Auth language the suite seeds no revision
+ *   for keeps the built-in default text the product owner approved (#1398, #1406), which is active by default.
  */
 
 export const FICTIONAL_COPY = '[FICTIONAL TEST COPY]';
@@ -101,11 +102,14 @@ export interface AuthWorldOptions {
   readonly binding?: PreVerificationPrivacyTransportService;
   /** Whether the double of Privacy's bind Action evidences a binding. Default: yes (labelled double). */
   readonly evidencing?: boolean;
+  /** The languages with an own FICTIONAL revision; any other Portal Auth language keeps its built-in default text. */
   readonly languages?: readonly ('cs' | 'en')[];
   readonly ledgerProbe?: IssuanceLedgerProbe;
   readonly mode?: 'A' | 'B';
   /** The transport to Privacy's Reads, when a suite composes Communications' REAL Privacy gate over it. Default: scripted. */
   readonly privacyGate?: PrivacyOwnerTransport;
+  /** The languages the Tenant took over and then deactivated: no text is in force, nothing is sent. */
+  readonly retiredLanguages?: readonly ('cs' | 'en')[];
   /** Approved types overriding the production catalog (a fictional recovery limit, for example). Default: production. */
   readonly types?: typeof approvedMessageTypes;
 }
@@ -132,6 +136,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     languages: options.languages ?? ['cs', 'en'],
     mode: options.mode,
     privacyOwner: options.privacyGate,
+    retiredLanguages: options.retiredLanguages,
     revisionOf: fictionalRevisionOf,
     types,
   });
@@ -310,7 +315,6 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
 
   return {
     attemptRows: owner.attemptRows,
-    confirmBuiltInDefault: owner.confirmBuiltInDefault,
     everyStoredRow: owner.everyStoredRow,
     /** The protected handoff of the CURRENT Auth process. */
     get handoff() {
@@ -330,7 +334,9 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
     privacyQueries: owner.privacyQueries,
     providerAnswer,
     rawDelivery: auth.rawDelivery,
+    /** The Tenant's authorised user replacing one text with an own revision (prepare + activate). */
     recoveryStore: auth.recoveryStore,
+    replaceTemplate: owner.replaceTemplate,
     /** ONE relay tick over the Auth-local outbox of the current Auth process, through the world's transport. */
     relay: auth.relayThrough(submitter),
     restartAuth: auth.restart,
