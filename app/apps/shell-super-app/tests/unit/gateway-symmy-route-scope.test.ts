@@ -53,6 +53,7 @@ import { admitAssertionSubject } from '../../api/auth/gateway-assertion-evidence
 import { GatewayDelegationVerification } from '../../api/auth/gateway-delegation-verification.ts';
 import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { admitNativeRouteRead, readAdmittedNativeRouteRead } from '../../api/auth/gateway-native-route-read.ts';
+import { privacyRegisteredWorkloadCalls } from '../../../../verticals/privacy/src/registered-workload-calls.ts';
 import { partyRegistryRegisteredWorkloadCalls } from '../../../../verticals/party-registry/src/registered-workload-calls.ts';
 import { commerceCustomerContextRegisteredWorkloadCalls } from '../../../../verticals/commerce-customer-context/src/registered-workload-calls.ts';
 import { makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
@@ -145,7 +146,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
         return Effect.succeed([]);
       }
       const workloadKey = parameters.find((value) => typeof value === 'string' &&
-        ['party.registry.source-read', 'privacy.core.source-processing-check', 'privacy.core.organization-business-check'].includes(value));
+        ['party.registry.source-read', 'privacy.core.source-processing-check', 'privacy.core.organization-business-check', 'integration.symmy.source-organization-facts.read'].includes(value));
       if (typeof workloadKey !== 'string') return Effect.succeed([]);
       return Effect.succeed(Array.from({ length: options.receiver === 'ambiguous' ? 2 : 1 }, () => ({
         principalId: options.receiver === 'service'
@@ -399,9 +400,17 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
         appId: 'commerce-customer-context', buildMarker: 'native-route-build', moduleId: sourceModule,
       });
       const targetBase = makeModuleContractFixture({ appId: audience, buildMarker: 'native-route-build', moduleId });
-      const privacyBase = makeModuleContractFixture({ appId: 'privacy', buildMarker: 'native-route-build', moduleId: 'privacy.core' });
-      const onwardRequirement = `party.registry.requirement.${entrypointKey.slice('party.registry.'.length)}-source-privacy`;
-      const onwardRead = 'privacy.core.api.source-processing-eligibility';
+      const hasOnwardRead = audience === 'party-registry' || suffix === 'organization';
+      const onwardAudience = audience === 'party-registry' ? 'privacy' : 'symmy-integration';
+      const onwardModule = audience === 'party-registry' ? 'privacy.core' : 'integration.symmy';
+      const onwardWorkload = audience === 'party-registry' ? 'privacy.core.source-processing-check' : 'integration.symmy.source-organization-facts.read';
+      const onwardRules = audience === 'party-registry' ? partyRegistryRegisteredWorkloadCalls : privacyRegisteredWorkloadCalls;
+      const onwardRequirement = audience === 'party-registry'
+        ? `party.registry.requirement.${entrypointKey.slice('party.registry.'.length)}-source-privacy`
+        : 'privacy.core.requirement.organization-business-source-facts';
+      const onwardRead = audience === 'party-registry'
+        ? 'privacy.core.api.source-processing-eligibility' : 'integration.symmy.api.symmy-source-organization-facts';
+      const onwardBase = makeModuleContractFixture({ appId: onwardAudience, buildMarker: 'native-route-build', moduleId: onwardModule });
       const publicRead = (key: string, owner: string) => ({
         apiKey: `${owner}.api.source`, operationKey: 'source.execute', schemaVersion: '1',
         entrypoint: defineTenantModuleEntrypoint({
@@ -430,13 +439,15 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
         ...targetBase,
         manifest: {
           ...targetBase.manifest,
-          ...(audience === 'party-registry' ? {
+          ...(hasOnwardRead ? {
             requirements: {
               schemaVersion: '1' as const, coreCapabilities: [], intrinsic: [],
               operations: [{ key: onwardRequirement, entrypointKey,
-                condition: 'party.registry.condition.client-source-processing',
-                evidence: ['party.registry.evidence.current-qualified-source'],
-                provider: { moduleId: 'privacy.core', entrypointKey: onwardRead, schemaVersion: '1' } }],
+                condition: audience === 'party-registry' ? 'party.registry.condition.client-source-processing'
+                  : 'privacy.core.condition.native-organization-business-facts',
+                evidence: [audience === 'party-registry' ? 'party.registry.evidence.current-qualified-source'
+                  : 'privacy.core.evidence.current-organization-business-facts'],
+                provider: { moduleId: onwardModule, entrypointKey: onwardRead, schemaVersion: '1' } }],
             },
           } : {}),
           publicSurface: {
@@ -445,11 +456,11 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
             operationContracts: [publicRead(entrypointKey, moduleId)],
           },
         },
-      }, ...(audience === 'party-registry' ? [{
-        ...privacyBase, manifest: { ...privacyBase.manifest, publicSurface: {
-          ...privacyBase.manifest.publicSurface,
-          api: [{ key: 'privacy.core.api.source', operationKeys: ['source.execute'] }],
-          operationContracts: [publicRead(onwardRead, 'privacy.core')],
+      }, ...(hasOnwardRead ? [{
+        ...onwardBase, manifest: { ...onwardBase.manifest, publicSurface: {
+          ...onwardBase.manifest.publicSurface,
+          api: [{ key: `${onwardModule}.api.source`, operationKeys: ['source.execute'] }],
+          operationContracts: [publicRead(onwardRead, onwardModule)],
         } },
       }] : [])]);
       const installed = { ...(yield* buildApplicationCompositionCatalog(snapshot.composition)), composition: snapshot.composition };
@@ -511,10 +522,10 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
             nativeReadReceiver: { requestHash: 'b'.repeat(64), workloadKey, originalPrincipalId: principal.principalId,
               originalWorkloadKey: 'integration.symmy-poll', originalWorkloadBindingIncarnation: originalReadIncarnation },
           });
-          if (audience === 'party-registry') {
+          if (hasOnwardRead) {
             const partyBinding = Schema.decodeUnknownSync(GatewayModuleBindingSchema)({
-              ...binding, providerKeyId: 'party-module-key', sourceAppId: 'party-registry',
-              registeredWorkloads: partyRegistryRegisteredWorkloadCalls,
+              ...binding, providerKeyId: 'party-module-key', sourceAppId: audience,
+              registeredWorkloads: onwardRules,
             });
             const onwardSourceInput = {
               assertion: Redacted.make(issued.token), binding: partyBinding,
@@ -524,18 +535,28 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
             expect(yield* admitAssertionSubject(onwardSourceInput).pipe(Effect.flip)).toMatchObject({ code: 'forbidden' });
             const onwardSource = yield* admitAssertionSubject({ ...onwardSourceInput, nativeRouteRead: true });
             const onwardInput = {
-              ...input, audience: 'privacy', binding: partyBinding,
+              ...input, audience: onwardAudience, binding: partyBinding,
               source: onwardSource.verifiedAssertion, operationRequirementKey: onwardRequirement, requestHash: 'c'.repeat(64),
-              actor: { ...actor, appId: 'party-registry', principalId: '60000000-0000-4000-8000-000000000005' },
+              actor: { ...actor, appId: audience, principalId: '60000000-0000-4000-8000-000000000005' },
             };
-            const onward = yield* issueNativeRouteReadGatewayContextAssertion(yield* admitNativeRouteRead(onwardInput));
+            const onwardWitness = yield* admitNativeRouteRead(onwardInput);
+            const onwardEvidence = readAdmittedNativeRouteRead(onwardWitness);
+            if (onwardAudience === 'symmy-integration' && onwardEvidence !== undefined) {
+              // Copying the valid evidence cannot unlock the reserved audience without its private one-use witness.
+              expect(yield* issueGatewayContextAssertion({
+                audience: onwardAudience, actor: onwardEvidence.actor,
+                compositionRevision: onwardEvidence.compositionRevision, principal: onwardEvidence.principal,
+                routeScope: onwardEvidence.routeScope, sourceValidity: onwardEvidence.sourceValidity,
+              }).pipe(Effect.flip)).toMatchObject({ stage: 'audience', code: 'gateway_audience_invalid' });
+            }
+            const onward = yield* issueNativeRouteReadGatewayContextAssertion(onwardWitness);
             const onwardClaims = yield* decodeSupportedGatewayContextClaims((yield* Effect.promise(() =>
-              jwtVerify(onward.token, current.publicKey, { audience: 'privacy', issuer: 'https://shell.test',
+              jwtVerify(onward.token, current.publicKey, { audience: onwardAudience, issuer: 'https://shell.test',
                 currentDate: new Date(1_700_000_001_000) }))).payload);
             expect(onwardClaims.ver).toBe(DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION);
             expect(onwardClaims.iat).toBe(claims.iat);
             expect(onwardClaims.exp).toBe(claims.exp);
-            const onwardRedeemed = yield* bindGatewayPrincipalVerifier('privacy', privacyBase.deployment).verifyAndRedeem(
+            const onwardRedeemed = yield* bindGatewayPrincipalVerifier(onwardAudience, onwardBase.deployment).verifyAndRedeem(
               Redacted.make(`Bearer ${onward.token}`), {
                 currentTimeSeconds: Effect.succeed(1_700_000_001),
                 environment: { ONTOS_GATEWAY_ISSUER: 'https://shell.test',
@@ -545,7 +566,7 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
             ).pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
             expect(readVerifiedGatewayRouteScope(onwardRedeemed)).toMatchObject({
               operations: [{ entrypointKey: onwardRead, schemaVersion: '1' }],
-              nativeReadReceiver: { workloadKey: 'privacy.core.source-processing-check', requestHash: 'c'.repeat(64),
+              nativeReadReceiver: { workloadKey: onwardWorkload, requestHash: 'c'.repeat(64),
                 originalPrincipalId: principal.principalId, originalWorkloadBindingIncarnation: originalReadIncarnation },
             });
             // A valid native signature never substitutes for a current installed requirement/receiver edge.

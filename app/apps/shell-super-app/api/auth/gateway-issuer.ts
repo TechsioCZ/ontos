@@ -224,6 +224,7 @@ const deniesSymmyAudience = <Principal>(
   input[privacyDispatchIssuance] !== true &&
   input[organizationGovernanceReadIssuance] !== true &&
   input[organizationProcessingReadIssuance] !== true &&
+  input[delegatedNativeReadIssuance] !== true &&
   (input[symmyIngressIssuance] !== true ||
     input.actor !== undefined ||
     input.sourceValidity !== undefined ||
