@@ -47,12 +47,14 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     },
     ConfigureStorefrontCatalog: 'hidden',
     CreateCategory: {
+      actionSlug: 'manage-catalog',
       agentProposalOnly: true,
       liveRight: 'canManageCatalog',
       title: { cs: 'Vytvořit kategorii', en: 'Create a category' },
     },
     CreateOrder: { title: { cs: 'Vytvořit objednávku', en: 'Create an order' } },
     CreateProduct: {
+      actionSlug: 'apply-command',
       liveRight: 'canManageCatalog',
       title: { cs: 'Vytvořit produkt', en: 'Create a product' },
     },
@@ -116,6 +118,8 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
   page: '/prodej/objednavky',
   reads: {
     'agent-review': OntosMcpHidden,
+    'demo-catalog-revision': OntosMcpHidden,
+    'demo-order-export': OntosMcpHidden,
     media: OntosMcpHidden,
     records: {
       description: {
