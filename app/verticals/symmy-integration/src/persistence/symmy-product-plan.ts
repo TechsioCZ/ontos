@@ -46,6 +46,16 @@ export const variantFactsOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 } as const;
+export const productFactsOperation = {
+  entrypointKey: 'commerce.catalog.set-product-localized-facts',
+  moduleId: catalogModule,
+  schemaVersion: '1',
+} as const;
+export const variantSkuOperation = {
+  entrypointKey: 'commerce.catalog.assign-sku',
+  moduleId: catalogModule,
+  schemaVersion: '1',
+} as const;
 const readinessOperation = (entrypointKey: string) => ({
   entrypointKey: `commerce.catalog.${entrypointKey}`,
   moduleId: catalogModule,
@@ -54,7 +64,7 @@ const readinessOperation = (entrypointKey: string) => ({
 export const readinessOperations = [
   readinessOperation('govern-variant-axes'),
   readinessOperation('confirm-variant-combination'),
-  readinessOperation('set-product-localized-facts'),
+  productFactsOperation,
   updateProductOperation,
   readinessOperation('set-product-unit-target-divisibility'),
   readinessOperation('decide-product-type-unnecessary'),

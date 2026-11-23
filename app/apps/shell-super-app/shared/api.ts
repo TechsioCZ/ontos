@@ -24,6 +24,7 @@ import { SymmyCustomersResponseSchema } from '../api/symmy/customers-public-cont
 import { SymmyCustomersBatchRequestSchema } from '../api/symmy/customers-batch-request-contract.ts';
 import { SymmyCustomerGroupsBatchResponseSchema } from '../api/symmy/customer-groups-batch-public-contract.ts';
 import { SymmyCustomerGroupsBatchRequestSchema } from '../api/symmy/customer-groups-batch-request-contract.ts';
+import { SymmyGroupCustomersBatchPayloadSchema } from '../api/symmy/group-customers-batch-request-contract.ts';
 import { SymmyPriceListsBatchRequestSchema } from '../api/symmy/price-lists-batch-upsert-request-contract.ts';
 import { SymmyPriceListPricesBatchRequestSchema } from '../api/symmy/price-lists-prices-batch-request-contract.ts';
 import { SymmyPriceListsResponseSchema } from '../api/symmy/price-lists-public-contract.ts';
@@ -32,6 +33,22 @@ import { SymmyProductsSuccessSchema } from '../api/symmy/products-public-contrac
 import { SymmyRegionsSuccessSchema } from '../api/symmy/regions-public-contract.ts';
 import { SymmyStockBatchResponseSchema } from '../api/symmy/stock-batch-public-contract.ts';
 import { SymmyStockBatchRequestSchema } from '../api/symmy/stock-batch-request-contract.ts';
+import {
+  SymmyDemoOrderIdSchema,
+  SymmyDemoOrderNotFoundProblemSchema,
+  SymmyDemoOrderResponseSchema,
+  SymmyDemoOrdersResponseSchema,
+  SymmyDemoOrdersUrlQuerySchema,
+} from '../api/symmy/demo-orders-contract.ts';
+import {
+  SymmyDemoCatalogBatchResponseSchema,
+  SymmyDemoCatalogRevisionResponseSchema,
+  SymmyDemoCategoriesBatchRequestSchema,
+  SymmyDemoMediaUploadRequestSchema,
+  SymmyDemoProductsBatchRequestSchema,
+} from '../api/symmy/demo-catalog-contract.ts';
+import { Schema } from 'effect';
+import { importSourceCatalogActionErrors } from '@app/merchandise/apis/import-source-catalog-action';
 import { ShellAuthenticationApi as ShellBrowserApi } from './browser-api.ts';
 
 // Every request, response and error shape below is a Schema.* value declared in `../api/symmy/*contract.ts`;
@@ -57,7 +74,7 @@ const adminRegionsEndpoint = HttpApiEndpoint.get('adminRegions', SYMMY_ROUTES.ad
 const customerGroupCustomersBatchEndpoint = HttpApiEndpoint.post(
   'customerGroupCustomersBatch',
   nativeSymmyPath(SYMMY_ROUTES.customerGroupCustomersBatch.path),
-  { ...symmySubmitOptions, params: symmyCodeParams },
+  { ...symmySubmitOptions, params: symmyCodeParams, payload: SymmyGroupCustomersBatchPayloadSchema },
 );
 const customerGroupsBatchEndpoint = HttpApiEndpoint.post('customerGroupsBatch', SYMMY_ROUTES.customerGroupsBatch.path, {
   ...symmyWriteOptions,
@@ -94,6 +111,44 @@ const productsBatchEndpoint = HttpApiEndpoint.post('productsBatch', SYMMY_ROUTES
   payload: SymmyProductsBatchRequestSchema,
 });
 
+const demoOrdersEndpoint = HttpApiEndpoint.get('demoOrders', '/api/symmy/v1/orders', {
+  ...symmyReadOptions,
+  query: SymmyDemoOrdersUrlQuerySchema,
+  success: SymmyDemoOrdersResponseSchema,
+});
+const demoCatalogRevisionEndpoint = HttpApiEndpoint.get('demoCatalogRevision', '/api/symmy/v1/catalog/revision', {
+  ...symmyReadOptions,
+  success: SymmyDemoCatalogRevisionResponseSchema,
+});
+const demoOrderEndpoint = HttpApiEndpoint.get('demoOrder', '/api/symmy/v1/orders/:id', {
+  ...symmyReadOptions,
+  error: [...symmyReadOptions.error, SymmyDemoOrderNotFoundProblemSchema],
+  params: Schema.Struct({ id: SymmyDemoOrderIdSchema }),
+  success: SymmyDemoOrderResponseSchema,
+});
+const demoCategoriesEndpoint = HttpApiEndpoint.post('demoCategories', '/api/symmy/v1/categories/batch', {
+  ...symmyWriteOptions,
+  error: [...symmyWriteOptions.error, ...importSourceCatalogActionErrors],
+  payload: SymmyDemoCategoriesBatchRequestSchema,
+  success: SymmyDemoCatalogBatchResponseSchema,
+});
+const demoCatalogProductsEndpoint = HttpApiEndpoint.post(
+  'demoCatalogProducts',
+  '/api/symmy/v1/catalog/products/batch',
+  {
+    ...symmyWriteOptions,
+    error: [...symmyWriteOptions.error, ...importSourceCatalogActionErrors],
+    payload: SymmyDemoProductsBatchRequestSchema,
+    success: SymmyDemoCatalogBatchResponseSchema,
+  },
+);
+const demoMediaEndpoint = HttpApiEndpoint.post('demoMedia', '/api/symmy/v1/products/media', {
+  ...symmyWriteOptions,
+  error: [...symmyWriteOptions.error, ...importSourceCatalogActionErrors],
+  payload: SymmyDemoMediaUploadRequestSchema,
+  success: SymmyDemoCatalogBatchResponseSchema,
+});
+
 const assortmentRulesFixtureBatchEndpoint = HttpApiEndpoint.post(
   'assortmentRulesFixtureBatch',
   SYMMY_FIXTURE_ROUTES.assortmentRulesFixtureBatch.path,
@@ -115,6 +170,12 @@ type SymmyIngressEndpoints = HttpApiEndpoint.AddMiddleware<
     | typeof customerGroupCustomersBatchEndpoint
     | typeof customerGroupsBatchEndpoint
     | typeof customersBatchEndpoint
+    | typeof demoOrdersEndpoint
+    | typeof demoOrderEndpoint
+    | typeof demoCategoriesEndpoint
+    | typeof demoCatalogProductsEndpoint
+    | typeof demoCatalogRevisionEndpoint
+    | typeof demoMediaEndpoint
     | typeof inventoryStockBatchEndpoint
     | typeof jobEndpoint
     | typeof priceListPricesBatchEndpoint
@@ -145,6 +206,12 @@ export const SymmyIngressGroup: SymmyIngressGroupContract = HttpApiGroup.make('s
     customerGroupCustomersBatchEndpoint,
     customerGroupsBatchEndpoint,
     customersBatchEndpoint,
+    demoOrdersEndpoint,
+    demoOrderEndpoint,
+    demoCategoriesEndpoint,
+    demoCatalogProductsEndpoint,
+    demoCatalogRevisionEndpoint,
+    demoMediaEndpoint,
     inventoryStockBatchEndpoint,
     jobEndpoint,
     priceListPricesBatchEndpoint,

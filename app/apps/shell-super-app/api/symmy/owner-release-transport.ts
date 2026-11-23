@@ -17,6 +17,11 @@ const operations: ReadonlyMap<string, ReadonlySet<string>> = new Map([
     ]),
   ],
   ['inventory', new Set(['reads/source-stock-position-resolution'])],
+  ['merchandise', new Set([
+    'reads/demo-order-export',
+    'reads/demo-catalog-revision',
+    'merchandise/actions/import-source-catalog',
+  ])],
   ['catalog', new Set(['reads/catalog-source-products', 'reads/catalog-source-product-page'])],
   ['price-group-catalog', new Set(['reads/price-group-source-associations', 'reads/price-group-definition'])],
   [

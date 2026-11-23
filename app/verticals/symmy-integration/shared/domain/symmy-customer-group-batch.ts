@@ -1,8 +1,11 @@
+import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import { CreateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/create-customer-group-action';
 import { UpdateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/update-customer-group-action';
 import { Schema } from 'effect';
 
-/** A synchronous group plan holds at most sixteen items: one per group. */
+import { SymmyCustomerRowSchema } from './symmy-customer-batch.ts';
+
+/** A synchronous group plan and a membership job hold at most sixteen items: one per group or per customer. */
 const SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS = 16;
 
 /**
@@ -11,6 +14,8 @@ const SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS = 16;
  */
 export const SYMMY_CUSTOMER_GROUP_REASON = 'Qualified Symmy source explicitly defines this customer group';
 export const SYMMY_CUSTOMER_GROUP_SOURCE_REVISION_STEM = 'symmy-customer-group-revision';
+export const SYMMY_GROUP_MEMBERSHIP_REASON =
+  'Qualified Symmy source explicitly assigns this customer to the selected customer group';
 
 const create = CreateCustomerGroupPayloadSchema.fields;
 const update = UpdateCustomerGroupPayloadSchema.fields;
@@ -78,3 +83,56 @@ export const SymmyCustomerGroupDefinitionFactsSchema = Schema.Array(SymmyCustome
   ),
 );
 export type SymmyCustomerGroupDefinitionFacts = typeof SymmyCustomerGroupDefinitionFactsSchema.Type;
+
+/**
+ * One customer of the group the path code selects, named by the source's own customer id: the `customerId` the same
+ * source sent in `POST /customers/batch`. Symmy resolves it to the customer profile it created for that source record,
+ * so the sender never reads an OntOS reference back. The group is never named here: the route enrollment binds it.
+ */
+export const SymmyGroupCustomerRowSchema = Schema.Struct({
+  customerId: SymmyCustomerRowSchema.members[0].fields.customerId,
+});
+export type SymmyGroupCustomerRow = typeof SymmyGroupCustomerRowSchema.Type;
+
+/** One to sixteen customers, each once. Assignment only: no removal, no replacement set. */
+export const SymmyGroupCustomerRowsSchema = Schema.NonEmptyArray(SymmyGroupCustomerRowSchema).check(
+  Schema.isMaxLength(SYMMY_CUSTOMER_GROUP_BATCH_MAX_ITEMS),
+  Schema.makeFilter(
+    (rows: readonly SymmyGroupCustomerRow[]) =>
+      new Set(rows.map(({ customerId }) => customerId)).size === rows.length || 'Each customer appears once',
+  ),
+);
+export type SymmyGroupCustomerRows = typeof SymmyGroupCustomerRowsSchema.Type;
+
+/** A customer profile exactly as the Commerce owner names it in a membership. */
+export const SymmyGroupMembershipProfileSchema =
+  ApplyCustomerGroupMembershipSourcePayloadSchema.members[0].fields.profile;
+export type SymmyGroupMembershipProfile = typeof SymmyGroupMembershipProfileSchema.Type;
+
+/**
+ * The text whose digest names the source record of one membership: the selected group's source record and the
+ * customer's source record. The same customer of the same group is always the same record, whichever request asserts it.
+ */
+export const symmyGroupMembershipRecordSeed = (groupRecordId: string, customerRecordId: string): string =>
+  ['group-membership', groupRecordId, customerRecordId].map((part) => `${part.length}:${part}`).join('');
+
+/**
+ * The text whose digest names the occurrence of one customer of a `POST /customer-groups/{code}/customers/batch`
+ * request: the admitted route, the group it selects, the request's Idempotency-Key and the plan item. The owner keys a
+ * membership assertion by profile and manager, which two group routes can share, so one key and position sent to two
+ * routes names two assertions. A conformance suite seeds Privacy for this exact occurrence before it submits.
+ */
+export const symmyGroupMembershipOccurrenceSeed = ({
+  groupId,
+  idempotencyKey,
+  itemKey,
+  routeId,
+}: {
+  readonly groupId: string;
+  readonly idempotencyKey: string;
+  readonly itemKey: string;
+  readonly routeId: string;
+}): string =>
+  ['group-membership-occurrence', routeId, groupId, idempotencyKey, itemKey]
+    .map((part) => `${part.length}:${part}`)
+    .join('');

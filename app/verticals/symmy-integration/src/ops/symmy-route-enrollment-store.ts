@@ -245,6 +245,7 @@ const readSelector = (transaction: Transaction, reference: SymmyRouteReference, 
       and(
         eq(symmyJobRoutes.tenantId, reference.tenantId),
         eq(symmyJobRoutes.principalId, reference.principalId),
+        eq(symmyJobRoutes.active, true),
         reference.legalEntityId === undefined
           ? isNull(symmyJobRoutes.legalEntityId)
           : eq(symmyJobRoutes.legalEntityId, reference.legalEntityId),
@@ -616,7 +617,7 @@ export const deactivateSymmyRoute = Effect.fn('SymmyRouteEnrollment.deactivate')
         if (run.mode === 'apply') {
           yield* lockEnrollment(transaction, reference);
         }
-        const stored = yield* readSelector(transaction, reference, run.mode === 'apply' ? 'update' : 'share');
+        const stored = yield* readRouteId(transaction, reference, run.mode === 'apply' ? 'update' : 'share');
         const decision = decideSymmyRouteDeactivation(reference, stored, change.expectedChangeToken);
         if (isRefused(decision)) {
           return yield* decision;

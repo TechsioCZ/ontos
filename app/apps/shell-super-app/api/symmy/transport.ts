@@ -10,6 +10,7 @@ import type { SymmyItemOutcome, SymmyRouteKey } from '@app/shared-contracts/symm
 import {
   SymmyCustomerGroupRowsSchema,
   SymmyCustomerRowsSchema,
+  SymmyGroupCustomerRowsSchema,
   SymmyInternalExecutionPlanSchema,
   SymmyPriceBatchSchema,
   SymmyPriceListRowsSchema,
@@ -19,6 +20,7 @@ import {
 import type {
   SymmyCustomerGroupRows,
   SymmyCustomerRows,
+  SymmyGroupCustomerRows,
   SymmyPriceBatch,
   SymmyPriceListRows,
   SymmyProductRows,
@@ -27,7 +29,7 @@ import type {
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { useEffectContext } from '@modern-js/bff-effect/context';
 import { HttpApiBuilder, HttpEffect } from '@modern-js/bff-effect/effect-edge';
-import { Array as EffectArray, Context, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Context, Crypto, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
 import type { Types } from 'effect';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import type { HttpMethod } from 'effect/http';
@@ -47,15 +49,17 @@ import {
   symmyMethodNotAllowedProblem,
   symmyIdempotencyRequiredProblem,
   symmyUnavailableProblem,
+  symmyFixtureIntentConflictProblem,
   SymmyInternalPlanPayloadSchema,
   SymmyInternalReadQuerySchema,
+  symmyReadOptions,
+  symmyWriteOptions,
 } from './contract.ts';
 import type {
   SymmyCustomerFieldName,
   SymmyProductFieldName,
   SymmyRegionFieldName,
   SymmyClientIdempotencyKeySchema,
-  symmyFixtureIntentConflictProblem,
   symmyFixtureJobNotFoundProblem,
   SymmyFixtureItemResultsSchema,
   SymmyFixtureJobIdSchema,
@@ -89,6 +93,23 @@ import type {
   SymmyInternalPriceListsProjectionSchema,
   SymmyInternalProductsProjectionSchema,
 } from './read-projection-contracts.ts';
+import {
+  SymmyDemoOrderNotFoundProblemSchema,
+  SymmyDemoOrderResponseSchema,
+  SymmyDemoOrdersResponseSchema,
+} from './demo-orders-contract.ts';
+import { readSymmyDemoOrder, readSymmyDemoOrders } from './demo-orders.ts';
+import {
+  SymmyDemoCatalogBatchResponseSchema,
+  SymmyDemoCatalogRevisionResponseSchema,
+} from './demo-catalog-contract.ts';
+import { readSymmyDemoCatalogRevision } from './demo-catalog-revision.ts';
+import {
+  executeSymmyDemoCategoriesBatch,
+  executeSymmyDemoMediaUpload,
+  executeSymmyDemoProductsBatch,
+  importSourceCatalogActionErrors,
+} from './demo-catalog.ts';
 
 import { SymmyRouteNotFoundProblemSchema, symmyRouteNotFoundProblem } from './defect-boundary.ts';
 
@@ -167,6 +188,12 @@ interface CustomersSubmit {
   readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
   readonly route: 'customersBatch';
 }
+interface GroupCustomersSubmit {
+  readonly code: string;
+  readonly groupCustomers: SymmyGroupCustomerRows;
+  readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
+  readonly route: 'customerGroupCustomersBatch';
+}
 type FixtureSubmit =
   | (InternalWritePayload & {
       readonly idempotencyKey: typeof SymmyClientIdempotencyKeySchema.Type;
@@ -180,6 +207,7 @@ type FixtureSubmit =
           }
       ))
   | CustomersSubmit
+  | GroupCustomersSubmit
   | PriceBatchSubmit
   | PriceListsSubmit
   | ProductsSubmit;
@@ -354,6 +382,12 @@ const repeatsCredential = Effect.fn('SymmyIngress.repeatsCredential')(function* 
     );
     return encoded.includes(raw);
   }
+  if ('groupCustomers' in request) {
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyGroupCustomerRowsSchema))(
+      request.groupCustomers,
+    ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));
+    return encoded.includes(raw);
+  }
   if ('customerGroups' in request) {
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerGroupRowsSchema))(
       request.customerGroups,
@@ -463,6 +497,84 @@ const handle = <Request extends SymmyIngressRequest, Result, DispatchProblem>(
     );
   });
 };
+
+const demoReadProblems = Schema.Union(symmyReadOptions.error);
+const demoOrderProblems = Schema.Union([...symmyReadOptions.error, SymmyDemoOrderNotFoundProblemSchema]);
+const demoCatalogProblems = Schema.Union([...symmyWriteOptions.error, ...importSourceCatalogActionErrors]);
+type DemoExchangeContext = {
+  readonly admission: SymmyIngressAdmission;
+  readonly scope: typeof SymmyRouteContextResponseSchema.Type;
+  readonly newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>;
+};
+type DemoExchangeOperation<Result, Problem> =
+  | {
+      readonly routeKey: 'productsBatch';
+      readonly readOnly: true;
+      readonly run: (context: DemoExchangeContext) => Effect.Effect<Result, Problem>;
+    }
+  | {
+      readonly routeKey: 'adminProducts';
+      readonly run: (context: DemoExchangeContext) => Effect.Effect<Result, Problem>;
+    }
+  | {
+      readonly routeKey: 'productsBatch';
+      readonly idempotencyKey: string | undefined;
+      readonly run: (context: DemoExchangeContext & { readonly idempotencyKey: string }) => Effect.Effect<Result, Problem>;
+    };
+
+/** Demo exchanges retain the real enrolled source scope and the owner's own operation permission. */
+const handleDemoExchange = <Result, Problem, PublicProblem>(input: {
+  readonly success: Schema.Codec<Result, unknown>;
+  readonly problems: Schema.Codec<PublicProblem, unknown>;
+  readonly rawKey: string | undefined;
+  readonly payload: unknown;
+  readonly request: HttpServerRequest.HttpServerRequest;
+} & DemoExchangeOperation<Result, Problem>) =>
+  Effect.gen(function* demoExchange() {
+    yield* noStore;
+    const key = input.rawKey?.trim();
+    if (key === undefined || key.length === 0) {
+      return yield* requireAuthentication;
+    }
+    const serialized = JSON.stringify(input.payload);
+    if ((typeof serialized === 'string' && serialized.includes(key)) || input.request.url.includes(key)) {
+      return yield* Effect.fail(symmyInvalidProblem);
+    }
+    const run = yield* Effect.gen(function* validateDemoOperation() {
+      if (input.routeKey === 'productsBatch' && !('readOnly' in input)) {
+        const idempotencyKey = input.idempotencyKey;
+        if (idempotencyKey === undefined || idempotencyKey.length === 0) {
+          return yield* Effect.fail(symmyIdempotencyRequiredProblem);
+        }
+        if (idempotencyKey.includes(key)) return yield* Effect.fail(symmyInvalidProblem);
+        return (context: DemoExchangeContext) => input.run({ ...context, idempotencyKey });
+      }
+      return input.run;
+    });
+    const ingress = yield* SymmyIngress;
+    const admission = yield* ingress.admit(key, input.request);
+    if (admission.acquireRouteAssertion === undefined) {
+      return yield* Effect.fail(symmyUnavailableProblem);
+    }
+    const routeAssertion = yield* admission.acquireRouteAssertion({ routeKey: input.routeKey });
+    if (routeAssertion.compositionRevision !== admission.compositionRevision) {
+      return yield* Effect.fail(symmyUnavailableProblem);
+    }
+    const scope = routeAssertion.route;
+    const crypto = yield* Crypto.Crypto;
+    const newRequestIdentifier = crypto.randomUUIDv4().pipe(Effect.mapError(() => symmyUnavailableProblem));
+    const result = yield* run({ admission, newRequestIdentifier, scope });
+    return yield* Schema.decodeUnknownEffect(Schema.toType(input.success))(result).pipe(
+      Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)),
+    );
+  }).pipe(
+    Effect.mapError((problem) => Schema.is(input.problems)(problem) ? problem : symmyUnavailableProblem),
+    Effect.tapError((problem) =>
+      Predicate.isTagged(problem, 'GatewayAuthenticationRequiredProblem') ||
+      Predicate.isTagged(problem, 'ImportSourceCatalogActionAuthenticationProblem')
+        ? apiKeyChallenge : Effect.void,
+    ),
+  );
 
 const projectItems = <Items extends readonly SymmyItemOutcome[]>(items: Items) =>
   EffectArray.map<Items, FixtureItemResult>((item) => ({
@@ -618,6 +730,78 @@ const stockRequest = (
 
 export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'symmy', (group) =>
   group
+    .handle('demoCatalogRevision', ({ headers, request }) =>
+      handleDemoExchange({
+        success: SymmyDemoCatalogRevisionResponseSchema,
+        problems: demoReadProblems,
+        rawKey: headers['x-api-key'],
+        payload: {},
+        request,
+        routeKey: 'productsBatch',
+        readOnly: true,
+        run: readSymmyDemoCatalogRevision,
+      }),
+    )
+    .handle('demoOrders', ({ headers, query, request }) =>
+      handleDemoExchange({
+        success: SymmyDemoOrdersResponseSchema,
+        problems: demoReadProblems,
+        rawKey: headers['x-api-key'],
+        payload: query,
+        request,
+        routeKey: 'adminProducts',
+        run: ({ admission, newRequestIdentifier, scope }) =>
+          readSymmyDemoOrders(scope, query, admission, newRequestIdentifier),
+      }),
+    )
+    .handle('demoOrder', ({ headers, params, request }) =>
+      handleDemoExchange({
+        success: SymmyDemoOrderResponseSchema,
+        problems: demoOrderProblems,
+        rawKey: headers['x-api-key'],
+        payload: params,
+        request,
+        routeKey: 'adminProducts',
+        run: ({ admission, newRequestIdentifier, scope }) =>
+          readSymmyDemoOrder(scope, params.id, admission, newRequestIdentifier),
+      }),
+    )
+    .handle('demoCategories', ({ headers, payload, request }) =>
+      handleDemoExchange({
+        success: SymmyDemoCatalogBatchResponseSchema,
+        problems: demoCatalogProblems,
+        rawKey: headers['x-api-key'],
+        payload,
+        request,
+        routeKey: 'productsBatch',
+        idempotencyKey: headers['idempotency-key'],
+        run: (context) => executeSymmyDemoCategoriesBatch(context, payload),
+      }),
+    )
+    .handle('demoCatalogProducts', ({ headers, payload, request }) =>
+      handleDemoExchange({
+        success: SymmyDemoCatalogBatchResponseSchema,
+        problems: demoCatalogProblems,
+        rawKey: headers['x-api-key'],
+        payload,
+        request,
+        routeKey: 'productsBatch',
+        idempotencyKey: headers['idempotency-key'],
+        run: (context) => executeSymmyDemoProductsBatch(context, payload),
+      }),
+    )
+    .handle('demoMedia', ({ headers, payload, request }) =>
+      handleDemoExchange({
+        success: SymmyDemoCatalogBatchResponseSchema,
+        problems: demoCatalogProblems,
+        rawKey: headers['x-api-key'],
+        payload,
+        request,
+        routeKey: 'productsBatch',
+        idempotencyKey: headers['idempotency-key'],
+        run: (context) => executeSymmyDemoMediaUpload(context, payload),
+      }),
+    )
     .handle('adminCustomers', ({ headers, query: { fields, ...read }, request }) =>
       handleCustomersRead(
         headers['x-api-key'],
@@ -653,12 +837,19 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
     .handle('customerGroupCustomersBatch', ({ headers, params, payload, request }) =>
       handleSubmit(
         headers['x-api-key'],
-        {
-          code: params.code,
-          ...payload,
-          idempotencyKey: headers['idempotency-key'],
-          route: 'customerGroupCustomersBatch',
-        },
+        'customers' in payload
+          ? {
+              code: params.code,
+              groupCustomers: payload.customers,
+              idempotencyKey: headers['idempotency-key'],
+              route: 'customerGroupCustomersBatch',
+            }
+          : {
+              code: params.code,
+              ...payload,
+              idempotencyKey: headers['idempotency-key'],
+              route: 'customerGroupCustomersBatch',
+            },
         request,
       ),
     )

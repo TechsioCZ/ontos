@@ -52,6 +52,8 @@ import { processingPurposeRepositoryForScope } from '../persistence/processing-p
 import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
 import { hasCurrentCustomerIntakeOrganizationProof } from '../services/customer-intake-organization-proof.ts';
 import { privacyEvidenceCall } from '../declared-evidence-calls.ts';
+import { DemoSourceProcessingPolicySchema } from '../../shared/domain/demo-source-processing-policy.ts';
+import type { DemoSourceProcessingPolicy } from '../../shared/domain/demo-source-processing-policy.ts';
 
 const configuredContexts = Config.schema(
   Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema).check(Schema.isMaxLength(4096))),
@@ -74,6 +76,11 @@ const unavailable = (cause?: unknown) => {
 };
 
 export interface SourceProcessingEligibilityServices {
+  readonly demo?: {
+    readonly policy: DemoSourceProcessingPolicy;
+    /** A source-wide test authorization stops when this scope has retained privacy protections. */
+    readonly hasScopeProtections: () => Effect.Effect<boolean, ReadHandlerUnavailable>;
+  };
   readonly contexts: readonly SourceProcessingContext[];
   readonly protections: (
     subjectRef: string,
@@ -93,6 +100,67 @@ export interface SourceProcessingEligibilityServices {
     targetAdmission?: SourceProcessingContext['targetAdmission'],
   ) => Effect.Effect<boolean, ReadHandlerUnavailable>;
 }
+
+const demoOperations: Readonly<Record<SourceProcessingEligibilityRequest['consumerModuleId'], readonly string[]>> = {
+  'integration.symmy': ['CUSTOMER_SOURCE_INTAKE'],
+  'party.registry': [
+    'CREATE',
+    'MATCH',
+    'RECOVER_CREATE',
+    'EVIDENCE_READ',
+    'PROFILE_EXPORT',
+    'ONBOARD_COUNTERPARTY_CUSTOMER',
+    'ADD_CONTACT_POINT',
+  ],
+  'commerce.customer-context': [
+    'PROFILE_CREATE',
+    'customer-profile-source.write',
+    'customer-profile-source.read',
+    'customer-profile-source.recover',
+    'saved-address-source.add',
+    'saved-address-source.current',
+    'saved-address-source.receipt',
+    'customer-group-membership.write',
+    'customer-group-membership.recover',
+  ],
+};
+
+/** Source-wide does not mean tenant-wide: both qualified source identity and actual enrolled caller must match. */
+export const demoSourceProcessingPolicyMatches = (
+  policy: DemoSourceProcessingPolicy,
+  request: SourceProcessingEligibilityRequest,
+  scope: OperationalScope,
+): boolean => {
+  const source = request.source;
+  if (
+    scope.tenantId !== policy.tenantId ||
+    scope.legalEntityId !== policy.legalEntityId ||
+    source === null ||
+    source.issuer !== policy.issuer ||
+    source.namespace !== policy.namespace ||
+    !policy.callers.some(
+      (caller) => caller.principalId === scope.principalId && caller.authMethod === scope.authMethod,
+    ) ||
+    !demoOperations[request.consumerModuleId].includes(request.operation)
+  ) {
+    return false;
+  }
+  const membership = request.operation.startsWith('customer-group-membership.');
+  const intake = request.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule;
+  const customerSource = source.routeRef === policy.customerRouteId && source.recordType === 'CUSTOMER';
+  const groupSource = source.routeRef === policy.groupRouteId && source.recordType === 'CUSTOMER_GROUP';
+  if (!(intake ? customerSource || groupSource : membership ? groupSource : customerSource)) {
+    return false;
+  }
+  const reference = request.partySourceReference?.source;
+  return (
+    reference === undefined ||
+    (reference.issuer === policy.issuer &&
+      reference.namespace === policy.namespace &&
+      reference.recordType === 'CUSTOMER' &&
+      reference.routeRef === policy.customerRouteId)
+  );
+};
 
 const correlatedSourcePersonTarget = (
   context: SourceProcessingContext,
@@ -149,6 +217,45 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       outcome: 'DENIED' as const,
       reason,
     });
+    const demo = services.demo;
+    if (demo !== undefined && demoSourceProcessingPolicyMatches(demo.policy, request, scope)) {
+      const { policy } = demo;
+      if (
+        !policy.active ||
+        !isPrivacyInstantAtOrBefore(policy.effectiveFrom, evaluatedAt) ||
+        !isPrivacyInstantAfter(policy.validUntil, evaluatedAt)
+      ) {
+        return denied('AUTHORITY_NOT_CURRENT');
+      }
+      if (yield* demo.hasScopeProtections()) {
+        return denied('PROTECTED_MATERIAL');
+      }
+      if (request.source === null) {
+        return denied('AUTHORITY_NOT_CURRENT');
+      }
+      // This is an actual operator-configured testing policy, not a GDPR applicability/consent/basis claim.
+      return {
+        authorityIncarnation: policy.policyId,
+        authorityRevision: policy.revision,
+        evaluatedAt,
+        evidence: {
+          _tag: 'DEMO_TEST_DATA_SOURCE_POLICY',
+          consumerModuleId: request.consumerModuleId,
+          dataUse: policy.dataUse,
+          legalEntityId: policy.legalEntityId,
+          operation: request.operation,
+          policyId: policy.policyId,
+          policyRevision: policy.revision,
+          purpose: policy.purpose,
+          source: request.source,
+          target: request.target,
+          tenantId: policy.tenantId,
+          trustedDecisionTime: evaluatedAt,
+          validUntil: policy.validUntil,
+        },
+        outcome: 'ALLOWED',
+      };
+    }
     const exactContexts = services.contexts.filter(
       (context) =>
         sourceRequestMatches(context, request) &&
@@ -672,6 +779,20 @@ export const sourceProcessingEligibilityRead = defineRead(
         result: { evaluatedAt, outcome: 'DENIED' as const, reason: 'AUTHORITY_NOT_CURRENT' as const },
       };
     }
+    const consumerAppIds = {
+      'commerce.customer-context': 'commerce-customer-context',
+      'integration.symmy': 'symmy-integration',
+      'party.registry': 'party-registry',
+    };
+    if (
+      context.services.demo !== undefined &&
+      readVerifiedGatewayActor(context.scope)?.appId !== consumerAppIds[input.consumerModuleId]
+    ) {
+      return {
+        evidence: { resultCount: 1 },
+        result: { evaluatedAt, outcome: 'DENIED' as const, reason: 'AUTHORITY_NOT_CURRENT' as const },
+      };
+    }
     const result = yield* evaluateSourceProcessingEligibility(input, context.scope, context.services, evaluatedAt).pipe(
       Effect.tapError(() => traceSourceStage('eligibility-unavailable')),
     );
@@ -684,6 +805,56 @@ export const sourceProcessingEligibilityRead = defineRead(
       Effect.mapError(sourceConfigurationUnavailable),
       Effect.tapError(() => traceSourceStage('configuration-unavailable')),
     );
+    const demoEnabled = yield* Config.Boolean('ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED').pipe(
+      Config.withDefault(false),
+      Effect.mapError(sourceConfigurationUnavailable),
+    );
+    let demo: SourceProcessingEligibilityServices['demo'];
+    if (demoEnabled) {
+      const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
+        Effect.mapError(sourceConfigurationUnavailable),
+      );
+      if (environment !== 'stage') {
+        return yield* sourceConfigurationUnavailable('Demo source processing is restricted to stage');
+      }
+      const rows = yield* transaction
+        .execute(
+          sql`
+        select policy_record as record from privacy.demo_source_processing_policies
+        where tenant_id=${scope.tenantId} and legal_entity_id=${scope.legalEntityId ?? ''}
+          and policy_id='akros-symmy-demo-test-data'`,
+          'objects',
+        )
+        .pipe(Effect.mapError(sourceConfigurationUnavailable));
+      const records = yield* Schema.decodeUnknownEffect(
+        Schema.Array(
+          Schema.Struct({
+            record: DemoSourceProcessingPolicySchema,
+          }),
+        ).check(Schema.isMaxLength(1)),
+      )(rows).pipe(Effect.mapError(sourceConfigurationUnavailable));
+      const [record] = records;
+      if (record !== undefined) {
+        demo = {
+          policy: record.record,
+          hasScopeProtections: () =>
+            transaction
+              .select({ id: antiResurrectionProtections.protectionId })
+              .from(antiResurrectionProtections)
+              .where(
+                and(
+                  eq(antiResurrectionProtections.tenantId, scope.tenantId),
+                  eq(antiResurrectionProtections.legalEntityId, scope.legalEntityId ?? ''),
+                ),
+              )
+              .limit(1)
+              .pipe(
+                Effect.map((protections) => protections.length > 0),
+                Effect.mapError(unavailable),
+              ),
+        };
+      }
+    }
     const { purposes, repository } = yield* Effect.all(
       {
         purposes: processingPurposeRepositoryForScope(transaction, scope),
@@ -694,6 +865,7 @@ export const sourceProcessingEligibilityRead = defineRead(
     yield* traceSourceStage('services-ready');
     return {
       contexts,
+      ...(demo === undefined ? {} : { demo }),
       protections: (subjectRef: string, request: SourceProcessingEligibilityRequest) =>
         readSourceProtections(transaction, scope, subjectRef, request),
       purposes,

@@ -2101,6 +2101,7 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
   const request = yield* Schema.decodeUnknownEffect(CustomerGroupMembershipSourceReceiptRequestSchema)({
     effectId: payload.source.effectId,
     manager: payload.manager,
+    ...(payload.processingKind === 'ORG_BUSINESS_REFERENCE' ? { processingKind: payload.processingKind } : {}),
     profile: payload.profile,
     route: payload.route,
   });

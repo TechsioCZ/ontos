@@ -624,6 +624,9 @@ importers:
       '@app/inventory':
         specifier: workspace:*
         version: link:../../verticals/inventory
+      '@app/merchandise':
+        specifier: workspace:*
+        version: link:../../verticals/merchandise
       '@app/party-registry':
         specifier: workspace:*
         version: link:../../verticals/party-registry

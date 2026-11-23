@@ -5,6 +5,10 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/merchandise-client.ts",
+    "./apis/demo-order-export": "./shared/apis/demo-order-export.ts",
+    "./apis/demo-order-export/client": "./src/api/demo-order-export-client.ts",
+    "./apis/demo-catalog-revision": "./shared/apis/demo-catalog-revision.ts",
+    "./apis/demo-catalog-revision/client": "./src/api/demo-catalog-revision-client.ts",
     "./apis/manage-catalog-action": "./shared/apis/manage-catalog-action.ts",
     "./apis/manage-catalog-action/client": "./src/api/manage-catalog-action-client.ts",
     "./apis/manage-markets-action": "./shared/apis/manage-markets-action.ts",
@@ -24,7 +28,10 @@
     "./resources/order": "./shared/resources/order.ts",
     "./resources/product": "./shared/resources/product.ts",
     "./Route": "./src/federation-entry.tsx",
-    "./outbox-worker-host": "./src/worker-host/entry.ts"
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
+    "./apis/import-source-catalog-action": "./shared/apis/import-source-catalog-action.ts",
+    "./apis/import-source-catalog-action/client": "./src/api/import-source-catalog-action-client.ts",
+    "./contracts/import-source-catalog": "./shared/actions/import-source-catalog.ts"
   },
   "scripts": {
     "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app merchandise --manifest-only && modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical merchandise --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app merchandise --target dist && modern deploy --skip-build --deploy-target node",

@@ -21,6 +21,7 @@ export const SPICEDB_ENDPOINT_VARIABLE = 'SPICEDB_ENDPOINT';
 export const SYMMY_INGRESS_VARIABLE = 'ONTOS_INTERNAL_SYMMY_INGRESS';
 export const SYMMY_RETENTION_POLICIES_VARIABLE = 'ONTOS_SYMMY_JOB_RETENTION_POLICIES';
 export const SYMMY_PRICE_READ_SOURCES_VARIABLE = 'ONTOS_SYMMY_PRICE_READ_SOURCES';
+export const SYMMY_DEMO_PROCESSING_VARIABLE = 'ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED';
 
 export const DeploymentEnvironmentSchema = Schema.Literals(['production', 'stage']);
 export type DeploymentEnvironment = typeof DeploymentEnvironmentSchema.Type;
@@ -109,7 +110,11 @@ const configureZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnviro
       for (const path of variablePaths(document, setupCount, SYMMY_INGRESS_VARIABLE)) {
         document.setIn(path, '0');
       }
-      for (const variable of [SYMMY_RETENTION_POLICIES_VARIABLE, SYMMY_PRICE_READ_SOURCES_VARIABLE]) {
+      for (const variable of [
+        SYMMY_RETENTION_POLICIES_VARIABLE,
+        SYMMY_PRICE_READ_SOURCES_VARIABLE,
+        SYMMY_DEMO_PROCESSING_VARIABLE,
+      ]) {
         for (const path of variablePaths(document, setupCount, variable)) {
           document.deleteIn(path);
         }

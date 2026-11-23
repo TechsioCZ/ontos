@@ -1,0 +1,73 @@
+import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { Schema } from 'effect';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+
+export const SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD = 'demo.merchandise.symmy-catalog-import';
+
+export const demoCatalogRevisionOperation = {
+  audience: 'merchandise',
+  declarationKey: 'demo.merchandise.demo-catalog-revision.read',
+  entrypointKey: 'demo.merchandise.api.demo-catalog-revision',
+  moduleId: 'demo.merchandise',
+  schemaVersion: '1',
+  workloadKey: SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD,
+} as const;
+
+export const DemoCatalogRevisionRequestSchema = Schema.Struct({});
+export type DemoCatalogRevisionRequest = typeof DemoCatalogRevisionRequestSchema.Type;
+export const DemoCatalogRevisionResponseSchema = Schema.Struct({
+  legalEntityId: LegalEntityIdSchema,
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  tenantId: TenantIdSchema,
+});
+export type DemoCatalogRevisionResponse = typeof DemoCatalogRevisionResponseSchema.Type;
+
+export const DemoCatalogRevisionAuthenticationProblemSchema = makeProblemDetailsSchema(
+  'DemoCatalogRevisionAuthenticationProblem',
+  401,
+);
+export const DemoCatalogRevisionForbiddenProblemSchema = makeProblemDetailsSchema(
+  'DemoCatalogRevisionForbiddenProblem',
+  403,
+);
+export const DemoCatalogRevisionInternalProblemSchema = makeProblemDetailsSchema(
+  'DemoCatalogRevisionInternalProblem',
+  500,
+);
+export const DemoCatalogRevisionInvalidProblemSchema = makeProblemDetailsSchema(
+  'DemoCatalogRevisionInvalidProblem',
+  400,
+);
+export const DemoCatalogRevisionNotFoundProblemSchema = makeProblemDetailsSchema(
+  'DemoCatalogRevisionNotFoundProblem',
+  404,
+);
+export const DemoCatalogRevisionPolicyConflictProblemSchema = makeProblemDetailsSchema(
+  'DemoCatalogRevisionPolicyConflictProblem',
+  409,
+);
+export const DemoCatalogRevisionPolicyProblemSchema = makeProblemDetailsSchema('DemoCatalogRevisionPolicyProblem', 422);
+export const DemoCatalogRevisionUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'DemoCatalogRevisionUnavailableProblem',
+  503,
+);
+
+export const DemoCatalogRevisionApi = HttpApi.make('DemoCatalogRevisionApi').add(
+  HttpApiGroup.make('demoCatalogRevision').add(
+    HttpApiEndpoint.post('execute', '/reads/demo-catalog-revision', {
+      error: [
+        DemoCatalogRevisionInvalidProblemSchema,
+        DemoCatalogRevisionAuthenticationProblemSchema,
+        DemoCatalogRevisionForbiddenProblemSchema,
+        DemoCatalogRevisionNotFoundProblemSchema,
+        DemoCatalogRevisionPolicyConflictProblemSchema,
+        DemoCatalogRevisionPolicyProblemSchema,
+        DemoCatalogRevisionUnavailableProblemSchema,
+        DemoCatalogRevisionInternalProblemSchema,
+      ],
+      payload: DemoCatalogRevisionRequestSchema,
+      success: DemoCatalogRevisionResponseSchema,
+    }),
+  ),
+);

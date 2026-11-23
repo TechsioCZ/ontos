@@ -13,6 +13,7 @@ import {
   IntendedProcessingScopeSchema,
   PrivacyEligibilityEvidenceSchema,
 } from '../domain/privacy-processing-eligibility.ts';
+import { DemoSourceProcessingEvidenceSchema } from '../domain/demo-source-processing-policy.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 export const SymmyCustomerSourceIntakeOperation = 'CUSTOMER_SOURCE_INTAKE';
@@ -121,7 +122,7 @@ export const SourceProcessingEligibilityResponseSchema = Schema.Union([
     authorityIncarnation: Ref,
     authorityRevision: Ref,
     evaluatedAt: PrivacyIsoTimestampSchema,
-    evidence: PrivacyEligibilityEvidenceSchema,
+    evidence: Schema.Union([PrivacyEligibilityEvidenceSchema, DemoSourceProcessingEvidenceSchema]),
     outcome: Schema.Literal('ALLOWED'),
   }),
 ]);

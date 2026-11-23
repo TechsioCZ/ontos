@@ -1,0 +1,40 @@
+import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
+import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+
+import { merchandiseApi } from '../shared/api.ts';
+import {
+  DemoOrderExportAuthenticationProblemSchema,
+  DemoOrderExportForbiddenProblemSchema,
+  DemoOrderExportInternalProblemSchema,
+  DemoOrderExportInvalidProblemSchema,
+  DemoOrderExportNotFoundProblemSchema,
+  DemoOrderExportPolicyConflictProblemSchema,
+  DemoOrderExportPolicyProblemSchema,
+  DemoOrderExportUnavailableProblemSchema,
+} from '../shared/apis/demo-order-export.ts';
+import { demoOrderExportRead } from '../src/api/demo-order-export.read.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
+
+const problems = makeGovernedReadProblems({
+  authentication: DemoOrderExportAuthenticationProblemSchema,
+  forbidden: DemoOrderExportForbiddenProblemSchema,
+  internal: DemoOrderExportInternalProblemSchema,
+  invalid: DemoOrderExportInvalidProblemSchema,
+  notFound: DemoOrderExportNotFoundProblemSchema,
+  policyConflict: DemoOrderExportPolicyConflictProblemSchema,
+  policyIneligible: DemoOrderExportPolicyProblemSchema,
+  unavailable: DemoOrderExportUnavailableProblemSchema,
+});
+
+/** Authenticated owner handler, mounted with the same governed Read runtime as the other Merchandise reads. */
+export const demoOrderExportApiLive = HttpApiBuilder.group(merchandiseApi, 'demoOrderExport', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: demoOrderExportRead,
+    }),
+  ),
+);

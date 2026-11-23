@@ -60,9 +60,15 @@ export {
   executeReviewOrderChangesWithAuthorization,
 } from './review-order-changes-action-client.ts';
 export type { ReviewOrderChangesActionClientOptions } from './review-order-changes-action-client.ts';
+export {
+  executeImportSourceCatalog,
+  executeImportSourceCatalogWithAuthorization,
+} from './import-source-catalog-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>
+export { executeDemoCatalogRevisionWithAuthorization } from './demo-catalog-revision-client.ts';
+export { executeDemoOrderExportWithAuthorization } from './demo-order-export-client.ts';
 export { executeRecords, executeRecordsWithAuthorization } from './records-client.ts';
 export type { RecordsClientOptions } from './records-client.ts';
 // </generated-module-api-client-exports>

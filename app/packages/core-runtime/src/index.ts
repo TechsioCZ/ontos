@@ -617,6 +617,7 @@ export type {
   ActionExecutionResolution,
   ActionRuntimeService,
   ResolveActionCommitInput,
+  ResolveActionExecutionInput,
   RunActionInput,
 } from './actions/runtime.ts';
 export { TrustedCompanyPrincipalContextSchema } from './actions/principal-context.ts';

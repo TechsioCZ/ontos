@@ -285,7 +285,14 @@ const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequiremen
       if (hosted === undefined) {
         return yield* unsatisfied();
       }
-      return { catalog, consumer, ownerRegistration: owner, providerAppId: SHELL_HOST_APP_ID, requirement };
+      return {
+        catalog,
+        consumer,
+        consumerAppId: consumer.deployment.appId,
+        ownerRegistration: owner,
+        providerAppId: SHELL_HOST_APP_ID,
+        requirement,
+      };
     }
     const provider = catalog.getByModuleId(requirement.provider.moduleId);
     if (

@@ -2448,6 +2448,62 @@ describe('current qualified Group Definition before first Membership write', () 
       );
       expect(recovered.status).toBe('settled');
       expect(peer.membershipReceipt.sent).toHaveLength(1);
+      expect(peer.membershipReceipt.bodies[0]).not.toHaveProperty('processingKind');
+      expect(peer.groupDefinition.sent).toHaveLength(0);
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('preserves organization business processing when recovering the original Membership receipt', () =>
+    Effect.gen(function* organizationMembershipRecovery() {
+      reset();
+      const profileRef = {
+        moduleId: 'commerce.customer-context',
+        resourceId: '10000000-0000-4000-8000-000000000071',
+        resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+        tenantId,
+      };
+      const { reason: _reason, ...assertion } = membershipPayload;
+      const organizationEffect = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+        ...membershipEffect,
+        intent: {
+          _tag: 'CustomerGroupMembership',
+          payload: {
+            ...assertion,
+            processingKind: 'ORG_BUSINESS_REFERENCE',
+            profile: { profileKind: 'COUNTERPARTY', profileRef },
+            reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
+          },
+        },
+        ref: { ...membershipEffect.ref, originalTarget: profileRef },
+      });
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.membershipReceipt.succeed(
+        Schema.decodeUnknownSync(CustomerGroupMembershipSourceReceiptResponseSchema)({
+          items: [],
+          processingKind: 'ORG_BUSINESS_REFERENCE',
+          reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
+          source: membershipPayload.source,
+        }),
+      );
+      const adapter = yield* membershipAdapter;
+      const recovered = yield* adapter.recover(
+        yield* withOriginalRequest({
+          ...input(),
+          effect: organizationEffect,
+          legalEntityId: sellingLegalEntityId,
+          routeKey: 'customerGroupCustomersBatch',
+        }),
+      );
+      expect(recovered.status).toBe('settled');
+      expect(peer.membershipReceipt.bodies).toEqual([
+        {
+          effectId: membershipPayload.source.effectId,
+          manager: membershipPayload.manager,
+          processingKind: 'ORG_BUSINESS_REFERENCE',
+          profile: { profileKind: 'COUNTERPARTY', profileRef },
+          route: membershipPayload.route,
+        },
+      ]);
       expect(peer.groupDefinition.sent).toHaveLength(0);
       expect(peer.membership.sent).toHaveLength(0);
     }).pipe(asSymmyWorker),

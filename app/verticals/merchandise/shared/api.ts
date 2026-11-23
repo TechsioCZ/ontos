@@ -15,6 +15,9 @@ import { BootstrapPlaygroundCatalogActionApi } from './apis/bootstrap-playground
 import { ChangeOrderStatusActionApi } from './apis/change-order-status-action.ts';
 import { ChangeProductImagesActionApi } from './apis/change-product-images-action.ts';
 import { CleanupDemoActionApi } from './apis/cleanup-demo-action.ts';
+import { DemoOrderExportApi } from './apis/demo-order-export.ts';
+import { DemoCatalogRevisionApi } from './apis/demo-catalog-revision.ts';
+import { ImportSourceCatalogActionApi } from './apis/import-source-catalog-action.ts';
 import { ManageCatalogActionApi } from './apis/manage-catalog-action.ts';
 import { ManageMarketsActionApi } from './apis/manage-markets-action.ts';
 import { MediaApi } from './apis/media.ts';
@@ -57,6 +60,9 @@ export const merchandiseApi = HttpApi.make('MerchandiseApi')
   .addHttpApi(ChangeOrderStatusActionApi)
   .addHttpApi(ChangeProductImagesActionApi)
   .addHttpApi(CleanupDemoActionApi)
+  .addHttpApi(DemoOrderExportApi)
+  .addHttpApi(DemoCatalogRevisionApi)
+  .addHttpApi(ImportSourceCatalogActionApi)
   .addHttpApi(ManageCatalogActionApi)
   .addHttpApi(ManageMarketsActionApi)
   .addHttpApi(MediaApi)

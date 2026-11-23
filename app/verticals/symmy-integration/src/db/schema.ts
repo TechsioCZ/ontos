@@ -11,6 +11,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import type {
@@ -123,9 +124,18 @@ export const symmyJobRoutes = symmyIntegrationSchema.table.withRLS(
   },
   (table) => [
     unique('symmy_job_routes_tenant_route_uq').on(table.tenantId, table.routeId),
-    unique('symmy_job_routes_scope_selector_uq')
+    uniqueIndex('symmy_job_routes_active_tenant_uq')
+      .on(table.tenantId, table.principalId, table.routeKey)
+      .where(sql`${table.active} and ${table.legalEntityId} is null and ${table.routeCode} is null`),
+    uniqueIndex('symmy_job_routes_active_company_uq')
+      .on(table.tenantId, table.principalId, table.legalEntityId, table.routeKey)
+      .where(sql`${table.active} and ${table.legalEntityId} is not null and ${table.routeCode} is null`),
+    uniqueIndex('symmy_job_routes_active_tenant_code_uq')
+      .on(table.tenantId, table.principalId, table.routeKey, table.routeCode)
+      .where(sql`${table.active} and ${table.legalEntityId} is null and ${table.routeCode} is not null`),
+    uniqueIndex('symmy_job_routes_active_company_code_uq')
       .on(table.tenantId, table.principalId, table.legalEntityId, table.routeKey, table.routeCode)
-      .nullsNotDistinct(),
+      .where(sql`${table.active} and ${table.legalEntityId} is not null and ${table.routeCode} is not null`),
     check(
       'symmy_job_routes_selector_ck',
       sql`(

@@ -9,6 +9,7 @@ import {
   materializeZeropsEnvironment,
   materializeZeropsSetupFiles,
   SYMMY_INGRESS_VARIABLE,
+  SYMMY_DEMO_PROCESSING_VARIABLE,
   SYMMY_PRICE_READ_SOURCES_VARIABLE,
   SYMMY_RETENTION_POLICIES_VARIABLE,
 } from '../materialize-zerops-environment.mts';
@@ -203,6 +204,10 @@ it.effect(
     Effect.gen(function* dropsSymmyStageRoutes() {
       const input = parseDocument(fixture);
       const named = [
+        {
+          path: ['zerops', 1, 'run', 'envVariables', SYMMY_DEMO_PROCESSING_VARIABLE],
+          value: 'true',
+        },
         {
           path: ['zerops', 1, 'run', 'envVariables', SYMMY_RETENTION_POLICIES_VARIABLE],
           value: '[{"policyId":"stage-route","revision":"v1"}]',

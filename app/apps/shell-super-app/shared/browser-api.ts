@@ -15,6 +15,8 @@ import {
   CoreSystemSearchPresentationSchema,
 } from '@app/core-runtime/search-contract';
 import { ApiKeyGatewayReadApiGroup, GatewayContextApiGroup } from '@app/shared-contracts';
+import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
+import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
 import {
   accessAdminApprovalsGroup,

@@ -3,10 +3,12 @@ import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runt
 import { cancelScopedSourceExecutionFence } from '@app/core-runtime/access/enforcement';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { Clock, Config, Context, DateTime, Effect, Option, Schema } from 'effect';
+import { and, eq } from 'drizzle-orm';
 import type { Crypto } from 'effect';
 import type { HttpClient } from 'effect/http';
 import {
   SymmyJobRetentionPolicySchema,
+  symmyRetentionPolicyMatchesRoute,
   symmyRetentionTargetForPrivacyHandoff,
   symmyJobIntentContentRef,
   symmyJobResourceRef,
@@ -19,6 +21,7 @@ import { SymmyJobPrivacy } from './symmy-job-privacy.service.ts';
 import type { SymmyJobPrivacyAuthority } from './symmy-job-privacy.service.ts';
 import { SymmyJobPrivacyError } from './symmy-job-privacy-error.ts';
 import { symmyIntegrationEvidenceCall } from '../declared-evidence-calls.ts';
+import { symmyJobRoutes } from '../db/schema.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(new SymmyJobRetentionError({ code: 'retention_configuration_unavailable' }), 'cause', {
@@ -85,10 +88,20 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       const job = maybeJob.value;
       const targetLegalEntityId = Option.getOrNull(job.legalEntityId);
       const pinned = Option.getOrUndefined(job.policy);
+      const [familyRoute] = policies.some((policy) => policy.routeFamily === 'DEMO_GROUP_MEMBERSHIP')
+        ? yield* transaction
+            .select()
+            .from(symmyJobRoutes)
+            .where(and(eq(symmyJobRoutes.tenantId, scope.tenantId), eq(symmyJobRoutes.routeId, job.routeId)))
+            .limit(1)
+            .pipe(Effect.mapError(unavailable))
+        : [];
       const matches = policies.filter(
         (policy) =>
           policy.tenantId === scope.tenantId &&
-          policy.routeId === job.routeId &&
+          (policy.routeFamily === undefined
+            ? policy.routeId === job.routeId
+            : familyRoute !== undefined && symmyRetentionPolicyMatchesRoute(policy, familyRoute)) &&
           (pinned === undefined || (policy.policyId === pinned.policyId && policy.revision === pinned.revision)),
       );
       const [policy] = matches;
@@ -136,6 +149,7 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       const finalAuthority = yield* privacy
         .current(handoff, scope)
         .pipe(symmyIntegrationEvidenceCall.retentionPrivacyCurrent, Effect.flatMap(requireRecheckedAuthority));
+      const { routeFamily: _family, ...exactPolicy } = policy;
       return outcome(
         yield* store.purge({
           authority: {
@@ -151,7 +165,7 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
           },
           jobId,
           kind: target.kind,
-          policy,
+          policy: { ...exactPolicy, routeId: job.routeId },
         }),
       );
     }),

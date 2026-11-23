@@ -1,10 +1,21 @@
 import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { SymmyJobIdSchema } from './symmy-job-identities.ts';
 import { SymmyJobLifecyclePolicyRefSchema, SymmyLifecycleRouteIdSchema } from './symmy-job-notification.ts';
+import type { SymmyFixtureExecutionPlan } from './symmy-job-execution.ts';
+
+export const SYMMY_DEMO_MEMBERSHIP_RETENTION = {
+  companyId: 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7',
+  issuer: 'symmy-akros',
+  namespace: 'akros-erp',
+  policyId: 'akros-symmy-memberships',
+  revision: 'v1',
+  sourceRouteId: 'f637a6ec-865b-43bc-9c28-57783757f367',
+  tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
+} as const;
 
 const uuid = Schema.String.check(Schema.isUUID());
 export const SymmyJobRetentionPolicySchema = Schema.Struct({
@@ -12,11 +23,60 @@ export const SymmyJobRetentionPolicySchema = Schema.Struct({
   governanceLegalEntityId: LegalEntityIdSchema,
   retentionMs: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(315_576_000_000)),
   routeId: SymmyLifecycleRouteIdSchema,
+  routeFamily: Schema.optionalKey(Schema.Literal('DEMO_GROUP_MEMBERSHIP')),
   targetLegalEntityId: Schema.OptionFromNullOr(LegalEntityIdSchema),
   tenantId: TenantIdSchema,
-});
+}).check(
+  Schema.makeFilter((policy) => {
+    const demo = SYMMY_DEMO_MEMBERSHIP_RETENTION;
+    return (
+      policy.routeFamily === undefined ||
+      (policy.tenantId === demo.tenantId &&
+        policy.routeId === demo.sourceRouteId &&
+        policy.governanceLegalEntityId === demo.companyId &&
+        Option.getOrNull(policy.targetLegalEntityId) === demo.companyId &&
+        policy.policyId === demo.policyId &&
+        policy.revision === demo.revision) ||
+      'Demo membership retention is restricted to the enrolled AKROS source and company'
+    );
+  }),
+);
 export type SymmyJobRetentionPolicy = typeof SymmyJobRetentionPolicySchema.Type;
 
+interface RetainedRoute {
+  readonly tenantId: string;
+  readonly legalEntityId: string | null;
+  readonly routeId: string;
+  readonly routeKey: string;
+  readonly fixturePlan: SymmyFixtureExecutionPlan | null;
+}
+
+/** A standing demo family policy applies only to real selected routes of its exact enrolled source. */
+export const symmyRetentionPolicyMatchesRoute = (policy: SymmyJobRetentionPolicy, route: RetainedRoute): boolean => {
+  if (policy.routeFamily === undefined) {
+    return policy.tenantId === route.tenantId && policy.routeId === route.routeId;
+  }
+  const demo = SYMMY_DEMO_MEMBERSHIP_RETENTION;
+  const plan = route.fixturePlan;
+  const selector = plan?.selector;
+  return (
+    route.tenantId === demo.tenantId &&
+    policy.tenantId === demo.tenantId &&
+    policy.routeId === demo.sourceRouteId &&
+    route.legalEntityId === demo.companyId &&
+    route.routeKey === 'customerGroupCustomersBatch' &&
+    plan?.sourceRouteId === demo.sourceRouteId &&
+    plan.sourceRouteRevision === demo.revision &&
+    plan.sourceMappingVersion === demo.revision &&
+    selector?.kind === 'CUSTOMER_GROUP' &&
+    selector.source.route.tenantId === demo.tenantId &&
+    selector.source.route.integrationRouteId === demo.sourceRouteId &&
+    selector.source.issuerId === demo.issuer &&
+    selector.source.sourceNamespace === demo.namespace &&
+    selector.target?.tenantId === demo.tenantId &&
+    plan.items.every(({ source }) => source.issuerId === demo.issuer && source.sourceNamespace === demo.namespace)
+  );
+};
 export const SymmyJobLifecycleMetadataSchema = Schema.Struct({
   admittedAt: Schema.DateTimeUtcFromString,
   jobId: SymmyJobIdSchema,

@@ -35,6 +35,7 @@ import {
 import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
+import { SHELL_HOST_APP_ID, coreOperations } from '../../src/sdk/core-operations.ts';
 
 const revision = 'a'.repeat(64);
 
@@ -371,6 +372,56 @@ const gatewayScope = (compositionRevision = revision) =>
     }),
     compositionRevision,
   );
+
+it.effect('retains the consumer deployment identity for both in-process and Shell-hosted Core requirements', () =>
+  Effect.gen(function* coreProviderConsumerIdentity() {
+    const moduleId = 'consumer.alpha';
+    for (const operation of Object.values(coreOperations)) {
+      const actual = registration(moduleId);
+      const base = makeModuleContractFixture({ appId: 'consumer-alpha', moduleId });
+      const requirements = Schema.decodeUnknownSync(OntosModuleRequirementsSchema)({
+        coreCapabilities: [],
+        intrinsic: [],
+        operations: [
+          {
+            condition: `${moduleId}.provider-branch`,
+            entrypointKey: actual.descriptor.entrypoint.entrypointKey,
+            evidence: [`${moduleId}.current-facts`],
+            key: requirementKey(moduleId),
+            provider: operation.provider,
+          },
+        ],
+        schemaVersion: '1',
+      });
+      const manifest = defineOntosModuleManifest({
+        ...base.manifest,
+        publicSurface: { ...base.manifest.publicSurface, actions: [actual], api: {}, components: {} },
+        requirements,
+      });
+      const contract = decodeContract({
+        ...base,
+        manifest: { ...base.manifest, requirements },
+      });
+      const scope = gatewayScope();
+      const fact = yield* withModuleOperationExecution(
+        {
+          loadCatalog: Effect.succeed(makeInstalledCatalogFixture(contract)),
+          ownerRegistration: defineVerticalRuntimeRegistration({ actions: [actual], manifest, outboxWorkers: [] }),
+          phase: 'execution',
+          registration: actual,
+          revision,
+          scope,
+        },
+        readModuleOperationRequirement(requirementKey(moduleId), scope),
+      );
+      expect(fact.consumerAppId).toBe('consumer-alpha');
+      expect(fact.providerAppId).toBe(
+        operation === coreOperations.assetCurrent ? SHELL_HOST_APP_ID : operation.provider.moduleId,
+      );
+      expect(fact.providerEntrypointKey).toBe(operation.provider.entrypointKey);
+    }
+  }),
+);
 
 it.effect('reads immutable exact conditional operation facts only from the original live gateway scope', () =>
   Effect.gen(function* factualOperationContract() {

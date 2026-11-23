@@ -2937,7 +2937,7 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
       return yield* Effect.fail(gatewayForbiddenProblem());
     }
     if (input.legalEntityId === undefined && input.audience !== 'inventory') {
-      return yield* acquireSymmyOwnerAssertion(rawKey, request, input, admission.compositionRevision);
+      return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
     }
     if (selectedRoute === undefined) {
       return yield* Effect.fail(gatewayForbiddenProblem());

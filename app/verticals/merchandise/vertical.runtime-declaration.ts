@@ -19,6 +19,11 @@ import { bootstrapPlaygroundCatalogAction } from './src/actions/bootstrap-playgr
 import { changeOrderStatusAction } from './src/actions/change-order-status.action.ts';
 import { changeProductImagesAction } from './src/actions/change-product-images.action.ts';
 import { cleanupDemoAction } from './src/actions/cleanup-demo.action.ts';
+import { DemoOrderExportApi } from './shared/apis/demo-order-export.ts';
+import { DemoCatalogRevisionApi } from './shared/apis/demo-catalog-revision.ts';
+import { demoCatalogRevisionRead } from './src/api/demo-catalog-revision.read.ts';
+import { demoOrderExportRead } from './src/api/demo-order-export.read.ts';
+import { importSourceCatalogAction } from './src/actions/import-source-catalog.action.ts';
 import { manageCatalogAction } from './src/actions/manage-catalog.action.ts';
 import { manageMarketsAction } from './src/actions/manage-markets.action.ts';
 import { MediaApi } from './shared/apis/media.ts';
@@ -89,6 +94,7 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
       changeOrderStatusAction,
       changeProductImagesAction,
       cleanupDemoAction,
+      importSourceCatalogAction,
       manageCatalogAction,
       manageMarketsAction,
       placeStorefrontOrderAction,
@@ -101,6 +107,8 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
     api: {
       // <generated-module-manifest-apis>
       'agent-review': AgentReviewApi,
+      'demo-order-export': DemoOrderExportApi,
+      'demo-catalog-revision': DemoCatalogRevisionApi,
       media: MediaApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       records: RecordsApi,
@@ -108,6 +116,11 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
     },
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'demo-catalog-revision',
+        operationKey: 'demoCatalogRevision.execute',
+        registration: demoCatalogRevisionRead,
+      },
       {
         apiKey: 'agent-review',
         operationKey: 'agentReview.execute',
@@ -117,6 +130,11 @@ export const merchandiseRuntimeManifest: VerticalRuntimeRegistrationInput['manif
         apiKey: 'media',
         operationKey: 'media.execute',
         registration: mediaRead,
+      },
+      {
+        apiKey: 'demo-order-export',
+        operationKey: 'demoOrderExport.execute',
+        registration: demoOrderExportRead,
       },
       {
         apiKey: 'records',
@@ -350,6 +368,7 @@ export const merchandiseRuntimeDeclaration: VerticalRuntimeRegistrationInput = {
   reads: [
     // <generated-module-registration-reads>
     agentReviewRead,
+    demoOrderExportRead,
     mediaRead,
     recordsRead,
     // </generated-module-registration-reads>

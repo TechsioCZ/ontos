@@ -9,7 +9,6 @@ import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-vari
 import { UpdateProductPayloadSchema } from '@app/catalog/api/update-product-action';
 import { GovernVariantAxesPayloadSchema } from '@app/catalog/api/govern-variant-axes-action';
 import { ConfirmVariantCombinationPayloadSchema } from '@app/catalog/api/confirm-variant-combination-action';
-import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
 import { SetProductUnitTargetDivisibilityPayloadSchema } from '@app/catalog/api/set-product-unit-target-divisibility-action';
 import { DecideProductTypeUnnecessaryPayloadSchema } from '@app/catalog/api/decide-product-type-unnecessary-action';
 import {

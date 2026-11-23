@@ -278,7 +278,7 @@ const ApplyUpdateCategoryCommandSchema = Schema.TaggedStruct('UpdateCategory', {
   patch: CategoryPatchSchema,
 });
 
-const ApplyCreateCategoryCommandSchema = Schema.TaggedStruct('CreateCategory', {
+export const ApplyCreateCategoryCommandSchema = Schema.TaggedStruct('CreateCategory', {
   heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
   id: CatalogCategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),

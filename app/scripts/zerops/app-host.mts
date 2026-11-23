@@ -48,6 +48,10 @@ import { observeRuntimeJob } from '../../packages/core-runtime/src/observability
 import { bootTimingLine, timedBootStage, timedBootStageJudged } from './boot-stage-timing.mts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
+  readSymmyDemoCustomerEnvironment,
+  SymmyDemoCustomerAuthorityLive,
+} from '../demo/symmy-demo-customer-authority.mts';
+import {
   earliestExpiryOf,
   encodeModuleCredentialHandover,
   MODULE_CREDENTIAL_CALLERS,
@@ -227,6 +231,7 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
   'ONTOS_GATEWAY_ISSUER',
   'ONTOS_SHELL_GATEWAY_BASE_URL',
   'ONTOS_SHELL_RENDER_API_URL',
+  'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
   'PORT',
   'SPICEDB_CA_CERT',
   'SPICEDB_ENDPOINT',
@@ -574,6 +579,7 @@ const runChild = (
   env: ChildEnvironment,
   /** `false`: the child sees exactly `env` and nothing of the supervisor's own environment. */
   extendEnv = true,
+  output: 'inherit' | 'ignore' = 'inherit',
 ) =>
   Effect.scoped(
     Effect.gen(function* runFiniteChild() {
@@ -582,8 +588,8 @@ const runChild = (
         env: finiteProcessEnvironment(env, yield* containerCompileCache),
         extendEnv,
         forceKillAfter: FINITE_CHILD_FORCE_KILL_AFTER,
-        stderr: 'inherit',
-        stdout: 'inherit',
+        stderr: output,
+        stdout: output,
       });
       const code = yield* handle.exitCode;
       if (code !== 0) {
@@ -595,6 +601,64 @@ const runChild = (
     observeRuntimeJob('supervisor-child', name),
     Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))),
   );
+
+/** Stage supervisor commands, in dependency order; none runs inside an owner process. */
+export const STAGE_SYMMY_DEMO_BOOTSTRAPS = [
+  { kind: 'source-policies', script: 'scripts/demo/symmy-demo-source-policies.mts', args: [] },
+  {
+    kind: 'customer-authority',
+    script: 'scripts/demo/symmy-demo-customer-authority.mts',
+    args: ['--mode', 'apply'],
+  },
+  { kind: 'exchange-authority', script: 'scripts/demo/symmy-demo-exchange-authority.mts', args: [] },
+] as const;
+
+/** Customer enrollment reads the existing owner configuration, never the owner's unrelated secrets. */
+const SYMMY_DEMO_CUSTOMER_SETTINGS = [
+  'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
+  'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
+  'ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS',
+] as const;
+
+/** Reapply the demo's canonical source policies, customer authority and exchange authority on every stage boot. */
+export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyDemo() {
+  const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
+    Config.withDefault('production'),
+  );
+  if (environment !== 'stage') {
+    return;
+  }
+  const admin = yield* Config.Redacted('DATABASE_ADMIN_URL');
+  const settings = {
+    DATABASE_ADMIN_URL: Redacted.value(admin),
+    ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+  };
+  for (const { kind, script, args } of STAGE_SYMMY_DEMO_BOOTSTRAPS) {
+    const childSettings: Record<string, string> = { ...settings };
+    if (kind === 'customer-authority') {
+      childSettings.DATABASE_URL = Redacted.value(yield* Config.Redacted('DATABASE_URL'));
+      for (const key of SYMMY_DEMO_CUSTOMER_SETTINGS) {
+        const value = yield* Config.option(Config.String(key));
+        if (Option.isSome(value)) {
+          childSettings[key] = value.value;
+        }
+      }
+    }
+    yield* runChild(
+      'stage-symmy-demo-bootstrap',
+      process.execPath,
+      [script, ...args],
+      workspaceRoot,
+      childSettings,
+      false,
+      'ignore',
+    ).pipe(Effect.tapError(() => Console.error(`[app-host] stage Symmy ${kind} bootstrap failed`)));
+  }
+  yield* Console.log('[app-host] stage Symmy demo bootstrap complete');
+}).pipe(
+  Effect.mapError(() => failure('stage Symmy demo bootstrap failed; composition not published')),
+  Effect.tapError(({ reason }) => Console.error(`[app-host] ${reason}`)),
+);
 
 /**
  * The platform's internal workload registration (`release-internal-workloads.mts`), started with its own settings
@@ -1956,14 +2020,24 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
-  const derived = derivedEnvironment(
-    publicOrigin,
-    storefrontOrigin,
-    CONTROL_PORT,
-    ports,
-    shopStorefrontOrigin,
-    environment,
-  );
+  const customerSourceEnvironment =
+    environment === 'stage'
+      ? (yield* readSymmyDemoCustomerEnvironment.pipe(
+          Effect.provide(SymmyDemoCustomerAuthorityLive),
+          Effect.mapError(() => failure('Unable to resolve the existing AKROS customer source writers')),
+        )).environment
+      : {};
+  const derived = {
+    ...derivedEnvironment(
+      publicOrigin,
+      storefrontOrigin,
+      CONTROL_PORT,
+      ports,
+      shopStorefrontOrigin,
+      environment,
+    ),
+    ...customerSourceEnvironment,
+  };
   const node = process.execPath;
   const runtime = yield* shellRuntime;
   const memoryBytes = yield* readContainerMemoryBytes;
@@ -2302,6 +2376,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       { concurrency: 2 },
     );
     yield* releaseAccessProof;
+    yield* bootstrapStageSymmyDemo.pipe(timedBootStage('host.symmy-demo-bootstrap'));
     const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.

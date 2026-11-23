@@ -162,23 +162,23 @@ const selector: NonNullable<EncodedConfiguration['selector']> = {
   },
 };
 
-/** One position of the ERP's stock the stock route admits rows for. */
-const stockPosition = (
-  itemKey: string,
-  changes: Partial<NonNullable<EncodedConfiguration['stockScope']>[number]> = {},
-): NonNullable<EncodedConfiguration['stockScope']>[number] => ({
+/** The immutable source policy, shared by every ERP item rather than a finite SKU list. */
+const stockSource = (
+  changes: Partial<NonNullable<EncodedConfiguration['inventorySource']>> = {},
+): NonNullable<EncodedConfiguration['inventorySource']> => ({
   customerConfigurationId: 'AKROS',
-  issuerBackendId: stockBackend,
-  itemKey,
-  locationKey: 'WH-MAIN',
+  issuer: { backendKind: 'external_business_system', backendId: stockBackend },
   namespace: 'AKROS_STOCK',
-  positionRef: {
-    moduleId: 'commerce.inventory',
-    resourceId: groupId,
-    resourceType: 'commerce.inventory.stock-position',
-    tenantId,
+  externalScope: 'AKROS_COMPANY',
+  unitRef,
+  policyRef: {
+    moduleId: 'commerce.inventory', resourceId: groupId,
+    resourceType: 'commerce.inventory.source-provisioning-policy', tenantId,
   },
-  scope: 'AKROS_COMPANY',
+  locations: [{ locationKey: 'WH-MAIN', stockLocationRef: {
+    moduleId: 'commerce.inventory', resourceId: groupId,
+    resourceType: 'commerce.inventory.stock-location', tenantId,
+  } }],
   ...changes,
 });
 
@@ -207,8 +207,8 @@ const valid = {
   inventoryStockBatch: () => ({
     configuration: {
       inventoryBackendId: stockBackend,
-      items: [item('STOCK', [importStock])],
-      stockScope: [stockPosition('SKU-1')],
+      items: [item('STOCK', [importStock, operation('commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution')])],
+      inventorySource: stockSource(),
     },
     lifecyclePolicy,
   }),
@@ -531,39 +531,23 @@ describe('Symmy route request refusals', () => {
     ).toEqual([]);
   });
 
-  it('requires the stock route to name its Inventory backend and positions of that backend and Tenant', () => {
-    expect(requestRefusals(withConfiguration('inventoryStockBatch', {}, ['stockScope']))).toEqual([
-      'stock_scope_required: inventoryStockBatch names the Inventory backend it asserts for and the stock positions it admits rows for',
-    ]);
-    expect(codes(withConfiguration('inventoryStockBatch', {}, ['inventoryBackendId']))).toEqual([
-      'stock_scope_required',
-    ]);
-    const otherTenant = { ...stockPosition('SKU-3').positionRef, tenantId: legalEntityId };
-    expect(
-      requestRefusals(
-        withConfiguration('inventoryStockBatch', {
-          stockScope: [
-            stockPosition('SKU-1'),
-            stockPosition('SKU-2', { issuerBackendId: 'OTHER_ERP' }),
-            stockPosition('SKU-3', { positionRef: otherTenant }),
-          ],
-        }),
-      ),
-    ).toEqual([
-      'stock_scope_invalid: The position of item SKU-2 at location WH-MAIN is issued by backend OTHER_ERP, not AKROS_ERP, so none of its rows is admitted',
-      'stock_scope_invalid: The position of item SKU-3 at location WH-MAIN belongs to another Tenant',
-    ]);
-    // The Inventory import is the stock route's one owner operation, and its admission pins a lifecycle policy.
-    expect(codes(withConfiguration('inventoryStockBatch', { items: [item('STOCK', [createProduct])] }))).toEqual([
-      'operation_not_in_route_inventory',
-      'required_operation_missing',
-      'required_operation_missing',
-    ]);
-    expect(codes(request('inventoryStockBatch', {}, ['lifecyclePolicy']))).toEqual(['lifecycle_policy_required']);
-    // Stock positions belong to the stock route alone.
-    expect(codes(withConfiguration('customerGroupsBatch', { stockScope: [stockPosition('SKU-1')] }))).toEqual([
+  it('requires one tenant-local source policy of the selected Inventory backend', () => {
+    expect(codes(withConfiguration('inventoryStockBatch', {}, ['inventorySource']))).toEqual([
       'configuration_field_not_allowed',
     ]);
+    expect(codes(withConfiguration('inventoryStockBatch', {}, ['inventoryBackendId']))).toEqual([
+      'configuration_field_not_allowed',
+    ]);
+    expect(codes(withConfiguration('inventoryStockBatch', {
+      inventorySource: stockSource({ issuer: { backendKind: 'external_business_system', backendId: 'OTHER_ERP' } }),
+    }))).toEqual(['configuration_field_not_allowed']);
+    expect(codes(withConfiguration('inventoryStockBatch', { items: [item('STOCK', [createProduct])] }))).toEqual([
+      'operation_not_in_route_inventory', 'required_operation_missing', 'required_operation_missing', 'required_operation_missing',
+    ]);
+    expect(codes(request('inventoryStockBatch', {}, ['lifecyclePolicy']))).toEqual(['lifecycle_policy_required']);
+    expect(codes(withConfiguration('customerGroupsBatch', { inventorySource: stockSource() }))).toContain(
+      'configuration_field_not_allowed',
+    );
   });
 
   it('keeps the routes of one company off a Tenant-only route', () => {
@@ -940,65 +924,18 @@ describe('Symmy route write decisions', () => {
     expect(refusalCodes(decided(enrollment, { byRouteId: inactive, bySelector: inactive }))).toEqual(['route_drift']);
   });
 
-  it('keeps the synchronous admissions of a stock route whose replacement only adds positions, and no others', () => {
-    // One enrolled route: its items are built once, so every revision below differs only where it says.
+  it('never treats source-policy replacement as permission to reinterpret retained synchronous admissions', () => {
     const base = fields('inventoryStockBatch');
-    const v2 = (
-      changes: Partial<EncodedRequest>,
-      configuration: Partial<EncodedConfiguration>,
-      routeRevision = 'route-v2',
-    ) => decode({ ...base, ...changes, configuration: { ...base.configuration, ...configuration }, routeRevision });
-    const v1 = v2({}, { stockScope: [stockPosition('SKU-1')] }, 'route-v1');
+    const v1 = decode({ ...base, routeRevision: 'route-v1' });
     const stored = storedRow(v1, { changeToken: 7 });
-    const admissionsOf = (replacement: SymmyRouteEnrollmentRequest) => {
-      const decision = decided(replacement, { byRouteId: stored, bySelector: stored }, replaceAt(7));
-      return 'admissions' in decision ? decision.admissions : decision;
-    };
-    // Every stored position kept as it was, one added: the admissions of route-v1 stay as they were admitted.
-    expect(admissionsOf(v2({}, { stockScope: [stockPosition('SKU-2'), stockPosition('SKU-1')] }))).toBe('kept');
-    // A stored position removed or changed, or anything else changed, could reinterpret an earlier admission.
-    expect(admissionsOf(v2({}, { stockScope: [stockPosition('SKU-2')] }))).toBe('outstanding');
-    expect(
-      admissionsOf(v2({}, { stockScope: [stockPosition('SKU-1', { locationKey: 'WH-2' }), stockPosition('SKU-2')] })),
-    ).toBe('outstanding');
-    expect(
-      admissionsOf(v2({}, { stockScope: [stockPosition('SKU-1', { scope: 'OTHER' }), stockPosition('SKU-2')] })),
-    ).toBe('outstanding');
-    expect(
-      admissionsOf(
-        v2({}, { items: [item('STOCK', [importStock], 'OTHER_ISSUER')], stockScope: [stockPosition('SKU-1')] }),
-      ),
-    ).toBe('outstanding');
-    expect(admissionsOf(v2({ mappingVersion: 'map-v2' }, { stockScope: [stockPosition('SKU-1')] }))).toBe(
-      'outstanding',
-    );
-    expect(
-      admissionsOf(
-        v2({ lifecyclePolicy: { policyId: 'other-policy', revision: 'r1' } }, { stockScope: [stockPosition('SKU-1')] }),
-      ),
-    ).toBe('outstanding');
-    // A stopped route, and every route without stock positions, keeps nothing.
-    const stopped = storedRow(v1, { active: false, changeToken: 7 });
-    const restarted = decided(
-      v2({}, { stockScope: [stockPosition('SKU-1'), stockPosition('SKU-2')] }),
-      { byRouteId: stopped, bySelector: stopped },
-      replaceAt(7),
-    );
-    expect(restarted).toMatchObject({ admissions: 'outstanding', kind: 'replace' });
-    const groups = request('customerGroupsBatch');
-    const storedGroups = storedRow(groups, { routeRevision: 'route-v0' });
-    expect(decided(groups, { byRouteId: storedGroups, bySelector: storedGroups }, replaceAt(1))).toMatchObject({
-      admissions: 'outstanding',
-      kind: 'replace',
-    });
-    // Kept admissions are not outstanding work, but a job of the route still is.
+    const v2 = decode({ ...base, routeRevision: 'route-v2' });
+    const decision = decided(v2, { byRouteId: stored, bySelector: stored }, replaceAt(7));
+    expect(decision).toMatchObject({ admissions: 'outstanding', kind: 'replace' });
     const outstanding = Schema.decodeUnknownSync(SymmyOutstandingWorkSchema);
     expect(symmyOutstandingRefusals(outstanding({ admissions: [], jobs: [], listedAll: true }))).toEqual([]);
-    expect(
-      symmyOutstandingRefusals(
-        outstanding({ admissions: [], jobs: [{ jobId: routeId, state: 'planned' }], listedAll: true }),
-      ).map(({ code }) => code),
-    ).toEqual(['outstanding_work']);
+    expect(symmyOutstandingRefusals(outstanding({
+      admissions: [routeId], jobs: [], listedAll: true,
+    })).map(({ code }) => code)).toEqual(['outstanding_work']);
   });
 
   it('refuses a replacement prepared before the route was stopped, at the revision it still carries', () => {

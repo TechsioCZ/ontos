@@ -366,6 +366,18 @@ export interface ResolveActionCommitInput {
   readonly principal: unknown;
 }
 
+export type ResolveActionExecutionInput = { readonly expectedRequestHash?: unknown; readonly principal: unknown } & (
+  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: unknown }
+  | { readonly actionKey: unknown; readonly idempotencyKey: unknown; readonly invocationId?: never }
+);
+
+const ExpectedActionRequestHashSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+const actionRequestMismatch = () =>
+  new ActionPayloadValidationError({
+    code: 'action_payload_invalid',
+    reason: 'The original Action request could not be matched',
+  });
+
 const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId'));
 
 const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
@@ -373,6 +385,21 @@ const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
 });
 
 export type ActionCommitOpen = typeof ActionCommitOpenSchema.Type;
+
+const validateInvocationId = <Input>(
+  input: Input,
+): Effect.Effect<typeof ActionInvocationIdSchema.Type, ActionPayloadValidationError> =>
+  Schema.decodeUnknownEffect(ActionInvocationIdSchema)(input).pipe(
+    Effect.mapError((cause) =>
+      attachFailureCause(
+        new ActionPayloadValidationError({
+          code: 'action_payload_invalid',
+          reason: 'The Action invocation identifier is invalid',
+        }),
+        cause,
+      ),
+    ),
+  );
 
 const ActionCommitActionKeySchema = Schema.String.check(
   Schema.isTrimmed(),
@@ -4191,23 +4218,18 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       .pipe(
         Effect.tapError((error) =>
           Schema.is(ActionInvocationPersistenceError)(error)
-            ? logInvocationPersistenceFailure(
-                error,
-                withOptionalProperty(
-                  { principalId: principal.principalId, tenantId: principal.tenantId },
-                  requestedInvocationId !== undefined,
-                  'invocationId',
-                  requestedInvocationId,
-                  {},
-                ),
-              )
+            ? logInvocationPersistenceFailure(error, {
+                invocationId,
+                principalId: principal.principalId,
+                tenantId: principal.tenantId,
+              })
             : Effect.void,
         ),
         Effect.mapError((error) =>
-          Schema.is(ActionInvocationPersistenceError)(error) && requestedInvocationId !== undefined
+          Schema.is(ActionInvocationPersistenceError)(error)
             ? new ActionCommitIndeterminate({
                 code: 'action_commit_indeterminate',
-                invocationId: requestedInvocationId,
+                invocationId,
                 reason: 'The database cannot confirm the Action commit state yet',
               })
             : error,

@@ -379,8 +379,11 @@ interface CustomerFacts<Failure> {
   readonly row: SymmyCustomerRow;
 }
 
-/** A source record id for a customer id the owners accept, or the one derived from the customer id when they do not. */
-const customerRecordId = Effect.fn('SymmyCustomerPlan.recordId')(function* customerRecordId<Failure>(
+/**
+ * A source record id for a customer id the owners accept, or the one derived from the customer id when they do not.
+ * The membership planner derives the same record from the same customer id to find the profile this plan created.
+ */
+export const symmyCustomerSourceRecordId = Effect.fn('SymmyCustomerPlan.recordId')(function* customerRecordId<Failure>(
   customerId: string,
   digest: Digest<Failure>,
 ) {
@@ -399,7 +402,7 @@ const buildCustomer = Effect.fn('SymmyCustomerPlan.customer')(function* buildCus
 ) {
   const { context, digest, idempotencyKey, index, row } = facts;
   const itemKey = `customer-${index}`;
-  const recordId = yield* customerRecordId(row.customerId, digest);
+  const recordId = yield* symmyCustomerSourceRecordId(row.customerId, digest);
   const customer = customerItem(
     { context, occurrenceId: yield* occurrenceOf(digest, idempotencyKey, itemKey), recordId },
     row,

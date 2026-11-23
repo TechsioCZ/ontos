@@ -213,6 +213,9 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
   if ('customers' in request) {
     return { customers: request.customers };
   }
+  if ('groupCustomers' in request) {
+    return { groupCustomers: request.groupCustomers };
+  }
   if ('products' in request) {
     if (selected === undefined) {
       return yield* unavailable();
@@ -455,6 +458,7 @@ export const makeSymmyGovernedDispatch = (
       'priceLists' in request ||
       'priceBatch' in request ||
       'customers' in request ||
+      'groupCustomers' in request ||
       'products' in request ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));

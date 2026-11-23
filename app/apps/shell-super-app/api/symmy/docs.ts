@@ -14,6 +14,17 @@ const tenantId = 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9';
 const catalogModuleId = 'commerce.catalog';
 const jsonMediaType = 'application/json';
 const priceListsTag = 'Price lists';
+const storefrontTag = 'Storefront catalog';
+/** These Shell endpoints are implemented outside the engineered SYMMY_ROUTES inventory. */
+const demoRoutes = {
+  demoCatalogRevision: { method: 'GET', path: '/api/symmy/v1/catalog/revision', successStatus: 200 },
+  demoOrders: { method: 'GET', path: '/api/symmy/v1/orders', successStatus: 200 },
+  demoOrder: { method: 'GET', path: '/api/symmy/v1/orders/{id}', successStatus: 200 },
+  demoCategories: { method: 'POST', path: '/api/symmy/v1/categories/batch', successStatus: 200 },
+  demoCatalogProducts: { method: 'POST', path: '/api/symmy/v1/catalog/products/batch', successStatus: 200 },
+  demoMedia: { method: 'POST', path: '/api/symmy/v1/products/media', successStatus: 200 },
+} as const;
+const routeDefinitions = { ...SYMMY_ROUTES, ...demoRoutes };
 const pieceUnitRef = {
   moduleId: catalogModuleId,
   resourceId: '43d5c797-2b36-4877-85ad-caac3a674d9c',
@@ -27,7 +38,7 @@ const wholesalePriceGroupRef = {
   tenantId,
 };
 
-const guide = `Send AKROS ERP data to OntOS: products, texts, item numbers, prices, stock, customer groups and price lists.
+const guide = `Exchange AKROS ERP data with OntOS: products, prices, stock, customers, groups, images, categories and order exports.
 
 This is the **Akros demo stage**. Everything on this page can be tried from the browser: paste your key under
 **Authentication**, open an operation and press **Test Request**.
@@ -72,20 +83,46 @@ Every refusal is \`application/problem+json\` with \`title\`, \`status\` and \`d
 | --- | --- |
 | 400 | The body breaks the schema or a limit, for example more than 16 items in one request. |
 | 401 | \`x-api-key\` is missing or not valid. |
-| 403 | The key may not do this, or a stock row names an item that is not prepared. |
-| 409 | This \`idempotency-key\` was already used with a different body. |
+| 403 | The key has no authority for this operation or selected company. |
+| 409 | An idempotency key conflicts, or the native catalog revision changed. |
+| 422 | A warehouse, unit or requested projection has no supported source mapping. |
 | 428 | \`idempotency-key\` is missing. |
 | 429 | Too many requests, retry later. |
 | 503 | Temporarily unavailable, retry the same body with a new key. |
 
-## 5. Limits of the demo
+## 5. Choose the product model
 
-- **Prices and stock** are accepted for the twelve prepared items: \`AKROS-10001-V1\` to \`AKROS-10009-V1\`,
-  \`AKROS-DEMO-0001-V1\`, \`AKROS-DEMO-0002-V1\` and \`AKROS-DEMO-0002-V2\`. A new product, its texts and its item
-  number go through at once; its price and stock need a one-time preparation on the OntOS side, so tell us which
-  item you want to add.
-- **Wholesale list prices** are prepared for \`AKROS-10001-V1\` to \`AKROS-10004-V1\` in the list \`VELKOOBCHOD\`.
-- **Not available yet:** customers, customer-group members, images, categories, and orders going back to the ERP.
+| API | Owner and identifiers |
+| --- | --- |
+| \`POST /products/batch\`, stock and price lists | Engineered Catalog. ERP identifiers resolve to typed \`productRef\`, \`variantRef\` and \`unitRef\` values. Read them with \`GET /admin/products\`. |
+| \`POST /categories/batch\`, \`POST /catalog/products/batch\`, \`POST /products/media\` | Native demo Merchandise, the storefront catalog. Responses contain native \`entityId\` values and \`ownerModuleId: "demo.merchandise"\`. These IDs are not engineered Catalog references. |
+
+New ERP SKUs do not need a manual per-SKU price or stock grant. The enrolled source policy still controls the
+company, warehouse, unit and commercial dimensions, without a preseeded SKU allowlist.
+The two product models are separate; sending an engineered Catalog product does not create its native Merchandise copy.
+
+For native storefront writes, read the current catalog revision with \`GET /catalog/revision\` first.
+Copy its \`revision\` into the write's \`expectedRevision\`, then use the returned \`revision\` for your next write.
+Replace the example revision \`0\` with the value you just read.
+Create categories before products that name their \`categoryCode\`. Use the product's native \`entityId\` as
+\`productId\` when uploading an image. A revision conflict requires a fresh catalog read, not a guessed revision.
+
+## 6. Customers and order exports
+
+\`POST /customers/batch\` imports people or organizations through Party Registry and Commerce Customer Context.
+\`POST /customer-groups/{code}/customers/batch\` assigns previously imported ERP \`customerId\` values to one group.
+Read customer results with \`GET /admin/customers\`. Personal data still requires the source's real Privacy authority.
+
+\`GET /orders\` and \`GET /orders/{id}\` export existing orders of the credential's selected company.
+They do not create an invoice, push an order into ABRA, or confirm an ERP import.
+
+## 7. Request limits
+
+Batch limits, source authority, company boundaries, idempotency and rate limits still apply.
+Native category and product requests accept 1 to 16 rows; a product has at most 20 image URL references.
+Customer batches accept 1 to 16 customers within the owner execution-plan budget.
+Order pages accept \`limit\` from 1 to 100 and a nonnegative \`offset\`.
+Core Media validates image signatures and decoded byte limits. A URL reference does not make Shell download remote bytes.
 `;
 
 type Json = typeof Schema.Json.Type;
@@ -95,7 +132,15 @@ interface DocumentedRoute {
   readonly requestExamples?: Readonly<Record<string, { readonly summary: string; readonly value: Json }>>;
   readonly responseExample?: Json;
   readonly summary: string;
-  readonly tag: 'Customer groups' | 'Jobs' | 'Products' | 'Stock' | typeof priceListsTag;
+  readonly tag:
+    | 'Customers'
+    | 'Customer groups'
+    | 'Jobs'
+    | 'Orders'
+    | 'Products'
+    | 'Stock'
+    | typeof priceListsTag
+    | typeof storefrontTag;
 }
 
 const queuedJob = { jobId: 'bea5c936-20ba-4570-99f4-1207c6472617', status: 'queued' };
@@ -103,6 +148,44 @@ const testProductName = 'Šroub s půlkulatou hlavou M6×20';
 
 /** The routes that work on the Akros stage. Every other route stays undocumented. */
 export const symmyDocumentedRoutes = {
+  adminCustomers: {
+    description: `Read customers imported by this source. The response uses the public customer projection, not internal plans.`,
+    summary: 'List imported customers',
+    tag: 'Customers',
+  },
+  customersBatch: {
+    description: `Import 1 to 16 customers within the owner execution-plan budget. Use stable ERP \`customerId\` values.
+\`kind: "ORGANIZATION"\` requires \`businessName\`; \`kind: "PERSON"\` requires \`firstName\` and \`lastName\`.
+Contacts, official identifiers and saved addresses use the owners' validated schemas.
+Personal-data writes require real source-processing authority; the API does not invent consent or a legal basis.
+The answer is \`202\`; read \`GET /jobs/{id}\` for item outcomes.`,
+    requestExamples: {
+      organization: {
+        summary: 'One organization identified by the ERP',
+        value: {
+          customers: [{ customerId: 'ERP-CUSTOMER-0001', kind: 'ORGANIZATION', businessName: 'AKROS partner' }],
+        },
+      },
+    },
+    responseExample: queuedJob,
+    summary: 'Import customers',
+    tag: 'Customers',
+  },
+  customerGroupCustomersBatch: {
+    description: `Assign 1 to 16 customers to the group selected by the path's ERP code.
+Each row names an ERP \`customerId\` previously sent through \`POST /customers/batch\`.
+This assigns members; it does not replace the whole group or remove members. An unresolved customer is refused for its item.
+The answer is \`202\`; read \`GET /jobs/{id}\`.`,
+    requestExamples: {
+      members: {
+        summary: 'Assign an imported customer',
+        value: { customers: [{ customerId: 'ERP-CUSTOMER-0001' }] },
+      },
+    },
+    responseExample: queuedJob,
+    summary: 'Assign customers to a group',
+    tag: 'Customer groups',
+  },
   adminProducts: {
     description: `The products OntOS holds from your requests, with the OntOS references you need for price lists
 (\`product.productRef\` and \`variantSources[].variantId\`).
@@ -144,8 +227,9 @@ at most 16 groups per request. The answer is \`200\` with one result per group.`
 - \`quantity.unitRef\`: the OntOS unit „ks“. Copy it from the example unchanged.
 - \`revision\` and \`sourceReference\`: your revision of the figure and your reference for tracing.
 
-The answer is \`200\` with one result per row, in the order sent. At most 16 rows per request. One row for an item
-that is not prepared refuses the whole request with \`403\`.`,
+The answer is \`200\` with one result per row, in the order sent. At most 16 rows per request.
+The source policy provisions stock for new ERP item keys. A product or position that is not ready returns a retryable
+\`503\`; an unknown warehouse or unit returns \`422\`. These are source and dependency checks, not a per-SKU allowlist.`,
     requestExamples: {
       stock: {
         summary: 'Stock of one item',
@@ -281,8 +365,9 @@ After the job completes, read the list's \`priceGroupRef\` from \`GET /price-lis
 **Limit:** 16 items per request. A product counts as one, its variant as one more when it carries texts or an item
 number, and each price as one more. Five products with texts and a price fit in one request.
 
-Leave out every other field of the schema (\`lifecycle\`, \`gtin\`, \`categories\`, \`media\`, \`brand\` and so on):
-OntOS does not write them yet.`,
+This route writes engineered Catalog products. Its \`categories\` and \`media\` fields do not import native
+storefront categories or image bytes. Use \`POST /categories/batch\`, \`POST /catalog/products/batch\` and
+\`POST /products/media\` for the native Merchandise storefront catalog.`,
     requestExamples: {
       newProduct: {
         summary: 'A new product with texts and an item number',
@@ -304,7 +389,7 @@ OntOS does not write them yet.`,
         },
       },
       priceChange: {
-        summary: 'A new price for a prepared item',
+        summary: 'A new price for an ERP item',
         value: {
           products: [
             {
@@ -325,7 +410,119 @@ OntOS does not write them yet.`,
     summary: 'Send products, texts, item numbers and prices',
     tag: 'Products',
   },
-} satisfies Partial<Readonly<Record<SymmyRouteKey, DocumentedRoute>>>;
+  demoOrders: {
+    description: `Read existing native Merchandise orders for the selected company. Page with \`limit\` (1 to 100) and
+\`offset\`. The response contains \`orders\`, \`count\`, \`limit\` and \`offset\`.
+Order IDs, lines, customer references, currency and monetary totals come from the owner.
+This is a read-only export, not invoice creation or an ABRA push.`,
+    summary: 'Export orders',
+    tag: 'Orders',
+  },
+  demoCatalogRevision: {
+    description: `Read the current native Merchandise catalog revision for the credential's selected company.
+The answer contains \`tenantId\`, \`legalEntityId\` and \`revision\`.
+Copy \`revision\` into \`expectedRevision\` when creating categories, importing storefront products or uploading an image.
+This is a read-only revision fence, not the engineered Catalog's product list.`,
+    summary: 'Read the current storefront catalog revision',
+    tag: storefrontTag,
+  },
+  demoOrder: {
+    description: `Read one existing native Merchandise order by its owner ID. The answer contains \`order\`.
+An order outside the credential's company is not exposed. A missing order returns \`404\`.
+This operation does not change the order or create an invoice.`,
+    summary: 'Export one order',
+    tag: 'Orders',
+  },
+  demoCategories: {
+    description: `Create native Merchandise categories from stable ERP \`code\` values, 1 to 16 per request.
+Read \`GET /catalog/revision\` and copy \`revision\` into \`expectedRevision\` first.
+Parents in the same batch must precede their children.
+The response returns native category \`entityId\` values and the resulting catalog \`revision\`.
+These IDs are not engineered Catalog references.`,
+    requestExamples: {
+      category: {
+        summary: 'Create a native storefront category at the revision you just read',
+        value: {
+          expectedRevision: 0,
+          categories: [
+            {
+              code: 'FASTENERS',
+              name: 'Spojovací materiál',
+              slug: 'spojovaci-material',
+              published: true,
+            },
+          ],
+        },
+      },
+    },
+    summary: 'Create storefront categories',
+    tag: storefrontTag,
+  },
+  demoCatalogProducts: {
+    description: `Create products in the actual native Merchandise storefront catalog, 1 to 16 per request.
+Read \`GET /catalog/revision\` first and copy \`revision\` into \`expectedRevision\`.
+Use the write response's \`revision\` for the next write.
+\`priceMinor\` is an integer in minor currency units. \`categoryCode\` selects an imported ERP category;
+\`categoryId\` selects a native category ID. Do not send both. \`images\` holds up to 20 allowed image URL references,
+not base64 bytes. Shell does not fetch these URLs. Upload bytes with \`POST /products/media\`.
+The response's native product \`entityId\` is not a Catalog \`productRef\` or \`variantRef\`.`,
+    requestExamples: {
+      product: {
+        summary: 'Create a storefront product at the revision you just read',
+        value: {
+          expectedRevision: 0,
+          products: [
+            {
+              active: true,
+              category: 'Spojovací materiál',
+              categoryCode: 'FASTENERS',
+              description: 'Šroub dodaný z ERP.',
+              lowStockThreshold: 5,
+              name: testProductName,
+              priceMinor: 12550,
+              published: true,
+              sku: 'ERP-M6X20',
+              slug: 'erp-m6x20',
+              stockTracked: true,
+              taxClassificationCode: 'cz.vat.standard',
+              unit: 'ks',
+            },
+          ],
+        },
+      },
+    },
+    summary: 'Create native storefront products',
+    tag: storefrontTag,
+  },
+  demoMedia: {
+    description: `Upload image bytes through Core Media and attach the verified image to a native Merchandise product.
+Send its native \`productId\`, the \`revision\` from \`GET /catalog/revision\` as \`expectedRevision\`,
+and \`image\` in the schema below.
+Use \`image.filename\` and \`image.full.contentBase64\`; \`image.thumbnail\` is optional.
+Core Media detects JPEG, PNG or WebP from the bytes. The full rendition is limited to 5 MiB,
+the thumbnail to 512 KiB, and declared dimensions to 4096 pixels.
+The response contains the new catalog \`revision\` and the stored image reference. This is not an engineered Catalog media reference.`,
+    requestExamples: {
+      image: {
+        summary: 'A PNG image. Replace productId and expectedRevision with your current native values',
+        value: {
+          expectedRevision: 0,
+          productId: 'native-product-id-from-catalog-import',
+          image: {
+            filename: 'one-pixel.png',
+            full: {
+              contentBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=',
+              height: 1,
+              width: 1,
+            },
+          },
+        },
+      },
+    },
+    summary: 'Upload a storefront product image',
+    tag: storefrontTag,
+  },
+} satisfies Partial<Readonly<Record<SymmyRouteKey | keyof typeof demoRoutes, DocumentedRoute>>>;
 
 /** The order a sender meets the routes in. */
 const documentedOrder = [
@@ -333,10 +530,19 @@ const documentedOrder = [
   'job',
   'adminProducts',
   'inventoryStockBatch',
+  'customersBatch',
+  'adminCustomers',
   'customerGroupsBatch',
+  'customerGroupCustomersBatch',
   'priceListsBatchUpsert',
   'priceLists',
   'priceListPricesBatch',
+  'demoCatalogRevision',
+  'demoCategories',
+  'demoCatalogProducts',
+  'demoMedia',
+  'demoOrders',
+  'demoOrder',
 ] as const satisfies readonly (keyof typeof symmyDocumentedRoutes)[];
 
 const tags = [
@@ -344,6 +550,9 @@ const tags = [
   { description: 'The result of every request that answered 202.', name: 'Jobs' },
   { description: 'Quantities on hand.', name: 'Stock' },
   { description: 'Customer groups of the ERP.', name: 'Customer groups' },
+  { description: 'Customer imports and their source-owned projections.', name: 'Customers' },
+  { description: 'Native Merchandise categories, products and Core Media images.', name: storefrontTag },
+  { description: "Read-only export of the selected company's native orders.", name: 'Orders' },
   { description: 'Price lists and their prices, for example wholesale.', name: priceListsTag },
 ];
 
@@ -393,7 +602,7 @@ const describeDocument = (generated: OpenApi.OpenAPISpec) => ({
   },
   paths: Object.fromEntries(
     documentedOrder.flatMap((key) => {
-      const { method, path, successStatus } = SYMMY_ROUTES[key];
+      const { method, path, successStatus } = routeDefinitions[key];
       const item = generated.paths[path];
       const operation = method === 'GET' ? item?.get : item?.post;
       if (operation === undefined) {
@@ -416,7 +625,7 @@ const SymmyRoutesApi = HttpApi.make('symmyRoutesApi')
 
 /**
  * The public Symmy API as Symmy's developers read it: the routes that work on the Akros stage, each with a plain
- * description and a request that can be sent as it stands.
+ * description and schema-valid examples. Native writes require the current revision and the caller's own entity IDs.
  */
 export const symmyOpenApiDocument = describeDocument(OpenApi.fromApi(SymmyRoutesApi));
 

@@ -38,7 +38,6 @@ import {
 } from '../../shared/domain/symmy-job-notification.ts';
 import type { SymmyJobRetentionPolicy } from '../../shared/domain/symmy-job-retention.ts';
 import { SymmyDecodedSourceSelectorSchema } from '../../shared/domain/symmy-source-selector.ts';
-import { SymmyStockScopeEntrySchema, symmyStockScopeKey } from '../../shared/domain/symmy-stock-batch.ts';
 import { SyncAdmissionIdSchema } from '../../shared/resources/sync-admission.ts';
 import type { symmyJobRoutes } from '../db/schema.ts';
 import {
@@ -184,8 +183,6 @@ export interface SymmyRouteInventory {
   readonly operations: readonly SymmyRouteInventoryOperation[];
   /** The route is one per selected Customer Group: it names a route code and the selector it resolves to. */
   readonly selected?: boolean;
-  /** The route names the Inventory backend it asserts for and the stock positions it admits rows for. */
-  readonly stock?: boolean;
   /** Every item names one entity kind: the record type its reader asks the owner for. */
   readonly uniformEntityKind?: boolean;
 }
@@ -390,14 +387,6 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     },
   ],
   [
-    'inventoryStockBatch',
-    {
-      admission: 'sync',
-      operations: [executor(stockOperation, { required: true })],
-      stock: true,
-    },
-  ],
-  [
     'priceListPricesBatch',
     {
       admission: 'job',
@@ -503,43 +492,6 @@ const completePlanRefusals = (
     'required_operation_missing',
     `${routeKey} enrolls no complete plan: ${plans.map((plan) => plan.map(symmyOperationName).join(' + ')).join(' or ')}`,
   );
-};
-
-/**
- * The stock route names the Inventory backend it asserts for and the positions it admits rows for, each issued by that
- * backend (`buildSymmyStockPlan` admits no row of a position another backend issues) and of this Tenant (the plan
- * targets the position, which `pin_symmy_fixture_plan` refuses outside the route's Tenant); no other route names either.
- */
-const stockRefusals = (request: SymmyRouteEnrollmentRequest, inventory: SymmyRouteInventory) => {
-  const { inventoryBackendId, stockScope } = request.configuration;
-  if (inventory.stock !== true) {
-    return refuseWhen(
-      stockScope !== undefined || inventoryBackendId !== undefined,
-      'configuration_field_not_allowed',
-      `${request.routeKey} enrolls no stock positions or Inventory backend`,
-    );
-  }
-  const backendId: string | undefined = inventoryBackendId;
-  if (backendId === undefined || stockScope === undefined) {
-    return [
-      refusal(
-        'stock_scope_required',
-        `${request.routeKey} names the Inventory backend it asserts for and the stock positions it admits rows for`,
-      ),
-    ];
-  }
-  return stockScope.flatMap(({ issuerBackendId, itemKey, locationKey, positionRef }) => [
-    ...refuseWhen(
-      issuerBackendId !== backendId,
-      'stock_scope_invalid',
-      `The position of item ${itemKey} at location ${locationKey} is issued by backend ${issuerBackendId}, not ${backendId}, so none of its rows is admitted`,
-    ),
-    ...refuseWhen(
-      positionRef.tenantId !== request.tenantId,
-      'stock_scope_invalid',
-      `The position of item ${itemKey} at location ${locationKey} belongs to another Tenant`,
-    ),
-  ]);
 };
 
 const selectorRefusals = (request: SymmyRouteEnrollmentRequest, inventory: SymmyRouteInventory) => {
@@ -933,37 +885,6 @@ export type SymmyRouteEnrollmentWrite =
     }
   | { readonly kind: 'unchanged' };
 
-const sameStockPosition = Schema.toEquivalence(SymmyStockScopeEntrySchema);
-
-/**
- * Whether a replacement keeps every synchronous admission of the stored route as it was admitted: it names a new
- * revision and adds stock positions, and changes nothing else, every stored position included. A synchronous
- * admission never reads its route again for what it asserted: it pinned its plan, positions included, when it was
- * admitted, its receipt is read through the route id, principal and company, and its retention through the route id
- * and lifecycle policy, all of which such a replacement keeps; a row for an added position is a new admission. Any
- * other change could reinterpret what an earlier admission asserted, so its admissions stay outstanding work.
- */
-const keepsAdmissions = (
-  request: SymmyRouteEnrollmentRequest,
-  stored: RouteRow,
-  changed: readonly SymmyRouteField[],
-): boolean => {
-  const storedPlan = decodeStoredConfiguration(stored.fixturePlan);
-  if (Option.isNone(storedPlan) || !changed.every((field) => field === 'configuration' || field === 'routeRevision')) {
-    return false;
-  }
-  const { stockScope: storedScope, ...storedRest } = storedPlan.value;
-  const { stockScope: requestedScope, ...requestedRest } = request.configuration;
-  if (storedScope === undefined || requestedScope === undefined || !sameConfiguration(storedRest, requestedRest)) {
-    return false;
-  }
-  const requested = new Map(requestedScope.map((entry) => [symmyStockScopeKey(entry), entry]));
-  return storedScope.every((entry) => {
-    const kept = requested.get(symmyStockScopeKey(entry));
-    return kept !== undefined && sameStockPosition(kept, entry);
-  });
-};
-
 const refused = (code: SymmyRouteEnrollmentRefusalCode, detail: string) =>
   new SymmyRouteEnrollmentRefused({ refusals: [refusal(code, detail)] });
 const staleToken = (current: RouteRow, expectedChangeToken: number) =>
@@ -973,6 +894,13 @@ const staleToken = (current: RouteRow, expectedChangeToken: number) =>
   );
 const reboundSelector = (current: RouteRow) =>
   refused('route_id_conflict', `The selector is enrolled as route ${current.routeId}; a route id is never rebound`);
+const sameRouteReference = (reference: SymmyRouteReference, route: RouteRow) =>
+  route.routeId === reference.routeId &&
+  route.principalId === reference.principalId &&
+  route.tenantId === reference.tenantId &&
+  route.routeKey === reference.routeKey &&
+  route.legalEntityId === (reference.legalEntityId ?? null) &&
+  route.routeCode === (reference.routeCode ?? null);
 
 /**
  * What one enrollment or replacement does with the routes already holding its selector (Tenant, principal, company,
@@ -986,7 +914,10 @@ export const decideSymmyRouteWrite = (
   existing: { readonly byRouteId: Option.Option<RouteRow>; readonly bySelector: Option.Option<RouteRow> },
   change: Exclude<SymmyRouteChange, { readonly kind: 'deactivate' }>,
 ): SymmyRouteEnrollmentWrite | SymmyRouteEnrollmentRefused => {
-  if (Option.isNone(existing.bySelector)) {
+  // An exact stopped physical route remains explicitly replaceable when no active route owns its selector.
+  const selected = Option.orElse(existing.bySelector, () =>
+    Option.filter(existing.byRouteId, (row) => sameRouteReference(request, row)));
+  if (Option.isNone(selected)) {
     if (change.kind !== 'enroll') {
       return refused('route_not_enrolled', `No route ${request.routeId} holds this selector`);
     }
@@ -994,7 +925,7 @@ export const decideSymmyRouteWrite = (
       ? refused('route_id_conflict', `Route id ${request.routeId} is already enrolled for another selector`)
       : { kind: 'insert' };
   }
-  const current = existing.bySelector.value;
+  const current = selected.value;
   if (current.routeId !== request.routeId) {
     return reboundSelector(current);
   }
@@ -1015,7 +946,7 @@ export const decideSymmyRouteWrite = (
     return refused('revision_not_advanced', 'A replacement names a new route revision');
   }
   return {
-    admissions: keepsAdmissions(request, current, changed) ? 'kept' : 'outstanding',
+    admissions: 'outstanding',
     changed,
     kind: 'replace',
     previous: { changeToken: current.changeToken, routeRevision: current.routeRevision },
@@ -1041,7 +972,7 @@ export const decideSymmyRouteDeactivation = (
     return refused('route_not_enrolled', `No route ${reference.routeId} holds this selector`);
   }
   const route = bySelector.value;
-  if (route.routeId !== reference.routeId) {
+  if (!sameRouteReference(reference, route)) {
     return reboundSelector(route);
   }
   if (!route.active) {

@@ -67,6 +67,7 @@ const unsupportedBranchSchema = Schema.Struct({
     'PriceHint',
     'StockProvisioningHint',
     'IdentifierHint',
+    'CustomerHint',
   ]),
 });
 const unsupportedBranches = Schema.optionalKey(
@@ -87,6 +88,18 @@ const pinnedUnsupportedBranches = Schema.optionalKey(
       branchId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyUnsupportedBranchId')),
     }),
   ).check(Schema.isMaxLength(8)),
+);
+
+/**
+ * An item states at least one owner effect, or nothing but what it cannot deliver: an item whose source record names
+ * no owner target the admission could resolve (a membership of a customer the source never sent) is refused alone,
+ * with its unsupported branch as its outcome, and makes no owner call.
+ */
+const itemStatesWork = Schema.makeFilter(
+  (item: { readonly effects: readonly unknown[]; readonly unsupportedBranches?: readonly unknown[] }) =>
+    item.effects.length > 0 ||
+    (item.unsupportedBranches?.length ?? 0) > 0 ||
+    'An item states an owner effect or an unsupported branch',
 );
 
 const effectDefinition = Schema.Struct({
@@ -154,8 +167,8 @@ export const symmyPlanDependenciesValid = (
   return remaining.size === 0;
 };
 
-const executionPlanItem = Schema.Struct({
-  effects: Schema.NonEmptyArray(effectDefinition).check(Schema.isMaxLength(32)),
+const executionPlanItemFields = {
+  effects: Schema.Array(effectDefinition).check(Schema.isMaxLength(32)),
   itemKey: itemKeySchema,
   source,
   sourceOccurrenceId: Schema.optionalKey(
@@ -164,7 +177,8 @@ const executionPlanItem = Schema.Struct({
     ),
   ),
   unsupportedBranches,
-});
+};
+const executionPlanItem = Schema.Struct(executionPlanItemFields).check(itemStatesWork);
 
 const executionPlanDefinition = Schema.Struct({
   inventoryBackendId: Schema.optionalKey(SymmyInventorySourceSchema.fields.issuer.fields.backendId),
@@ -188,11 +202,11 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
   ...executionPlanDefinition.fields,
   items: Schema.NonEmptyArray(
     Schema.Struct({
-      ...executionPlanItem.fields,
-      effects: Schema.NonEmptyArray(
+      ...executionPlanItemFields,
+      effects: Schema.Array(
         Schema.Struct({ ...effectDefinition.fields, intent: Schema.optionalKey(fixtureOwnerIntent) }),
       ).check(Schema.isMaxLength(32)),
-    }),
+    }).check(itemStatesWork),
   ).check(Schema.isMaxLength(16)),
   /** Only the price list routes: the grant refs a price assertion names. Prices are never enrolled themselves. */
   priceSource: Schema.optionalKey(SymmyPriceSourceSchema),
@@ -265,11 +279,11 @@ export const SymmyPinnedJobPlanSchema = Schema.Struct({
   inventoryBackendId: SymmyFixtureExecutionPlanSchema.fields.inventoryBackendId,
   items: Schema.NonEmptyArray(
     Schema.Struct({
-      effects: Schema.NonEmptyArray(SymmyPinnedEffectSchema).check(Schema.isMaxLength(32)),
+      effects: Schema.Array(SymmyPinnedEffectSchema).check(Schema.isMaxLength(32)),
       itemId: itemIdSchema,
       itemKey: itemKeySchema,
       unsupportedBranches: pinnedUnsupportedBranches,
-    }),
+    }).check(itemStatesWork),
   ).check(Schema.isMaxLength(16)),
   pricingSourceSystem: SymmyFixtureExecutionPlanSchema.fields.pricingSourceSystem,
   selector: Schema.optionalKey(selectorSchema),
@@ -355,6 +369,7 @@ const unsupportedBranchOutcomes = {
   AttributeHint: { ...unsupportedCatalogMeaning, branchKind: 'AttributeHint' },
   CategoryHint: { ...unsupportedCatalogMeaning, branchKind: 'CategoryHint' },
   ClassificationHint: { ...unsupportedCatalogMeaning, branchKind: 'ClassificationHint' },
+  CustomerHint: { owner: 'commerce.customer-context', reason: 'missing_context' },
   DescriptiveHint: { ...unsupportedCatalogMeaning, branchKind: 'DescriptiveHint' },
   IdentifierHint: { branchKind: 'IdentifierHint', owner: 'party.registry', reason: 'owner_not_activated' },
   MediaHint: { ...unsupportedCatalogMeaning, branchKind: 'MediaHint' },

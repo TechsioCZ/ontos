@@ -433,6 +433,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
               );
           return invocation?.tenantId === input.principal.tenantId &&
             invocation.legalEntityId === input.principal.legalEntityId &&
+            (input.expectedActionKey === undefined || invocation.actionKey === input.expectedActionKey) &&
             invocation.principalId === input.principal.principalId
             ? Effect.succeed(invocation)
             : Effect.fail(

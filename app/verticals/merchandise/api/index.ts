@@ -57,6 +57,7 @@ import { bootstrapPlaygroundCatalogActionApiLive } from './bootstrap-playground-
 import { changeOrderStatusActionApiLive } from './change-order-status-action-server.ts';
 import { changeProductImagesActionApiLive } from './change-product-images-action-server.ts';
 import { cleanupDemoActionApiLive } from './cleanup-demo-action-server.ts';
+import { demoOrderExportApiLive } from './demo-order-export-server.ts';
 import { manageCatalogActionApiLive } from './manage-catalog-action-server.ts';
 import { manageMarketsActionApiLive } from './manage-markets-action-server.ts';
 import { mediaReadApiLive } from './media-read-server.ts';
@@ -65,6 +66,8 @@ import { placeStorefrontOrderActionApiLive } from './place-storefront-order-acti
 import { productsReadApiLive } from './products-search-server.ts';
 import { proposeOrderChangesActionApiLive } from './propose-order-changes-action-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
+import { importSourceCatalogActionApiLive } from './import-source-catalog-action-server.ts';
+import { demoCatalogRevisionApiLive } from './demo-catalog-revision-server.ts';
 import { recordStockMovementActionApiLive } from './record-stock-movement-action-server.ts';
 import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
 import { reviewOrderChangesActionApiLive } from './review-order-changes-action-server.ts';
@@ -163,6 +166,9 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   changeOrderStatusActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   changeProductImagesActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   cleanupDemoActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  demoOrderExportApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  demoCatalogRevisionApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  importSourceCatalogActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageCatalogActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageMarketsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   mediaReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

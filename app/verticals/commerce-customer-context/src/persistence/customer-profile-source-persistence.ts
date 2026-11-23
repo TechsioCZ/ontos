@@ -42,6 +42,7 @@ import type {
 } from '../../shared/apis/customer-profile-source-page.ts';
 import type { CustomerProfileSourceAssertion } from '../../shared/domain/customer-profile-source.ts';
 import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
+import { CommerceSourceProcessingRejected } from '../integrations/source-processing-rejected.ts';
 import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
 
 const storedSourceResponseSchema = Schema.Union([
@@ -152,6 +153,14 @@ const unavailable = (cause?: unknown) =>
     'cause',
     { configurable: true, value: cause },
   );
+export const customerProfileSourcePrivacyFailure = (cause: unknown) =>
+  Schema.is(CommerceSourceProcessingRejected)(cause) && cause.code === 'DENIED'
+    ? new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'Current Privacy does not authorize this source Profile read',
+      })
+    : unavailable(cause);
+
 export interface CustomerProfileSourceReadServices {
   readonly readSource: (
     input: CustomerProfileSourceRequest,
@@ -191,7 +200,9 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       .check(
         scope,
         {
+          dataCategoryRefs: ['commerce:customer-profile'],
           operation,
+          partySourceReference: item.partySourceReference,
           source: {
             issuer: source.issuer,
             namespace: source.namespace,
@@ -205,10 +216,11 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
               item.profile.profileRef.kind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
             resourceId: item.profile.profileRef.resourceId,
           },
+          targetPartyRef: item.partyRef,
         },
         requirements.privacy,
       )
-      .pipe(Effect.mapError(unavailable));
+      .pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
   const currentAdmissionForItem = Effect.fn('CustomerProfileSourceRead.currentAdmission')(
     function* currentAdmissionForItem(item: CustomerProfileSourceItem) {
       if (item.profile.subject.kind === 'RETAIL') {
@@ -343,6 +355,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       .check(
         scope,
         {
+          dataCategoryRefs: ['commerce:customer-profile'],
           operation: 'PROFILE_CREATE',
           partySourceReference: originalPartyReference,
           source: {

@@ -1,10 +1,13 @@
 import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import { Option, Schema } from 'effect';
+import { Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   SymmyJobRetentionPolicySchema,
+  SYMMY_DEMO_MEMBERSHIP_RETENTION,
+  symmyRetentionPolicyMatchesRoute,
   symmyRetentionTargetForPrivacyHandoff,
 } from '../../shared/domain/symmy-job-retention.ts';
+import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 
 const id = '10000000-0000-4000-8000-000000000003';
 const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
@@ -87,4 +90,110 @@ it('requires explicit target absence and a concrete governance company in extern
   const { governanceLegalEntityId: _governance, ...missingGovernance } = encoded;
   expect(() => decode(missingTarget)).toThrow();
   expect(() => decode(missingGovernance)).toThrow();
+});
+
+const demo = SYMMY_DEMO_MEMBERSHIP_RETENTION;
+const demoFamilyPolicy = {
+  governanceLegalEntityId: demo.companyId,
+  policyId: demo.policyId,
+  retentionMs: 60_000,
+  revision: demo.revision,
+  routeFamily: 'DEMO_GROUP_MEMBERSHIP',
+  routeId: demo.sourceRouteId,
+  targetLegalEntityId: demo.companyId,
+  tenantId: demo.tenantId,
+};
+const demoRoute = () => ({
+  tenantId: demo.tenantId,
+  legalEntityId: demo.companyId,
+  routeId: id,
+  routeKey: 'customerGroupCustomersBatch',
+  fixturePlan: Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({
+    sourceRouteId: demo.sourceRouteId,
+    sourceRouteRevision: demo.revision,
+    sourceMappingVersion: demo.revision,
+    items: [
+      {
+        itemKey: 'source-template',
+        source: {
+          entityKind: 'CUSTOMER_GROUP',
+          issuerId: demo.issuer,
+          sourceNamespace: demo.namespace,
+          sourceRecordId: 'ENROLLMENT_TEMPLATE',
+        },
+        effects: [
+          {
+            effectKey: 'operation-0',
+            operation: {
+              moduleId: 'commerce.customer-context',
+              entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
+              schemaVersion: '1',
+            },
+          },
+        ],
+      },
+    ],
+    selector: {
+      kind: 'CUSTOMER_GROUP',
+      source: {
+        entityKind: 'CUSTOMER_GROUP',
+        issuerId: demo.issuer,
+        sourceNamespace: demo.namespace,
+        sourceRecordId: 'created-after-boot',
+        route: { integrationRouteId: demo.sourceRouteId, tenantId: demo.tenantId },
+      },
+      target: {
+        moduleId: 'commerce.customer-context',
+        resourceType: 'commerce.customer-context.customer-group',
+        resourceId: id,
+        tenantId: demo.tenantId,
+      },
+    },
+  }),
+});
+
+it('authorizes new demo membership route IDs under one explicit source-family retention policy', () => {
+  const policy = Schema.decodeUnknownSync(SymmyJobRetentionPolicySchema)(demoFamilyPolicy);
+  expect(symmyRetentionPolicyMatchesRoute(policy, demoRoute())).toBe(true);
+  expect(
+    symmyRetentionPolicyMatchesRoute(policy, {
+      ...demoRoute(),
+      routeId: '10000000-0000-4000-8000-000000000099',
+    }),
+  ).toBe(true);
+});
+
+it('does not extend family retention to another tenant, company, source, route kind or unselected group', () => {
+  const policy = Schema.decodeUnknownSync(SymmyJobRetentionPolicySchema)(demoFamilyPolicy);
+  const route = demoRoute();
+  expect(symmyRetentionPolicyMatchesRoute(policy, { ...route, tenantId: id })).toBe(false);
+  expect(symmyRetentionPolicyMatchesRoute(policy, { ...route, legalEntityId: id })).toBe(false);
+  expect(symmyRetentionPolicyMatchesRoute(policy, { ...route, routeKey: 'customersBatch' })).toBe(false);
+  const { sourceRouteId: _source, ...withoutSource } = route.fixturePlan;
+  const { selector: _selector, ...withoutSelector } = route.fixturePlan;
+  expect(
+    symmyRetentionPolicyMatchesRoute(policy, {
+      ...route,
+      fixturePlan: withoutSource,
+    }),
+  ).toBe(false);
+  expect(
+    symmyRetentionPolicyMatchesRoute(policy, {
+      ...route,
+      fixturePlan: withoutSelector,
+    }),
+  ).toBe(false);
+});
+
+it('refuses external family policy configuration for any source or company outside the demo', () => {
+  const decode = Schema.decodeUnknownResult(SymmyJobRetentionPolicySchema);
+  for (const wrong of [
+    { ...demoFamilyPolicy, tenantId: id },
+    { ...demoFamilyPolicy, routeId: id },
+    { ...demoFamilyPolicy, governanceLegalEntityId: id },
+    { ...demoFamilyPolicy, targetLegalEntityId: id },
+    { ...demoFamilyPolicy, policyId: 'an-unapproved-family' },
+  ]) {
+    expect(Result.isFailure(decode(wrong))).toBe(true);
+  }
 });

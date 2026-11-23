@@ -9,7 +9,7 @@ import {
   readScopedSystemWorkloadEnrollment,
   requireScopedSourceExecutionFenceOpen,
 } from '@app/core-runtime/access/enforcement';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { SQLWrapper } from 'drizzle-orm';
 import { Array as EffectArray, Config, DateTime, Duration, Effect, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -35,9 +35,13 @@ import type { SymmyDurableRouteKey } from '../db/schema.ts';
 import { projectSymmyExecutionJob, symmyJobExecutionStore } from './symmy-job-execution-store.ts';
 import {
   SymmyPartyCommerceIntentSchema,
+  SymmyPartyCommerceOwnerReceiptSchema,
   materializeSymmyPartyCommerceIntent,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
-import { SymmyJobRetentionPolicySchema } from '../../shared/domain/symmy-job-retention.ts';
+import {
+  SymmyJobRetentionPolicySchema,
+  symmyRetentionPolicyMatchesRoute,
+} from '../../shared/domain/symmy-job-retention.ts';
 import {
   prepareSymmyCatalogPricingInventoryRequestHash,
   materializeSymmyCatalogPricingInventorySourceOccurrence,
@@ -46,8 +50,11 @@ import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-co
 import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
 import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batch.ts';
 import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
-import { SymmyCustomerGroupRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
-import type { SymmyCustomerGroupRows } from '../../shared/domain/symmy-customer-group-batch.ts';
+import {
+  SymmyCustomerGroupRowsSchema,
+  SymmyGroupCustomerRowsSchema,
+} from '../../shared/domain/symmy-customer-group-batch.ts';
+import type { SymmyCustomerGroupRows, SymmyGroupCustomerRows } from '../../shared/domain/symmy-customer-group-batch.ts';
 import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts';
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
@@ -58,6 +65,15 @@ import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
 import { buildSymmyCustomerPlan } from './symmy-customer-plan.ts';
 import { buildSymmyCustomerGroupPlan } from './symmy-customer-group-plan.ts';
+import {
+  buildSymmyGroupMembershipPlan,
+  symmyMembershipProfilesFromReceipts,
+} from './symmy-customer-group-membership-plan.ts';
+import type {
+  SymmyGroupMembershipCustomerSource,
+  SymmyGroupMembershipCustomer,
+  SymmyGroupMembershipLineage,
+} from './symmy-customer-group-membership-plan.ts';
 import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyProductPlan } from './symmy-product-plan.ts';
@@ -90,6 +106,7 @@ export interface SymmyJobAdmissionRequest {
   readonly customerGroups?: SymmyCustomerGroupRows;
   readonly customers?: SymmyCustomerRows;
   readonly fixtureId?: string;
+  readonly groupCustomers?: SymmyGroupCustomerRows;
   readonly idempotencyKey: string;
   readonly plan?: SymmyFixtureExecutionPlan;
   readonly priceBatch?: SymmyPriceBatch;
@@ -251,8 +268,7 @@ const requireLifecyclePolicy = Effect.fn('SymmyJobStore.requireLifecyclePolicy')
   ).pipe(Effect.mapError(unavailable));
   const matches = Option.getOrElse(configured, () => []).filter(
     (policy) =>
-      policy.tenantId === route.tenantId &&
-      policy.routeId === route.routeId &&
+      symmyRetentionPolicyMatchesRoute(policy, route) &&
       policy.policyId === route.lifecyclePolicy?.policyId &&
       policy.revision === route.lifecyclePolicy?.revision &&
       Option.getOrNull(policy.targetLegalEntityId) === route.legalEntityId &&
@@ -335,6 +351,12 @@ const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(funct
       Effect.map(Option.some),
     );
   }
+  if (input.groupCustomers !== undefined) {
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyGroupCustomerRowsSchema))(input.groupCustomers).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
   if (input.products !== undefined) {
     // The price lists the price group codes name are facts read when the request arrived, not caller intent.
     return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyProductRowsSchema))(input.products).pipe(
@@ -402,6 +424,7 @@ const policyFixtureTemplateAllowed = (template: SymmyFixtureExecutionPlan, isPol
     template.pricingSourceSystem === undefined &&
     template.items.length === 1 &&
     item.effects.length === 1 &&
+    effect !== undefined &&
     (item.unsupportedBranches?.length ?? 0) === 0 &&
     (effect.dependsOn?.length ?? 0) === 0 &&
     Schema.is(SymmyPolicyFixtureIntentSchema)(effect.intent)
@@ -414,9 +437,9 @@ const requirePinnedPolicyFixture = (
   legalEntityId?: string,
 ) => {
   const [item] = plan.items;
-  const [{ intent, ref }] = item.effects;
-  return Schema.is(SymmyPolicyFixtureIntentSchema)(intent)
-    ? mapSymmyPolicyFixtureIntent(ref, intent, routeKey, legalEntityId).pipe(
+  const [effect] = item.effects;
+  return effect !== undefined && Schema.is(SymmyPolicyFixtureIntentSchema)(effect.intent)
+    ? mapSymmyPolicyFixtureIntent(effect.ref, effect.intent, routeKey, legalEntityId).pipe(
         Effect.asVoid,
         Effect.mapError(routeDenied),
       )
@@ -513,6 +536,7 @@ const configuredEffectsAllowed = (routeKey: SymmyDurableRouteKey, plan: SymmyFix
 const carriesCallerPlan = (input: SymmyJobAdmissionRequest): boolean =>
   input.plan !== undefined ||
   input.customers !== undefined ||
+  input.groupCustomers !== undefined ||
   input.priceLists !== undefined ||
   input.priceBatch !== undefined ||
   input.products !== undefined;
@@ -520,6 +544,152 @@ const carriesCallerPlan = (input: SymmyJobAdmissionRequest): boolean =>
 /** The tenant of the route scope, as the tenant every ref of a price request must carry. */
 const requestTenant = (scope: OperationalScope) =>
   Schema.decodeUnknownEffect(SymmyRequestTenantSchema)(scope.tenantId).pipe(Effect.mapError(unavailable));
+
+const SourceProfileReceiptsSchema = Schema.Array(
+  Schema.Struct({
+    organization: Schema.Boolean,
+    receipt: SymmyPartyCommerceOwnerReceiptSchema,
+    recordId: Schema.String,
+  }),
+);
+
+const resolveSourceProfiles = Effect.fn('SymmyJobStore.resolveSourceProfiles')(function* resolveSourceProfiles(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  source: SymmyGroupMembershipCustomerSource,
+  recordIds: readonly string[],
+) {
+  if (scope.legalEntityId === undefined || recordIds.length === 0) {
+    return new Map<string, SymmyGroupMembershipCustomer>();
+  }
+  const routes = yield* transaction
+    .select()
+    .from(symmyJobRoutes)
+    .where(
+      and(
+        eq(symmyJobRoutes.tenantId, scope.tenantId),
+        eq(symmyJobRoutes.principalId, scope.principalId),
+        eq(symmyJobRoutes.legalEntityId, scope.legalEntityId),
+        eq(symmyJobRoutes.routeKey, 'customersBatch'),
+        eq(symmyJobRoutes.active, true),
+        isNull(symmyJobRoutes.routeCode),
+      ),
+    )
+    .limit(2)
+    .pipe(Effect.mapError(unavailable));
+  const [customerRoute] = routes;
+  if (customerRoute === undefined || routes.length !== 1) {
+    return yield* routeDenied();
+  }
+  yield* lockRoute(transaction, customerRoute);
+  const template = yield* decodeRouteTemplate(customerRoute);
+  const sources = template?.items.filter(({ effects }) =>
+    effects.some(
+      ({ operation }) =>
+        operation.moduleId === 'party.registry' &&
+        operation.entrypointKey === 'party.registry.create-party' &&
+        operation.schemaVersion === '1',
+    ),
+  );
+  const [customer] = sources ?? [];
+  if (
+    customer === undefined ||
+    customer.source.issuerId !== source.issuerId ||
+    sources?.some(
+      ({ source: candidate }) =>
+        candidate.issuerId !== customer.source.issuerId ||
+        candidate.sourceNamespace !== customer.source.sourceNamespace ||
+        candidate.entityKind !== customer.source.entityKind,
+    )
+  ) {
+    return yield* routeDenied();
+  }
+  const customerSource = customer.source;
+  const recordId = sql<string>`${symmyJobEffects.effect} #>> '{ref,occurrence,record,sourceRecordId}'`;
+  const rows = yield* transaction
+    .select({
+      organization: sql<boolean>`(
+        ${symmyJobEffects.resolvedEffect} #>> '{intent,_tag}' = 'CreateCounterpartyProfile'
+        and ${symmyJobEffects.resolvedEffect} #> '{intent,payload,sourceOrganizationWitness}' is not null
+      ) is true`,
+      receipt: symmyJobEffects.ownerReceipt,
+      recordId,
+    })
+    .from(symmyJobEffects)
+    .innerJoin(
+      symmyImportJobs,
+      and(eq(symmyImportJobs.tenantId, symmyJobEffects.tenantId), eq(symmyImportJobs.jobId, symmyJobEffects.jobId)),
+    )
+    .where(
+      and(
+        eq(symmyJobEffects.tenantId, scope.tenantId),
+        eq(symmyImportJobs.principalId, scope.principalId),
+        eq(symmyImportJobs.legalEntityId, scope.legalEntityId),
+        eq(symmyImportJobs.routeKey, 'customersBatch'),
+        eq(symmyJobEffects.state, 'settled'),
+        sql`${symmyJobEffects.outcome} ->> 'status' in ('accepted_change', 'accepted_no_change', 'duplicate')`,
+        sql`${symmyJobEffects.ownerReceipt} ->> '_tag' in ('RetailProfileEnsured', 'CounterpartyProfileCreated')`,
+        sql`${symmyJobEffects.effect} #>> '{ref,occurrence,record,issuerId}' = ${customerSource.issuerId}`,
+        sql`${symmyJobEffects.effect} #>> '{ref,occurrence,record,sourceNamespace}' = ${customerSource.sourceNamespace}`,
+        sql`${symmyJobEffects.effect} #>> '{ref,occurrence,record,entityKind}' = ${customerSource.entityKind}`,
+        inArray(recordId, [...recordIds]),
+      ),
+    )
+    .pipe(Effect.mapError(unavailable));
+  const receipts = yield* Schema.decodeUnknownEffect(SourceProfileReceiptsSchema)(rows).pipe(
+    Effect.mapError(unavailable),
+  );
+  return symmyMembershipProfilesFromReceipts(receipts, scope.tenantId);
+});
+
+/** Serializes admissions sharing a profile without adding a second membership ledger. */
+const nextMembershipOrder = Effect.fn('SymmyJobStore.nextMembershipOrder')(function* nextMembershipOrder(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  lineage: SymmyGroupMembershipLineage,
+  reserved: ReadonlyMap<string, number>,
+) {
+  if (scope.legalEntityId === undefined) {
+    return yield* routeDenied();
+  }
+  const key = JSON.stringify([
+    'symmy-membership',
+    scope.tenantId,
+    scope.legalEntityId,
+    lineage.profileId,
+    lineage.issuer,
+    lineage.namespace,
+  ]);
+  yield* transaction
+    .select({ locked: sql`pg_advisory_xact_lock(hashtextextended(${key}, 0))` })
+    .from(sql`(values (1)) as symmy_membership_lock(anchor)`)
+    .pipe(Effect.mapError(unavailable));
+  const [previous] = yield* transaction
+    .select({
+      order: sql<number>`coalesce(max((
+        select max((membership #>> '{intent,payload,source,order}')::integer)
+        from jsonb_array_elements(${symmyImportJobs.executionPlan}->'items') item,
+          lateral jsonb_array_elements(item->'effects') membership
+        where membership #>> '{intent,_tag}' = 'CustomerGroupMembership'
+          and lower(membership #>> '{intent,payload,profile,profileRef,resourceId}') = ${lineage.profileId}
+          and membership #>> '{intent,payload,manager,issuer}' = ${lineage.issuer}
+          and membership #>> '{intent,payload,manager,sourceNamespace}' = ${lineage.namespace}
+      )), 0)::integer`,
+    })
+    .from(symmyImportJobs)
+    .where(and(eq(symmyImportJobs.tenantId, scope.tenantId), eq(symmyImportJobs.legalEntityId, scope.legalEntityId)))
+    .pipe(Effect.mapError(unavailable));
+  const effectiveAt = yield* DateTime.now;
+  const order = Math.max(
+    (previous?.order ?? 0) + 1,
+    (reserved.get(lineage.profileId) ?? 0) + 1,
+    Math.floor(DateTime.toEpochMillis(effectiveAt) / 1000),
+  );
+  if (order > 2_147_483_647) {
+    return yield* unavailable();
+  }
+  return { effectiveAt, order };
+});
 
 /**
  * What a durable admission pins: the caller's internal plan, the route template, or the plan built from the public
@@ -531,7 +701,30 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
   input: SymmyJobAdmissionRequest,
   scope: OperationalScope,
   template: SymmyFixtureExecutionPlan,
+  transaction: ScopedTransactionExecutor,
 ) {
+  if (input.groupCustomers !== undefined) {
+    if (input.routeKey !== 'customerGroupCustomersBatch') {
+      return yield* routeDenied();
+    }
+    const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
+    const reserved = new Map<string, number>();
+    return yield* buildSymmyGroupMembershipPlan({
+      admittedRouteId: route.routeId,
+      authority: { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision },
+      digest: hash,
+      idempotencyKey: input.idempotencyKey,
+      legalEntityId: scope.legalEntityId,
+      reserve: (lineage) =>
+        nextMembershipOrder(transaction, scope, lineage, reserved).pipe(
+          Effect.tap(({ order }) => Effect.sync(() => reserved.set(lineage.profileId, order))),
+        ),
+      resolveProfiles: (source, recordIds) => resolveSourceProfiles(transaction, scope, source, recordIds),
+      rows: input.groupCustomers,
+      template,
+      tenantId: scope.tenantId,
+    });
+  }
   if (input.customers !== undefined) {
     const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
     return yield* buildSymmyCustomerPlan({
@@ -626,7 +819,7 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
     if (!selectedPlanMatches(input, template, scope.tenantId)) {
       return yield* routeDenied();
     }
-    const source = yield* admissionPlanSource(route, input, scope, template);
+    const source = yield* admissionPlanSource(route, input, scope, template, transaction);
     if (Option.isNone(source)) {
       return yield* routeDenied();
     }
@@ -941,13 +1134,17 @@ const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(fun
   digest: string,
   template: SourceRouteAuthority | null = null,
 ): Effect.fn.Return<ConfiguredRouteContext, SymmyJobStoreError> {
-  const [item] = original.items;
-  const [effect] = item.effects;
-  const { record } = effect.ref.occurrence;
+  const [effect] = original.items.flatMap(({ effects }) => effects);
+  const record = original.selector?.source ?? effect?.ref.occurrence.record;
   const replayIdempotencyDigest = yield* Schema.decodeUnknownEffect(
     SymmyRouteContextResponseSchema.fields.replayIdempotencyDigest,
   )(digest).pipe(Effect.mapError(unavailable));
-  if (replayIdempotencyDigest === undefined || record.route.tenantId !== row.tenantId) {
+  if (
+    replayIdempotencyDigest === undefined ||
+    record === undefined ||
+    record.route.tenantId !== row.tenantId ||
+    (effect !== undefined && effect.ref.occurrence.record.route.tenantId !== row.tenantId)
+  ) {
     return yield* unavailable();
   }
   const result: ConfiguredRouteContext = {
@@ -1445,23 +1642,21 @@ export const symmyJobStoreFactory = (
           const plan = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema, { onExcessProperty: 'error' })(
             inserted.executionPlan,
           ).pipe(Effect.mapError(unavailable));
-          yield* transaction
-            .insert(symmyJobEffects)
-            .values(
-              plan.items.flatMap(({ effects }) =>
-                effects.map((effect) => ({
-                  effect,
-                  effectId: effect.ref.effectId,
-                  effectKey: effect.effectKey,
-                  itemId: effect.itemId,
-                  jobId: inserted.jobId,
-                  state: 'planned' as const,
-                  tenantId: scope.tenantId,
-                  version: 0,
-                })),
-              ),
-            )
-            .pipe(Effect.mapError(unavailable));
+          const effects = plan.items.flatMap(({ effects }) =>
+            effects.map((effect) => ({
+              effect,
+              effectId: effect.ref.effectId,
+              effectKey: effect.effectKey,
+              itemId: effect.itemId,
+              jobId: inserted.jobId,
+              state: 'planned' as const,
+              tenantId: scope.tenantId,
+              version: 0,
+            })),
+          );
+          if (effects.length > 0) {
+            yield* transaction.insert(symmyJobEffects).values(effects).pipe(Effect.mapError(unavailable));
+          }
         }
         return {
           executionReady: inserted.executionPlan !== null,

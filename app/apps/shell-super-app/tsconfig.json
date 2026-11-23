@@ -74,6 +74,9 @@
     },
     {
       "path": "../../verticals/payment"
+    },
+    {
+      "path": "../../verticals/merchandise"
     }
   ]
 }
