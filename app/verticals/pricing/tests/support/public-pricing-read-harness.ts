@@ -101,6 +101,7 @@ import {
   FileSystem,
   Layer,
   Match,
+  Option,
   Queue,
   Redacted,
   Schema,
@@ -745,6 +746,24 @@ export interface PublicPricingReadHarnessOptions {
   readonly nativeClock: Clock.Clock;
 }
 
+const HarnessFeeSetObservationSchema = Schema.Struct({
+  completenessObservedAt: Schema.DateTimeUtc,
+  currentnessObservedAt: Schema.DateTimeUtc,
+  currentnessRevalidatedAt: Schema.DateTimeUtc,
+  /** The effective period of every Fee in the set; an owner-proven empty set has none. */
+  feeEffectivePeriods: Schema.Array(
+    Schema.Struct({ effectiveFrom: Schema.DateTimeUtc, effectiveTo: Schema.OptionFromNullOr(Schema.DateTimeUtc) }),
+  ),
+  /** The owner's next applicability boundary, when it reported one. */
+  nextApplicabilityBoundary: Schema.Option(Schema.DateTimeUtc),
+  /** `observedAt` of the set as the owner issued it: the actual owner observation, not the requested instant. */
+  observedAt: Schema.DateTimeUtc,
+  ownerReceiptObservedAt: Schema.DateTimeUtc,
+});
+
+/** One Commercial Fee Current set exactly as the Read retained it for the Pricing owner fence (never rewritten). */
+export type HarnessFeeSetObservation = typeof HarnessFeeSetObservationSchema.Type;
+
 /** One owner final-fence call and its typed outcome, kept beside the customer-safe projection. */
 export interface HarnessFenceObservation {
   /** Sizes of the Catalog Pricing-purpose equivalence groups handed to this owner (one entry per group). */
@@ -758,6 +777,10 @@ export interface HarnessFenceObservation {
 
 /** One whole-attempt result, so a customer-safe non-success stays diagnosable. */
 export interface HarnessWholeAttemptObservation {
+  /** The requested as-of instant of the owner fence request the attempt retained, when it retained one. */
+  readonly effectiveAt: Option.Option<DateTime.Utc>;
+  /** The Commercial Fee Current sets the attempt retained for its owner final fence, as the owner issued them. */
+  readonly feeSets: readonly HarnessFeeSetObservation[];
   readonly kind: string;
   readonly outcome: string;
   readonly reason?: string;
@@ -778,6 +801,49 @@ const isEquivalenceMaterial = Schema.is(
     request: Schema.Struct({ members: Schema.Array(Schema.Unknown) }),
   }),
 );
+
+const FeeAuthorityMaterialSchema = Schema.Struct({
+  currentSet: Schema.Struct({
+    completenessEvidence: Schema.Struct({
+      nextApplicabilityBoundary: Schema.optionalKey(Schema.DateTimeUtcFromString),
+      observedAt: Schema.DateTimeUtcFromString,
+    }),
+    currentnessEvidence: Schema.Struct({
+      observedAt: Schema.DateTimeUtcFromString,
+      revalidatedAt: Schema.DateTimeUtcFromString,
+    }),
+    fees: Schema.Array(
+      Schema.Struct({
+        effectivePeriod: Schema.Struct({
+          effectiveFrom: Schema.DateTimeUtcFromString,
+          effectiveTo: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+        }),
+      }),
+    ),
+    observedAt: Schema.DateTimeUtcFromString,
+  }),
+  kind: Schema.Literal('PRICING_COMMERCIAL_FEE_AUTHORITY'),
+  ownerReadReceipt: Schema.Struct({ authority: Schema.Struct({ observedAt: Schema.DateTimeUtcFromString }) }),
+});
+const decodeFeeAuthorityMaterial = Schema.decodeUnknownOption(FeeAuthorityMaterialSchema);
+
+const feeSetObservationsOf = (materials: readonly unknown[]): readonly HarnessFeeSetObservation[] =>
+  materials.flatMap((material) =>
+    Option.match(decodeFeeAuthorityMaterial(material), {
+      onNone: () => [],
+      onSome: ({ currentSet, ownerReadReceipt }) => [
+        {
+          completenessObservedAt: currentSet.completenessEvidence.observedAt,
+          currentnessObservedAt: currentSet.currentnessEvidence.observedAt,
+          currentnessRevalidatedAt: currentSet.currentnessEvidence.revalidatedAt,
+          feeEffectivePeriods: currentSet.fees.map(({ effectivePeriod }) => effectivePeriod),
+          nextApplicabilityBoundary: Option.fromNullishOr(currentSet.completenessEvidence.nextApplicabilityBoundary),
+          observedAt: currentSet.observedAt,
+          ownerReceiptObservedAt: ownerReadReceipt.authority.observedAt,
+        },
+      ],
+    }),
+  );
 
 const fenceObservationOf = (
   input: ObservedTypedSources,
@@ -829,48 +895,97 @@ const observeOwnerFence = <Self>(
     }),
   );
 
+const RetainedOwnerFenceRequestSchema = Schema.Struct({
+  materialEvidence: Schema.Struct({
+    sourceEvidence: Schema.Struct({
+      ownerFenceRequest: Schema.Struct({
+        effectiveAt: Schema.DateTimeUtcFromString,
+        sources: Schema.Array(Schema.Struct({ verificationMaterial: Schema.Unknown })),
+      }),
+    }),
+  }),
+});
+const decodeRetainedOwnerFenceRequest = Schema.decodeUnknownOption(RetainedOwnerFenceRequestSchema);
+
 const recordWholeAttempt = (
   observed: HarnessWholeAttemptObservation[],
   whole: {
-    readonly attempt: { readonly kind: string; readonly reason?: string };
+    readonly attempt: { readonly kind: string; readonly publicationRequest?: unknown; readonly reason?: string };
     readonly outcome: { readonly outcome: string };
   },
 ) =>
   Effect.sync(() => {
     const { attempt, outcome } = whole;
-    const entry = { kind: attempt.kind, outcome: outcome.outcome };
+    // A READY attempt retained the owner fence request its final publication hands to the owners.
+    const retained = decodeRetainedOwnerFenceRequest(attempt.publicationRequest);
+    const fenceRequest = retained.pipe(
+      Option.map(({ materialEvidence }) => materialEvidence.sourceEvidence.ownerFenceRequest),
+    );
+    const entry = {
+      effectiveAt: fenceRequest.pipe(Option.map(({ effectiveAt }) => effectiveAt)),
+      feeSets: feeSetObservationsOf(
+        Option.match(fenceRequest, {
+          onNone: () => [],
+          onSome: ({ sources }) => sources.map(({ verificationMaterial }) => verificationMaterial),
+        }),
+      ),
+      kind: attempt.kind,
+      outcome: outcome.outcome,
+    };
     observed.push(attempt.reason === undefined ? entry : { ...entry, reason: attempt.reason });
   });
+
+/**
+ * TEST-ONLY interference point (declared, never production behaviour): an optional hook that runs after each whole
+ * attempt returned its result and before that attempt's final publication and owner fences, i.e. exactly where a
+ * concurrent owner write between "read" and "fence" lands. It decides nothing itself.
+ */
+interface HarnessAttemptHooks {
+  afterWholeAttempt: ((ordinal: number) => Effect.Effect<void>) | null;
+}
+
+/** A failing hook is a test defect, so it surfaces as one instead of being absorbed by the Read. */
+const hookWithCrypto = (hook: (ordinal: number) => HarnessEffect<void>, crypto: Crypto.Crypto) => (ordinal: number) =>
+  hook(ordinal).pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.orDie);
 
 const observeWholeEvaluation = (
   factory: CurrentPricingDecisionEvaluationFactoryService,
   observed: HarnessWholeAttemptObservation[],
+  hooks: HarnessAttemptHooks,
 ): CurrentPricingDecisionEvaluationFactoryService => ({
   make: (source, ...rest) =>
     factory.make(
       {
         ...source,
         loadFresh: (...input) =>
-          source.loadFresh(...input).pipe(Effect.tap((whole) => recordWholeAttempt(observed, whole))),
+          source.loadFresh(...input).pipe(
+            Effect.tap((whole) => recordWholeAttempt(observed, whole)),
+            Effect.tap(() => hooks.afterWholeAttempt?.(input[2]) ?? Effect.void),
+          ),
       },
       ...rest,
     ),
 });
 
-const observeEvaluationFactory = (observed: HarnessWholeAttemptObservation[]) =>
+const observeEvaluationFactory = (observed: HarnessWholeAttemptObservation[], hooks: HarnessAttemptHooks) =>
   Layer.effect(
     CurrentPricingDecisionEvaluationFactory,
     Effect.gen(function* observeFactory() {
-      return observeWholeEvaluation(yield* CurrentPricingDecisionEvaluationFactory, observed);
+      return observeWholeEvaluation(yield* CurrentPricingDecisionEvaluationFactory, observed, hooks);
     }),
   );
 
 /**
  * Production wiring for the registered Read. The only additions are pass-through observers of each whole attempt
- * and each owner final-fence call; they change nothing the owner evaluation or the owners decide.
+ * and each owner final-fence call, plus the declared test-only attempt hook; they change nothing the owner
+ * evaluation or the owners decide.
  */
-const productionReadCollaborators = (observed: HarnessWholeAttemptObservation[], fences: HarnessFenceObservation[]) =>
-  observeEvaluationFactory(observed).pipe(
+const productionReadCollaborators = (
+  observed: HarnessWholeAttemptObservation[],
+  fences: HarnessFenceObservation[],
+  hooks: HarnessAttemptHooks,
+) =>
+  observeEvaluationFactory(observed, hooks).pipe(
     Layer.provide(currentPricingDecisionEvaluationFactoryLive),
     Layer.provideMerge(pricingExternalOwnerEvidenceValidationService),
     Layer.provideMerge(pricingOrdinaryCurrentPublicationLive),
@@ -884,6 +999,37 @@ const productionReadCollaborators = (observed: HarnessWholeAttemptObservation[],
     ),
   );
 
+const HarnessFeeFamilySchema = Schema.Literals(['COPYRIGHT_FEE', 'RECYCLING_FEE']);
+type HarnessFeeFamily = typeof HarnessFeeFamilySchema.Type;
+
+const harnessFeeIdentityKey = (
+  legalEntityId: string,
+  handoff: typeof CatalogQuantityHandoffReadySchema.Type,
+  family: HarnessFeeFamily,
+) => ({
+  calculationBasis: { kind: 'FIXED_PER_LINE' as const },
+  commercialScope: { ...HARNESS_MARKET, sellingLegalEntityId: legalEntityId },
+  currencyCode: 'CZK' as const,
+  family,
+  monetaryBoundary: 'PRE_TAX' as const,
+  target: { variantRef: handoff.selection.variantRef },
+});
+
+const harnessFeeCatalogTargetEvidence = (
+  handoff: typeof CatalogQuantityHandoffReadySchema.Type,
+  capturedAt: string,
+) => {
+  const { productRef, variantRef } = handoff.selection;
+  return {
+    capturedAt,
+    catalogOwnerRevision: handoff.ownerRevision,
+    productRef,
+    snapshotId: `TEST:harness:fee-catalog-snapshot:${variantRef.resourceId}`,
+    targetId: `TEST:harness:fee-target:${variantRef.resourceId}`,
+    variantRef,
+  };
+};
+
 const defineHarnessCommercialFee = Effect.fn('PublicPricingReadHarness.defineCommercialFee')(
   function* defineHarnessCommercialFee(
     transaction: ScopedTransactionExecutor,
@@ -891,7 +1037,11 @@ const defineHarnessCommercialFee = Effect.fn('PublicPricingReadHarness.defineCom
     input: {
       readonly amount: string;
       readonly effectiveFrom: string;
+      readonly effectiveTo?: string | null;
+      readonly family?: HarnessFeeFamily;
       readonly handoff: typeof CatalogQuantityHandoffReadySchema.Type;
+      /** The trusted operation instant of the write; defaults to `effectiveFrom` (a past instant). */
+      readonly trustedOperationAt?: string;
     },
   ) {
     const { legalEntityId } = scope;
@@ -900,32 +1050,71 @@ const defineHarnessCommercialFee = Effect.fn('PublicPricingReadHarness.defineCom
     }
     const persistence = yield* commercialFeePersistenceForScope(transaction, scope);
     const actionInvocationId = yield* nextId;
-    const { productRef, variantRef } = input.handoff.selection;
+    const trustedOperationAt = input.trustedOperationAt ?? input.effectiveFrom;
     return yield* persistence.define({
       actingPrincipalId: scope.principalId,
       actionInvocationId,
-      catalogTargetEvidence: {
-        capturedAt: input.effectiveFrom,
-        catalogOwnerRevision: input.handoff.ownerRevision,
-        productRef,
-        snapshotId: `TEST:harness:fee-catalog-snapshot:${variantRef.resourceId}`,
-        targetId: `TEST:harness:fee-target:${variantRef.resourceId}`,
-        variantRef,
-      },
+      catalogTargetEvidence: harnessFeeCatalogTargetEvidence(input.handoff, trustedOperationAt),
       configuredAmount: { amount: input.amount, currencyCode: 'CZK' },
-      effectivePeriod: { effectiveFrom: input.effectiveFrom, effectiveTo: null },
-      identityKey: {
-        calculationBasis: { kind: 'FIXED_PER_LINE' },
-        commercialScope: { ...HARNESS_MARKET, sellingLegalEntityId: legalEntityId },
-        currencyCode: 'CZK',
-        family: 'RECYCLING_FEE',
-        monetaryBoundary: 'PRE_TAX',
-        target: { variantRef },
-      },
+      effectivePeriod: { effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo ?? null },
+      identityKey: harnessFeeIdentityKey(legalEntityId, input.handoff, input.family ?? 'RECYCLING_FEE'),
       reason: 'Pricing public Read harness Fee',
       requestCorrelationId: actionInvocationId,
-      trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveFrom)),
+      trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(trustedOperationAt)),
     });
+  },
+);
+
+/**
+ * A value-only revision of the Current Fee through Pricing's own scoped persistence: the revised amount is effective
+ * from `effectiveFrom` (a past instant), so a later read at an instant after it sees the new revision.
+ */
+const reviseHarnessCommercialFee = Effect.fn('PublicPricingReadHarness.reviseCommercialFee')(
+  function* reviseHarnessCommercialFee(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    input: {
+      readonly amount: string;
+      readonly effectiveFrom: string;
+      readonly family?: HarnessFeeFamily;
+      readonly handoff: typeof CatalogQuantityHandoffReadySchema.Type;
+    },
+  ) {
+    const { legalEntityId } = scope;
+    if (legalEntityId === undefined) {
+      return yield* unavailable('harness-fee-requires-legal-entity-scope');
+    }
+    const persistence = yield* commercialFeePersistenceForScope(transaction, scope);
+    const identityKey = harnessFeeIdentityKey(legalEntityId, input.handoff, input.family ?? 'RECYCLING_FEE');
+    const trustedOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveFrom));
+    const schedule = yield* persistence.readSchedule({ identityKey, trustedOperationAt });
+    if (schedule.outcome !== 'COMMERCIAL_FEE_SCHEDULE' || schedule.schedule.current === undefined) {
+      return yield* unavailable('harness-fee-revision-requires-current-fee');
+    }
+    const { current } = schedule.schedule;
+    const actionInvocationId = yield* nextId;
+    const revised = yield* persistence.revise({
+      actingPrincipalId: scope.principalId,
+      actionInvocationId,
+      catalogTargetEvidence: harnessFeeCatalogTargetEvidence(input.handoff, input.effectiveFrom),
+      configuredAmount: { amount: input.amount, currencyCode: 'CZK' },
+      effectiveFrom: input.effectiveFrom,
+      expectedCurrent: {
+        effectivePeriod: current.effectivePeriod,
+        feeRef: current.definition.feeRef,
+        identityKey,
+        revision: current.definition.revision.revision,
+        revisionId: current.definition.revision.revisionId,
+        scheduleRevision: schedule.schedule.scheduleRevision,
+      },
+      identityKey,
+      intent: 'VALUE_ONLY_CURRENT',
+      reason: 'Pricing public Read harness Fee revision',
+      requestCorrelationId: actionInvocationId,
+      trustedOperationAt,
+    });
+    expect(revised.outcome).toBe('COMMERCIAL_FEE_REVISED');
+    return revised;
   },
 );
 
@@ -1208,8 +1397,14 @@ type HarnessCatalogSelection = typeof CatalogSelectionSchema.Type;
 
 /** What a scenario may rely on; every member is produced through a supported owner path or the registered Read. */
 export interface PublicPricingReadHarness {
+  /**
+   * Installs the declared test-only hook that runs after each whole attempt and before its final publication and
+   * owner fences, with the attempt ordinal (1 or 2); `clearAfterWholeAttempt` removes it.
+   */
+  readonly afterWholeAttempt: (hook: (ordinal: number) => HarnessEffect<void>) => Effect.Effect<void>;
   /** Catalog-signed owner credential, for direct Catalog owner reads. */
   readonly authorization: (issuedAt: DateTime.Utc) => HarnessEffect<string>;
+  readonly clearAfterWholeAttempt: () => Effect.Effect<void>;
   readonly composition: typeof ActiveApplicationCompositionSnapshotSchema.Type;
   readonly endpoint: { readonly baseUrl: URL; readonly compositionRevision: string };
   /** Every owner final-fence call of the registered Read, in order. */
@@ -1246,8 +1441,17 @@ export interface PublicPricingReadHarness {
   readonly priceGroupRef: HarnessPriceGroupRef;
   /** Requests the declared Customer Context price-group stand-in answered, including final-fence replays. */
   readonly priceGroupRequests: readonly CustomerPriceGroupResolutionRequest[];
+  /**
+   * A Commercial Fee through Pricing's own scoped persistence. By default a RECYCLING_FEE effective from the harness
+   * start with no end. `effectiveFrom` in the future keeps the Variant's Fee set owner-proven EMPTY at earlier
+   * instants (Price admission initialised its Fee root); `effectiveTo` sets the Fee's end, i.e. the owner's next
+   * applicability boundary; `family` adds a second Fee family for the same Variant (a material insertion).
+   */
   readonly produceCommercialFee: (input: {
     readonly amount: string;
+    readonly effectiveFrom?: string;
+    readonly effectiveTo?: string | null;
+    readonly family?: HarnessFeeFamily;
     readonly handoff: HarnessCatalogHandoff;
   }) => HarnessEffect<void>;
   /** A Current Price Group VARIANT_LINE Discount of a fixed amount; visible to Profile subjects only. */
@@ -1265,6 +1469,15 @@ export interface PublicPricingReadHarness {
     readonly fresh: HarnessCatalogHandoff;
     readonly previous: HarnessCatalogHandoff;
     readonly resultingUnitPrice?: string;
+  }) => HarnessEffect<void>;
+  /**
+   * A value-only revision of the Variant's Current Fee, effective one millisecond after the previous harness
+   * revision (the first one a millisecond after the harness start), so every Read as-of a later instant sees it.
+   */
+  readonly reviseCommercialFee: (input: {
+    readonly amount: string;
+    readonly family?: HarnessFeeFamily;
+    readonly handoff: HarnessCatalogHandoff;
   }) => HarnessEffect<void>;
   readonly reviseFirstUnitRule: () => HarnessEffect<number>;
   /** One call through the registered production Read; nothing below the Read boundary is substituted. */
@@ -1676,6 +1889,8 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     };
     const wholeAttempts: HarnessWholeAttemptObservation[] = [];
     const fenceCalls: HarnessFenceObservation[] = [];
+    const attemptHooks: HarnessAttemptHooks = { afterWholeAttempt: null };
+    const crypto = yield* Crypto.Crypto;
     yield* shell.serve(
       Effect.gen(function* harnessShell() {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -1794,17 +2009,33 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     );
 
     /** A valid RECYCLING_FEE Current set for one Variant, produced through Pricing's own scoped persistence. */
-    const produceCommercialFee = (input: {
-      readonly amount: string;
-      readonly handoff: typeof CatalogQuantityHandoffReadySchema.Type;
-    }) =>
+    const produceCommercialFee = (input: Parameters<PublicPricingReadHarness['produceCommercialFee']>[0]) =>
       fixture
         .prepareOwner(
           (transaction, scope) =>
-            defineHarnessCommercialFee(transaction, scope, { ...input, effectiveFrom: operationTime }),
+            defineHarnessCommercialFee(transaction, scope, {
+              ...input,
+              effectiveFrom: input.effectiveFrom ?? operationTime,
+              trustedOperationAt: operationTime,
+            }),
           'required',
         )
         .pipe(Effect.asVoid);
+
+    let feeRevisions = 0;
+    /** A value-only Fee revision effective `operationTime` plus one millisecond per harness revision. */
+    const reviseCommercialFee = (input: Parameters<PublicPricingReadHarness['reviseCommercialFee']>[0]) => {
+      feeRevisions += 1;
+      const effectiveFrom = DateTime.formatIso(
+        DateTime.add(DateTime.makeUnsafe(operationTime), { milliseconds: feeRevisions }),
+      );
+      return fixture
+        .prepareOwner(
+          (transaction, scope) => reviseHarnessCommercialFee(transaction, scope, { ...input, effectiveFrom }),
+          'required',
+        )
+        .pipe(Effect.asVoid);
+    };
 
     /**
      * A Current Contractual Discount for the declared Price Group on one exact Variant line, produced through
@@ -1962,7 +2193,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         ),
     };
 
-    const collaborators = yield* Layer.build(productionReadCollaborators(wholeAttempts, fenceCalls)).pipe(
+    const collaborators = yield* Layer.build(productionReadCollaborators(wholeAttempts, fenceCalls, attemptHooks)).pipe(
       Effect.provideService(
         ActiveApplicationCompositionService,
         makeActiveApplicationCompositionService(Effect.succeed(composition)),
@@ -1993,7 +2224,15 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     });
 
     return {
+      afterWholeAttempt: (hook: Parameters<PublicPricingReadHarness['afterWholeAttempt']>[0]) =>
+        Effect.sync(() => {
+          attemptHooks.afterWholeAttempt = hookWithCrypto(hook, crypto);
+        }),
       authorization: (issuedAt: DateTime.Utc) => confine('authorization', authorization(issuedAt)),
+      clearAfterWholeAttempt: () =>
+        Effect.sync(() => {
+          attemptHooks.afterWholeAttempt = null;
+        }),
       composition,
       endpoint,
       fenceCalls,
@@ -2017,6 +2256,8 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       profileSubject,
       reproduceTier: (input: Parameters<typeof reproduceTier>[0]) =>
         confine('reproduce-tier', reproduceTier(input).pipe(Effect.asVoid)),
+      reviseCommercialFee: (input: Parameters<typeof reviseCommercialFee>[0]) =>
+        confine('revise-commercial-fee', reviseCommercialFee(input)),
       reviseFirstUnitRule: () => confine('revise-first-unit-rule', reviseFirstUnitRule()),
       runRegisteredRead: (request: Parameters<typeof runRegisteredRead>[0]) =>
         confine('registered-read', runRegisteredRead(request)),
