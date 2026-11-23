@@ -146,7 +146,10 @@ import { authenticationQueryRedactions } from '@app/shared-contracts/credential-
 import { Reactivity } from 'effect/reactivity';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
 import { flow } from 'effect/Function';
-import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import {
+  TrustedCompanyPrincipalContextSchema,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime/actions/principal-context';
 import {
   assetDownloadRead,
   downloadResponseHeaders,
@@ -4712,6 +4715,15 @@ export const makeShellAuthenticationApiRuntime = (
   const delegationLedgerLayer = GatewayDelegationExchangeLedgerLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
   const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
+  );
+  const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
+  );
+  const agentConnectionStoreLive = AgentConnectionStoreLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive)),
+  );
+  const platformWorkloadKeyAdmissionLayer = PlatformWorkloadKeyAdmissionLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive, moduleCatalogLayer)),
   );
   // The Core operations this host serves to modules: the object store, the verifier of the Shell-audience assertion,
   // its single-use redemption in the Shell's own private store, and the approved release it is checked against.
