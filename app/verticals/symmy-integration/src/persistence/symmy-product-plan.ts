@@ -583,6 +583,9 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
       : readinessSteps.map((step, position) => ({
           dependsOn: [
             parent,
+            ...(position === 0
+              ? productTexts.map(({ effectKey }) => ({ effectKey, itemKey: productItemKey }))
+              : []),
             ...readinessSteps.slice(0, position).map((previous) => ({
               effectKey: `readiness-${previous.toLowerCase()}`,
               itemKey: productItemKey,
