@@ -18,7 +18,6 @@ import { MediaIntegrityFailed, MediaUnavailable } from '../../src/media/errors.t
 import { MediaIntegrityRecorder } from '../../src/media/integrity-recorder.ts';
 import { statReadyMediaAsset, verifyReadyMediaAsset } from '../../src/media/verified-read.ts';
 import type { MediaVerifiableAsset } from '../../src/media/verified-read.ts';
-import { emulatorConfig } from '../support/s3-emulator-config.ts';
 import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import {
   pointAt,
