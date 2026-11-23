@@ -112,6 +112,9 @@ export class SymmyDemoCustomerAuthorityError extends Schema.TaggedError<SymmyDem
   { reason: Schema.String },
 ) {}
 const fail = (message: string) => new SymmyDemoCustomerAuthorityError({ reason: message });
+export const symmyDemoDiscoveryFailure =
+  (phase: 'integration-route' | 'party-writer' | 'commerce-writer' | 'party-reader') => () =>
+    fail(phase);
 const tenantId = TenantIdSchema.make(SYMMY_DEMO_CUSTOMER_TENANT);
 const legalEntityId = LegalEntityIdSchema.make(SYMMY_DEMO_CUSTOMER_COMPANY);
 const Uuid = Schema.String.check(Schema.isUUID());
@@ -176,9 +179,8 @@ export const selectSymmyDemoSourceWriter = (workloadKey: string, input: unknown)
     return principalId;
   });
 
-/** Active native bindings establish the candidate set; Core revalidates the selected identity as a trusted worker. */
-export const resolveSymmyDemoSourceWriter = (workloadKey: string, excludedBindingIds: readonly string[] = []) =>
-  Effect.gen(function* resolveWriter() {
+const readSymmyDemoSourceWriterCandidates = (workloadKey: string) =>
+  Effect.gen(function* readCandidates() {
     const sql = yield* PgClient.PgClient;
     const candidates = yield* sql`select distinct b.binding_id as "bindingId", p.principal_id as "principalId", p.kind,
       p.platform_role as "platformRole", b.tenant_id as "tenantId",
@@ -193,7 +195,16 @@ export const resolveSymmyDemoSourceWriter = (workloadKey: string, excludedBindin
       where b.tenant_id=${tenantId} and b.workload_key=${workloadKey}
         and b.status='active' and p.status='active'
         and p.kind in ('system','service') and t.status='active' and l.status='active'`;
-    const parsed = yield* symmyDemoReceiverCandidates(candidates, excludedBindingIds);
+    return yield* Schema.decodeUnknownEffect(Schema.Array(SourceWriterCandidateSchema))(candidates);
+  });
+
+/** Active native bindings establish the candidate set; Core revalidates the selected identity as a trusted worker. */
+export const resolveSymmyDemoSourceWriter = (workloadKey: string, excludedBindingIds: readonly string[] = []) =>
+  Effect.gen(function* resolveWriter() {
+    const parsed = yield* symmyDemoReceiverCandidates(
+      yield* readSymmyDemoSourceWriterCandidates(workloadKey),
+      excludedBindingIds,
+    );
     const principalId = yield* selectSymmyDemoSourceWriter(workloadKey, parsed);
     const executor = yield* makeWithDefaults({ relations: coreRelations });
     return yield* makeSystemPrincipalContextResolver({ executor }).resolve({
@@ -203,6 +214,7 @@ export const resolveSymmyDemoSourceWriter = (workloadKey: string, excludedBindin
       tenantId,
     });
   });
+
 export const symmyDemoObsoleteReceiverBindingIds = (partyId: string, commerceId: string, key: string) =>
   [partyId, commerceId].map((principalId) => stageWorkloadBindingIds(tenantId, principalId, key).bindingId);
 
@@ -583,20 +595,22 @@ export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnviron
     return yield* fail('Customer authority bootstrap is restricted to stage');
   }
   const sql = yield* PgClient.PgClient;
-  const rows = yield* sql`select principal_id as "principalId" from symmy_integration.job_routes
+  const [integration] = yield* sql`select principal_id as "principalId" from symmy_integration.job_routes
     where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}
-      and route_id=${SYMMY_DEMO_GROUPS_ROUTE} and route_key='customerGroupsBatch' and active=true`;
-  const [integration] = yield* Schema.decodeUnknownEffect(
-    Schema.Tuple([Schema.Struct({ principalId: PrincipalIdSchema })]),
-  )(rows);
-  const [party, commerce] = yield* Effect.all(
-    [resolveSymmyDemoSourceWriter(partyWriter), resolveSymmyDemoSourceWriter(sourceWriter)],
-    { concurrency: 1 },
+      and route_id=${SYMMY_DEMO_GROUPS_ROUTE} and route_key='customerGroupsBatch' and active=true`.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ principalId: PrincipalIdSchema })]))),
+    Effect.mapError(symmyDemoDiscoveryFailure('integration-route')),
+  );
+  const party = yield* resolveSymmyDemoSourceWriter(partyWriter).pipe(
+    Effect.mapError(symmyDemoDiscoveryFailure('party-writer')),
+  );
+  const commerce = yield* resolveSymmyDemoSourceWriter(sourceWriter).pipe(
+    Effect.mapError(symmyDemoDiscoveryFailure('commerce-writer')),
   );
   const reader = yield* resolveSymmyDemoSourceWriter(
     'party.registry.source-read',
     symmyDemoObsoleteReceiverBindingIds(party.principalId, commerce.principalId, 'party.registry.source-read'),
-  );
+  ).pipe(Effect.mapError(symmyDemoDiscoveryFailure('party-reader')));
   const identities = yield* Schema.decodeUnknownEffect(
     Schema.Struct({
       commerceWriterId: Uuid,

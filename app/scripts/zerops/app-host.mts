@@ -49,6 +49,7 @@ import { bootTimingLine, timedBootStage, timedBootStageJudged } from './boot-sta
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
   readSymmyDemoCustomerEnvironment,
+  SymmyDemoCustomerAuthorityError,
   SymmyDemoCustomerAuthorityLive,
 } from '../demo/symmy-demo-customer-authority.mts';
 import {
@@ -104,6 +105,7 @@ import type { Dispatcher } from '@effect/platform-node/Undici';
 import { sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
+  Cause,
   Clock,
   Config,
   ConfigProvider,
@@ -190,6 +192,40 @@ const RELAY_HEADERS_TIMEOUT = Duration.seconds(60);
 
 export class AppHostError extends Schema.TaggedError<AppHostError>()('AppHostError', { reason: Schema.String }) {}
 const failure = (reason: string) => new AppHostError({ reason });
+
+const CUSTOMER_DISCOVERY_REASONS: ReadonlyMap<string, string> = new Map([
+  ['integration-route', 'AKROS customer discovery failed phase=integration-route'],
+  ['party-writer', 'AKROS customer discovery failed phase=party-writer'],
+  ['commerce-writer', 'AKROS customer discovery failed phase=commerce-writer'],
+  ['party-reader', 'AKROS customer discovery failed phase=party-reader'],
+]);
+
+export const customerDiscoveryHostError = (problem: unknown): AppHostError =>
+  failure(
+    (problem instanceof SymmyDemoCustomerAuthorityError ? CUSTOMER_DISCOVERY_REASONS.get(problem.reason) : undefined)
+      ?? 'Unable to resolve the existing AKROS customer source writers',
+  );
+
+/** Only host-authored typed reasons are public diagnostics; never render a platform/database cause. */
+export const formatAppHostStop = (cause: Cause.Cause<unknown>): string => {
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error) && error.value instanceof AppHostError && SAFE_HOST_STOP_REASONS.has(error.value.reason)
+    ? `[app-host] stopped: ${error.value.reason}`
+    : '[app-host] stopped: unclassified host failure';
+};
+
+/** Dynamic host reasons can include configuration names or downstream details; only these literals may be logged. */
+const SAFE_HOST_STOP_REASONS: ReadonlySet<string> = new Set([
+  ...CUSTOMER_DISCOVERY_REASONS.values(),
+  'Unable to resolve the existing AKROS customer source writers',
+  'ONTOS_OWNER_SECRETS_JSON must be an owner record of string secrets',
+  'Unable to verify the Core bootstrap catalog before owner migrations',
+  'stage Symmy demo bootstrap failed; composition not published',
+  'The Shell is not hosted',
+  'the module credential provisioning output is malformed',
+  'module credential provisioning exceeded its time budget',
+  'this host was superseded and never writes the authority again',
+]);
 
 const OwnerSecretsSchema = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
@@ -2047,7 +2083,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     environment === 'stage'
       ? (yield* readSymmyDemoCustomerEnvironment.pipe(
           Effect.provide(SymmyDemoCustomerAuthorityLive),
-          Effect.mapError(() => failure('Unable to resolve the existing AKROS customer source writers')),
+          Effect.mapError(customerDiscoveryHostError),
         )).environment
       : {};
   const derived = {
@@ -2568,7 +2604,7 @@ if (import.meta.main) {
     Effect.provide(NodeServices.layer),
     Effect.provide(ProcessDatabasePoolsLive),
     Effect.provideService(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
-    Effect.tapCause((cause) => Console.error(`[app-host] stopped: ${String(cause)}`)),
+    Effect.tapCause((cause) => Console.error(formatAppHostStop(cause))),
   );
   const exit = await Effect.runPromiseExit(program);
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;

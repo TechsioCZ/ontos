@@ -1,13 +1,20 @@
 import { readFileSync } from 'node:fs';
 
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Console, Effect, Match } from 'effect';
+import { Cause, ConfigProvider, Console, Effect, Match } from 'effect';
 import { systemError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { TestConsole } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
-import { bootstrapStageSymmyDemo, processEnvironment } from '../zerops/app-host.mts';
+import {
+  AppHostError,
+  bootstrapStageSymmyDemo,
+  customerDiscoveryHostError,
+  formatAppHostStop,
+  processEnvironment,
+} from '../zerops/app-host.mts';
+import { SymmyDemoCustomerAuthorityError } from '../demo/symmy-demo-customer-authority.mts';
 import { workspaceRoot } from '../zerops/hosted-units.mts';
 
 const SCRIPTS = [
@@ -30,6 +37,36 @@ const STAGE = {
   ONTOS_OWNER_SECRETS_JSON: '{"shell-super-app":{"unrelated":"never-inherit-this"}}',
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
 };
+
+it('prints only allowlisted host-authored stop reasons, never dynamic reasons or raw causes', () => {
+  expect(formatAppHostStop(Cause.fail(new AppHostError({
+    reason: 'Unable to resolve the existing AKROS customer source writers',
+  })))).toBe('[app-host] stopped: Unable to resolve the existing AKROS customer source writers');
+  for (const cause of [
+    Cause.fail(new AppHostError({ reason: `${ADMIN_URL}; ${SQL_TEXT}` })),
+    Cause.fail(new Error(`${ADMIN_URL}; ${SQL_TEXT}`)),
+    Cause.die(`${ADMIN_URL}; ${SQL_TEXT}`),
+    Cause.fail({ _tag: 'AppHostError', reason: ADMIN_URL }),
+  ]) {
+    expect(formatAppHostStop(cause)).toBe('[app-host] stopped: unclassified host failure');
+  }
+});
+
+it('preserves only exact typed discovery phases and replaces every other source error', () => {
+  for (const phase of ['integration-route', 'party-writer', 'commerce-writer', 'party-reader']) {
+    const error = customerDiscoveryHostError(new SymmyDemoCustomerAuthorityError({ reason: phase }));
+    expect(formatAppHostStop(Cause.fail(error))).toBe(`[app-host] stopped: AKROS customer discovery failed phase=${phase}`);
+  }
+  for (const problem of [
+    new SymmyDemoCustomerAuthorityError({ reason: `${ADMIN_URL}; ${SQL_TEXT}` }),
+    new Error(`${ADMIN_URL}; ${SQL_TEXT}`),
+    { _tag: 'SymmyDemoCustomerAuthorityError', reason: 'party-writer' },
+  ]) {
+    expect(formatAppHostStop(Cause.fail(customerDiscoveryHostError(problem)))).toBe(
+      '[app-host] stopped: Unable to resolve the existing AKROS customer source writers',
+    );
+  }
+});
 
 /** Exercise the real child boundary without running the database-writing demo commands. */
 const fixture = (failAt = 0, exitCode = 7) =>

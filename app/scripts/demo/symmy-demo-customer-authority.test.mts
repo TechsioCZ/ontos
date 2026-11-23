@@ -18,6 +18,7 @@ import {
   selectSymmyDemoSourceWriter,
   symmyDemoReceiverCandidates,
   symmyDemoReceiverWorkloadsForPhase,
+  symmyDemoDiscoveryFailure,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
@@ -27,6 +28,15 @@ const identities = {
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
 };
+
+it('replaces all discovery causes with fixed phase codes and retains no raw cause', () => {
+  for (const phase of ['integration-route', 'party-writer', 'commerce-writer', 'party-reader'] as const) {
+    const failure = symmyDemoDiscoveryFailure(phase)();
+    expect(failure.reason).toBe(phase);
+    expect(failure._tag).toBe('SymmyDemoCustomerAuthorityError');
+    expect('cause' in failure).toBe(false);
+  }
+});
 
 it('discovers only required receiver identities before owner startup, and the full chain after registration', () => {
   expect(symmyDemoReceiverWorkloadsForPhase('pre-owner')).toEqual(['party.registry.source-read']);
