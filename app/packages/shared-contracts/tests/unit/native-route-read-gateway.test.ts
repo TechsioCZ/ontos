@@ -58,6 +58,10 @@ it('decodes a native synchronous Read without any fabricated invocation or exter
 it('requires a distinct calling module on delegated native Reads without changing receiver or original identity rules', () => {
   const delegated = {
     ...claims,
+    routeScope: {
+      ...claims.routeScope,
+      nativeReadReceiver: { ...claims.routeScope.nativeReadReceiver, requestHash: 'b'.repeat(64) },
+    },
     act: {
       appId: 'symmy-integration',
       buildMarker: 'symmy-build',
@@ -69,6 +73,7 @@ it('requires a distinct calling module on delegated native Reads without changin
   const { act: _actor, ...withoutActor } = delegated;
   for (const invalid of [
     withoutActor,
+    { ...delegated, routeScope: claims.routeScope },
     { ...delegated, act: { ...delegated.act, principalId } },
     { ...delegated, act: { ...delegated.act, principalId: originalPrincipalId } },
     { ...delegated, principal: { ...delegated.principal, authMethod: 'api_key' } },

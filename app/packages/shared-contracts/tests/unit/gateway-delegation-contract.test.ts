@@ -557,6 +557,7 @@ it.effect('refuses a native route Read outside its actual declared operation lea
       requestCorrelation: 'native-read-outside-lease',
       subject: {
         _tag: 'NativeRouteRead',
+        requestHash: 'b'.repeat(64),
         scope,
         operationRequirementKey: 'integration.symmy.requirement.customer-intake-privacy',
       },

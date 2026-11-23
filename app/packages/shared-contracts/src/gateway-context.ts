@@ -481,6 +481,9 @@ export const GatewayContextV10ClaimsSchema = Schema.Struct({
       act.principalId !== claims.routeScope.nativeReadReceiver?.originalPrincipalId
       ? []
       : [{ issue: 'The module actor differs from both the native receiver and original integration', path: ['act'] }]),
+    ...(claims.routeScope.nativeReadReceiver?.requestHash !== undefined
+      ? []
+      : [{ issue: 'A delegated native Read requires its exact decoded request hash', path: ['routeScope'] }]),
   ]),
 );
 
@@ -566,6 +569,7 @@ export const GatewayRegisteredAssertionSubjectSchema = Schema.TaggedStruct('Regi
 /** A declared synchronous prerequisite of a signed route, before any durable Action evidence is available. */
 export const GatewayNativeRouteReadSubjectSchema = Schema.TaggedStruct('NativeRouteRead', {
   operationRequirementKey: GatewayCapabilityKeySchema,
+  requestHash: compositionRevision,
   sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
 });
 

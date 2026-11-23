@@ -135,6 +135,7 @@ const PrivacyDispatchSourceSchema = Schema.Union([
 export const GatewayDelegationSubjectSchema = Schema.Union([
   Schema.TaggedStruct('NativeRouteRead', {
     operationRequirementKey: GatewayCapabilityKeySchema,
+    requestHash: revisionString,
     scope: VerifiedScopeSchema,
   }),
   Schema.TaggedStruct('OrganizationGovernanceRead', { requestHash: revisionString, scope: VerifiedScopeSchema }),
@@ -443,13 +444,13 @@ const subjectWireOf = (
   subject: GatewayDelegationSubject,
 ): Effect.Effect<WireSubjectRevision, GatewayDelegationSourceError> =>
   Match.value(subject).pipe(
-    Match.tag('NativeRouteRead', ({ scope, operationRequirementKey }) =>
+    Match.tag('NativeRouteRead', ({ scope, operationRequirementKey, requestHash }) =>
       assertionWire({ scope }).pipe(
         Effect.flatMap((source) =>
           Match.value(source.subject).pipe(
             Match.tag('Assertion', (proof) => Effect.succeed({
               compositionRevision: source.compositionRevision,
-              subject: { _tag: 'NativeRouteRead' as const, operationRequirementKey, sourceAssertion: proof.sourceAssertion },
+              subject: { _tag: 'NativeRouteRead' as const, operationRequirementKey, requestHash, sourceAssertion: proof.sourceAssertion },
             })),
             Match.orElse(() => Effect.fail(
               new GatewayDelegationSourceError({ reason: 'A native route Read requires its original verified assertion' }),

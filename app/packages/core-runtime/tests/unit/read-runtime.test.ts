@@ -67,6 +67,7 @@ import { TrustedPrincipalContextSchema } from '../../src/actions/principal-conte
 import {
   trustVerifiedGatewayPrincipalContext,
   preserveSystemPrincipalContextTrust,
+  RegisteredGatewayRouteScopeSchema,
 } from '../../src/auth/system-principal-context-provenance.ts';
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
@@ -4477,6 +4478,49 @@ it.effect('rejects a recreated Core external-subject resolution Read before its 
     expect(harness.stages).toEqual(['input_decoded', 'scope_validated']);
     expect(handlerCalls).toBe(0);
     expect(harness.evidence()).toBe(0);
+  }),
+);
+
+it.effect('rejects native route input substitution before any owner scope or private Read work', () =>
+  Effect.gen(function* nativeReadInputHash() {
+    const read = registration();
+    const system = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+      authMethod: 'system',
+      authContextRef: 'job:native-read:run:unit',
+      principalId: scope.principalId,
+      tenantId: scope.tenantId,
+    });
+    const id = '60000000-0000-4000-8000-000000000001';
+    const route = Schema.decodeUnknownSync(RegisteredGatewayRouteScopeSchema)({
+      nativeReadReceiver: {
+        bindingIncarnation: id,
+        originalPrincipalId: '60000000-0000-4000-8000-000000000002',
+        originalWorkloadBindingIncarnation: id,
+        originalWorkloadKey: 'integration.symmy-admit',
+        requestHash: computeCanonicalValueHash({ changed: true }),
+        workloadKey: 'privacy.core.source-processing-check',
+      },
+      operations: [{ entrypointKey: read.descriptor.entrypoint.entrypointKey, schemaVersion: read.descriptor.schemaVersion }],
+      principalId: scope.principalId,
+      routeId: id,
+      routeKey: 'customersBatch',
+      routeRevision: 'v1',
+      sourceRouteId: id,
+      sourceRouteRevision: 'v1',
+      tenantId: scope.tenantId,
+    });
+    const principal = trustVerifiedGatewayPrincipalContext(system, 'a'.repeat(64), undefined, undefined, undefined, route);
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(harness.runtime.runRead({
+      input: {},
+      principal,
+      registration: read,
+      transport: { correlationId: scope.correlationId },
+    }));
+    expect(Predicate.isTagged(failure, 'ReadInputValidationError')).toBe(true);
+    expect(failure.reason).toBe('Native route authority does not match the exact Read request');
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
+    expect(harness.stages).not.toContain('handler');
   }),
 );
 

@@ -3,6 +3,7 @@ import {
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
   decodeTrustedPrincipalContext,
   readVerifiedGatewayRecovery,
   isTrustedSupportRecoveryPrincipalContext,
@@ -1372,6 +1373,16 @@ const readRuntimeFromDependencies = <
           reason: 'Privacy dispatch authority does not match the exact Read request',
         });
       }
+    }
+    const nativeReadHash = readVerifiedGatewayRouteScope(principal)?.nativeReadReceiver?.requestHash;
+    if (
+      nativeReadHash !== undefined &&
+      nativeReadHash !== (yield* computeRequiredReadQueryHash(decodedInput))
+    ) {
+      return yield* new ReadInputValidationError({
+        code: 'read_input_invalid',
+        reason: 'Native route authority does not match the exact Read request',
+      });
     }
     const recovery = readVerifiedGatewayRecovery(principal);
     if (recovery !== undefined) {
