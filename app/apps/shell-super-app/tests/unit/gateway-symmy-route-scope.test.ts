@@ -1,3 +1,5 @@
+import { sourceCounterpartyAdmissionRead } from '../../../../verticals/party-registry/src/api/source-counterparty-admission.read.ts';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import {
   AccessWorkloadSchema,
   AccessDeclarationSchema,
@@ -522,6 +524,31 @@ it.effect('follows only installed finite native Read edges across V9 and V10 wit
             nativeReadReceiver: { requestHash: 'b'.repeat(64), workloadKey, originalPrincipalId: principal.principalId,
               originalWorkloadKey: 'integration.symmy-poll', originalWorkloadBindingIncarnation: originalReadIncarnation },
           });
+          if (suffix === 'counterparty') {
+            const ports = inertAccessEnforcementPorts();
+            const authority = ports.intent.authorityFor(redeemed);
+            const receiverGate = makeAccessDecisionService({
+              authorityFor: () => ({ ...authority, readCompanyOwnership: () => Effect.succeed(true) }),
+              check: ports.check, decisionLog: ports.decisionLog, legalEntities: ports.candidates,
+              principalKinds: { readKind: () => Effect.succeedSome('system') },
+              workloadBindings: { readWorkloadAuthority: () => Effect.succeed({
+                activeCompanyIds: new Set([LegalEntityIdSchema.make(legalEntityId)]),
+                workloadKeys: new Set(['party.registry.source-read']),
+              }) },
+            });
+            const receivingScope = preserveSystemPrincipalContextTrust(redeemed, {
+              ...redeemed, legalEntityId, correlationId: 'native-customer-page-counterparty',
+            });
+            const receiving = sourceCounterpartyAdmissionRead.descriptor;
+            const receiverDecision = yield* receiverGate.decide({
+              carrier: { accessActor: receiving.accessActor, accessDeclaration: receiving.accessDeclaration,
+                accessWorkload: receiving.accessWorkload, entrypoint: receiving.entrypoint,
+                schemaVersion: receiving.schemaVersion },
+              legalEntityScope: receiving.legalEntityScope,
+              now: new Date(1_700_000_001_000), scope: receivingScope,
+            });
+            expect(receiverDecision.outcome, JSON.stringify(receiverDecision.reasons)).toBe('ALLOWED');
+          }
           if (hasOnwardRead) {
             const partyBinding = Schema.decodeUnknownSync(GatewayModuleBindingSchema)({
               ...binding, providerKeyId: 'party-module-key', sourceAppId: audience,

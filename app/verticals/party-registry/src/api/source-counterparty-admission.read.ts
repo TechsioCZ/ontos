@@ -21,6 +21,13 @@ const sourceCounterpartyAdmissionEntrypoint = defineTenantModuleEntrypoint({
 
 export const sourceCounterpartyAdmissionRead = defineRead(
   {
+    accessActor: {
+      callers: ['commerce-customer-context'],
+      subject: 'rights',
+      subjectWorkloads: ['party.registry.source-read'],
+      reason:
+        'Customer-profile source reads preserve their exact CCC actor while checking current source-correlated CUSTOMER metadata',
+    },
     accessWorkload: {
       workloads: ['party.registry.source-read'],
       reason:
