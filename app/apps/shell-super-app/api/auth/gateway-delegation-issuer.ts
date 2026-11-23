@@ -4,6 +4,7 @@ import {
   RegisteredGatewayWorkloadSchema,
   RegisteredGatewayPrivacyDispatchSchema,
   RegisteredGatewayOrganizationGovernanceReadSchema,
+  RegisteredGatewayRouteScopeSchema,
   preserveSystemPrincipalContextTrust,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
@@ -30,6 +31,7 @@ import {
   GatewayRegisteredRecoverySubjectSchema,
   GatewayPrivacyDispatchSubjectSchema,
   GatewayOrganizationGovernanceReadSubjectSchema,
+  GatewayNativeRouteReadSubjectSchema,
   GatewayTrustedPrincipalContextSchema,
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
@@ -50,7 +52,9 @@ import {
   issuePrivacyDispatchGatewayContextAssertion,
   issueOrganizationGovernanceReadGatewayContextAssertion,
   issueOrganizationProcessingReadGatewayContextAssertion,
+  issueNativeRouteReadGatewayContextAssertion,
 } from './gateway-issuer.ts';
+import { admitNativeRouteRead, readAdmittedNativeRouteRead } from './gateway-native-route-read.ts';
 import {
   admitOrganizationGovernanceRead,
   readAdmittedOrganizationGovernanceRead,
@@ -738,6 +742,55 @@ const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function*
   const catalog = yield* ShellInstalledModuleCatalog;
   const installed = yield* catalog.load.pipe(Effect.mapError(delegationUnavailable('installed_release_unavailable')));
   const sourceContract = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+  if (Schema.is(GatewayNativeRouteReadSubjectSchema)(payload.subject)) {
+    const source = yield* admitAssertionSubject({
+      assertion: payload.subject.sourceAssertion,
+      binding,
+      currentDate,
+      now,
+      nativeRouteRead: true,
+      requestedCompositionRevision: payload.compositionRevision,
+    });
+    const witness = yield* admitNativeRouteRead({
+      actor,
+      audience: payload.audience,
+      binding,
+      installed,
+      operationRequirementKey: payload.subject.operationRequirementKey,
+      requestCorrelation: input.requestCorrelation,
+      requestHash: payload.subject.requestHash,
+      source: source.verifiedAssertion,
+    });
+    const admitted = readAdmittedNativeRouteRead(witness);
+    if (admitted === undefined || payload.legalEntityScope !== 'subject') {
+      return yield* delegationForbidden('conditional_requirement_refused')();
+    }
+    yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(admitted.principal.tenantId) }));
+    const states = yield* loadModuleStates(admitted.principal.tenantId, admitted.moduleAccess.map((item) => item.moduleKey));
+    yield* requireModuleStates(states, admitted.moduleAccess);
+    const requestFingerprint = yield* fingerprintOf({
+      actor: GatewayActorClaimSchema,
+      audience: Schema.String,
+      compositionRevision: Schema.String,
+      principal: GatewayTrustedPrincipalContextSchema,
+      routeScope: RegisteredGatewayRouteScopeSchema,
+      requirementKey: Schema.String,
+    }, {
+      actor,
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      principal: admitted.principal,
+      routeScope: admitted.routeScope,
+      requirementKey: payload.subject.operationRequirementKey,
+    });
+    yield* reserveExchange({
+      exchangeId: payload.exchangeId,
+      expiresAtEpochSeconds: admitted.sourceValidity.expiresAt,
+      requestFingerprint,
+      sourceJti: admitted.sourceKey,
+    });
+    return yield* issueNativeRouteReadGatewayContextAssertion(witness);
+  }
   if (Schema.is(GatewayOrganizationGovernanceReadSubjectSchema)(payload.subject)) {
     return yield* issueFiniteOrganizationGovernanceRead(
       { actor, binding, installed, payload: { ...payload, subject: payload.subject } },

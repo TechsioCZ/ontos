@@ -22,6 +22,7 @@ import {
   VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
+  DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   GatewayActorClaimSchema,
@@ -71,6 +72,8 @@ import { takeAdmittedOrganizationProcessingRead } from './gateway-registered-ass
 import type { AdmittedOrganizationProcessingRead } from './gateway-registered-assertion.ts';
 import { readAdmittedSymmyNativeRead } from './gateway-symmy-route-scope.ts';
 import type { AdmittedSymmyNativeRead } from './gateway-symmy-route-scope.ts';
+import { takeAdmittedNativeRouteRead } from './gateway-native-route-read.ts';
+import type { AdmittedNativeRouteRead } from './gateway-native-route-read.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -86,6 +89,7 @@ export const SYMMY_INGRESS_AUDIENCE = 'symmy-integration';
 const symmyIngressIssuance = Symbol('Symmy ingress issuance');
 const routeScopedIssuance = Symbol('Verified route scoped issuance');
 const nativeReadRouteIssuance = Symbol('Verified native route Read issuance');
+const delegatedNativeReadIssuance = Symbol('Verified delegated native route Read issuance');
 const privacyDispatchIssuance = Symbol('Verified finite Privacy dispatch issuance');
 const organizationGovernanceReadIssuance = Symbol('Verified organization governance Read issuance');
 const organizationProcessingReadIssuance = Symbol('Verified organization processing Read issuance');
@@ -121,6 +125,7 @@ export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalC
   readonly routeScope?: RegisteredGatewayRouteScope;
   readonly [routeScopedIssuance]?: true;
   readonly [nativeReadRouteIssuance]?: true;
+  readonly [delegatedNativeReadIssuance]?: true;
   /** Delegated paths keep the requester's exact signing interval; fresh issuance uses the default window. */
   readonly sourceValidity?: { readonly expiresAt: number; readonly issuedAt: number } | undefined;
   readonly [symmyIngressIssuance]?: true;
@@ -292,9 +297,9 @@ const decodeRouteScopedIssuance = Effect.fn('GatewayIssuer.decodeRouteScope')(fu
   }
   if (
     input[routeScopedIssuance] !== true ||
-    input.actor !== undefined ||
+    (input.actor !== undefined && input[delegatedNativeReadIssuance] !== true) ||
     input.workload !== undefined ||
-    input.sourceValidity !== undefined
+    (input.sourceValidity !== undefined && input[delegatedNativeReadIssuance] !== true)
   ) {
     return yield* unavailable('principal');
   }
@@ -303,6 +308,8 @@ const decodeRouteScopedIssuance = Effect.fn('GatewayIssuer.decodeRouteScope')(fu
   })(input.routeScope).pipe(Effect.mapError((cause) => unavailable('principal', cause)));
   const nativeRead = routeScope.nativeReadReceiver !== undefined;
   if (
+    (input[delegatedNativeReadIssuance] === true &&
+      (!nativeRead || input.actor === undefined || input.sourceValidity === undefined)) ||
     (nativeRead
       ? input[nativeReadRouteIssuance] !== true ||
         principal.authMethod !== 'system' ||
@@ -369,7 +376,9 @@ const finiteAssertionVersion = (
   routeScope: RegisteredGatewayRouteScope | undefined,
 ) => {
   if (routeScope?.nativeReadReceiver !== undefined) {
-    return NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION;
+    return actor === undefined
+      ? NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION
+      : DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION;
   }
   if (organizationGovernanceRead !== undefined) {
     return organizationGovernanceRead.target === undefined
@@ -486,6 +495,7 @@ const decodeIssuanceIdentity = Effect.fn('GatewayIssuer.decodeIdentity')(functio
     (actor.principalId === principal.principalId ||
       (privacyDispatch === undefined &&
         organizationGovernanceRead === undefined &&
+        input[delegatedNativeReadIssuance] !== true &&
         principal.authenticationNamespaceId === undefined))
   ) {
     // A version 3 assertion names two different parties, and its subject must carry an explicit namespace.
@@ -886,6 +896,27 @@ export const issueNativeReadRouteScopedGatewayContextAssertion = Effect.fn('Gate
       ...admitted,
       [routeScopedIssuance]: true,
       [nativeReadRouteIssuance]: true,
+    });
+  },
+);
+
+/** Only the private finite requirement witness permits a native route Read with its actual module actor. */
+export const issueNativeRouteReadGatewayContextAssertion = Effect.fn('GatewayIssuer.issueDelegatedNativeRouteRead')(
+  function* issueDelegatedNativeRouteRead(witness: AdmittedNativeRouteRead) {
+    const admitted = takeAdmittedNativeRouteRead(witness);
+    if (admitted === undefined) {
+      return yield* unavailable('principal');
+    }
+    return yield* (yield* GatewayIssuer).issue({
+      actor: admitted.actor,
+      audience: admitted.audience,
+      compositionRevision: admitted.compositionRevision,
+      principal: admitted.principal,
+      routeScope: admitted.routeScope,
+      sourceValidity: admitted.sourceValidity,
+      [routeScopedIssuance]: true,
+      [nativeReadRouteIssuance]: true,
+      [delegatedNativeReadIssuance]: true,
     });
   },
 );

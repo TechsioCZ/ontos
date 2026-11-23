@@ -1,7 +1,15 @@
+import type { GatewayActorClaim } from '@app/shared-contracts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { decodeGatewayContextProtectedHeader, decodeSupportedGatewayContextClaims } from '@app/shared-contracts';
+import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
+  DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
+  decodeGatewayContextProtectedHeader,
+  decodeSupportedGatewayContextClaims,
+} from '@app/shared-contracts';
 import { Effect, Redacted, Schema } from 'effect';
 import { jwtVerify } from 'jose';
 
@@ -31,6 +39,8 @@ interface VerifiedAssertionEvidence {
   readonly sourceBuildMarker: string;
   readonly sourceKey: string;
   readonly sourceValidity: { readonly expiresAt: number; readonly issuedAt: number };
+  readonly routeScope: RegisteredGatewayRouteScope | undefined;
+  readonly sourceActor: GatewayActorClaim | undefined;
   readonly workload: RegisteredGatewayWorkload | undefined;
 }
 const mintKey = Object.freeze({ kind: 'verified_gateway_assertion' });
@@ -42,7 +52,15 @@ class VerifiedGatewayAssertionValue {
         ? Object.freeze({
             ...evidence,
             principal: Object.freeze({ ...evidence.principal }),
+            sourceActor: evidence.sourceActor === undefined ? undefined : Object.freeze({ ...evidence.sourceActor }),
             sourceValidity: Object.freeze({ ...evidence.sourceValidity }),
+            routeScope: evidence.routeScope === undefined ? undefined : Object.freeze({
+              ...evidence.routeScope,
+              ...(evidence.routeScope.nativeReadReceiver === undefined ? {} : {
+                nativeReadReceiver: Object.freeze({ ...evidence.routeScope.nativeReadReceiver }),
+              }),
+              operations: Object.freeze(evidence.routeScope.operations.map((operation) => Object.freeze({ ...operation }))),
+            }),
             workload:
               evidence.workload === undefined ? undefined : snapshotRegisteredGatewayWorkload(evidence.workload),
           })
@@ -69,6 +87,7 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
     readonly currentDate: Date;
     readonly now: number;
     readonly registeredWorkload?: boolean;
+    readonly nativeRouteRead?: boolean;
     readonly requestedCompositionRevision: string;
   }) {
     const verification = yield* GatewayDelegationVerification;
@@ -105,7 +124,13 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
     if ('privacyDispatch' in source || 'organizationGovernanceRead' in source) {
       return yield* delegationForbidden('subject_assertion_finite')();
     }
-    if (source.ver === 4) {
+    if (source.ver === NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ||
+      source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION) {
+      if (input.nativeRouteRead !== true || input.registeredWorkload === true) {
+        return yield* delegationForbidden('subject_assertion_kind_mismatch')();
+      }
+      // The dedicated native handoff rechecks the signed receiver and original binding, never API-key fiction.
+    } else if (source.ver === 4) {
       if (input.registeredWorkload !== true) {
         return yield* delegationForbidden('subject_assertion_kind_mismatch')();
       }
@@ -129,6 +154,10 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
       sourceBuildMarker: source.targetBuildMarker,
       sourceKey: source.jti,
       sourceValidity: Object.freeze({ expiresAt: source.exp, issuedAt: source.iat }),
+      sourceActor: source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ? source.act : undefined,
+      routeScope: source.ver === EXTERNAL_GATEWAY_ASSERTION_VERSION || source.ver === NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ||
+        source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION
+        ? source.routeScope : undefined,
       workload: source.ver === 4 ? snapshotRegisteredGatewayWorkload(source.workload) : undefined,
     };
     return { ...evidence, verifiedAssertion: new VerifiedGatewayAssertionValue(mintKey, evidence) };

@@ -5,6 +5,7 @@ import {
   makeActiveApplicationCompositionLayer,
   defineTenantModuleEntrypoint,
   LegalEntityContext,
+  PrincipalResolver,
 } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import {
@@ -16,19 +17,25 @@ import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-crede
 import { NodeCrypto } from '@effect/platform-node';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
-import { decodeJwt, exportJWK, generateKeyPair, jwtVerify } from 'jose';
-import { decodeSupportedGatewayContextClaims, NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { createLocalJWKSet, decodeJwt, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import {
+  decodeSupportedGatewayContextClaims, NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
+  DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION, GatewayActorClaimSchema,
+} from '@app/shared-contracts';
 
 import {
   issueGatewayContextAssertion,
   issueRouteScopedGatewayContextAssertion,
   issueNativeReadRouteScopedGatewayContextAssertion,
+  issueNativeRouteReadGatewayContextAssertion,
   makeGatewayIssuerLayer,
 } from '../../api/auth/gateway-issuer.ts';
 import {
@@ -40,6 +47,15 @@ import {
 } from '../../api/auth/gateway-symmy-route-scope.ts';
 import { capturingScopeGrantRegistrar, scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { AuthDatabase } from '../../api/auth/db/client.ts';
+import { authDatabaseSchema, authRelations } from '../../api/auth/db/schema.ts';
+import { admitAssertionSubject } from '../../api/auth/gateway-assertion-evidence.ts';
+import { GatewayDelegationVerification } from '../../api/auth/gateway-delegation-verification.ts';
+import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
+import { admitNativeRouteRead, readAdmittedNativeRouteRead } from '../../api/auth/gateway-native-route-read.ts';
+import { partyRegistryRegisteredWorkloadCalls } from '../../../../verticals/party-registry/src/registered-workload-calls.ts';
+import { commerceCustomerContextRegisteredWorkloadCalls } from '../../../../verticals/commerce-customer-context/src/registered-workload-calls.ts';
+import { makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 import type { ShellInstalledCatalog } from '../../api/modules/installed-module-catalog.ts';
 import {
   ShellInstalledModuleCatalog,
@@ -92,6 +108,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   readonly responseTenant?: string;
   readonly receiver?: 'system' | 'service' | 'missing' | 'ambiguous';
   readonly originalReadActive?: boolean;
+  readonly onwardSourceActive?: boolean;
   readonly originalReadWorkload?: 'integration.symmy-admit' | 'integration.symmy-poll';
 }) {
   const { privateKey, publicKey } = yield* Effect.promise(() =>
@@ -122,11 +139,26 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   };
   const nativeQueries: { statement: string; parameters: readonly unknown[] }[] = [];
   const connection = testSqlConnection((statement, parameters) => {
+    if (statement.includes('join core.access_workload_bindings current_source')) {
+      nativeQueries.push({ statement, parameters });
+      if (options.originalReadActive === false || options.onwardSourceActive === false || options.receiver === 'missing') {
+        return Effect.succeed([]);
+      }
+      const workloadKey = parameters.find((value) => typeof value === 'string' &&
+        ['party.registry.source-read', 'privacy.core.source-processing-check', 'privacy.core.organization-business-check'].includes(value));
+      if (typeof workloadKey !== 'string') return Effect.succeed([]);
+      return Effect.succeed(Array.from({ length: options.receiver === 'ambiguous' ? 2 : 1 }, () => ({
+        principalId: options.receiver === 'service'
+          ? internalWorkloadPrincipalId({ tenantId: principal.tenantId, legalEntityId, workloadKey }) : nativePrincipalId,
+        bindingIncarnation: nativeBindingIncarnation,
+      })));
+    }
     if (statement.includes('as "originalWorkloadKey"')) {
       nativeQueries.push({ statement, parameters });
       const workloadKey = parameters.find((parameter) => typeof parameter === 'string' &&
         ['party.registry.source-read', 'commerce.customer-context.source-read', 'pricing.price-group-catalog.source-read',
-          'commerce.pricing.source-read', 'commerce.catalog.symmy-product-read', 'commerce.inventory.source-read'].includes(parameter));
+          'commerce.pricing.source-read', 'commerce.catalog.symmy-product-read', 'commerce.inventory.source-read',
+          'privacy.core.source-processing-check'].includes(parameter));
       if (typeof workloadKey !== 'string' || options.receiver === 'missing' || options.originalReadActive === false) {
         return Effect.succeed([]);
       }
@@ -166,6 +198,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
         ['price-group-catalog', 'native-route-build'],
         ['pricing', 'native-route-build'],
         ['catalog', 'native-route-build'],
+        ['privacy', 'native-route-build'],
       ]),
       revision: options.catalog?.composition.revision ?? compositionRevision,
     }),
@@ -204,6 +237,361 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     publicKey,
   };
 });
+
+it.effect('hands the signed uncommitted intake route to exact native Privacy with its actual Symmy actor and source lifetime', () =>
+  Effect.gen(function* nativeIntakeHandoff() {
+    const intakeAction = 'integration.symmy.admit-symmy-job';
+    const requirementKey = 'integration.symmy.requirement.customer-intake-privacy';
+    const privacyRead = 'privacy.core.api.source-processing-eligibility';
+    const symmy = makeModuleContractFixture({ appId: 'symmy-integration', buildMarker: 'native-route-build', moduleId: 'integration.symmy' });
+    const privacy = makeModuleContractFixture({ appId: 'privacy', buildMarker: 'native-route-build', moduleId: 'privacy.core' });
+    const snapshot = yield* makeCompositionSnapshot([{
+      ...symmy,
+      manifest: {
+        ...symmy.manifest,
+        requirements: {
+          schemaVersion: '1', coreCapabilities: [], intrinsic: [],
+          operations: [{
+            key: requirementKey, condition: 'integration.symmy.condition.personal-customer-source-intake',
+            evidence: ['integration.symmy.evidence.qualified-customer-source'], entrypointKey: intakeAction,
+            provider: { moduleId: 'privacy.core', entrypointKey: privacyRead, schemaVersion: '1' },
+          }],
+        },
+        publicSurface: {
+          ...symmy.manifest.publicSurface,
+          actions: [{
+            actionKey: intakeAction, auditProfile: 'standard', idempotency: 'required', legalEntityScope: 'optional',
+            owningModuleId: 'integration.symmy', schemaVersion: '1',
+            accessWorkload: { reason: 'Current intake admission', workloads: ['integration.symmy-admit'] },
+            entrypoint: defineTenantModuleEntrypoint({
+              access: 'write', authorization: { kind: 'protected' }, entrypointKey: intakeAction,
+              moduleKey: 'integration.symmy', role: 'action',
+            }),
+          }],
+        },
+      },
+    }, {
+      ...privacy,
+      manifest: {
+        ...privacy.manifest,
+        publicSurface: {
+          ...privacy.manifest.publicSurface,
+          api: [{ key: 'privacy.core.api.processing', operationKeys: ['eligibility.execute'] }],
+          operationContracts: [{
+            apiKey: 'privacy.core.api.processing', operationKey: 'eligibility.execute', schemaVersion: '1',
+            entrypoint: defineTenantModuleEntrypoint({
+              access: 'read', authorization: { kind: 'protected' }, entrypointKey: privacyRead,
+              moduleKey: 'privacy.core', role: 'api',
+            }),
+          }],
+        },
+      },
+    }]);
+    const installed = { ...(yield* buildApplicationCompositionCatalog(snapshot.composition)), composition: snapshot.composition };
+    const binding = Schema.decodeUnknownSync(GatewayModuleBindingSchema)({
+      compositionRevision: snapshot.composition.revision, providerKeyId: 'symmy-module-key',
+      sourceAppId: 'symmy-integration', sourceBuildMarker: 'native-route-build',
+    });
+    const actor = Schema.decodeUnknownSync(GatewayActorClaimSchema)({
+      appId: 'symmy-integration', buildMarker: 'native-route-build',
+      principalId: '60000000-0000-4000-8000-000000000004',
+    });
+    const auth = Layer.effect(AuthDatabase, Effect.gen(function* currentKeyDatabase() {
+      const executor = yield* makeWithDefaults({ relations: authRelations });
+      return { executor, adapter: yield* makeEffectDrizzleAuthAdapter(executor, authDatabaseSchema) };
+    })).pipe(Layer.provide(scriptedPgClientLayer(Effect.succeed(testSqlConnection((sql) =>
+      Effect.succeed(sql.includes('apikey') ? [{ enabled: true, expiresAt: null }] : []),
+    ))).pipe(Layer.provide(Reactivity.layer))));
+    const resolver = Layer.succeed(PrincipalResolver, makePrincipalResolverDouble({
+      resolveBetterAuthApiKey: () => Effect.succeed({
+        authBindingId: principal.authBindingId, displayName: 'Synthetic integration',
+        principalId: principal.principalId, principalKind: 'integration', tenantId: principal.tenantId,
+      }),
+    }));
+    for (const [receiver, routeKey] of [
+      ['system', 'customersBatch'], ['service', 'customersBatch'],
+      ['system', 'customerGroupCustomersBatch'], ['service', 'customerGroupCustomersBatch'],
+    ] as const) {
+      const current = yield* fixture({ catalog: installed, receiver });
+      const publicJwk = yield* Effect.promise(() => exportJWK(current.publicKey));
+      const verification = Layer.succeed(GatewayDelegationVerification, {
+        load: Effect.succeed({
+          issuer: 'https://shell.test',
+          keys: createLocalJWKSet({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }] }),
+        }),
+      });
+      yield* Effect.gen(function* exactNativeIntake() {
+        const routeProof = yield* acquireSymmyRouteScopeProof({
+          ...request, compositionRevision: snapshot.composition.revision,
+          routeRequest: { routeKey }, sourcePurpose: 'admit',
+        });
+        const original = yield* issueSymmyRouteScopeAssertion(routeProof, {
+          audience: 'symmy-integration', principal, legalEntityId,
+        });
+        const verifiedSource = yield* admitAssertionSubject({
+          assertion: Redacted.make(original.token), binding, currentDate: new Date(1_700_000_001_000),
+          now: 1_700_000_001, requestedCompositionRevision: snapshot.composition.revision,
+        });
+        const input = {
+          actor, audience: 'privacy', binding, installed, operationRequirementKey: requirementKey,
+          requestCorrelation: 'actual-native-intake', requestHash: 'b'.repeat(64), source: verifiedSource.verifiedAssertion,
+        };
+        const witness = yield* admitNativeRouteRead(input);
+        expect(Object.isFrozen(readAdmittedNativeRouteRead(witness)?.routeScope)).toBe(true);
+        const issued = yield* issueNativeRouteReadGatewayContextAssertion(witness);
+        const jwt = yield* Effect.promise(() => jwtVerify(issued.token, current.publicKey, {
+          algorithms: ['EdDSA'], audience: 'privacy', issuer: 'https://shell.test', currentDate: new Date(1_700_000_001_000),
+        }));
+        const claims = yield* decodeSupportedGatewayContextClaims(jwt.payload);
+        expect(claims.ver).toBe(DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION);
+        expect(jwt.payload['act']).toEqual(actor);
+        expect(jwt.payload['iat']).toBe(decodeJwt(original.token).iat);
+        expect(jwt.payload['exp']).toBe(decodeJwt(original.token).exp);
+        expect('workload' in claims).toBe(false);
+        expect(jwt.payload['routeScope']).toMatchObject({
+          routeKey, legalEntityId,
+          operations: [{ entrypointKey: privacyRead, schemaVersion: '1' }],
+          nativeReadReceiver: { requestHash: 'b'.repeat(64), workloadKey: 'privacy.core.source-processing-check', originalPrincipalId: principal.principalId },
+        });
+        const redeemed = yield* bindGatewayPrincipalVerifier('privacy', privacy.deployment).verifyAndRedeem(
+          Redacted.make(`Bearer ${issued.token}`), {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment: {
+              ONTOS_GATEWAY_ISSUER: 'https://shell.test',
+              ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }] }),
+            },
+            redemption: { consume: () => Effect.void },
+          },
+        ).pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
+        expect(readVerifiedGatewayRouteScope(redeemed)?.nativeReadReceiver?.originalWorkloadKey).toBe('integration.symmy-admit');
+        expect(yield* issueNativeRouteReadGatewayContextAssertion(witness).pipe(Effect.flip)).toMatchObject({ stage: 'principal' });
+        for (const invalid of [
+          { ...input, operationRequirementKey: 'integration.symmy.requirement.unregistered' },
+          { ...input, audience: 'party-registry' },
+          { ...input, actor: { ...actor, appId: 'party-registry' } },
+          { ...input, binding: { ...binding, sourceBuildMarker: 'stale-source-build' } },
+        ]) {
+          expect(yield* admitNativeRouteRead(invalid).pipe(Effect.flip)).toMatchObject({ code: 'forbidden' });
+        }
+        const copied = Object.assign(Object.create(Object.getPrototypeOf(witness)), witness);
+        expect(readAdmittedNativeRouteRead(copied)).toBeUndefined();
+        expect(yield* issueNativeRouteReadGatewayContextAssertion(copied).pipe(Effect.flip)).toMatchObject({ stage: 'principal' });
+      }).pipe(Effect.provide(Layer.mergeAll(current.layer, auth, resolver, verification)));
+    }
+  }),
+);
+
+it.effect('follows only installed finite native Read edges across V9 and V10 with current bindings and fresh body hashes', () =>
+  Effect.gen(function* customerPageHandoff() {
+    for (const sourceKind of ['customer-profile-source-page', 'customer-profile-source'] as const) {
+    const sourcePage = `commerce.customer-context.api.${sourceKind}`;
+    const sourceModule = 'commerce.customer-context';
+    const targets = [
+      ['party', 'party-registry', 'party.registry', 'party.registry.api.source-person-admission', 'party.registry.source-read'],
+      ['counterparty', 'party-registry', 'party.registry', 'party.registry.api.source-counterparty-admission', 'party.registry.source-read'],
+      ['counterparty-person', 'party-registry', 'party.registry', 'party.registry.api.source-person-admission', 'party.registry.source-read'],
+      ['privacy', 'privacy', 'privacy.core', 'privacy.core.api.source-processing-eligibility', 'privacy.core.source-processing-check'],
+      ['organization', 'privacy', 'privacy.core', 'privacy.core.api.organization-business-applicability', 'privacy.core.organization-business-check'],
+    ] as const;
+    for (const [suffix, audience, moduleId, entrypointKey, workloadKey] of targets) {
+      const requirementKey = `commerce.customer-context.requirement.${sourceKind}-${suffix}`;
+      const sourceBase = makeModuleContractFixture({
+        appId: 'commerce-customer-context', buildMarker: 'native-route-build', moduleId: sourceModule,
+      });
+      const targetBase = makeModuleContractFixture({ appId: audience, buildMarker: 'native-route-build', moduleId });
+      const privacyBase = makeModuleContractFixture({ appId: 'privacy', buildMarker: 'native-route-build', moduleId: 'privacy.core' });
+      const onwardRequirement = `party.registry.requirement.${entrypointKey.slice('party.registry.'.length)}-source-privacy`;
+      const onwardRead = 'privacy.core.api.source-processing-eligibility';
+      const publicRead = (key: string, owner: string) => ({
+        apiKey: `${owner}.api.source`, operationKey: 'source.execute', schemaVersion: '1',
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read', authorization: { kind: 'protected' }, entrypointKey: key, moduleKey: owner, role: 'api',
+        }),
+      });
+      const snapshot = yield* makeCompositionSnapshot([{
+        ...sourceBase,
+        manifest: {
+          ...sourceBase.manifest,
+          requirements: {
+            schemaVersion: '1', coreCapabilities: [], intrinsic: [],
+            operations: [{
+              key: requirementKey, condition: 'commerce.customer-context.condition.current-source-profile',
+              evidence: ['commerce.customer-context.evidence.exact-source-profile-authority'], entrypointKey: sourcePage,
+              provider: { moduleId, entrypointKey, schemaVersion: '1' },
+            }],
+          },
+          publicSurface: {
+            ...sourceBase.manifest.publicSurface,
+            api: [{ key: `${sourceModule}.api.source`, operationKeys: ['source.execute'] }],
+            operationContracts: [publicRead(sourcePage, sourceModule)],
+          },
+        },
+      }, {
+        ...targetBase,
+        manifest: {
+          ...targetBase.manifest,
+          ...(audience === 'party-registry' ? {
+            requirements: {
+              schemaVersion: '1' as const, coreCapabilities: [], intrinsic: [],
+              operations: [{ key: onwardRequirement, entrypointKey,
+                condition: 'party.registry.condition.client-source-processing',
+                evidence: ['party.registry.evidence.current-qualified-source'],
+                provider: { moduleId: 'privacy.core', entrypointKey: onwardRead, schemaVersion: '1' } }],
+            },
+          } : {}),
+          publicSurface: {
+            ...targetBase.manifest.publicSurface,
+            api: [{ key: `${moduleId}.api.source`, operationKeys: ['source.execute'] }],
+            operationContracts: [publicRead(entrypointKey, moduleId)],
+          },
+        },
+      }, ...(audience === 'party-registry' ? [{
+        ...privacyBase, manifest: { ...privacyBase.manifest, publicSurface: {
+          ...privacyBase.manifest.publicSurface,
+          api: [{ key: 'privacy.core.api.source', operationKeys: ['source.execute'] }],
+          operationContracts: [publicRead(onwardRead, 'privacy.core')],
+        } },
+      }] : [])]);
+      const installed = { ...(yield* buildApplicationCompositionCatalog(snapshot.composition)), composition: snapshot.composition };
+      const binding = Schema.decodeUnknownSync(GatewayModuleBindingSchema)({
+        compositionRevision: snapshot.composition.revision, providerKeyId: 'commerce-module-key',
+        sourceAppId: 'commerce-customer-context', sourceBuildMarker: 'native-route-build',
+        registeredWorkloads: commerceCustomerContextRegisteredWorkloadCalls,
+      });
+      const actor = Schema.decodeUnknownSync(GatewayActorClaimSchema)({
+        appId: 'commerce-customer-context', buildMarker: 'native-route-build',
+        principalId: '60000000-0000-4000-8000-000000000004',
+      });
+      for (const receiver of ['system', 'service'] as const) {
+        const current = yield* fixture({
+          catalog: installed, receiver, originalReadWorkload: 'integration.symmy-poll',
+          allowedOwnerOperations: [{ moduleId: sourceModule, entrypointKey: sourcePage, schemaVersion: '1' }],
+        });
+        const publicJwk = yield* Effect.promise(() => exportJWK(current.publicKey));
+        const verification = Layer.succeed(GatewayDelegationVerification, {
+          load: Effect.succeed({ issuer: 'https://shell.test',
+            keys: createLocalJWKSet({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }] }) }),
+        });
+        yield* Effect.gen(function* actualNativePageSource() {
+          const proof = yield* acquireSymmyRouteScopeProof({ ...request, compositionRevision: snapshot.composition.revision });
+          const original = yield* issueSymmyRouteScopeAssertion(proof, {
+            audience: 'commerce-customer-context', principal, legalEntityId,
+          });
+          const subjectInput = {
+            assertion: Redacted.make(original.token), binding, currentDate: new Date(1_700_000_001_000),
+            now: 1_700_000_001, requestedCompositionRevision: snapshot.composition.revision,
+          };
+          expect(yield* admitAssertionSubject(subjectInput).pipe(Effect.flip)).toMatchObject({ code: 'forbidden' });
+          const source = yield* admitAssertionSubject({ ...subjectInput, nativeRouteRead: true });
+          const input = { actor, audience, binding, installed, operationRequirementKey: requirementKey,
+            requestCorrelation: 'actual-native-page', requestHash: 'b'.repeat(64), source: source.verifiedAssertion };
+          const witness = yield* admitNativeRouteRead(input);
+          const evidence = readAdmittedNativeRouteRead(witness);
+          expect(evidence?.moduleAccess).toEqual([
+            { access: 'read', moduleKey: sourceModule }, { access: 'read', moduleKey: moduleId },
+          ]);
+          const issued = yield* issueNativeRouteReadGatewayContextAssertion(witness);
+          const claims = yield* decodeSupportedGatewayContextClaims((yield* Effect.promise(() =>
+            jwtVerify(issued.token, current.publicKey, { audience, issuer: 'https://shell.test',
+              currentDate: new Date(1_700_000_001_000) }))).payload);
+          expect(claims.ver).toBe(DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION);
+          expect(claims.iat).toBe(decodeJwt(original.token).iat);
+          expect(claims.exp).toBe(decodeJwt(original.token).exp);
+          const redeemed = yield* bindGatewayPrincipalVerifier(audience, targetBase.deployment).verifyAndRedeem(
+            Redacted.make(`Bearer ${issued.token}`), {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment: { ONTOS_GATEWAY_ISSUER: 'https://shell.test',
+                ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }] }) },
+              redemption: { consume: () => Effect.void },
+            },
+          ).pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
+          expect(readVerifiedGatewayRouteScope(redeemed)).toMatchObject({
+            routeKey: 'adminCustomers', legalEntityId,
+            operations: [{ entrypointKey, schemaVersion: '1' }],
+            nativeReadReceiver: { requestHash: 'b'.repeat(64), workloadKey, originalPrincipalId: principal.principalId,
+              originalWorkloadKey: 'integration.symmy-poll', originalWorkloadBindingIncarnation: originalReadIncarnation },
+          });
+          if (audience === 'party-registry') {
+            const partyBinding = Schema.decodeUnknownSync(GatewayModuleBindingSchema)({
+              ...binding, providerKeyId: 'party-module-key', sourceAppId: 'party-registry',
+              registeredWorkloads: partyRegistryRegisteredWorkloadCalls,
+            });
+            const onwardSourceInput = {
+              assertion: Redacted.make(issued.token), binding: partyBinding,
+              now: 1_700_000_001, currentDate: new Date(1_700_000_001_000),
+              requestedCompositionRevision: snapshot.composition.revision,
+            };
+            expect(yield* admitAssertionSubject(onwardSourceInput).pipe(Effect.flip)).toMatchObject({ code: 'forbidden' });
+            const onwardSource = yield* admitAssertionSubject({ ...onwardSourceInput, nativeRouteRead: true });
+            const onwardInput = {
+              ...input, audience: 'privacy', binding: partyBinding,
+              source: onwardSource.verifiedAssertion, operationRequirementKey: onwardRequirement, requestHash: 'c'.repeat(64),
+              actor: { ...actor, appId: 'party-registry', principalId: '60000000-0000-4000-8000-000000000005' },
+            };
+            const onward = yield* issueNativeRouteReadGatewayContextAssertion(yield* admitNativeRouteRead(onwardInput));
+            const onwardClaims = yield* decodeSupportedGatewayContextClaims((yield* Effect.promise(() =>
+              jwtVerify(onward.token, current.publicKey, { audience: 'privacy', issuer: 'https://shell.test',
+                currentDate: new Date(1_700_000_001_000) }))).payload);
+            expect(onwardClaims.ver).toBe(DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION);
+            expect(onwardClaims.iat).toBe(claims.iat);
+            expect(onwardClaims.exp).toBe(claims.exp);
+            const onwardRedeemed = yield* bindGatewayPrincipalVerifier('privacy', privacyBase.deployment).verifyAndRedeem(
+              Redacted.make(`Bearer ${onward.token}`), {
+                currentTimeSeconds: Effect.succeed(1_700_000_001),
+                environment: { ONTOS_GATEWAY_ISSUER: 'https://shell.test',
+                  ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }] }) },
+                redemption: { consume: () => Effect.void },
+              },
+            ).pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
+            expect(readVerifiedGatewayRouteScope(onwardRedeemed)).toMatchObject({
+              operations: [{ entrypointKey: onwardRead, schemaVersion: '1' }],
+              nativeReadReceiver: { workloadKey: 'privacy.core.source-processing-check', requestHash: 'c'.repeat(64),
+                originalPrincipalId: principal.principalId, originalWorkloadBindingIncarnation: originalReadIncarnation },
+            });
+            // A valid native signature never substitutes for a current installed requirement/receiver edge.
+            expect(yield* admitNativeRouteRead({ ...onwardInput, binding: { ...partyBinding, registeredWorkloads: [] } })
+              .pipe(Effect.flip)).toMatchObject({ code: 'forbidden' });
+          }
+          const queriesBeforeRecoveryRefusal = current.nativeQueries.length;
+          for (const recoveryBinding of [
+            { ...binding, registeredWorkloads: (binding.registeredWorkloads ?? []).filter((rule) => rule.allowRecoverySource === true) },
+            { ...binding, registeredWorkloads: (binding.registeredWorkloads ?? []).map((rule) => ({ ...rule, allowHistoricalDeliveryRecovery: true })) },
+          ]) {
+            expect(yield* admitNativeRouteRead({ ...input, binding: recoveryBinding }).pipe(Effect.flip))
+              .toMatchObject({ code: 'forbidden', reason: 'conditional_requirement_refused' });
+          }
+          expect(current.nativeQueries.length).toBe(queriesBeforeRecoveryRefusal);
+          for (const invalid of [
+            { ...input, operationRequirementKey: `${requirementKey}-unregistered` },
+            { ...input, audience: 'inventory' },
+            { ...input, requestHash: 'not-a-request-hash' },
+            { ...input, binding: { ...binding, registeredWorkloads: [] } },
+            { ...input, binding: { ...binding, sourceBuildMarker: 'stale-build' } },
+            { ...input, actor: { ...actor, appId: 'symmy-integration' } },
+          ]) {
+            expect(yield* admitNativeRouteRead(invalid).pipe(Effect.flip)).toMatchObject({ code: 'forbidden' });
+          }
+          for (const unavailable of [
+            { originalReadActive: false }, { onwardSourceActive: false },
+            { receiver: 'missing' as const }, { receiver: 'ambiguous' as const },
+          ]) {
+            const revoked = yield* fixture({ catalog: installed, ...unavailable });
+            expect(yield* admitNativeRouteRead(input).pipe(Effect.flip, Effect.provide(revoked.layer)))
+              .toMatchObject({ code: 'forbidden', reason: 'workload_binding_not_active' });
+          }
+        }).pipe(Effect.provide(Layer.mergeAll(current.layer, verification)));
+        const query = current.nativeQueries.find((query) => query.statement.includes('current_source'));
+        expect(query?.parameters).toContain(nativeBindingIncarnation);
+        expect(query?.parameters).toContain(originalReadIncarnation);
+        expect(query?.parameters).toContain(workloadKey);
+        expect(query?.statement).toContain("original.kind='integration' and original.status='active'");
+        expect(query?.statement).toContain('current_source.incarnation=');
+        expect(query?.statement).toContain("cb.status='active'");
+      }
+    }
+    }
+  }),
+);
 
 it.effect('issues and redeems V9 only after current canonical source-read selection, never from copied issuer input', () =>
   Effect.gen(function* nativeSourceReads() {

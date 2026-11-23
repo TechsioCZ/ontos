@@ -216,6 +216,7 @@ const nativeReadOperations = [
   ['party.registry', 'party.registry.api.source-party-search', 'party.registry.source-read'],
   ['party.registry', 'party.registry.api.organization-business-name-export', 'party.registry.source-read'],
   ['commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-page', 'commerce.customer-context.source-read'],
+  ['commerce.customer-context', 'commerce.customer-context.api.customer-profile-source', 'commerce.customer-context.source-read'],
   ['commerce.customer-context', 'commerce.customer-context.api.customer-profile-source-parties', 'commerce.customer-context.source-read'],
   ['commerce.customer-context', 'commerce.customer-context.api.customer-profile-ico', 'commerce.customer-context.source-read'],
   ['commerce.customer-context', 'commerce.customer-context.api.organization-customer-profile-ico', 'commerce.customer-context.source-read'],
@@ -345,6 +346,18 @@ const selectNativeReadReceiver = Effect.fn('SymmyRouteScope.selectNativeReadRece
   }
   return receiver;
 });
+
+/** The intake handoff uses the same current native enrollment proof, never an invocation-shaped substitute. */
+export const selectSymmyIntakePrivacyReceiver = Effect.fn('SymmyRouteScope.selectIntakePrivacyReceiver')(
+  function* selectIntakePrivacyReceiver(proof: SymmyRouteScopeProof) {
+    const facts = yield* proofFacts(proof);
+    if (facts.sourcePurpose !== 'admit' ||
+      (facts.routeKey !== 'customersBatch' && facts.routeKey !== 'customerGroupCustomersBatch')) {
+      return yield* delegationForbidden('symmy_route_not_admitted')();
+    }
+    return yield* selectNativeReadReceiver(facts, yield* readSymmyRouteScope(proof), 'privacy.core.source-processing-check');
+  },
+);
 /**
  * Finite owner operations of admission routes: pre-admission source reads and the demo catalog import with its
  * required revision read. Enrollment and the installed owner's exact access/version remain mandatory.
