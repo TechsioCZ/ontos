@@ -747,6 +747,8 @@ export interface PublicPricingReadHarnessOptions {
 
 /** One owner final-fence call and its typed outcome, kept beside the customer-safe projection. */
 export interface HarnessFenceObservation {
+  /** Sizes of the Catalog Pricing-purpose equivalence groups handed to this owner (one entry per group). */
+  readonly equivalenceGroupSizes: readonly number[];
   readonly failure?: string;
   /** Kinds of owner-native source material the Read retained and handed to this owner, in order. */
   readonly materialKinds: readonly string[];
@@ -766,9 +768,32 @@ const recordFence = (observed: HarnessFenceObservation[], entry: HarnessFenceObs
     observed.push(entry);
   });
 
-const materialKindsOf = (input: {
+interface ObservedTypedSources {
   readonly typedSources?: readonly { readonly verificationMaterial: { readonly kind: string } }[];
-}): readonly string[] => (input.typedSources ?? []).map(({ verificationMaterial }) => verificationMaterial.kind);
+}
+
+const isEquivalenceMaterial = Schema.is(
+  Schema.Struct({
+    kind: Schema.Literal('CATALOG_EQUIVALENCE_AUTHORITY'),
+    request: Schema.Struct({ members: Schema.Array(Schema.Unknown) }),
+  }),
+);
+
+const fenceObservationOf = (
+  input: ObservedTypedSources,
+  entry: Pick<HarnessFenceObservation, 'failure' | 'operation' | 'owner'>,
+): HarnessFenceObservation => {
+  const materials = (input.typedSources ?? []).map(({ verificationMaterial }) => verificationMaterial);
+  const observation = {
+    equivalenceGroupSizes: materials.flatMap((material) =>
+      isEquivalenceMaterial(material) ? [material.request.members.length] : [],
+    ),
+    materialKinds: materials.map(({ kind }) => kind),
+    operation: entry.operation,
+    owner: entry.owner,
+  };
+  return entry.failure === undefined ? observation : { ...observation, failure: entry.failure };
+};
 
 const observeGateway = (
   gateway: PricingOwnerMaterialEvidenceFenceGateway,
@@ -777,26 +802,16 @@ const observeGateway = (
 ): PricingOwnerMaterialEvidenceFenceGateway => ({
   confirmObservedGenerationsThrough: (input) =>
     gateway.confirmObservedGenerationsThrough(input).pipe(
-      Effect.tap(() => recordFence(observed, { materialKinds: materialKindsOf(input), operation: 'confirm', owner })),
+      Effect.tap(() => recordFence(observed, fenceObservationOf(input, { operation: 'confirm', owner }))),
       Effect.tapError((cause) =>
-        recordFence(observed, {
-          failure: cause._tag,
-          materialKinds: materialKindsOf(input),
-          operation: 'confirm',
-          owner,
-        }),
+        recordFence(observed, fenceObservationOf(input, { failure: cause._tag, operation: 'confirm', owner })),
       ),
     ),
   verifyOpaqueProofsAgainstCurrentState: (input) =>
     gateway.verifyOpaqueProofsAgainstCurrentState(input).pipe(
-      Effect.tap(() => recordFence(observed, { materialKinds: materialKindsOf(input), operation: 'verify', owner })),
+      Effect.tap(() => recordFence(observed, fenceObservationOf(input, { operation: 'verify', owner }))),
       Effect.tapError((cause) =>
-        recordFence(observed, {
-          failure: cause._tag,
-          materialKinds: materialKindsOf(input),
-          operation: 'verify',
-          owner,
-        }),
+        recordFence(observed, fenceObservationOf(input, { failure: cause._tag, operation: 'verify', owner })),
       ),
     ),
 });
