@@ -106,6 +106,16 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # A queued commit can already be obsolete when its runner starts. Fail before install/planning, not only at
+      # the mutation marker after every shard built. Never cancel a delivery whose Zerops processes are running.
+      - name: Refuse a superseded stage head before preparation
+        run: |
+          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
+          if [ -z "$current_head" ] || [ "$current_head" != "$GITHUB_SHA" ]; then
+            echo '::notice::Stage head changed or could not be read; this run performs no further preparation or deployment.'
+            exit 1
+          fi
+
       # The planner (effect, @effect/platform-node) and the unit identities read only the root importer's packages; the
       # whole workspace installs after the app upload (.github/actions/deliver-stage).
       - name: Install the planner and identity tooling
@@ -294,6 +304,15 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # The head may have advanced while this job waited for the planner or a runner.
+      - name: Refuse a superseded stage head before preparation
+        run: |
+          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
+          if [ -z "$current_head" ] || [ "$current_head" != "$GITHUB_SHA" ]; then
+            echo '::notice::Stage head changed or could not be read; this run performs no further preparation or deployment.'
+            exit 1
+          fi
+
       - name: Take this commit's unit identities
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -421,6 +440,14 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Refuse a superseded stage head before preparation
+        run: |
+          current_head="$(git ls-remote origin refs/heads/demo/sales-crm | cut -f1)"
+          if [ -z "$current_head" ] || [ "$current_head" != "$GITHUB_SHA" ]; then
+            echo '::notice::Stage head changed or could not be read; this run performs no further preparation or deployment.'
+            exit 1
+          fi
 
       # No install before the push: the delivery's steps up to the app upload run bash, curl, jq, tar, zstd and git
       # only, and it sets up the toolchain and the whole workspace itself once the upload is done (toolchain: none).

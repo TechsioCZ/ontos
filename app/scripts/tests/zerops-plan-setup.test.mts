@@ -4,6 +4,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
+import { parse } from 'yaml';
 
 import { DeliveryPlanSchema, MUTATION_MARKER } from '../zerops/delivery-plan.mts';
 import type { Comparison, RunMutation } from '../zerops/delivery-plan.mts';
@@ -14,6 +15,7 @@ const HISTORY = 'scripts/zerops/read-delivery-history.sh';
 const BASE = 'a'.repeat(40);
 const HEAD = 'b'.repeat(40);
 const WORKFLOW = '.github/workflows/zerops-stage.yml';
+const SUPERSEDED_HEAD = 'Refuse a superseded stage head before preparation';
 const run = (id: number, number: number, conclusion: string | null, status = 'completed') => ({
   conclusion,
   event: 'push',
@@ -57,6 +59,74 @@ if [ -f "$FIXTURES/$name.zip" ]; then cat "$FIXTURES/$name.zip"; exit 0; fi
 jq -c "$filter" "$FIXTURES/$name.json"
 `;
 const fixtureName = (route: string) => route.replaceAll(/[^A-Za-z0-9]/gu, '_');
+
+it.effect(
+  'rejects superseded or unreadable stage heads before setup without cancelling running Zerops deliveries',
+  () =>
+    Effect.gen(function* rejectSupersededPreparation() {
+      const fs = yield* FileSystem.FileSystem;
+      const workflow = yield* fs.readFileString(path.resolve(app, '..', WORKFLOW)).pipe(
+        Effect.flatMap((source) =>
+          Schema.decodeUnknownEffect(
+            Schema.Struct({
+              concurrency: Schema.Struct({ group: Schema.String, 'cancel-in-progress': Schema.Boolean }),
+              jobs: Schema.Record(
+                Schema.String,
+                Schema.Struct({
+                  steps: Schema.Array(
+                    Schema.Struct({
+                      name: Schema.String,
+                      run: Schema.optionalKey(Schema.String),
+                      uses: Schema.optionalKey(Schema.String),
+                    }),
+                  ),
+                }),
+              ),
+            }),
+          )(parse(source)),
+        ),
+      );
+      expect(workflow.concurrency).toEqual({ group: 'zerops-stage', 'cancel-in-progress': false });
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const git = path.join(directory, 'git');
+      yield* fs.writeFileString(
+        git,
+        `#!/usr/bin/env bash
+set -euo pipefail
+[ "$*" = 'ls-remote origin refs/heads/demo/sales-crm' ] || exit 9
+[ "$REMOTE_HEAD" != unavailable ] || exit 1
+printf '%s\\trefs/heads/demo/sales-crm\\n' "$REMOTE_HEAD"
+`,
+      );
+      yield* fs.chmod(git, 0o700);
+      for (const name of ['deliver', 'build', 'deliver_app']) {
+        const job = workflow.jobs[name];
+        if (job === undefined) return expect.fail(`Missing stage job ${name}`);
+        const checkpoint = job.steps.findIndex((step) => step.name === SUPERSEDED_HEAD);
+        const checkout = job.steps.findIndex((step) => step.uses?.startsWith('actions/checkout@'));
+        expect(checkpoint).toBe(checkout + 1);
+        const script = job.steps[checkpoint]?.run;
+        if (script === undefined) return expect.fail(`Missing stage checkpoint ${name}`);
+        // No credential sync, download, install or build can occur before the head is checked.
+        expect(job.steps.slice(0, checkpoint).map((step) => step.name)).toEqual(['Checkout']);
+        for (const head of [HEAD, BASE, '', 'unavailable']) {
+          const result = yield* collectToolingProcess(
+            ChildProcess.make('bash', ['-e', '-o', 'pipefail', '-c', script], {
+              env: { GITHUB_SHA: HEAD, REMOTE_HEAD: head, PATH: `${directory}:${process.env.PATH ?? ''}` },
+              extendEnv: true,
+            }),
+          );
+          expect(result.status === 0, `${name}: ${head}`).toBe(head === HEAD);
+        }
+      }
+      // The last-moment fences are retained: a push after preparation still cannot mutate stage with an old head.
+      for (const name of ['deliver', 'deliver_app']) {
+        const marker = workflow.jobs[name]?.steps.find((step) => step.name === MUTATION_MARKER);
+        expect(marker?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
+        expect(workflow.jobs[name]?.steps.some((step) => step.uses === './.github/actions/deliver-stage')).toBe(true);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 /** The API answers, as JSON text by route, and the services of each plan artifact, by its zip route. */
 const readHistory = (
