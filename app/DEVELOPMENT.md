@@ -77,7 +77,7 @@ Keep these results separate when checking a flow:
 
 Checkpoint, in a fresh and unchanged isolated sandbox, with the Party Registry process running:
 
-1. As `demo@test.com` (the fixed local owner) submit a valid person-engagement mutation (`party.registry.attach-person-engagement`) for the fixed local Tenant and Legal Entity, then confirm it succeeds without a denial Toast. If it is denied or unavailable, treat that as a failed or incomplete sandbox preparation and rerun `pnpm local:initialize`; do not add grants by hand.
+1. As `demo@test.com` (the fixed local owner) submit a valid person-engagement mutation (`party.registry.attach-person-engagement`) for the fixed local Tenant and Legal Entity, then confirm it succeeds without a denial Toast. If it is `DENIED`, treat that as a failed or incomplete sandbox preparation and rerun `pnpm local:initialize`; do not add grants by hand. If it is `UNAVAILABLE`, that is not a denial: check that the authorization engine is reachable and the session Principal and catalog artifact are current, then retry.
 2. As the negative control, confirm a Principal that is not a member of the fixed development Tenant, or a capability that Role does not name, remains denied for the same mutation. A denial for a capability added after the Role was compiled is expected until it is adopted through Access administration (Novinky), not a provisioning failure.
 3. List the current catalog with `mise exec -- pnpm authorization:catalog:report`, and confirm the inventory is complete with `mise exec -- pnpm authorization:inventory:check`. These read declarations; they never grant anything.
 
