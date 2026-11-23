@@ -658,7 +658,8 @@ const EnrollmentLive = Layer.unwrap(
     const database = Layer.mergeAll(
       Layer.effect(
         CoreDatabase,
-        makeCoreDatabase(connections.admin).pipe(Effect.mapError(() => fail('enrollment-core-client'))),
+        // Core's real writers install an enrolled operation scope; the admin login deliberately has no such authority.
+        makeCoreDatabase(connections.runtime).pipe(Effect.mapError(() => fail('enrollment-core-client'))),
       ),
       Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
     );
@@ -692,13 +693,17 @@ const safeEnrollmentCodes: ReadonlySet<string> = new Set([
   'additive-step-revoke-workload',
   'additive-step-disable-principal',
 ]);
-export const safeSymmyDemoEnrollmentFailure = (error: unknown) =>
-  fail(
-    (Schema.is(SymmyDemoCustomerAuthorityError)(error) || Schema.is(ReleaseInternalWorkloadError)(error)) &&
-      safeEnrollmentCodes.has(error.reason)
-      ? error.reason
-      : 'customer-workload-enrollment',
-  );
+export const safeSymmyDemoEnrollmentFailure = (error: unknown) => {
+  if (
+    !(Schema.is(SymmyDemoCustomerAuthorityError)(error) || Schema.is(ReleaseInternalWorkloadError)(error)) ||
+    !safeEnrollmentCodes.has(error.reason)
+  )
+    return fail('customer-workload-enrollment');
+  const detail = Schema.is(ReleaseInternalWorkloadError)(error)
+    ? `:${error.sqlState ?? 'no-sqlstate'}:${error.databaseConstraint ?? 'unclassified-constraint'}`
+    : '';
+  return fail(`${error.reason}${detail}`);
+};
 
 /** Explicit additive administrative operation, restricted to the standing-approved AKROS stage source. */
 export const ensureSymmyDemoCustomerInternalWorkloads = Effect.gen(function* ensureWorkloads() {

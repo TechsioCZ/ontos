@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { DateTime, Effect, Match, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../access/ids.ts';
@@ -22,6 +22,7 @@ import {
 } from '../auth/principal-management.ts';
 import { SystemPrincipalContextResolverFromCoreDatabase } from '../auth/system-principal-context.ts';
 import { registerSystemWorkload } from '../auth/system-workload-registration.ts';
+import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
 import {
@@ -75,9 +76,29 @@ export const RELEASE_INTERNAL_WORKLOAD_JOB = registerSystemWorkload({
 const NO_CONSTRAINTS: ReadonlySet<string> = new Set();
 const RETIREMENT_REASON = 'The internal workload is no longer wanted here (module, catalogue or company)';
 
+const enrollmentSqlStateSchema = Schema.Literals([
+  '23505',
+  '23514',
+  '42501',
+  '42703',
+  '42P01',
+  '23503',
+  '23502',
+  'P0001',
+  '22P02',
+]);
+const enrollmentConstraintSchema = Schema.Literals([
+  'core_principals_platform_role_ck',
+  'core_principals_pkey',
+  'principals_pkey',
+]);
 export class ReleaseInternalWorkloadError extends Schema.TaggedError<ReleaseInternalWorkloadError>()(
   'ReleaseInternalWorkloadError',
-  { reason: Schema.String },
+  {
+    reason: Schema.String,
+    sqlState: Schema.optional(enrollmentSqlStateSchema),
+    databaseConstraint: Schema.optional(enrollmentConstraintSchema),
+  },
 ) {}
 const refusal = (reason: string) => new ReleaseInternalWorkloadError({ reason });
 
@@ -264,8 +285,22 @@ const releaseScopeOf = Effect.fn('ReleaseInternalWorkloads.releaseScope')(functi
 /** A step's failure, with what failed and the writer's own reason. */
 const stepFailed =
   (what: string) =>
-  (cause: { readonly reason?: string }): ReleaseInternalWorkloadError =>
-    refusal(`${what}: ${cause.reason ?? 'unavailable'}`);
+  (cause: { readonly reason?: string }): ReleaseInternalWorkloadError => {
+    const metadata = findPostgresFailure(cause, ({ code }) => Schema.is(enrollmentSqlStateSchema)(code));
+    const sqlState =
+      Option.isSome(metadata) && Schema.is(enrollmentSqlStateSchema)(metadata.value.code)
+        ? metadata.value.code
+        : undefined;
+    const databaseConstraint =
+      Option.isSome(metadata) && Schema.is(enrollmentConstraintSchema)(metadata.value.constraint)
+        ? metadata.value.constraint
+        : undefined;
+    return new ReleaseInternalWorkloadError({
+      reason: `${what}: ${cause.reason ?? 'unavailable'}`,
+      sqlState,
+      databaseConstraint,
+    });
+  };
 
 /** Performs one planned step through Core's own writer for it, as the release actor. */
 /** Core's own workload binding writers, from the surrounding composition. */
@@ -578,7 +613,14 @@ export const registerAdditiveCompanyInternalWorkloads = Effect.fn('ReleaseIntern
     for (const unit of plan.units) {
       for (const step of unit.steps) {
         yield* performStep(database, writers, scope, step, at).pipe(
-          Effect.mapError(() => refusal(`additive-step-${step.kind}`)),
+          Effect.mapError(
+            (error) =>
+              new ReleaseInternalWorkloadError({
+                reason: `additive-step-${step.kind}`,
+                sqlState: error.sqlState,
+                databaseConstraint: error.databaseConstraint,
+              }),
+          ),
         );
       }
     }

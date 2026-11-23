@@ -40,7 +40,7 @@ it('retains only typed fixed enrollment categories and strips arbitrary reasons 
     new ReleaseInternalWorkloadError({ reason: 'additive-release-scope' }),
     new ReleaseInternalWorkloadError({ reason: 'additive-step-create-principal' }),
   ])
-    expect(safeSymmyDemoEnrollmentFailure(error).reason).toBe(error.reason);
+    expect(safeSymmyDemoEnrollmentFailure(error).reason.startsWith(error.reason)).toBe(true);
   for (const error of [
     new Error('credential-bearing driver diagnostic'),
     new ReleaseInternalWorkloadError({ reason: 'raw private diagnostic' }),
@@ -50,6 +50,15 @@ it('retains only typed fixed enrollment categories and strips arbitrary reasons 
     expect(safe.reason).toBe('customer-workload-enrollment');
     expect('cause' in safe).toBe(false);
   }
+  expect(
+    safeSymmyDemoEnrollmentFailure(
+      new ReleaseInternalWorkloadError({
+        reason: 'additive-step-create-principal',
+        sqlState: '23514',
+        databaseConstraint: 'core_principals_platform_role_ck',
+      }),
+    ).reason,
+  ).toBe('additive-step-create-principal:23514:core_principals_platform_role_ck');
 });
 
 it('plans exactly seven canonical AKROS company registrations without retiring unrelated platform jobs', () => {
