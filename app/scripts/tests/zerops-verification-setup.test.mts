@@ -322,6 +322,20 @@ shift 2
 exec "$@"
 `;
 
+it.effect('the native checkout CLI accepts a leading-dash build identity as one attached flag value', () =>
+  Effect.gen(function* checkoutBuildIdentity() {
+    const result = yield* collectToolingProcess(
+      ChildProcess.make(
+        process.execPath,
+        ['scripts/ops/stage-n1-checkout.mts', 'quote', '--expect-build-id=-packaged-build', '--help'],
+        { cwd: path.join(repository, 'app') },
+      ),
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('--expect-build-id');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const scenario of [
   { checkout: 0, name: 'both succeed', oauth: 0, services: 0, status: 0, warmup: 0 },
   { checkout: 0, name: 'warm-up fails', oauth: 0, services: 0, status: 1, warmup: 17 },
@@ -393,7 +407,7 @@ for (const scenario of [
           RUNNER_TEMP: directory,
           SERVICE_EXIT: String(scenario.services),
           SETUP_CALLS: calls,
-          STAGE_N1_BUILD_ID: 'packaged-build',
+          STAGE_N1_BUILD_ID: '-packaged-build',
           STAGE_N1_URL: 'https://n1.example.test',
           STAGE_SHELL_URL: 'https://shell.example.test',
           WARMUP_EXIT: String(scenario.warmup),
@@ -458,12 +472,12 @@ for (const scenario of [
           invocations.filter(
             (call) =>
               call ===
-              `exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id packaged-build' : ''}`,
+              `exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id=-packaged-build' : ''}`,
           ),
         ).toHaveLength(1);
         expect(recorded).not.toContain('stage-n1-checkout.mts place');
         expect(invocations.filter((call) => call.startsWith('timeout '))).toEqual([
-          `timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id packaged-build' : ''}`,
+          `timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id=-packaged-build' : ''}`,
         ]);
         expect(recorded).toContain('sudo find ');
         expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');

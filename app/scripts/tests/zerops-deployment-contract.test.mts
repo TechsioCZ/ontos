@@ -910,7 +910,7 @@ it('binds N1 pushes to the packaged Next build and configured origin, not an unr
   const proofs = readFileSync(stageProofsPath, 'utf-8');
   expect(proofs).toContain(`checkout_args=(--origin "\${STAGE_N1_URL:?STAGE_N1_URL is required}")`);
   expect(proofs).toContain(`if [ "\${PUSH_N1:-false}" = true ]; then`);
-  expect(proofs).toContain(`--expect-build-id "\${STAGE_N1_BUILD_ID:?packaged N1 build id is required}"`);
+  expect(proofs).toContain(`"--expect-build-id=\${STAGE_N1_BUILD_ID:?packaged N1 build id is required}"`);
   expect(proofs).toContain(
     'N1 kept: checkout is not verified yet; a VALID quote is required for the currently served build',
   );

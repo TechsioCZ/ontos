@@ -74,7 +74,7 @@ finish() {
   E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
   export E2E_PLAYWRIGHT_MODULE
   if [ "${PUSH_N1:-false}" = true ]; then
-    checkout_args+=(--expect-build-id "${STAGE_N1_BUILD_ID:?packaged N1 build id is required}")
+    checkout_args+=("--expect-build-id=${STAGE_N1_BUILD_ID:?packaged N1 build id is required}")
   else
     echo 'N1 kept: checkout is not verified yet; a VALID quote is required for the currently served build and live owner contract, not this commit.'
   fi
