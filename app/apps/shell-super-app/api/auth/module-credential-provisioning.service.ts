@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
   bindPlatformCredential,
@@ -43,6 +45,14 @@ import type { ModuleCredentialRelease, PlatformCredentialAttestation } from './m
  * plugin's minimum first (the provisioning integration test issues at this lifetime and is refused one second under).
  */
 export const MODULE_CREDENTIAL_LIFETIME = Duration.hours(24);
+
+/** Better Auth defaults to 32 display-name characters. Full workload identity stays in the binding and attestation. */
+export const workloadCredentialProviderName = (workloadKey: string): string => {
+  const name = `workload:${workloadKey}`;
+  return name.length <= 32
+    ? name
+    : `workload:${workloadKey.slice(0, 14)}-${createHash('sha256').update(workloadKey).digest('hex').slice(0, 8)}`;
+};
 
 /** One issued module key, by its provider id (not secret) and the moment it stops verifying. */
 export interface IssuedModuleKey {
@@ -300,7 +310,7 @@ export const provisionModuleCredentials = Effect.fn('ModuleCredentialProvisionin
         expiresInSeconds: Duration.toSeconds(MODULE_CREDENTIAL_LIFETIME),
         issuerPrincipalId: binding.principalId,
         lifecycleOperationId: input.operationId,
-        name: `workload:${binding.workloadKey}`,
+        name: workloadCredentialProviderName(binding.workloadKey),
         ownerUserId: PLATFORM_KEY_OWNER.id,
         tenantId: binding.tenantId,
       })
