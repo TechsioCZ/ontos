@@ -449,7 +449,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
       yield* checkItem(item);
       const { icoAuthority: _classification, ...sourceSyncItem } = item;
-      return sourceSyncItem;
+      return { ...sourceSyncItem, sourceProcessingMode: 'SOURCE_SYNC' as const };
     }
     if (item.profile.subject.kind === 'RETAIL') {
       yield* checkItem(item);

@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { EnsureRetailCustomerProfilePayloadSchema } from '../../shared/actions/ensure-retail-customer-profile.ts';
-import { CustomerProfileSourceRequestSchema } from '../../shared/apis/customer-profile-source.ts';
+import {
+  CustomerProfileSourceItemSchema,
+  CustomerProfileSourceRequestSchema,
+} from '../../shared/apis/customer-profile-source.ts';
 import { CustomerProfileSourceAssertionSchema } from '../../shared/domain/customer-profile-source.ts';
 
 const tenantId = randomUUID();
@@ -73,3 +76,28 @@ it.effect('bounds source paging and preserves explicit cursor absence through th
     expect(Schema.is(CustomerProfileSourceRequestSchema)({ ...request, limit: 0 })).toBe(false);
   }),
 );
+
+it('preserves the current source-sync read mode without inventing an ICO classification', () => {
+  const item = {
+    partyRef: payload.subject.partyRef,
+    partySourceReference,
+    profile: {
+      profileRef: {
+        kind: 'RETAIL',
+        moduleId: 'commerce.customer-context',
+        resourceId: randomUUID(),
+        resourceType: 'commerce.customer-context.retail-customer-profile',
+        tenantId,
+      },
+      revision: 1,
+      state: 'ACTIVE',
+      subject: payload.subject,
+    },
+    source,
+    sourceProcessingMode: 'SOURCE_SYNC',
+  };
+  const current = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)(item);
+  expect(current.sourceProcessingMode).toBe('SOURCE_SYNC');
+  expect(current).not.toHaveProperty('icoAuthority');
+  expect(Schema.is(CustomerProfileSourceItemSchema)({ ...item, sourceProcessingMode: 'UNAPPROVED' })).toBe(false);
+});

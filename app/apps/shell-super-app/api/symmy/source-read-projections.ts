@@ -423,13 +423,19 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<CustomerRow, SymmyIngressProblem> {
   const selects = (name: SymmyCustomerFieldName) => fields === undefined || fields.includes(name);
-  const authority = yield* customerIcoAuthority(item);
   let result: CustomerRow = {
     id: qualifySymmyReadId(scope, `CUSTOMER:${item.source.recordType}`, item.source.recordId),
     partyRef: item.partyRef,
     profile: item.profile,
     source_record_id: item.source.recordId,
   };
+  if (item.sourceProcessingMode === 'SOURCE_SYNC') {
+    if (selects('party') && routeAllows(scope, partyModule, partyProfileRead)) {
+      result = { ...result, party: yield* readCustomerParty(item, scope, admission, newRequestIdentifier) };
+    }
+    return result;
+  }
+  const authority = yield* customerIcoAuthority(item);
   if (Option.isSome(authority)) {
     result = yield* Match.value(authority.value).pipe(
       Match.when('PERSONAL', () =>

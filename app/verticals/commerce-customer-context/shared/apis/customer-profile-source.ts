@@ -48,6 +48,7 @@ export const CustomerProfileSourceRequestSchema = Schema.Union([
 export type CustomerProfileSourceRequest = typeof CustomerProfileSourceRequestSchema.Type;
 export const CustomerProfileSourceItemSchema = Schema.Struct({
   icoAuthority: Schema.optionalKey(Schema.Literals(['PERSONAL', 'ORGANIZATION'])),
+  sourceProcessingMode: Schema.optionalKey(Schema.Literal('SOURCE_SYNC')),
   partyRef: PartyRefSchema,
   partySourceReference: CustomerProfilePartySourceReferenceSchema,
   profile: Schema.Struct({

@@ -319,6 +319,7 @@ const organizationNameReply = (value: OrganizationBusinessNameExportResponse = o
 interface FixtureOwnerReplies {
   readonly ico?: Response;
   readonly name?: Response;
+  readonly party?: Response;
 }
 const organizationCurrentIco = Schema.decodeUnknownSync(
   OrganizationCustomerProfileIcoResponseSchema.members[1].fields.current,
@@ -625,6 +626,8 @@ const fixture = (
       return Promise.resolve(customerPageReply(decoded, mode === 'short_count'));
     }
     if (pathname.endsWith('/reads/source-profile-export')) {
+      const replies = Schema.is(Schema.instanceOf(Response))(icoResponse) ? undefined : icoResponse;
+      if (replies?.party !== undefined) return Promise.resolve(replies.party.clone());
       return Promise.resolve(
         Response.json(
           mode === 'party_unavailable'
@@ -1799,6 +1802,44 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(companyIcoOnly.customer).not.toHaveProperty('business_name');
       const companyParty = yield* projectCustomerParts(['party'], companyNameScope, companyPage(), organization);
       expect(companyParty.owners).toEqual(['customer-profile-source-page']);
+    }),
+  );
+  it.effect('exports source-sync Counterparty profiles without claiming personal or organization-business authority', () =>
+    Effect.gen(function* sourceSyncCustomerParts() {
+      const { icoAuthority: _classification, ...unclassified } = company;
+      const sourceSync = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)({
+        ...unclassified,
+        sourceProcessingMode: 'SOURCE_SYNC',
+      });
+      const organization = Schema.decodeUnknownSync(SourceProfileExportResponseSchema)({
+        ...partyExport, partyType: 'ORGANIZATION', firstName: null, lastName: null,
+        businessName: 'Synced Organization',
+      });
+      const all = yield* projectCustomerParts(undefined, scope, companyPage(sourceSync), {
+        party: Response.json(Schema.encodeSync(SourceProfileExportResponseSchema)(organization)),
+      });
+      expect(all.owners).toEqual(['customer-profile-source-page', 'source-profile-export']);
+      expect(all.customer?.party).toEqual(organization);
+      expect(all.customer).not.toHaveProperty('ico');
+      expect(all.customer).not.toHaveProperty('business_name');
+      for (const fields of [['ico'], ['businessName'], ['id', 'profile']] as const) {
+        const selected = yield* projectCustomerParts(fields, scope, companyPage(sourceSync));
+        expect(selected.owners).toEqual(['customer-profile-source-page']);
+        expect(selected.customer).not.toHaveProperty('party');
+      }
+      const withoutPermission = yield* projectCustomerParts(
+        undefined, scopeWithout(scope, personalNameRead), companyPage(sourceSync),
+      );
+      expect(withoutPermission.owners).toEqual(['customer-profile-source-page']);
+      expect(withoutPermission.customer).not.toHaveProperty('party');
+      const unavailable = fixture('party_unavailable', sourceCorrelation.recordKey, companyPage(sourceSync));
+      const failure = yield* projectSymmySourceCustomers(
+        scope, {}, unavailable.admission, unavailable.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, unavailable.fakeFetch));
+      expect(Schema.is(SymmyUnavailableProblemSchema)(failure)).toBe(true);
+      expect(unavailable.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
+        'customer-profile-source-page', 'source-profile-export',
+      ]);
     }),
   );
   it.effect('pages Catalog products with offset, count and q and carries the owner total', () =>
