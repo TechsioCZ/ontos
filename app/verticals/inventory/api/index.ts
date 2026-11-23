@@ -240,6 +240,14 @@ export const makeInventoryApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     inventoryReadinessLayer,
+    HttpApiBuilder.group(inventoryApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     defineSourceProvisioningPolicyCommitApiLive.pipe(Layer.provide(governedActionRuntimeLive)),
     // <generated-governed-http-handler-layers>
     catalogToStockBindingResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
