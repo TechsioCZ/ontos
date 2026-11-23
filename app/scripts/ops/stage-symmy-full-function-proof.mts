@@ -777,7 +777,7 @@ const NativeCatalogReadSchema = Schema.Struct({
   })),
   revision: Schema.Int,
 });
-async function proveNativeCatalog(
+export async function proveNativeCatalog(
   config: SymmyProofConfig, client: SymmyProofClient, names: SymmyProofNames,
 ): Promise<SymmyNativeProofResult> {
   const tenantId = config.input.unitRef.tenantId;
