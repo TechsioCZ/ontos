@@ -7,6 +7,7 @@ import type { SchemaAST } from 'effect';
 import {
   AKROS_STAGE_PROOF_INPUT,
   assertAcceptedEffects,
+  assertCurrentListPrice,
   assertNativeApplied,
   assertOrderSnapshots,
   assertRecordReadback,
@@ -225,6 +226,36 @@ test('decimal equality stays exact beyond Number precision and rejects malformed
   assert.equal(decimalEqual('9007199254740993', '9007199254740992'), false);
   for (const value of ['01', '-1', '1e2', '', NaN, 123.45, null]) {
     assert.equal(decimalEqual(value, value), false);
+  }
+});
+
+test('list-price readback accepts canonical decimal basis but rejects a different quantity or unit', () => {
+  const { input } = readSymmyProofConfig({ SYMMY_API_KEY: 'synthetic-key' });
+  const ref = { ...input.unitRef, resourceId: itemId };
+  const variant = { ...ref, resourceId: effectId };
+  const proof = {
+    names: makeSymmyProofNames(), productRef: ref, variantRef: variant,
+    baseAmount: '1', stockAmount: '1', listAmount: '19.5', effectiveFrom: '2026-11-23T12:00:00.000Z',
+  };
+  const value = (quantity: string, unitRef = input.unitRef) => ({
+    outcome: 'PRICE_DEFINITION_CURRENT',
+    definition: {
+      priceRef: ref,
+      identityKey: {
+        catalogSelection: { productRef: ref, variantRef: variant },
+        commercialScope: input.commercialScope,
+        priceGroupSelector: { kind: 'PRICE_GROUP', priceGroupRef: ref },
+        unitBasis: { quantity, unitRef },
+      },
+      revision: {
+        effectiveFrom: proof.effectiveFrom, monetaryAmount: { amount: '19.500000', currencyCode: input.currencyCode },
+        revision: 1, revisionId: itemId,
+      },
+    },
+  });
+  assert.doesNotThrow(() => assertCurrentListPrice(value('1.000000'), proof, input, ref, proof.effectiveFrom));
+  for (const invalid of [value('2.000000'), value('1', { ...input.unitRef, resourceId: effectId })]) {
+    assert.throws(() => assertCurrentListPrice(invalid, proof, input, ref, proof.effectiveFrom), /readback/u);
   }
 });
 

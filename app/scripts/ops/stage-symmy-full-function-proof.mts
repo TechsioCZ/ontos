@@ -380,6 +380,29 @@ const CurrentPriceSchema = Schema.Struct({
 export interface SymmyCommerceProof extends SymmyProductProof {
   readonly priceGroupRef: ProofRef;
 }
+export function assertCurrentListPrice(
+  value: unknown,
+  proof: SymmyProductProof,
+  input: SymmyProofConfig['input'],
+  priceGroupRef: ProofRef,
+  startsAt: string,
+) {
+  const stored = decode(CurrentPriceSchema, value, 'list-price-readback');
+  const identity = stored.definition.identityKey;
+  ensure(
+    isDeepStrictEqual(identity.catalogSelection, { productRef: proof.productRef, variantRef: proof.variantRef }) &&
+    identity.priceGroupSelector.priceGroupRef.resourceId === priceGroupRef.resourceId &&
+    identity.commercialScope.channelId === input.commercialScope.channelId &&
+    identity.commercialScope.marketId === input.commercialScope.marketId &&
+    decimalEqual(identity.unitBasis.quantity, '1') &&
+    isDeepStrictEqual(identity.unitBasis.unitRef, input.unitRef) &&
+    decimalEqual(stored.definition.revision.monetaryAmount.amount, proof.listAmount) &&
+    stored.definition.revision.monetaryAmount.currencyCode === input.currencyCode &&
+    stored.definition.revision.effectiveFrom === startsAt,
+    'list-price-readback', 'readback',
+  );
+  return stored;
+}
 const PRICE_EFFECTS = {
   effectsAtLeast: 1, itemsAtLeast: 1, owners: { 'commerce.pricing': 1 },
 } satisfies EffectExpectation;
@@ -465,19 +488,7 @@ export async function proveSymmyProductStockList(
     readback.prices !== undefined && readback.prices.count === 1 && readback.prices.prices.length === 1,
     'list-price-readback', 'readback',
   );
-  const stored = decode(CurrentPriceSchema, readback.prices.prices[0]?.price, 'list-price-readback');
-  const identity = stored.definition.identityKey;
-  ensure(
-    isDeepStrictEqual(identity.catalogSelection, { productRef: proof.productRef, variantRef: proof.variantRef }) &&
-    identity.priceGroupSelector.priceGroupRef.resourceId === list.priceGroupRef.resourceId &&
-    identity.commercialScope.channelId === input.commercialScope.channelId &&
-    identity.commercialScope.marketId === input.commercialScope.marketId &&
-    isDeepStrictEqual(identity.unitBasis, { quantity: '1', unitRef: input.unitRef }) &&
-    decimalEqual(stored.definition.revision.monetaryAmount.amount, proof.listAmount) &&
-    stored.definition.revision.monetaryAmount.currencyCode === input.currencyCode &&
-    stored.definition.revision.effectiveFrom === startsAt,
-    'list-price-readback', 'readback',
-  );
+  const stored = assertCurrentListPrice(readback.prices.prices[0]?.price, proof, input, list.priceGroupRef, startsAt);
   const replay = await client.settle(await client.write(
     `${PREFIX}/price-lists/prices/batch`, priceBody, key, 'list-price-import',
   ), PRICE_EFFECTS, 'list-price-import');
