@@ -46,7 +46,7 @@ import {
 } from '../../shared/domain/privacy-subject.ts';
 import { PrivacyPartyRefSchema } from '../../shared/domain/party-reference.ts';
 import type { PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
-import { antiResurrectionProtections, privacySubjects } from '../database/schema.ts';
+import { antiResurrectionProtections, demoSourceProcessingPolicies, privacySubjects } from '../database/schema.ts';
 import {
   PrivacySubjectPartyOwner,
   privacySubjectPartyOwnerUnavailable,
@@ -885,12 +885,14 @@ export const sourceProcessingEligibilityRead = defineRead(
         return yield* sourceConfigurationUnavailable('Demo source processing is restricted to stage');
       }
       const rows = yield* transaction
-        .execute(
-          sql`
-        select policy_record as record from privacy.demo_source_processing_policies
-        where tenant_id=${scope.tenantId} and legal_entity_id=${scope.legalEntityId ?? ''}
-          and policy_id='akros-symmy-demo-test-data'`,
-          'objects',
+        .select({ record: demoSourceProcessingPolicies.policyRecord })
+        .from(demoSourceProcessingPolicies)
+        .where(
+          and(
+            eq(demoSourceProcessingPolicies.tenantId, scope.tenantId),
+            eq(demoSourceProcessingPolicies.legalEntityId, scope.legalEntityId ?? ''),
+            eq(demoSourceProcessingPolicies.policyId, 'akros-symmy-demo-test-data'),
+          ),
         )
         .pipe(Effect.mapError(sourceConfigurationUnavailable));
       const records = yield* Schema.decodeUnknownEffect(
