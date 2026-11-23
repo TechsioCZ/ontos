@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { Effect, Order, Schema, Stream } from 'effect';
+import { Effect, Option, Order, Schema, Stream } from 'effect';
 import { sort as sortArray } from 'effect/Array';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -17,7 +17,11 @@ const DigestInputsSchema = Schema.Struct({
   version: Schema.Literal(3),
 });
 const BuildManifestSchema = Schema.fromJsonString(
-  Schema.Struct({ scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)) }),
+  Schema.Struct({
+    exports: Schema.optionalKey(Schema.Unknown),
+    imports: Schema.optionalKey(Schema.Unknown),
+    scripts: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  }),
 );
 
 export interface WorkspacePackage {
@@ -92,7 +96,7 @@ export const runtimeClosure = (directory: string, packages: readonly WorkspacePa
  *
  * Included (fail closed):
  * - every file of the unit's workspace closure (the unit and, transitively, the workspace packages it depends on),
- *   except tests, fixtures and documentation;
+ *   except tests, fixtures, documentation and manifest-declared operator schema-verification entrypoints;
  * - every file reached from an included file by a static reference: imports, re-exports, `require`, `import()`,
  *   `new URL(…, import.meta.url)`, CSS `@import`/`@source`/`@plugin`/`url()`, tsconfig `extends`/`references`, a
  *   workspace package named by a bare specifier (all of it), the nearest package.json, and every string literal
@@ -318,6 +322,28 @@ const ancestors = (filepath: string) =>
 /** The reference graph of one commit. Each file's references are resolved once and shared by every unit. */
 export const unitInputGraph = (workspace: UnitWorkspace) => {
   const tracked = new Set(workspace.entries.map((entry) => entry.path));
+  // Operator schema checks run on deployment, not in a unit bundle. Explicit build/import/scan edges still add them.
+  const schemaVerificationEntries = new Set(
+    workspace.packages.flatMap(({ directory }) => {
+      const manifest = Schema.decodeUnknownOption(BuildManifestSchema)(
+        workspace.sources.get(`${directory}/package.json`),
+      );
+      return Option.isNone(manifest)
+        ? []
+        : matches(SCRIPT_TOKEN, manifest.value.scripts?.['db:verify'] ?? '')
+            .map((token) => path.posix.normalize(path.posix.join(directory, token)))
+            .filter(
+              (filepath) =>
+                inside(filepath, directory) &&
+                tracked.has(filepath) &&
+                // Exported or #import-mapped checks can be bundled through a bare package reference.
+                !JSON.stringify([manifest.value.exports, manifest.value.imports]).includes('*') &&
+                !JSON.stringify([manifest.value.exports, manifest.value.imports]).includes(
+                  JSON.stringify(`./${path.posix.relative(directory, filepath)}`),
+                ),
+            );
+    }),
+  );
   const directories = new Set(
     workspace.entries.flatMap((entry) =>
       entry.path
@@ -384,7 +410,13 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
       return owner === undefined ? NOTHING : { ...NOTHING, packages: [owner] };
     }
     const named = byName.find((entry) => specifier === entry.name || specifier.startsWith(`${entry.name}/`));
-    return named === undefined ? NOTHING : { ...NOTHING, packages: [named.directory] };
+    if (named === undefined) return NOTHING;
+    const subpath = specifier.slice(named.name.length + 1);
+    return {
+      ...NOTHING,
+      files: subpath.length === 0 ? [] : resolvePath(path.posix.join(named.directory, subpath)).files,
+      packages: [named.directory],
+    };
   };
   /** In code, a string naming a tracked file (from the file or from app/) is taken as a path the code reads. */
   const resolveLiteral = (from: string, literal: string): readonly string[] =>
@@ -453,7 +485,7 @@ export const unitInputGraph = (workspace: UnitWorkspace) => {
     reaches.set(filepath, result);
     return result;
   };
-  return { owningPackage, reach, tracked, under, workspace };
+  return { owningPackage, reach, schemaVerificationEntries, tracked, under, workspace };
 };
 export type UnitInputGraph = ReturnType<typeof unitInputGraph>;
 
@@ -502,6 +534,9 @@ const exclusionReason = (filepath: string, closure: ReadonlySet<string>, graph: 
   if (isUnitDocumentation(filepath)) {
     return 'documentation' as const;
   }
+  if (graph.schemaVerificationEntries.has(filepath)) {
+    return 'unused-script' as const;
+  }
   if (inClosure) {
     return 'input' as const;
   }
@@ -536,7 +571,11 @@ export const unitInputs = (directory: string, graph: UnitInputGraph, driver: Bui
       }
       packagesAdded.add(root);
       for (const filepath of graph.under(root)) {
-        if (!isTestInput(filepath) && !isUnitDocumentation(filepath)) {
+        if (
+          !isTestInput(filepath) &&
+          !isUnitDocumentation(filepath) &&
+          !graph.schemaVerificationEntries.has(filepath)
+        ) {
           add(filepath);
         }
       }

@@ -7,6 +7,7 @@ import {
   BUILD_DRIVER,
   BUILD_DRIVER_TOOLS,
   buildEnvironment,
+  deliveryReads,
   isTestInput,
   runtimeClosure,
   unitInputDigest,
@@ -132,6 +133,102 @@ const sameAfter = (changed: string) =>
     Effect.flatMap((after) => identity(graphOf()).pipe(Effect.map((before) => ({ changed, same: after === before })))),
   );
 
+it.effect('keeps deployment-only schema verification out of owner and importer build fingerprints', () =>
+  Effect.gen(function* verificationOnly() {
+    const verifier = `${PARTY}/scripts/verify-db-schema.mts`;
+    const additions = [
+      [
+        `${PARTY}/package.json`,
+        JSON.stringify({ name: PARTY_PACKAGE, scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' } }),
+      ],
+      [verifier, 'export const verified = true;'],
+      ['app/scripts/run-zerops-migrator.mjs', "import '../verticals/party/scripts/verify-db-schema.mts';"],
+    ] as const;
+    const before = graphOf([], additions);
+    const after = graphOf([verifier], additions);
+    for (const directory of [CRM, PARTY]) {
+      expect(yield* unitInputDigest(directory, { environment, graph: after })).toBe(
+        yield* unitInputDigest(directory, { environment, graph: before }),
+      );
+      expect((yield* unitInputs(directory, before)).inputs.some(({ path }) => path === verifier)).toBe(false);
+    }
+    // Deployment still runs and fingerprints the verifier through its migrator root.
+    expect((yield* deliveryReads(before, [{ id: 'crm', directory: CRM }], new Map())).has(verifier)).toBe(true);
+  }),
+);
+
+it.effect('still invalidates a schema verifier explicitly reached by a build, import or stylesheet scan', () =>
+  Effect.gen(function* verificationIsBuildInput() {
+    const verifier = `${PARTY}/scripts/verify-db-schema.mts`;
+    const base = [
+      [
+        `${PARTY}/package.json`,
+        JSON.stringify({ name: PARTY_PACKAGE, scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' } }),
+      ],
+      [verifier, 'export const verified = true;'],
+    ] as const;
+    const cases = [
+      [...base, [CRM_ENTRY, `import '${verifier.replace('app/verticals/', '../../')}';`]],
+      [...base, [CRM_ENTRY, `import '${PARTY_PACKAGE}/scripts/verify-db-schema.mts';`]],
+      [
+        ...base,
+        [
+          `${PARTY}/package.json`,
+          JSON.stringify({
+            name: PARTY_PACKAGE,
+            exports: { './verify': './scripts/verify-db-schema.mts' },
+            scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' },
+          }),
+        ],
+      ],
+      [
+        ...base,
+        [
+          `${PARTY}/package.json`,
+          JSON.stringify({
+            name: PARTY_PACKAGE,
+            imports: { '#verify': './scripts/verify-db-schema.mts' },
+            scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' },
+          }),
+        ],
+      ],
+      ...[
+        { exports: { './*': './*' } },
+        { imports: { '#*': './*' } },
+      ].map((mapping) => [
+        ...base,
+        [
+          `${PARTY}/package.json`,
+          JSON.stringify({
+            name: PARTY_PACKAGE,
+            ...mapping,
+            scripts: { 'db:verify': 'node scripts/verify-db-schema.mts' },
+          }),
+        ] as const,
+      ]),
+      [
+        ...base,
+        [
+          `${CRM}/package.json`,
+          JSON.stringify({
+            name: '@app/crm',
+            scripts: {
+              build: 'pnpm run db:verify',
+              'db:verify': 'node ../party/scripts/verify-db-schema.mts',
+            },
+          }),
+        ],
+      ],
+      [...base, [`${PARTY}/src/style.css`, '@import "tailwindcss";']],
+    ] satisfies readonly (readonly (readonly [string, string])[])[];
+    for (const additions of cases) {
+      const before = graphOf([], additions);
+      const after = graphOf([verifier], additions);
+      expect(yield* identity(after)).not.toBe(yield* identity(before));
+    }
+  }),
+);
+
 it.effect('changes a unit identity for a change in any dependency, reached file, build script or root input', () =>
   Effect.gen(function* changedInputs() {
     for (const changed of [
@@ -216,13 +313,18 @@ it.effect('follows a devDependency only when included code imports it', () =>
   }),
 );
 
-/** The rule the identity must never break: inside the unit or a dependency, only tests and docs stay out. */
-const unsafeExclusions = (closure: readonly string[], excluded: readonly ExcludedInput[]) =>
+/** Runtime package exclusions must be tests, docs, or an explicitly declared operator-only verification entry. */
+const unsafeExclusions = (
+  closure: readonly string[],
+  excluded: readonly ExcludedInput[],
+  verificationEntries: ReadonlySet<string> = new Set(),
+) =>
   excluded.filter(
     (entry) =>
       closure.some((root) => entry.path.startsWith(`${root}/`)) &&
       !(entry.reason === 'test' && isTestInput(entry.path)) &&
-      entry.reason !== 'documentation',
+      entry.reason !== 'documentation' &&
+      !(entry.reason === 'unused-script' && verificationEntries.has(entry.path)),
   );
 
 it.effect('excludes nothing from a unit or its dependencies except tests and documentation', () =>
@@ -237,7 +339,7 @@ it.effect('excludes nothing from a unit or its dependencies except tests and doc
 );
 
 it.effect(
-  'excludes nothing but tests and documentation from any committed unit, and lists only real driver tools',
+  'excludes only tests, documentation and declared operator schema checks from committed units, and lists real driver tools',
   () =>
     Effect.gen(function* committedExclusions() {
       const { graph, units } = yield* readUnitIdentities('HEAD');
@@ -248,7 +350,10 @@ it.effect(
       expect(units.length).toBeGreaterThan(1);
       for (const { directory } of units) {
         const { closure, excluded } = yield* unitInputs(directory, graph);
-        expect({ directory, unsafe: unsafeExclusions(closure, excluded) }).toEqual({ directory, unsafe: [] });
+        expect({ directory, unsafe: unsafeExclusions(closure, excluded, graph.schemaVerificationEntries) }).toEqual({
+          directory,
+          unsafe: [],
+        });
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   60_000,
