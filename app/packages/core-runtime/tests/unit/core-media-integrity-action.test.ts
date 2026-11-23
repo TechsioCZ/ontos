@@ -68,7 +68,8 @@ const gateFor = (options: {
   const spec = { cells: options.capability === undefined ? [] : [cell({ capability: options.capability })] };
   const kinds: AccessPrincipalKinds = { readKind: () => Effect.succeed(Option.some(options.kind)) };
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: () => Effect.succeed(new Set(options.workloadKeys)),
+    readWorkloadAuthority: () =>
+      Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set(options.workloadKeys) }),
   };
   return makeAccessDecisionService({
     authorityFor: () => makeAuthority(spec).port,

@@ -629,6 +629,8 @@ interface BoundaryServices {
 const boundaryServices: ReadServiceFactory<BoundaryServices> = (transaction, readScope) =>
   Effect.succeed({ rows: boundaryRows(transaction, readScope) });
 
+const fixtureProcessingPurposeSchema = Schema.Literals(['PROCESSING', 'GOVERNANCE']);
+
 for (const verified of [false, true]) {
   for (const control of [
     'success',
@@ -4484,14 +4486,14 @@ it.effect('rejects a recreated Core external-subject resolution Read before its 
 it.effect('rejects native route input substitution before any owner scope or private Read work', () =>
   Effect.gen(function* nativeReadInputHash() {
     const read = registration();
-    const system = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-      authMethod: 'system',
+    const system = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
       authContextRef: 'job:native-read:run:unit',
+      authMethod: 'system',
       principalId: scope.principalId,
       tenantId: scope.tenantId,
     });
     const id = '60000000-0000-4000-8000-000000000001';
-    const route = Schema.decodeUnknownSync(RegisteredGatewayRouteScopeSchema)({
+    const route = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
       nativeReadReceiver: {
         bindingIncarnation: id,
         originalPrincipalId: '60000000-0000-4000-8000-000000000002',
@@ -4500,7 +4502,9 @@ it.effect('rejects native route input substitution before any owner scope or pri
         requestHash: computeCanonicalValueHash({ changed: true }),
         workloadKey: 'privacy.core.source-processing-check',
       },
-      operations: [{ entrypointKey: read.descriptor.entrypoint.entrypointKey, schemaVersion: read.descriptor.schemaVersion }],
+      operations: [
+        { entrypointKey: read.descriptor.entrypoint.entrypointKey, schemaVersion: read.descriptor.schemaVersion },
+      ],
       principalId: scope.principalId,
       routeId: id,
       routeKey: 'customersBatch',
@@ -4509,59 +4513,81 @@ it.effect('rejects native route input substitution before any owner scope or pri
       sourceRouteRevision: 'v1',
       tenantId: scope.tenantId,
     });
-    const principal = trustVerifiedGatewayPrincipalContext(system, 'a'.repeat(64), undefined, undefined, undefined, route);
+    const principal = trustVerifiedGatewayPrincipalContext(
+      system,
+      'a'.repeat(64),
+      undefined,
+      undefined,
+      undefined,
+      route,
+    );
     const harness = yield* makeHarness();
-    const failure = yield* Effect.flip(harness.runtime.runRead({
-      input: {},
-      principal,
-      registration: read,
-      transport: { correlationId: scope.correlationId },
-    }));
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
     expect(Predicate.isTagged(failure, 'ReadInputValidationError')).toBe(true);
     expect(failure.reason).toBe('Native route authority does not match the exact Read request');
     expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
     expect(harness.stages).not.toContain('handler');
-    const processing = defineRead({
-      ...read.descriptor,
-      accessDeclaration: fixtureReadAccess('integration.symmy'),
-      owningModuleKey: 'integration.symmy',
-      readKey: 'integration.symmy.api.native-processing-test',
-      entrypoint: defineTenantModuleEntrypoint({
-        access: 'read',
-        authorization: { kind: 'protected' },
-        entrypointKey: 'integration.symmy.api.native-processing-test',
-        moduleKey: 'integration.symmy',
-        role: 'api',
-      }),
-      inputSchema: Schema.Struct({ purpose: Schema.Literals(['PROCESSING', 'GOVERNANCE']) }),
-      accessWorkload: {
-        reason: 'Only the declared processing purpose',
-        requestPurpose: 'PROCESSING',
-        workloads: ['integration.symmy.source-organization-facts.read'],
+    const processing = defineRead(
+      {
+        ...read.descriptor,
+        accessDeclaration: fixtureReadAccess('integration.symmy'),
+        accessWorkload: {
+          reason: 'Only the declared processing purpose',
+          requestPurpose: 'PROCESSING',
+          workloads: ['integration.symmy.source-organization-facts.read'],
+        },
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'protected' },
+          entrypointKey: 'integration.symmy.api.native-processing-test',
+          moduleKey: 'integration.symmy',
+          role: 'api',
+        }),
+        inputSchema: Schema.Struct({ purpose: fixtureProcessingPurposeSchema }),
+        owningModuleKey: 'integration.symmy',
+        readKey: 'integration.symmy.api.native-processing-test',
       },
-    }, () => Effect.die('A different purpose must never reach the owner'), () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: 'core.shell' }));
+      () => Effect.die('A different purpose must never reach the owner'),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
     const otherPurpose = { purpose: 'GOVERNANCE' };
-    const purposeRoute = Schema.decodeUnknownSync(RegisteredGatewayRouteScopeSchema)({
+    const purposeRoute = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
       ...route,
-      operations: [{ entrypointKey: processing.descriptor.entrypoint.entrypointKey, schemaVersion: '1' }],
       nativeReadReceiver: {
         ...route.nativeReadReceiver,
         requestHash: computeCanonicalValueHash(otherPurpose),
       },
+      operations: [{ entrypointKey: processing.descriptor.entrypoint.entrypointKey, schemaVersion: '1' }],
     });
     const purposePrincipal = trustVerifiedGatewayPrincipalContext(
-      system, 'a'.repeat(64), undefined, undefined, undefined, purposeRoute,
+      system,
+      'a'.repeat(64),
+      undefined,
+      undefined,
+      undefined,
+      purposeRoute,
     );
     const purposeHarness = yield* makeHarness();
-    const purposeFailure = yield* Effect.flip(purposeHarness.runtime.runRead({
-      input: otherPurpose,
-      principal: purposePrincipal,
-      registration: processing,
-      transport: { correlationId: scope.correlationId },
-    }));
+    const purposeFailure = yield* Effect.flip(
+      purposeHarness.runtime.runRead({
+        input: otherPurpose,
+        principal: purposePrincipal,
+        registration: processing,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
     expect(Predicate.isTagged(purposeFailure, 'ReadInputValidationError')).toBe(true);
-    expect(purposeFailure.reason).toBe('Native workload authority does not match the declared purpose and exact Read request');
+    expect(purposeFailure.reason).toBe(
+      'Native workload authority does not match the declared purpose and exact Read request',
+    );
     expect(purposeHarness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
   }),
 );
@@ -4971,7 +4997,7 @@ it.effect(
       const processing = { effectId: 'effect-original', purpose: 'PROCESSING' };
       const inputSchema = Schema.Struct({
         effectId: Schema.String.pipe(Schema.brand('EffectId')),
-        purpose: Schema.Literals(['PROCESSING', 'GOVERNANCE']),
+        purpose: fixtureProcessingPurposeSchema,
       });
       let handlerCalls = 0;
       const read = defineRead(

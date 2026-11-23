@@ -12,6 +12,7 @@ import {
   retailProfileOperation,
 } from '../../src/persistence/symmy-customer-plan.ts';
 import { reviseOperation } from '../../src/persistence/symmy-price-batch-plan.ts';
+import { stockOperation } from '../../src/persistence/symmy-stock-plan.ts';
 import { groupOperation, priceOperation } from '../../src/persistence/symmy-price-list-plan.ts';
 import {
   createProductOperation,
@@ -167,18 +168,27 @@ const stockSource = (
   changes: Partial<NonNullable<EncodedConfiguration['inventorySource']>> = {},
 ): NonNullable<EncodedConfiguration['inventorySource']> => ({
   customerConfigurationId: 'AKROS',
-  issuer: { backendKind: 'external_business_system', backendId: stockBackend },
-  namespace: 'AKROS_STOCK',
   externalScope: 'AKROS_COMPANY',
-  unitRef,
+  issuer: { backendId: stockBackend, backendKind: 'external_business_system' },
+  locations: [
+    {
+      locationKey: 'WH-MAIN',
+      stockLocationRef: {
+        moduleId: 'commerce.inventory',
+        resourceId: groupId,
+        resourceType: 'commerce.inventory.stock-location',
+        tenantId,
+      },
+    },
+  ],
+  namespace: 'AKROS_STOCK',
   policyRef: {
-    moduleId: 'commerce.inventory', resourceId: groupId,
-    resourceType: 'commerce.inventory.source-provisioning-policy', tenantId,
+    moduleId: 'commerce.inventory',
+    resourceId: groupId,
+    resourceType: 'commerce.inventory.source-provisioning-policy',
+    tenantId,
   },
-  locations: [{ locationKey: 'WH-MAIN', stockLocationRef: {
-    moduleId: 'commerce.inventory', resourceId: groupId,
-    resourceType: 'commerce.inventory.stock-location', tenantId,
-  } }],
+  unitRef,
   ...changes,
 });
 
@@ -207,8 +217,13 @@ const valid = {
   inventoryStockBatch: () => ({
     configuration: {
       inventoryBackendId: stockBackend,
-      items: [item('STOCK', [importStock, operation('commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution')])],
       inventorySource: stockSource(),
+      items: [
+        item('STOCK', [
+          importStock,
+          operation('commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution'),
+        ]),
+      ],
     },
     lifecyclePolicy,
   }),
@@ -393,7 +408,7 @@ describe('Symmy route inventories', () => {
       ['customersBatch', counterpartyProfileOperation, undefined],
       ['customersBatch', addAddressOperation, undefined],
       ['customersBatch', organizationIcoOperation, undefined],
-      ['inventoryStockBatch', stockOperation, undefined],
+      ['inventoryStockBatch', stockOperation, 'STOCK'],
     ];
     for (const [routeKey, builderOperation, entityKind] of built) {
       const listed = inventoryOf(routeKey).operations.flatMap((candidate) =>
@@ -538,11 +553,18 @@ describe('Symmy route request refusals', () => {
     expect(codes(withConfiguration('inventoryStockBatch', {}, ['inventoryBackendId']))).toEqual([
       'configuration_field_not_allowed',
     ]);
-    expect(codes(withConfiguration('inventoryStockBatch', {
-      inventorySource: stockSource({ issuer: { backendKind: 'external_business_system', backendId: 'OTHER_ERP' } }),
-    }))).toEqual(['configuration_field_not_allowed']);
+    expect(
+      codes(
+        withConfiguration('inventoryStockBatch', {
+          inventorySource: stockSource({ issuer: { backendId: 'OTHER_ERP', backendKind: 'external_business_system' } }),
+        }),
+      ),
+    ).toEqual(['configuration_field_not_allowed']);
     expect(codes(withConfiguration('inventoryStockBatch', { items: [item('STOCK', [createProduct])] }))).toEqual([
-      'operation_not_in_route_inventory', 'required_operation_missing', 'required_operation_missing', 'required_operation_missing',
+      'operation_not_in_route_inventory',
+      'required_operation_missing',
+      'required_operation_missing',
+      'required_operation_missing',
     ]);
     expect(codes(request('inventoryStockBatch', {}, ['lifecyclePolicy']))).toEqual(['lifecycle_policy_required']);
     expect(codes(withConfiguration('customerGroupsBatch', { inventorySource: stockSource() }))).toContain(
@@ -933,9 +955,15 @@ describe('Symmy route write decisions', () => {
     expect(decision).toMatchObject({ admissions: 'outstanding', kind: 'replace' });
     const outstanding = Schema.decodeUnknownSync(SymmyOutstandingWorkSchema);
     expect(symmyOutstandingRefusals(outstanding({ admissions: [], jobs: [], listedAll: true }))).toEqual([]);
-    expect(symmyOutstandingRefusals(outstanding({
-      admissions: [routeId], jobs: [], listedAll: true,
-    })).map(({ code }) => code)).toEqual(['outstanding_work']);
+    expect(
+      symmyOutstandingRefusals(
+        outstanding({
+          admissions: [routeId],
+          jobs: [],
+          listedAll: true,
+        }),
+      ).map(({ code }) => code),
+    ).toEqual(['outstanding_work']);
   });
 
   it('refuses a replacement prepared before the route was stopped, at the revision it still carries', () => {

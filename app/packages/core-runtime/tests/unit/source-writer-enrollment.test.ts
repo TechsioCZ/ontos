@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { readScopedSystemWorkloadEnrollment } from '../../src/access/workloads/system-enrollment.ts';
@@ -13,25 +13,30 @@ const legalEntityId = '10000000-0000-4000-8000-000000000002';
 const legacyId = '10000000-0000-4000-8000-000000000003';
 const incarnation = '10000000-0000-4000-8000-000000000004';
 const nativeSourceWriters = ['party.registry.source-write', 'commerce.customer-context.source-write'];
-type Enrollment = { readonly principalId: string; readonly bindingIncarnation: string };
+interface Enrollment {
+  readonly bindingIncarnation: string;
+  readonly principalId: string;
+}
 
 const run = (input: {
-  readonly workloadKey: string;
   readonly company?: boolean;
-  readonly systems?: readonly Enrollment[];
   readonly services?: readonly Enrollment[];
+  readonly systems?: readonly Enrollment[];
+  readonly workloadKey: string;
 }) =>
   Effect.gen(function* readEnrollment() {
     const statements: { sql: string; values: readonly unknown[] }[] = [];
+    const inputPrincipal = {
+      authBindingId: '10000000-0000-4000-8000-000000000005',
+      authContextRef: 'source-writer-enrollment-unit',
+      authMethod: 'session',
+      principalId: legacyId,
+      tenantId,
+    };
     const scope = {
-      ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
-        authBindingId: '10000000-0000-4000-8000-000000000005',
-        authContextRef: 'source-writer-enrollment-unit',
-        authMethod: 'session',
-        ...(input.company === false ? {} : { legalEntityId }),
-        principalId: legacyId,
-        tenantId,
-      }),
+      ...(yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
+        input.company === false ? inputPrincipal : { ...inputPrincipal, legalEntityId },
+      )),
       correlationId: 'source-writer-enrollment-unit',
     };
     const database = yield* makeTestDatabase((sql, values) => {
@@ -39,9 +44,9 @@ const run = (input: {
         return Effect.succeed([
           {
             legal_entity_id: scope.legalEntityId ?? '',
+            operation_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-23T00:00:00Z')),
             role: 'ontos_runtime',
             tenant_id: tenantId,
-            operation_at: new Date('2026-11-23T00:00:00Z'),
           },
         ]);
       }
@@ -65,17 +70,17 @@ const run = (input: {
 it.effect('resolves both real owner source-write jobs through exact platform company service bindings', () =>
   Effect.gen(function* test() {
     for (const workloadKey of nativeSourceWriters) {
-      const principalId = internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey });
+      const principalId = internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey });
       const { result, statements } = yield* run({
+        services: [{ bindingIncarnation: incarnation, principalId }],
         workloadKey,
-        services: [{ principalId, bindingIncarnation: incarnation }],
       });
-      expect(result._tag).toBe('Success');
-      if (result._tag === 'Success') {
-        expect(result.success).toEqual(Option.some({ principalId, bindingIncarnation: incarnation }));
+      expect(Result.isSuccess(result)).toBe(true);
+      if (Result.isSuccess(result)) {
+        expect(result.success).toEqual(Option.some({ bindingIncarnation: incarnation, principalId }));
       }
       expect(statements).toHaveLength(2);
-      const service = statements[1];
+      const [, service] = statements;
       expect(service?.sql).toContain('"core"."access_workload_company_bindings"');
       expect(service?.sql).toContain('"core"."legal_entities"');
       expect(service?.values).toContain('service');
@@ -92,13 +97,13 @@ it.effect('resolves both real owner source-write jobs through exact platform com
 it.effect('preserves unique legacy system identity without requiring a company row or querying services', () =>
   Effect.gen(function* test() {
     const { result, statements } = yield* run({
-      workloadKey: nativeSourceWriters[0] ?? '',
       company: false,
-      systems: [{ principalId: legacyId, bindingIncarnation: incarnation }],
+      systems: [{ bindingIncarnation: incarnation, principalId: legacyId }],
+      workloadKey: nativeSourceWriters[0] ?? '',
     });
-    expect(result._tag).toBe('Success');
-    if (result._tag === 'Success') {
-      expect(result.success).toEqual(Option.some({ principalId: legacyId, bindingIncarnation: incarnation }));
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isSuccess(result)) {
+      expect(result.success).toEqual(Option.some({ bindingIncarnation: incarnation, principalId: legacyId }));
     }
     expect(statements).toHaveLength(1);
   }),
@@ -107,13 +112,13 @@ it.effect('preserves unique legacy system identity without requiring a company r
 it.effect('does not hide ambiguous legacy enrollment behind a service candidate', () =>
   Effect.gen(function* test() {
     const { result, statements } = yield* run({
-      workloadKey: 'party.registry.source-write',
       systems: [
-        { principalId: legacyId, bindingIncarnation: incarnation },
-        { principalId: legalEntityId, bindingIncarnation: incarnation },
+        { bindingIncarnation: incarnation, principalId: legacyId },
+        { bindingIncarnation: incarnation, principalId: legalEntityId },
       ],
+      workloadKey: 'party.registry.source-write',
     });
-    expect(result._tag).toBe('Failure');
+    expect(Result.isFailure(result)).toBe(true);
     expect(statements).toHaveLength(1);
   }),
 );
@@ -122,12 +127,12 @@ it.effect('never widens unrelated jobs or tenant-only source requests to service
   Effect.gen(function* test() {
     for (const input of [
       { workloadKey: 'integration.symmy.execute-symmy-job' },
-      { workloadKey: 'party.registry.source-write', company: false },
+      { company: false, workloadKey: 'party.registry.source-write' },
       { workloadKey: 'commerce.customer-context.source-read' },
     ]) {
       const { result, statements } = yield* run(input);
-      expect(result._tag).toBe('Success');
-      if (result._tag === 'Success') {
+      expect(Result.isSuccess(result)).toBe(true);
+      if (Result.isSuccess(result)) {
         expect(result.success).toEqual(Option.none());
       }
       expect(statements).toHaveLength(1);
@@ -138,8 +143,8 @@ it.effect('never widens unrelated jobs or tenant-only source requests to service
 it.effect('returns no enrollment when the exact active company service binding is absent', () =>
   Effect.gen(function* test() {
     const { result, statements } = yield* run({ workloadKey: 'party.registry.source-write' });
-    expect(result._tag).toBe('Success');
-    if (result._tag === 'Success') {
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isSuccess(result)) {
       expect(result.success).toEqual(Option.none());
     }
     expect(statements).toHaveLength(2);

@@ -379,7 +379,7 @@ it.effect('retains the consumer deployment identity for both in-process and Shel
     for (const operation of Object.values(coreOperations)) {
       const actual = registration(moduleId);
       const base = makeModuleContractFixture({ appId: 'consumer-alpha', moduleId });
-      const requirements = Schema.decodeUnknownSync(OntosModuleRequirementsSchema)({
+      const requirements = yield* Schema.decodeUnknownEffect(OntosModuleRequirementsSchema)({
         coreCapabilities: [],
         intrinsic: [],
         operations: [

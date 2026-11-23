@@ -65,6 +65,8 @@ import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
@@ -283,7 +285,10 @@ const buildRuntime = (input: {
           Effect.as('allowed' as const),
         ),
     };
-    const core = Layer.succeed(CoreDatabase, { executor: input.executor });
+    const core = Layer.mergeAll(
+      Layer.succeed(CoreDatabase, { executor: input.executor }),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    );
     const platforms = Layer.mergeAll(
       core,
       Layer.succeed(AccessProjectionCompiler, compiler),
@@ -314,6 +319,7 @@ const buildRuntime = (input: {
       testOperationalScopeResolver,
       {
         accessDecision: boundGate,
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         lockCompositionAuthority: () => Effect.succeed([]),
         moduleEntrypointGateway: openModuleEntrypointGateway,
         moduleStateGate: openModuleStateGate,
@@ -331,7 +337,11 @@ const buildRuntime = (input: {
         resources: () => Effect.succeed([]),
         tenants: () => Effect.succeed([]),
       },
-      { accessDecision: boundGate, ownerAuthorizationOverlay: overlay },
+      {
+        accessDecision: boundGate,
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        ownerAuthorizationOverlay: overlay,
+      },
     );
     return {
       bootstrap: Context.get(context, TenantAccessBootstrap),
@@ -440,6 +450,7 @@ const withMediaWorld = <Value, Failure>(run: (world: MediaWorld) => Effect.Effec
         admin,
         bootstrap: (input) => bootstrapTenant(live, tenantId, input),
         changes: live.changes,
+        decisionGate: live.gate,
         gate: (input: GateInput): Effect.Effect<AccessDecision> => live.gate.decide(input),
         ownerOverlayFacts: yield* Ref.make<readonly (OwnerAccessFacts | undefined)[]>([]),
         runAction: live.runAction,

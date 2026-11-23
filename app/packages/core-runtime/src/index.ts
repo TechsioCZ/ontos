@@ -1256,11 +1256,13 @@ export { changePrincipalBindingStatusAction } from './modules/actions/change-pri
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeSystemWorkloadEnrollmentAction } from './modules/actions/change-system-workload-enrollment.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
+export { configureDemoCompaniesAction } from './modules/actions/configure-demo-companies.action.ts';
 export { confirmAssetAction } from './modules/actions/confirm-asset.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordAssetIntegrityFailureAction } from './modules/actions/record-asset-integrity-failure.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { renameDisplayFilenameAction } from './modules/actions/rename-display-filename.action.ts';
+export { replaceAgentOperatorsAction } from './modules/actions/replace-agent-operators.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setCompanyMembershipAction } from './modules/actions/set-company-membership.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';

@@ -23,6 +23,7 @@
  * The owner operations come from the plan builders that call them, so a builder and its route inventory never name two
  * versions of one operation.
  */
+import type { LegalEntityScope } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
@@ -58,7 +59,6 @@ import {
   readinessOperations,
   createProductOperation,
   createVariantOperation,
-  productFactsOperation,
   updateProductOperation,
   variantFactsOperation,
   variantSkuOperation,
@@ -287,7 +287,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       admission: 'sync',
       operations: [
         executor(stockOperation, { entityKind: 'STOCK', required: true }),
-        shellRead('commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution', true),
+        shellRead('commerce.inventory', 'commerce.inventory.api.source-stock-position-resolution', 'forbidden', true),
       ],
       uniformEntityKind: true,
     },
@@ -464,9 +464,7 @@ export const symmyOperationName = ({ entrypointKey, schemaVersion }: SymmyRouteC
   `${entrypointKey}@${schemaVersion}`;
 
 /** The inventory of the route, or the typed reason it cannot be enrolled. */
-export const symmyRouteInventoryOf = (
-  routeKey: SymmyEnrollmentRouteKey,
-): Option.Option<SymmyRouteInventory> | SymmyRouteEnrollmentRefusal =>
+export const symmyRouteInventoryOf = (routeKey: SymmyEnrollmentRouteKey): Option.Option<SymmyRouteInventory> =>
   Option.fromUndefinedOr(symmyRouteInventories.get(routeKey));
 
 /** The operations a configuration enrolls, with the entity kind of the item naming each. */
@@ -922,7 +920,8 @@ export const decideSymmyRouteWrite = (
 ): SymmyRouteEnrollmentWrite | SymmyRouteEnrollmentRefused => {
   // An exact stopped physical route remains explicitly replaceable when no active route owns its selector.
   const selected = Option.orElse(existing.bySelector, () =>
-    Option.filter(existing.byRouteId, (row) => sameRouteReference(request, row)));
+    existing.byRouteId.pipe(Option.filter((row) => sameRouteReference(request, row))),
+  );
   if (Option.isNone(selected)) {
     if (change.kind !== 'enroll') {
       return refused('route_not_enrolled', `No route ${request.routeId} holds this selector`);

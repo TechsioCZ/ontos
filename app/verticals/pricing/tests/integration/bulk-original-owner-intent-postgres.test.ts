@@ -1168,6 +1168,7 @@ const makeBulkTestSigningAuthority = Effect.fn('BulkOriginalIntent.makeTestSigni
 const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchema.Type)['subject']): boolean =>
   Match.value(subject).pipe(
     Match.tag('Assertion', () => true),
+    Match.tag('NativeRouteRead', () => false),
     Match.tag('Originator', () => false),
     Match.tag('OrganizationGovernanceRead', () => false),
     Match.tag('PrivacyDispatch', () => false),

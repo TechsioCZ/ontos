@@ -1822,7 +1822,7 @@ const testProgram12 = () =>
           principal,
         }),
       );
-      const committedResolution = yield* Effect.exit(
+      const committedResolution = yield* Effect.flip(
         resolvingRuntime.resolveActionCommit({
           expectedActionKey: actionRegistration.descriptor.actionKey,
           invocationId,
@@ -1862,14 +1862,6 @@ const testProgram12 = () =>
       expect(unavailableExecution).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
       const executionFailure = yield* unavailableRuntime.resolveActionExecution(keyedLookup).pipe(Effect.flip);
       expect(Schema.is(ActionInvocationPersistenceError)(executionFailure)).toBe(true);
-      const keyedCommitted = yield* Effect.flip(resolvingRuntime.resolveActionCommit(keyedLookup));
-      expect(Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')).toBe(true);
-      if (Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')) {
-        expect(keyedCommitted.invocationId).toBe(invocationId);
-        expect(keyedCommitted.invocationId).not.toBe(key);
-      }
-      const keyedUnavailable = yield* Effect.flip(unavailableRuntime.resolveActionCommit(keyedLookup));
-      expect(Predicate.isTagged(keyedUnavailable, 'ActionInvocationPersistenceError')).toBe(true);
       for (const outsideScope of [
         { ...keyedLookup, actionKey: 'core.shell.test.other-action' },
         { ...keyedLookup, idempotencyKey: 'unknown-key' },
@@ -1896,11 +1888,18 @@ const testProgram12 = () =>
           expect(
             yield* resolvingRuntime.resolveActionExecution({ invocationId, principal: outsideScope.principal }),
           ).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+          const deniedLookup = yield* Effect.flip(
+            resolvingRuntime.resolveActionCommit({
+              expectedActionKey: actionRegistration.descriptor.actionKey,
+              invocationId,
+              principal: outsideScope.principal,
+            }),
+          );
+          expect(Predicate.isTagged(deniedLookup, 'ActionInvocationNotFound')).toBe(true);
         }
-        const deniedLookup = yield* Effect.flip(resolvingRuntime.resolveActionCommit(outsideScope));
-        expect(Predicate.isTagged(deniedLookup, 'ActionInvocationNotFound')).toBe(true);
       }
-      expect(hasFailure(committedResolution, 'ActionAlreadyCommitted')).toBe(true);
+      expect(Predicate.isTagged(committedResolution, 'ActionAlreadyCommitted')).toBe(true);
+      expect(committedResolution).toMatchObject({ invocationId });
       expect(hasFailure(wrongActionResolution, 'ActionInvocationNotFound')).toBe(true);
       expect(hasFailure(unauthorizedResolution, 'ActionInvocationNotFound')).toBe(true);
       expect(hasFailure(unavailableResolution, 'ActionCommitIndeterminate')).toBe(true);
@@ -1969,12 +1968,6 @@ const testProgram12 = () =>
         invocationId: openInvocationId,
         principal,
       });
-      const keyedOpen = yield* resolvingRuntime.resolveActionCommit({
-        actionKey: 'core.shell.test.lost-ack-open',
-        idempotencyKey: openKey,
-        principal,
-      });
-      expect(keyedOpen.invocationId).toBe(openInvocationId);
       expect(
         yield* resolvingRuntime.resolveActionExecution({
           actionKey: 'core.shell.test.lost-ack-open',

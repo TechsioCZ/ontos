@@ -14,6 +14,7 @@ import { MediaAssetIdSchema, MediaTenantIdSchema, mediaAssetRefFor } from '../..
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { renameDisplayFilenameAction } from '../../src/modules/actions/rename-display-filename.action.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
 import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
@@ -231,6 +232,7 @@ const openHarness = Effect.fn('CoreMediaMetadataTest.harness')(function* openHar
       contextAccess,
       {
         accessDecision: makeScriptedBoundAccessGate(access).bound,
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       },
     );
     return (world: World, mediaAssetRef: ReturnType<typeof refOf>, legalEntityId?: string) =>

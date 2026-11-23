@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { PriceProductTargetSnapshotSchema } from '@app/pricing-contracts/domain/catalog-price-target';
@@ -49,6 +50,8 @@ import { productPriceBulkActionInvocationIdFor } from '../../src/services/produc
 import { applyPriceRevision } from '../../src/actions/revise-price.action.ts';
 import { externalPriceSourceAuthorityForScope } from '../../src/persistence/external-price-source-authority-persistence.ts';
 import { makeExternalPriceInputBoundary } from '../../src/services/external-price-input-boundary.service.ts';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e7550000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7550000-0000-4000-8000-000000000002';
@@ -2314,7 +2317,11 @@ it.live('revises a stored uppercase native identity through the real Action and 
             sql`select set_config('ontos.tenant_id', ${tenantId}, true),
                        set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
           );
-          const ownerTransaction = yield* installOperationalScope(transaction, scope);
+          const ownerTransaction = yield* installOperationalScope(
+            transaction,
+            scope,
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          );
           const persistence = yield* pricePersistenceForScope(ownerTransaction, scope);
           const authority = yield* externalPriceSourceAuthorityForScope(ownerTransaction, scope);
           // Seed the historical owner storage shape, not a rewritten or case-folded schedule.

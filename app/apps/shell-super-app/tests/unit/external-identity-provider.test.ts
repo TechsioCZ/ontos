@@ -273,6 +273,7 @@ it.effect('mints a fresh provider audience assertion for every exact workload ca
         });
       },
       issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
+      issueSymmy: () => Effect.die('Unexpected Symmy issuance in the provider fixture'),
     };
     const request = makeProviderRequest();
     const acquire = Effect.gen(function* acquireAssertion() {
@@ -340,6 +341,7 @@ it.effect('admits a gateway-context assertion audienced for the provider verific
         });
       },
       issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
+      issueSymmy: () => Effect.die('Unexpected Symmy issuance in the provider fixture'),
     };
     const acquireFor = (request: ExternalIdentityVerificationRequest) =>
       acquireExternalIdentityWorkloadAssertion(configuration, request, 'example-portal').pipe(
@@ -396,6 +398,7 @@ it.effect('refuses a provider workload assertion when its captured composition r
         );
       },
       issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
+      issueSymmy: () => Effect.die('Unexpected Symmy issuance in the provider fixture'),
     };
     const result = yield* acquireExternalIdentityWorkloadAssertion(
       configuration,
@@ -544,6 +547,7 @@ it.effect('routes the production deployment client to the verification path the 
         });
       },
       issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
+      issueSymmy: () => Effect.die('Unexpected Symmy issuance in the provider fixture'),
     };
     const fakeFetch: typeof fetch = (input, init) => {
       const outboundRequest = new Request(input, init);

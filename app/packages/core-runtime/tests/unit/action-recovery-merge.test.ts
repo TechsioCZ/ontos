@@ -1,5 +1,5 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Predicate, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';
@@ -47,10 +47,10 @@ const registration = defineAction(
   },
   () => Effect.succeed({ committed: true }),
 );
-const ownerRegistration = makeTestOperationOwner({
+const { ownerRegistration } = makeTestOperationOwner({
   actions: [registration],
   moduleId: 'test.recovery-merge',
-}).ownerRegistration;
+});
 const committedHarness = Effect.fn('RecoveryMerge.committedHarness')(function* committedHarness() {
   const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', ownerRegistration });
   yield* harness.runtime.runAction({
@@ -148,14 +148,14 @@ it.effect('the production repository executes both exact lookup predicates and k
       return Effect.succeed([
         {
           actionInvocationId: invocationId,
+          actionKey,
           completedAt: null,
           requestHash: 'a'.repeat(64),
           status: 'received',
-          actionKey,
         },
       ]);
     });
-    const crypto = yield* Crypto.Crypto.pipe(Effect.provide(NodeCrypto.layer));
+    const crypto = Context.get(yield* Layer.build(NodeCrypto.layer), Crypto.Crypto);
     const repository = makeActionRepository(crypto);
     expect(
       (yield* repository.resolveInvocation(database, { expectedActionKey: actionKey, invocationId, principal }))

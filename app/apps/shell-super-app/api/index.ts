@@ -30,7 +30,6 @@ import {
 } from './auth/gateway-delegation-policy.ts';
 import {
   acquireSymmyRouteScopeProof,
-  issueSymmyRouteScopeAssertion,
   readSymmyRouteScope,
   requiresSymmyPriceGroupRouteProof,
 } from './auth/gateway-symmy-route-scope.ts';
@@ -270,10 +269,7 @@ import {
   resolvePaymentOwnerReleaseBase,
 } from './payment-gateway/owner-release-transport.ts';
 import { acquirePaymentRouteScopeProof, issuePaymentRouteScopeAssertion } from './auth/gateway-payment-route-scope.ts';
-import {
-  SymmyGovernedDispatch,
-  SymmyGovernedDispatchLive,
-} from './symmy/governed-dispatch.ts';
+import { SymmyGovernedDispatch, SymmyGovernedDispatchLive } from './symmy/governed-dispatch.ts';
 import { symmyOwnerReleaseFetchLive } from './symmy/owner-release-transport.ts';
 
 import { ShellAuthenticationApi } from '../shared/api.ts';
@@ -367,6 +363,7 @@ import {
   gatewayIssuerRefusalReason,
   issueGatewayContextAssertion,
   issueSymmyGatewayContextAssertion,
+  issueSymmyRouteScopeAssertion,
 } from './auth/gateway-issuer.ts';
 import {
   externalIdentityGroupLive,
@@ -4220,6 +4217,8 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(compositionSourceLive),
 );
 const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
+const failShellStartup = flow(Layer.tapCause(logRequestServicesFailure), Layer.orDie);
+
 /** A suite may pin the Shell's own read authority; production reads the active composition. */
 const shellReadAuthorityLayerFor = (shellReadAuthority: ActiveApplicationCompositionServiceContract | undefined) =>
   shellReadAuthority === undefined
@@ -4812,8 +4811,6 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provideMerge(compositionSourceLive),
     Layer.provideMerge(Reactivity.layer),
     Layer.provideMerge(databaseIdentitiesLive),
-    Layer.tapCause(logRequestServicesFailure),
-    Layer.orDie,
   );
 
   // Shell-owned routes outside the HTTP API resolve their request services from the same memoized instances as the
@@ -4927,7 +4924,12 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       ),
     ),
-  ).pipe(Layer.provide(apiServicesLive), Layer.provide(shellSearchNoStoreLayer), Layer.provide(NoServerTimingLive));
+  ).pipe(
+    Layer.provide(apiServicesLive),
+    Layer.provide(shellSearchNoStoreLayer),
+    Layer.provide(NoServerTimingLive),
+    failShellStartup,
+  );
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
@@ -4944,6 +4946,7 @@ export const makeShellAuthenticationApiRuntime = (
       Layer.provide(SymmyDocsLive),
       Layer.provide(shellTransportServicesLive),
       Layer.provide(apiServicesLive),
+      failShellStartup,
     ),
   });
 };

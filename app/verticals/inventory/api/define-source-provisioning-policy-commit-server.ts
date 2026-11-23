@@ -54,6 +54,7 @@ const resolveCommit = Effect.fn('DefineSourceProvisioningPolicyActionServer.reso
         ActionAlreadyCommitted: (error) => Effect.fail(problem.alreadyCommitted(error.invocationId)),
         ActionCommitIndeterminate: (error) => Effect.fail(problem.indeterminate(error.invocationId)),
         ActionInvocationNotFound: (error) => Effect.fail(problem.notFound(error.code)),
+        ActionInvocationPersistenceError: (error) => Effect.fail(problem.unavailable(error.code)),
         ActionInvocationStateError: (error) => Effect.fail(problem.conflict(error.code)),
         ActionPayloadValidationError: () => Effect.fail(problem.invalid()),
         ActionTrustedContextValidationError: () => Effect.fail(problem.authentication()),

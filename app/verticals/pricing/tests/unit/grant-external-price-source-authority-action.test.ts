@@ -233,7 +233,9 @@ describe('Grant external Price Source Authority Action', () => {
         },
         services: {
           assess: () => Effect.die('unused'),
+          endPolicy: () => Effect.die('unused'),
           store: () => Effect.succeed({ outcome: 'STORED' as const }),
+          storePolicy: () => Effect.die('unused'),
         },
       });
 

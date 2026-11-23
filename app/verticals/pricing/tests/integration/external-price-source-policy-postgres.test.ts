@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import type { OperationalScope } from '@app/core-runtime';
 import { findPostgresFailure, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
@@ -37,6 +38,8 @@ import {
   unitRefFor,
 } from '../support/standing-price-source-policy.fixture.ts';
 
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
+
 const tenantId = 'f2000000-0000-4000-8000-000000000001';
 const legalEntityId = 'f2000000-0000-4000-8000-000000000002';
 const otherLegalEntityId = 'f2000000-0000-4000-8000-000000000003';
@@ -74,7 +77,11 @@ const withAuthority = <Value, Failure>(
 ) =>
   database.transaction((transaction: PricingTransaction) =>
     Effect.gen(function* scopedAuthority() {
-      const ownerTransaction = yield* installOperationalScope(transaction, selectedScope);
+      const ownerTransaction = yield* installOperationalScope(
+        transaction,
+        selectedScope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       const authority = yield* externalPriceSourceAuthorityForScope(ownerTransaction, selectedScope);
       return yield* operation(authority);
     }),

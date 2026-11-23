@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
@@ -51,7 +52,7 @@ export const workloadCredentialProviderName = (workloadKey: string): string => {
   const name = `workload:${workloadKey}`;
   return name.length <= 32
     ? name
-    : `workload:${workloadKey.slice(0, 14)}-${createHash('sha256').update(workloadKey).digest('hex').slice(0, 8)}`;
+    : `workload:${workloadKey.slice(0, 14)}-${bytesToHex(sha256(utf8ToBytes(workloadKey))).slice(0, 8)}`;
 };
 
 /** One issued module key, by its provider id (not secret) and the moment it stops verifying. */

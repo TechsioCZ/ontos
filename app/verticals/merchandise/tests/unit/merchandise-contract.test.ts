@@ -1,15 +1,26 @@
-import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
-import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
-import { merchandiseRegistration } from '../../vertical.registration.ts';
 import {
+  extractVerticalRuntimeSafeDescriptors,
   OntosMcpTextSchema,
   OperationContextDenied,
   ReadHandlerUnavailable,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import { demoOrderExportApiLive } from '../../api/demo-order-export-server.ts';
+import { executeDemoOrderExportWithAuthorization } from '../../src/api/demo-order-export-client.ts';
+import { demoOrderExportRead } from '../../src/api/demo-order-export.read.ts';
+import { merchandiseBackendRegistration } from '../../vertical.runtime-declaration.ts';
+import { SYMMY_DEMO_ORDER_EXPORT_WORKLOAD, demoOrderExportOperation } from '../../shared/apis/demo-order-export.ts';
+import { ImportSourceCatalogPayloadSchema } from '../../shared/actions/import-source-catalog.ts';
+import { merchandiseApi } from '../../shared/api.ts';
+import { SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD } from '../../shared/apis/demo-catalog-revision.ts';
+import { importSourceCatalogAction } from '../../src/actions/import-source-catalog.action.ts';
+import { demoCatalogRevisionRead } from '../../src/api/demo-catalog-revision.read.ts';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
+import { merchandiseRegistration } from '../../vertical.registration.ts';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
 import { recordsRead } from '../../src/api/records.read.ts';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
@@ -342,4 +353,43 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
       expect(harness.snapshot().evidenceWrites).toBe(0);
     }),
   );
+});
+
+it('publishes the company-bound source catalog contracts and their exact receipt identity', () => {
+  expect(merchandiseApi.groups.importSourceCatalogAction).toBeDefined();
+  expect(merchandiseApi.groups.demoCatalogRevision).toBeDefined();
+  expect(merchandiseApi.groups.demoOrderExport).toBeDefined();
+  expect(importSourceCatalogAction.descriptor).toMatchObject({
+    actionKey: 'demo.merchandise.import-source-catalog',
+    legalEntityScope: 'required',
+    owningModuleKey: 'demo.merchandise',
+    schemaVersion: '1',
+  });
+  expect(importSourceCatalogAction.descriptor.payloadSchema).toBe(ImportSourceCatalogPayloadSchema);
+  expect(demoCatalogRevisionRead.descriptor.legalEntityScope).toBe('required');
+  expect(importSourceCatalogAction.descriptor.accessWorkload?.workloads).toEqual([SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD]);
+  expect(demoCatalogRevisionRead.descriptor.accessWorkload?.workloads).toEqual([SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD]);
+  expect(SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD).toBe('demo.merchandise.symmy-catalog-import');
+});
+
+it('publishes the mounted owner endpoint and its exact company-scoped workload operation', () => {
+  const descriptors = extractVerticalRuntimeSafeDescriptors(merchandiseBackendRegistration);
+  const contract = descriptors.operationContracts.find(
+    ({ operationKey }) => operationKey === 'demoOrderExport.execute',
+  );
+  expect(contract).toMatchObject({
+    apiKey: 'demo.merchandise.demo-order-export',
+    entrypoint: { authorization: { kind: 'protected' }, entrypointKey: demoOrderExportOperation.entrypointKey },
+    schemaVersion: '1',
+    workloadCarrier: {
+      declarationKey: demoOrderExportOperation.declarationKey,
+      workloads: [SYMMY_DEMO_ORDER_EXPORT_WORKLOAD],
+    },
+  });
+  expect(SYMMY_DEMO_ORDER_EXPORT_WORKLOAD).toBe('demo.merchandise.symmy-order-export');
+  expect(demoOrderExportRead.descriptor.legalEntityScope).toBe('required');
+  expect(merchandiseApi.groups.demoOrderExport.endpoints.execute.path).toBe('/reads/demo-order-export');
+  expect(merchandiseApi.groups.demoOrderExport.endpoints.execute.method).toBe('POST');
+  expect(Layer.isLayer(demoOrderExportApiLive)).toBe(true);
+  expect(executeDemoOrderExportWithAuthorization).toEqual(expect.any(Function));
 });

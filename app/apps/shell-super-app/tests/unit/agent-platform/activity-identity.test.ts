@@ -219,6 +219,7 @@ const fixture = (selected: AgentPlatformCaller, privateRecords = false) =>
                 token: 'activity-review-token',
               }),
             issueDocument: () => Effect.die('Activity does not issue document assertions'),
+            issueSymmy: () => Effect.die('Unexpected Symmy issuance in this fixture'),
           }),
           Layer.succeed(CompanyDirectory, {
             confirmArchived: () => Effect.die('Activity does not archive agents'),

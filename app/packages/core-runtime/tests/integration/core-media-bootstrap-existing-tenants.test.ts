@@ -14,6 +14,8 @@ import {
 import { AccessChangesStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
 import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
 import { AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
+import { AccessPeopleStoreLive } from '../../src/access/intent/people-store.ts';
+import { AccessTeamStoreLive } from '../../src/access/intent/teams.ts';
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
 import { TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
@@ -35,6 +37,8 @@ import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-d
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import type { AccessDecision } from '../../src/access/decision/contract.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -225,7 +229,7 @@ interface Stage {
   readonly reconcile: (
     input: Parameters<typeof reconcileStageContextBootstraps>[0],
     release: readonly AccessCatalogModule[],
-  ) => Effect.Effect<readonly { readonly owner: boolean; readonly principalId: string }[], StageFailure>;
+  ) => Effect.Effect<void, StageFailure>;
   /** The case's own tenant: random, so no case reads another case's tuples in the shared engine. */
   readonly tenantId: string;
 }
@@ -270,13 +274,18 @@ const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, F
       AccessProjectionCompiler,
       Effect.sync(() => makeAccessProjectionCompiler(makeAccessProjectionTransport(spiceDb))),
     );
-    const core = Layer.succeed(CoreDatabase, { executor });
+    const core = Layer.mergeAll(
+      Layer.succeed(CoreDatabase, { executor }),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    );
     const platforms = Layer.mergeAll(core, engine, NodeServices.layer);
     const intent = TenantIntentLoaderLive.pipe(Layer.provide(platforms));
     const journal = AccessWriteJournalStoreLive.pipe(Layer.provide(platforms));
     const changes = AccessChangesStoreLive.pipe(Layer.provide(platforms));
     const memberships = AccessMembershipStoreLive.pipe(Layer.provide(platforms));
-    const stores = Layer.mergeAll(platforms, intent, journal, changes, memberships);
+    const people = AccessPeopleStoreLive.pipe(Layer.provide(platforms));
+    const teams = AccessTeamStoreLive.pipe(Layer.provide(platforms));
+    const stores = Layer.mergeAll(platforms, intent, journal, changes, memberships, people, teams);
     const catalog = AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores));
     const writer = AccessProjectionWriterLive.pipe(Layer.provide(stores));
     const bootstrap = TenantAccessBootstrapLive.pipe(Layer.provide(Layer.mergeAll(stores, catalog, writer)));
@@ -306,6 +315,7 @@ const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, F
       reconcile: (input, release) =>
         reconcileStageContextBootstraps(input, { authenticationNamespaceId: 'staff', modules: release }).pipe(
           Effect.mapError(asStageFailure),
+          Effect.asVoid,
           Effect.provide(context),
         ),
       tenantId: yield* crypto.randomUUIDv4(),
@@ -362,7 +372,10 @@ it.layer(NodeServices.layer)('core media on tenants bootstrapped before it', (su
         Effect.gen(function* freshEnvironment() {
           const { tenantId } = stage;
           yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
+            .reconcile(
+              { attachedLogins: [], retiredPrincipals: [], retiredTenants: [], tenants: [tenantBootstrap(tenantId)] },
+              releaseWithMedia,
+            )
             .pipe(failClosed);
           // The row is derived from the catalog, never named by the tenant file (its own module list is party.registry).
           expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
@@ -385,19 +398,28 @@ it.layer(NodeServices.layer)('core media on tenants bootstrapped before it', (su
           const { tenantId } = stage;
           // The tenant existed before D20: its release has no Core Media entry and no installation row.
           yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, modules)
+            .reconcile(
+              { attachedLogins: [], retiredPrincipals: [], retiredTenants: [], tenants: [tenantBootstrap(tenantId)] },
+              modules,
+            )
             .pipe(failClosed);
           expect(yield* mediaStates(stage, tenantId)).toEqual([]);
           expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
 
           // The operator re-runs the stage bootstrap with the catalog of this build, which now carries Core Media.
           yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
+            .reconcile(
+              { attachedLogins: [], retiredPrincipals: [], retiredTenants: [], tenants: [tenantBootstrap(tenantId)] },
+              releaseWithMedia,
+            )
             .pipe(failClosed);
           // The derived installation is written (and a second run adds nothing: one row, not two).
           expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
           yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
+            .reconcile(
+              { attachedLogins: [], retiredPrincipals: [], retiredTenants: [], tenants: [tenantBootstrap(tenantId)] },
+              releaseWithMedia,
+            )
             .pipe(failClosed);
           expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
           // What the earlier release already granted is untouched.

@@ -14,6 +14,7 @@ import type { ReserveMediaAssetInput } from '../../src/media/repository.ts';
 import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 /*
  * The Media repository against PostgreSQL: what the owner's own constraints and guarded updates enforce, which a
@@ -90,7 +91,7 @@ const openDatabases = Effect.fn('CoreMediaRepositoryTest.openDatabases')(functio
     scopeOf(tenant, legalEntityId).pipe(
       Effect.flatMap((scope) =>
         runtime.transaction((transaction) =>
-          installOperationalScope(transaction, scope).pipe(
+          installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.map(mediaAssetRepositoryFromTransaction),
             Effect.flatMap(run),
           ),

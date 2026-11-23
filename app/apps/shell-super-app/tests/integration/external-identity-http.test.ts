@@ -383,6 +383,7 @@ const makeServer = (
         });
       },
       issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
+      issueSymmy: () => Effect.die('Unexpected Symmy issuance in this fixture'),
     };
     const dependencies = Layer.mergeAll(
       Layer.succeed(ActionRuntime, scopedActionRuntime),

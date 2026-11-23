@@ -11,6 +11,7 @@ import { mediaAssetRepositoryFromTransaction } from '../../src/media/repository.
 import type { MediaAssetRecord } from '../../src/media/repository.ts';
 import { MediaStorageKeySchema, deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const tenantId = '44444444-4444-4444-8444-444444444444';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -96,8 +97,15 @@ const fixture = Effect.fn('MediaRepositoryFixture.make')(function* fixture(
   const remaining = [...answers];
   const scope = scopeWith(withLegalEntity);
   const database = yield* makeTestDatabase((sql, parameters) => {
-    if (sql.includes('current_setting')) {
-      return Effect.succeed([{ legal_entity_id: scope.legalEntityId ?? '', tenant_id: scope.tenantId }]);
+    if (sql.includes("set_config('ontos.tenant_id'")) {
+      return Effect.succeed([
+        {
+          legal_entity_id: scope.legalEntityId ?? '',
+          operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+          role: 'ontos_runtime',
+          tenant_id: scope.tenantId,
+        },
+      ]);
     }
     if (sql.includes('"core"."media_assets"')) {
       statements.push({ parameters, sql });
@@ -106,7 +114,7 @@ const fixture = Effect.fn('MediaRepositoryFixture.make')(function* fixture(
     }
     return Effect.succeed([]);
   });
-  const installed = yield* installOperationalScope(database, scope);
+  const installed = yield* installOperationalScope(database, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
   return { repository: mediaAssetRepositoryFromTransaction(installed), statements };
 });
 

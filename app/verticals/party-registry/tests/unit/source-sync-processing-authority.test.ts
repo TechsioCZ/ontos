@@ -2,7 +2,7 @@ import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
 } from '@app/privacy/api/source-processing-eligibility';
-import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -64,7 +64,9 @@ type DemoEvidence = Extract<
 >;
 
 it('retains native source-sync processing evidence without claiming a business-only exemption', () => {
-  expect(select()).toEqual({ _tag: 'SOURCE_SYNC_PROCESSING_ALLOWED', evidence });
+  const decision = select();
+  expect(Predicate.isTagged(decision, 'SOURCE_SYNC_PROCESSING_ALLOWED')).toBe(true);
+  expect(decision).toMatchObject({ evidence });
 });
 
 it('refuses stale, mismatched or denied source-sync authority rather than using a business-only fallback', () => {
@@ -92,7 +94,7 @@ it('refuses stale, mismatched or denied source-sync authority rather than using 
       reason: 'AUTHORITY_NOT_CURRENT',
     }),
   ];
-  for (const decision of decisions) expect(select(decision)).toBe('DENIED');
+  for (const decision of decisions) {expect(select(decision)).toBe('DENIED');}
   expect(
     sourceSyncPartyProcessingAuthority({
       scope: { ...scope, legalEntityId: '10000000-0000-4000-8000-000000000002' },
@@ -106,7 +108,7 @@ it('refuses stale, mismatched or denied source-sync authority rather than using 
 it.effect('keeps the selected source-sync authority distinct through source enrollment authorization', () =>
   Effect.gen(function* sourceAuthorization() {
     const decision = select();
-    if (decision === 'DENIED') return yield* Effect.die('Native source-sync authority fixture was rejected');
+    if (decision === 'DENIED') {return yield* Effect.die('Native source-sync authority fixture was rejected');}
     const authorization = yield* authorizePartyClientSourceReferenceWithProjection(
       {
         occurrenceId: source.occurrenceId,
@@ -127,7 +129,7 @@ it.effect('keeps the selected source-sync authority distinct through source enro
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromUnknown({
-          ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: JSON.stringify([
+          ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))([
             {
               ...scope,
               issuer: source.issuer,

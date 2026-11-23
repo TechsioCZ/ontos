@@ -1,31 +1,37 @@
-import { Effect } from 'effect';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { Effect, Option, Schema } from 'effect';
 import { symmyUnavailableProblem } from './contract.ts';
 import type { SymmySourceReadScope } from './source-read-projections.ts';
 
+const encodeScopeIdentity = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Tuple([Schema.String, Schema.OptionFromNullOr(Schema.String), Schema.String, Schema.String, Schema.String]),
+  ),
+);
+
 export const symmyDemoCatalogScopeIdentity = (scope: SymmySourceReadScope) =>
-  JSON.stringify([
+  encodeScopeIdentity([
     scope.tenantId,
-    scope.legalEntityId,
+    Option.fromUndefinedOr(scope.legalEntityId),
     scope.issuerId,
     scope.sourceNamespace,
     scope.sourceRouteId ?? scope.routeId,
-  ]);
+  ]).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyUnavailableProblem)));
 
-export const symmyDemoCatalogDigest = (value: string) =>
-  Effect.tryPromise({
-    catch: () => symmyUnavailableProblem,
-    try: async () => {
-      const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
-      return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    },
-  });
+export const symmyDemoCatalogDigest = (value: string) => Effect.sync(() => bytesToHex(sha256(utf8ToBytes(value))));
 
 export const symmyDemoCategoryPrefix = (scope: SymmySourceReadScope) =>
-  symmyDemoCatalogDigest(symmyDemoCatalogScopeIdentity(scope)).pipe(Effect.map((hash) => `symmy-${hash}-`));
+  symmyDemoCatalogScopeIdentity(scope).pipe(
+    Effect.flatMap(symmyDemoCatalogDigest),
+    Effect.map((hash) => `symmy-${hash}-`),
+  );
 
 /** Opaque native category identity scoped to the enrolled source and selected company. */
-export const symmyDemoCategoryId = (scope: SymmySourceReadScope, code: string) =>
-  Effect.gen(function* categoryId() {
-    const prefix = yield* symmyDemoCategoryPrefix(scope);
-    return `${prefix}${yield* symmyDemoCatalogDigest(code)}`;
-  });
+export const symmyDemoCategoryId = Effect.fn('SymmyDemoCatalog.categoryId')(function* categoryId(
+  scope: SymmySourceReadScope,
+  code: string,
+) {
+  const prefix = yield* symmyDemoCategoryPrefix(scope);
+  return `${prefix}${yield* symmyDemoCatalogDigest(code)}`;
+});

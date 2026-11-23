@@ -40,6 +40,7 @@ import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
 import { makeInMemoryObjectStorage, withObjectStorageFaults } from '../../src/testing/media-object-storage.ts';
 import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestPgClient } from '../support/database.ts';
 
@@ -173,6 +174,7 @@ interface AssetRow {
 
 const unavailableAuthority: DecisionAuthorityPort = {
   readCells: () => Effect.fail(accessDecisionUnavailable('no intent in this suite')),
+  readCompanyOwnership: () => Effect.fail(accessDecisionUnavailable('no intent in this suite')),
   readConfigureBases: () => Effect.fail(accessDecisionUnavailable('no intent in this suite')),
   readConnection: () => Effect.fail(accessDecisionUnavailable('no intent in this suite')),
   readScope: () => Effect.fail(accessDecisionUnavailable('no intent in this suite')),
@@ -213,14 +215,20 @@ const openHarness = Effect.fn('CoreMediaUploadTest.harness')(function* openHarne
   const storage = yield* makeInMemoryObjectStorage();
   // The machine path of the real seam over the real principal-kind and workload-binding tables. Only the
   // identity and registry reads are live here: no access intent exists, and the workload path never asks for any.
-  const workloadBindings = makeDrizzleAccessWorkloadBindings({ executor: database.executor });
+  const workloadBindings = makeDrizzleAccessWorkloadBindings({
+    enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    executor: database.executor,
+  });
   const privacyDispatchLiveness = { read: () => Effect.succeed(false) };
   const enforcementPorts: AccessEnforcementPorts = {
     candidates: { listCandidateIds: () => Effect.succeed([]) },
     check: { checkBulk: () => Effect.fail(accessDecisionUnavailable('no engine in this suite')) },
     decisionLog: { record: () => Effect.void },
     intent: { authorityFor: () => unavailableAuthority },
-    principalKinds: makeDrizzleAccessPrincipalKinds({ executor: database.executor }),
+    principalKinds: makeDrizzleAccessPrincipalKinds({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      executor: database.executor,
+    }),
     privacyDispatchLiveness,
     workloadBindings,
   };
@@ -277,7 +285,7 @@ const openHarness = Effect.fn('CoreMediaUploadTest.harness')(function* openHarne
     const incarnation = yield* nextUuid.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AccessWorkloadBindingIdSchema)));
     const trusted = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(principalOf(world, actor));
     yield* writeWorkloadBindings(
-      database,
+      { enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor: database.executor },
       { ...trusted, correlationId: 'media-upload-bind' },
       {
         bindings: [

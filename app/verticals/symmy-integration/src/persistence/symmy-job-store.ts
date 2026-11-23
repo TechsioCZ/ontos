@@ -549,7 +549,7 @@ const SourceProfileReceiptsSchema = Schema.Array(
   Schema.Struct({
     organization: Schema.Boolean,
     receipt: SymmyPartyCommerceOwnerReceiptSchema,
-    recordId: Schema.String,
+    recordId: Schema.String.pipe(Schema.brand('SourceProfileRecordId')),
   }),
 );
 
@@ -600,7 +600,7 @@ const resolveSourceProfiles = Effect.fn('SymmyJobStore.resolveSourceProfiles')(f
         candidate.issuerId !== customer.source.issuerId ||
         candidate.sourceNamespace !== customer.source.sourceNamespace ||
         candidate.entityKind !== customer.source.entityKind,
-    )
+    ) === true
   ) {
     return yield* routeDenied();
   }
@@ -652,14 +652,14 @@ const nextMembershipOrder = Effect.fn('SymmyJobStore.nextMembershipOrder')(funct
   if (scope.legalEntityId === undefined) {
     return yield* routeDenied();
   }
-  const key = JSON.stringify([
+  const key = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))([
     'symmy-membership',
     scope.tenantId,
     scope.legalEntityId,
     lineage.profileId,
     lineage.issuer,
     lineage.namespace,
-  ]);
+  ]).pipe(Effect.mapError(unavailable));
   yield* transaction
     .select({ locked: sql`pg_advisory_xact_lock(hashtextextended(${key}, 0))` })
     .from(sql`(values (1)) as symmy_membership_lock(anchor)`)
@@ -1504,6 +1504,15 @@ interface SymmyJobStore {
   }) => Effect.Effect<ConfiguredRouteContext, SymmyJobStoreError>;
 }
 
+const requiresSignedRouteProof = (
+  routeKey: SymmyDurableRouteKey,
+  scope: OperationalScope,
+  admissionInvocationId?: string,
+) =>
+  admissionInvocationId !== undefined ||
+  Schema.is(SymmyPolicyFixtureRouteKeySchema)(routeKey) ||
+  readVerifiedGatewayRouteScope(scope) !== undefined;
+
 export const symmyJobStoreFactory = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
@@ -1547,9 +1556,7 @@ export const symmyJobStoreFactory = (
       yield* lockRoute(transaction, route);
       const template = yield* decodeRouteTemplate(route);
       if (
-        (admissionInvocationId !== undefined ||
-          Schema.is(SymmyPolicyFixtureRouteKeySchema)(input.routeKey) ||
-          readVerifiedGatewayRouteScope(scope) !== undefined) &&
+        requiresSignedRouteProof(input.routeKey, scope, admissionInvocationId) &&
         !exactRouteProofMatches(route, scope, template, idempotencyDigest)
       ) {
         return yield* routeDenied();
@@ -1642,8 +1649,8 @@ export const symmyJobStoreFactory = (
           const plan = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema, { onExcessProperty: 'error' })(
             inserted.executionPlan,
           ).pipe(Effect.mapError(unavailable));
-          const effects = plan.items.flatMap(({ effects }) =>
-            effects.map((effect) => ({
+          const effects = plan.items.flatMap(({ effects: itemEffects }) =>
+            itemEffects.map((effect) => ({
               effect,
               effectId: effect.ref.effectId,
               effectKey: effect.effectKey,

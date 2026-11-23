@@ -201,7 +201,9 @@ const harness = (options: { readonly capability?: string; readonly kind: AccessP
     legalEntities: { listCandidateIds: () => Effect.succeed([]) },
     principalKinds: kinds,
     privacyDispatchLiveness: { read: () => Effect.succeed(false) },
-    workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set<string>()) },
+    workloadBindings: {
+      readWorkloadAuthority: () => Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set() }),
+    },
   });
 };
 

@@ -124,7 +124,8 @@ const harness = (options: {
   const entries: AccessDecisionLogEntry[] = [];
   const kinds: AccessPrincipalKinds = { readKind: () => Effect.succeed(Option.some(options.kind)) };
   const workloadBindings: AccessWorkloadBindings = {
-    readActiveWorkloadKeys: () => Effect.succeed(new Set(options.workloadKeys)),
+    readWorkloadAuthority: () =>
+      Effect.succeed({ activeCompanyIds: new Set(), workloadKeys: new Set(options.workloadKeys) }),
   };
   const gate = makeAccessDecisionService({
     authorityFor: () => authority.port,
@@ -234,7 +235,7 @@ it.effect('is unavailable, not allowed, when the workload registry cannot be rea
       legalEntities: { listCandidateIds: () => Effect.succeed([]) },
       principalKinds: { readKind: () => Effect.succeed(Option.some('system' as const)) },
       privacyDispatchLiveness: { read: () => Effect.succeed(false) },
-      workloadBindings: { readActiveWorkloadKeys: () => Effect.fail(accessDecisionUnavailable('registry down')) },
+      workloadBindings: { readWorkloadAuthority: () => Effect.fail(accessDecisionUnavailable('registry down')) },
     });
     const decision = yield* gate.decide(gateInputOf(upload, scopeFor(uid(82), 'api_key')));
     expect(decision.outcome).toBe('UNAVAILABLE');

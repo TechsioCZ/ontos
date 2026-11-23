@@ -26,7 +26,8 @@ pre-push:
   jobs:
     - name: typecheck
       root: "app/"
-      run: GOMAXPROCS=9 ULTRAMODERN_TSGO_BUILDERS=1 ULTRAMODERN_TSGO_CHECKERS=1 pnpm typecheck
+      run: GOMAXPROCS=${GOMAXPROCS:-9} ULTRAMODERN_TSGO_BUILDERS=1 ULTRAMODERN_TSGO_CHECKERS=1 pnpm typecheck
     - name: contract
       root: "app/"
-      run: GOMAXPROCS=9 GOMEMLIMIT=12GiB pnpm contract:check
+      # Allow the same validation to fit on machines with less memory.
+      run: GOMAXPROCS=${GOMAXPROCS:-9} GOMEMLIMIT=${GOMEMLIMIT:-12GiB} pnpm contract:check
