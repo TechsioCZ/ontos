@@ -107,6 +107,82 @@ const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmen
   }
 });
 
+export interface SymmyExecutionRoutineFacts {
+  readonly definer: boolean;
+  readonly name: string;
+  readonly public_execute: boolean;
+  readonly runtime_execute: boolean;
+  readonly safe_settings: boolean;
+}
+
+/** Exact migrated routines and each routine's native execution boundary; no extra or insecure routine is admitted. */
+export const symmyExecutionRoutineInventoryMatches = (routines: readonly SymmyExecutionRoutineFacts[]): boolean => {
+  const routineNames = [
+    'advance_route_change_token',
+    'can_execute_symmy_job_effect',
+    'claim_symmy_job_effect',
+    'claim_symmy_job_notification',
+    'erase_symmy_effect_payload',
+    'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
+    'lock_symmy_enrollment_snapshot',
+    'lock_symmy_privacy_execution',
+    'mark_symmy_job_effect_blocked',
+    'mark_symmy_job_effect_indeterminate',
+    'mark_symmy_job_effect_unavailable',
+    'materialize_demo_group_membership_route',
+    'pin_symmy_fixture_plan',
+    'publish_route_execution_gate',
+    'purge_symmy_job_intents',
+    'purge_symmy_sync_intents',
+    'read_symmy_job_execution',
+    'read_symmy_job_lifecycle',
+    'read_symmy_job_notification_wake',
+    'read_symmy_privacy_execution',
+    'read_symmy_sync_lifecycle',
+    'record_symmy_owner_executor',
+    'record_symmy_owner_invocation',
+    'record_symmy_owner_receipt',
+    'record_symmy_owner_request',
+    'record_symmy_privacy_execution',
+    'record_symmy_resolved_effect',
+    'settle_symmy_job_effect',
+    'settle_symmy_job_notification',
+    'symmy_original_route_active',
+    'symmy_source_selector_code',
+  ];
+  return !(
+    routines.length !== routineNames.length ||
+    routines.some(
+      (routine, index) =>
+        routine.name !== routineNames[index] ||
+        routine.public_execute ||
+        !routine.safe_settings ||
+        routine.runtime_execute !==
+          ![
+            'materialize_demo_group_membership_route',
+            'publish_route_execution_gate',
+            'symmy_original_route_active',
+            'erase_symmy_effect_payload',
+            'erase_symmy_plan_payload',
+            'guard_route_enrollment_record',
+            'advance_route_change_token',
+          ].includes(routine.name) ||
+        routine.definer !==
+          ![
+            'symmy_source_selector_code',
+            'pin_symmy_fixture_plan',
+            'publish_route_execution_gate',
+            'symmy_original_route_active',
+            'erase_symmy_effect_payload',
+            'erase_symmy_plan_payload',
+            'guard_route_enrollment_record',
+            'advance_route_change_token',
+          ].includes(routine.name),
+    )
+  );
+};
+
 const verification = Effect.gen(function* verifySymmySchema() {
   const client = yield* PgClient.PgClient;
   const database = yield* makeWithDefaults({ relations: symmyIntegrationRelations });
@@ -240,68 +316,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
     from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'symmy_integration' order by p.proname
   `;
-  const routineNames = [
-    'advance_route_change_token',
-    'can_execute_symmy_job_effect',
-    'claim_symmy_job_effect',
-    'claim_symmy_job_notification',
-    'erase_symmy_effect_payload',
-    'erase_symmy_plan_payload',
-    'guard_route_enrollment_record',
-    'lock_symmy_enrollment_snapshot',
-    'lock_symmy_privacy_execution',
-    'mark_symmy_job_effect_blocked',
-    'mark_symmy_job_effect_indeterminate',
-    'mark_symmy_job_effect_unavailable',
-    'pin_symmy_fixture_plan',
-    'publish_route_execution_gate',
-    'purge_symmy_job_intents',
-    'purge_symmy_sync_intents',
-    'read_symmy_job_execution',
-    'read_symmy_job_lifecycle',
-    'read_symmy_job_notification_wake',
-    'read_symmy_privacy_execution',
-    'read_symmy_sync_lifecycle',
-    'record_symmy_owner_executor',
-    'record_symmy_owner_invocation',
-    'record_symmy_owner_receipt',
-    'record_symmy_owner_request',
-    'record_symmy_privacy_execution',
-    'record_symmy_resolved_effect',
-    'settle_symmy_job_effect',
-    'settle_symmy_job_notification',
-    'symmy_original_route_active',
-    'symmy_source_selector_code',
-  ];
-  if (
-    routines.length !== routineNames.length ||
-    routines.some(
-      (routine, index) =>
-        routine.name !== routineNames[index] ||
-        routine.public_execute ||
-        !routine.safe_settings ||
-        routine.runtime_execute !==
-          ![
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-          ].includes(routine.name) ||
-        routine.definer !==
-          ![
-            'symmy_source_selector_code',
-            'pin_symmy_fixture_plan',
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-          ].includes(routine.name),
-    )
-  ) {
+  if (!symmyExecutionRoutineInventoryMatches(routines)) {
     yield* new SymmySchemaVerificationError({ reason: 'Symmy execution routine inventory or runtime grants mismatch' });
   }
 });
@@ -311,9 +326,10 @@ const adminClientLive = Layer.unwrap(
     Effect.map((connections) => PgClient.layer({ url: Redacted.make(connections.admin.connectionString) })),
   ),
 );
-await Effect.runPromise(
-  verification.pipe(
-    Effect.provide(adminClientLive),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer)),
-  ),
-);
+if (import.meta.main)
+  await Effect.runPromise(
+    verification.pipe(
+      Effect.provide(adminClientLive),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer)),
+    ),
+  );
