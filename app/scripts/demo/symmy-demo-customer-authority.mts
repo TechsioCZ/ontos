@@ -7,8 +7,8 @@
  *
  * No person, API key, Privacy decision, receipt, contract or legal basis is invented here.
  * The existing customer-group route identifies the integration; Core identifies the real source writers.
- * Administrative inserts initialize missing owner source registries and routes only. Existing differing policy is
- * refused, never replaced, so an enrollment epoch of outstanding work cannot change.
+ * Initialize missing owner routes. On an active bootstrap-owned route the canonical reader may be appended;
+ * conflicting or operator-managed policy is never replaced. The Symmy execution epoch is not rotated.
  *
  * Required: ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage, DATABASE_URL, DATABASE_ADMIN_URL,
  * ONTOS_SYMMY_JOB_RETENTION_POLICIES. No published-composition URL is needed.
@@ -93,6 +93,7 @@ const issuer = 'symmy-akros';
 const namespace = 'akros-erp';
 const revision = 'v1';
 const recordType = 'CUSTOMER';
+const sourceReader = 'commerce.customer-context.source-read';
 const sourceWriter = 'commerce.customer-context.source-write';
 const partyWriter = 'party.registry.source-write';
 const customerReceiverWorkloads = [
@@ -284,14 +285,31 @@ const resolveSymmyDemoCustomerReceivers = (
       resolved.push({ key, principalId: principal.principalId });
     }
     const partyReader = resolved.find(({ key }) => key === 'party.registry.source-read');
+    const commerceReader = resolved.find(({ key }) => key === sourceReader);
     const privacyReceiver = resolved.find(({ key }) => key === 'privacy.core.source-processing-check');
-    if (partyReader === undefined || privacyReceiver === undefined)
+    if (partyReader === undefined || commerceReader === undefined || privacyReceiver === undefined)
       return yield* fail('Native customer receiver enrollment is absent');
     return {
+      commerceReaderId: commerceReader.principalId,
       partyReaderId: partyReader.principalId,
       privacyReceiverId: privacyReceiver.principalId,
       receivers: resolved,
     };
+  });
+
+/** An existing native reader is never replaced. An operator-managed route must be changed by its own Action. */
+export const symmyDemoNativeReaderNeedsEnrollment = (
+  route: { readonly readers: readonly string[]; readonly managed: boolean },
+  integration: string,
+  nativeReader: string,
+) =>
+  Effect.gen(function* needsEnrollment() {
+    if (integration === nativeReader) return yield* fail('The external integration cannot be the native source reader');
+    if (route.readers.includes(nativeReader)) return false;
+    if (!route.readers.includes(integration))
+      return yield* fail('The exact legacy integration reader is not enrolled on this owner route');
+    if (route.managed) return yield* fail('Name the canonical Commerce reader through the managed source route Action');
+    return true;
   });
 
 const GroupSchema = Schema.Struct({
@@ -1043,7 +1061,7 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     }
 
     // Bootstrap inserts are not Action invocations and deliberately manufacture no Action history/receipt.
-    // A conflicting existing row is never changed: verify the full source policy after ON CONFLICT DO NOTHING.
+    // Only the exact bootstrap-owned read grant can grow. Never overwrite an operator-managed route.
     yield* sql.withTransaction(
       Effect.gen(function* ownerSources() {
         yield* sql`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}:symmy-demo-customer-authority`},0))`;
@@ -1052,23 +1070,71 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
           (tenant_id,legal_entity_id,route_id,route_revision,mapping_revision,issuer,namespace,record_type,
             principal_id,active,source_reader_principal_ids)
           values(${tenantId},${legalEntityId},${SYMMY_DEMO_CUSTOMERS_ROUTE},${revision},${revision},
-            ${issuer},${namespace},${recordType},${commerce.principalId},true,ARRAY[${existing.principalId}]::uuid[])
+            ${issuer},${namespace},${recordType},${commerce.principalId},true,ARRAY[${receiverIdentities.commerceReaderId}]::uuid[])
           on conflict do nothing`;
           yield* sql`insert into commerce_customer_context.saved_address_source_routes
           (tenant_id,legal_entity_id,route_ref,route_revision,mapping_revision,issuer,namespace,record_type,principal_id,active)
           values(${tenantId},${legalEntityId},${SYMMY_DEMO_CUSTOMERS_ROUTE},${revision},${revision},
             ${issuer},${namespace},${recordType},${commerce.principalId},true) on conflict do nothing`;
+          yield* sql`insert into commerce_customer_context.customer_group_definition_source_routes
+          (tenant_id,legal_entity_id,route_id,route_revision,mapping_revision,issuer,namespace,
+            principal_id,active,source_reader_principal_ids)
+          values(${tenantId},${legalEntityId},${SYMMY_DEMO_GROUPS_ROUTE},${revision},${revision},
+            ${issuer},${namespace},${commerce.principalId},true,
+            ARRAY[${existing.principalId},${receiverIdentities.commerceReaderId}]::uuid[])
+          on conflict do nothing`;
           yield* sql`insert into commerce_customer_context.customer_group_membership_source_routes
           (tenant_id,legal_entity_id,route_id,route_revision,issuer,source_namespace,principal_id,active,allow_complete)
           values(${tenantId},${legalEntityId},${SYMMY_DEMO_GROUPS_ROUTE},${revision},
             ${issuer},${namespace},${commerce.principalId},true,false) on conflict do nothing`;
+        }
+        for (const [kind, id, table] of [
+          ['PROFILE', SYMMY_DEMO_CUSTOMERS_ROUTE, sql`commerce_customer_context.customer_profile_source_routes`],
+          [
+            'GROUP_DEFINITION',
+            SYMMY_DEMO_GROUPS_ROUTE,
+            sql`commerce_customer_context.customer_group_definition_source_routes`,
+          ],
+        ] as const) {
+          const record = kind === 'PROFILE' ? sql`and record_type=${recordType}` : sql``;
+          const where = sql`tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and route_id=${id}
+            and route_revision=${revision} and mapping_revision=${revision} and issuer=${issuer} and namespace=${namespace}
+            and principal_id=${commerce.principalId} and active ${record}`;
+          const [route] = yield* sql`select source_reader_principal_ids as readers, exists(select 1 from
+            commerce_customer_context.customer_source_route_history h where h.tenant_id=${tenantId} and
+            h.legal_entity_id=${legalEntityId} and h.route_kind=${kind} and h.route_id=${id}) as managed
+            from ${table} where ${where} for update`.pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.Tuple([Schema.Struct({ readers: Schema.Array(Uuid), managed: Schema.Boolean })]),
+              ),
+            ),
+            Effect.mapError(() => fail(`Exact active AKROS ${kind} source route is absent`)),
+          );
+          if (
+            yield* symmyDemoNativeReaderNeedsEnrollment(
+              route,
+              existing.principalId,
+              receiverIdentities.commerceReaderId,
+            )
+          ) {
+            if (mode !== 'apply') return yield* fail(`Native Commerce reader not enrolled on ${kind}`);
+            yield* sql`update ${table} set source_reader_principal_ids=array_append(source_reader_principal_ids,
+              ${receiverIdentities.commerceReaderId}::uuid), generation=generation+1 where ${where}
+              returning ${receiverIdentities.commerceReaderId}::uuid=any(source_reader_principal_ids) as enrolled`.pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ enrolled: Schema.Literal(true) })])),
+              ),
+              Effect.mapError(() => fail(`Native Commerce reader was not enrolled on ${kind}`)),
+            );
+          }
         }
         const checks = yield* sql`select
         exists(select 1 from commerce_customer_context.customer_profile_source_routes
           where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and route_id=${SYMMY_DEMO_CUSTOMERS_ROUTE}
           and route_revision=${revision} and mapping_revision=${revision} and issuer=${issuer} and namespace=${namespace}
           and record_type=${recordType} and principal_id=${commerce.principalId} and active=true
-          and ${existing.principalId}::uuid=any(source_reader_principal_ids)) as profile,
+          and ${receiverIdentities.commerceReaderId}::uuid=any(source_reader_principal_ids)) as profile,
         exists(select 1 from commerce_customer_context.saved_address_source_routes
           where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and route_ref=${SYMMY_DEMO_CUSTOMERS_ROUTE}
           and route_revision=${revision} and mapping_revision=${revision} and issuer=${issuer} and namespace=${namespace}

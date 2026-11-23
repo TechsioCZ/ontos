@@ -1,4 +1,5 @@
 import { requireModuleOperation } from '@app/core-runtime';
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import type { OperationalScope } from '@app/core-runtime';
 import { OrganizationMembershipSourcePayloadSchema } from '@app/commerce-customer-context/domain/organization-membership-source';
 import { OrganizationBusinessUpdateInputSchema } from '@app/party-registry/apis/organization-record-facts';
@@ -255,7 +256,12 @@ export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakeP
             callingAppId: 'symmy-integration',
             legalEntityScope: 'subject',
             requestCorrelation,
-            subject: { _tag: 'Assertion', scope },
+            subject: {
+              _tag: 'NativeRouteRead',
+              scope,
+              operationRequirementKey: customerIntakePrivacyRequirement,
+              requestHash: computeCanonicalValueHash(request),
+            },
           },
           crypto,
         ).pipe(symmyIntegrationEvidenceCall.customerIntakePrivacy, Effect.mapError(unavailable));

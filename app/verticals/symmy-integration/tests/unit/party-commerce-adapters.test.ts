@@ -807,18 +807,26 @@ describe('governed internal Party adapter', () => {
       if (adapter === undefined) {
         return yield* symmyJobWorkerUnavailable();
       }
-      const recovered = yield* adapter.recover(
-        yield* withOriginalRequest({
-          ...input(),
-          effect: endContactEffect,
-          originalInvocationId: invocationId,
-        }),
-      );
+      const original = yield* withOriginalRequest({
+        ...input(),
+        effect: endContactEffect,
+        originalInvocationId: invocationId,
+      });
+      const recovered = yield* adapter.recover(original);
       expect(recovered).toMatchObject({ outcome: { status: 'accepted_no_change' }, status: 'settled' });
       expect(peer.receipt.bodies[0]).toMatchObject({
         operation: 'END_CONTACT_POINT',
         payload: { contactPointRef },
       });
+      peer.receipt.succeed(
+        Schema.decodeUnknownSync(PartySourceEffectReceiptResponseSchema)({
+          actionInvocationId: 'ad140000-0000-4000-8000-000000000037',
+          operation: 'END_CONTACT_POINT',
+          outcome: 'COMMITTED',
+          result: { changed: false, contactPointRef, partyRef: canonicalPartyRef, revision: 3 },
+        }),
+      );
+      expect(yield* adapter.recover(original)).toEqual({ status: 'unavailable' });
       return yield* Effect.void;
     }).pipe(asSymmyWorker),
   );
@@ -1740,8 +1748,37 @@ it.effect('uses only independently guarded minimal Retail creation receipt after
       Match.tag('EnsureRetailProfile', (intent) => intent.payload),
       Match.orElse(() => {}),
     );
-    peer.profileReceipt
-      .failOnce(
+    const minimal = Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+      _tag: 'MINIMAL_RECEIPT',
+      currentAdmission: {
+        outcome: 'SOURCE_PERSON_CURRENT',
+        partyRef: canonicalPartyRef,
+        partyRevision: 1,
+        sourceActionInvocationId: '10000000-0000-4000-8000-000000000097',
+        sourceDecisionRef: created.decisionRef,
+        sourceReference: {
+          occurrenceId: 'occurrence-1',
+          recordId: 'customer-1',
+          source: { issuer: 'internal-symmy', namespace: 'customers', recordType: 'CUSTOMER', routeRef: routeId },
+        },
+      },
+      receipt: {
+        actionInvocationId: invocationId,
+        actorPrincipalId: executorPrincipalId,
+        intent: originalIntent,
+        profileKind: 'RETAIL',
+        recordedAt: '2026-11-07T00:00:00.000Z',
+        result: {
+          outcome: 'PROFILE_CREATED',
+          profileRef: profile,
+          revision: 1,
+          sourceEffect: { effectId, replayed: false },
+          state: 'ACTIVE',
+        },
+      },
+    });
+    const forbidFull = () =>
+      peer.profileReceipt.failOnce(
         CustomerProfileSourceForbiddenProblemSchema,
         CustomerProfileSourceForbiddenProblemSchema.make({
           detail: 'Exact full profile read currently forbidden',
@@ -1749,38 +1786,8 @@ it.effect('uses only independently guarded minimal Retail creation receipt after
           title: 'Forbidden',
           type: 'about:blank',
         }),
-      )
-      .succeedOnce(
-        Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
-          _tag: 'MINIMAL_RECEIPT',
-          currentAdmission: {
-            outcome: 'SOURCE_PERSON_CURRENT',
-            partyRef: canonicalPartyRef,
-            partyRevision: 1,
-            sourceActionInvocationId: '10000000-0000-4000-8000-000000000097',
-            sourceDecisionRef: created.decisionRef,
-            sourceReference: {
-              occurrenceId: 'occurrence-1',
-              recordId: 'customer-1',
-              source: { issuer: 'internal-symmy', namespace: 'customers', recordType: 'CUSTOMER', routeRef: routeId },
-            },
-          },
-          receipt: {
-            actionInvocationId: invocationId,
-            actorPrincipalId: executorPrincipalId,
-            intent: originalIntent,
-            profileKind: 'RETAIL',
-            recordedAt: '2026-11-07T00:00:00.000Z',
-            result: {
-              outcome: 'PROFILE_CREATED',
-              profileRef: profile,
-              revision: 1,
-              sourceEffect: { effectId, replayed: false },
-              state: 'ACTIVE',
-            },
-          },
-        }),
       );
+    forbidFull().succeedOnce(minimal);
     const adapter = yield* retailDependencyAdapter;
     const result = yield* adapter.recover(
       yield* withOriginalRequest({ ...input(), effect: resolvedRetailEffect, legalEntityId: sellingLegalEntityId }),
@@ -1788,6 +1795,18 @@ it.effect('uses only independently guarded minimal Retail creation receipt after
     expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
     expect(peer.retail.sent).toHaveLength(0);
     expect(peer.profileReceipt.bodies.map((body) => body.mode)).toEqual(['RECEIPT', 'MINIMAL_RECEIPT']);
+    if (minimal._tag !== 'MINIMAL_RECEIPT') throw new Error('Expected minimal fixture');
+    forbidFull().succeedOnce(
+      Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+        ...minimal,
+        receipt: { ...minimal.receipt, actionInvocationId: '10000000-0000-4000-8000-000000000097' },
+      }),
+    );
+    expect(
+      yield* adapter.recover(
+        yield* withOriginalRequest({ ...input(), effect: resolvedRetailEffect, legalEntityId: sellingLegalEntityId }),
+      ),
+    ).toMatchObject({ status: 'unavailable' });
   }).pipe(asSymmyWorker),
 );
 it.effect('does not treat an unavailable full profile receipt as absence or issue another write', () =>

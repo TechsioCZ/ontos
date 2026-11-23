@@ -1122,7 +1122,11 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
     context.requestCorrelation,
     context.options,
   );
-  if (receipt.outcome !== 'COMMITTED' || receipt.operation !== operation) {
+  if (
+    receipt.outcome !== 'COMMITTED' ||
+    receipt.operation !== operation ||
+    receipt.actionInvocationId !== context.originalActionInvocationId
+  ) {
     return unavailableRecovery;
   }
   yield* Match.value(receipt).pipe(
@@ -2326,6 +2330,9 @@ const recoverProfileMode = Effect.fn('SymmyPartyCommerceAdapters.recoverProfileM
     context.requestCorrelation,
     context.options,
   );
+  if (result._tag !== mode || result.receipt.actionInvocationId !== context.originalActionInvocationId) {
+    return unavailableRecovery;
+  }
   if (mode === 'ORG_RECEIPT') {
     return yield* Match.value(result).pipe(
       Match.tag(
@@ -2375,7 +2382,10 @@ const recoverProfileMode = Effect.fn('SymmyPartyCommerceAdapters.recoverProfileM
       Effect.fn('SymmyPartyCommerceAdapters.profileReceipt')(function* recoveredProfile(
         found: Extract<CustomerProfileSourceResponse, { readonly _tag: 'RECEIPT' | 'MINIMAL_RECEIPT' }>,
       ) {
-        if (!sameProfileIntent(expected, found.receipt.intent)) {
+        if (
+          found.receipt.actorPrincipalId !== input.originalExecutorPrincipalId ||
+          !sameProfileIntent(expected, found.receipt.intent)
+        ) {
           return unavailableRecovery;
         }
         yield* Match.value(found.receipt).pipe(

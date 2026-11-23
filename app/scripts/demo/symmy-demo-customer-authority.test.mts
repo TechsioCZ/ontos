@@ -21,6 +21,7 @@ import {
   SYMMY_DEMO_CUSTOMER_TENANT,
   SYMMY_DEMO_GROUPS_ROUTE,
   symmyDemoCustomerEnvironment,
+  symmyDemoNativeReaderNeedsEnrollment,
   symmyDemoCustomerRetentionRefs,
   symmyDemoMembershipRouteId,
   symmyDemoCustomerWriteKey,
@@ -467,4 +468,31 @@ it.effect('retires only explicitly identified duplicate aliases, preserving a un
     ]);
     expect(yield* symmyDemoReceiverCandidates([alias, other, serviceWriter], [])).toHaveLength(3);
   }),
+);
+
+it.effect(
+  'adds only the distinct Commerce reader, preserves existing readers, and never overrides a managed route',
+  () =>
+    Effect.gen(function* test() {
+      const external = identities.integrationPrincipalId;
+      const reader = '72000000-0000-4000-8000-000000000027';
+      expect(
+        yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [external], managed: false }, external, reader),
+      ).toBe(true);
+      expect(
+        yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [external, reader], managed: true }, external, reader),
+      ).toBe(false);
+      expect(yield* symmyDemoNativeReaderNeedsEnrollment({ readers: [reader], managed: true }, external, reader)).toBe(
+        false,
+      );
+      for (const [readers, managed, receiver] of [
+        [[external], true, reader],
+        [[], false, reader],
+        [[external], false, external],
+      ] as const)
+        expect(
+          (yield* symmyDemoNativeReaderNeedsEnrollment({ readers, managed }, external, receiver).pipe(Effect.result))
+            ._tag,
+        ).toBe('Failure');
+    }),
 );
