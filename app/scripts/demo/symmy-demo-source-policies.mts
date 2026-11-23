@@ -44,6 +44,7 @@ import { SymmyPriceSourceSchema } from '../../verticals/symmy-integration/shared
 import { SymmyInventorySourceSchema } from '../../verticals/symmy-integration/shared/domain/symmy-stock-batch.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../verticals/symmy-integration/shared/domain/symmy-job-execution.ts';
 import { provisionStockItemOperation } from '../../verticals/symmy-integration/src/persistence/symmy-product-plan.ts';
+import type { SymmyRouteEnrollmentRequest } from '../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts';
 
 export const symmyDemoPolicyScope = {
   tenantId: 'bceaa540-13eb-5508-9ac0-9ed7e40a2ee9',
@@ -116,6 +117,50 @@ export const requireSymmyDemoStage = (environment: string) => environment === 's
   : Effect.fail(fail('Symmy demo source policies require the stage deployment environment'));
 const only = <A>(values: readonly A[], reason: string) =>
   values.length === 1 && values[0] !== undefined ? Effect.succeed(values[0]) : Effect.fail(fail(reason));
+
+/** Validate native authority without attempting to re-enroll the exchange's separately approved operations.
+ * This projection is validation-only: the complete original configuration is what we compare and persist.
+ */
+export const validateSymmyDemoSourceEnrollment = (request: SymmyRouteEnrollmentRequest) => Effect.gen(function* validate() {
+  const { SymmyRouteEnrollmentRequestSchema, symmyRouteInventoryOf, symmyRouteRequestRefusals } =
+    yield* Effect.promise(() => import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'));
+  const demoEffects = request.configuration.items.flatMap((item) =>
+    item.effects.filter(({ operation }) => operation.moduleId === 'demo.merchandise'));
+  let nativeRequest = request;
+  if (demoEffects.length > 0) {
+    const { SYMMY_DEMO_EXCHANGE_PRODUCTS_ROUTE, symmyDemoExchangeRouteOperations } =
+      yield* Effect.promise(() => import('./symmy-demo-exchange-authority.mts'));
+    const approved = symmyDemoExchangeRouteOperations('productsBatch');
+    if (request.routeKey !== 'productsBatch' || request.routeId !== SYMMY_DEMO_EXCHANGE_PRODUCTS_ROUTE ||
+      request.tenantId !== symmyDemoPolicyScope.tenantId ||
+      request.principalId !== symmyDemoPolicyScope.principalId ||
+      request.legalEntityId !== symmyDemoPolicyScope.legalEntityId || request.routeCode !== undefined ||
+      request.configuration.sourceRouteId === undefined ||
+      request.configuration.items.some(({ source }) =>
+        source.issuerId !== 'symmy-akros' || source.sourceNamespace !== symmyDemoPolicyScope.namespace) ||
+      demoEffects.some((effect) => !approved.some((addition) =>
+        isDeepStrictEqual(effect, { effectKey: addition.effectKey, operation: addition.operation }))) ||
+      new Set(demoEffects.map(({ effectKey }) => effectKey)).size !== demoEffects.length) {
+      return yield* fail('Source-policy replay refuses demo operations outside the exact approved AKROS exchange enrollment');
+    }
+    nativeRequest = yield* Schema.decodeUnknownEffect(SymmyRouteEnrollmentRequestSchema)({
+      ...request,
+      configuration: {
+        ...request.configuration,
+        items: request.configuration.items.map((item) => ({
+          ...item, effects: item.effects.filter(({ operation }) => operation.moduleId !== 'demo.merchandise'),
+        })),
+      },
+    });
+  }
+  const inventory = symmyRouteInventoryOf(nativeRequest.routeKey);
+  if (!Option.isOption(inventory) || Option.isNone(inventory)) {
+    return yield* fail('The native owner does not support this declared source route');
+  }
+  if (symmyRouteRequestRefusals(nativeRequest, inventory.value).length > 0) {
+    return yield* fail('Native Symmy route validation refused source-policy enrollment');
+  }
+});
 
 /** Replaces the old finite stock scope, never copying an ERP item key into the new enrollment. */
 export const symmyDemoInventoryConfiguration = (
@@ -218,8 +263,7 @@ export const symmyDemoPricePolicies = (
 export const bootstrapSymmyDemoSourcePolicies = Effect.gen(function* bootstrapSourcePolicies() {
   const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT');
   yield* requireSymmyDemoStage(environment);
-  const { SymmyRouteEnrollmentRequestSchema, symmyRouteEnrollmentLockKey,
-    symmyRouteInventoryOf, symmyRouteRequestRefusals } = yield* Effect.tryPromise({
+  const { SymmyRouteEnrollmentRequestSchema, symmyRouteEnrollmentLockKey } = yield* Effect.tryPromise({
       try: () => import('../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts'),
       catch: () => fail('The native Symmy route enrollment module could not be loaded'),
     });
@@ -389,14 +433,7 @@ export const bootstrapSymmyDemoSourcePolicies = Effect.gen(function* bootstrapSo
           configuration, lifecyclePolicy,
           mappingVersion: route.mapping_version, routeRevision: route.route_revision,
         });
-        const inventoryOfRoute = symmyRouteInventoryOf(request.routeKey);
-        if (!Option.isOption(inventoryOfRoute) || Option.isNone(inventoryOfRoute)) {
-          return yield* fail('The native owner does not support this declared source route');
-        }
-        const refusals = symmyRouteRequestRefusals(request, inventoryOfRoute.value);
-        if (refusals.length > 0) {
-          return yield* fail('Native Symmy route validation refused source-policy enrollment');
-        }
+        yield* validateSymmyDemoSourceEnrollment(request);
         const encoded = yield* Schema.encodeEffect(SymmyFixtureExecutionPlanSchema)(configuration);
         if (rollover) {
           const freshRows = yield* transaction.execute(sql`select fixture_plan, active, principal_id, route_key,

@@ -21,7 +21,9 @@ import {
   symmyDemoPricePolicies,
   symmyDemoStockSourceRetention,
   symmyDemoStockSourceRouteId,
+  validateSymmyDemoSourceEnrollment,
 } from './symmy-demo-source-policies.mts';
+import { symmyDemoExchangeConfiguration } from './symmy-demo-exchange-authority.mts';
 
 const { tenantId } = symmyDemoPolicyScope;
 const unitRef = {
@@ -145,6 +147,72 @@ test('the actual enrollment owner accepts source-scoped stock with its required 
   deepStrictEqual(decideSymmyRouteWrite(request, {
     bySelector: Option.none(), byRouteId: Option.none(),
   }, { kind: 'enroll' }), { kind: 'insert' });
+});
+
+test('source → exchange → source replay preserves approved demo authority and still validates native operations', async () => {
+  const productRouteId = '1a24b716-0542-40d5-8906-c78554b7436d';
+  const base = {
+    ...fixture('PRODUCT'),
+    sourceRouteId: productRouteId,
+    priceSource: source,
+    pricingSourceSystem: { ownerModuleId: 'external.symmy', sourceSystemRef: 'symmy-akros' },
+    items: [
+      ['PRODUCT', 'commerce.catalog', 'commerce.catalog.create-product'],
+      ['VARIANT', 'commerce.catalog', 'commerce.catalog.create-variant'],
+      ['PRICE', 'commerce.pricing', 'commerce.pricing.define-price'],
+    ].map(([entityKind, moduleId, entrypointKey]) => ({
+      itemKey: entityKind,
+      source: { ...fixture('PRODUCT').items[0].source, entityKind },
+      effects: [{ effectKey: 'existing-operation', operation: { moduleId, entrypointKey, schemaVersion: '2' } }],
+    })),
+  };
+  const first = await Effect.runPromise(symmyDemoInventoryConfiguration(base, inventorySource, true));
+  const requestOf = (configuration: unknown) => Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({
+    tenantId, principalId: symmyDemoPolicyScope.principalId, legalEntityId: symmyDemoPolicyScope.legalEntityId,
+    routeId: productRouteId, routeKey: 'productsBatch', configuration,
+    lifecyclePolicy: { policyId: 'products', revision: 'v1' }, mappingVersion: 'v1', routeRevision: 'v1',
+  });
+  await Effect.runPromise(validateSymmyDemoSourceEnrollment(requestOf(first)));
+  const exchange = await Effect.runPromise(symmyDemoExchangeConfiguration(first, 'productsBatch'));
+  const replay = await Effect.runPromise(symmyDemoInventoryConfiguration(exchange.configuration, inventorySource, true));
+  const request = requestOf(replay);
+  const inventory = symmyRouteInventoryOf(request.routeKey);
+  ok(Option.isSome(inventory));
+  ok(symmyRouteRequestRefusals(request, inventory.value).some(({ code }) => code === 'operation_not_in_route_inventory'));
+  await Effect.runPromise(validateSymmyDemoSourceEnrollment(request));
+  deepStrictEqual(replay, requestOf(exchange.configuration).configuration);
+  deepStrictEqual(await Effect.runPromise(symmyDemoExchangeConfiguration(replay, 'productsBatch')), {
+    changed: false, configuration: exchange.configuration,
+  });
+  for (const change of [
+    { tenantId: '11111111-1111-4111-8111-111111111111' },
+    { principalId: '11111111-1111-4111-8111-111111111111' },
+    { legalEntityId: '11111111-1111-4111-8111-111111111111' },
+    { routeId: '11111111-1111-4111-8111-111111111111' },
+  ]) {
+    const altered = Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({ ...request, ...change });
+    ok(Exit.isFailure(await Effect.runPromiseExit(validateSymmyDemoSourceEnrollment(altered))));
+  }
+  for (const corruption of ['version', 'key', 'unknown-demo', 'unknown-native', 'source'] as const) {
+    const altered = requestOf({
+      ...replay,
+      items: replay.items.map((item) => ({
+        ...item,
+        source: corruption === 'source' ? { ...item.source, issuerId: 'other-issuer' } : item.source,
+        effects: item.effects.map((effect) => effect.operation.moduleId === 'demo.merchandise' ? {
+          ...effect,
+          effectKey: corruption === 'key' ? `wrong-${effect.effectKey}` : effect.effectKey,
+          operation: {
+            ...effect.operation,
+            schemaVersion: corruption === 'version' ? '999' : effect.operation.schemaVersion,
+            entrypointKey: corruption.startsWith('unknown-') ? 'demo.merchandise.unapproved-operation' : effect.operation.entrypointKey,
+            moduleId: corruption === 'unknown-native' ? 'commerce.catalog' : effect.operation.moduleId,
+          },
+        } : effect),
+      })),
+    });
+    ok(Exit.isFailure(await Effect.runPromiseExit(validateSymmyDemoSourceEnrollment(altered))), corruption);
+  }
 });
 
 test('route selector uniqueness retains NULL semantics only for active routes and chains after the membership migration', () => {
