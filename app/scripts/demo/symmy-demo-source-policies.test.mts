@@ -1,7 +1,8 @@
 import { deepStrictEqual, equal, ok } from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { Effect, Exit, Option, Schema } from 'effect';
+import { createHash } from 'node:crypto';
+import { DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { symmyJobRoutes } from '../../verticals/symmy-integration/src/db/schema.ts';
 import {
@@ -17,12 +18,15 @@ import { SymmyPriceSourceSchema } from '../../verticals/symmy-integration/shared
 import {
   requireSymmyDemoStage,
   symmyDemoInventoryConfiguration,
+  symmyDemoCatalogReadinessConfiguration,
   symmyDemoPolicyScope,
   symmyDemoPricePolicies,
   symmyDemoStockSourceRetention,
   symmyDemoStockSourceRouteId,
   validateSymmyDemoSourceEnrollment,
 } from './symmy-demo-source-policies.mts';
+import { buildSymmyProductPlan, readinessOperations } from '../../verticals/symmy-integration/src/persistence/symmy-product-plan.ts';
+import { SymmyProductRowsSchema } from '../../verticals/symmy-integration/shared/domain/symmy-product-batch.ts';
 import { symmyDemoExchangeConfiguration } from './symmy-demo-exchange-authority.mts';
 
 const { tenantId } = symmyDemoPolicyScope;
@@ -71,6 +75,69 @@ const fixture = (entityKind: 'PRODUCT' | 'STOCK') => ({
       },
     }],
   }],
+});
+
+test('enrolls native axis-free readiness idempotently and plans all six native steps for ACTIVE', async () => {
+  const original = fixture('PRODUCT');
+  const template = await Effect.runPromise(symmyDemoInventoryConfiguration({
+    ...original,
+    items: [{
+      ...original.items[0],
+      effects: [{ ...original.items[0].effects[0], operation: {
+        moduleId: 'commerce.catalog', entrypointKey: 'commerce.catalog.create-product', schemaVersion: '2',
+      } }, { effectKey: 'existing-update', operation: {
+        moduleId: 'commerce.catalog', entrypointKey: 'commerce.catalog.update-product', schemaVersion: '1',
+      } }],
+    }, {
+      ...original.items[0], itemKey: 'variant',
+      source: { ...original.items[0].source, entityKind: 'VARIANT' },
+      effects: [{ effectKey: 'sku', operation: {
+        moduleId: 'commerce.catalog', entrypointKey: 'commerce.catalog.assign-sku', schemaVersion: '1',
+      } }],
+    }],
+  }, inventorySource, true));
+  const ready = await Effect.runPromise(symmyDemoCatalogReadinessConfiguration(template, inventorySource));
+  deepStrictEqual(ready.catalogReadiness, {
+    kind: 'AXIS_FREE_UNTYPED', divisible: false, locale: 'en', unitRef,
+  });
+  deepStrictEqual(await Effect.runPromise(symmyDemoCatalogReadinessConfiguration(ready, inventorySource)), ready);
+  const request = Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({
+    tenantId, principalId: symmyDemoPolicyScope.principalId, legalEntityId: symmyDemoPolicyScope.legalEntityId,
+    routeId: '1a24b716-0542-40d5-8906-c78554b7436d', routeKey: 'productsBatch',
+    configuration: ready, lifecyclePolicy: { policyId: 'products', revision: 'v1' },
+    mappingVersion: 'v1', routeRevision: 'v1',
+  });
+  await Effect.runPromise(validateSymmyDemoSourceEnrollment(request));
+  const planInput = {
+    digest: (value) => Effect.succeed(createHash('sha256').update(value).digest('hex')),
+    idempotencyKey: 'demo-readiness-regression', legalEntityId: symmyDemoPolicyScope.legalEntityId,
+    priceGroups: [], receivedAt: DateTime.makeUnsafe('2026-11-23T00:00:00.000Z'),
+    route: { routeId: request.routeId, mappingVersion: 'v1' }, tenantId, template: ready,
+    rows: Schema.decodeUnknownSync(SymmyProductRowsSchema)([{
+      name: 'Approved demo product', lifecycle: 'ACTIVE', unsupported: [],
+      variants: [{ sku: 'new-demo-sku', localized: [], prices: [] }],
+    }]),
+  } satisfies Parameters<typeof buildSymmyProductPlan>[0];
+  const before = await Effect.runPromise(buildSymmyProductPlan({ ...planInput, template }));
+  ok(Option.isSome(before));
+  equal(before.value.items.flatMap((item) => item.effects).filter(
+    ({ effectKey }) => effectKey.startsWith('readiness-'),
+  ).length, 0);
+  const plan = await Effect.runPromise(buildSymmyProductPlan(planInput));
+  ok(Option.isSome(plan));
+  const effects = plan.value.items.flatMap((item) => item.effects);
+  equal(effects.filter(({ effectKey }) => effectKey.startsWith('readiness-')).length, 6);
+  for (const operation of readinessOperations)
+    ok(effects.some((effect) =>
+      effect.operation.moduleId === operation.moduleId &&
+      effect.operation.entrypointKey === operation.entrypointKey &&
+      effect.operation.schemaVersion === operation.schemaVersion));
+  ok(!effects.some(({ effectKey }) => effectKey === 'product-update'));
+  const foreign = { ...inventorySource, unitRef: { ...unitRef, tenantId: unitRef.resourceId } };
+  ok(Exit.isFailure(await Effect.runPromiseExit(symmyDemoCatalogReadinessConfiguration(ready, foreign))));
+  ok(Exit.isFailure(await Effect.runPromiseExit(symmyDemoCatalogReadinessConfiguration({
+    ...ready, catalogReadiness: { ...ready.catalogReadiness, divisible: true },
+  }, inventorySource))));
 });
 
 test('creates source-wide base and group policies without overlapping mappings or SKU identities', async () => {
@@ -166,7 +233,9 @@ test('source → exchange → source replay preserves approved demo authority an
       effects: [{ effectKey: 'existing-operation', operation: { moduleId, entrypointKey, schemaVersion: '2' } }],
     })),
   };
-  const first = await Effect.runPromise(symmyDemoInventoryConfiguration(base, inventorySource, true));
+  const first = await Effect.runPromise(symmyDemoInventoryConfiguration(base, inventorySource, true).pipe(
+    Effect.flatMap((configuration) => symmyDemoCatalogReadinessConfiguration(configuration, inventorySource)),
+  ));
   const requestOf = (configuration: unknown) => Schema.decodeUnknownSync(SymmyRouteEnrollmentRequestSchema)({
     tenantId, principalId: symmyDemoPolicyScope.principalId, legalEntityId: symmyDemoPolicyScope.legalEntityId,
     routeId: productRouteId, routeKey: 'productsBatch', configuration,
@@ -174,7 +243,9 @@ test('source → exchange → source replay preserves approved demo authority an
   });
   await Effect.runPromise(validateSymmyDemoSourceEnrollment(requestOf(first)));
   const exchange = await Effect.runPromise(symmyDemoExchangeConfiguration(first, 'productsBatch'));
-  const replay = await Effect.runPromise(symmyDemoInventoryConfiguration(exchange.configuration, inventorySource, true));
+  const replay = await Effect.runPromise(symmyDemoInventoryConfiguration(exchange.configuration, inventorySource, true).pipe(
+    Effect.flatMap((configuration) => symmyDemoCatalogReadinessConfiguration(configuration, inventorySource)),
+  ));
   const request = requestOf(replay);
   const inventory = symmyRouteInventoryOf(request.routeKey);
   ok(Option.isSome(inventory));

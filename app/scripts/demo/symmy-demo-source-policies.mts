@@ -43,7 +43,7 @@ import { externalPriceSourceAuthorityForScope } from '../../verticals/pricing/sr
 import { SymmyPriceSourceSchema } from '../../verticals/symmy-integration/shared/domain/symmy-price-list-batch.ts';
 import { SymmyInventorySourceSchema } from '../../verticals/symmy-integration/shared/domain/symmy-stock-batch.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../verticals/symmy-integration/shared/domain/symmy-job-execution.ts';
-import { provisionStockItemOperation } from '../../verticals/symmy-integration/src/persistence/symmy-product-plan.ts';
+import { provisionStockItemOperation, readinessOperations } from '../../verticals/symmy-integration/src/persistence/symmy-product-plan.ts';
 import type { SymmyRouteEnrollmentRequest } from '../../verticals/symmy-integration/src/ops/symmy-route-enrollment.ts';
 
 export const symmyDemoPolicyScope = {
@@ -208,6 +208,47 @@ export const symmyDemoInventoryConfiguration = (
         effectKey: 'source-stock-provision',
         operation: provisionStockItemOperation,
       }],
+    } : item),
+  });
+});
+
+/** Standing demo approval covers one axis-free, untyped ACTIVE Product, never unsupported structured variants. */
+export const symmyDemoCatalogReadinessConfiguration = (
+  original: unknown,
+  inventorySource: typeof SymmyInventorySourceSchema.Type,
+) => Effect.gen(function* catalogReadinessConfiguration() {
+  const configuration = yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(original);
+  const products = configuration.items.filter(({ source }) => source.entityKind === 'PRODUCT');
+  const product = yield* only(products, 'Catalog readiness requires exactly one approved PRODUCT source template');
+  if (
+    inventorySource.unitRef.tenantId !== symmyDemoPolicyScope.tenantId ||
+    inventorySource.issuer.backendId !== 'symmy-akros' ||
+    inventorySource.namespace !== symmyDemoPolicyScope.namespace ||
+    product.source.issuerId !== 'symmy-akros' ||
+    product.source.sourceNamespace !== symmyDemoPolicyScope.namespace ||
+    !isDeepStrictEqual(configuration.inventorySource, inventorySource)
+  ) {
+    return yield* fail('Catalog readiness is restricted to the approved AKROS Inventory source and its exact Unit');
+  }
+  const catalogReadiness = {
+    kind: 'AXIS_FREE_UNTYPED',
+    divisible: false,
+    locale: 'en',
+    unitRef: inventorySource.unitRef,
+  } as const;
+  if (configuration.catalogReadiness !== undefined && !isDeepStrictEqual(configuration.catalogReadiness, catalogReadiness)) {
+    return yield* fail('An existing different Catalog readiness policy is never overwritten');
+  }
+  const additions = readinessOperations.flatMap((operation, index) =>
+    product.effects.some((effect) => isDeepStrictEqual(effect.operation, operation))
+      ? []
+      : [{ effectKey: `source-catalog-readiness-${index}`, operation }],
+  );
+  return yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)({
+    ...configuration,
+    catalogReadiness,
+    items: configuration.items.map((item) => item === product ? {
+      ...item, effects: [...item.effects, ...additions],
     } : item),
   });
 });
@@ -409,6 +450,9 @@ export const bootstrapSymmyDemoSourcePolicies = Effect.gen(function* bootstrapSo
         let configuration = yield* symmyDemoInventoryConfiguration(
           raw.fixture_plan, inventorySource, route.route_key === 'productsBatch',
         );
+        if (route.route_key === 'productsBatch') {
+          configuration = yield* symmyDemoCatalogReadinessConfiguration(configuration, inventorySource);
+        }
         const retained = route.route_key === 'inventoryStockBatch' && !route.active && 'stockScope' in raw.fixture_plan
           ? yield* transaction.execute(sql`select 1 from symmy_integration.sync_admissions
               where tenant_id=${tenantId}::uuid and route_id=${route.route_id}::uuid
@@ -522,7 +566,9 @@ export const bootstrapSymmyDemoSourcePolicies = Effect.gen(function* bootstrapSo
           (change, change_token, legal_entity_id, previous_change_token, previous_revision,
             reason, route_id, route_key, route_revision, stated_operator_ref, tenant_id)
           values ('replace', ${changed.change_token}, ${route.legal_entity_id}::uuid, ${route.change_token},
-            ${route.route_revision}, 'Stage-approved replacement of finite SKU stock enrollment with the Inventory source policy',
+            ${route.route_revision}, ${route.route_key === 'productsBatch'
+              ? 'Stage-approved AKROS AXIS_FREE_UNTYPED Catalog readiness and Inventory source policy enrollment'
+              : 'Stage-approved replacement of finite SKU stock enrollment with the Inventory source policy'},
             ${route.route_id}::uuid, ${route.route_key}, ${route.route_revision},
             'ontos:stage:akros-symmy:source-policies:v1', ${tenantId}::uuid)`);
         routeOutcomes.push({ routeId: route.route_id, outcome: 'REPLACED' });
