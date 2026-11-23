@@ -1,0 +1,83 @@
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import {
+  GatewayContextV2ClaimsSchema,
+  GatewayContextV9ClaimsSchema,
+  SupportedGatewayContextClaimsSchema,
+} from '../../src/gateway-context.ts';
+
+const principalId = '10000000-0000-4000-8000-000000000001';
+const tenantId = '10000000-0000-4000-8000-000000000002';
+const companyId = '10000000-0000-4000-8000-000000000003';
+const originalPrincipalId = '10000000-0000-4000-8000-000000000004';
+const runId = '10000000-0000-4000-8000-000000000005';
+const claims = {
+  aud: 'party-registry',
+  compositionRevision: 'a'.repeat(64),
+  exp: 1_700_000_300,
+  iat: 1_700_000_000,
+  iss: 'https://shell.example.test',
+  jti: runId,
+  principal: {
+    authMethod: 'system',
+    authContextRef: `job:integration.symmy.route-read:run:${runId}`,
+    principalId,
+    tenantId,
+  },
+  routeScope: {
+    legalEntityId: companyId,
+    nativeReadReceiver: {
+      bindingIncarnation: runId,
+      enrollmentLegalEntityId: companyId,
+      originalPrincipalId,
+      originalWorkloadBindingIncarnation: runId,
+      originalWorkloadKey: 'integration.symmy-poll',
+      workloadKey: 'party.registry.source-read',
+    },
+    operations: [{ entrypointKey: 'party.registry.api.source-profile-export', schemaVersion: '1' }],
+    principalId,
+    routeId: runId,
+    routeKey: 'adminCustomers',
+    routeRevision: '1',
+    sourceRouteId: runId,
+    sourceRouteRevision: '1',
+    tenantId,
+  },
+  sub: principalId,
+  targetBuildMarker: 'party-build',
+  ver: 9,
+};
+
+it('decodes a native synchronous Read without any fabricated invocation or external identity namespace', () => {
+  expect(Schema.is(GatewayContextV9ClaimsSchema)(claims)).toBe(true);
+  expect(Schema.is(SupportedGatewayContextClaimsSchema)(claims)).toBe(true);
+  expect('admissionInvocationId' in claims.routeScope.nativeReadReceiver).toBe(false);
+});
+
+it('rejects native Read evidence on old external claims, or a missing or mismatched receiver identity', () => {
+  expect(Schema.is(GatewayContextV2ClaimsSchema)({
+    ...claims,
+    principal: {
+      ...claims.principal,
+      authMethod: 'api_key',
+      authBindingId: runId,
+      authenticationNamespaceId: 'staff',
+      legalEntityId: companyId,
+    },
+    ver: 2,
+  })).toBe(false);
+  const { nativeReadReceiver: _receiver, ...routeScope } = claims.routeScope;
+  for (const invalid of [
+    { ...claims, routeScope },
+    { ...claims, principal: { ...claims.principal, principalId: originalPrincipalId } },
+    { ...claims, principal: { ...claims.principal, legalEntityId: companyId } },
+    { ...claims, principal: { ...claims.principal, authenticationNamespaceId: 'staff' } },
+    { ...claims, exp: claims.exp + 1 },
+    { ...claims, routeScope: { ...claims.routeScope, principalId: originalPrincipalId } },
+    { ...claims, routeScope: { ...claims.routeScope, nativeReadReceiver: {
+      ...claims.routeScope.nativeReadReceiver, originalWorkloadKey: 'party.registry.source-write',
+    } } },
+  ]) {
+    expect(Schema.is(GatewayContextV9ClaimsSchema)(invalid)).toBe(false);
+  }
+});

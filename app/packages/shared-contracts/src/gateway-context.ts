@@ -35,6 +35,7 @@ export const PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION = 5 as const;
 export const ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION = 6 as const;
 export const VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION = 7 as const;
 export const VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION = 8 as const;
+export const NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION = 9 as const;
 export const GATEWAY_ASSERTION_TTL_SECONDS = 300 as const;
 export const GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS = 30 as const;
 
@@ -138,7 +139,8 @@ export const GatewayContextV2ClaimsSchema = Schema.Struct({
       : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
     ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
     ...(claims.routeScope === undefined ||
-    (claims.principal.authMethod === 'api_key' &&
+    (claims.routeScope.nativeReadReceiver === undefined &&
+      claims.principal.authMethod === 'api_key' &&
       claims.principal.principalId === claims.routeScope.principalId &&
       claims.principal.tenantId === claims.routeScope.tenantId &&
       claims.principal.legalEntityId === claims.routeScope.legalEntityId)
@@ -433,6 +435,37 @@ const GatewayContextV8ClaimsSchema = organizationGovernanceClaims(
 );
 export type GatewayContextV6Claims = typeof GatewayContextV6ClaimsSchema.Type;
 
+/** A synchronous source Read executes as its native receiver without inventing an Action invocation. */
+export const GatewayContextV9ClaimsSchema = Schema.Struct({
+  aud: GatewayAudienceSchema,
+  compositionRevision,
+  exp: epochSeconds,
+  iat: epochSeconds,
+  iss: nonEmptyString,
+  jti: uuid,
+  principal: GatewayTrustedPrincipalContextSchema,
+  routeScope: RegisteredGatewayRouteScopeSchema,
+  sub: uuid,
+  targetBuildMarker,
+  ver: Schema.Literal(NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION),
+}).check(
+  Schema.makeFilter((claims) => [
+    ...(claims.exp - claims.iat === GATEWAY_ASSERTION_TTL_SECONDS
+      ? []
+      : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
+    ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
+    ...(claims.principal.authMethod === 'system' &&
+    claims.principal.authenticationNamespaceId === undefined &&
+    claims.routeScope.nativeReadReceiver !== undefined &&
+    claims.principal.principalId === claims.routeScope.principalId &&
+    claims.principal.principalId !== claims.routeScope.nativeReadReceiver.originalPrincipalId &&
+    claims.principal.tenantId === claims.routeScope.tenantId &&
+    claims.principal.legalEntityId === undefined
+      ? []
+      : [{ issue: 'A native route Read requires its exact system receiver and original integration evidence', path: ['routeScope'] }]),
+  ]),
+);
+
 export const SupportedGatewayContextClaimsSchema = Schema.Union([
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,
@@ -442,6 +475,7 @@ export const SupportedGatewayContextClaimsSchema = Schema.Union([
   GatewayContextV6ClaimsSchema,
   GatewayContextV7ClaimsSchema,
   GatewayContextV8ClaimsSchema,
+  GatewayContextV9ClaimsSchema,
 ]);
 export type SupportedGatewayContextClaims = typeof SupportedGatewayContextClaimsSchema.Type;
 export const decodeSupportedGatewayContextClaims = Schema.decodeUnknownEffect(SupportedGatewayContextClaimsSchema, {

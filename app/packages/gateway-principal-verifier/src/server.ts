@@ -23,6 +23,7 @@ import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
   GatewayAudienceSchema,
   ReferenceGatewayCredentialsSchema,
   REFERENCE_GATEWAY_CREDENTIALS_HEADER,
@@ -540,6 +541,9 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
         if (claims.principal.authenticationNamespaceId === undefined) {
           return yield* Effect.fail(invalidError());
         }
+        principalFromClaims = claims.principal;
+        ({ routeScope } = claims);
+      } else if (claims.ver === NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION) {
         principalFromClaims = claims.principal;
         ({ routeScope } = claims);
       } else if (claims.ver === WORKLOAD_GATEWAY_ASSERTION_VERSION) {

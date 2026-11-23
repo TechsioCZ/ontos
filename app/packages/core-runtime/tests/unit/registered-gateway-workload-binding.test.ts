@@ -1,14 +1,24 @@
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   registeredGatewayExecutorEligibility,
   registeredGatewayOriginalAdmission,
 } from '../../src/access/workloads/bindings.ts';
-import { PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
+import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
+import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
+import { WorkloadKeySchema } from '../../src/authorization/access-declaration.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { internalWorkloadPrincipalId } from '../../src/auth/module-credentials.ts';
-import { RegisteredGatewayWorkloadSchema } from '../../src/auth/system-principal-context-provenance.ts';
+import {
+  RegisteredGatewayRouteScopeSchema,
+  RegisteredGatewayWorkloadSchema,
+  isTrustedSystemPrincipalContext,
+  preserveSystemPrincipalContextTrust,
+  readVerifiedGatewayRouteScope,
+  trustVerifiedGatewayPrincipalContext,
+} from '../../src/auth/system-principal-context-provenance.ts';
 
 const tenantId = TenantIdSchema.make('10000000-0000-4000-8000-000000000001');
 const legalEntityId = '10000000-0000-4000-8000-000000000002';
@@ -77,3 +87,93 @@ it('keeps a projected tenant-only receiver fenced to platform identity and its a
   expect(query.sql).toContain("le.status='active'");
   expect(query.params).not.toContain(legalEntityId);
 });
+
+it.effect('admits only the exact synchronous native Read and cannot reuse its proof for an Action or another workload', () =>
+  Effect.gen(function* nativeSourceRead() {
+    const route = Schema.decodeUnknownSync(RegisteredGatewayRouteScopeSchema)({
+      legalEntityId,
+      nativeReadReceiver: {
+        bindingIncarnation,
+        enrollmentLegalEntityId: legalEntityId,
+        originalPrincipalId,
+        originalWorkloadBindingIncarnation,
+        originalWorkloadKey: 'integration.symmy-poll',
+        workloadKey,
+      },
+      operations: [{ entrypointKey: workload.entrypointKey, schemaVersion: '1' }],
+      principalId,
+      routeId: workload.runReference,
+      routeKey: 'adminCustomers',
+      routeRevision: '1',
+      sourceRouteId: workload.runReference,
+      sourceRouteRevision: '1',
+      tenantId,
+    });
+    const principal = trustVerifiedGatewayPrincipalContext(
+      Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+        authContextRef: `job:integration.symmy.source-read:run:${workload.runReference}`,
+        authMethod: 'system',
+        principalId,
+        tenantId,
+      }),
+      'a'.repeat(64),
+      undefined,
+      undefined,
+      undefined,
+      route,
+    );
+    const scope = preserveSystemPrincipalContextTrust(principal, {
+      ...principal,
+      legalEntityId: LegalEntityIdSchema.make(legalEntityId),
+      correlationId: 'native-source-read',
+    });
+    expect(isTrustedSystemPrincipalContext(scope)).toBe(true);
+    expect(readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver?.bindingIncarnation).toBe(bindingIncarnation);
+    const makeGate = () => makeAccessDecisionService({
+      authorityFor: () => ({
+        readCells: () => Effect.succeed([]),
+        readCompanyOwnership: () => Effect.succeed(true),
+        readConnection: () => Effect.succeed(Option.none()),
+        readScope: () => Effect.succeed(Option.none()),
+        readTeamIds: () => Effect.succeed([]),
+      }),
+      check: { checkBulk: () => Effect.succeed([]) },
+      decisionLog: { record: () => Effect.void },
+      legalEntities: { listCandidateIds: () => Effect.succeed([]) },
+      principalKinds: { readKind: () => Effect.succeed(Option.some('service')) },
+      workloadBindings: {
+        readWorkloadAuthority: () => Effect.succeed({
+          activeCompanyIds: new Set([LegalEntityIdSchema.make(legalEntityId)]),
+          workloadKeys: new Set([workloadKey]),
+        }),
+      },
+    });
+    const gate = makeGate();
+    const carrier = {
+      accessDeclaration: {
+        key: 'party.registry.source-read',
+        kind: 'read',
+        modes: ['run'],
+        risk: 'sensitive',
+        selectors: [],
+      },
+      accessWorkload: { reason: 'Exact native source Read', workloads: [WorkloadKeySchema.make(workloadKey)] },
+      entrypoint: { entrypointKey: workload.entrypointKey },
+      schemaVersion: '1',
+    } satisfies Parameters<typeof gate.decide>[0]['carrier'];
+    const input = { carrier, legalEntityScope: 'required', now: new Date(), scope } satisfies Parameters<typeof gate.decide>[0];
+    expect((yield* gate.decide(input)).outcome).toBe('ALLOWED');
+    expect((yield* makeGate().decide({
+      ...input,
+      carrier: { ...carrier, accessDeclaration: { ...carrier.accessDeclaration, kind: 'action' } },
+    })).outcome).toBe('DENIED');
+    expect((yield* makeGate().decide({
+      ...input,
+      carrier: { ...carrier, accessWorkload: { ...carrier.accessWorkload, workloads: [WorkloadKeySchema.make('party.registry.source-write')] } },
+    })).outcome).toBe('DENIED');
+    expect((yield* makeGate().decide({
+      ...input,
+      carrier: { ...carrier, entrypoint: { entrypointKey: 'party.registry.api.other-read' } },
+    })).outcome).toBe('DENIED');
+  }),
+);

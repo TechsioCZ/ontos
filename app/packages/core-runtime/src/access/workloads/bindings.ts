@@ -1,4 +1,4 @@
-import { readVerifiedGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
+import { readVerifiedGatewayRouteScope, readVerifiedGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
 import type { RegisteredGatewayWorkload } from '../../auth/system-principal-context-provenance.ts';
 import { internalWorkloadPrincipalId } from '../../auth/module-credentials.ts';
 import { and, eq, sql } from 'drizzle-orm';
@@ -48,7 +48,7 @@ const readUnavailable = (cause?: unknown): AccessDecisionUnavailable =>
 /** The signed receiver is an active native executor, never the external integration's executor alias. */
 export const registeredGatewayExecutorEligibility = (
   query: Pick<WorkloadBindingQuery, 'tenantId' | 'principalId'>,
-  workload: RegisteredGatewayWorkload,
+  workload: Pick<RegisteredGatewayWorkload, 'legalEntityId' | 'workloadKey'>,
 ) => {
   const canonical =
     workload.legalEntityId === undefined
@@ -79,7 +79,8 @@ export const registeredGatewayExecutorEligibility = (
 /** Original admission stays live; owner authority is the exact signed native receiver binding, not an alias. */
 export const registeredGatewayOriginalAdmission = (
   query: Pick<WorkloadBindingQuery, 'tenantId' | 'principalId'>,
-  workload: RegisteredGatewayWorkload,
+  workload: Pick<RegisteredGatewayWorkload,
+    'originalPrincipalId' | 'originalWorkloadKey' | 'originalWorkloadBindingIncarnation' | 'originalOwnerBindingIncarnation'>,
 ) =>
   sql`exists (
     select 1 from core.principals p
@@ -96,6 +97,7 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
       // A verified gateway workload (a system workload acting for a source integration) holds exactly the one binding
       // its assertion names; a historical delivery or an incomplete original admits nothing (source execution fence).
       const workload = readVerifiedGatewayWorkload(query.scope);
+      const nativeRead = readVerifiedGatewayRouteScope(query.scope)?.nativeReadReceiver;
       const nothing = { activeCompanyIds: new Set<LegalEntityId>(), workloadKeys: new Set<string>() };
       if (workload?.sourceMode === 'historical_delivery' && workload.recovery === undefined) {
         return nothing;
@@ -130,6 +132,22 @@ export const makeDrizzleAccessWorkloadBindings = (database: AccessWorkloadBindin
                   eq(accessWorkloadBindings.tenantId, query.tenantId),
                   eq(accessWorkloadBindings.principalId, query.principalId),
                   eq(accessWorkloadBindings.status, 'active'),
+                  ...(nativeRead === undefined
+                    ? []
+                    : [
+                        eq(accessWorkloadBindings.incarnation, nativeRead.bindingIncarnation),
+                        eq(accessWorkloadBindings.workloadKey, nativeRead.workloadKey),
+                        registeredGatewayExecutorEligibility(query, {
+                          workloadKey: nativeRead.workloadKey,
+                          ...(nativeRead.enrollmentLegalEntityId === undefined
+                            ? {}
+                            : { legalEntityId: nativeRead.enrollmentLegalEntityId }),
+                        }),
+                        registeredGatewayOriginalAdmission(query, {
+                          ...nativeRead,
+                          originalOwnerBindingIncarnation: nativeRead.bindingIncarnation,
+                        }),
+                      ]),
                   // A verified gateway workload reads only the binding its assertion names, of an active native
                   // principal, for a delivery still running when it is a worker's, and only while the original
                   // integration's admission stays active; its keys and companies are the receiver binding's alone.

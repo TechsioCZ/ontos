@@ -10,6 +10,8 @@ import {
   isTrustedSupportRecoveryPrincipalContext,
   readVerifiedGatewayActor,
   readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
+  RegisteredGatewayRouteScopeSchema,
   VerifiedGatewayPrincipalContextSchema,
   isTrustedSystemPrincipalContext,
   readVerifiedGatewayCompositionRevision,
@@ -314,6 +316,62 @@ it.layer(NodeCrypto.layer)('operation context', (suite) => {
 });
 
 it.layer(NodeCrypto.layer)('registered workload operation context', (suite) => {
+  suite.effect('derives the signed native Read company without inventing an Action or adding company to its system Principal', () =>
+    Effect.gen(function* nativeReadScope() {
+      const readAttempt = '60000000-0000-4000-8000-000000000002';
+      const company = principal.legalEntityId;
+      const system = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+        authContextRef: `job:integration.symmy.route-read:run:${readAttempt}`,
+        authMethod: 'system',
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      });
+      const route = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
+        legalEntityId: company,
+        nativeReadReceiver: {
+          bindingIncarnation: readAttempt,
+          enrollmentLegalEntityId: company,
+          originalPrincipalId: '60000000-0000-4000-8000-000000000003',
+          originalWorkloadBindingIncarnation: '60000000-0000-4000-8000-000000000004',
+          originalWorkloadKey: 'integration.symmy-poll',
+          workloadKey: 'party.registry.source-read',
+        },
+        operations: [{ entrypointKey: 'party.registry.api.source-profile-export', schemaVersion: '1' }],
+        principalId: principal.principalId,
+        routeId: readAttempt,
+        routeKey: 'adminCustomers',
+        routeRevision: '1',
+        sourceRouteId: readAttempt,
+        sourceRouteRevision: '1',
+        tenantId: principal.tenantId,
+      });
+      const verified = trustVerifiedGatewayPrincipalContext(
+        system, 'a'.repeat(64), undefined, undefined, undefined, route,
+      );
+      const resolver = yield* makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('denied'));
+      const scope = yield* resolver.resolve({
+        correlationId: 'native-read-scope',
+        legalEntityScope: 'required',
+        principal: verified,
+      });
+      expect(verified.legalEntityId).toBeUndefined();
+      expect(scope.legalEntityId).toBe(company);
+      expect(isTrustedSystemPrincipalContext(scope)).toBe(true);
+      expect(readVerifiedGatewayRouteScope(scope)).toEqual(route);
+      expect(readVerifiedGatewayWorkload(scope)).toBeUndefined();
+      expect(yield* decodeTrustedPrincipalContext(scope)).toBe(scope);
+      expect(Schema.is(VerifiedGatewayPrincipalContextSchema)({ ...scope })).toBe(false);
+      const foreign = yield* makeOperationalScopeResolver(
+        { load: () => Effect.succeed({ ...active, legalEntityTenantId: 'another-tenant' }) },
+        access('allowed'),
+      );
+      expect(Exit.isFailure(yield* Effect.exit(foreign.resolve({
+        correlationId: 'foreign-native-read-company',
+        legalEntityScope: 'required',
+        principal: verified,
+      })))).toBe(true);
+    }),
+  );
   suite.effect('derives a registered workload company scope while retaining a tenant-local system Principal', () =>
     Effect.gen(function* registeredWorkloadScope() {
       const runReference = '60000000-0000-4000-8000-000000000002';

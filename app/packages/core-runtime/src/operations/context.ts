@@ -596,12 +596,16 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
     input: ResolveOperationalScopeInput,
   ) {
     const workload = readVerifiedGatewayWorkload(input.principal);
+    const readRoute = readVerifiedGatewayRouteScope(input.principal);
+    const registeredCompany =
+      workload?.legalEntityId ??
+      (readRoute?.nativeReadReceiver === undefined ? undefined : readRoute.legalEntityId);
     const principal =
-      workload?.legalEntityId === undefined
+      registeredCompany === undefined
         ? input.principal
         : preserveSystemPrincipalContextTrust(input.principal, {
             ...input.principal,
-            legalEntityId: workload.legalEntityId,
+            legalEntityId: registeredCompany,
           });
     const requestFailure = validateRequestedScope(input, input.legalEntityScope, principal);
     if (requestFailure !== undefined) {

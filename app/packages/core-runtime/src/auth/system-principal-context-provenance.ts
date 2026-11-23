@@ -139,10 +139,21 @@ const routeOperation = Schema.Struct({
   schemaVersion: Schema.NonEmptyString.check(Schema.isMaxLength(40), Schema.isTrimmed()),
 });
 
+/** A synchronous source Read has a live integration admission and native receiver, not an invented Action receipt. */
+export const NativeRouteReadReceiverSchema = Schema.Struct({
+  bindingIncarnation: uuid,
+  enrollmentLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  originalPrincipalId: PrincipalIdSchema,
+  originalWorkloadBindingIncarnation: uuid,
+  originalWorkloadKey: Schema.Literals(['integration.symmy-admit', 'integration.symmy-poll']),
+  workloadKey: WorkloadKeySchema,
+});
+
 /** Shell-attested finite operations for one admitted private route in its exact receiver scope (Tenant or company). */
 export const RegisteredGatewayRouteScopeSchema = Schema.Struct({
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   mappingVersion: Schema.optionalKey(routeIdentity),
+  nativeReadReceiver: Schema.optionalKey(NativeRouteReadReceiverSchema),
   operations: Schema.Array(routeOperation).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(32),
@@ -297,11 +308,14 @@ const readPrincipalContextProvenance = <Context>(
   const provenance = readPrincipalContextProvenanceSeal(context);
   if (!Schema.is(TrustedPrincipalContextSchema)(context)) {
     // A derived operational scope carries the signed company separately from the tenant-local system Principal.
-    const workload = provenance?.redeemedGateway?.workload;
+    const gateway = provenance?.redeemedGateway;
+    const registeredCompany =
+      gateway?.workload?.legalEntityId ??
+      (gateway?.routeScope?.nativeReadReceiver === undefined ? undefined : gateway.routeScope.legalEntityId);
     if (
-      workload?.legalEntityId === undefined ||
+      registeredCompany === undefined ||
       !Schema.is(OperationalLegalEntityCarrierSchema)(context) ||
-      context.legalEntityId !== workload.legalEntityId ||
+      context.legalEntityId !== registeredCompany ||
       !Schema.is(TrustedPrincipalContextSchema)(
         Object.fromEntries(Object.entries(context).filter(([key]) => key !== 'legalEntityId')),
       )
@@ -338,7 +352,9 @@ export const trustResolvedSystemPrincipalContext = <Context extends TrustedPrinc
 };
 
 export const isTrustedSystemPrincipalContext = <Context>(context: Context): boolean =>
-  (hasSystemProvenance(context) || readRedeemedGatewayProvenance(context)?.workload !== undefined) &&
+  (hasSystemProvenance(context) ||
+    readRedeemedGatewayProvenance(context)?.workload !== undefined ||
+    readRedeemedGatewayProvenance(context)?.routeScope?.nativeReadReceiver !== undefined) &&
   Schema.is(SystemPrincipalContextSchema)(context);
 
 const routeScopeMatchesPrincipal = (
@@ -350,11 +366,15 @@ const routeScopeMatchesPrincipal = (
   Schema.is(RegisteredGatewayRouteScopeSchema)(routeScope) &&
   actor === undefined &&
   workload === undefined &&
-  context.authMethod === 'api_key' &&
-  context.authenticationNamespaceId !== undefined &&
+  (routeScope.nativeReadReceiver === undefined
+    ? context.authMethod === 'api_key' &&
+      context.authenticationNamespaceId !== undefined &&
+      context.legalEntityId === routeScope.legalEntityId
+    : context.authMethod === 'system' &&
+      context.authenticationNamespaceId === undefined &&
+      (context.legalEntityId === undefined || context.legalEntityId === routeScope.legalEntityId)) &&
   context.principalId === routeScope.principalId &&
-  context.tenantId === routeScope.tenantId &&
-  context.legalEntityId === routeScope.legalEntityId;
+  context.tenantId === routeScope.tenantId;
 
 const freezeRegisteredGatewayWorkload = (workload: RegisteredGatewayWorkload): RegisteredGatewayWorkload => {
   if (workload.organizationProcessingRead !== undefined) {
@@ -463,7 +483,7 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
     return failProvenanceInvariant('A workload gateway context requires a registered system workload');
   }
   if (routeScope !== undefined && !routeScopeMatchesPrincipal(routeScope, context, actor, workload)) {
-    return failProvenanceInvariant('A registered route scope requires its exact API-key principal and receiver scope');
+    return failProvenanceInvariant('A registered route scope requires its exact authenticated principal and receiver scope');
   }
   if (
     privacyDispatch !== undefined &&
@@ -499,6 +519,9 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
         ? undefined
         : Object.freeze({
             ...routeScope,
+            ...(routeScope.nativeReadReceiver === undefined
+              ? {}
+              : { nativeReadReceiver: Object.freeze({ ...routeScope.nativeReadReceiver }) }),
             operations: Object.freeze(routeScope.operations.map((operation) => Object.freeze({ ...operation }))),
           }),
     scopeAssertion:

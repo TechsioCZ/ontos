@@ -830,6 +830,13 @@ const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): bool
   }
   const routeScope = readVerifiedGatewayRouteScope(input.scope);
   if (
+    routeScope?.nativeReadReceiver !== undefined &&
+    (input.carrier.accessDeclaration?.kind !== 'read' ||
+      input.carrier.accessWorkload?.workloads.includes(routeScope.nativeReadReceiver.workloadKey) !== true)
+  ) {
+    return false;
+  }
+  if (
     routeScope !== undefined &&
     (routeScope.tenantId !== input.scope.tenantId ||
       routeScope.principalId !== input.scope.principalId ||

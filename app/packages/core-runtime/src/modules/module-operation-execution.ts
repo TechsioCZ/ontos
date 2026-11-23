@@ -469,6 +469,9 @@ const matchesSignedOperation = (lease: ModuleOperationExecutionLease, scope: Tru
     return false;
   }
   const route = readVerifiedGatewayRouteScope(scope);
+  if (route?.nativeReadReceiver !== undefined && entrypoint.access !== 'read' && entrypoint.access !== 'historical_read') {
+    return false;
+  }
   return (
     route === undefined ||
     (route.tenantId === scope.tenantId &&

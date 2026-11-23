@@ -65,6 +65,8 @@ export {
   GatewayContextV4ClaimsSchema,
   GatewayContextV5ClaimsSchema,
   GatewayContextV6ClaimsSchema,
+  GatewayContextV9ClaimsSchema,
+  NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
