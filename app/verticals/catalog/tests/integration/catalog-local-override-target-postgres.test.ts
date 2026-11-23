@@ -408,8 +408,13 @@ it.live(
         value: 'No phantom',
       });
       const missingKey = yield* nextId;
+      const coreBeforeMissing = yield* fixture.evidence(coreEvidenceExecutor);
       const absentResult = yield* activate(absentPayload, missingKey);
       expect(absentResult.status).toBe('INVALID');
+      // A missing target emits no domain event and no Outbox message (no new Current fact to announce).
+      const coreAfterMissing = yield* fixture.evidence(coreEvidenceExecutor);
+      expect(coreAfterMissing.events).toEqual(coreBeforeMissing.events);
+      expect(coreAfterMissing.outbox).toEqual(coreBeforeMissing.outbox);
       const absentRows = yield* observe();
       expect(absentRows.products).toEqual([]);
       expect(absentRows.heads).toEqual([]);
@@ -452,6 +457,7 @@ it.live(
         scope: { ...absentPayload.scope, targetId: productRef.resourceId },
         value: 'Owner name',
       };
+      const coreBeforeActivated = yield* fixture.evidence(coreEvidenceExecutor);
       const activated = yield* activate(payload);
       expect(activated).toMatchObject({
         lifecycle: 'ACTIVE',
@@ -459,6 +465,10 @@ it.live(
         revision: 1n,
         status: 'APPLIED',
       });
+      // Positive control for the evidence probe above: an existing target does announce its new Current fact.
+      const coreAfterActivated = yield* fixture.evidence(coreEvidenceExecutor);
+      expect(coreAfterActivated.events.length).toBeGreaterThan(coreBeforeActivated.events.length);
+      expect(coreAfterActivated.outbox.length).toBeGreaterThan(coreBeforeActivated.outbox.length);
       expect(yield* current(payload.scope)).toEqual({
         source: { evidenceRef: payload.evidenceRef, kind: 'LOCAL_OVERRIDE', revision: 1n },
         status: 'CURRENT',
