@@ -72,7 +72,6 @@ import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestPgClient } from '../support/database.ts';
-import { emulatorConfig } from '../support/s3-emulator-config.ts';
 import { startS3FaultProxy } from '../support/s3-fault-proxy.ts';
 import { pointAt, s3FaultInjectableConfig, s3ProviderConfig, s3Providers } from '../support/s3-provider-under-test.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
