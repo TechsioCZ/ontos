@@ -226,8 +226,16 @@ const sourceForDiscount = (contribution: PricingLineDiscountCompositionEvidence)
   sourceKind: 'PRICING_DISCOUNT',
 });
 
+/**
+ * Owner persistence returns fixed-scale decimals ("3.000000000"); the original contribution keeps that owner text
+ * exactly, while an allocation line is a canonical exact decimal ("3"), so the line drops insignificant trailing
+ * zeros without changing its value.
+ */
+const canonicalAllocationAmount = (amount: string): string =>
+  amount.includes('.') ? amount.replace(/\.?0+$/u, '') : amount;
+
 const allocationLine = (occurrenceId: string, amount: PricingMoney): PricingAllocationLine => ({
-  amount,
+  amount: { ...amount, amount: canonicalAllocationAmount(amount.amount) },
   occurrenceId,
   recipientKind: 'MERCHANDISE',
 });
