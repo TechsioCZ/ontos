@@ -302,6 +302,43 @@ describe('Pricing material-evidence final owner fence #786', () => {
     }),
   );
 
+  it.effect('treats one proof reference read at two owner observation instants as one proof', () =>
+    Effect.gen(function* acceptsRepeatedProofObservedLater() {
+      const laterObservedAt = '2026-09-28T12:00:05.000Z';
+      const laterRead = yield* Schema.decodeEffect(PricingSourceEvidenceResultSchema, { onExcessProperty: 'error' })({
+        ...sourceAtRevisionA,
+        completeness: {
+          ...sourceAtRevisionA.completeness,
+          completenessEvidence: { ...sourceAtRevisionA.completeness.completenessEvidence, observedAt: laterObservedAt },
+          temporal: {
+            ...sourceAtRevisionA.completeness.temporal,
+            evaluatedAt: laterObservedAt,
+            observedAt: laterObservedAt,
+          },
+        },
+        currentFacts: sourceAtRevisionA.currentFacts.map((fact) => ({
+          ...fact,
+          temporal: { ...fact.temporal, evaluatedAt: laterObservedAt, observedAt: laterObservedAt },
+        })),
+      });
+      let receivedSourceCount = 0;
+      const fence: PricingMaterialEvidenceOwnerFencePort = {
+        verifyImmediatelyBeforePublication: (request) => {
+          receivedSourceCount = request.sources.length;
+          return ownerFence(unchangedObservation).verifyImmediatelyBeforePublication(request);
+        },
+      };
+
+      const result = yield* verifyPricingMaterialEvidenceOwnerFence('candidate-786', scope, [
+        sourceAtRevisionA,
+        laterRead,
+      ]).pipe(Effect.provideService(PricingMaterialEvidenceOwnerFinalFence, fence));
+
+      expect(receivedSourceCount).toBe(1);
+      expect(result.sources).toHaveLength(1);
+    }),
+  );
+
   it.effect('rejects conflicting proof meaning that reuses one opaque verification reference', () =>
     Effect.gen(function* rejectsConflictingProofReuse() {
       const conflictingSource = yield* Schema.decodeEffect(PricingSourceEvidenceResultSchema, {

@@ -29,6 +29,15 @@ import {
   PricingPurchaseContextVerificationResponseSchema,
 } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
+import {
+  CustomerPriceGroupResolutionRequestSchema,
+  CustomerPriceGroupResolutionResponseSchema,
+  customerPriceGroupResolutionPredicateRef,
+} from '@app/commerce-customer-context/api/customer-price-group-resolution';
+import type { CustomerPriceGroupResolutionRequest } from '@app/commerce-customer-context/api/customer-price-group-resolution';
+import { PriceGroupCompatibilityDecisionSchema } from '@app/price-group-catalog-contracts/price-group';
+import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
+import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { pricingExternalOwnerEvidenceValidationService } from '../../src/services/external-owner-evidence-validation.service.ts';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
@@ -74,6 +83,8 @@ import {
   shellGatewayContextContract,
 } from '@app/shared-contracts';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
+import { PricingDiscountIdentityKeySchema } from '@app/pricing-contracts/domain/discount';
+import type { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { SetSupportedCurrenciesV2PayloadSchema } from '@app/pricing-contracts/domain/currency-support';
 import { QuantityTierIdentityKeySchema } from '@app/pricing-contracts/domain/quantity-tier';
@@ -108,6 +119,7 @@ import {
 } from 'effect/http';
 import { assert, expect } from 'effect-rstest';
 import { commercialFeePersistenceForScope } from '../../src/services/commercial-fee-persistence.service.ts';
+import { contractualDiscountPersistenceForScope } from '../../src/services/contractual-discount-persistence.service.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
 import type { DefinePricePersistenceCommand } from '../../src/services/price-persistence.service.ts';
 import { quantityTierPersistenceForScope } from '../../src/services/quantity-tier-persistence.service.ts';
@@ -133,6 +145,9 @@ const PRICING_MODULE = 'commerce.pricing' as const;
 const CATALOG_MODULE = 'commerce.catalog' as const;
 const HARNESS_MARKET = { channelId: 'B2C', marketId: 'component-test' } as const;
 const CUSTOMER_CONTEXT_AUDIENCE = 'commerce-customer-context' as const;
+const CUSTOMER_CONTEXT_MODULE = 'commerce.customer-context' as const;
+const PRICE_GROUP_CATALOG_AUDIENCE = 'price-group-catalog' as const;
+const PRICE_GROUP_CATALOG_MODULE = 'pricing.price-group-catalog' as const;
 const protocolVersion = 'ontos.catalog.whole-candidate.fixture.v1' as const;
 
 const version = protocolVersion;
@@ -246,7 +261,6 @@ const catalogActionKeys = [
 ].map((slug) => ActionKeySchema.make(`commerce.catalog.${slug}`));
 const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const appRoot = new URL('../../../../', import.meta.url).pathname;
-const componentPermission = 'pricing.whole_candidate_component_test.read';
 /** Services the harness needs from its caller: process spawning, crypto, HTTP and the staff authentication namespaces. */
 export const publicPricingReadHarnessServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -257,7 +271,12 @@ export const publicPricingReadHarnessServices = NodeChildProcessSpawner.layer.pi
 export class WholeCandidateReceiverTestUnavailable extends Schema.TaggedError<WholeCandidateReceiverTestUnavailable>()(
   'WholeCandidateReceiverTestUnavailable',
   { stage: Schema.String },
-) {}
+) {
+  /** Surfaces the failing stage in the test report instead of an empty message. */
+  override get message(): string {
+    return this.stage;
+  }
+}
 const unavailable = (stage: string) => new WholeCandidateReceiverTestUnavailable({ stage });
 // Component setup intentionally uses Pricing's real scoped persistence, not registered
 // DefinePrice admission. No Market/CCC authority or published whole result is invented.
@@ -416,6 +435,8 @@ const declaredMarketPrerequisite1225 = (payload: PricingCurrentMarketEvidenceReq
     const encodedRequest = yield* Schema.encodeEffect(PricingCurrentMarketEvidenceRequestSchema)(payload);
     const { channel, marketRef, sellingLegalEntityRef } = payload.commercialScope;
     const observedAt = DateTime.formatIso(yield* DateTime.now);
+    // The owner answers a verification request with the proof it was asked about, so the reference is stable.
+    const marketVerificationRef = 'TEST:harness:market-proof';
     const declared = {
       market: {
         channels: [channel],
@@ -442,14 +463,14 @@ const declaredMarketPrerequisite1225 = (payload: PricingCurrentMarketEvidenceReq
           ownerRootRef: 'TEST:1225:market-root',
           ownerSetRevisionRef: 'TEST:1225:market-set',
           predicateRef: 'TEST:1225:market-predicate',
-          verificationRef: 'TEST:1225:market-proof',
+          verificationRef: marketVerificationRef,
         },
         currentFacts: [
           {
             effectivePeriod: { startsAt: encodedRequest.effectiveAt },
             factRef: marketRef.resourceId,
             factRevisionRef: 'TEST:1225:market-definition',
-            verificationRef: 'TEST:1225:market-proof',
+            verificationRef: marketVerificationRef,
           },
         ],
         state: 'PRESENT',
@@ -672,8 +693,18 @@ const deriveHarnessSnapshot = Effect.fn('PublicPricingReadHarness.deriveSnapshot
 });
 
 // Real built contracts for every owner whose Pricing requirement the registered Read gates on.
-const harnessContractVerticals = ['commerce-market-catalog', 'commerce-customer-context'] as const;
-const HARNESS_PRICING_AUDIENCES = ['catalog', 'commerce-market-catalog', CUSTOMER_CONTEXT_AUDIENCE, 'pricing'];
+const harnessContractVerticals = [
+  'commerce-market-catalog',
+  'commerce-customer-context',
+  'price-group-catalog',
+] as const;
+const HARNESS_PRICING_AUDIENCES = [
+  'catalog',
+  'commerce-market-catalog',
+  CUSTOMER_CONTEXT_AUDIENCE,
+  PRICE_GROUP_CATALOG_AUDIENCE,
+  'pricing',
+];
 
 const productionReadRuntime = (
   runtimeConnectionString: string,
@@ -716,7 +747,11 @@ export interface PublicPricingReadHarnessOptions {
 
 /** One owner final-fence call and its typed outcome, kept beside the customer-safe projection. */
 export interface HarnessFenceObservation {
+  /** Sizes of the Catalog Pricing-purpose equivalence groups handed to this owner (one entry per group). */
+  readonly equivalenceGroupSizes: readonly number[];
   readonly failure?: string;
+  /** Kinds of owner-native source material the Read retained and handed to this owner, in order. */
+  readonly materialKinds: readonly string[];
   readonly operation: string;
   readonly owner: string;
 }
@@ -733,6 +768,33 @@ const recordFence = (observed: HarnessFenceObservation[], entry: HarnessFenceObs
     observed.push(entry);
   });
 
+interface ObservedTypedSources {
+  readonly typedSources?: readonly { readonly verificationMaterial: { readonly kind: string } }[];
+}
+
+const isEquivalenceMaterial = Schema.is(
+  Schema.Struct({
+    kind: Schema.Literal('CATALOG_EQUIVALENCE_AUTHORITY'),
+    request: Schema.Struct({ members: Schema.Array(Schema.Unknown) }),
+  }),
+);
+
+const fenceObservationOf = (
+  input: ObservedTypedSources,
+  entry: Pick<HarnessFenceObservation, 'failure' | 'operation' | 'owner'>,
+): HarnessFenceObservation => {
+  const materials = (input.typedSources ?? []).map(({ verificationMaterial }) => verificationMaterial);
+  const observation = {
+    equivalenceGroupSizes: materials.flatMap((material) =>
+      isEquivalenceMaterial(material) ? [material.request.members.length] : [],
+    ),
+    materialKinds: materials.map(({ kind }) => kind),
+    operation: entry.operation,
+    owner: entry.owner,
+  };
+  return entry.failure === undefined ? observation : { ...observation, failure: entry.failure };
+};
+
 const observeGateway = (
   gateway: PricingOwnerMaterialEvidenceFenceGateway,
   owner: string,
@@ -740,13 +802,17 @@ const observeGateway = (
 ): PricingOwnerMaterialEvidenceFenceGateway => ({
   confirmObservedGenerationsThrough: (input) =>
     gateway.confirmObservedGenerationsThrough(input).pipe(
-      Effect.tap(() => recordFence(observed, { operation: 'confirm', owner })),
-      Effect.tapError((cause) => recordFence(observed, { failure: cause._tag, operation: 'confirm', owner })),
+      Effect.tap(() => recordFence(observed, fenceObservationOf(input, { operation: 'confirm', owner }))),
+      Effect.tapError((cause) =>
+        recordFence(observed, fenceObservationOf(input, { failure: cause._tag, operation: 'confirm', owner })),
+      ),
     ),
   verifyOpaqueProofsAgainstCurrentState: (input) =>
     gateway.verifyOpaqueProofsAgainstCurrentState(input).pipe(
-      Effect.tap(() => recordFence(observed, { operation: 'verify', owner })),
-      Effect.tapError((cause) => recordFence(observed, { failure: cause._tag, operation: 'verify', owner })),
+      Effect.tap(() => recordFence(observed, fenceObservationOf(input, { operation: 'verify', owner }))),
+      Effect.tapError((cause) =>
+        recordFence(observed, fenceObservationOf(input, { failure: cause._tag, operation: 'verify', owner })),
+      ),
     ),
 });
 
@@ -863,7 +929,127 @@ const defineHarnessCommercialFee = Effect.fn('PublicPricingReadHarness.defineCom
   },
 );
 
+/**
+ * Re-produces a Pricing Quantity Tier under a revised Catalog Unit rule through Pricing's own scoped persistence: the
+ * Tier bound to the superseded rule is retired and an equivalent Tier is defined for the fresh Quantity Basis.
+ * Pricing never rebinds a Tier on its own; selection fails closed while a Tier for another rule is still Current.
+ */
+const reproduceHarnessTier = Effect.fn('PublicPricingReadHarness.reproduceTier')(function* reproduceHarnessTier(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  input: {
+    readonly fresh: typeof CatalogQuantityHandoffReadySchema.Type;
+    readonly previous: typeof CatalogQuantityHandoffReadySchema.Type;
+    readonly priceRef: typeof PriceRefSchema.Type;
+    readonly resultingUnitPrice: string;
+    readonly thresholdQuantity: string;
+  },
+) {
+  const tiers = yield* quantityTierPersistenceForScope(transaction, scope);
+  const keyFor = (handoff: typeof CatalogQuantityHandoffReadySchema.Type) =>
+    Schema.decodeUnknownEffect(QuantityTierIdentityKeySchema)({
+      priceRef: input.priceRef,
+      quantityBasis: {
+        catalogQuantityBasis: handoff.quantityBasis,
+        priceUnitBasis: { quantity: '1', unitRef: handoff.unitRef },
+      },
+      thresholdQuantity: input.thresholdQuantity,
+    });
+  const previousKey = yield* keyFor(input.previous);
+  const freshKey = yield* keyFor(input.fresh);
+  const trustedOperationAt = DateTime.toDateUtc(yield* DateTime.now);
+  const effectiveAt = DateTime.formatIso(DateTime.fromDateUnsafe(trustedOperationAt));
+  const schedule = yield* tiers.readSchedule({ identityKey: previousKey, trustedOperationAt });
+  if (schedule.outcome !== 'QUANTITY_TIER_SCHEDULE_CURRENT' || schedule.schedule.current === undefined) {
+    return yield* unavailable('harness-tier-previous-not-current');
+  }
+  const { current } = schedule.schedule;
+  const retired = yield* tiers.revise({
+    actingPrincipalId: scope.principalId,
+    actionInvocationId: yield* nextId,
+    effectiveTo: effectiveAt,
+    expectedCurrent: {
+      effectivePeriod: current.effectivePeriod,
+      identityKey: previousKey,
+      revision: current.definition.revision.revision,
+      revisionId: current.definition.revision.revisionId,
+      scheduleRevision: schedule.schedule.scheduleRevision,
+    },
+    identityKey: previousKey,
+    intent: 'RETIRE_CURRENT',
+    reason: 'Pricing public Read harness: retire the Tier bound to the superseded Unit rule',
+    requestCorrelationId: yield* nextId,
+    trustedOperationAt,
+  });
+  expect(retired.outcome).toBe('QUANTITY_TIER_REVISED');
+  const defined = yield* tiers.define({
+    actingPrincipalId: scope.principalId,
+    actionInvocationId: yield* nextId,
+    effectivePeriod: { effectiveFrom: effectiveAt, effectiveTo: null },
+    expectedState: { state: 'ABSENT' },
+    identityKey: freshKey,
+    reason: 'Pricing public Read harness: Tier under the revised Unit rule',
+    requestCorrelationId: yield* nextId,
+    resultingUnitPrice: { amount: input.resultingUnitPrice, currencyCode: 'CZK' },
+    trustedOperationAt,
+  });
+  expect(defined.outcome).toBe('QUANTITY_TIER_CREATED');
+  return defined;
+});
+
+const defineHarnessContractualDiscount = Effect.fn('PublicPricingReadHarness.defineContractualDiscount')(
+  function* defineHarnessContractualDiscount(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    input: {
+      readonly amount: string;
+      readonly effectiveFrom: string;
+      readonly handoff: typeof CatalogQuantityHandoffReadySchema.Type;
+      readonly priceGroupRef: HarnessProfileIdentity['priceGroupRef'];
+    },
+  ) {
+    const { legalEntityId } = scope;
+    if (legalEntityId === undefined) {
+      return yield* unavailable('harness-discount-requires-legal-entity-scope');
+    }
+    const persistence = yield* contractualDiscountPersistenceForScope(transaction, scope);
+    const actionInvocationId = yield* nextId;
+    const identityKey = yield* Schema.decodeUnknownEffect(PricingDiscountIdentityKeySchema)({
+      audience: { kind: 'PRICE_GROUP', priceGroupRef: input.priceGroupRef },
+      basis: {
+        catalogSelection: input.handoff.selection,
+        kind: 'VARIANT_LINE',
+        unitBasis: { quantity: '1', unitRef: input.handoff.unitRef },
+      },
+      commercialScope: { ...HARNESS_MARKET, sellingLegalEntityId: legalEntityId },
+      currencyCode: 'CZK',
+      effectKind: 'FIXED_MONETARY_AMOUNT',
+      family: 'CONTRACTUAL_DISCOUNT',
+      monetaryBoundary: 'PRE_TAX',
+      scope: 'VARIANT_LINE',
+    });
+    const result = yield* persistence.manage({
+      actingPrincipalId: scope.principalId,
+      actionInvocationId,
+      configuredEffect: { kind: 'FIXED_MONETARY_AMOUNT', level: { amount: input.amount, currencyCode: 'CZK' } },
+      effectivePeriod: { effectiveFrom: input.effectiveFrom, effectiveTo: null },
+      expectedState: { state: 'ABSENT' },
+      identityKey,
+      intent: 'CREATE',
+      reason: 'Pricing public Read harness Discount',
+      requestCorrelationId: actionInvocationId,
+      trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveFrom)),
+    });
+    expect(result.outcome).toBe('CONTRACTUAL_DISCOUNT_CREATED');
+    return result;
+  },
+);
+
+const isProfileSubject = Schema.is(Schema.Struct({ kind: Schema.Literal('PROFILE') }));
+
+/** Declared Customer Context purchase-context verdict for a Guest or a Profile subject (published contract only). */
 const declaredPurchaseContextEvidence = (request: {
+  readonly actor: { readonly kind: string; readonly principalId?: string };
   readonly operationTime: string;
   readonly purchasingContext: {
     readonly channelId: string;
@@ -884,13 +1070,23 @@ const declaredPurchaseContextEvidence = (request: {
     },
     ownerRef: request.purchasingContext.contextRef,
     ownerRevisionRef: request.purchasingContext.contextRevision,
-    subjectAuthority: {
-      guestEvidenceAuthorityRef: 'TEST:harness:declared-guest-authority',
-      guestSessionAuthorityRef: 'TEST:harness:declared-session-authority',
-      kind: 'GUEST',
-      subject: request.subject,
-      subjectAuthorityRevisionRef: '1',
-    },
+    subjectAuthority: isProfileSubject(request.subject)
+      ? {
+          actorPrincipalId: request.actor.principalId,
+          kind: 'PROFILE',
+          partyAuthorityRef: 'TEST:harness:declared-party-authority',
+          partyAuthorityRevisionRef: '1',
+          subject: request.subject,
+          subjectAuthorityRef: 'TEST:harness:declared-profile-authority',
+          subjectAuthorityRevisionRef: '1',
+        }
+      : {
+          guestEvidenceAuthorityRef: 'TEST:harness:declared-guest-authority',
+          guestSessionAuthorityRef: 'TEST:harness:declared-session-authority',
+          kind: 'GUEST',
+          subject: request.subject,
+          subjectAuthorityRevisionRef: '1',
+        },
     verificationRef: 'TEST:harness:declared-purchase-verification',
     verifiedScope: {
       channelId: request.purchasingContext.channelId,
@@ -900,8 +1096,114 @@ const declaredPurchaseContextEvidence = (request: {
     },
   });
 
+// Declared Price Group Catalog definition: one fixed revision, so the Customer Context assignment evidence and the
+// Catalog compatibility answer agree exactly, as two published owner answers about one Price Group would.
+const harnessPriceGroupDefinition = {
+  catalogRevision: 1,
+  definitionEffectivePeriod: { effectiveFrom: '2020-01-01T00:00:00.000Z', effectiveTo: null },
+  definitionRevisionId: '10000000-0000-4000-8000-0000000012d5',
+  definitionRevisionNumber: 1,
+  meaningFingerprint: 'd'.repeat(64),
+  requiredContract: { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
+} as const;
+const HARNESS_PRICE_GROUP_GENERATION = 'TEST:harness:price-group-generation:1';
+
+interface HarnessProfileIdentity {
+  readonly assignmentRef: {
+    readonly moduleId: string;
+    readonly resourceId: string;
+    readonly resourceType: string;
+    readonly tenantId: string;
+  };
+  readonly priceGroupRef: {
+    readonly moduleId: string;
+    readonly resourceId: string;
+    readonly resourceType: string;
+    readonly tenantId: string;
+  };
+}
+
+/** Declared Price Group Catalog answer: the one harness definition is USABLE for the exact requested group. */
+const declaredPriceGroupCompatibility = (request: ValidatePriceGroupCompatibilityRequest, nativeClock: Clock.Clock) =>
+  Effect.gen(function* declaredPriceGroupCompatibilityResponse() {
+    // The Price Group Catalog verifies at the exact operation instant it was asked about.
+    const decision = yield* Schema.decodeUnknownEffect(PriceGroupCompatibilityDecisionSchema)({
+      evidence: {
+        ...harnessPriceGroupDefinition,
+        priceGroupRef: request.priceGroupRef,
+        requiredContract: request.requiredContract,
+        trustedOperationAt: request.trustedOperationAt,
+        verifiedAt: request.trustedOperationAt,
+      },
+      kind: 'USABLE',
+    });
+    return yield* Schema.encodeEffect(PriceGroupCompatibilityDecisionSchema)(decision);
+  }).pipe(Effect.orDie, Effect.provideService(Clock.Clock, nativeClock));
+
+/**
+ * Declared Customer Context answer: the harness Profile is ASSIGNED to the declared Price Group, with one stable
+ * generation on every replay so the owner final fence can confirm it.
+ */
+const declaredCustomerPriceGroupResolution = (
+  request: CustomerPriceGroupResolutionRequest,
+  identity: HarnessProfileIdentity,
+  nativeClock: Clock.Clock,
+) =>
+  Effect.gen(function* declaredCustomerPriceGroupResolutionResponse() {
+    const clockNow = DateTime.formatIso(yield* DateTime.now);
+    const observedAt = clockNow < request.effectiveAt ? request.effectiveAt : clockNow;
+    const predicateRef = customerPriceGroupResolutionPredicateRef(request.profile, request.effectiveAt);
+    const generation = HARNESS_PRICE_GROUP_GENERATION;
+    const response = yield* Schema.decodeUnknownEffect(CustomerPriceGroupResolutionResponseSchema)({
+      completenessEvidence: { observedAt, ownerRevision: generation, scope: { kind: 'EXACT_PREDICATE', predicateRef } },
+      currentnessEvidence: {
+        evaluatedAt: request.effectiveAt,
+        generation,
+        observedAt,
+        ownerRevision: generation,
+        predicateRef,
+        revalidatedAt: observedAt,
+        verificationMode: 'OWNER_CURRENT_SET_REVALIDATED',
+      },
+      effectiveAt: request.effectiveAt,
+      generation,
+      observedAt,
+      profile: request.profile,
+      resolution: {
+        _tag: 'ASSIGNED',
+        assignmentRef: identity.assignmentRef,
+        assignmentRevision: 1,
+        compatibility: {
+          ...harnessPriceGroupDefinition,
+          priceGroupRef: identity.priceGroupRef,
+          trustedOperationAt: request.effectiveAt,
+          verifiedAt: request.effectiveAt,
+        },
+        effectiveFrom: '2020-01-01T00:00:00.000Z',
+        effectiveTo: null,
+        priceGroupRef: identity.priceGroupRef,
+      },
+      verificationReceipt: {
+        generation,
+        issuedAt: observedAt,
+        ownerModuleId: CUSTOMER_CONTEXT_MODULE,
+        ownerRevision: generation,
+        predicateRef,
+        // One verification reference per observation, as the owner issues: one reference never names two proofs.
+        verificationRef: `TEST:harness:declared-price-group-verification:${observedAt}`,
+      },
+    });
+    return yield* Schema.encodeEffect(CustomerPriceGroupResolutionResponseSchema)(response);
+  }).pipe(Effect.orDie, Effect.provideService(Clock.Clock, nativeClock));
+
 type HarnessEffect<Success> = Effect.Effect<Success, WholeCandidateReceiverTestUnavailable, Crypto.Crypto>;
 type HarnessCatalogHandoff = typeof CatalogQuantityHandoffReadySchema.Type;
+type HarnessPriceGroupRef = HarnessProfileIdentity['priceGroupRef'];
+interface HarnessProfileSubject {
+  readonly authorizationSubject: { readonly kind: 'RETAIL' };
+  readonly kind: 'PROFILE';
+  readonly profileRef: HarnessProfileIdentity['assignmentRef'];
+}
 type HarnessCatalogSelection = typeof CatalogSelectionSchema.Type;
 
 /** What a scenario may rely on; every member is produced through a supported owner path or the registered Read. */
@@ -921,16 +1223,48 @@ export interface PublicPricingReadHarness {
   readonly makeRequest: (input: {
     readonly lines: readonly { readonly handoff: HarnessCatalogHandoff; readonly occurrenceId: string }[];
     readonly operationTime: string;
+    /**
+     * Guest by default; PROFILE selects the declared Price Group assignment and its Discount audience;
+     * OTHER_GROUP_PROFILE is a Profile the declared Customer Context assigns to a different Price Group.
+     */
+    readonly subject?: 'GUEST' | 'OTHER_GROUP_PROFILE' | 'PROFILE';
   }) => HarnessEffect<typeof CurrentPricingDecisionRequestSchema.Type>;
   readonly managerPrincipalId: string;
   /** Requests the declared Commerce Market stand-in answered through the published contract. */
   readonly marketRequests: readonly PricingCurrentMarketEvidenceRequest[];
   readonly operationTime: string;
+  /** A Profile the declared Customer Context assigns to a DIFFERENT Price Group than `priceGroupRef`. */
+  readonly otherGroupProfileSubject: HarnessProfileSubject;
   readonly prepareFreshHandoff: (selection: HarnessCatalogSelection) => HarnessEffect<HarnessCatalogHandoff>;
-  readonly priceComponents: readonly { readonly handoff: HarnessCatalogHandoff }[];
+  readonly priceComponents: readonly {
+    readonly handoff: HarnessCatalogHandoff;
+    readonly priceRef: typeof PriceRefSchema.Type;
+  }[];
+  /** Requests the declared Price Group Catalog stand-in answered. */
+  readonly priceGroupCompatibilityRequests: readonly ValidatePriceGroupCompatibilityRequest[];
+  /** The declared Price Group the harness Profile is assigned to; Discounts are produced for this audience. */
+  readonly priceGroupRef: HarnessPriceGroupRef;
+  /** Requests the declared Customer Context price-group stand-in answered, including final-fence replays. */
+  readonly priceGroupRequests: readonly CustomerPriceGroupResolutionRequest[];
   readonly produceCommercialFee: (input: {
     readonly amount: string;
     readonly handoff: HarnessCatalogHandoff;
+  }) => HarnessEffect<void>;
+  /** A Current Price Group VARIANT_LINE Discount of a fixed amount; visible to Profile subjects only. */
+  readonly produceContractualDiscount: (input: {
+    readonly amount: string;
+    readonly handoff: HarnessCatalogHandoff;
+  }) => HarnessEffect<void>;
+  /** The harness Profile subject (RETAIL), assigned to `priceGroupRef` by the declared Customer Context. */
+  readonly profileSubject: HarnessProfileSubject;
+  /**
+   * Retires the Tier bound to `previous` (the superseded Unit rule) and defines its equivalent for `fresh` (default
+   * resulting unit price 75, threshold 2), through Pricing's own scoped persistence.
+   */
+  readonly reproduceTier: (input: {
+    readonly fresh: HarnessCatalogHandoff;
+    readonly previous: HarnessCatalogHandoff;
+    readonly resultingUnitPrice?: string;
   }) => HarnessEffect<void>;
   readonly reviseFirstUnitRule: () => HarnessEffect<number>;
   /** One call through the registered production Read; nothing below the Read boundary is substituted. */
@@ -942,16 +1276,26 @@ export interface PublicPricingReadHarness {
     readonly p2: HarnessCatalogSelection;
     readonly q1: HarnessCatalogSelection;
   };
+  /** Paths the fixture Shell refused (an owner call it could not route). */
+  readonly shellRefusals: readonly string[];
   readonly tenantId: string;
   /** Each whole-attempt result of the registered Read, so a customer-safe non-success stays diagnosable. */
   readonly wholeAttempts: readonly HarnessWholeAttemptObservation[];
 }
 
+const hasMessage = Schema.is(Schema.Struct({ message: Schema.String }));
+
 /** Narrows every owner/runtime failure to this harness's one nameable, tagged failure. */
 const confine = <Success, Failure extends { readonly _tag: string }, Requirements>(
   stage: string,
   effect: Effect.Effect<Success, Failure, Requirements>,
-) => effect.pipe(Effect.mapError((cause) => unavailable(`${stage}:${cause._tag}`)));
+) =>
+  effect.pipe(
+    Effect.mapError((cause) => {
+      const detail = hasMessage(cause) ? `:${cause.message.slice(0, 600)}` : '';
+      return unavailable(`${stage}:${cause._tag}${detail}`);
+    }),
+  );
 
 /**
  * Shared Pricing-owned native harness for the registered public Current Pricing Read (#1225, #1242, #1250, #1277).
@@ -962,10 +1306,20 @@ const confine = <Success, Failure extends { readonly _tag: string }, Requirement
  * Currency, Price, Quantity Tier and Commercial Fee, and the real Catalog receiver process reached through the
  * published Catalog client over a Shell fixture.
  *
- * Declared (explicit, published-contract answers, never private owner fixtures): the Commerce Market evidence
- * owner and the Customer Context purchase-context verdict. Promotion is the production "not installed" fence.
- * Guest subjects have no Discount audience, so the production Discount reader returns its empty set; a Discount
- * scenario needs a Profile subject and Customer Context price-group evidence and extends this harness.
+ * Declared stand-ins, each labelled and answering only through a published owner contract, never a private owner
+ * fixture:
+ *  - Core access gate: `makeTestAccessGateLayers` with `defaultAnswer: ALLOWED` (allow-all for the Pricing Read's own
+ *    permission check, in place of Core's SpiceDB-backed gate). Catalog's own permissions are real grants.
+ *  - Delegated gateway context: the Shell fixture below issues the Catalog-signed module credential Pricing uses to
+ *    reach owners (in place of the real Shell issuer); only an Assertion subject for this composition is admitted.
+ *  - Commerce Market evidence owner (published Market evidence contract) and the Customer Context purchase-context
+ *    verdict (published purchase-context contract).
+ *  - Customer Context price-group assignment and Price Group Catalog compatibility (published contracts), answered
+ *    only for a Profile subject, with the same generation on every replay so the owner final fence can confirm it.
+ *  - Promotion is the production "not installed" fence.
+ * Guest subjects have no Discount audience, so the production Discount reader returns its empty set. A Profile
+ * subject is assigned the declared Price Group; Contractual Discounts are produced through Pricing's own scoped
+ * persistence, not registered admission, and the production Discount reader/applicability reads them.
  *
  * Needs a clean git tree (release identity) and built catalog, pricing, commerce-market-catalog and
  * commerce-customer-context contracts plus the Shell output.
@@ -1048,7 +1402,13 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
         compositionRevision: composition.composition.revision,
         moduleAccess: 'configured-modules',
-        moduleKeys: [CATALOG_MODULE, PRICING_MODULE, 'commerce.market-catalog', 'commerce.customer-context'],
+        moduleKeys: [
+          CATALOG_MODULE,
+          PRICING_MODULE,
+          'commerce.market-catalog',
+          CUSTOMER_CONTEXT_MODULE,
+          PRICE_GROUP_CATALOG_MODULE,
+        ],
         runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
       }),
       (value) => value.close().pipe(Effect.orDie),
@@ -1062,7 +1422,6 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     const permissions = yield* makeContextPermissionRelationshipMutationLive();
     const principal = { principalId: fixture.manager.principalId, tenantId: fixture.tenantId };
     const targets = [
-      { moduleId: PRICING_MODULE, permission: componentPermission },
       { moduleId: CATALOG_MODULE, permission: 'commerce.catalog.read.quantity-preparation' },
       { moduleId: CATALOG_MODULE, permission: 'commerce.catalog.read.pricing-purpose-equivalence' },
       { moduleId: CATALOG_MODULE, permission: 'commerce.catalog.read.quantity-basis-compatibility' },
@@ -1259,6 +1618,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     const catalogPath = '/catalog-api';
     const marketPath = '/commerce-market-catalog-api';
     const customerContextPath = '/commerce-customer-context-api';
+    const priceGroupCatalogPath = '/price-group-catalog-api';
     const shellContext = yield* Layer.build(NodeHttpServer.layerTest);
     const shell = Context.get(shellContext, HttpServer.HttpServer);
     const client = yield* HttpClient.HttpClient;
@@ -1273,9 +1633,47 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       Match.value(audience).pipe(
         Match.when('catalog', () => catalogPath),
         Match.when(CUSTOMER_CONTEXT_AUDIENCE, () => customerContextPath),
+        Match.when(PRICE_GROUP_CATALOG_AUDIENCE, () => priceGroupCatalogPath),
         Match.orElse(() => marketPath),
       );
     const marketRequests: PricingCurrentMarketEvidenceRequest[] = [];
+    const priceGroupRequests: CustomerPriceGroupResolutionRequest[] = [];
+    const priceGroupCompatibilityRequests: ValidatePriceGroupCompatibilityRequest[] = [];
+    const shellRefusals: string[] = [];
+    const priceGroupRef = {
+      moduleId: PRICE_GROUP_CATALOG_MODULE,
+      resourceId: yield* nextId,
+      resourceType: 'pricing.price-group-catalog.price-group',
+      tenantId: fixture.tenantId,
+    } as const;
+    const profileIdentity: HarnessProfileIdentity = {
+      assignmentRef: {
+        moduleId: CUSTOMER_CONTEXT_MODULE,
+        resourceId: yield* nextId,
+        resourceType: 'commerce.customer-context.customer-price-group-assignment',
+        tenantId: fixture.tenantId,
+      },
+      priceGroupRef,
+    };
+    const makeProfileSubject = Effect.fn('PublicPricingReadHarness.profileSubject')(function* makeProfileSubject() {
+      return {
+        authorizationSubject: { kind: 'RETAIL' as const },
+        kind: 'PROFILE' as const,
+        profileRef: {
+          moduleId: CUSTOMER_CONTEXT_MODULE,
+          resourceId: yield* nextId,
+          resourceType: 'commerce.customer-context.retail-customer-profile',
+          tenantId: fixture.tenantId,
+        },
+      };
+    });
+    const profileSubject = yield* makeProfileSubject();
+    // A second Profile, assigned by the declared Customer Context to a DIFFERENT Price Group, for audience controls.
+    const otherGroupProfileSubject = yield* makeProfileSubject();
+    const otherGroupIdentity: HarnessProfileIdentity = {
+      assignmentRef: { ...profileIdentity.assignmentRef, resourceId: yield* nextId },
+      priceGroupRef: { ...priceGroupRef, resourceId: yield* nextId },
+    };
     const wholeAttempts: HarnessWholeAttemptObservation[] = [];
     const fenceCalls: HarnessFenceObservation[] = [];
     yield* shell.serve(
@@ -1312,6 +1710,32 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
           marketRequests.push(decoded);
           return yield* HttpServerResponse.json(yield* declaredMarketPrerequisite1225(decoded, nativeClock));
         }
+        if (url.pathname === `${customerContextPath}/reads/customer-price-group-resolution`) {
+          // The published Customer Context price-group assignment contract, answered by an explicit declared owner.
+          const decoded = yield* request.json.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(CustomerPriceGroupResolutionRequestSchema)),
+            Effect.mapError(() => unavailable('fixture-price-group-request')),
+          );
+          priceGroupRequests.push(decoded);
+          return yield* HttpServerResponse.json(
+            yield* declaredCustomerPriceGroupResolution(
+              decoded,
+              decoded.profile.resourceId === otherGroupProfileSubject.profileRef.resourceId
+                ? otherGroupIdentity
+                : profileIdentity,
+              nativeClock,
+            ),
+          );
+        }
+        if (url.pathname === `${priceGroupCatalogPath}/reads/validate-price-group-compatibility`) {
+          // The published Price Group Catalog compatibility contract, answered by an explicit declared owner.
+          const decoded = yield* request.json.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(ValidatePriceGroupCompatibilityRequestSchema)),
+            Effect.mapError(() => unavailable('fixture-price-group-compatibility-request')),
+          );
+          priceGroupCompatibilityRequests.push(decoded);
+          return yield* HttpServerResponse.json(yield* declaredPriceGroupCompatibility(decoded, nativeClock));
+        }
         if (url.pathname.startsWith(`${customerContextPath}/`)) {
           // The published Customer Context purchase-context contract, answered by an explicit declared owner.
           const decoded = yield* request.json.pipe(
@@ -1338,6 +1762,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
           payload.compositionRevision !== composition.composition.revision ||
           !isAssertionSubject(payload.subject)
         ) {
+          shellRefusals.push(url.pathname);
           return HttpServerResponse.text('Delegated gateway context refused by the fixture Shell', { status: 403 });
         }
         const issued = yield* catalogAssertion;
@@ -1381,6 +1806,56 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         )
         .pipe(Effect.asVoid);
 
+    /**
+     * A Current Contractual Discount for the declared Price Group on one exact Variant line, produced through
+     * Pricing's own scoped persistence (not registered admission). WHOLE_PURCHASE Discounts are Counterparty-only by
+     * domain rule, and the production Discount reader refuses a Counterparty Discount without Party owner evidence,
+     * so the Price Group VARIANT_LINE Discount is the Discount fact the production Read can price today.
+     */
+    const produceContractualDiscount = (input: {
+      readonly amount: string;
+      readonly handoff: typeof CatalogQuantityHandoffReadySchema.Type;
+    }) =>
+      fixture
+        .prepareOwner(
+          (transaction, scope) =>
+            defineHarnessContractualDiscount(transaction, scope, {
+              ...input,
+              effectiveFrom: operationTime,
+              priceGroupRef,
+            }),
+          'required',
+        )
+        .pipe(Effect.asVoid);
+
+    /** Retires the Tier bound to the superseded Unit rule and defines its equivalent for the fresh Quantity Basis. */
+    const reproduceTier = Effect.fn('PublicPricingReadHarness.reproduceTierForRevisedRule')(
+      function* reproduceTierForRevisedRule(input: {
+        readonly fresh: HarnessCatalogHandoff;
+        readonly previous: HarnessCatalogHandoff;
+        readonly resultingUnitPrice?: string;
+      }) {
+        const component = priceComponents.find(
+          ({ handoff }) => handoff.selection.variantRef.resourceId === input.previous.selection.variantRef.resourceId,
+        );
+        if (component === undefined) {
+          return yield* unavailable('harness-tier-price-component-absent');
+        }
+        const resultingUnitPrice = input.resultingUnitPrice ?? '75';
+        return yield* fixture.prepareOwner(
+          (transaction, scope) =>
+            reproduceHarnessTier(transaction, scope, {
+              fresh: input.fresh,
+              previous: input.previous,
+              priceRef: component.priceRef,
+              resultingUnitPrice,
+              thresholdQuantity: '2',
+            }),
+          'required',
+        );
+      },
+    );
+
     /** Catalog's own supported owner operation: revises the first Unit rule, superseding every earlier basis. */
     const reviseFirstUnitRule = Effect.fn('PublicPricingReadHarness.reviseFirstUnitRule')(function* reviseUnit() {
       yield* send({ expectedRevision: handoffP1.quantity.unitRuleRevision, type: 'revise-first-unit', version });
@@ -1422,7 +1897,15 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         readonly occurrenceId: string;
       }[];
       readonly operationTime: string;
+      readonly subject?: 'GUEST' | 'OTHER_GROUP_PROFILE' | 'PROFILE';
     }) {
+      const profile = input.subject === 'PROFILE' || input.subject === 'OTHER_GROUP_PROFILE';
+      let subject: typeof guestSubject | HarnessProfileSubject = guestSubject;
+      if (input.subject === 'PROFILE') {
+        subject = profileSubject;
+      } else if (input.subject === 'OTHER_GROUP_PROFILE') {
+        subject = otherGroupProfileSubject;
+      }
       return yield* Schema.decodeUnknownEffect(CurrentPricingDecisionRequestSchema)({
         decision: {
           commercialScope: { ...HARNESS_MARKET, sellingLegalEntityId: fixture.legalEntityId },
@@ -1436,7 +1919,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
           operationTime: input.operationTime,
           purchasingContext: {
             accessDecision: { decisionRef: 'TEST:harness:access', decisionRevision: '1' },
-            actor: guestSubject,
+            actor: profile ? { kind: 'PRINCIPAL', principalId: fixture.manager.principalId } : guestSubject,
             commercialSettingsDecision: { decisionRef: 'TEST:harness:commercial-settings', decisionRevision: '1' },
             contextRef: 'TEST:harness:declared-purchase-context',
             contextRevision: '1',
@@ -1445,11 +1928,11 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
               resolutionRef: 'TEST:harness:currency',
               resolutionRevision: '1',
             },
-            subject: guestSubject,
+            subject,
           },
           tenantId: fixture.tenantId,
         },
-        subject: guestSubject,
+        subject,
       });
     });
 
@@ -1458,6 +1941,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     const subjectAuthority: typeof CurrentPricingDecisionSubjectAuthority.Service = {
       verify: (input) =>
         declaredPurchaseContextEvidence({
+          actor: input.request.decision.purchasingContext.actor,
           operationTime: input.request.decision.operationTime,
           purchasingContext: {
             channelId: input.request.decision.commercialScope.channelId,
@@ -1519,15 +2003,25 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       managerPrincipalId: fixture.manager.principalId,
       marketRequests,
       operationTime,
+      otherGroupProfileSubject,
       prepareFreshHandoff: (selection: Parameters<typeof prepareFreshHandoff>[0]) =>
         confine('prepare-fresh-handoff', prepareFreshHandoff(selection)),
       priceComponents,
+      priceGroupCompatibilityRequests,
+      priceGroupRef,
+      priceGroupRequests,
       produceCommercialFee: (input: Parameters<typeof produceCommercialFee>[0]) =>
         confine('produce-commercial-fee', produceCommercialFee(input)),
+      produceContractualDiscount: (input: Parameters<typeof produceContractualDiscount>[0]) =>
+        confine('produce-contractual-discount', produceContractualDiscount(input)),
+      profileSubject,
+      reproduceTier: (input: Parameters<typeof reproduceTier>[0]) =>
+        confine('reproduce-tier', reproduceTier(input).pipe(Effect.asVoid)),
       reviseFirstUnitRule: () => confine('revise-first-unit-rule', reviseFirstUnitRule()),
       runRegisteredRead: (request: Parameters<typeof runRegisteredRead>[0]) =>
         confine('registered-read', runRegisteredRead(request)),
       selections: { p1, p2, q1 },
+      shellRefusals,
       tenantId: fixture.tenantId,
       wholeAttempts,
     } as const;
