@@ -200,7 +200,6 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       .check(
         scope,
         {
-          dataCategoryRefs: ['commerce:customer-profile'],
           operation,
           partySourceReference: item.partySourceReference,
           source: {
@@ -216,7 +215,6 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
               item.profile.profileRef.kind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
             resourceId: item.profile.profileRef.resourceId,
           },
-          targetPartyRef: item.partyRef,
         },
         requirements.privacy,
       )
@@ -355,7 +353,6 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       .check(
         scope,
         {
-          dataCategoryRefs: ['commerce:customer-profile'],
           operation: 'PROFILE_CREATE',
           partySourceReference: originalPartyReference,
           source: {
@@ -622,6 +619,14 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
             current,
             receipt,
           }: Extract<StoredSourceResponse, { readonly _tag: 'RECEIPT' }>) {
+            if (scope.authMethod === 'system' || readVerifiedGatewayRecovery(scope) !== undefined) {
+              yield* checkOriginalRecovery(
+                receipt,
+                receipt.profileKind === 'RETAIL'
+                  ? 'commerce.customer-context.ensure-retail-customer-profile'
+                  : 'commerce.customer-context.create-counterparty-purchasing-profile',
+              );
+            }
             yield* checkItem(current);
             const original = receipt.intent.source;
             const originalPartyReference = receipt.intent.partySourceReference;

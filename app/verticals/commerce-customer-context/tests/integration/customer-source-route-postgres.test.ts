@@ -888,9 +888,9 @@ it.live(
           },
         });
         type GroupIntent = ReturnType<typeof groupIntent>;
-        const writeGroup = (principalId: string, intent: GroupIntent) =>
+        const writeGroup = (principalId: string, intent: GroupIntent, invocationId = randomUUID()) =>
           owner(
-            sql`select outcome, group_json from commerce_customer_context.apply_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,'CREATE',${json(intent)}::jsonb,now(),${principalId}::uuid,${randomUUID()}::uuid)`,
+            sql`select outcome, group_json from commerce_customer_context.apply_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,'CREATE',${json(intent)}::jsonb,now(),${principalId}::uuid,${invocationId}::uuid)`,
           ).pipe(Effect.map((row) => ({ groupId: row?.group_json?.groupRef.resourceId ?? '', outcome: row?.outcome })));
         // The request the Group definition Read decodes for each mode and hands to its routine.
         const groupRequest = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceRequestSchema, {
@@ -901,6 +901,7 @@ it.live(
           intent: GroupIntent,
           route: SourceRoute,
           mode: 'CURRENT' | 'RECEIPT' = 'RECEIPT',
+          originalInvocationId: string | null = null,
         ) => {
           const identity = {
             issuer: intent.source.issuer,
@@ -920,7 +921,7 @@ it.live(
                 },
           );
           return owner(
-            sql`select outcome, result from commerce_customer_context.read_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${json(request)}::jsonb)`,
+            sql`select outcome, result from commerce_customer_context.read_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${originalInvocationId}::uuid,${json(request)}::jsonb)`,
           );
         };
 
@@ -1073,7 +1074,8 @@ it.live(
 
         // While the routes are active the writer writes through each of them.
         const group = groupIntent('group-create', '77', 'LOYAL', routes.group.route);
-        const created = yield* writeGroup(writer, group);
+        const groupInvocationId = randomUUID();
+        const created = yield* writeGroup(writer, group, groupInvocationId);
         expect(created).toMatchObject({ outcome: 'CREATED' });
         const ensured = yield* ensureProfile(writer, profileSource('profile-create', 'C-1', routes.profile.route));
         expect(ensured).toMatchObject({ payload: { sourceEffect: { effectId: 'profile-create', replayed: false } } });
@@ -1103,6 +1105,13 @@ it.live(
           outcome: 'FOUND',
           result: { _tag: 'CURRENT' },
         });
+        expect(yield* readGroup(writer, group, routes.group.route, 'RECEIPT', groupInvocationId)).toMatchObject({
+          outcome: 'FOUND',
+        });
+        expect(yield* readGroup(writer, group, routes.group.route, 'RECEIPT', randomUUID())).toMatchObject({
+          outcome: 'NOT_FOUND',
+        });
+        expect(yield* readGroup(reader, group, routes.group.route, 'RECEIPT', groupInvocationId)).toMatchObject(denied);
         expect(yield* readGroup(reader, group, routes.group.route)).toMatchObject(denied);
         for (const mode of ['CURRENT', 'RECEIPT'] as const) {
           expect(yield* readGroup(secondReader, group, routes.group.route, mode)).toMatchObject(denied);
@@ -1114,6 +1123,7 @@ it.live(
         expect(yield* configure(null, bind, otherRoute)).toEqual(
           resultOf({ _tag: 'CONFIGURED', generation: 1, route: otherRoute }),
         );
+        expect(yield* readGroup(writer, group, otherRoute.route, 'RECEIPT', groupInvocationId)).toMatchObject(denied);
         const otherGroup = groupIntent('group-create-b', '79', 'BRONZE', otherRoute.route);
         expect(yield* writeGroup(writer, otherGroup)).toMatchObject({ outcome: 'CREATED' });
         for (const route of [routes.group.route, otherRoute.route]) {

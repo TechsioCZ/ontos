@@ -1813,7 +1813,7 @@ it.live('keeps native source processing class explicit despite untrusted project
           );
           expect(crossClass).toMatchObject({ outcome: 'SOURCE_CONFLICT', result: null });
           const [crossClassRead] = yield* transaction.execute<{ outcome: string; result: unknown }>(
-            sql`select * from commerce_customer_context.read_customer_group_membership_source_receipt(${test.tenantId}::uuid,${test.legalEntityId}::uuid,${test.fixture.manager.principalId}::uuid,${organizationQueryJson}::jsonb)`,
+            sql`select * from commerce_customer_context.read_customer_group_membership_source_receipt(${test.tenantId}::uuid,${test.legalEntityId}::uuid,${test.fixture.manager.principalId}::uuid,null::uuid,${organizationQueryJson}::jsonb)`,
             'objects',
           );
           expect(crossClassRead).toMatchObject({ outcome: 'SOURCE_AUTHORITY_DENIED', result: null });
@@ -1824,8 +1824,9 @@ it.live('keeps native source processing class explicit despite untrusted project
             'objects',
           );
           expect(admitted?.outcome).toBe('APPLIED');
+          const originalInvocationId = randomUUID();
           const [ended] = yield* transaction.execute<{ outcome: string; result: unknown }>(
-            sql`select * from commerce_customer_context.apply_customer_group_membership_source(${test.tenantId}::uuid,${test.legalEntityId}::uuid,${test.fixture.manager.principalId}::uuid,${randomUUID()}::uuid,${at}::timestamptz,${completeJson}::jsonb)`,
+            sql`select * from commerce_customer_context.apply_customer_group_membership_source(${test.tenantId}::uuid,${test.legalEntityId}::uuid,${test.fixture.manager.principalId}::uuid,${originalInvocationId}::uuid,${at}::timestamptz,${completeJson}::jsonb)`,
             'objects',
           );
           expect(ended?.outcome).toBe('APPLIED');
@@ -1835,10 +1836,15 @@ it.live('keeps native source processing class explicit despite untrusted project
           expect(safe.items).toHaveLength(1);
           expect(safe.items[0]?.outcome).toBe('ENDED');
           const [recovered] = yield* transaction.execute<{ outcome: string; result: unknown }>(
-            sql`select * from commerce_customer_context.read_customer_group_membership_source_receipt(${test.tenantId}::uuid,${test.legalEntityId}::uuid,${test.fixture.manager.principalId}::uuid,${completeQueryJson}::jsonb)`,
+            sql`select * from commerce_customer_context.read_customer_group_membership_source_receipt(${test.tenantId}::uuid,${test.legalEntityId}::uuid,${test.fixture.manager.principalId}::uuid,${originalInvocationId}::uuid,${completeQueryJson}::jsonb)`,
             'objects',
           );
           expect(recovered).toMatchObject({ outcome: 'FOUND', result: safe });
+          const [differentInvocation] = yield* transaction.execute<{ outcome: string; result: unknown }>(
+            sql`select * from commerce_customer_context.read_customer_group_membership_source_receipt(${test.tenantId}::uuid,${test.legalEntityId}::uuid,${test.fixture.manager.principalId}::uuid,${randomUUID()}::uuid,${completeQueryJson}::jsonb)`,
+            'objects',
+          );
+          expect(differentInvocation).toMatchObject({ outcome: 'SOURCE_AUTHORITY_DENIED', result: null });
           const [settings] = yield* transaction.execute<{ processingKind: string; reasonCode: string }>(
             sql`select current_setting('ontos.ccc_membership_processing_kind') as "processingKind",current_setting('ontos.ccc_membership_reason_code') as "reasonCode"`,
             'objects',

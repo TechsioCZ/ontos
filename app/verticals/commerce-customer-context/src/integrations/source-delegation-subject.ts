@@ -11,6 +11,7 @@ import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement'
 import {
   readVerifiedGatewayRecovery,
   readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 
@@ -31,6 +32,14 @@ export const commerceSourceDelegationSubject = (
   operationRequirementKey: string,
 ): GatewayDelegationSubject => {
   const recovery = readVerifiedGatewayRecovery(scope);
+  if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
+    return {
+      _tag: 'NativeRouteRead',
+      scope,
+      operationRequirementKey,
+      requestHash: computeCanonicalValueHash(decodedReadInput),
+    };
+  }
   if (scope.authMethod !== 'system' && readVerifiedGatewayWorkload(scope) === undefined && recovery === undefined) {
     return { _tag: 'Assertion', scope };
   }

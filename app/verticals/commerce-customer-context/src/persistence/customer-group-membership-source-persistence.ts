@@ -1,3 +1,4 @@
+import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
@@ -106,6 +107,7 @@ const readMembershipSourceReceiptRoutine = defineScopedRoutine({
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
+    { nullable: true, source: 'input', type: 'uuid' },
     { source: 'input', type: 'jsonb' },
   ],
   resultSchema: Schema.Struct({
@@ -320,8 +322,19 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
           ? ORG_RECOVER_PRIVACY_REQUIREMENT
           : RECOVER_PRIVACY_REQUIREMENT;
       yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
+      const recovery = readVerifiedGatewayRecovery(scope);
+      if (
+        recovery !== undefined &&
+        recovery.originalActionKey !== 'commerce.customer-context.apply-customer-group-membership-source'
+      ) {
+        return yield* unavailable();
+      }
       const [row] = yield* transaction
-        .invoke(readMembershipSourceReceiptRoutine, [scope.principalId, input])
+        .invoke(readMembershipSourceReceiptRoutine, [
+          recovery?.originalPrincipalId ?? scope.principalId,
+          recovery?.originalActionInvocationId ?? null,
+          input,
+        ])
         .pipe(Effect.mapError(unavailable));
       if (row === undefined) {
         return yield* unavailable();

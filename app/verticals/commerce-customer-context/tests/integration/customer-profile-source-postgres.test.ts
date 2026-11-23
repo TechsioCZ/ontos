@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
 import { ContextAccessLive, ReadRuntime, runAction, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
@@ -238,6 +239,10 @@ it.live(
           }),
           Layer.succeed(CommerceSourceProcessingEligibility, {
             check: (scope, input, operationRequirementKey) => {
+              Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema, { onExcessProperty: 'error' })({
+                ...input,
+                consumerModuleId: 'commerce.customer-context',
+              });
               observedPrivacyRequirements.add(operationRequirementKey);
               privacyChecks += 1;
               observedPrivacy.push({ operation: input.operation, targetKind: input.target?.kind ?? null });

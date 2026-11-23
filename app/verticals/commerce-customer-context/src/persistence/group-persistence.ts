@@ -1,3 +1,4 @@
+import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
   defineScopedRoutine,
   ReadPermissionDenied,
@@ -160,6 +161,7 @@ const definitionSourceReadRoutine = defineScopedRoutine({
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
+    { nullable: true, source: 'input', type: 'uuid' },
     { source: 'input', type: 'jsonb' },
   ],
   resultSchema: Schema.Struct({
@@ -195,8 +197,23 @@ export const customerGroupDefinitionSourceServiceFactory: ReadServiceFactory<
 > = (transaction, scope) =>
   Effect.succeed({
     readDefinitionSource: Effect.fn('CustomerGroupDefinitionSource.read')(function* readDefinitionSource(input) {
+      const recovery = readVerifiedGatewayRecovery(scope);
+      if (
+        recovery !== undefined &&
+        (input.mode !== 'RECEIPT' ||
+          recovery.originalActionKey !==
+            (input.expectedOperation === 'CREATE'
+              ? 'commerce.customer-context.create-customer-group'
+              : 'commerce.customer-context.update-customer-group'))
+      ) {
+        return yield* definitionSourceReadUnavailable();
+      }
       const [row] = yield* transaction
-        .invoke(definitionSourceReadRoutine, [scope.principalId, input])
+        .invoke(definitionSourceReadRoutine, [
+          recovery?.originalPrincipalId ?? scope.principalId,
+          recovery?.originalActionInvocationId ?? null,
+          input,
+        ])
         .pipe(Effect.mapError(definitionSourceReadUnavailable));
       if (row === undefined) {
         return yield* definitionSourceReadUnavailable();
