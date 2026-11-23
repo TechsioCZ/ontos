@@ -61,6 +61,17 @@ export const partyRegistryRegisteredWorkloadCalls = [
     sourceWorkloadKey: partyRegistrySourceWrite,
     workloadKey: privacyCoreOrganizationBusinessCheck,
   },
+  // A current organization name export checks its declared current business context, not a write's recovery receipt.
+  {
+    audience: 'privacy',
+    declarationKey: privacyCoreOrganizationBusinessApplicabilityRead,
+    entrypointKey: privacyCoreApiOrganizationBusinessApplicability,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: partyRegistrySourceRead,
+    workloadKey: privacyCoreOrganizationBusinessCheck,
+  },
   // symmy-route-bindings-main-contracts.test.ts — the Symmy customers and membership routes reach party.registry.requirement.api.party-source-effect-receipt-organization-business-privacy, read when Symmy recovers a lost Party write
   {
     allowRecoverySource: true,

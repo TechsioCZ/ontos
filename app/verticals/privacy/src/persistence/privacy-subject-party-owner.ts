@@ -1,6 +1,9 @@
 import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
 import type { OperationalScope } from '@app/core-runtime';
-import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  readVerifiedGatewayRecovery,
+  readVerifiedGatewayRouteScope,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { executeSourcePersonAdmissionWithAuthorization } from '@app/party-registry/apis/source-person-admission/client';
 import {
@@ -181,7 +184,10 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
         onExcessProperty: 'error',
       })({ partyRef, sourceReference }).pipe(Effect.mapError(unavailable));
       const requestHash =
-        readVerifiedGatewayRecovery(scope) === undefined ? undefined : computeCanonicalValueHash(sourceRequest);
+        readVerifiedGatewayRecovery(scope) === undefined &&
+        readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver === undefined
+          ? undefined
+          : computeCanonicalValueHash(sourceRequest);
       const transport = yield* credentials.acquire(
         scope,
         partyOwnerDeclaration(sourceReference),
@@ -219,6 +225,9 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
             scope,
             partyOwnerDeclaration(sourceReference),
             operationRequirementKey,
+            readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver === undefined
+              ? undefined
+              : computeCanonicalValueHash({ partyRef }),
           );
           if (compositionRevision !== undefined && transport.compositionRevision !== compositionRevision) {
             return yield* unavailable();

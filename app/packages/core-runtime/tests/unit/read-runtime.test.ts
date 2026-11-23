@@ -4521,6 +4521,48 @@ it.effect('rejects native route input substitution before any owner scope or pri
     expect(failure.reason).toBe('Native route authority does not match the exact Read request');
     expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
     expect(harness.stages).not.toContain('handler');
+    const processing = defineRead({
+      ...read.descriptor,
+      accessDeclaration: fixtureReadAccess('integration.symmy'),
+      owningModuleKey: 'integration.symmy',
+      readKey: 'integration.symmy.api.native-processing-test',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'protected' },
+        entrypointKey: 'integration.symmy.api.native-processing-test',
+        moduleKey: 'integration.symmy',
+        role: 'api',
+      }),
+      inputSchema: Schema.Struct({ purpose: Schema.Literals(['PROCESSING', 'GOVERNANCE']) }),
+      accessWorkload: {
+        reason: 'Only the declared processing purpose',
+        requestPurpose: 'PROCESSING',
+        workloads: ['integration.symmy.source-organization-facts.read'],
+      },
+    }, () => Effect.die('A different purpose must never reach the owner'), () => Effect.succeed({}),
+    () => ({ kind: 'module', moduleId: 'core.shell' }));
+    const otherPurpose = { purpose: 'GOVERNANCE' };
+    const purposeRoute = Schema.decodeUnknownSync(RegisteredGatewayRouteScopeSchema)({
+      ...route,
+      operations: [{ entrypointKey: processing.descriptor.entrypoint.entrypointKey, schemaVersion: '1' }],
+      nativeReadReceiver: {
+        ...route.nativeReadReceiver,
+        requestHash: computeCanonicalValueHash(otherPurpose),
+      },
+    });
+    const purposePrincipal = trustVerifiedGatewayPrincipalContext(
+      system, 'a'.repeat(64), undefined, undefined, undefined, purposeRoute,
+    );
+    const purposeHarness = yield* makeHarness();
+    const purposeFailure = yield* Effect.flip(purposeHarness.runtime.runRead({
+      input: otherPurpose,
+      principal: purposePrincipal,
+      registration: processing,
+      transport: { correlationId: scope.correlationId },
+    }));
+    expect(Predicate.isTagged(purposeFailure, 'ReadInputValidationError')).toBe(true);
+    expect(purposeFailure.reason).toBe('Native workload authority does not match the declared purpose and exact Read request');
+    expect(purposeHarness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
   }),
 );
 

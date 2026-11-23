@@ -3,6 +3,7 @@ import {
   isVerifiedGatewayPrincipalContext,
   readVerifiedGatewayRecovery,
   readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
 import {
@@ -201,7 +202,14 @@ const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOr
     operationRequirementKey,
   };
   let subject: GatewayDelegationSubject = { _tag: 'Assertion', scope };
-  if (usesRegisteredPartyPrivacyCarrier(scope)) {
+  if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
+    subject = {
+      _tag: 'NativeRouteRead',
+      scope,
+      operationRequirementKey,
+      requestHash: computeCanonicalValueHash(nativeRequest),
+    };
+  } else if (usesRegisteredPartyPrivacyCarrier(scope)) {
     subject = registered;
     if (readVerifiedGatewayRecovery(scope) !== undefined) {
       subject = { ...registered, recoveryRequestHash: computeCanonicalValueHash(nativeRequest) };
@@ -756,7 +764,9 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
     operationRequirementKey,
   };
   let subject: GatewayDelegationSubject;
-  if (usesRegisteredPartyPrivacyCarrier(scope)) {
+  if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
+    subject = { _tag: 'NativeRouteRead', scope, operationRequirementKey, requestHash };
+  } else if (usesRegisteredPartyPrivacyCarrier(scope)) {
     subject = registeredSubject;
     if (readVerifiedGatewayRecovery(scope) !== undefined) {
       subject = { ...registeredSubject, recoveryRequestHash: requestHash };

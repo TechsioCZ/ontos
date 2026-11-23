@@ -701,6 +701,20 @@ const requireOrganizationProcessingReadInput = Effect.fn('ReadRuntime.requireOrg
   function* requireOrganizationProcessingReadInput(
     input: OrganizationProcessingReadValidationInput,
   ): Effect.fn.Return<void, ReadInputValidationError> {
+    const nativeRead = readVerifiedGatewayRouteScope(input.principal)?.nativeReadReceiver;
+    if (nativeRead !== undefined && input.requestPurpose !== undefined) {
+      if (
+        nativeRead.requestHash === undefined ||
+        !Schema.is(Schema.Struct({ purpose: Schema.Literal(input.requestPurpose) }))(input.decodedInput) ||
+        nativeRead.requestHash !== (yield* computeRequiredReadQueryHash(input.decodedInput))
+      ) {
+        return yield* new ReadInputValidationError({
+          code: 'read_input_invalid',
+          reason: 'Native workload authority does not match the declared purpose and exact Read request',
+        });
+      }
+      return yield* Effect.void;
+    }
     const workload = readVerifiedGatewayWorkload(input.principal);
     const processing = workload?.organizationProcessingRead;
     if (processing === undefined) {

@@ -5,6 +5,7 @@ import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement'
 import {
   readVerifiedGatewayRecovery,
   readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
   OrganizationRecordFactsResponseSchema,
@@ -338,7 +339,14 @@ const providerContext = Effect.fn('Privacy.organizationBusinessProviderContext')
   let subject: Parameters<typeof acquireDelegatedGatewayContext>[0]['subject'];
   const recoveryPresent = readVerifiedGatewayRecovery(scope) !== undefined;
   const workloadPresent = readVerifiedGatewayWorkload(scope) !== undefined;
-  if (recoveryPresent) {
+  if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
+    subject = {
+      _tag: 'NativeRouteRead',
+      operationRequirementKey: requirementKey,
+      requestHash: computeCanonicalValueHash(nativeRequest),
+      scope,
+    };
+  } else if (recoveryPresent) {
     subject = {
       _tag: 'RegisteredAssertion',
       declarationKey: target.declarationKey,

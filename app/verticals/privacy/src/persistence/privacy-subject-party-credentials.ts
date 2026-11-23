@@ -2,6 +2,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import {
   readVerifiedGatewayRecovery,
   readVerifiedGatewayWorkload,
+  readVerifiedGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
@@ -48,7 +49,20 @@ export const PrivacySubjectPartyCredentialsLive = Layer.effect(
         function* acquire(scope, declarationKey, operationRequirementKey, recoveryRequestHash) {
           let subject: GatewayDelegationSubject;
           const recovery = readVerifiedGatewayRecovery(scope);
-          if (
+          if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
+            if (operationRequirementKey === undefined || recoveryRequestHash === undefined) {
+              return yield* new PrivacyOperationPersistenceError({
+                code: 'privacy_operation_persistence_unavailable',
+                reason: 'A native Party prerequisite requires its declared operation and exact request',
+              });
+            }
+            subject = {
+              _tag: 'NativeRouteRead',
+              scope,
+              operationRequirementKey,
+              requestHash: recoveryRequestHash,
+            };
+          } else if (
             scope.authMethod === 'system' ||
             recovery !== undefined ||
             readVerifiedGatewayWorkload(scope) !== undefined
