@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Predicate, Result, Schema } from 'effect';
+import { Effect, FileSystem, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { compileFullAccessRole } from '@app/core-runtime/access/bootstrap';
 import { buildAccessCatalogRelease } from '@app/core-runtime/access/catalog';
@@ -171,6 +171,28 @@ it.effect('orders modules and descriptors canonically regardless of scan order',
     expect(sortAccessCatalogModules(forward).map((module) => module.moduleId)).toEqual([ALPHA_MODULE_ID, 'zeta.core']);
     expect(yield* renderAccessCatalogArtifact(forward, [])).toBe(yield* renderAccessCatalogArtifact(reversed, []));
   }),
+);
+
+it.effect('retains both pricing source authority capabilities from their actual declarations', () =>
+  Effect.gen(function* retainedPricingDeclarations() {
+    const root = fileURLToPath(new URL('../..', import.meta.url));
+    const fs = yield* FileSystem.FileSystem;
+    const files = [
+      'verticals/pricing/src/actions/grant-external-price-source-authority.action.ts',
+      'verticals/pricing/src/actions/manage-external-price-source-policy.action.ts',
+    ];
+    const sources = yield* Effect.forEach(files, (file) =>
+      fs.readFileString(path.join(root, file)).pipe(Effect.map((source) => ({ file, source }))),
+    );
+    const expected = sortAccessCatalogModules(yield* modulesOf(sources))[0];
+    expect(expected?.descriptors).toHaveLength(2);
+    const artifact = yield* readAccessCatalogArtifact(root);
+    const pricing = artifact.find(({ moduleId }) => moduleId === 'commerce.pricing');
+    const keys = new Set(expected?.descriptors.map(({ accessDeclaration }) => accessDeclaration.key));
+    expect(pricing?.descriptors.filter(({ accessDeclaration }) => keys.has(accessDeclaration.key))).toStrictEqual(
+      expected?.descriptors,
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect('writes, reads, and drift-checks the artifact', () =>
