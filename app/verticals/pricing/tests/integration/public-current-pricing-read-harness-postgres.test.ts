@@ -51,15 +51,22 @@ it.live(
           const fresh = yield* harness.prepareFreshHandoff(harness.selections.p1);
           expect(fresh.quantity.unitRuleRevision).toBe(ruleRevision);
           const fenceCallsBefore = harness.fenceCalls.length;
+          const attemptsBefore = harness.wholeAttempts.length;
           const staleRequest = yield* harness.makeRequest({
             lines: [{ handoff: fresh, occurrenceId: 'P-fresh' }],
             operationTime: DateTime.formatIso(yield* DateTime.now),
           });
           const stale = yield* harness.runRegisteredRead(staleRequest);
           assert(stale.outcome === 'PRICING_INDETERMINATE');
-          expect(stale).toMatchObject({ candidate: { occurrenceIds: ['P-fresh'] }, retryable: true });
-          expect(harness.wholeAttempts.slice(1).every(({ kind }) => kind === 'INDETERMINATE_OR_UNVERIFIABLE')).toBe(
-            true,
+          expect(stale).toMatchObject({ candidate: { occurrenceIds: ['P-fresh'] } });
+          // The customer-safe projection hides the cause, so the control reads the owner evaluation's own attempts:
+          // they must exist (a vacuous empty `every` would pass) and fail for the Tier/Unit binding, not another reason.
+          const staleAttempts = harness.wholeAttempts.slice(attemptsBefore);
+          expect(harness.wholeAttempts.length).toBeGreaterThan(1);
+          expect(staleAttempts.length).toBeGreaterThan(0);
+          expect(staleAttempts.every(({ kind }) => kind === 'INDETERMINATE_OR_UNVERIFIABLE')).toBe(true);
+          expect(staleAttempts.map(({ reason }) => reason)).toContain(
+            'Unit Price could not bind exact Price, Quantity, and Tier evidence',
           );
           expect(harness.fenceCalls).toHaveLength(fenceCallsBefore);
         }).pipe(Effect.provideContext(context));
