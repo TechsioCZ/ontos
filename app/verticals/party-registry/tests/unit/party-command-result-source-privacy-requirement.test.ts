@@ -7,6 +7,7 @@ import { getVerticalRuntimeReads } from '../../../../packages/core-runtime/src/m
 import { withModuleOperationExecution } from '../../../../packages/core-runtime/src/modules/module-operation-execution.ts';
 import { partyCommandResultRead } from '../../src/api/party-command-result.read.ts';
 import { partyMatchDecisionRead } from '../../src/api/party-match-decision.read.ts';
+import { organizationBusinessNameExportRead } from '../../src/api/organization-business-name-export.read.ts';
 import { partySourcePrivacyRequirementKey } from '../../src/services/party-client-source-privacy.service.ts';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
 
@@ -49,6 +50,30 @@ const executing = (registration: typeof partyCommandResultRead | typeof partyMat
     },
     requireModuleOperation(commandResultRequirementKey),
   );
+
+it.effect('business-name export resolves its own native source Privacy requirement', () =>
+  Effect.gen(function* exportRequirement() {
+    const entrypointKey = organizationBusinessNameExportRead.descriptor.entrypoint.entrypointKey;
+    const key = partySourcePrivacyRequirementKey(entrypointKey);
+    expect(ownerDescriptors.requirements?.operations.find((operation) => operation.key === key)).toMatchObject({
+      entrypointKey,
+      provider: { entrypointKey: 'privacy.core.api.source-processing-eligibility', moduleId: 'privacy.core' },
+    });
+    expect(
+      yield* withModuleOperationExecution(
+        {
+          loadCatalog: Effect.succeed(installedCatalog()),
+          ownerRegistration: partyRegistryBackendRegistration,
+          phase: 'execution',
+          registration: organizationBusinessNameExportRead,
+          revision: 'a'.repeat(64),
+          scope: { tenantId: 'trusted-tenant' },
+        },
+        requireModuleOperation(key),
+      ),
+    ).toBeUndefined();
+  }),
+);
 
 it.effect('Create recovery resolves its own source Privacy requirement as a registered owner Read', () =>
   Effect.gen(function* commandResultRequirement() {

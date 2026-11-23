@@ -251,8 +251,8 @@ zerops:
         # The demo company's pseudonymous e-shop (ŠroubShop): its staff links, e-mail links and portal sign-in.
         ONTOS_SHOP_STOREFRONT_ORIGIN: https://ontos-stage-shop.web-revolution.cz
         ONTOS_STOREFRONT_ORIGIN: https://ontos-stage-akros.web-revolution.cz
-        # Explicitly scoped, persisted test-data authority; never enabled by production materialization.
-        ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED: 'true'
+        # Operator-authorized AKROS source synchronization; never enabled by production materialization.
+        ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true'
         # Stage only: the retention policy of each Symmy write route (SymmyJobRetentionPolicySchema). The Symmy owner
         # admits a write, and its retention Action erases one, only on a route named here; the route enrollment command
         # refuses a route whose lifecycle policy is missing. Entry: the AKROS playground's products route, kept 30 days.

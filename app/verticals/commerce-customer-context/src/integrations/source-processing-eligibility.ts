@@ -6,7 +6,9 @@ import {
 import type { SourceProcessingEligibilityRequest } from '@app/privacy/api';
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { sourceSyncProcessingSelected, requireSourceSyncProcessingPermit } from './source-sync-processing.ts';
+import type { CommerceSourceProcessingAuthority } from './source-sync-processing.ts';
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
 import { CommerceSourceProcessingRejected } from './source-processing-rejected.ts';
 import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
@@ -20,7 +22,7 @@ export interface CommerceSourceProcessingEligibilityService {
     scope: OperationalScope,
     input: CommerceSourceProcessingRequest,
     operationRequirementKey: string,
-  ) => Effect.Effect<void, CommerceSourceProcessingRejected>;
+  ) => Effect.Effect<CommerceSourceProcessingAuthority, CommerceSourceProcessingRejected>;
 }
 
 export class CommerceSourceProcessingEligibility extends Context.Service<
@@ -105,7 +107,10 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
               reason: 'Current source processing is not permitted',
             });
           }
-          return yield* Effect.void;
+          if (yield* sourceSyncProcessingSelected) {
+            yield* requireSourceSyncProcessingPermit(scope, input, decision, DateTime.formatIso(yield* DateTime.now));
+          }
+          return decision;
         },
       ),
     };

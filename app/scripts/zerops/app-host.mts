@@ -202,8 +202,8 @@ const CUSTOMER_DISCOVERY_REASONS: ReadonlyMap<string, string> = new Map([
 
 export const customerDiscoveryHostError = (problem: unknown): AppHostError =>
   failure(
-    (problem instanceof SymmyDemoCustomerAuthorityError ? CUSTOMER_DISCOVERY_REASONS.get(problem.reason) : undefined)
-      ?? 'Unable to resolve the existing AKROS customer source writers',
+    (problem instanceof SymmyDemoCustomerAuthorityError ? CUSTOMER_DISCOVERY_REASONS.get(problem.reason) : undefined) ??
+      'Unable to resolve the existing AKROS customer source writers',
   );
 
 /** Only host-authored typed reasons are public diagnostics; never render a platform/database cause. */
@@ -268,7 +268,7 @@ const HOST_CONTROLLED_KEYS: ReadonlySet<string> = new Set([
   'ONTOS_SHELL_GATEWAY_BASE_URL',
   'ONTOS_SHELL_RENDER_API_URL',
   'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
-  'ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED',
+  'ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED',
   'ONTOS_SYMMY_JOB_RETENTION_POLICIES',
   'PORT',
   'SPICEDB_CA_CERT',
@@ -608,9 +608,7 @@ export const finiteProcessEnvironment = (
  */
 export const FINITE_CHILD_FORCE_KILL_AFTER = Duration.minutes(2);
 
-type FiniteChildFailure =
-  | { readonly category: 'exit'; readonly exitCode: number }
-  | { readonly category: 'spawn' };
+type FiniteChildFailure = { readonly category: 'exit'; readonly exitCode: number } | { readonly category: 'spawn' };
 
 /** Runs one finite child to a successful exit. */
 const runChild = (
@@ -698,9 +696,7 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
         }
       }
       return selected;
-    }).pipe(
-      Effect.tapError(() => Console.error(`[app-host] stage Symmy ${kind} bootstrap failed category=config`)),
-    );
+    }).pipe(Effect.tapError(() => Console.error(`[app-host] stage Symmy ${kind} bootstrap failed category=config`)));
     yield* runChild(
       'stage-symmy-demo-bootstrap',
       process.execPath,
@@ -709,11 +705,12 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
       childSettings,
       false,
       'ignore',
-      (result) => Console.error(
-        `[app-host] stage Symmy ${kind} bootstrap failed category=${result.category}${
-          result.category === 'exit' ? ` exitCode=${String(result.exitCode)}` : ''
-        }`,
-      ),
+      (result) =>
+        Console.error(
+          `[app-host] stage Symmy ${kind} bootstrap failed category=${result.category}${
+            result.category === 'exit' ? ` exitCode=${String(result.exitCode)}` : ''
+          }`,
+        ),
     ).pipe(timedBootStage(`host.symmy-demo.${kind}`));
   }
   yield* Console.log('[app-host] stage Symmy demo bootstrap complete');
@@ -2090,14 +2087,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
         )).environment
       : {};
   const derived = {
-    ...derivedEnvironment(
-      publicOrigin,
-      storefrontOrigin,
-      CONTROL_PORT,
-      ports,
-      shopStorefrontOrigin,
-      environment,
-    ),
+    ...derivedEnvironment(publicOrigin, storefrontOrigin, CONTROL_PORT, ports, shopStorefrontOrigin, environment),
     ...customerSourceEnvironment,
   };
   const node = process.execPath;

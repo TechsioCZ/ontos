@@ -1,3 +1,4 @@
+import type { SourceSyncProcessingPermit } from '../integrations/source-sync-processing.ts';
 import type { CurrentOrganizationCustomerRecordFactsSchema } from '@app/party-registry/apis/organization-record-facts';
 import type {
   CustomerProfilePartySourceReference,
@@ -1174,6 +1175,7 @@ export type CounterpartyRoleEligibility =
       readonly managedLegalEntityId: string;
       readonly observedAt?: string;
       readonly organizationProof?: typeof CurrentOrganizationCustomerRecordFactsSchema.Type;
+      readonly sourceSyncPermit?: SourceSyncProcessingPermit;
       readonly outcome: 'ELIGIBLE';
       readonly partyResourceId?: string;
       readonly partyResourceRevision?: string;

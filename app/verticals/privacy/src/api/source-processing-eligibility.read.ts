@@ -57,8 +57,8 @@ import { processingPurposeRepositoryForScope } from '../persistence/processing-p
 import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
 import { hasCurrentCustomerIntakeOrganizationProof } from '../services/customer-intake-organization-proof.ts';
 import { privacyEvidenceCall } from '../declared-evidence-calls.ts';
-import { DemoSourceProcessingPolicySchema } from '../../shared/domain/demo-source-processing-policy.ts';
-import type { DemoSourceProcessingPolicy } from '../../shared/domain/demo-source-processing-policy.ts';
+import { SourceSyncProcessingPolicySchema } from '../../shared/domain/source-sync-processing-policy.ts';
+import type { SourceSyncProcessingPolicy } from '../../shared/domain/source-sync-processing-policy.ts';
 
 const configuredContexts = Config.schema(
   Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema).check(Schema.isMaxLength(4096))),
@@ -81,9 +81,9 @@ const unavailable = (cause?: unknown) => {
 };
 
 export interface SourceProcessingEligibilityServices {
-  readonly demo?: {
-    readonly policy: DemoSourceProcessingPolicy;
-    /** A source-wide test authorization stops when this scope has retained privacy protections. */
+  readonly sourceSync?: {
+    readonly policy: SourceSyncProcessingPolicy;
+    /** A source-wide sync authorization stops when this scope has retained privacy protections. */
     readonly hasScopeProtections: () => Effect.Effect<boolean, ReadHandlerUnavailable>;
   };
   readonly contexts: readonly SourceProcessingContext[];
@@ -106,7 +106,9 @@ export interface SourceProcessingEligibilityServices {
   ) => Effect.Effect<boolean, ReadHandlerUnavailable>;
 }
 
-const demoOperations: Readonly<Record<SourceProcessingEligibilityRequest['consumerModuleId'], readonly string[]>> = {
+const sourceSyncOperations: Readonly<
+  Record<SourceProcessingEligibilityRequest['consumerModuleId'], readonly string[]>
+> = {
   'integration.symmy': ['CUSTOMER_SOURCE_INTAKE'],
   'party.registry': [
     'CREATE',
@@ -114,6 +116,7 @@ const demoOperations: Readonly<Record<SourceProcessingEligibilityRequest['consum
     'RECOVER_CREATE',
     'EVIDENCE_READ',
     'PROFILE_EXPORT',
+    'ORGANIZATION_BUSINESS_NAME_EXPORT',
     'ONBOARD_COUNTERPARTY_CUSTOMER',
     'ADD_CONTACT_POINT',
   ],
@@ -131,8 +134,8 @@ const demoOperations: Readonly<Record<SourceProcessingEligibilityRequest['consum
 };
 
 /** Source-wide does not mean tenant-wide: both qualified source identity and actual enrolled caller must match. */
-export const demoSourceProcessingPolicyMatches = (
-  policy: DemoSourceProcessingPolicy,
+export const sourceSyncProcessingPolicyMatches = (
+  policy: SourceSyncProcessingPolicy,
   request: SourceProcessingEligibilityRequest,
   scope: OperationalScope,
 ): boolean => {
@@ -151,7 +154,7 @@ export const demoSourceProcessingPolicyMatches = (
       !policy.callers.some(
         (caller) => caller.authMethod === 'api_key' && caller.principalId === native.originalPrincipalId,
       )) ||
-    !demoOperations[request.consumerModuleId].includes(request.operation)
+    !sourceSyncOperations[request.consumerModuleId].includes(request.operation)
   ) {
     return false;
   }
@@ -271,9 +274,9 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       outcome: 'DENIED' as const,
       reason,
     });
-    const demo = services.demo;
-    if (demo !== undefined && demoSourceProcessingPolicyMatches(demo.policy, request, scope)) {
-      const { policy } = demo;
+    const sourceSync = services.sourceSync;
+    if (sourceSync !== undefined && sourceSyncProcessingPolicyMatches(sourceSync.policy, request, scope)) {
+      const { policy } = sourceSync;
       if (
         !policy.active ||
         !isPrivacyInstantAtOrBefore(policy.effectiveFrom, evaluatedAt) ||
@@ -281,19 +284,19 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       ) {
         return denied('AUTHORITY_NOT_CURRENT');
       }
-      if (yield* demo.hasScopeProtections()) {
+      if (yield* sourceSync.hasScopeProtections()) {
         return denied('PROTECTED_MATERIAL');
       }
       if (request.source === null) {
         return denied('AUTHORITY_NOT_CURRENT');
       }
-      // This is an actual operator-configured testing policy, not a GDPR applicability/consent/basis claim.
+      // This is an actual operator-configured source synchronization policy, not a GDPR applicability/consent/basis claim.
       return {
         authorityIncarnation: policy.policyId,
         authorityRevision: policy.revision,
         evaluatedAt,
         evidence: {
-          _tag: 'DEMO_TEST_DATA_SOURCE_POLICY',
+          _tag: 'SOURCE_SYNC_PROCESSING_POLICY',
           consumerModuleId: request.consumerModuleId,
           dataUse: policy.dataUse,
           legalEntityId: policy.legalEntityId,
@@ -851,7 +854,7 @@ export const sourceProcessingEligibilityRead = defineRead(
       'party.registry': 'party-registry',
     };
     if (
-      (context.services.demo !== undefined ||
+      (context.services.sourceSync !== undefined ||
         readVerifiedGatewayRouteScope(context.scope)?.nativeReadReceiver !== undefined) &&
       sourceProcessingCaller(context.scope) !== consumerAppIds[input.consumerModuleId]
     ) {
@@ -872,17 +875,17 @@ export const sourceProcessingEligibilityRead = defineRead(
       Effect.mapError(sourceConfigurationUnavailable),
       Effect.tapError(() => traceSourceStage('configuration-unavailable')),
     );
-    const demoEnabled = yield* Config.Boolean('ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED').pipe(
+    const sourceSyncEnabled = yield* Config.Boolean('ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED').pipe(
       Config.withDefault(false),
       Effect.mapError(sourceConfigurationUnavailable),
     );
-    let demo: SourceProcessingEligibilityServices['demo'];
-    if (demoEnabled) {
+    let sourceSync: SourceProcessingEligibilityServices['sourceSync'];
+    if (sourceSyncEnabled) {
       const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
         Effect.mapError(sourceConfigurationUnavailable),
       );
       if (environment !== 'stage') {
-        return yield* sourceConfigurationUnavailable('Demo source processing is restricted to stage');
+        return yield* sourceConfigurationUnavailable('This source synchronization policy is restricted to stage');
       }
       const rows = yield* transaction
         .select({ record: demoSourceProcessingPolicies.policyRecord })
@@ -891,20 +894,20 @@ export const sourceProcessingEligibilityRead = defineRead(
           and(
             eq(demoSourceProcessingPolicies.tenantId, scope.tenantId),
             eq(demoSourceProcessingPolicies.legalEntityId, scope.legalEntityId ?? ''),
-            eq(demoSourceProcessingPolicies.policyId, 'akros-symmy-demo-test-data'),
+            eq(demoSourceProcessingPolicies.policyId, 'akros-symmy-source-sync'),
           ),
         )
         .pipe(Effect.mapError(sourceConfigurationUnavailable));
       const records = yield* Schema.decodeUnknownEffect(
         Schema.Array(
           Schema.Struct({
-            record: DemoSourceProcessingPolicySchema,
+            record: SourceSyncProcessingPolicySchema,
           }),
         ).check(Schema.isMaxLength(1)),
       )(rows).pipe(Effect.mapError(sourceConfigurationUnavailable));
       const [record] = records;
       if (record !== undefined) {
-        demo = {
+        sourceSync = {
           policy: record.record,
           hasScopeProtections: () =>
             transaction
@@ -934,7 +937,7 @@ export const sourceProcessingEligibilityRead = defineRead(
     yield* traceSourceStage('services-ready');
     return {
       contexts,
-      ...(demo === undefined ? {} : { demo }),
+      ...(sourceSync === undefined ? {} : { sourceSync }),
       protections: (subjectRef: string, request: SourceProcessingEligibilityRequest) =>
         readSourceProtections(transaction, scope, subjectRef, request),
       purposes,

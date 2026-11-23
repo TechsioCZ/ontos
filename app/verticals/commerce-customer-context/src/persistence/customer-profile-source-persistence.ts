@@ -1,3 +1,7 @@
+import {
+  sourceSyncProcessingSelected,
+  acquireSourceSyncProcessingPermit,
+} from '../integrations/source-sync-processing.ts';
 import { CommerceOrganizationBusinessEligibility } from '../integrations/organization-business-eligibility.ts';
 import {
   OrganizationProfileSourceCurrentSchema,
@@ -195,30 +199,39 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       reason: 'Source Profile reads require a trusted Legal Entity',
     });
   }
-  const privacyCheck = (source: CustomerProfileSourceAssertion, item: CustomerProfileSourceItem, operation: string) =>
-    privacy
-      .check(
-        scope,
-        {
-          operation,
-          partySourceReference: item.partySourceReference,
-          source: {
-            issuer: source.issuer,
-            namespace: source.namespace,
-            occurrenceId: source.occurrenceId,
-            recordId: source.recordId,
-            recordType: source.recordType,
-            routeRef: source.route.id,
-          },
-          target: {
-            kind:
-              item.profile.profileRef.kind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
-            resourceId: item.profile.profileRef.resourceId,
-          },
-        },
-        requirements.privacy,
-      )
+  const privacyCheck = Effect.fn('CustomerProfileSourceRead.privacy')(function* privacyCheck(
+    source: CustomerProfileSourceAssertion,
+    item: CustomerProfileSourceItem,
+    operation: string,
+  ) {
+    const request = {
+      operation,
+      partySourceReference: item.partySourceReference,
+      source: {
+        issuer: source.issuer,
+        namespace: source.namespace,
+        occurrenceId: source.occurrenceId,
+        recordId: source.recordId,
+        recordType: source.recordType,
+        routeRef: source.route.id,
+      },
+      target: {
+        kind:
+          item.profile.profileRef.kind === 'RETAIL'
+            ? ('RETAIL_CUSTOMER_PROFILE' as const)
+            : ('COUNTERPARTY_PURCHASING_PROFILE' as const),
+        resourceId: item.profile.profileRef.resourceId,
+      },
+    };
+    if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
+      return yield* acquireSourceSyncProcessingPermit(scope, privacy, request, requirements.privacy).pipe(
+        Effect.mapError(customerProfileSourcePrivacyFailure),
+      );
+    }
+    return yield* privacy
+      .check(scope, request, requirements.privacy)
       .pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
+  });
   const currentAdmissionForItem = Effect.fn('CustomerProfileSourceRead.currentAdmission')(
     function* currentAdmissionForItem(item: CustomerProfileSourceItem) {
       if (item.profile.subject.kind === 'RETAIL') {
@@ -250,6 +263,8 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       if (result.outcome !== 'ELIGIBLE' || result.partyResourceId !== item.partyRef.resourceId) {
         return yield* unavailable();
       }
+      if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure)))
+        return result.currentAdmission;
       const personKey = requirements.counterpartyPerson;
       yield* requireModuleOperation(personKey).pipe(Effect.mapError(unavailable));
       const person = yield* proof
@@ -431,6 +446,11 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
   const projectCurrentItem = Effect.fn('CustomerProfileSourceRead.projectCurrent')(function* projectCurrent(
     item: CustomerProfileSourceItem,
   ) {
+    if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
+      yield* checkItem(item);
+      const { icoAuthority: _classification, ...sourceSyncItem } = item;
+      return sourceSyncItem;
+    }
     if (item.profile.subject.kind === 'RETAIL') {
       yield* checkItem(item);
       return { ...item, icoAuthority: 'PERSONAL' as const };
@@ -464,7 +484,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
   );
   const recoverOrganizationReceipt = Effect.fn('CustomerProfileSourceRead.organizationReceipt')(
     function* organizationReceipt(input: CustomerProfileSourceRequest) {
-      if (Option.isNone(organizationBusiness) || input.mode !== 'ORG_RECEIPT') {
+      if (input.mode !== 'ORG_RECEIPT') {
         return yield* unavailable();
       }
       const recovery = yield* organizationRecoveryIdentity();
@@ -493,6 +513,43 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       const { current, receipt: safe } = yield* Schema.decodeUnknownEffect(organizationReceiptResultSchema, {
         onExcessProperty: 'error',
       })(row.result).pipe(Effect.mapError(unavailable));
+      if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
+        if (current.counterpartyRef.resourceId !== safe.intent.subject.counterpartyRef.resourceId)
+          return yield* unavailable();
+        yield* requireModuleOperation(requirements.counterparty).pipe(Effect.mapError(unavailable));
+        const native = yield* proof
+          .counterparty(
+            scope,
+            current.counterpartyRef.resourceId,
+            safe.intent.source,
+            safe.intent.partySourceReference,
+            requirements.counterparty,
+          )
+          .pipe(Effect.mapError(unavailable));
+        if (native.outcome !== 'ELIGIBLE' || native.partyResourceId !== current.partyRef.resourceId)
+          return yield* unavailable();
+        yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
+        yield* acquireSourceSyncProcessingPermit(
+          scope,
+          privacy,
+          {
+            operation: 'customer-profile-source.recover',
+            source: {
+              issuer: safe.intent.source.issuer,
+              namespace: safe.intent.source.namespace,
+              occurrenceId: safe.intent.source.occurrenceId,
+              recordId: safe.intent.source.recordId,
+              recordType: safe.intent.source.recordType,
+              routeRef: safe.intent.source.route.id,
+            },
+            partySourceReference: safe.intent.partySourceReference,
+            target: { kind: 'COUNTERPARTY_PURCHASING_PROFILE', resourceId: safe.result.profileRef.resourceId },
+          },
+          requirements.privacy,
+        ).pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
+        return { _tag: 'ORG_RECEIPT' as const, receipt: safe };
+      }
+      if (Option.isNone(organizationBusiness)) return yield* unavailable();
       const authority = yield* organizationBusiness.value
         .check(
           scope,

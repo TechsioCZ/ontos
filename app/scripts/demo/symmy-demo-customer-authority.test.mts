@@ -14,7 +14,7 @@ import { stageWorkloadBindingIds } from './register-stage-workloads.mts';
 
 import {
   buildSymmyDemoCustomerRoutes,
-  buildSymmyDemoSourceProcessingPolicy,
+  buildSymmySourceSyncProcessingPolicy,
   SYMMY_DEMO_CUSTOMERS_READ_ROUTE,
   SYMMY_DEMO_CUSTOMERS_ROUTE,
   SYMMY_DEMO_CUSTOMER_COMPANY,
@@ -403,7 +403,7 @@ it('merges only exact tenant-local Party source bindings and never fabricates Pr
   expect(symmyDemoCustomerEnvironment(identities, entries)).toEqual(first);
   expect(Object.keys(first)).toEqual([
     'ONTOS_PARTY_CLIENT_SOURCE_BINDINGS',
-    'ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED',
+    'ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED',
   ]);
   expect(entries.map((entry: { principalId: string }) => entry.principalId)).toEqual([
     identities.integrationPrincipalId,
@@ -444,7 +444,7 @@ it.effect('reuses a native Action key after a lost response and separates change
 
 it.effect('authorizes the actual switched Privacy receiver, not merely upstream source writers', () =>
   Effect.gen(function* test() {
-    const policy = yield* buildSymmyDemoSourceProcessingPolicy(identities);
+    const policy = yield* buildSymmySourceSyncProcessingPolicy(identities);
     expect(policy.callers).toContainEqual({ authMethod: 'system', principalId: identities.privacyReceiverId });
     expect(policy.callers).toHaveLength(4);
   }),

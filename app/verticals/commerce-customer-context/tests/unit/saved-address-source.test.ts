@@ -286,7 +286,7 @@ it.effect('keeps unknown receipts indeterminate without inspecting current profi
         Effect.provideService(CommerceSourceProcessingEligibility, {
           check: () => {
             checks += 1;
-            return Effect.void;
+            return Effect.die('An indeterminate original address receipt must not acquire Privacy authority');
           },
         }),
       );

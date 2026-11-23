@@ -12,9 +12,9 @@
  *
  * Required: ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage, DATABASE_URL, DATABASE_ADMIN_URL,
  * ONTOS_SYMMY_JOB_RETENTION_POLICIES. No published-composition URL is needed.
- * Synthetic imports use the migrated, administrator-owned demo source policy. Publish the environment builder's
- * ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED and ONTOS_PARTY_CLIENT_SOURCE_BINDINGS before starting owners.
- * Real-person processing remains on Privacy's ordinary exact-context/legal-basis path; no demo policy grants it.
+ * Customer synchronization uses the persisted, operator-authorized source policy. Publish the environment builder's
+ * ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED and ONTOS_PARTY_CLIENT_SOURCE_BINDINGS before starting owners.
+ * Source-sync evidence authorizes this integration; it never fabricates consent or a business-only exemption.
  * A parent host must hand these environment additions to the owner processes; setting this child's environment
  * cannot reconfigure an already running owner. This script does not claim an end-to-end owner smoke passed.
  */
@@ -63,7 +63,7 @@ import { stageScopeOf } from '../../packages/core-runtime/src/install/stage-cont
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { SourceProcessingContextSchema } from '../../verticals/privacy/shared/apis/source-processing-eligibility.ts';
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy/api/source-processing-eligibility/client';
-import { DemoSourceProcessingPolicySchema } from '../../verticals/privacy/shared/domain/demo-source-processing-policy.ts';
+import { SourceSyncProcessingPolicySchema } from '../../verticals/privacy/shared/domain/source-sync-processing-policy.ts';
 import { stageWorkloadBindingIds, stageWorkloadCompanyIds } from './register-stage-workloads.mts';
 import type { SeedClient } from './seed-client.mts';
 import {
@@ -319,8 +319,8 @@ const GroupSchema = Schema.Struct({
 });
 type Group = typeof GroupSchema.Type;
 
-export const buildSymmyDemoSourceProcessingPolicy = (identities: Identities) =>
-  Schema.decodeUnknownEffect(DemoSourceProcessingPolicySchema)({
+export const buildSymmySourceSyncProcessingPolicy = (identities: Identities) =>
+  Schema.decodeUnknownEffect(SourceSyncProcessingPolicySchema)({
     active: true,
     callers: [
       { authMethod: 'api_key', principalId: identities.integrationPrincipalId },
@@ -329,15 +329,15 @@ export const buildSymmyDemoSourceProcessingPolicy = (identities: Identities) =>
       { authMethod: 'system', principalId: identities.privacyReceiverId },
     ],
     customerRouteId: SYMMY_DEMO_CUSTOMERS_ROUTE,
-    dataUse: 'DEMO_TEST_DATA_ONLY',
+    dataUse: 'SOURCE_CUSTOMER_SYNC',
     effectiveFrom: '2026-11-23T00:00:00.000Z',
     groupRouteId: SYMMY_DEMO_GROUPS_ROUTE,
     issuer,
     legalEntityId,
     namespace,
-    policyId: 'akros-symmy-demo-test-data',
-    purpose: 'DEMO_CUSTOMER_IMPORT_TESTING',
-    reason: 'Standing operator approval for AKROS stage synthetic customer import testing; not real-person processing',
+    policyId: 'akros-symmy-source-sync',
+    purpose: 'CUSTOMER_IMPORT',
+    reason: 'Operator-authorized AKROS customer source synchronization for the customer demonstration',
     revision,
     tenantId,
     validUntil: '2026-12-23T00:00:00.000Z',
@@ -635,7 +635,7 @@ export const symmyDemoCustomerEnvironment = (
   );
   return {
     ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: JSON.stringify([...entries.values()]),
-    ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED: 'true',
+    ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED: 'true',
   };
 };
 
@@ -1036,16 +1036,16 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
         return yield* fail(`No active AKROS company registration for ${key}; revoked policy is never revived`);
       }
     }
-    const demoPolicy = yield* buildSymmyDemoSourceProcessingPolicy(identities);
-    const encodedDemoPolicy = yield* Schema.encodeEffect(DemoSourceProcessingPolicySchema)(demoPolicy);
+    const sourceSyncPolicy = yield* buildSymmySourceSyncProcessingPolicy(identities);
+    const encodedSourceSyncPolicy = yield* Schema.encodeEffect(SourceSyncProcessingPolicySchema)(sourceSyncPolicy);
     if (mode === 'apply') {
       yield* sql.withTransaction(
-        Effect.gen(function* installDemoPolicy() {
+        Effect.gen(function* installSourceSyncPolicy() {
           yield* sql`select pg_advisory_xact_lock(hashtextextended(
-            ${`${tenantId}:${legalEntityId}:demo-source-processing-policy`},0))`;
+            ${`${tenantId}:${legalEntityId}:source-sync-processing-policy`},0))`;
           yield* sql`insert into privacy.demo_source_processing_policies
           (tenant_id,legal_entity_id,policy_id,policy_record)
-          values(${tenantId},${legalEntityId},${demoPolicy.policyId},${sql.json(encodedDemoPolicy)})
+          values(${tenantId},${legalEntityId},${sourceSyncPolicy.policyId},${sql.json(encodedSourceSyncPolicy)})
           on conflict (tenant_id,legal_entity_id,policy_id) do update
           set policy_record=jsonb_set(privacy.demo_source_processing_policies.policy_record,'{callers}',
             excluded.policy_record->'callers')
@@ -1055,9 +1055,9 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     }
     const verifiedPolicy = yield* sql`select policy_id from privacy.demo_source_processing_policies
       where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}
-        and policy_id=${demoPolicy.policyId} and policy_record=${sql.json(encodedDemoPolicy)}::jsonb`;
+        and policy_id=${sourceSyncPolicy.policyId} and policy_record=${sql.json(encodedSourceSyncPolicy)}::jsonb`;
     if (verifiedPolicy.length !== 1) {
-      return yield* fail('Existing demo source policy differs; no policy was overwritten or reactivated');
+      return yield* fail('Existing source sync policy differs; no policy was overwritten or reactivated');
     }
 
     // Bootstrap inserts are not Action invocations and deliberately manufacture no Action history/receipt.
@@ -1241,9 +1241,9 @@ export const bootstrapSymmyDemoCustomerAuthority = Effect.fn('SymmyDemoCustomerA
     return {
       environment,
       identities,
-      personalDataAuthority: 'DEMO_TEST_DATA_SOURCE_POLICY' as const,
+      sourceProcessingAuthority: 'SOURCE_SYNC_PROCESSING_POLICY' as const,
       exactPersonalDataContexts: personalContexts.length,
-      readyForPersonalData: false,
+      readyForSourceSync: true,
       receipts,
       retention: symmyDemoCustomerRetentionRefs(),
     };
@@ -1267,7 +1267,7 @@ const command = Command.make(
             Effect.flatMap((result) =>
               Console.log({
                 mode,
-                personalDataAuthority: result.personalDataAuthority,
+                sourceProcessingAuthority: result.sourceProcessingAuthority,
                 routes: result.receipts.map(({ outcome, routeId, routeKey }) => ({ outcome, routeId, routeKey })),
               }),
             ),

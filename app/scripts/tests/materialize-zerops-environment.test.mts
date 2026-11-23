@@ -9,7 +9,7 @@ import {
   materializeZeropsEnvironment,
   materializeZeropsSetupFiles,
   SYMMY_INGRESS_VARIABLE,
-  SYMMY_DEMO_PROCESSING_VARIABLE,
+  SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE,
   SYMMY_PRICE_READ_SOURCES_VARIABLE,
   SYMMY_RETENTION_POLICIES_VARIABLE,
 } from '../materialize-zerops-environment.mts';
@@ -205,7 +205,7 @@ it.effect(
       const input = parseDocument(fixture);
       const named = [
         {
-          path: ['zerops', 1, 'run', 'envVariables', SYMMY_DEMO_PROCESSING_VARIABLE],
+          path: ['zerops', 1, 'run', 'envVariables', SYMMY_SOURCE_SYNC_PROCESSING_VARIABLE],
           value: 'true',
         },
         {
