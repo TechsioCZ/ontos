@@ -117,8 +117,9 @@ it.live(
           ).toBe(true);
           // The Catalog owner was handed one line authority per ORIGINAL occurrence, not one merged line.
           expect(catalogMaterialCount(mixedFences, 'CATALOG_LINE_AUTHORITY')).toBe(3);
-          // Catalog was asked about one two-member group (P) and one single-member group (Q), never one merged group.
-          expect(catalogEquivalenceGroupSizes(mixedFences)).toEqual([1, 2]);
+          // Whole-candidate completeness asks Catalog per ORIGINAL occurrence (one single-member authority each), never
+          // one merged group across the purchase; the pooled P pair is a Tier concern proved by the published amounts.
+          expect(catalogEquivalenceGroupSizes(mixedFences)).toEqual([1, 1, 1]);
 
           // One Product, two Tier-non-equivalent Variants: no pooling, so both keep the base Price; whole total sums.
           const fencesBeforeSameProduct = harness.fenceCalls.length;
