@@ -7,7 +7,11 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  readVerifiedGatewayActor,
+  readVerifiedGatewayRouteScope,
+  readVerifiedGatewayWorkload,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Config, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
@@ -15,6 +19,7 @@ import {
   SourceProcessingEligibilityResponseSchema,
   SourceProcessingContextSchema,
   SymmyCustomerSourceIntakeConsumerModule,
+  SymmyCustomerSourceIntakeOperation,
 } from '../../shared/apis/source-processing-eligibility.ts';
 import type {
   SourceProcessingEligibilityRequest,
@@ -132,6 +137,7 @@ export const demoSourceProcessingPolicyMatches = (
   scope: OperationalScope,
 ): boolean => {
   const source = request.source;
+  const native = readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver;
   if (
     scope.tenantId !== policy.tenantId ||
     scope.legalEntityId !== policy.legalEntityId ||
@@ -141,15 +147,23 @@ export const demoSourceProcessingPolicyMatches = (
     !policy.callers.some(
       (caller) => caller.principalId === scope.principalId && caller.authMethod === scope.authMethod,
     ) ||
+    (native !== undefined &&
+      !policy.callers.some(
+        (caller) => caller.authMethod === 'api_key' && caller.principalId === native.originalPrincipalId,
+      )) ||
     !demoOperations[request.consumerModuleId].includes(request.operation)
   ) {
     return false;
   }
-  const membership = request.operation.startsWith('customer-group-membership.');
+  const membership =
+    request.consumerModuleId === 'commerce.customer-context' &&
+    (request.operation === 'customer-group-membership.write' ||
+      request.operation === 'customer-group-membership.recover');
   const intake = request.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule;
   const customerSource = source.routeRef === policy.customerRouteId && source.recordType === 'CUSTOMER';
   const groupSource = source.routeRef === policy.groupRouteId && source.recordType === 'CUSTOMER_GROUP';
-  if (!(intake ? customerSource || groupSource : membership ? groupSource : customerSource)) {
+  const membershipSource = source.routeRef === policy.groupRouteId && source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP';
+  if (!(intake ? customerSource || groupSource : membership ? membershipSource : customerSource)) {
     return false;
   }
   const reference = request.partySourceReference?.source;
@@ -177,6 +191,47 @@ const correlatedSourcePersonTarget = (
 const sourceRequestMatches = (context: SourceProcessingContext, request: SourceProcessingEligibilityRequest): boolean =>
   requestEquivalent(context.request, request) || correlatedSourcePersonTarget(context, request);
 
+/** The original integration is the intake policy subject, not the native receiver or the distinct module actor. */
+const nativeIntakePrincipal = (scope: OperationalScope, request: SourceProcessingEligibilityRequest) => {
+  const route = readVerifiedGatewayRouteScope(scope);
+  const native = route?.nativeReadReceiver;
+  if (
+    scope.authMethod !== 'system' ||
+    scope.legalEntityId === undefined ||
+    route === undefined ||
+    native === undefined ||
+    native.originalWorkloadKey !== 'integration.symmy-admit' ||
+    native.workloadKey !== 'privacy.core.source-processing-check' ||
+    native.originalPrincipalId === scope.principalId ||
+    route.legalEntityId !== scope.legalEntityId ||
+    native.enrollmentLegalEntityId !== scope.legalEntityId ||
+    route.operations.length !== 1 ||
+    route.operations[0]?.entrypointKey !== 'privacy.core.api.source-processing-eligibility' ||
+    route.operations[0]?.schemaVersion !== '1' ||
+    readVerifiedGatewayActor(scope)?.appId !== 'symmy-integration' ||
+    request.consumerModuleId !== SymmyCustomerSourceIntakeConsumerModule ||
+    request.operation !== SymmyCustomerSourceIntakeOperation ||
+    request.source?.routeRef !== route.sourceRouteId ||
+    !(
+      (route.routeKey === 'customersBatch' && request.source.recordType === 'CUSTOMER') ||
+      (route.routeKey === 'customerGroupCustomersBatch' && request.source.recordType === 'CUSTOMER_GROUP')
+    )
+  )
+    return undefined;
+  return native.originalPrincipalId;
+};
+
+const contextCallerMatches = (
+  context: SourceProcessingContext,
+  request: SourceProcessingEligibilityRequest,
+  scope: OperationalScope,
+) => {
+  const original = nativeIntakePrincipal(scope, request);
+  return original === undefined
+    ? context.principalId === scope.principalId && context.authMethod === scope.authMethod
+    : context.principalId === original && context.authMethod === 'api_key';
+};
+
 const currentContextMatches = (
   context: SourceProcessingContext,
   request: SourceProcessingEligibilityRequest,
@@ -187,8 +242,7 @@ const currentContextMatches = (
   return (
     context.tenantId === scope.tenantId &&
     context.legalEntityId === scope.legalEntityId &&
-    context.principalId === scope.principalId &&
-    context.authMethod === scope.authMethod &&
+    contextCallerMatches(context, request, scope) &&
     sourceRequestMatches(context, request) &&
     isPrivacyInstantAtOrBefore(context.effectiveFrom, evaluatedAt) &&
     isPrivacyInstantAfter(context.validUntil, evaluatedAt) &&
@@ -261,8 +315,7 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
         sourceRequestMatches(context, request) &&
         context.tenantId === scope.tenantId &&
         context.legalEntityId === scope.legalEntityId &&
-        context.principalId === scope.principalId &&
-        context.authMethod === scope.authMethod,
+        contextCallerMatches(context, request, scope),
     );
     const [context] = exactContexts;
     if (
@@ -721,6 +774,19 @@ const traceSourceStage = (stage: string) =>
     ),
   );
 
+const sourceProcessingCaller = (scope: OperationalScope) => {
+  const workload = readVerifiedGatewayWorkload(scope);
+  if (workload !== undefined) {
+    return workload.workloadKey === 'privacy.core.source-processing-check' &&
+      workload.declarationKey === 'privacy.core.source-processing-eligibility.read' &&
+      workload.entrypointKey === 'privacy.core.api.source-processing-eligibility' &&
+      workload.schemaVersion === '1'
+      ? workload.sourceAppId
+      : undefined;
+  }
+  return readVerifiedGatewayActor(scope)?.appId;
+};
+
 const sourceProcessingEligibilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -772,7 +838,7 @@ export const sourceProcessingEligibilityRead = defineRead(
     const evaluatedAt = DateTime.formatIso(yield* DateTime.now);
     if (
       input.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
-      (context.scope.authMethod !== 'api_key' || readVerifiedGatewayActor(context.scope)?.appId !== 'symmy-integration')
+      nativeIntakePrincipal(context.scope, input) === undefined
     ) {
       return {
         evidence: { resultCount: 1 },
@@ -785,8 +851,9 @@ export const sourceProcessingEligibilityRead = defineRead(
       'party.registry': 'party-registry',
     };
     if (
-      context.services.demo !== undefined &&
-      readVerifiedGatewayActor(context.scope)?.appId !== consumerAppIds[input.consumerModuleId]
+      (context.services.demo !== undefined ||
+        readVerifiedGatewayRouteScope(context.scope)?.nativeReadReceiver !== undefined) &&
+      sourceProcessingCaller(context.scope) !== consumerAppIds[input.consumerModuleId]
     ) {
       return {
         evidence: { resultCount: 1 },
