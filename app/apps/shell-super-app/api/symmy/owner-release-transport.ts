@@ -1,4 +1,6 @@
-import { Effect } from 'effect';
+import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import { Effect, Layer, flow } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
 import { symmyUnavailableProblem } from './contract.ts';
@@ -86,3 +88,12 @@ export const forwardSymmyOwnerRelease = Effect.fn('SymmyOwnerRelay.forward')(fun
   }
   return yield* dispatchModuleApiRequest(request);
 });
+
+/** Generated clients use only the finite native relay, with this runtime's approved composition. */
+export const symmyOwnerReleaseFetchLive = Layer.effect(
+  FetchHttpClient.Fetch,
+  Effect.gen(function* symmyOwnerReleaseFetchLayer() {
+    const services = yield* Effect.context<ActiveApplicationCompositionService>();
+    return flow(forwardSymmyOwnerRelease, Effect.runPromiseWith(services));
+  }),
+);

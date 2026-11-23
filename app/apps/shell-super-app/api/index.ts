@@ -272,8 +272,8 @@ import { acquirePaymentRouteScopeProof, issuePaymentRouteScopeAssertion } from '
 import {
   SymmyGovernedDispatch,
   SymmyGovernedDispatchLive,
-  forwardSymmyOwnerRelease,
 } from './symmy/governed-dispatch.ts';
+import { symmyOwnerReleaseFetchLive } from './symmy/owner-release-transport.ts';
 
 import { ShellAuthenticationApi } from '../shared/api.ts';
 import {
@@ -4199,15 +4199,6 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(UrlParams.CurrentRedactedNames, authenticationQueryRedactions),
 );
 
-/** The scoped Fetch edge for generated Symmy clients uses the normal owner release transport. */
-const symmyOwnerReleaseFetchLive = Layer.effect(
-  FetchHttpClient.Fetch,
-  Effect.gen(function* symmyOwnerReleaseFetchLayer() {
-    // Generated clients call Fetch with Promises; each relay runs with the services this layer was built with.
-    const services = yield* Effect.context<ActiveApplicationCompositionService>();
-    return flow(forwardSymmyOwnerRelease, Effect.runPromiseWith(services));
-  }),
-);
 /** The scoped Fetch edge for the generated Payment route Read, capture and recovery clients. */
 const paymentOwnerReleaseFetchLive = Layer.effect(
   FetchHttpClient.Fetch,
@@ -4895,7 +4886,9 @@ export const makeShellAuthenticationApiRuntime = (
     compositionGroupLive,
     documentContextGroupLive,
     resourcesGroupLive,
-    gatewayContextGroupLive,
+    gatewayContextGroupLive.pipe(
+      Layer.provide(symmyOwnerReleaseFetchLive.pipe(Layer.provide(shellReadAuthorityLayer))),
+    ),
     apiKeyGatewayReadGroupLive,
     documentGatewayGroupLive,
     oauthConnectGroupLive,
