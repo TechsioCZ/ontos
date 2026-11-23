@@ -26,10 +26,7 @@ it.live(
           });
           const resolved = yield* harness.runRegisteredRead(resolvedRequest);
           // Price 100 + persisted fixed-scale Fee 3: a persisted "3.000000000" must not block publication.
-          expect(
-            resolved,
-            JSON.stringify({ attempts: harness.wholeAttempts, fences: harness.fenceCalls }),
-          ).toMatchObject({
+          expect(resolved).toMatchObject({
             candidate: { occurrenceIds: ['P-only'] },
             outcome: 'PRICE_RESOLVED',
             result: {
