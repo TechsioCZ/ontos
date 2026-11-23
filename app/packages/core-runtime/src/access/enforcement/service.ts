@@ -832,7 +832,7 @@ const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): bool
   if (
     routeScope?.nativeReadReceiver !== undefined &&
     (input.carrier.accessDeclaration?.kind !== 'read' ||
-      input.carrier.accessWorkload?.workloads.includes(routeScope.nativeReadReceiver.workloadKey) !== true)
+      input.carrier.accessWorkload?.workloads.some((key) => key === routeScope.nativeReadReceiver?.workloadKey) !== true)
   ) {
     return false;
   }
