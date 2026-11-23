@@ -28,6 +28,7 @@ interface State {
 }
 const fixture = (options: Partial<State> & {
   readonly auditFailure?: boolean; readonly casFailure?: boolean; readonly administrative?: boolean;
+  readonly databaseNow?: string;
 } = {}) => {
   let state: State = {
     status: 'pending', attemptsCount: 12, availableAt: '2026-11-23T07:57:21.000Z',
@@ -54,7 +55,8 @@ const fixture = (options: Partial<State> & {
     }
     if (sql.includes('session_user')) {
       return Effect.succeed([{
-        databaseNow: now, recordedBy: options.administrative === false ? 'ontos_runtime' : 'native_admin_fixture',
+        databaseNow: options.databaseNow ?? now,
+        recordedBy: options.administrative === false ? 'ontos_runtime' : 'native_admin_fixture',
         administrative: options.administrative !== false,
       }]);
     }
@@ -113,6 +115,15 @@ it.effect('returns ALREADY_DUE without moving its schedule or resetting the atte
     expect(yield* current.retry()).toMatchObject({ outcome: 'ALREADY_DUE', attemptsCount: 12, availableAt: new Date(availableAt) });
     expect(current.statements.some(({ sql }) => sql.startsWith('update '))).toBe(false);
     expect(current.audits.length).toBeGreaterThan(0);
+  }),
+);
+
+it.effect('refuses an invalid database clock without changing the delivery or writing an audit', () =>
+  Effect.gen(function* invalidDatabaseClock() {
+    const current = fixture({ databaseNow: 'not-a-database-instant' });
+    expect(yield* current.retry().pipe(Effect.flip)).toMatchObject({ code: 'outbox_retry_unavailable' });
+    expect(current.statements.some(({ sql }) => /^(?:insert|update) /u.test(sql))).toBe(false);
+    expect(current.audits).toEqual([]);
   }),
 );
 

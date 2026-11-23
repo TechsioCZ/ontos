@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { auditEvents, outboxDeliveries, outboxMessages } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
@@ -83,8 +83,8 @@ export const retryPendingOutboxDelivery = Effect.fn('PendingOutboxDeliveryRetry.
       })))(rows).pipe(Effect.mapError(unavailable('The database clock and identity were invalid')))),
     );
     const [fact] = facts;
-    const now = new Date(fact?.databaseNow ?? '');
-    if (facts.length !== 1 || fact === undefined || !Number.isFinite(now.getTime())) {
+    const clock = DateTime.make(fact?.databaseNow ?? '');
+    if (facts.length !== 1 || fact === undefined || Option.isNone(clock)) {
       return yield* new PendingOutboxDeliveryRetryError({
         code: 'outbox_retry_unavailable', reason: 'The database returned no valid clock and administrative identity',
       });
@@ -95,6 +95,7 @@ export const retryPendingOutboxDelivery = Effect.fn('PendingOutboxDeliveryRetry.
         reason: 'Pending retry requires the database identity authorized to insert native operator delivery decisions',
       });
     }
+    const now = DateTime.toDateUtc(clock.value);
     const alreadyDue = delivery.availableAt.getTime() <= now.getTime();
     let availableAt = delivery.availableAt;
     if (!alreadyDue) {
