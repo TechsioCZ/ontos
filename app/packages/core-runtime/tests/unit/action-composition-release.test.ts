@@ -6,7 +6,11 @@ import { expect, it } from 'effect-rstest';
 import { ActionTransactionError } from '../../src/actions/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { makeActionCompositionRevisionResolver } from '../../src/actions/runtime.ts';
+import { defineAction } from '../../src/actions/definition.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import { mutateAgentProposalsAction } from '../../src/modules/actions/mutate-agent-proposals.action.ts';
+import { loadModuleOperationAdmission } from '../../src/modules/module-operation-execution.ts';
+import { ModuleOperationRequirementError } from '../../src/modules/module-operation-requirement-error.ts';
 import { makeApplicationCompositionSnapshotFixture } from '../../src/testing/module-contract.ts';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -48,5 +52,30 @@ it.effect('rejects an old owner artifact even when a cold process observes the n
     );
     const failure = yield* resolve(principal).pipe(Effect.flip);
     expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+  }),
+);
+
+it.effect('admits the genuine native proposal Action through the selected Shell, never a recreated descriptor', () =>
+  Effect.gen(function* admitNativeProposalAction() {
+    yield* TestClock.setTime(Date.parse('2026-10-02T16:00:00.000Z'));
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['party-registry']);
+    const authority = makeActiveApplicationCompositionService(Effect.succeed(snapshot));
+    const admission = yield* loadModuleOperationAdmission(
+      authority,
+      snapshot.composition.shell.deployment,
+      mutateAgentProposalsAction,
+      principal,
+    );
+    expect(admission.revision).toBe(snapshot.composition.revision);
+    const recreated = defineAction({ ...mutateAgentProposalsAction.descriptor }, () =>
+      Effect.die('A recreated proposal Action must never execute'),
+    );
+    const failure = yield* loadModuleOperationAdmission(
+      authority,
+      snapshot.composition.shell.deployment,
+      recreated,
+      principal,
+    ).pipe(Effect.flip);
+    expect(Schema.is(ModuleOperationRequirementError)(failure)).toBe(true);
   }),
 );
