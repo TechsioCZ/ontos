@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
 import { Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import {
@@ -27,7 +29,9 @@ import { executeImportSourceCatalogWithAuthorization } from '../../../../vertica
 import {
   ImportSourceCatalogActionAlreadyCommittedProblemSchema,
   ImportSourceCatalogActionCommitIndeterminateProblemSchema,
+  ImportSourceCatalogActionConflictProblemSchema,
   ImportSourceCatalogActionForbiddenProblemSchema,
+  ImportSourceCatalogActionUnavailableProblemSchema,
 } from '../../../../verticals/merchandise/shared/apis/import-source-catalog-action.ts';
 
 const product = {
@@ -41,6 +45,7 @@ const product = {
   taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
 };
+const sourceRequestDigest = 'a'.repeat(64);
 const scope: SymmySourceReadScope = {
   allowedOwnerOperations: [],
   issuerId: 'issuer-one',
@@ -142,15 +147,26 @@ test('the dedicated owner action cannot mutate orders, prices, products or a sav
     { _tag: 'ChangeProductImages', id: 'product', change: { _tag: 'Remove', image: 'media:asset' } },
     { _tag: 'CreateProduct', ...product, images: ['media:another-products-asset'] },
   ]) {
-    assert.equal(Schema.is(ImportSourceCatalogPayloadSchema)({ command, expectedRevision: 0 }), false, command._tag);
+    assert.equal(
+      Schema.is(ImportSourceCatalogPayloadSchema)({ command, expectedRevision: 0, sourceRequestDigest }),
+      false,
+      command._tag,
+    );
   }
   assert.equal(
     Schema.is(ImportSourceCatalogPayloadSchema)({
       command: { _tag: 'CreateProduct', ...product },
       expectedRevision: 0,
+      sourceRequestDigest,
     }),
     true,
   );
+});
+
+test('the import action requires a SHA-256 source request digest', () => {
+  const payload = { command: { _tag: 'CreateProduct', ...product }, expectedRevision: 0 };
+  assert.equal(Schema.is(ImportSourceCatalogPayloadSchema)(payload), false);
+  assert.equal(Schema.is(ImportSourceCatalogPayloadSchema)({ ...payload, sourceRequestDigest: 'not-a-digest' }), false);
 });
 
 test('image uploads retain CoreMedia rendition byte and dimension bounds', () => {
@@ -185,6 +201,7 @@ test('real owner client sends native creates with bearer, idempotency and compos
   const payload = Schema.decodeUnknownSync(ImportSourceCatalogPayloadSchema)({
     command: { _tag: 'CreateProduct', ...product },
     expectedRevision: 0,
+    sourceRequestDigest,
   });
   const result = await Effect.runPromise(
     executeImportSourceCatalogWithAuthorization(payload, 'Bearer fresh-owner-assertion', 'catalog-import-test', {
@@ -232,6 +249,7 @@ test('owner denial, already committed and uncertain commit stay failures, never 
   const payload = Schema.decodeUnknownSync(ImportSourceCatalogPayloadSchema)({
     command: { _tag: 'CreateProduct', ...product },
     expectedRevision: 0,
+    sourceRequestDigest,
   });
   for (const problem of problems) {
     const fetch: typeof globalThis.fetch = async () =>
@@ -319,6 +337,134 @@ test('public helpers create source categories, arbitrary products and bind nativ
   assert.equal(uploaded.legalEntityId, scope.legalEntityId);
   assert.equal(uploaded.tenantId, scope.tenantId);
 });
+
+for (const kind of ['categories', 'products'] as const) {
+  test(`${kind}: a partial batch resumes only for the original ordered request`, async () => {
+    const batch = (names: readonly string[], expectedRevision = 0, selected = context) =>
+      kind === 'categories'
+        ? executeSymmyDemoCategoriesBatch(
+            selected,
+            Schema.decodeUnknownSync(SymmyDemoCategoriesBatchRequestSchema)({
+              categories: names.map((name) => ({ code: name, name, slug: name })),
+              expectedRevision,
+            }),
+          )
+        : executeSymmyDemoProductsBatch(
+            selected,
+            Schema.decodeUnknownSync(SymmyDemoProductsBatchRequestSchema)({
+              expectedRevision,
+              products: names.map((name) => ({ ...product, name, sku: name })),
+            }),
+          );
+    const { descriptor } = importSourceCatalogAction;
+    const principal = Schema.decodeUnknownSync(
+      TrustedPrincipalContextSchema.mapFields(({ tenantId, legalEntityId, principalId }) => ({
+        tenantId,
+        legalEntityId,
+        principalId,
+      })),
+    )({ ...scope, principalId: '33333333-3333-4333-8333-333333333333' });
+
+    // Capture identities after the real HTTP client and the registered owner's payload codec.
+    // Stand in only for receipt storage/transport, not for the Action's request hash.
+    type Receipt = { entityIds: string[]; revision: number };
+    const attempts: { key: string; hash: string; revision: number }[] = [];
+    const receipts = new Map<string, Receipt>();
+    let interruptSecond = true;
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const payload = Schema.decodeUnknownSync(descriptor.payloadSchema)(await request.json());
+      const hash = computeActionRequestHash({
+        actionKey: descriptor.actionKey,
+        normalizedPayload: Schema.encodeSync(descriptor.payloadSchema)(payload),
+        owningModuleKey: descriptor.owningModuleKey,
+        principal,
+        schemaVersion: descriptor.schemaVersion,
+        target: {},
+      });
+      const key = request.headers.get('idempotency-key');
+      assert.ok(key);
+      const previous = attempts.find((attempt) => attempt.key === key);
+      attempts.push({ key, hash, revision: payload.expectedRevision });
+      if (previous && previous.hash !== hash) {
+        return Response.json(
+          ImportSourceCatalogActionConflictProblemSchema.make({
+            code: 'action_request_hash_conflict',
+            detail: 'Request changed',
+            status: 409,
+            title: 'Conflict',
+            type: 'https://ontos.dev/problems/action-request-hash-conflict',
+          }),
+          { status: 409, headers: { 'content-type': 'application/problem+json' } },
+        );
+      }
+      const saved = receipts.get(key);
+      if (saved) return Response.json(saved);
+      if (payload.expectedRevision === 1 && interruptSecond) {
+        interruptSecond = false;
+        return Response.json(
+          ImportSourceCatalogActionUnavailableProblemSchema.make({
+            code: 'operation_context_unavailable',
+            detail: 'Try again',
+            retryable: true,
+            status: 503,
+            title: 'Unavailable',
+            type: 'https://ontos.dev/problems/operation-context-unavailable',
+          }),
+          { status: 503, headers: { 'content-type': 'application/problem+json' } },
+        );
+      }
+      assert.equal(payload.expectedRevision, receipts.size);
+      const { command } = payload;
+      const receipt = {
+        entityIds: [command._tag === 'CreateCategory' ? command.id : `product-${receipts.size}`],
+        revision: receipts.size + 1,
+      };
+      receipts.set(key, receipt);
+      return Response.json(receipt);
+    };
+    const run = <A, E>(effect: Effect.Effect<A, E>) =>
+      Effect.runPromise(effect.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
+    const original = ['alpha', 'beta', 'gamma'];
+    const failure = await run(batch(original).pipe(Effect.flip));
+    assert.equal(failure._tag, 'ImportSourceCatalogActionUnavailableProblem');
+    assert.equal(receipts.size, 1);
+    const [first, interrupted] = attempts;
+    assert.ok(first?.key && interrupted?.key && first.key !== interrupted.key);
+    for (const changed of [
+      original.slice(0, 1),
+      [...original, 'delta'],
+      ['alpha', 'gamma', 'beta'],
+      ['alpha', 'edited', 'gamma'],
+    ]) {
+      const start = attempts.length;
+      const conflict = await run(batch(changed).pipe(Effect.flip));
+      assert.equal(conflict._tag, 'ImportSourceCatalogActionConflictProblem');
+      assert.equal(attempts.length, start + 1);
+      assert.equal(attempts[start]?.key, first.key);
+      assert.notEqual(attempts[start]?.hash, first.hash);
+      assert.equal(receipts.size, 1);
+    }
+    const start = attempts.length;
+    const result = await run(batch(original));
+    assert.deepEqual(attempts.slice(start, start + 2), [first, interrupted]);
+    assert.deepEqual(
+      result.items.map(({ entityId, revision }) => [entityId, revision]),
+      [...receipts.values()].map(({ entityIds, revision }) => [entityIds[0], revision]),
+    );
+    assert.equal(result.revision, 3);
+    assert.equal(receipts.size, 3);
+
+    // Original incident: extending even a fully successful one-item batch cannot append a write.
+    const singleton = { ...context, idempotencyKey: 'completed-singleton' };
+    await run(batch(['delta'], 3, singleton));
+    const startExtension = attempts.length;
+    const extension = await run(batch(['delta', 'epsilon'], 3, singleton).pipe(Effect.flip));
+    assert.equal(extension._tag, 'ImportSourceCatalogActionConflictProblem');
+    assert.equal(attempts.length, startExtension + 1);
+    assert.equal(receipts.size, 4);
+  });
+}
 
 test('missing company or owner enrollment is refused before obtaining any assertion', async () => {
   let attempts = 0;

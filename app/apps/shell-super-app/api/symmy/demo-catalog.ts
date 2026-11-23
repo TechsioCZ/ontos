@@ -1,3 +1,4 @@
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { executeImportSourceCatalogWithAuthorization } from '@app/merchandise/apis/import-source-catalog-action/client';
 import { importSourceCatalogActionErrors } from '@app/merchandise/apis/import-source-catalog-action';
 import {
@@ -92,8 +93,8 @@ const write = Effect.fn('SymmyDemoCatalog.write')(function* write(
   return result;
 });
 
-const decodeCommand = (command: unknown, expectedRevision: number) =>
-  Schema.decodeUnknownEffect(ImportSourceCatalogPayloadSchema)({ command, expectedRevision }).pipe(
+const decodeCommand = (command: unknown, expectedRevision: number, sourceRequestDigest: string) =>
+  Schema.decodeUnknownEffect(ImportSourceCatalogPayloadSchema)({ command, expectedRevision, sourceRequestDigest }).pipe(
     Effect.mapError(() => symmyInvalidProblem),
   );
 
@@ -130,6 +131,7 @@ export const executeSymmyDemoCategoriesBatch = Effect.fn('SymmyDemoCatalog.categ
   ) {
     return yield* Effect.fail(symmyInvalidProblem);
   }
+  const sourceRequestDigest = computeCanonicalValueHash(request);
   let revision = request.expectedRevision;
   const items: Applied[] = [];
   for (const [index, category] of request.categories.entries()) {
@@ -146,6 +148,7 @@ export const executeSymmyDemoCategoriesBatch = Effect.fn('SymmyDemoCatalog.categ
         slug: category.slug,
       },
       revision,
+      sourceRequestDigest,
     );
     const result = yield* write(context, payload, `category:${index}`);
     if (result.entityIds[0] !== id) {
@@ -181,13 +184,18 @@ export const executeSymmyDemoProductsBatch = Effect.fn('SymmyDemoCatalog.product
   ) {
     return yield* Effect.fail(symmyInvalidProblem);
   }
+  const sourceRequestDigest = computeCanonicalValueHash(request);
   let revision = request.expectedRevision;
   const items: Applied[] = [];
   for (const [index, product] of request.products.entries()) {
     const { categoryCode, ...fields } = product;
     const categoryFields =
       categoryCode === undefined ? {} : { categoryId: yield* symmyDemoCategoryId(context.scope, categoryCode) };
-    const payload = yield* decodeCommand({ ...fields, ...categoryFields, _tag: 'CreateProduct' }, revision);
+    const payload = yield* decodeCommand(
+      { ...fields, ...categoryFields, _tag: 'CreateProduct' },
+      revision,
+      sourceRequestDigest,
+    );
     const result = yield* write(context, payload, `product:${index}`);
     const [id] = result.entityIds;
     if (id === undefined || result.entityIds.length !== 1) {
@@ -208,6 +216,7 @@ export const executeSymmyDemoMediaUpload = Effect.fn('SymmyDemoCatalog.media')(f
   const payload = yield* decodeCommand(
     { _tag: 'ChangeProductImages', change: { _tag: 'Upload', image: request.image }, id: request.productId },
     request.expectedRevision,
+    computeCanonicalValueHash(request),
   );
   const result = yield* write(context, payload, 'media:0');
   if (

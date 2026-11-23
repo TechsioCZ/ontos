@@ -26,6 +26,8 @@ export const ImportSourceCatalogPayloadSchema = Schema.Struct({
     }),
   ]),
   expectedRevision: MerchandiseCommandPayloadSchema.fields.expectedRevision,
+  /** Binds every item receipt to the whole ordered source request, without changing its retry key. */
+  sourceRequestDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
 });
 export type ImportSourceCatalogPayload = typeof ImportSourceCatalogPayloadSchema.Type;
 export { ApplyCommandResultSchema as ImportSourceCatalogResultSchema } from './apply-command.ts';
