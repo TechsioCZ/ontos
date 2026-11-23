@@ -88,6 +88,7 @@ import {
   findPartySourceDecision,
   findPartySourceMatchDecision,
   requireSupportedPartyEvidenceOperation,
+  permitsQualifiedOrganizationSource,
 } from './party-client-source-evidence.service.ts';
 import type { PartyClientSourceScope, PartySourceCreateTarget } from './party-client-source-evidence.service.ts';
 import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
@@ -769,7 +770,10 @@ const authorizeCandidateEvidence = Effect.fn('PartyMatchingPersistenceService.au
     const projection = yield* authorizePartyEvidenceWithProjection(candidate.subjectEvidence, sourceScope, {
       operation,
     });
-    if (projection === true) {
+    if (
+      projection?.kind === 'organization_business' ||
+      (projection?.kind === 'demo_test_data' && candidate.partyType === 'ORGANIZATION')
+    ) {
       if (operation === 'REVIEW') {
         return yield* organizationReviewRequired();
       }
@@ -1125,7 +1129,7 @@ const requireOrganizationSourceTarget = Effect.fn('PartyMatchingPersistenceServi
       operation,
       target: { kind: 'PARTY', partyId },
     });
-    if (projected !== true) {
+    if (!permitsQualifiedOrganizationSource(projected)) {
       return yield* organizationReviewRequired('organization_business_projection_required');
     }
     const now = yield* DateTime.nowAsDate;
@@ -1613,7 +1617,7 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
     });
   }
   yield* requirePartySubjectEvidence(input.candidate);
-  if (organizationProjection === true) {
+  if (input.candidate.partyType === 'ORGANIZATION' && permitsQualifiedOrganizationSource(organizationProjection)) {
     return yield* createOrganizationSourceParty(transaction, input);
   }
   const identifiers = input.candidate.officialIdentifiers.map(normalizeOfficialIdentifier);
@@ -1864,7 +1868,7 @@ export const matchParty = Effect.fn('PartyMatchingPersistenceService.matchParty'
   const assertion = clientSourceAssertion(input.candidate.subjectEvidence);
   const organizationProjection = yield* authorizeCandidateEvidence(input, 'MATCH');
   yield* lockTenantIdentityWrites(transaction, input.tenantId);
-  if (organizationProjection === true) {
+  if (input.candidate.partyType === 'ORGANIZATION' && permitsQualifiedOrganizationSource(organizationProjection)) {
     return yield* matchOrganizationSourceParty(transaction, input);
   }
   yield* requirePriorReviewCase(transaction, input);
@@ -2841,7 +2845,7 @@ const recoverIdentitySourceEffect = Effect.fn('PartySourceReceipt.recoverIdentit
   const organizationProjection = yield* authorizePartyEvidenceWithProjection(candidate.subjectEvidence, scope, {
     operation: 'EVIDENCE_READ',
   });
-  if (organizationProjection === true) {
+  if (candidate.partyType === 'ORGANIZATION' && permitsQualifiedOrganizationSource(organizationProjection)) {
     return yield* recoverOrganizationSourceEffect(transaction, scope, input);
   }
   const decision =

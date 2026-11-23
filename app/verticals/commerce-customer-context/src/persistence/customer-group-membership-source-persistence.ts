@@ -1,3 +1,7 @@
+import {
+  syntheticSourceProcessingSelected,
+  acquireSyntheticSourceProcessingPermit,
+} from '../integrations/synthetic-source-processing.ts';
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
@@ -212,7 +216,8 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
         reason: 'The exact Customer Profile is not Current and eligible',
       });
     }
-    if (input.processingKind === 'ORG_BUSINESS_REFERENCE') {
+    const synthetic = yield* syntheticSourceProcessingSelected.pipe(Effect.mapError(privacyRejected));
+    if (input.processingKind === 'ORG_BUSINESS_REFERENCE' && !synthetic) {
       const organization = yield* Effect.serviceOption(CommerceOrganizationBusinessEligibility);
       if (Option.isNone(organization) || input.profile.profileKind !== 'COUNTERPARTY') {
         return yield* unavailable();
@@ -239,34 +244,41 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
       yield* organization.value.check(scope, request, operationRequirementKey).pipe(Effect.mapError(privacyRejected));
       return yield* Effect.void;
     }
-    yield* privacy
-      .check(
-        scope,
-        {
-          operation,
-          source: {
-            issuer: input.manager.issuer,
-            namespace: input.manager.sourceNamespace,
-            occurrenceId: source.assertionId,
-            recordId: source.sourceRecordId,
-            recordType: input.manager.factFamily,
-            routeRef: input.route.id,
-          },
-          target: {
-            kind: profile.profileKind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
-            resourceId: profile.profileId,
-          },
+    const check = (
+      scope: Parameters<typeof privacy.check>[0],
+      request: Parameters<typeof privacy.check>[1],
+      requirement: string,
+    ): Effect.Effect<void, CommerceSourceProcessingRejected> =>
+      synthetic
+        ? acquireSyntheticSourceProcessingPermit(scope, privacy, request, requirement).pipe(Effect.asVoid)
+        : privacy.check(scope, request, requirement).pipe(Effect.asVoid);
+    yield* check(
+      scope,
+      {
+        operation,
+        source: {
+          issuer: input.manager.issuer,
+          namespace: input.manager.sourceNamespace,
+          occurrenceId: source.assertionId,
+          recordId: source.sourceRecordId,
+          recordType: input.manager.factFamily,
+          routeRef: input.route.id,
         },
-        operationRequirementKey,
-      )
-      .pipe(Effect.mapError(privacyRejected));
+        target: {
+          kind: profile.profileKind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
+          resourceId: profile.profileId,
+        },
+      },
+      operationRequirementKey,
+    ).pipe(Effect.mapError(privacyRejected));
     return yield* Effect.void;
   });
   return {
     admitSnapshot: Effect.fn('CustomerGroupMembershipSource.admitSnapshot')(
       function* admitSnapshot(payload, invocationId, recordedAt) {
         const requirement =
-          payload.snapshot.processingKind === 'ORG_BUSINESS_REFERENCE'
+          payload.snapshot.processingKind === 'ORG_BUSINESS_REFERENCE' &&
+          !(yield* syntheticSourceProcessingSelected.pipe(Effect.mapError(privacyRejected)))
             ? ORG_ADMIT_PRIVACY_REQUIREMENT
             : ADMIT_PRIVACY_REQUIREMENT;
         yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
@@ -292,7 +304,8 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
     apply: Effect.fn('CustomerGroupMembershipSource.apply')(
       function* applyMembershipSource(payload, invocationId, recordedAt) {
         const requirement =
-          payload.processingKind === 'ORG_BUSINESS_REFERENCE'
+          payload.processingKind === 'ORG_BUSINESS_REFERENCE' &&
+          !(yield* syntheticSourceProcessingSelected.pipe(Effect.mapError(privacyRejected)))
             ? ORG_WRITE_PRIVACY_REQUIREMENT
             : WRITE_PRIVACY_REQUIREMENT;
         yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
@@ -318,7 +331,8 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
     ),
     recover: Effect.fn('CustomerGroupMembershipSource.recover')(function* recoverMembershipSource(input) {
       const requirement =
-        input.processingKind === 'ORG_BUSINESS_REFERENCE'
+        input.processingKind === 'ORG_BUSINESS_REFERENCE' &&
+        !(yield* syntheticSourceProcessingSelected.pipe(Effect.mapError(privacyRejected)))
           ? ORG_RECOVER_PRIVACY_REQUIREMENT
           : RECOVER_PRIVACY_REQUIREMENT;
       yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));

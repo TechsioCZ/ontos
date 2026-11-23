@@ -1,5 +1,6 @@
 import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import type { OperationalScope, ScopedTransactionExecutor, TrustedPrincipalContext } from '@app/core-runtime';
+import type { SourceProcessingEligibilityResponse } from '@app/privacy/api/source-processing-eligibility';
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { checkPartyClientSourcePrivacy } from './party-client-source-privacy.service.ts';
 import { and, eq, isNotNull, ne, or, sql } from 'drizzle-orm';
@@ -38,6 +39,22 @@ export interface PartyClientSourceScope {
 }
 
 export type PartyClientSourceReference = Pick<PartyClientSourceAssertion, 'source' | 'recordId' | 'occurrenceId'>;
+type DemoProcessingEvidence = Extract<
+  Extract<SourceProcessingEligibilityResponse, { readonly outcome: 'ALLOWED' }>['evidence'],
+  { readonly _tag: 'DEMO_TEST_DATA_SOURCE_POLICY' }
+>;
+export type PartyClientSourcePrivacyDecision =
+  | 'ALLOWED'
+  | 'DENIED'
+  | 'ORGANIZATION_BUSINESS_ALLOWED'
+  | { readonly _tag: 'DEMO_TEST_DATA_PROCESSING_ALLOWED'; readonly evidence: DemoProcessingEvidence };
+export type PartySourceProjectionAuthority =
+  | { readonly kind: 'ordinary' }
+  | { readonly kind: 'organization_business' }
+  | { readonly kind: 'demo_test_data'; readonly evidence: DemoProcessingEvidence };
+
+export const permitsQualifiedOrganizationSource = (authority: PartySourceProjectionAuthority | undefined): boolean =>
+  authority?.kind === 'organization_business' || authority?.kind === 'demo_test_data';
 
 export type PartySourceCreateTarget =
   | { readonly kind: 'PARTY'; readonly partyId: string }
@@ -74,7 +91,7 @@ export class PartyClientSourcePrivacy extends Context.Service<
       readonly assertion: PartyClientSourceReference;
       readonly scope: PartyClientSourceScope;
       readonly intent: SourceIntent;
-    }) => Effect.Effect<'ALLOWED' | 'DENIED' | 'ORGANIZATION_BUSINESS_ALLOWED', PartyPersistenceUnavailableError>;
+    }) => Effect.Effect<PartyClientSourcePrivacyDecision, PartyPersistenceUnavailableError>;
   }
 >()('@app/party-registry/services/party-client-source-evidence.service/PartyClientSourcePrivacy') {}
 
@@ -136,10 +153,16 @@ export const authorizePartyClientSourceReferenceWithProjection = Effect.fn(
   const outcome = yield* Option.isSome(privacy)
     ? privacy.value.checkImport({ assertion, scope, intent })
     : checkPartyClientSourcePrivacy({ assertion, scope, intent });
-  if (outcome !== 'ALLOWED' && outcome !== 'ORGANIZATION_BUSINESS_ALLOWED') {
-    return yield* evidenceDenied('client_source_privacy_denied');
+  if (typeof outcome === 'object') {
+    return { kind: 'demo_test_data', evidence: outcome.evidence } satisfies PartySourceProjectionAuthority;
   }
-  return outcome === 'ORGANIZATION_BUSINESS_ALLOWED';
+  if (outcome === 'ORGANIZATION_BUSINESS_ALLOWED') {
+    return { kind: 'organization_business' } satisfies PartySourceProjectionAuthority;
+  }
+  if (outcome === 'ALLOWED') {
+    return { kind: 'ordinary' } satisfies PartySourceProjectionAuthority;
+  }
+  return yield* evidenceDenied('client_source_privacy_denied');
 });
 export const authorizePartyClientSourceReference = (
   assertion: PartyClientSourceReference,

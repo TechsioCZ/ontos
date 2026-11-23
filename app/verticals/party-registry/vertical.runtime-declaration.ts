@@ -719,6 +719,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         partySourceEffectReceiptRead,
         sourcePersonAdmissionRead,
         sourceProfileExportRead,
+        organizationBusinessNameExportRead,
         sourcePartySearchRead,
         sourceCounterpartyAdmissionRead,
         duplicateCandidateDetailRead,

@@ -5,7 +5,10 @@ import {
   readVerifiedGatewayWorkload,
   readVerifiedGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
+import {
+  SourceProcessingEligibilityRequestSchema,
+  SourceProcessingEligibilityResponseSchema,
+} from '@app/privacy/api/source-processing-eligibility';
 import {
   OrganizationBusinessApplicabilityRequestSchema,
   OrganizationBusinessSourceOnboardLiveProofSchema,
@@ -23,7 +26,7 @@ import {
   OrganizationBusinessNameExportFields,
   organizationBusinessNameExportInputDigest,
 } from '../../shared/apis/organization-business-name-export.ts';
-import { Config, Context, Crypto, Effect, Option, Schema } from 'effect';
+import { Config, Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
   OrganizationBusinessUpdateFields,
   OrganizationBusinessEvidenceReadFields,
@@ -45,6 +48,7 @@ import type {
   PartyClientSourceReference,
   PartyClientSourceScope,
   SourceIntent,
+  PartyClientSourcePrivacyDecision,
 } from './party-client-source-evidence.service.ts';
 import { partyRegistryEvidenceCall } from '../declared-evidence-calls.ts';
 
@@ -699,44 +703,48 @@ const checkSourceOrganization = Effect.fn('PartyClientSourcePrivacy.checkSourceO
     : ('DENIED' as const);
 });
 
-/** Every attempt exchanges the original verified scope for one fresh Privacy audience assertion. */
-export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy.check')(function* check(input: {
+interface PartySourcePrivacyInput {
   readonly assertion: PartyClientSourceReference;
   readonly scope: PartyClientSourceScope;
   readonly intent: SourceIntent;
-}) {
+}
+
+const syntheticOrganizationWitnessMatches = Effect.fn('PartyClientSourcePrivacy.syntheticOrganizationWitness')(
+  function* matches(input: PartySourcePrivacyInput) {
+    const request = yield* PartySourceRequest;
+    if (request === null) return true;
+    const decoded = yield* Schema.decodeUnknownEffect(SourceOrganizationActionInputSchema, {
+      onExcessProperty: 'error',
+    })(request).pipe(Effect.option);
+    if (Option.isNone(decoded)) return true;
+    const command = decoded.value;
+    const processing = yield* readSourceOrganizationProcessingRef(input.scope, command.operation);
+    if (processing === undefined) return false;
+    if (command.operation !== 'ONBOARD_COUNTERPARTY_CUSTOMER') {
+      return sameOrganizationSourceReference(
+        (yield* organizationBusinessSourceInputDigest(request)).sourceReference,
+        input.assertion,
+      );
+    }
+    const { payload } = command;
+    const witness = payload.sourceOrganizationWitness;
+    return (
+      witness !== undefined &&
+      witness.effectId === processing.effectId &&
+      witness.originalAdmissionInvocationId === processing.originalAdmissionInvocationId &&
+      payload.partyRef.tenantId === input.scope.tenantId &&
+      onboardProcessingIntentMatches(input.intent, payload.partyRef.resourceId) &&
+      sameOrganizationSourceReference(payload.sourceReference, input.assertion)
+    );
+  },
+);
+
+const readPartySourceProcessing = Effect.fn('PartyClientSourcePrivacy.readSourceProcessing')(function* read(
+  input: PartySourcePrivacyInput,
+  crypto: Crypto.Crypto,
+  operationRequirementKey: string,
+) {
   const { scope, assertion, intent } = input;
-  if (!isVerifiedGatewayPrincipalContext(scope)) {
-    return yield* failUnavailable('scope');
-  }
-  const crypto = yield* Effect.serviceOption(Crypto.Crypto);
-  if (Option.isNone(crypto)) {
-    return yield* failUnavailable('crypto');
-  }
-  const operationRequirementKey = yield* PartyPrivacyRequirement;
-  if (operationRequirementKey === null) {
-    return yield* failUnavailable('delegation');
-  }
-  const sourceOrganization = yield* checkSourceOrganization(input, crypto.value, operationRequirementKey);
-  if (sourceOrganization !== undefined) {
-    return sourceOrganization;
-  }
-  const deferredOnboard = yield* checkDeferredOrganizationOnboard(input, crypto.value, operationRequirementKey);
-  if (deferredOnboard !== undefined) {
-    return deferredOnboard;
-  }
-  const nameExport = yield* checkOrganizationBusinessNameExport(input, crypto.value, operationRequirementKey);
-  if (nameExport !== undefined) {
-    return nameExport;
-  }
-  const knownOrganizationOnboard = yield* checkKnownOrganizationOnboard(input, crypto.value, operationRequirementKey);
-  if (knownOrganizationOnboard !== undefined) {
-    return knownOrganizationOnboard;
-  }
-  const organization = yield* checkOrganizationUpdate(input, crypto.value, operationRequirementKey);
-  if (organization !== undefined) {
-    return organization;
-  }
   yield* requireModuleOperation(operationRequirementKey).pipe(
     Effect.catch((error) => failUnavailable('delegation', error)),
   );
@@ -774,7 +782,7 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
   } else {
     subject = { _tag: 'Assertion', scope };
   }
-  const requestCorrelation = yield* crypto.value
+  const requestCorrelation = yield* crypto
     .randomUUIDv4()
     .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
   yield* tracePartyPrivacyCarrier(scope, subject, operationRequirementKey);
@@ -786,7 +794,7 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
       requestCorrelation,
       subject,
     },
-    crypto.value,
+    crypto,
   ).pipe(
     partyRegistryEvidenceCall.clientSourcePrivacy,
     Effect.catch((error) => failUnavailable('delegation', error)),
@@ -803,5 +811,101 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
     partyRegistryEvidenceCall.clientSourcePrivacy,
     Effect.catch((error) => failUnavailable('privacy-read', error)),
   );
-  return result.outcome;
+  return { payload, result };
+});
+
+/** Native testing authority remains testing evidence, never a business-only applicability finding. */
+export const demoPartySourceProcessingAuthority = ({
+  scope,
+  request,
+  result,
+  now,
+}: {
+  readonly scope: PartyClientSourceScope;
+  readonly request: typeof SourceProcessingEligibilityRequestSchema.Type;
+  readonly result: typeof SourceProcessingEligibilityResponseSchema.Type;
+  readonly now: DateTime.Utc;
+}): Extract<PartyClientSourcePrivacyDecision, object> | 'DENIED' => {
+  if (
+    result.outcome !== 'ALLOWED' ||
+    !('_tag' in result.evidence) ||
+    result.evidence._tag !== 'DEMO_TEST_DATA_SOURCE_POLICY'
+  )
+    return 'DENIED' as const;
+  const evidence = result.evidence;
+  const expires = DateTime.make(evidence.validUntil);
+  const source = request.source;
+  if (
+    source === null ||
+    evidence.consumerModuleId !== request.consumerModuleId ||
+    evidence.operation !== request.operation ||
+    evidence.tenantId !== scope.tenantId ||
+    evidence.legalEntityId !== scope.legalEntityId ||
+    result.authorityIncarnation !== evidence.policyId ||
+    result.authorityRevision !== evidence.policyRevision ||
+    result.evaluatedAt !== evidence.trustedDecisionTime ||
+    Option.isNone(expires) ||
+    DateTime.Order(now, expires.value) >= 0 ||
+    evidence.source.issuer !== source.issuer ||
+    evidence.source.namespace !== source.namespace ||
+    evidence.source.recordType !== source.recordType ||
+    evidence.source.routeRef !== source.routeRef ||
+    evidence.source.recordId !== source.recordId ||
+    evidence.source.occurrenceId !== source.occurrenceId ||
+    evidence.target?.kind !== request.target?.kind ||
+    evidence.target?.resourceId !== request.target?.resourceId
+  )
+    return 'DENIED' as const;
+  return { _tag: 'DEMO_TEST_DATA_PROCESSING_ALLOWED', evidence } satisfies PartyClientSourcePrivacyDecision;
+};
+
+/** Every attempt exchanges the original verified scope for one fresh Privacy audience assertion. */
+export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy.check')(function* check(input: {
+  readonly assertion: PartyClientSourceReference;
+  readonly scope: PartyClientSourceScope;
+  readonly intent: SourceIntent;
+}) {
+  const { scope } = input;
+  if (!isVerifiedGatewayPrincipalContext(scope)) {
+    return yield* failUnavailable('scope');
+  }
+  const crypto = yield* Effect.serviceOption(Crypto.Crypto);
+  if (Option.isNone(crypto)) {
+    return yield* failUnavailable('crypto');
+  }
+  const operationRequirementKey = yield* PartyPrivacyRequirement;
+  if (operationRequirementKey === null) {
+    return yield* failUnavailable('delegation');
+  }
+  const testingMode = yield* Config.Boolean('ONTOS_PRIVACY_DEMO_SOURCE_PROCESSING_ENABLED').pipe(
+    Config.withDefault(false),
+    Effect.catch((error) => failUnavailable('privacy-read', error)),
+  );
+  if (testingMode) {
+    if (!(yield* syntheticOrganizationWitnessMatches(input).pipe(Effect.mapError(unavailable))))
+      return 'DENIED' as const;
+    const { payload, result } = yield* readPartySourceProcessing(input, crypto.value, operationRequirementKey);
+    return demoPartySourceProcessingAuthority({ scope, request: payload, result, now: yield* DateTime.now });
+  }
+  const sourceOrganization = yield* checkSourceOrganization(input, crypto.value, operationRequirementKey);
+  if (sourceOrganization !== undefined) {
+    return sourceOrganization;
+  }
+  const deferredOnboard = yield* checkDeferredOrganizationOnboard(input, crypto.value, operationRequirementKey);
+  if (deferredOnboard !== undefined) {
+    return deferredOnboard;
+  }
+  const nameExport = yield* checkOrganizationBusinessNameExport(input, crypto.value, operationRequirementKey);
+  if (nameExport !== undefined) {
+    return nameExport;
+  }
+  const knownOrganizationOnboard = yield* checkKnownOrganizationOnboard(input, crypto.value, operationRequirementKey);
+  if (knownOrganizationOnboard !== undefined) {
+    return knownOrganizationOnboard;
+  }
+  const organization = yield* checkOrganizationUpdate(input, crypto.value, operationRequirementKey);
+  if (organization !== undefined) {
+    return organization;
+  }
+  return (yield* readPartySourceProcessing(input, crypto.value, operationRequirementKey)).result.outcome;
 });
