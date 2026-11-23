@@ -1211,6 +1211,7 @@ export function createSymmyProofClient(config: SymmyProofConfig): SymmyProofClie
       authenticationHeaders = {
         authorization: `Bearer ${Redacted.value(authentication.token)}`,
         'x-ontos-composition-revision': authentication.revision,
+        'x-correlation-id': randomUUID(),
       };
     }
     try {

@@ -218,6 +218,7 @@ test('serialized operator gateway token authorizes the actual owner read', async
         const headers = new Headers(init.headers);
         assert.equal(headers.get('authorization'), 'Bearer synthetic-assertion');
         assert.equal(headers.get('x-ontos-composition-revision'), revision);
+        assert.match(headers.get('x-correlation-id') ?? '', /^[0-9a-f-]{36}$/u);
         assert.equal(headers.has('cookie') || headers.has('x-api-key'), false);
         assert.equal(init.method, 'POST');
         assert.deepEqual(JSON.parse(String(init.body)), query);
