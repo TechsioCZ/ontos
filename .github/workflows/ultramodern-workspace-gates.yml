@@ -5,8 +5,7 @@ on:
   push:
     branches:
       - main
-      # The demo trunk runs the same gates on every push, so it needs no pull request toward main to be checked.
-      - demo/sales-crm
+      # The demo trunk deploys through zerops-stage.yml without competing full-workspace runs.
     paths-ignore:
       - 'docs/**'
       - CONTEXT-MAP.md

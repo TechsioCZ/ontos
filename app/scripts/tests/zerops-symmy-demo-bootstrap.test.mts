@@ -16,6 +16,7 @@ const SCRIPTS = [
   ['scripts/demo/symmy-demo-exchange-authority.mts'],
 ];
 const ADMIN_URL = 'postgres://admin:never-log-this@db/stage';
+const SQL_TEXT = 'select secret_value from private_table';
 const CUSTOMER_SETTINGS = {
   DATABASE_URL: 'postgres://ontos_runtime:never-log-runtime@db/stage',
   ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: '[]',
@@ -31,7 +32,7 @@ const STAGE = {
 };
 
 /** Exercise the real child boundary without running the database-writing demo commands. */
-const fixture = (failAt = 0) =>
+const fixture = (failAt = 0, exitCode = 7) =>
   Effect.gen(function* bootstrapFixture() {
     const native = yield* ChildProcessSpawner.ChildProcessSpawner;
     const output = yield* TestConsole.make;
@@ -46,7 +47,7 @@ const fixture = (failAt = 0) =>
               process.execPath,
               [
                 '--eval',
-                `console.log(process.env.DATABASE_ADMIN_URL); console.error(process.env.DATABASE_ADMIN_URL); process.exit(${calls.length === failAt ? '7' : '0'});`,
+                `console.log(process.env.DATABASE_ADMIN_URL); console.error(process.env.DATABASE_ADMIN_URL, ${JSON.stringify(SQL_TEXT)}); process.exit(${calls.length === failAt ? String(exitCode) : '0'});`,
               ],
               standard.options,
             ),
@@ -67,7 +68,7 @@ const fixture = (failAt = 0) =>
 
 it.live('runs all three idempotent commands on every stage boot with only supervisor bootstrap settings', () =>
   Effect.gen(function* repeatedStageBoots() {
-    const { calls, run } = yield* fixture();
+    const { calls, output, run } = yield* fixture();
     yield* run(STAGE);
     yield* run(STAGE);
     expect(calls.map(({ args }) => args)).toEqual([...SCRIPTS, ...SCRIPTS]);
@@ -86,6 +87,14 @@ it.live('runs all three idempotent commands on every stage boot with only superv
         ONTOS_DATABASE_POOL_SHARED: 'false',
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
       });
+    }
+    const lines = (yield* output.logLines).map(String);
+    for (const kind of ['source-policies', 'customer-authority', 'exchange-authority']) {
+      const timings = lines.filter((line) => line.startsWith(`[boot-timing] stage=host.symmy-demo.${kind} `));
+      expect(timings).toHaveLength(2);
+      for (const timing of timings) {
+        expect(timing).toMatch(/ ms=\d+ outcome=ok$/u);
+      }
     }
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -108,7 +117,8 @@ for (const [failAt, kind] of [
 ] as const) {
   it.live(`stops before publication and logs two sanitized lines when command ${failAt} fails`, () =>
     Effect.gen(function* failedBootstrap() {
-      const { calls, output, run } = yield* fixture(failAt);
+      const exitCode = failAt + 6;
+      const { calls, output, run } = yield* fixture(failAt, exitCode);
       let published = false;
       const problem = yield* run(STAGE).pipe(
         Effect.andThen(
@@ -123,11 +133,11 @@ for (const [failAt, kind] of [
       expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
       const errors = yield* output.errorLines;
       expect(errors).toEqual([
-        `[app-host] stage Symmy ${kind} bootstrap failed`,
+        `[app-host] stage Symmy ${kind} bootstrap failed category=exit exitCode=${exitCode}`,
         '[app-host] stage Symmy demo bootstrap failed; composition not published',
       ]);
       const logs = JSON.stringify([...(yield* output.logLines), ...errors]);
-      for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this']) {
+      for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this', SQL_TEXT]) {
         expect(logs).not.toContain(secret);
       }
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -141,6 +151,7 @@ it.live('fails stage configuration before starting any command and does not expo
     expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
     expect(calls).toEqual([]);
     expect(yield* output.errorLines).toEqual([
+      '[app-host] stage Symmy source-policies bootstrap failed category=config',
       '[app-host] stage Symmy demo bootstrap failed; composition not published',
     ]);
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -152,7 +163,7 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
     const spawner = ChildProcessSpawner.make(() =>
       Effect.fail(systemError({
         _tag: 'PermissionDenied',
-        description: ADMIN_URL,
+        description: `${ADMIN_URL}; ${SQL_TEXT}`,
         method: 'spawn',
         module: 'ChildProcessSpawner',
       })),
@@ -166,14 +177,34 @@ it.effect('sanitizes a process-start error instead of reporting its command deta
     expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
     const errors = yield* output.errorLines;
     expect(errors).toEqual([
-      '[app-host] stage Symmy source-policies bootstrap failed',
+      '[app-host] stage Symmy source-policies bootstrap failed category=spawn',
       '[app-host] stage Symmy demo bootstrap failed; composition not published',
     ]);
     const logs = JSON.stringify([...(yield* output.logLines), ...errors]);
-    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this']) {
+    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this', SQL_TEXT]) {
       expect(logs).not.toContain(secret);
     }
   }),
+);
+
+it.live('identifies customer configuration failure without starting that child or publishing secrets', () =>
+  Effect.gen(function* missingCustomerRuntime() {
+    const { calls, output, run } = yield* fixture();
+    const problem = yield* run({
+      DATABASE_ADMIN_URL: ADMIN_URL,
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+    }).pipe(Effect.flip);
+    expect(problem.reason).toBe('stage Symmy demo bootstrap failed; composition not published');
+    expect(calls.map(({ args }) => args)).toEqual([SCRIPTS[0]]);
+    expect(yield* output.errorLines).toEqual([
+      '[app-host] stage Symmy customer-authority bootstrap failed category=config',
+      '[app-host] stage Symmy demo bootstrap failed; composition not published',
+    ]);
+    const logs = JSON.stringify([...(yield* output.logLines), ...(yield* output.errorLines)]);
+    for (const secret of [ADMIN_URL, CUSTOMER_SETTINGS.DATABASE_URL, 'never-inherit-this', SQL_TEXT]) {
+      expect(logs).not.toContain(secret);
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it('does not make the supervisor admin URL available to owners, even through their stored secrets', () => {

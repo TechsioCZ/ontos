@@ -572,6 +572,10 @@ export const finiteProcessEnvironment = (
  */
 export const FINITE_CHILD_FORCE_KILL_AFTER = Duration.minutes(2);
 
+type FiniteChildFailure =
+  | { readonly category: 'exit'; readonly exitCode: number }
+  | { readonly category: 'spawn' };
+
 /** Runs one finite child to a successful exit. */
 const runChild = (
   name: string,
@@ -582,6 +586,7 @@ const runChild = (
   /** `false`: the child sees exactly `env` and nothing of the supervisor's own environment. */
   extendEnv = true,
   output: 'inherit' | 'ignore' = 'inherit',
+  onFailure: (result: FiniteChildFailure) => Effect.Effect<void> = () => Effect.void,
 ) =>
   Effect.scoped(
     Effect.gen(function* runFiniteChild() {
@@ -595,13 +600,16 @@ const runChild = (
       });
       const code = yield* handle.exitCode;
       if (code !== 0) {
+        yield* onFailure({ category: 'exit', exitCode: Number(code) });
         return yield* failure(`${name} exited with code ${String(code)}`);
       }
       return yield* Effect.void;
     }),
   ).pipe(
     observeRuntimeJob('supervisor-child', name),
-    Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))),
+    Effect.catchTag('PlatformError', () =>
+      onFailure({ category: 'spawn' }).pipe(Effect.andThen(Effect.fail(failure(`${name} could not run`)))),
+    ),
   );
 
 /** Stage supervisor commands, in dependency order; none runs inside an owner process. */
@@ -626,26 +634,34 @@ const SYMMY_DEMO_CUSTOMER_SETTINGS = [
 export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyDemo() {
   const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
     Config.withDefault('production'),
+    Effect.tapError(() => Console.error('[app-host] stage Symmy environment bootstrap failed category=config')),
   );
   if (environment !== 'stage') {
     return;
   }
-  const admin = yield* Config.Redacted('DATABASE_ADMIN_URL');
+  const admin = yield* Config.Redacted('DATABASE_ADMIN_URL').pipe(
+    Effect.tapError(() => Console.error('[app-host] stage Symmy source-policies bootstrap failed category=config')),
+  );
   const settings = {
     DATABASE_ADMIN_URL: Redacted.value(admin),
     ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
   };
   for (const { kind, script, args } of STAGE_SYMMY_DEMO_BOOTSTRAPS) {
-    const childSettings: Record<string, string> = { ...settings };
-    if (kind === 'customer-authority') {
-      childSettings.DATABASE_URL = Redacted.value(yield* Config.Redacted('DATABASE_URL'));
-      for (const key of SYMMY_DEMO_CUSTOMER_SETTINGS) {
-        const value = yield* Config.option(Config.String(key));
-        if (Option.isSome(value)) {
-          childSettings[key] = value.value;
+    const childSettings = yield* Effect.gen(function* bootstrapSettings() {
+      const selected: Record<string, string> = { ...settings };
+      if (kind === 'customer-authority') {
+        selected.DATABASE_URL = Redacted.value(yield* Config.Redacted('DATABASE_URL'));
+        for (const key of SYMMY_DEMO_CUSTOMER_SETTINGS) {
+          const value = yield* Config.option(Config.String(key));
+          if (Option.isSome(value)) {
+            selected[key] = value.value;
+          }
         }
       }
-    }
+      return selected;
+    }).pipe(
+      Effect.tapError(() => Console.error(`[app-host] stage Symmy ${kind} bootstrap failed category=config`)),
+    );
     yield* runChild(
       'stage-symmy-demo-bootstrap',
       process.execPath,
@@ -654,7 +670,12 @@ export const bootstrapStageSymmyDemo = Effect.gen(function* bootstrapStageSymmyD
       childSettings,
       false,
       'ignore',
-    ).pipe(Effect.tapError(() => Console.error(`[app-host] stage Symmy ${kind} bootstrap failed`)));
+      (result) => Console.error(
+        `[app-host] stage Symmy ${kind} bootstrap failed category=${result.category}${
+          result.category === 'exit' ? ` exitCode=${String(result.exitCode)}` : ''
+        }`,
+      ),
+    ).pipe(timedBootStage(`host.symmy-demo.${kind}`));
   }
   yield* Console.log('[app-host] stage Symmy demo bootstrap complete');
 }).pipe(
