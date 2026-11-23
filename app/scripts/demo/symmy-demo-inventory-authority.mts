@@ -10,19 +10,54 @@ import { makeCoreDatabase, CoreDatabase } from '../../packages/core-runtime/src/
 import { parseDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { enrollReleaseSystemWorkload } from '../../packages/core-runtime/src/install/release-system-workloads.ts';
+import {
+  ONTOS_MODULE_CONTRACT_MAX_BYTES,
+  ONTOS_MODULE_CONTRACT_PATH,
+  OntosModuleDeploymentContractSchema,
+} from '../../packages/core-runtime/src/modules/manifest.ts';
 import { inventorySourceProvisionSystemWorkload } from '../../verticals/inventory/src/source-provision-system-workload.ts';
-import { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
 import { requireSymmyDemoStage, symmyDemoPolicyScope } from './symmy-demo-source-policies.mts';
 
 const catalogPath = new URL('../../topology/authorization-catalog.json', import.meta.url);
 const catalogSchema = Schema.Struct({ declaredWorkloadKeys: Schema.Array(Schema.String) });
 const workloadKey = 'commerce.inventory.source-provision';
+export const inventoryCandidateContractUrl = new URL(
+  `../../verticals/inventory/dist/public${ONTOS_MODULE_CONTRACT_PATH}`,
+  import.meta.url,
+);
 
 export class SymmyDemoInventoryAuthorityError extends Schema.TaggedError<SymmyDemoInventoryAuthorityError>()(
   'SymmyDemoInventoryAuthorityError',
   { reason: Schema.String },
 ) {}
 const unavailable = (reason: string) => new SymmyDemoInventoryAuthorityError({ reason });
+
+/** Read the complete build-generated candidate artifact; never compile owners during runtime enrollment. */
+export const readSymmyInventoryCandidateContract = (
+  artifact: URL = inventoryCandidateContractUrl,
+) => Effect.gen(function* readCandidateContract() {
+  const fs = yield* FileSystem.FileSystem;
+  const bytes = yield* fs.readFile(artifact.pathname).pipe(
+    Effect.mapError(() => unavailable('The shipped Inventory candidate deployment contract is unavailable')),
+  );
+  if (bytes.byteLength > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
+    return yield* unavailable('The shipped Inventory candidate deployment contract exceeds its size limit');
+  }
+  const text = yield* Effect.try({
+    try: () => new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+    catch: () => unavailable('The shipped Inventory candidate deployment contract is not UTF-8'),
+  });
+  const contract = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(OntosModuleDeploymentContractSchema),
+    { onExcessProperty: 'error' },
+  )(text).pipe(
+    Effect.mapError(() => unavailable('The shipped Inventory candidate deployment contract is invalid')),
+  );
+  if (contract.deployment.appId !== 'inventory' || contract.manifest.module.id !== 'commerce.inventory') {
+    return yield* unavailable('The shipped candidate deployment contract does not identify Inventory');
+  }
+  return contract;
+});
 
 export const SymmyDemoInventoryAuthorityLive = Layer.unwrap(Effect.gen(function* runtime() {
   const [runtime, admin] = yield* Effect.all([
@@ -38,7 +73,7 @@ export const SymmyDemoInventoryAuthorityLive = Layer.unwrap(Effect.gen(function*
   return Layer.mergeAll(database, AccessReleaseStoreLive.pipe(Layer.provide(database)));
 }));
 
-/** No fixture contract or substituted installed catalog: derive the complete reviewed owner deployment contract. */
+/** No fixture contract or substituted installed catalog: load the complete reviewed candidate deployment artifact. */
 export const bootstrapSymmyDemoInventoryAuthority = Effect.gen(function* bootstrap() {
   yield* requireSymmyDemoStage(yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'));
   const registration = inventorySourceProvisionSystemWorkload;
@@ -50,9 +85,7 @@ export const bootstrapSymmyDemoInventoryAuthority = Effect.gen(function* bootstr
     Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(catalogSchema))),
     Effect.mapError(() => unavailable('The reviewed workload vocabulary is unavailable')),
   );
-  const contract = yield* deriveOntosModuleDeploymentContract({ vertical: 'inventory' }).pipe(
-    Effect.mapError(() => unavailable('The genuine Inventory deployment contract could not be derived')),
-  );
+  const contract = yield* readSymmyInventoryCandidateContract();
   const { executor } = yield* CoreDatabase;
   return yield* enrollReleaseSystemWorkload(
     { executor, enrollment: APP_DATABASE_IDENTITY_ENROLLMENT },
