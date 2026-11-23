@@ -423,7 +423,9 @@ export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (
       return checkPortalSessionFacts(transaction, input, portalPermission, sessions);
     }
     const sourceManagedOwnerFacts =
-      (sourceAddressActions.has(input.operationKey) && input.ownerFacts?.[OWNER_FACT_RETAIL_PROFILE] !== undefined) ||
+      (sourceAddressActions.has(input.operationKey) &&
+        (input.ownerFacts?.[OWNER_FACT_RETAIL_PROFILE] !== undefined ||
+          input.ownerFacts?.[OWNER_FACT_COUNTERPARTY] !== undefined)) ||
       (input.operationKey === 'commerce.customer-context.assign-counterparty-price-group' &&
         input.ownerFacts?.[OWNER_FACT_COUNTERPARTY] !== undefined);
     if (input.operation === 'action' && sourceManagedOwnerFacts) {

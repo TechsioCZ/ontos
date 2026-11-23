@@ -35,8 +35,11 @@ import { SkuLookupRequestSchema, SkuLookupResponseSchema } from '../../verticals
 import { CatalogPagePricesRequestSchema, CatalogPagePricesResponseSchema } from '@app/pricing-contracts/catalog-page-prices';
 import {
   SourceStockPositionResolutionRequestSchema,
-  SourceStockPositionResolutionResponseSchema,
 } from '../../verticals/inventory/shared/apis/source-stock-position-resolution.ts';
+import {
+  CatalogVariantOnHandPageRequestSchema,
+  CatalogVariantOnHandPageResponseSchema,
+} from '../../verticals/inventory/shared/apis/catalog-variant-on-hand-page.ts';
 import {
   CurrentStockEvidenceForAvailabilityRequestSchema,
   CurrentStockEvidenceForAvailabilityResponseSchema,
@@ -850,33 +853,50 @@ export async function proveNativeCatalog(
     imageId: media.item.image.slice('media:'.length),
   };
 }
-async function proveOwnerStock(
+export async function proveOwnerStock(
   config: SymmyProofConfig, client: SymmyProofClient, context: SymmyCommerceProof,
 ): Promise<void> {
   const source = decode(SymmyProofStockSourceSchema, config.stockSource ?? AKROS_STAGE_STOCK_SOURCE, 'configuration');
-  const resolution = decode(SourceStockPositionResolutionResponseSchema, await client.ownerRead(
-    'inventory/source-stock-position-resolution',
-    { ...source, itemKey: context.names.variant, locationKey: config.input.locationKey },
+  const page = decode(CatalogVariantOnHandPageResponseSchema, await client.ownerRead(
+    'inventory/catalog-variant-on-hand-page',
+    { customerConfigurationId: source.customerConfigurationId, variantRefs: [context.variantRef] },
     'stock-readback',
   ), 'stock-readback');
-  ensure(resolution._tag === 'RESOLVED', 'stock-readback', 'readback');
+  const [item] = page.items;
+  ensure(
+    page.items.length === 1 && item !== undefined && item.outcome === 'ON_HAND' &&
+    isDeepStrictEqual(item.variantRef, context.variantRef) &&
+    page.backend.backendId === source.issuer.backendId && page.backend.kind === source.issuer.backendKind &&
+    item.positions.length === 1 && decimalEqual(item.total.amount, context.stockAmount) &&
+    isDeepStrictEqual(item.stockItem.unitRef, config.input.unitRef),
+    'stock-readback', 'readback',
+  );
+  const [position] = item.positions;
+  ensure(position !== undefined, 'stock-readback', 'readback');
   const { evidence } = decode(CurrentStockEvidenceForAvailabilityResponseSchema, await client.ownerRead(
-    'inventory/current-stock-evidence-for-availability', { positionRef: resolution.positionRef }, 'stock-readback',
+    'inventory/current-stock-evidence-for-availability', { positionRef: position.positionRef }, 'stock-readback',
   ), 'stock-readback');
-  const onHand = evidence.position.onHand;
   const sourceEvidence = evidence.sourceEvidence;
   ensure(
     evidence.position.lifecycle === 'CURRENT' &&
-    isDeepStrictEqual(evidence.position.ref, resolution.positionRef) &&
+    isDeepStrictEqual(evidence.position.ref, position.positionRef) &&
     isDeepStrictEqual(evidence.binding.catalogSelection, {
       productRef: context.productRef, variantRef: context.variantRef,
     }) &&
-    isDeepStrictEqual(evidence.position.scope.stockLocationRef, resolution.stockLocationRef) &&
-    isDeepStrictEqual(evidence.position.scope.stockItemRef, resolution.stockItemRef) &&
-    onHand._tag === 'CURRENT' && decimalEqual(onHand.quantity.amount, context.stockAmount) &&
-    isDeepStrictEqual(onHand.quantity.unitRef, config.input.unitRef) &&
+    isDeepStrictEqual(evidence.position.scope.stockLocationRef, position.stockLocation.ref) &&
+    isDeepStrictEqual(evidence.position.scope.stockItemRef, item.stockItem.stockItemRef) &&
     sourceEvidence._tag === 'EXTERNAL_SOURCE_ASSERTION' && sourceEvidence.evaluation._tag === 'DETERMINATE' &&
-    decimalEqual(sourceEvidence.evaluation.postEffectOnHand.amount, context.stockAmount),
+    !sourceEvidence.evaluation.reconciliationRequired &&
+    decimalEqual(sourceEvidence.evaluation.postEffectOnHand.amount, context.stockAmount) &&
+    isDeepStrictEqual(sourceEvidence.evaluation.postEffectOnHand.unitRef, config.input.unitRef) &&
+    isDeepStrictEqual(sourceEvidence.evaluation.assertion.positionRef, position.positionRef) &&
+    isDeepStrictEqual(sourceEvidence.evaluation.assertion.issuer, source.issuer) &&
+    sourceEvidence.evaluation.assertion.customerConfigurationId === source.customerConfigurationId &&
+    sourceEvidence.evaluation.assertion.itemExternalKey.externalValue === context.names.variant &&
+    sourceEvidence.evaluation.assertion.itemExternalKey.namespace === source.namespace &&
+    sourceEvidence.evaluation.assertion.itemExternalKey.externalScope === source.externalScope &&
+    sourceEvidence.evaluation.assertion.locationExternalKey.externalValue === config.input.locationKey &&
+    decimalEqual(sourceEvidence.evaluation.assertion.quantity.amount, context.stockAmount),
     'stock-readback', 'readback',
   );
 }
@@ -1096,8 +1116,8 @@ const OWNER_READS = {
   'pricing/catalog-page-prices': {
     audience: 'pricing', readName: 'catalog-page-prices', request: CatalogPagePricesRequestSchema,
   },
-  'inventory/source-stock-position-resolution': {
-    audience: 'inventory', readName: 'source-stock-position-resolution', request: SourceStockPositionResolutionRequestSchema,
+  'inventory/catalog-variant-on-hand-page': {
+    audience: 'inventory', readName: 'catalog-variant-on-hand-page', request: CatalogVariantOnHandPageRequestSchema,
   },
   'inventory/current-stock-evidence-for-availability': {
     audience: 'inventory', readName: 'current-stock-evidence-for-availability',
@@ -1126,7 +1146,7 @@ export function symmyOwnerReadEnvelope(
   decode(uuid, legalEntityId, 'configuration');
   return {
     audience: read.audience,
-    ...(operation === 'inventory/source-stock-position-resolution' ? {} : { legalEntityId }),
+    legalEntityId,
     readName: read.readName,
     query,
   };

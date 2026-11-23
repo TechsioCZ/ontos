@@ -1,3 +1,4 @@
+import { addSavedAddressAction } from '../../src/actions/add-saved-address.action.ts';
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import type { OwnerAuthorizationInput, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
@@ -739,3 +740,73 @@ describe("a storefront-relayed resolution of its own shop's Retail customer", ()
     }),
   );
 });
+
+it.effect(
+  'admits source-owned Counterparty saved addresses only through the exact live Core source-write decision',
+  () =>
+    Effect.gen(function* sourceCounterpartyAddress() {
+      const { descriptor: address } = addSavedAddressAction;
+      const carrier: GateInput['carrier'] = {
+        accessDeclaration: address.accessDeclaration,
+        accessWorkload: address.accessWorkload,
+      };
+      const sourceScope = trustVerifiedGatewayPrincipalContext(
+        {
+          ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+            authMethod: 'api_key',
+            authBindingId: '70000000-0000-4000-8000-000000000001',
+            authContextRef: 'api_key:source-address-unit',
+            principalId: storefrontPrincipal,
+            tenantId: tenant,
+            legalEntityId: company,
+          }),
+          correlationId: 'source-counterparty-address',
+        },
+        'c'.repeat(64),
+      );
+      const decision = yield* gateFor(['commerce.customer-context.source-write']).decide({
+        carrier,
+        scope: sourceScope,
+        legalEntityScope: 'required',
+        now,
+      });
+      expect(decision.outcome).toBe('ALLOWED');
+      const calls: string[] = [];
+      const native = {
+        ...transactionWith((key) => {
+          calls.push(key);
+          return [];
+        }),
+        scope: { tenantId: tenant, legalEntityId: company },
+      };
+      const admission = bindScopedWorkloadAdmission(native, { carrier, scope: sourceScope }, decision);
+      const input: OwnerAuthorizationInput = {
+        capabilityKey: address.accessDeclaration?.key ?? address.actionKey,
+        operation: 'action',
+        operationAt: storefrontOperationAt,
+        operationKey: address.actionKey,
+        ownerFacts: { counterpartyId: companyCounterpartyId },
+        owningModuleKey: 'commerce.customer-context',
+        scope: sourceScope,
+        targets: [],
+      };
+      const overlay = makeCommerceCustomerContextOwnerAuthorizationOverlay();
+      expect(yield* overlay.authorize(admission.transaction, input)).toBe('allowed');
+      expect(calls).toEqual([]);
+      expect(
+        yield* overlay.authorize(admission.transaction, {
+          ...input,
+          scope: { ...sourceScope, legalEntityId: otherCompany },
+        }),
+      ).not.toBe('allowed');
+      expect(
+        yield* overlay.authorize(admission.transaction, { ...input, operationKey: grantCounterpartyCommerceAccess }),
+      ).not.toBe('allowed');
+      admission.close();
+      expect(yield* overlay.authorize(admission.transaction, input)).not.toBe('allowed');
+      const unselected = bindScopedWorkloadAdmission(native, { carrier, scope: sourceScope });
+      expect(yield* overlay.authorize(unselected.transaction, input)).not.toBe('allowed');
+      unselected.close();
+      expect(yield* overlay.authorize(native, input)).not.toBe('allowed');
+    }),
+);

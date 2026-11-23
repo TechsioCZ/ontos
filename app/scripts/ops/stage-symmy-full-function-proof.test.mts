@@ -311,19 +311,18 @@ test('native APPLIED proof binds exact tenant, company, item and advancing revis
   }
 });
 
-test('operator owner-read plans use documented bodies and required versus forbidden company scope', () => {
+test('operator owner-read plans use documented company-scoped reads, never a tenant-only source receiver', () => {
   const company = '22222222-2222-4222-8222-222222222222';
   assert.deepEqual(symmyOwnerReadEnvelope('catalog/sku-lookup', { code: 'ERP-1' }, company, 'sku-readback'), {
     audience: 'catalog', legalEntityId: company, readName: 'sku-lookup', query: { code: 'ERP-1' },
   });
   const query = {
-    customerConfigurationId: 'akros', externalScope: 'akros', namespace: 'akros-erp',
-    issuer: { backendKind: 'external_business_system', backendId: 'akros-erp' },
-    itemKey: 'NEW-ERP-ITEM', locationKey: 'AKROS-SKLAD-1',
+    customerConfigurationId: 'akros',
+    variantRefs: [{ ...AKROS_STAGE_PROOF_INPUT.unitRef, resourceType: 'commerce.catalog.variant' }],
   };
-  const stock = symmyOwnerReadEnvelope('inventory/source-stock-position-resolution', query, company, 'stock-readback');
-  assert.equal('legalEntityId' in stock, false);
-  assert.equal(stock.readName, 'source-stock-position-resolution');
+  const stock = symmyOwnerReadEnvelope('inventory/catalog-variant-on-hand-page', query, company, 'stock-readback');
+  assert.equal(stock.legalEntityId, company);
+  assert.equal(stock.readName, 'catalog-variant-on-hand-page');
   assert.throws(() => symmyOwnerReadEnvelope(
     'catalog/sku-lookup', { code: 'ERP-1', operation: 'WRITE' }, company, 'sku-readback',
   ), /input-contract/u);
