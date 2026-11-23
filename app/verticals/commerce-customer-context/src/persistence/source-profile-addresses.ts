@@ -1,17 +1,31 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { ReadHandlerUnavailable } from '@app/core-runtime';
+import { defineScopedRoutine, ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
-import { and, desc, eq, notExists, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 import { Effect, Schema } from 'effect';
 
 import type { CustomerProfileSourceItem } from '../../shared/apis/customer-profile-source.ts';
 import { AddressBookProfileSchema, ActiveSavedAddressSchema } from '../../shared/domain/address-book.ts';
 import type { AddressBookProfile } from '../../shared/domain/address-book.ts';
 import { SavedAddressSourceAssertionSchema } from '../../shared/domain/saved-address-source.ts';
-import { savedAddressSourceBindings, savedAddressSourceReceipts } from '../database/schema.ts';
 import { savedAddressSourceReadService } from '../services/saved-address-source.service.ts';
 import { addressReadServicesForTransaction } from './address-persistence.ts';
+
+const candidatesRoutine = defineScopedRoutine({
+  name: 'read_source_profile_address_candidates',
+  ownerModuleKey: 'commerce.customer-context',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({
+    outcome: Schema.Literals(['AVAILABLE', 'SOURCE_AUTHORITY_DENIED']),
+    candidates: Schema.Array(Schema.Struct({ savedAddressId: Schema.String, source: Schema.Unknown })),
+  }),
+  routineKey: 'saved-address-source.candidates',
+  schema: 'commerce_customer_context',
+});
 
 const unavailable = () => new ReadHandlerUnavailable({
   code: 'read_handler_unavailable',
@@ -71,43 +85,15 @@ export const readSourceProfileAddresses = Effect.fn('CustomerProfileSourceRead.a
         ? { kind: 'COUNTERPARTY', counterpartyRef: item.profile.subject.counterpartyRef, profileRef }
         : { kind: 'RETAIL', profileRef },
     ).pipe(Effect.mapError(unavailable));
-    const binding = savedAddressSourceBindings;
-    const receipt = savedAddressSourceReceipts;
-    const newer = alias(savedAddressSourceReceipts, 'newer_source_address_receipt');
-    const newerReceipt = transaction.select({ id: newer.actionInvocationId }).from(newer).where(and(
-      eq(newer.tenantId, receipt.tenantId),
-      eq(newer.legalEntityId, receipt.legalEntityId),
-      eq(newer.issuer, receipt.issuer),
-      eq(newer.namespace, receipt.namespace),
-      sql`${newer.source} #>> '{identity,recordType}' = ${binding.recordType}`,
-      sql`${newer.source} #>> '{identity,recordId}' = ${binding.recordId}`,
-      sql`${newer.result} #>> '{profile,profileRef,resourceId}' = ${binding.customerProfileId}::text`,
-      sql`${newer.source} #>> '{identity,routeRef}' = ${item.source.route.id}`,
-      sql`(${newer.recordedAt}, ${newer.actionInvocationId}) > (${receipt.recordedAt}, ${receipt.actionInvocationId})`,
-    ));
-    // Only source correlation metadata is selected before the native source/current and Privacy checks.
-    const candidates = yield* transaction.select({
-      savedAddressId: binding.savedAddressId,
-      source: receipt.source,
-    }).from(binding).innerJoin(receipt, and(
-      eq(receipt.tenantId, binding.tenantId),
-      eq(receipt.legalEntityId, binding.legalEntityId),
-      eq(receipt.issuer, binding.issuer),
-      eq(receipt.namespace, binding.namespace),
-      sql`${receipt.source} #>> '{identity,recordType}' = ${binding.recordType}`,
-      sql`${receipt.source} #>> '{identity,recordId}' = ${binding.recordId}`,
-      sql`${receipt.result} #>> '{profile,profileRef,resourceId}' = ${binding.customerProfileId}::text`,
-      sql`${receipt.source} #>> '{identity,routeRef}' = ${item.source.route.id}`,
-    )).where(and(
-      eq(binding.tenantId, scope.tenantId),
-      eq(binding.legalEntityId, scope.legalEntityId),
-      eq(binding.customerProfileId, profileRef.resourceId),
-      eq(binding.issuer, item.source.issuer),
-      eq(binding.namespace, item.source.namespace),
-      notExists(newerReceipt),
-    )).orderBy(binding.savedAddressId, desc(receipt.recordedAt)).limit(257).pipe(Effect.mapError(unavailable));
+    const [row] = yield* transaction.invoke(candidatesRoutine, [scope.principalId, {
+      profileId: profileRef.resourceId, source: item.source,
+    }]).pipe(Effect.mapError(unavailable));
+    if (row === undefined) return yield* unavailable();
+    if (row.outcome === 'SOURCE_AUTHORITY_DENIED') return yield* new ReadPermissionDenied({
+      code: 'read_permission_denied', reason: 'Current source authority does not admit this profile address read',
+    });
     return yield* projectSourceProfileAddresses(
-      candidates, profile, scope.tenantId,
+      row.candidates, profile, scope.tenantId,
       savedAddressSourceReadService(transaction, scope, privacyRequirement),
       addressReadServicesForTransaction(transaction, scope),
     );

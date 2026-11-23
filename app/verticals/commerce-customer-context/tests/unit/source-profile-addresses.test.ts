@@ -148,7 +148,7 @@ it.effect('refuses malformed source metadata and over-budget pages without mater
   }),
 );
 
-it.effect('scopes the real metadata query and selects only the newest receipt per source address', () =>
+it.effect('uses the scoped owner routine instead of selecting private metadata tables', () =>
   Effect.scoped(Effect.gen(function* scopedMetadataQuery() {
     const legalEntityId = 'aa000000-0000-4000-8000-000000000006';
     const scope = {
@@ -180,15 +180,16 @@ it.effect('scopes the real metadata query and selects only the newest receipt pe
         return [{ role: 'ontos_runtime', tenant_id: tenantId, legal_entity_id: legalEntityId }];
       }
       if (query.includes('set_config') || /^(?:BEGIN|COMMIT|ROLLBACK)/u.test(query)) return [];
-      expect(query).toContain('saved_address_source_bindings');
-      expect(query).toContain('not exists');
-      expect(query).toContain('newer_source_address_receipt');
-      expect(query).toContain('{identity,routeRef}');
-      for (const value of [tenantId, legalEntityId, profile.profileRef.resourceId, 'source-erp', 'customers', 'customer-route', 257]) {
-        expect(params).toContain(value);
-      }
+      expect(query).toContain('read_source_profile_address_candidates');
+      expect(query).not.toContain('saved_address_source_bindings');
+      expect(params).toContain(tenantId);
+      expect(params).toContain(legalEntityId);
+      expect(params).toContain(scope.principalId);
+      expect(params).toContainEqual(expect.objectContaining({
+        oid: 3802, value: { profileId: profile.profileRef.resourceId, source: item.source },
+      }));
       metadataQueries++;
-      return [];
+      return [{ outcome: 'AVAILABLE', candidates: [] }];
     }));
     const database = yield* testCoreDatabase.pipe(Effect.provide(
       scriptedPgClientLayer(Effect.succeed(connection)).pipe(Layer.provide(Reactivity.layer)),
