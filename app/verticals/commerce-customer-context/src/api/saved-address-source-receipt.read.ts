@@ -60,5 +60,8 @@ export const savedAddressSourceReceiptRead = defineRead(
         result,
       })),
     ),
-  (transaction, scope) => Effect.succeed(savedAddressSourceReadService(transaction, scope)),
+  (transaction, scope) =>
+    Effect.succeed(savedAddressSourceReadService(
+      transaction, scope, 'commerce.customer-context.requirement.saved-address-source-receipt-privacy',
+    )),
 );

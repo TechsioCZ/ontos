@@ -280,7 +280,9 @@ it.effect('keeps unknown receipts indeterminate without inspecting current profi
       requestHash: 'a'.repeat(64),
       source,
     });
-    const result = yield* savedAddressSourceReadService(invoker, scope)
+    const result = yield* savedAddressSourceReadService(
+      invoker, scope, 'commerce.customer-context.requirement.saved-address-source-receipt-privacy',
+    )
       .read(input)
       .pipe(
         Effect.provideService(CommerceSourceProcessingEligibility, {
@@ -324,7 +326,9 @@ it.effect('refuses revoked receipt route authority before releasing original evi
       requestHash: 'a'.repeat(64),
       source,
     });
-    expect(yield* Effect.flip(savedAddressSourceReadService(invoker, scope).read(input))).toBeInstanceOf(
+    expect(yield* Effect.flip(savedAddressSourceReadService(
+      invoker, scope, 'commerce.customer-context.requirement.saved-address-source-receipt-privacy',
+    ).read(input))).toBeInstanceOf(
       ReadPermissionDenied,
     );
   }),

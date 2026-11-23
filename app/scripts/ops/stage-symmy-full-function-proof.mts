@@ -44,10 +44,7 @@ import {
   CurrentStockEvidenceForAvailabilityRequestSchema,
   CurrentStockEvidenceForAvailabilityResponseSchema,
 } from '../../verticals/inventory/shared/apis/current-stock-evidence-for-availability.ts';
-import {
-  SavedAddressListRequestSchema,
-  SavedAddressListResponseSchema,
-} from '../../verticals/commerce-customer-context/shared/apis/saved-address-list.ts';
+import { ActiveSavedAddressSchema } from '../../verticals/commerce-customer-context/shared/domain/address-book.ts';
 import {
   EffectiveCustomerGroupMembershipsRequestSchema,
   EffectiveCustomerGroupMembershipsResponseSchema,
@@ -901,14 +898,27 @@ export async function proveOwnerStock(
     'stock-readback', 'readback',
   );
 }
-async function proveOwnerAddresses(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
+export async function proveOwnerAddresses(client: SymmyProofClient, context: SymmyFullProofContext): Promise<void> {
+  const fields = CustomerPageSchema.fields.customers.value.fields;
+  const page = decode(Schema.Struct({
+    count: Schema.Int,
+    customers: Schema.Array(Schema.Struct({
+      sourceRecordId: fields.sourceRecordId,
+      profile: fields.profile,
+      addresses: Schema.Array(ActiveSavedAddressSchema),
+    })),
+  }), await client.read(
+    `${PREFIX}/admin/customers?q=${encodeURIComponent(context.names.prefix)}&limit=100&fields=sourceRecordId,profile,addresses`,
+    'address-readback',
+  ), 'address-readback');
+  ensure(page.count === 2 && page.customers.length === 2, 'address-readback', 'readback');
   for (const customer of context.customers) {
-    const profile = customer.subject.kind === 'COUNTERPARTY'
-      ? { kind: 'COUNTERPARTY', counterpartyRef: customer.subject.counterpartyRef, profileRef: customer.profileRef }
-      : { kind: 'RETAIL', profileRef: customer.profileRef };
-    const { addresses } = decode(SavedAddressListResponseSchema, await client.ownerRead(
-      'commerce-customer-context/saved-address-list', { profile }, 'address-readback',
-    ), 'address-readback');
+    const matches = page.customers.filter((item) => item.sourceRecordId === customer.customerId);
+    const [current] = matches;
+    ensure(matches.length === 1 && current !== undefined, 'address-readback', 'readback');
+    const { kind: _kind, ...profileRef } = current.profile.profileRef;
+    ensure(isDeepStrictEqual(profileRef, customer.profileRef), 'address-readback', 'readback');
+    const { addresses } = current;
     const [address] = addresses;
     ensure(
       addresses.length === 1 && address !== undefined && address.label === context.address.label &&
@@ -1123,9 +1133,6 @@ const OWNER_READS = {
   'inventory/current-stock-evidence-for-availability': {
     audience: 'inventory', readName: 'current-stock-evidence-for-availability',
     request: CurrentStockEvidenceForAvailabilityRequestSchema,
-  },
-  'commerce-customer-context/saved-address-list': {
-    audience: 'commerce-customer-context', readName: 'saved-address-list', request: SavedAddressListRequestSchema,
   },
   'commerce-customer-context/effective-customer-group-memberships': {
     audience: 'commerce-customer-context', readName: 'effective-customer-group-memberships',

@@ -48,6 +48,7 @@ import type { CustomerProfileSourceAssertion } from '../../shared/domain/custome
 import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
 import { CommerceSourceProcessingRejected } from '../integrations/source-processing-rejected.ts';
 import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
+import { readSourceProfileAddresses } from './source-profile-addresses.ts';
 
 const storedSourceResponseSchema = Schema.Union([
   CustomerProfileSourceResponseSchema.members[0],
@@ -445,12 +446,22 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
   );
   const projectCurrentItem = Effect.fn('CustomerProfileSourceRead.projectCurrent')(function* projectCurrent(
     item: CustomerProfileSourceItem,
+    includeSourceAddresses: boolean,
   ) {
     if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
       yield* checkItem(item);
       const { icoAuthority: _classification, ...sourceSyncItem } = item;
-      return { ...sourceSyncItem, sourceProcessingMode: 'SOURCE_SYNC' as const };
+      const selected = { ...sourceSyncItem, sourceProcessingMode: 'SOURCE_SYNC' as const };
+      return includeSourceAddresses
+        ? { ...selected, sourceAddresses: yield* readSourceProfileAddresses(
+            transaction, scope, selected, requirements.privacy,
+          ) }
+        : selected;
     }
+    if (includeSourceAddresses) return yield* new ReadPermissionDenied({
+      code: 'read_permission_denied',
+      reason: 'Source address values require current source-sync processing authority',
+    });
     if (item.profile.subject.kind === 'RETAIL') {
       yield* checkItem(item);
       return { ...item, icoAuthority: 'PERSONAL' as const };
@@ -587,8 +598,9 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     readPage: Effect.fn('CustomerProfileSourceRead.readPage')(function* readPage(
       input: CustomerProfileSourcePageRequest,
     ) {
+      const { includeSourceAddresses, ...sourceInput } = input;
       const [row] = yield* transaction
-        .invoke(sourcePageRoutine, [scope.principalId, input])
+        .invoke(sourcePageRoutine, [scope.principalId, sourceInput])
         .pipe(Effect.mapError(unavailable));
       if (row?.outcome === 'SOURCE_AUTHORITY_DENIED') {
         return yield* new ReadPermissionDenied({
@@ -605,7 +617,9 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       const items =
         page.items.length === 0
           ? yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
-          : yield* Effect.forEach(page.items, projectCurrentItem, { concurrency: 1 });
+          : yield* Effect.forEach(
+              page.items, (item) => projectCurrentItem(item, includeSourceAddresses === true), { concurrency: 1 },
+            );
       return { ...page, items };
     }),
     readParties: Effect.fn('CustomerProfileSourceRead.readParties')(function* readParties(
@@ -666,11 +680,11 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
           ABSENT: (value) =>
             requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as(value)),
           CURRENT: (value) =>
-            projectCurrentItem(value.item).pipe(Effect.map((item) => ({ _tag: 'CURRENT' as const, item }))),
+            projectCurrentItem(value.item, false).pipe(Effect.map((item) => ({ _tag: 'CURRENT' as const, item }))),
           PAGE: (value) =>
             (value.items.length === 0
               ? requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
-              : Effect.forEach(value.items, projectCurrentItem, { concurrency: 1 })
+              : Effect.forEach(value.items, (item) => projectCurrentItem(item, false), { concurrency: 1 })
             ).pipe(Effect.map((items) => ({ ...value, items }))),
           RECEIPT: Effect.fn('CustomerProfileSourceRead.recover')(function* checkReceipt({
             current,

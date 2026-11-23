@@ -356,6 +356,7 @@ export const savedAddressSourceService = (
 export const savedAddressSourceReadService = (
   invoker: CustomerContextAddressRoutineInvoker,
   scope: OperationalScope,
+  privacyRequirement: string,
 ) => ({
   read: Effect.fn('SavedAddressSource.read')(function* read(
     input: SavedAddressSourceReceiptRequest,
@@ -377,7 +378,7 @@ export const savedAddressSourceReadService = (
         input.source,
         input.profile,
         'saved-address-source.current',
-        'commerce.customer-context.requirement.saved-address-source-receipt-privacy',
+        privacyRequirement,
       ).pipe(Effect.mapError(readUnavailable));
     }
     const [row] = yield* invoker
@@ -408,7 +409,7 @@ export const savedAddressSourceReadService = (
         input.source,
         input.profile,
         'saved-address-source.receipt',
-        'commerce.customer-context.requirement.saved-address-source-receipt-privacy',
+        privacyRequirement,
       ).pipe(Effect.mapError(readUnavailable));
     }
     return yield* Schema.decodeUnknownEffect(SavedAddressSourceReceiptResponseSchema, { onExcessProperty: 'error' })(

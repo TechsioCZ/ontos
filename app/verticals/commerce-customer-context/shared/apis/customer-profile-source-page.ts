@@ -25,6 +25,7 @@ export const CustomerProfileSourceSearchSchema = Schema.Struct({
  */
 export const CustomerProfileSourcePageRequestSchema = Schema.Struct({
   ...CustomerProfileSourceAuthoritySchema.fields,
+  includeSourceAddresses: Schema.optionalKey(Schema.Boolean),
   limit: Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   search: Schema.optionalKey(CustomerProfileSourceSearchSchema),

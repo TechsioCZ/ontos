@@ -430,6 +430,9 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
     source_record_id: item.source.recordId,
   };
   if (item.sourceProcessingMode === 'SOURCE_SYNC') {
+    if (fields?.includes('addresses') === true && item.sourceAddresses !== undefined) {
+      result = { ...result, addresses: item.sourceAddresses };
+    }
     if (selects('party') && routeAllows(scope, partyModule, partyProfileRead)) {
       result = { ...result, party: yield* readCustomerParty(item, scope, admission, newRequestIdentifier) };
     }
@@ -470,7 +473,8 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
   return result;
 });
 const customerUnsupportedFields = (scope: SymmySourceReadScope, customers: readonly CustomerRow[]) => {
-  const unsupported: SymmyInternalCustomersProjection['unsupported_fields'][number][] = ['addresses', 'groups'];
+  const unsupported: SymmyInternalCustomersProjection['unsupported_fields'][number][] =
+    customers.length > 0 && customers.every((row) => row.addresses !== undefined) ? ['groups'] : ['addresses', 'groups'];
   if (
     (!routeAllows(scope, partyModule, partyProfileRead) && !routeAllows(scope, partyModule, organizationNameRead)) ||
     customers.some((row) => row.party === undefined && row.business_name === undefined)
@@ -591,7 +595,10 @@ export const projectSymmySourceCustomers = Effect.fn('SymmyReadProjection.custom
     query.q === undefined
       ? undefined
       : yield* readCustomerSearch(scope, authority, query.q, admission, newRequestIdentifier);
-  const pageRequest = { ...authority, ...paging };
+  const pageRequest = {
+    ...authority, ...paging,
+    ...(query.fields?.includes('addresses') === true ? { includeSourceAddresses: true } : {}),
+  };
   const input = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePageRequestSchema)(
     terms === undefined ? pageRequest : { ...pageRequest, search: { terms } },
   ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(symmyInvalidProblem)));

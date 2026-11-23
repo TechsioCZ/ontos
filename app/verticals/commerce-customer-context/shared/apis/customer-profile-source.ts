@@ -14,6 +14,7 @@ import { CommerceCustomerProfileRefSchema } from '../domain/profile-decisions.ts
 import { CommerceCustomerProfileSubjectSchema, ProfileInstantSchema } from '../domain/profile-contracts.ts';
 import { OrganizationProfileSourceReceiptSchema } from '../domain/organization-profile-source.ts';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
+import { ActiveSavedAddressSchema } from '../domain/address-book.ts';
 import {
   EnsureRetailCustomerProfilePayloadSchema,
   EnsureRetailCustomerProfileResultSchema,
@@ -49,6 +50,7 @@ export type CustomerProfileSourceRequest = typeof CustomerProfileSourceRequestSc
 export const CustomerProfileSourceItemSchema = Schema.Struct({
   icoAuthority: Schema.optionalKey(Schema.Literals(['PERSONAL', 'ORGANIZATION'])),
   sourceProcessingMode: Schema.optionalKey(Schema.Literal('SOURCE_SYNC')),
+  sourceAddresses: Schema.optionalKey(Schema.Array(ActiveSavedAddressSchema)),
   partyRef: PartyRefSchema,
   partySourceReference: CustomerProfilePartySourceReferenceSchema,
   profile: Schema.Struct({

@@ -128,6 +128,7 @@ export const SymmyInternalCustomersProjectionSchema = Schema.Struct({
       party: Schema.optionalKey(SourceProfileExportResponseSchema.members[1]),
       partyRef: CustomerProfileSourceItemSchema.fields.partyRef,
       profile: CustomerProfileSourceItemSchema.fields.profile,
+      addresses: CustomerProfileSourceItemSchema.fields.sourceAddresses,
       source_record_id: sourceId,
     }),
   ),

@@ -1842,6 +1842,47 @@ describe('Symmy source-qualified public owner read projections', () => {
       ]);
     }),
   );
+  it.effect('requests and exports source-owned addresses only for an explicit selected source-sync view', () =>
+    Effect.gen(function* selectedSourceAddresses() {
+      const { icoAuthority: _classification, ...unclassified } = company;
+      const { kind: _kind, ...nativeProfileRef } = companyProfileRef;
+      const addresses = [{
+        label: 'Source address', lifecycle: 'ACTIVE', revision: 1,
+        origin: {
+          kind: 'COMMERCE_ONLY',
+          postalAddress: { addressLine1: 'Source 1', city: 'Test City', postalCode: '11000', countryCode: 'CZ' },
+        },
+        profile: {
+          kind: 'COUNTERPARTY', profileRef: nativeProfileRef,
+          counterpartyRef: { ...partyRef, resourceType: 'party.registry.counterparty' },
+        },
+        purposes: ['BILLING', 'DELIVERY'],
+        savedAddressRef: {
+          moduleId: 'commerce.customer-context', resourceType: 'commerce.customer-context.saved-address',
+          resourceId: productId, tenantId,
+        },
+      }];
+      const item = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)({
+        ...unclassified, sourceProcessingMode: 'SOURCE_SYNC', sourceAddresses: addresses,
+      });
+      const current = fixture('current', sourceCorrelation.recordKey, companyPage(item));
+      const result = yield* projectSymmySourceCustomers(
+        scope, { fields: ['addresses'] }, current.admission, current.newRequestIdentifier,
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+      expect(result.customers[0]?.addresses).toEqual(addresses);
+      expect(result.customers[0]).not.toHaveProperty('party');
+      expect(result.unsupported_fields).not.toContain('addresses');
+      expect(current.requests).toHaveLength(1);
+      expect(yield* bodyOf(current.requests[0])).toMatchObject({ includeSourceAddresses: true });
+      const unselected = yield* projectCustomerParts(undefined, scope, companyPage(item));
+      expect(unselected.customer).not.toHaveProperty('addresses');
+      const ordinary = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)({
+        ...company, sourceAddresses: addresses,
+      });
+      const notSourceSync = yield* projectCustomerParts(['addresses'], scope, companyPage(ordinary));
+      expect(notSourceSync.customer).not.toHaveProperty('addresses');
+    }),
+  );
   it.effect('pages Catalog products with offset, count and q and carries the owner total', () =>
     Effect.gen(function* productsPage() {
       const current = fixture();

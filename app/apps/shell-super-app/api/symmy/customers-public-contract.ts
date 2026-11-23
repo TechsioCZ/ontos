@@ -14,7 +14,7 @@ export const SymmyCustomersResponseSchema = Schema.Struct({
   count: projectionFields.count,
   customers: Schema.Array(
     Schema.Struct({
-      ...Struct.pick(customerFields, ['ico', 'id', 'party', 'partyRef', 'profile']),
+      ...Struct.pick(customerFields, ['ico', 'id', 'party', 'partyRef', 'profile', 'addresses']),
       businessName: customerFields.business_name,
       sourceRecordId: customerFields.source_record_id,
     }),

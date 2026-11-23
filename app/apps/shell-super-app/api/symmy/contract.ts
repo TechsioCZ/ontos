@@ -230,6 +230,7 @@ export const SymmyProductsReadQuerySchema = Schema.Struct({
 });
 /** The selectable item parts of `GET /admin/customers`. The first four are always returned. */
 const SymmyCustomerFieldNameSchema = Schema.Literals([
+  'addresses',
   'businessName',
   'ico',
   'id',

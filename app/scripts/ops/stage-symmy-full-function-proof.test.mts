@@ -17,6 +17,7 @@ import {
   makeSymmyProofNames,
   parseSymmyOperatorCookieJar,
   proveCustomers,
+  proveOwnerAddresses,
   proveSymmyFullFunction,
   proveSymmyProduct,
   proveSymmyProductStockList,
@@ -31,7 +32,7 @@ import {
   runSymmyProofLanes,
   symmyNativeResultLine,
 } from './stage-symmy-full-function-proof.mts';
-import type { SymmyProofClient } from './stage-symmy-full-function-proof.mts';
+import type { SymmyProofClient, SymmyFullProofContext } from './stage-symmy-full-function-proof.mts';
 import { SymmyPriceListsBatchRequestSchema } from '../../apps/shell-super-app/api/symmy/price-lists-batch-upsert-request-contract.ts';
 import {
   SymmyDemoCategoriesBatchRequestSchema,
@@ -252,6 +253,79 @@ test('two customer items retain all eleven owner effects and replay identities',
   const result = await proveCustomers(config, client, names);
   assert.equal(result.customers.length, 2);
   assert.equal(writes, 2);
+});
+
+test('address readback uses the authorized source view, not buyer-only staff access, and checks every value', async () => {
+  const names = makeSymmyProofNames();
+  const tenantId = AKROS_STAGE_PROOF_INPUT.unitRef.tenantId;
+  const partyRef = { moduleId: 'party.registry', resourceType: 'party.registry.party', resourceId: itemId, tenantId };
+  const seller = {
+    moduleId: 'core.identity', resourceType: 'core.identity.legal-entity', resourceId: effectId, tenantId,
+  };
+  const retail = {
+    moduleId: 'commerce.customer-context', resourceType: 'commerce.customer-context.retail-customer-profile',
+    resourceId: itemId, tenantId,
+  };
+  const counterparty = { ...retail, resourceType: 'commerce.customer-context.counterparty-purchasing-profile', resourceId: effectId };
+  const context: SymmyFullProofContext = {
+    names,
+    address: {
+      label: `${names.prefix}_ADDRESS`, purposes: ['BILLING', 'DELIVERY'],
+      postalAddress: { addressLine1: 'Acceptance fixture 1', city: 'Test City', postalCode: '11000', countryCode: 'CZ' },
+    },
+    customers: [
+      {
+        customerId: names.person, kind: 'PERSON', partyRef, profileId: itemId, profileRef: retail,
+        subject: { kind: 'RETAIL', partyRef, sellingLegalEntityRef: seller },
+      },
+      {
+        customerId: names.organization, kind: 'ORGANIZATION', partyRef, profileId: effectId, profileRef: counterparty,
+        subject: { kind: 'COUNTERPARTY', counterpartyRef: { ...partyRef, resourceType: 'party.registry.counterparty' } },
+      },
+    ],
+  };
+  const page = { count: 2, customers: context.customers.map((customer) => ({
+    sourceRecordId: customer.customerId,
+    profile: {
+      profileRef: { ...customer.profileRef, kind: customer.subject.kind }, subject: customer.subject,
+    },
+    addresses: [{
+      ...context.address, lifecycle: 'ACTIVE', revision: 1,
+      origin: { kind: 'COMMERCE_ONLY', postalAddress: context.address.postalAddress },
+      profile: customer.subject.kind === 'COUNTERPARTY'
+        ? { kind: 'COUNTERPARTY', profileRef: customer.profileRef, counterpartyRef: customer.subject.counterpartyRef }
+        : { kind: 'RETAIL', profileRef: customer.profileRef },
+      savedAddressRef: {
+        moduleId: 'commerce.customer-context', resourceType: 'commerce.customer-context.saved-address',
+        resourceId: customer.profileId, tenantId,
+      },
+    }],
+  })) };
+  let current: unknown = page;
+  const client: SymmyProofClient = {
+    async read(path, boundary) {
+      assert.equal(boundary, 'address-readback');
+      assert.equal(new URL(path, 'https://proof.invalid').searchParams.get('fields'), 'sourceRecordId,profile,addresses');
+      return current;
+    },
+    async ownerRead() { throw new SymmyProofFailure('address-readback', 'read-permission', 403); },
+    async write() { throw new Error('Address verification must not write'); },
+    async settle() { throw new Error('Address verification must not start a job'); },
+    async waitUntil() { throw new Error('Address verification must not wait'); },
+  };
+  await proveOwnerAddresses(client, context);
+  for (const changes of [
+    { label: 'Wrong label' },
+    { purposes: ['DELIVERY'] },
+    { origin: { kind: 'COMMERCE_ONLY', postalAddress: { ...context.address.postalAddress, city: 'Wrong city' } } },
+  ]) {
+    current = { ...page, customers: page.customers.map((customer) => ({
+      ...customer, addresses: customer.addresses.map((address) => ({ ...address, ...changes })),
+    })) };
+    await assert.rejects(proveOwnerAddresses(client, context), /address-readback:readback/u);
+  }
+  current = { ...page, customers: page.customers.map((customer) => ({ ...customer, addresses: [] })) };
+  await assert.rejects(proveOwnerAddresses(client, context), /address-readback:readback/u);
 });
 
 test('configuration keeps the environment key Redacted and uses only published stage refs', () => {
