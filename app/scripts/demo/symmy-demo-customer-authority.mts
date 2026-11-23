@@ -48,9 +48,12 @@ import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization
 import { AccessReleaseStoreLive } from '../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
 import { AccessWorkloadBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/binding-store.ts';
 import { AccessWorkloadCompanyBindingStoreLive } from '../../packages/core-runtime/src/access/workloads/company-bindings.ts';
-import { CoreAdminDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { makeCoreDatabase, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
-import { registerAdditiveCompanyInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import {
+  registerAdditiveCompanyInternalWorkloads,
+  ReleaseInternalWorkloadError,
+} from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 import {
   accessWorkloadBindings,
   accessWorkloadCompanyBindings,
@@ -642,8 +645,21 @@ export const SymmyDemoCustomerAuthorityLive = AdminLive;
 
 const EnrollmentLive = Layer.unwrap(
   Effect.gen(function* enrollmentLayer() {
+    const runtime = yield* Config.Redacted('DATABASE_URL').pipe(
+      Effect.mapError(() => fail('enrollment-database-config')),
+    );
+    const admin = yield* Config.Redacted('DATABASE_ADMIN_URL').pipe(
+      Effect.mapError(() => fail('enrollment-database-config')),
+    );
+    const connections = yield* parseDatabaseConnectionPair({
+      DATABASE_URL: Redacted.value(runtime),
+      DATABASE_ADMIN_URL: Redacted.value(admin),
+    }).pipe(Effect.mapError(() => fail('enrollment-database-config')));
     const database = Layer.mergeAll(
-      CoreAdminDatabaseLive,
+      Layer.effect(
+        CoreDatabase,
+        makeCoreDatabase(connections.admin).pipe(Effect.mapError(() => fail('enrollment-core-client'))),
+      ),
       Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
     );
     return Layer.mergeAll(
@@ -656,6 +672,33 @@ const EnrollmentLive = Layer.unwrap(
     );
   }),
 );
+const safeEnrollmentCodes: ReadonlySet<string> = new Set([
+  'enrollment-database-config',
+  'enrollment-core-client',
+  'enrollment-catalog-read',
+  'enrollment-catalog-declaration',
+  'enrollment-source-read',
+  'enrollment-legacy-ambiguity',
+  'additive-read-tenant',
+  'additive-company-inactive',
+  'additive-module-inactive',
+  'additive-release-scope',
+  'additive-step-create-principal',
+  'additive-step-bind-workload',
+  'additive-step-bind-company',
+  'additive-step-reactivate-principal',
+  'additive-step-rename-principal',
+  'additive-step-revoke-company',
+  'additive-step-revoke-workload',
+  'additive-step-disable-principal',
+]);
+export const safeSymmyDemoEnrollmentFailure = (error: unknown) =>
+  fail(
+    (Schema.is(SymmyDemoCustomerAuthorityError)(error) || Schema.is(ReleaseInternalWorkloadError)(error)) &&
+      safeEnrollmentCodes.has(error.reason)
+      ? error.reason
+      : 'customer-workload-enrollment',
+  );
 
 /** Explicit additive administrative operation, restricted to the standing-approved AKROS stage source. */
 export const ensureSymmyDemoCustomerInternalWorkloads = Effect.gen(function* ensureWorkloads() {
@@ -669,14 +712,17 @@ export const ensureSymmyDemoCustomerInternalWorkloads = Effect.gen(function* ens
         Schema.fromJsonString(Schema.Struct({ declaredWorkloadKeys: Schema.Array(Schema.String) })),
       ),
     ),
+    Effect.mapError(() => fail('enrollment-catalog-read')),
   );
   const declarations = [];
   for (const declaration of symmyDemoCustomerInternalWorkloadDeclarations) {
     if (!catalog.declaredWorkloadKeys.includes(declaration.workloadKey))
-      return yield* fail('Customer workload is absent from the reviewed authorization catalog');
-    const candidates = yield* readSymmyDemoSourceWriterCandidates(declaration.workloadKey);
+      return yield* fail('enrollment-catalog-declaration');
+    const candidates = yield* readSymmyDemoSourceWriterCandidates(declaration.workloadKey).pipe(
+      Effect.mapError(() => fail('enrollment-source-read')),
+    );
     const systems = candidates.filter(({ kind }) => kind === 'system');
-    if (systems.length > 1) return yield* fail('Customer workload has ambiguous legacy SYSTEM enrollment');
+    if (systems.length > 1) return yield* fail('enrollment-legacy-ambiguity');
     if (systems.length === 0) declarations.push(declaration);
   }
   const { executor } = yield* CoreDatabase;
@@ -684,10 +730,7 @@ export const ensureSymmyDemoCustomerInternalWorkloads = Effect.gen(function* ens
     { enrollment: APP_DATABASE_IDENTITY_ENROLLMENT, executor },
     { tenantId, legalEntityId, declarations, runReference: 'akros-stage-customer-enrollment' },
   );
-}).pipe(
-  Effect.provide(EnrollmentLive),
-  Effect.mapError(() => fail('customer-workload-enrollment')),
-);
+}).pipe(Effect.provide(EnrollmentLive), Effect.mapError(safeSymmyDemoEnrollmentFailure));
 
 /** Read this before starting Party. No composition, operator session, new identity or write is needed. */
 export const readSymmyDemoCustomerEnvironment = Effect.gen(function* readEnvironment() {

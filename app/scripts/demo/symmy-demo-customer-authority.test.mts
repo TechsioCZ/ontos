@@ -2,6 +2,7 @@ import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { internalWorkloadPrincipalId } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import { planAdditiveCompanyInternalWorkloads } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import { ReleaseInternalWorkloadError } from '../../packages/core-runtime/src/install/release-internal-workloads.ts';
 
 import {
   buildSymmyDemoCustomerRoutes,
@@ -21,6 +22,8 @@ import {
   symmyDemoReceiverWorkloadsForPhase,
   symmyDemoDiscoveryFailure,
   symmyDemoCustomerInternalWorkloadDeclarations,
+  safeSymmyDemoEnrollmentFailure,
+  SymmyDemoCustomerAuthorityError,
 } from './symmy-demo-customer-authority.mts';
 
 const identities = {
@@ -30,6 +33,24 @@ const identities = {
   integrationPrincipalId: '72000000-0000-4000-8000-000000000021',
   partyWriterId: '72000000-0000-4000-8000-000000000022',
 };
+
+it('retains only typed fixed enrollment categories and strips arbitrary reasons and raw causes', () => {
+  for (const error of [
+    new SymmyDemoCustomerAuthorityError({ reason: 'enrollment-database-config' }),
+    new ReleaseInternalWorkloadError({ reason: 'additive-release-scope' }),
+    new ReleaseInternalWorkloadError({ reason: 'additive-step-create-principal' }),
+  ])
+    expect(safeSymmyDemoEnrollmentFailure(error).reason).toBe(error.reason);
+  for (const error of [
+    new Error('credential-bearing driver diagnostic'),
+    new ReleaseInternalWorkloadError({ reason: 'raw private diagnostic' }),
+    { reason: 'additive-release-scope' },
+  ]) {
+    const safe = safeSymmyDemoEnrollmentFailure(error);
+    expect(safe.reason).toBe('customer-workload-enrollment');
+    expect('cause' in safe).toBe(false);
+  }
+});
 
 it('plans exactly seven canonical AKROS company registrations without retiring unrelated platform jobs', () => {
   const tenantId = SYMMY_DEMO_CUSTOMER_TENANT;

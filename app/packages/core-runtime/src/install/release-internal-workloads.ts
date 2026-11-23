@@ -562,23 +562,25 @@ export const registerAdditiveCompanyInternalWorkloads = Effect.fn('ReleaseIntern
     const state = yield* readTenant(
       input.tenantId,
       input.declarations.map(({ workloadKey }) => workloadKey),
-    );
-    if (
-      !state.activeCompanies.has(input.legalEntityId) ||
-      input.declarations.some(({ moduleKey }) => !state.activeModuleKeys.has(moduleKey))
-    ) {
-      return yield* refusal('The requested company or owning module is not active');
-    }
+    ).pipe(Effect.mapError(() => refusal('additive-read-tenant')));
+    if (!state.activeCompanies.has(input.legalEntityId)) return yield* refusal('additive-company-inactive');
+    if (input.declarations.some(({ moduleKey }) => !state.activeModuleKeys.has(moduleKey)))
+      return yield* refusal('additive-module-inactive');
     const plan = planAdditiveCompanyInternalWorkloads(state, input.declarations, input.legalEntityId);
-    const scope = yield* releaseScopeOf(input.tenantId, input.runReference);
+    const scope = yield* releaseScopeOf(input.tenantId, input.runReference).pipe(
+      Effect.mapError(() => refusal('additive-release-scope')),
+    );
     const writers = {
       bindings: yield* AccessWorkloadBindingStore,
       companies: yield* AccessWorkloadCompanyBindingStore,
     };
     const at = yield* DateTime.nowAsDate;
     for (const unit of plan.units) {
-      const result = yield* performUnit(database, writers, scope, unit, at);
-      if (Result.isFailure(result)) return yield* result.failure;
+      for (const step of unit.steps) {
+        yield* performStep(database, writers, scope, step, at).pipe(
+          Effect.mapError(() => refusal(`additive-step-${step.kind}`)),
+        );
+      }
     }
     return { registered: plan.registered, unchanged: plan.unchanged };
   },
