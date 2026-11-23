@@ -856,6 +856,11 @@ it.live(
           yield* Deferred.succeed(released, null);
         }).pipe(Effect.ensuring(Deferred.succeed(released, null)));
         const revoker = yield* revoke.pipe(Effect.forkChild);
+        const invitationBeforeClaim = yield* readCounterpartyInvitationRow(
+          scenario.fixture,
+          scenario.realm,
+          scenario.invitationId,
+        );
         const assertion = yield* recipientAssertion(scenario);
         const response = yield* Effect.promise(
           async () =>
@@ -878,6 +883,36 @@ it.live(
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           0,
         );
+        // The rejection leaves the invitation exactly as it was, and the rejected invocation committed no
+        // business effect: no journalled mutation, no recipient grant, no domain event and no Outbox message.
+        expect(
+          yield* readCounterpartyInvitationRow(scenario.fixture, scenario.realm, scenario.invitationId),
+        ).toStrictEqual(invitationBeforeClaim);
+        const effects = yield* scenario.fixture.admin.execute<{
+          readonly domain_events: string;
+          readonly grants: string;
+          readonly journalled_mutations: string;
+          readonly outbox_messages: string;
+        }>(
+          sql`
+      select
+        (select count(*)::text from commerce_customer_context.access_mutation_journal journal
+          where journal.tenant_id = ${scenario.realm.tenantId}::uuid
+            and journal.action_invocation_id = ${permittedInvocation}::uuid) as journalled_mutations,
+        (select count(*)::text from commerce_customer_context.counterparty_commerce_access_grants access_grant
+          where access_grant.tenant_id = ${scenario.realm.tenantId}::uuid
+            and access_grant.action_invocation_id = ${permittedInvocation}::uuid) as grants,
+        (select count(*)::text from core.domain_events event
+          where event.tenant_id = ${scenario.realm.tenantId}::uuid
+            and event.action_invocation_id = ${permittedInvocation}::uuid) as domain_events,
+        (select count(*)::text from core.outbox_messages message
+          join core.domain_events event on event.domain_event_id = message.domain_event_id
+          where event.tenant_id = ${scenario.realm.tenantId}::uuid
+            and event.action_invocation_id = ${permittedInvocation}::uuid) as outbox_messages
+    `,
+          'objects',
+        );
+        expect(effects).toEqual([{ domain_events: '0', grants: '0', journalled_mutations: '0', outbox_messages: '0' }]);
         const rows = yield* scenario.fixture.admin.execute<{
           readonly outcome: string;
           readonly outcome_code: string;
