@@ -192,8 +192,18 @@ it.effect('refuses conflicting versions and effect keys rather than replacing ex
 );
 
 /** Real Effect SQL/Drizzle and Core writers over a scripted wire connection; no native database or services. */
-const fixture = (options: { readonly outstanding?: boolean; readonly revoked?: boolean } = {}) => {
+const fixture = (
+  options: {
+    readonly outstanding?: boolean;
+    readonly revoked?: boolean;
+    readonly tenantReader?: boolean;
+  } = {},
+) => {
   const routes = [route('productsBatch'), route('adminProducts')].map((row) => ({ ...row }));
+  if (options.tenantReader === true) {
+    const reader = routes.find(({ routeKey }) => routeKey === 'adminProducts');
+    if (reader !== undefined) reader.legalEntityId = null;
+  }
   const statements: string[] = [];
   const keys = Object.values(symmyDemoExchangeOperations).map(({ workloadKey }) => workloadKey);
   const bindings = new Set<string>();
@@ -263,6 +273,7 @@ const fixture = (options: { readonly outstanding?: boolean; readonly revoked?: b
         expect(PgTypes.isParameter(parameter)).toBe(true);
         if (!PgTypes.isParameter(parameter)) throw new Error('Expected the native PostgreSQL JSON parameter');
         selected.configuration = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(parameter.value);
+        if (sql.includes('legal_entity_id=')) selected.legalEntityId = legalEntityId;
         selected.changeToken += 1;
         return [{ changeToken: selected.changeToken }];
       }
@@ -326,6 +337,39 @@ it.effect('refuses outstanding work, revoked grants and verify-before-apply with
       ).toBe(false);
       expect(state.statements.some((sql) => sql.startsWith('ROLLBACK'))).toBe(true);
     }
+  }),
+);
+
+it.effect('narrows the actual tenant-only reader without creating ambiguous duplicate routes and then converges', () =>
+  Effect.gen(function* narrowExistingReader() {
+    const state = fixture({ tenantReader: true });
+    const reader = state.routes.find(({ routeKey }) => routeKey === 'adminProducts');
+    const originalId = reader?.routeId;
+    expect(reader?.legalEntityId).toBeNull();
+    yield* state.run('apply');
+    expect(reader?.routeId).toBe(originalId);
+    expect(reader?.legalEntityId).toBe(symmyDemoExchangeScope.legalEntityId);
+    expect(state.routes).toHaveLength(2);
+    yield* state.run('apply');
+    yield* state.run('verify');
+    expect(state.statements.filter((sql) => sql.startsWith('update symmy_integration.job_routes'))).toHaveLength(2);
+  }),
+);
+
+it.effect('refuses narrowing an unrelated reader or another company instead of borrowing write source authority', () =>
+  Effect.gen(function* refuseUnrelatedReader() {
+    const reader = { ...route('adminProducts'), legalEntityId: null };
+    for (const invalid of [
+      { ...reader, configuration: { ...reader.configuration, sourceRouteId: 'c0000000-0000-4000-8000-000000000001' } },
+      { ...reader, legalEntityId: 'c0000000-0000-4000-8000-000000000002' },
+    ]) {
+      expect(Exit.isFailure(yield* Effect.exit(planSymmyDemoExchangeRoutes([route('productsBatch'), invalid])))).toBe(
+        true,
+      );
+    }
+    const blocked = fixture({ tenantReader: true, outstanding: true });
+    expect(Exit.isFailure(yield* Effect.exit(blocked.run('apply')))).toBe(true);
+    expect(blocked.routes.find(({ routeKey }) => routeKey === 'adminProducts')?.legalEntityId).toBeNull();
   }),
 );
 

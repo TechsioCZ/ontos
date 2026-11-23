@@ -6,7 +6,8 @@
  *
  * Symmy's native enrollment inventory cannot enroll demo owner operations. This narrowly scoped administrator
  * update uses its source-family lock, route row locks, outstanding-work refusal, change-token trigger and
- * enrollment audit. Only fixture_plan changes; source identities, lifecycle policies and old operations remain.
+ * enrollment audit. The existing tenant-only product Read is narrowed to the approved company after matching its
+ * source against the company writer. Source identities, physical route IDs, lifecycle policies and old operations remain.
  * Core's workload writers grant company-bound machine authority. No Role, Action receipt or route proof is minted.
  */
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -153,7 +154,8 @@ export const planSymmyDemoExchangeRoutes = Effect.fn('SymmyDemoExchange.plan')(f
       (row) =>
         !row.active ||
         row.tenantId !== symmyDemoExchangeScope.tenantId ||
-        row.legalEntityId !== symmyDemoExchangeScope.legalEntityId ||
+        (row.legalEntityId !== symmyDemoExchangeScope.legalEntityId &&
+          !(row.routeKey === 'adminProducts' && row.legalEntityId === null)) ||
         row.principalId !== symmyDemoExchangeScope.principalId ||
         row.routeCode !== null,
     )
@@ -167,11 +169,34 @@ export const planSymmyDemoExchangeRoutes = Effect.fn('SymmyDemoExchange.plan')(f
   if (products.length !== 1 || products[0]?.routeId !== SYMMY_DEMO_EXCHANGE_PRODUCTS_ROUTE || reads.length !== 1) {
     return yield* fail('The existing productsBatch/adminProducts routes are absent, ambiguous or rebound');
   }
+  const [product] = products;
+  const [read] = reads;
+  if (product === undefined || read === undefined) return yield* fail('The product source pair is absent');
+  const sourceOf = (row: Route) => Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(row.configuration);
+  const productPlan = yield* sourceOf(product);
+  const readPlan = yield* sourceOf(read);
+  const logicalSourceId = productPlan.sourceRouteId;
+  const first = productPlan.items[0].source;
+  if (
+    logicalSourceId === undefined ||
+    readPlan.sourceRouteId !== logicalSourceId ||
+    [...productPlan.items, ...readPlan.items].some(
+      ({ source }) => source.issuerId !== first.issuerId || source.sourceNamespace !== first.sourceNamespace,
+    )
+  ) {
+    return yield* fail('The product reader and company writer do not share the same enrolled logical source');
+  }
   return yield* Effect.forEach(
     rows,
     (route) =>
       symmyDemoExchangeConfiguration(route.configuration, route.routeKey).pipe(
-        Effect.map((change) => ({ ...route, ...change })),
+        Effect.map((change) => ({
+          ...route,
+          ...change,
+          changed: change.changed || route.legalEntityId === null,
+          previousLegalEntityId: route.legalEntityId,
+          legalEntityId: symmyDemoExchangeScope.legalEntityId,
+        })),
       ),
     { concurrency: 1 },
   );
@@ -206,7 +231,8 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
         legal_entity_id as "legalEntityId", principal_id as "principalId", route_code as "routeCode",
         route_id as "routeId", route_key as "routeKey", tenant_id as "tenantId"
         from symmy_integration.job_routes
-        where tenant_id=${tenantId} and principal_id=${principalId} and legal_entity_id=${legalEntityId}
+        where tenant_id=${tenantId} and principal_id=${principalId}
+          and (legal_entity_id=${legalEntityId} or (route_key='adminProducts' and legal_entity_id is null))
           and route_key in ('productsBatch','adminProducts') and active=true
         order by route_id for update`;
       const planned = yield* Schema.decodeUnknownEffect(Schema.Array(SymmyDemoExchangeRouteSchema))(rows).pipe(
@@ -353,8 +379,9 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
       for (const route of planned) {
         if (mode === 'apply' && route.changed) {
           const updated = yield* sql`update symmy_integration.job_routes
-            set fixture_plan=${sql.json(route.configuration)}
-            where tenant_id=${tenantId} and principal_id=${principalId} and legal_entity_id=${legalEntityId}
+            set fixture_plan=${sql.json(route.configuration)},legal_entity_id=${legalEntityId}
+            where tenant_id=${tenantId} and principal_id=${principalId}
+              and legal_entity_id is not distinct from ${route.previousLegalEntityId}::uuid
               and route_id=${route.routeId} and change_token=${route.changeToken} and active=true
             returning change_token as "changeToken"`;
           const [written] = yield* Schema.decodeUnknownEffect(
