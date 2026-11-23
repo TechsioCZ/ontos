@@ -42,6 +42,12 @@ const catalogMaterialCount = (fences: readonly HarnessFenceObservation[], kind: 
     .flatMap(({ materialKinds }) => materialKinds)
     .filter((materialKind) => materialKind === kind).length;
 
+const catalogEquivalenceGroupSizes = (fences: readonly HarnessFenceObservation[]): readonly number[] =>
+  fences
+    .filter(({ operation, owner }) => owner === 'catalog' && operation === 'verify')
+    .flatMap(({ equivalenceGroupSizes }) => equivalenceGroupSizes)
+    .toSorted((left, right) => left - right);
+
 const pricePurchase = (
   harness: PublicPricingReadHarness,
   lines: Parameters<PublicPricingReadHarness['makeRequest']>[0]['lines'],
@@ -111,7 +117,8 @@ it.live(
           ).toBe(true);
           // The Catalog owner was handed one line authority per ORIGINAL occurrence, not one merged line.
           expect(catalogMaterialCount(mixedFences, 'CATALOG_LINE_AUTHORITY')).toBe(3);
-          expect(catalogMaterialCount(mixedFences, 'CATALOG_EQUIVALENCE_AUTHORITY')).toBeGreaterThan(0);
+          // Catalog was asked about one two-member group (P) and one single-member group (Q), never one merged group.
+          expect(catalogEquivalenceGroupSizes(mixedFences)).toEqual([1, 2]);
 
           // One Product, two Tier-non-equivalent Variants: no pooling, so both keep the base Price; whole total sums.
           const fencesBeforeSameProduct = harness.fenceCalls.length;
@@ -129,10 +136,8 @@ it.live(
           expect(
             catalogMaterialCount(harness.fenceCalls.slice(fencesBeforeSameProduct), 'CATALOG_LINE_AUTHORITY'),
           ).toBe(2);
-          // Distinct exact Prices form two single-member Tier groups, so Catalog equivalence is never asked.
-          expect(
-            catalogMaterialCount(harness.fenceCalls.slice(fencesBeforeSameProduct), 'CATALOG_EQUIVALENCE_AUTHORITY'),
-          ).toBe(0);
+          // Distinct exact Prices form two single-member Tier groups: no pooling and no two-member equivalence group.
+          expect(catalogEquivalenceGroupSizes(harness.fenceCalls.slice(fencesBeforeSameProduct))).toEqual([1, 1]);
           expect(publishedAmounts(sameProduct)).toEqual([
             ['P-variant-first', String(BASE_PRICE + FEE)],
             ['P-variant-second', String(BASE_PRICE - DISCOUNT + FEE)],
