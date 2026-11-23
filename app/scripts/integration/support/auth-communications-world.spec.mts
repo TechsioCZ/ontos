@@ -310,6 +310,7 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
 
   return {
     attemptRows: owner.attemptRows,
+    confirmBuiltInDefault: owner.confirmBuiltInDefault,
     everyStoredRow: owner.everyStoredRow,
     /** The protected handoff of the CURRENT Auth process. */
     get handoff() {

@@ -91,7 +91,7 @@ export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')
  * An Action of one scope may only change a Template of exactly that scope: a tenant-wide Template needs a tenant-wide
  * operation, a Legal Entity Template needs that Legal Entity as the trusted operating scope.
  */
-const assertOperatingScope = (scope: TemplateScope, legalEntityId: string | null) =>
+export const assertOperatingScope = (scope: TemplateScope, legalEntityId: string | null) =>
   (scope.kind === 'tenant' ? legalEntityId === null : legalEntityId === scope.legalEntityId)
     ? Effect.void
     : refuse('template_scope_mismatch', 'The Template scope is not the trusted operating scope of this operation');
@@ -436,7 +436,7 @@ const activationAudit = (activation: TemplateActivationRecord) => {
   });
 };
 
-const lifecycleOf = (
+export const lifecycleOf = (
   activations: readonly TemplateActivationRecord[],
   invalidated: boolean,
 ): TemplateLifecycleState => {

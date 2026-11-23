@@ -151,6 +151,8 @@ export const makeInMemoryTemplatePort = (startAt = '2026-11-19T10:00:00Z') => {
       Effect.succeed(
         state.activations.filter((activation) => activation.templateTypeId === templateTypeId && isOpen(activation)),
       ),
+    revisionsOfType: (templateTypeId) =>
+      Effect.succeed(state.revisions.filter((revision) => revision.templateTypeId === templateTypeId)),
   };
   return {
     advance: (minutes: number) => {

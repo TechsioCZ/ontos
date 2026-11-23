@@ -24,7 +24,12 @@ import type { ScopedRunner } from '../../src/handoff/process-intent-handoff.ts';
 import { actionOwnerCall, underOwnerCall } from '../../src/integrations/owner-call.ts';
 import { privacyProcessingEligibilityGateOver } from '../../src/integrations/privacy-eligibility-gate.ts';
 import type { PrivacyOwnerTransport } from '../../src/integrations/privacy-eligibility-gate.ts';
+import {
+  confirmBuiltInTemplateDefault,
+  reviewBuiltInTemplateDefaults,
+} from '../../src/services/built-in-template-default-domain.service.ts';
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
+import type { TemplateRevisionPortContract } from '../../src/services/template-revision-port.service.ts';
 import { loadRequestHistory } from '../../src/services/message-history.service.ts';
 import { privacyAllowed } from '../unit/support/privacy-fixtures.ts';
 import type { PrivacyAnswer } from '../unit/support/privacy-fixtures.ts';
@@ -119,6 +124,32 @@ const allowedHistoryAccess: HistoryAccess = {
   'communications.core.message-history.list': 'allowed',
   'communications.core.message-history.read': 'allowed',
 };
+
+/** Reviews the built-in default candidates of the Tenant scope and confirms the reviewed digest of one of them. */
+const confirmReviewedDefault = Effect.fn('CommunicationsSourceOwnerWorld.confirmReviewedDefault')(function* confirm(
+  port: TemplateRevisionPortContract,
+  messageType: string,
+  language: 'cs' | 'en',
+) {
+  const reviewed = yield* reviewBuiltInTemplateDefaults(port, { kind: 'tenant' });
+  const candidate = reviewed.find(
+    (entry) => entry.identity.messageType === messageType && entry.identity.language === language,
+  );
+  if (candidate === undefined) {
+    return yield* Effect.die('no built-in default exists for this message type and language');
+  }
+  return yield* confirmBuiltInTemplateDefault(
+    port,
+    {
+      contentDigest: candidate.builtInDefault.contentDigest,
+      language,
+      messageType,
+      reason: 'Fictional confirmation of the approved default text',
+      scope: { kind: 'tenant' },
+    },
+    { ...actorFor(null), actionInvocationId: yield* nextId },
+  );
+});
 
 /**
  * One Tenant with the FICTIONAL approved revisions the suite supplies, over the real Communications persistence that the
@@ -294,6 +325,13 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
     };
   });
 
+  /**
+   * The Tenant's authorised user confirming one built-in default text (#1398, #1406) the way the confirm Action does: it
+   * reviews the candidate first and confirms exactly the digest it reviewed, tenant-wide, with its own reason.
+   */
+  const confirmBuiltInDefault = (messageType: string, language: 'cs' | 'en') =>
+    database.withPort(tenantId, (port) => confirmReviewedDefault(port, messageType, language));
+
   return {
     /** The delivery attempts of the Tenant, as the runtime role reads them. */
     attemptRows: database.inTenant(tenantId, (transaction) => transaction.select().from(deliveryAttempts)),
@@ -301,6 +339,7 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
      * Every row of EVERY table of the `communications` schema (enumerated from the database catalog, so no table is left
      * out by a hand list) and of Core's real outbox tables, as the runtime role sees them for the Tenant.
      */
+    confirmBuiltInDefault,
     everyStoredRow: database.everyRowOf(tenantId, {
       schemas: ['communications'],
       tables: ['core.outbox_messages', 'core.outbox_deliveries'],

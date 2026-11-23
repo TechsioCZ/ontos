@@ -95,9 +95,15 @@ import { RecordOwnerExecutionEvidenceResultSchema } from '../../shared/owner-exe
 import type { RecordOwnerExecutionEvidencePayloadSchema } from '../../shared/owner-execution-evidence.ts';
 import { scopePartRefs } from '../../shared/privacy-owner/inventory.ts';
 import { fingerprintCommunicationsHandoff } from '../../shared/privacy-owner/measure-handoff.ts';
-import { PrepareTemplateRevisionResultSchema } from '../../shared/template-revision.ts';
+import { BuiltInTemplateDefaultsResponseSchema } from '../../shared/apis/built-in-template-defaults.ts';
+import type { BuiltInTemplateDefaultsRequestSchema } from '../../shared/apis/built-in-template-defaults.ts';
+import {
+  ConfirmBuiltInTemplateDefaultResultSchema,
+  PrepareTemplateRevisionResultSchema,
+} from '../../shared/template-revision.ts';
 import type {
   ActivateTemplateRevisionPayloadSchema,
+  ConfirmBuiltInTemplateDefaultPayloadSchema,
   PrepareTemplateRevisionPayloadSchema,
 } from '../../shared/template-revision.ts';
 import { PrivacyMeasureReporter, privacyMeasureReporterService } from '../../src/services/privacy-measure-reporter.ts';
@@ -368,6 +374,8 @@ const assertionFor = Effect.fnUntraced(function* assertionFor(
 /** Exactly the public request bodies this suite sends. */
 type RequestBody =
   | typeof ActivateTemplateRevisionPayloadSchema.Encoded
+  | typeof BuiltInTemplateDefaultsRequestSchema.Encoded
+  | typeof ConfirmBuiltInTemplateDefaultPayloadSchema.Encoded
   | typeof LanguagePolicyRequestSchema.Encoded
   | typeof MessageHistoryListRequestFieldsSchema.Encoded
   | typeof PrepareTemplateRevisionPayloadSchema.Encoded
@@ -1339,5 +1347,151 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
         }),
       ).pipe(Effect.provide(services)),
     180_000,
+  );
+});
+
+const DEFAULTS_LIST = 'communications.core.template-revision.list';
+const DEFAULT_CONFIRM = 'communications.core.template-revision.confirm-built-in-default';
+const VERIFY_EMAIL = 'commerce.customer-context.portal-auth.verify-email-message';
+
+describe('Built-in template defaults with the real authorization engine (SpiceDB) and native PostgreSQL (#1398, #1406)', () => {
+  it.live(
+    'lets only a permitted member of the Tenant review and confirm a default, and refuses again once revoked',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* builtInDefaults() {
+          const { core, document, snapshot } = yield* publishComposition();
+          const { revision } = snapshot.composition;
+          const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+          const fixtureOf = Effect.fnUntraced(function* fixtureOf() {
+            const fixture = yield* makeLiveOperationFixture({
+              access: 'allowed',
+              authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+              compositionRevision: revision,
+              runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+            });
+            yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
+            yield* activateCommunications(core, fixture.tenantId);
+            return fixture;
+          });
+          const tenant = yield* fixtureOf();
+          const foreign = yield* fixtureOf();
+          const target = yield* environmentTestAccessTarget;
+          // the manager holds the review and the confirmation Tenant-wide, the reader is a member without either, and the
+          // foreign manager holds both in the foreign Tenant only
+          for (const scope of [tenant, foreign]) {
+            yield* grantTestTenantRoleAccess({
+              ...target,
+              holders: [
+                { capabilityKeys: [DEFAULTS_LIST, DEFAULT_CONFIRM], principalId: scope.manager.principalId },
+                { capabilityKeys: ['party.registry.party.read'], principalId: scope.reader.principalId },
+              ],
+              legalEntityIds: [scope.legalEntityId],
+              tenantId: scope.tenantId,
+            });
+          }
+          const gateway = yield* makeGateway();
+          const runtime = yield* mountRuntime(gateway, document);
+          const send = staffSender(gateway, revision, runtime);
+          const { manager, reader } = tenant;
+          const { manager: foreignManager } = foreign;
+          const review = Effect.fnUntraced(function* review(principal: Principal) {
+            const reply = yield* send(principal, '/reads/built-in-template-defaults', {});
+            return {
+              reply,
+              result:
+                reply.status === 200
+                  ? Option.some(Schema.decodeUnknownSync(BuiltInTemplateDefaultsResponseSchema)(reply.body))
+                  : Option.none(),
+            };
+          });
+          const candidate = Effect.fnUntraced(function* candidate(language: 'cs' | 'en') {
+            const reviewed = Option.getOrThrow((yield* review(manager)).result);
+            return Option.getOrThrow(
+              Option.fromNullishOr(
+                reviewed.entries.find(
+                  (entry) => entry.identity.messageType === VERIFY_EMAIL && entry.identity.language === language,
+                ),
+              ),
+            );
+          });
+          const confirm = (principal: Principal, language: 'cs' | 'en', contentDigest: string) =>
+            send(
+              principal,
+              '/communications/actions/confirm-built-in-template-default',
+              {
+                contentDigest,
+                language,
+                messageType: VERIFY_EMAIL,
+                reason: 'Fictional confirmation for the authorization tests',
+                scope: { kind: 'tenant' },
+              },
+              true,
+            );
+
+          // ALLOWED: the manager reviews six unconfirmed candidates and confirms the Czech one
+          const czech = yield* candidate('cs');
+          expect(czech.builtInDefault.state).toBe('BUILT_IN_DEFAULT_NOT_CONFIRMED');
+          expect(czech.revisions).toEqual([]);
+          const english = yield* candidate('en');
+          expect(english.confirmationBlockedBy).toBe('template_built_in_default_requires_czech');
+          // DENIED: a member without the capabilities neither reads nor confirms anything
+          expect((yield* review(reader)).reply.status).toBe(403);
+          expect((yield* confirm(reader, 'cs', czech.builtInDefault.contentDigest)).status).toBe(403);
+          const confirmed = yield* confirm(manager, 'cs', czech.builtInDefault.contentDigest);
+          expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
+          const first = Schema.decodeUnknownSync(ConfirmBuiltInTemplateDefaultResultSchema)(confirmed.body);
+          expect(first.alreadyConfirmed).toBe(false);
+          // the same confirmation again stores and changes nothing
+          const again = yield* confirm(manager, 'cs', czech.builtInDefault.contentDigest);
+          expect(again.status, JSON.stringify(again.body)).toBe(200);
+          expect(Schema.decodeUnknownSync(ConfirmBuiltInTemplateDefaultResultSchema)(again.body)).toMatchObject({
+            activationId: first.activationId,
+            alreadyConfirmed: true,
+            revisionId: first.revisionId,
+          });
+          expect((yield* candidate('cs')).builtInDefault.state).toBe('BUILT_IN_DEFAULT_CONFIRMED');
+          // the reviewed digest is required: another text's digest is refused with its typed code
+          const mismatch = yield* confirm(manager, 'en', czech.builtInDefault.contentDigest);
+          expect(mismatch.status, JSON.stringify(mismatch.body)).toBe(422);
+          expect(mismatch.body).toMatchObject({ code: 'template_built_in_default_digest_mismatch' });
+
+          // CROSS-TENANT: the foreign manager sees only the foreign Tenant, where nothing is confirmed, and this Tenant's
+          // Czech confirmation does not admit an English confirmation there
+          const foreignReview = Option.getOrThrow((yield* review(foreignManager)).result);
+          expect(
+            foreignReview.entries.every((entry) => entry.builtInDefault.state === 'BUILT_IN_DEFAULT_NOT_CONFIRMED'),
+          ).toBe(true);
+          const foreignEnglish = yield* confirm(foreignManager, 'en', english.builtInDefault.contentDigest);
+          expect(foreignEnglish.status, JSON.stringify(foreignEnglish.body)).toBe(422);
+          expect(foreignEnglish.body).toMatchObject({ code: 'template_built_in_default_requires_czech' });
+          // a forged Tenant claim is refused before any Communications code runs
+          expect([401, 403]).toContain(
+            (yield* confirm(
+              { ...foreignManager, tenantId: tenant.tenantId },
+              'en',
+              english.builtInDefault.contentDigest,
+            )).status,
+          );
+
+          // GRANTED THEN REVOKED: a role of exactly the two capabilities admits the reader, then refuses it again
+          const roles = yield* makeTestTenantRoleAccess({
+            ...target,
+            legalEntityIds: [tenant.legalEntityId],
+            principalId: reader.principalId,
+            tenantId: tenant.tenantId,
+          });
+          const defaultsRole = yield* roles.capabilityRole([DEFAULTS_LIST, DEFAULT_CONFIRM]);
+          yield* defaultsRole.grant();
+          expect((yield* review(reader)).reply.status).toBe(200);
+          const readerEnglish = yield* confirm(reader, 'en', english.builtInDefault.contentDigest);
+          expect(readerEnglish.status, JSON.stringify(readerEnglish.body)).toBe(200);
+          yield* defaultsRole.revoke();
+          expect((yield* review(reader)).reply.status).toBe(403);
+          expect((yield* confirm(reader, 'en', english.builtInDefault.contentDigest)).status).toBe(403);
+          expect((yield* candidate('en')).builtInDefault.state).toBe('BUILT_IN_DEFAULT_CONFIRMED');
+        }),
+      ).pipe(Effect.provide(services)),
+    120_000,
   );
 });

@@ -216,6 +216,16 @@ export const postgresTemplateRevisionPort = (
         Effect.mapError(unavailable),
         Effect.map((rows) => Option.fromNullishOr(rows[0]).pipe(Option.map(revisionRecord))),
       );
+  const revisionsOfType: TemplateRevisionPortContract['revisionsOfType'] = (templateTypeId) =>
+    transaction
+      .select()
+      .from(templateRevisions)
+      .where(and(eq(templateRevisions.tenantId, tenantId), eq(templateRevisions.templateTypeId, templateTypeId)))
+      .orderBy(asc(templateRevisions.revisionNumber))
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.map((rows) => rows.map(revisionRecord)),
+      );
   const activationRows = (predicate: ReturnType<typeof and>) =>
     transaction
       .select()
@@ -365,6 +375,7 @@ export const postgresTemplateRevisionPort = (
     lockType,
     lockTypeShared,
     openActivations,
+    revisionsOfType,
   });
 };
 

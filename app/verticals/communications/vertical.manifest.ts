@@ -5,6 +5,9 @@ import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
+import { BuiltInTemplateDefaultsApi } from './shared/apis/built-in-template-defaults.ts';
+import { builtInTemplateDefaultsRead } from './src/api/built-in-template-defaults.read.ts';
+import { confirmBuiltInTemplateDefaultAction } from './src/actions/confirm-built-in-template-default.action.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { LanguagePolicyApi } from './shared/apis/language-policy.ts';
@@ -42,6 +45,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     actions: [
       // <generated-module-manifest-actions>
       activateTemplateRevisionAction,
+      confirmBuiltInTemplateDefaultAction,
       deactivateTemplateRevisionAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,
@@ -52,6 +56,7 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     ],
     api: {
       // <generated-module-manifest-apis>
+      'built-in-template-defaults': BuiltInTemplateDefaultsApi,
       'language-policy': LanguagePolicyApi,
       'message-history-detail': MessageHistoryDetailApi,
       'message-history-list': MessageHistoryListApi,
@@ -66,6 +71,11 @@ export const communicationsManifest: OntosModuleManifestInput = defineOntosModul
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'built-in-template-defaults',
+        operationKey: 'builtInTemplateDefaults.execute',
+        registration: builtInTemplateDefaultsRead,
+      },
       { apiKey: 'language-policy', operationKey: 'languagePolicy.execute', registration: languagePolicyRead },
       {
         apiKey: 'message-history-detail',

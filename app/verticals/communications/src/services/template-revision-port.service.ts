@@ -131,6 +131,10 @@ export interface TemplateRevisionPortContract {
   readonly openActivations: (
     templateTypeId: string,
   ) => Effect.Effect<readonly TemplateActivationRecord[], TemplateStoreUnavailable>;
+  /** Every revision of one Type, oldest first: the review of a Type lists them all, drafts included. */
+  readonly revisionsOfType: (
+    templateTypeId: string,
+  ) => Effect.Effect<readonly TemplateRevisionRecord[], TemplateStoreUnavailable>;
 }
 
 /**

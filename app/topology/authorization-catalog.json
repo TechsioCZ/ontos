@@ -14324,6 +14324,34 @@
         },
         {
           "accessDeclaration": {
+            "key": "communications.core.template-revision.confirm-built-in-default",
+            "kind": "action",
+            "modes": [
+              "run",
+              "propose",
+              "approve"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.confirm-built-in-template-default",
+            "moduleKey": "communications.core",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "communications.core.template-revision.deactivate",
             "kind": "action",
             "modes": [
@@ -14375,6 +14403,32 @@
             "entrypointKey": "communications.core.invalidate-template-revision",
             "moduleKey": "communications.core",
             "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "communications.core.template-revision.list",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "template-revision",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "communications.core.api.built-in-template-defaults",
+            "moduleKey": "communications.core",
+            "role": "api",
             "scope": "tenant"
           }
         },

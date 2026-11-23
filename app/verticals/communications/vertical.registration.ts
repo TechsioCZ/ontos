@@ -5,6 +5,8 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { communicationsManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { activateTemplateRevisionAction } from './src/actions/activate-template-revision.action.ts';
+import { builtInTemplateDefaultsRead } from './src/api/built-in-template-defaults.read.ts';
+import { confirmBuiltInTemplateDefaultAction } from './src/actions/confirm-built-in-template-default.action.ts';
 import { deactivateTemplateRevisionAction } from './src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from './src/actions/invalidate-template-revision.action.ts';
 import { languagePolicyRead } from './src/api/language-policy.read.ts';
@@ -25,6 +27,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     activateTemplateRevisionAction,
+    confirmBuiltInTemplateDefaultAction,
     deactivateTemplateRevisionAction,
     invalidateTemplateRevisionAction,
     prepareTemplateRevisionAction,
@@ -36,6 +39,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'built-in-template-defaults': () => import('./src/api/built-in-template-defaults-client.ts'),
       'language-policy': () => import('./src/api/language-policy-client.ts'),
       'message-history-detail': () => import('./src/api/message-history-detail-client.ts'),
       'message-history-list': () => import('./src/api/message-history-list-client.ts'),
@@ -70,6 +74,7 @@ export const communicationsRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    builtInTemplateDefaultsRead,
     languagePolicyRead,
     messageHistoryDetailRead,
     messageHistoryListRead,

@@ -18,6 +18,7 @@ import {
 import {
   approvedMessageTypes,
   nativeServices,
+  portalAuthCopyDraft,
   privacyNotAllowed,
 } from '@app/communications/testing/source-owner-world';
 import {
@@ -123,6 +124,40 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         const page = yield* (yield* historyReads(world)).list();
         expect(page.items[0]).toMatchObject({
           headline: { deliveryProven: false, providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
+          template: { language: 'cs', mode: 'B', revisionNumber: 1 },
+        });
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[#1398 #1406] once the Tenant confirms the built-in Czech default, the verification is prepared and sent with exactly that text',
+    () =>
+      Effect.gen(function* confirmedDefault() {
+        const VERIFY_EMAIL = 'commerce.customer-context.portal-auth.verify-email-message';
+        const approved = portalAuthCopyDraft.find(
+          (copy) => copy.messageType === VERIFY_EMAIL && copy.language === 'cs',
+        );
+        // no revision at all: nothing is active until the Tenant's authorised user confirms the default
+        const { create, realm, world } = yield* setup({ languages: [], mode: 'B' });
+        const confirmed = yield* world.confirmBuiltInDefault(VERIFY_EMAIL, 'cs');
+        expect(confirmed.alreadyConfirmed).toBe(false);
+        yield* create();
+        expect((yield* step(world, world.messageHandoff, yield* onlyIntent(world))).kind).toBe('HANDED_OFF');
+        const [mail] = world.mailbox;
+        expect(mail?.language).toBe('cs');
+        expect(mail?.subject).toBe(approved?.subject);
+        const text = textOf(mail);
+        // the approved wording around the secret slot, which Auth filled with its own verification link
+        const [greeting, intro, , closing] = approved?.body.split('\n\n') ?? [];
+        for (const paragraph of [greeting, intro, closing]) {
+          expect(text).toContain(paragraph);
+        }
+        expect(text).toContain('/verify-email?');
+        expect(text).not.toContain('{{verification_link}}');
+        expect(Redacted.value(mail?.to ?? Redacted.make(''))).toBe(realm.email);
+        const page = yield* (yield* historyReads(world)).list();
+        expect(page.items[0]).toMatchObject({
+          headline: { providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
           template: { language: 'cs', mode: 'B', revisionNumber: 1 },
         });
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),

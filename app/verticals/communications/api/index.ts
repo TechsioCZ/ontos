@@ -44,6 +44,8 @@ import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLiv
 
 // <generated-governed-http-handler-imports>
 import { activateTemplateRevisionActionApiLive } from './activate-template-revision-action-server.ts';
+import { builtInTemplateDefaultsReadApiLive } from './built-in-template-defaults-read-server.ts';
+import { confirmBuiltInTemplateDefaultActionApiLive } from './confirm-built-in-template-default-action-server.ts';
 import { deactivateTemplateRevisionActionApiLive } from './deactivate-template-revision-action-server.ts';
 import { invalidateTemplateRevisionActionApiLive } from './invalidate-template-revision-action-server.ts';
 import { languagePolicyReadApiLive } from './language-policy-read-server.ts';
@@ -159,6 +161,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   communicationsReadinessLayer,
   // <generated-governed-http-handler-layers>
   activateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  builtInTemplateDefaultsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  confirmBuiltInTemplateDefaultActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   deactivateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   invalidateTemplateRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   languagePolicyReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

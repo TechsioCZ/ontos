@@ -241,17 +241,30 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
       }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it('is activated by no code path: nothing that uses the draft can reach the activate Action or the activation rule', () => {
+  it('is activated only by the human confirm Action: nothing else that uses the copy reaches the activation rule', () => {
     const root = path.join(import.meta.dirname, '..', '..');
-    const users = ['src', 'shared', 'api', 'scripts']
-      .flatMap((directory) => sourceFiles(path.join(root, directory)))
+    const sources = ['src', 'shared', 'api', 'scripts'].flatMap((directory) => sourceFiles(path.join(root, directory)));
+    const relative = (file: string) => path.relative(root, file);
+    const users = sources
       .filter((file) => !file.endsWith('portal-auth-copy-draft.ts'))
       .filter((file) => readFileSync(file, 'utf-8').includes('portal-auth-copy-draft'));
-    expect(users.map((file) => path.relative(root, file))).toEqual(['scripts/review-portal-auth-copy-draft.mts']);
-    for (const file of [...users, path.join(root, 'src/domain/catalog/portal-auth-copy-draft.ts')]) {
+    // the review script prints the copy; the built-in default domain is the one confirm path
+    expect(users.map(relative)).toEqual([
+      'src/services/built-in-template-default-domain.service.ts',
+      'scripts/review-portal-auth-copy-draft.mts',
+    ]);
+    for (const file of [
+      path.join(root, 'scripts/review-portal-auth-copy-draft.mts'),
+      path.join(root, 'src/domain/catalog/portal-auth-copy-draft.ts'),
+    ]) {
       expect(readFileSync(file, 'utf-8')).not.toMatch(
-        /activateRevision|activate-template-revision\.action|ActivateTemplateRevision/u,
+        /activateRevision|activate-template-revision\.action|ActivateTemplateRevision|confirmBuiltInTemplateDefault/u,
       );
     }
+    // the confirm program is reached only from its own governed Action, never from a worker, a handoff or a Read
+    const confirmCallers = sources
+      .filter((file) => !file.endsWith('built-in-template-default-domain.service.ts'))
+      .filter((file) => /\bconfirmBuiltInTemplateDefault\b/u.test(readFileSync(file, 'utf-8')));
+    expect(confirmCallers.map(relative)).toEqual(['src/actions/confirm-built-in-template-default.action.ts']);
   });
 });

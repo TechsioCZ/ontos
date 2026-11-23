@@ -6,6 +6,7 @@ import { languagePolicyOperation } from '../../shared/apis/language-policy.ts';
 import { privacyOwnerCoverageOperation } from '../../shared/apis/privacy-owner-coverage.ts';
 import { privacyOwnerExecutionOutcomeOperation } from '../../shared/apis/privacy-owner-execution-outcome.ts';
 import { activateTemplateRevisionAction } from '../../src/actions/activate-template-revision.action.ts';
+import { confirmBuiltInTemplateDefaultAction } from '../../src/actions/confirm-built-in-template-default.action.ts';
 import { deactivateTemplateRevisionAction } from '../../src/actions/deactivate-template-revision.action.ts';
 import { invalidateTemplateRevisionAction } from '../../src/actions/invalidate-template-revision.action.ts';
 import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
@@ -36,6 +37,7 @@ describe('Communications module contract', () => {
         .toSorted((left, right) => left.localeCompare(right)),
     ).toEqual([
       'communications.core.activate-template-revision',
+      'communications.core.confirm-built-in-template-default',
       'communications.core.deactivate-template-revision',
       'communications.core.invalidate-template-revision',
       'communications.core.prepare-template-revision',
@@ -44,6 +46,7 @@ describe('Communications module contract', () => {
       'communications.core.submit-communication-request',
     ]);
     expect(Object.keys(communicationsManifest.publicSurface.api)).toEqual([
+      'built-in-template-defaults',
       'language-policy',
       'message-history-detail',
       'message-history-list',
@@ -51,6 +54,7 @@ describe('Communications module contract', () => {
       'privacy-owner-execution-outcome',
     ]);
     expect(communicationsManifest.publicSurface.operationContracts?.map((contract) => contract.operationKey)).toEqual([
+      'builtInTemplateDefaults.execute',
       'languagePolicy.execute',
       'messageHistoryDetail.execute',
       'messageHistoryList.execute',
@@ -157,6 +161,7 @@ describe('Communications module contract', () => {
     // every public Action's own payload contract, checked to be exactly the published set so none escapes the scan
     const registrations = [
       activateTemplateRevisionAction,
+      confirmBuiltInTemplateDefaultAction,
       deactivateTemplateRevisionAction,
       invalidateTemplateRevisionAction,
       prepareTemplateRevisionAction,
