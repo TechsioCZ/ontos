@@ -169,6 +169,41 @@ it.live('proves the entries after one that ends its process, and counts a left-o
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.live('counts programming import failures but keeps configuration and TypeError failures as notes', () =>
+  Effect.gen(function* programmingImports() {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: 'prove-app-runtime-programming-' });
+    const fixtures = [
+      ['reference', 'export const start = TrustedCompanyPrincipalContextSchema;\n'],
+      ['syntax', 'export const start = ;\n'],
+      ['named', "import { missingLayer } from './valid.mjs';\nexport const start = missingLayer;\n"],
+      ['config', "throw new Error('needs DATABASE_URL');\n"],
+      ['type', "throw new TypeError('runtime configuration unavailable');\n"],
+      ['message', "throw new Error('ReferenceError: configuration diagnostic, not an error class');\n"],
+      [
+        'valid',
+        "import { writeFileSync } from 'node:fs';\nwriteFileSync(new URL('./imported', import.meta.url), 'yes');\nexport const start = 1;\n",
+      ],
+    ] as const;
+    const entries: string[] = [];
+    for (const [name, source] of fixtures) {
+      const entry = path.join(root, `${name}.mjs`);
+      yield* fs.writeFileString(entry, source);
+      entries.push(entry);
+    }
+    const { failures, notes } = yield* entryImportFindings(root, [entries]);
+    expect(failures).toHaveLength(3);
+    expect(failures[0]).toContain('reference.mjs: ReferenceError: TrustedCompanyPrincipalContextSchema is not defined');
+    expect(failures[1]).toContain('syntax.mjs: SyntaxError:');
+    expect(failures[2]).toContain("named.mjs: SyntaxError: The requested module './valid.mjs' does not provide an export named 'missingLayer'");
+    expect(notes).toHaveLength(3);
+    expect(notes[0]).toContain('config.mjs (not counted): Error: needs DATABASE_URL');
+    expect(notes[1]).toContain('type.mjs (not counted): TypeError: runtime configuration unavailable');
+    expect(notes[2]).toContain('message.mjs (not counted): Error: ReferenceError: configuration diagnostic');
+    expect(yield* fs.readFileString(path.join(root, 'imported'))).toBe('yes');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const OVER_BUDGET = 'did not finish within';
 
 it.live('ends an entry that blocks its process at its own budget, and still proves the entries after it', () =>

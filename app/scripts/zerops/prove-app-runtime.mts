@@ -13,8 +13,8 @@
  * 4. Every served unit's dist/zerops-entry.mjs imports, its API bundle included, while the left-out store directories
  *    are moved to ASIDE (and always back): the entries resolve exactly as in the shipped tree. They load in the
  *    processes the app host runs them in (app-host.mts startUnitProcess): the Shell alone, every owner together in
- *    one, so a module the owners share loads once, as it does on stage. An entry that fails for any other reason (an
- *    environment this proof does not provide) is reported, not counted.
+ *    one, so a module the owners share loads once, as it does on stage. Resolution failures, ReferenceError and
+ *    SyntaxError count; other failures (an environment this proof does not provide) are reported, not counted.
  *
  * Check 3 reads only workspace sources, never a store directory, so it runs beside check 4.
  *
@@ -55,6 +55,7 @@ const ALONE_CONCURRENCY = 4;
 const RECORD_POLL = Duration.millis(200);
 const RESOLUTION_FAILURE =
   /ERR_RUNTIME_EXCLUDED|ERR_MODULE_NOT_FOUND|ERR_PACKAGE_PATH_NOT_EXPORTED|MODULE_NOT_FOUND|Cannot find (?:module|package)/u;
+const PROGRAMMING_FAILURE = /^(?:ReferenceError|SyntaxError)(?: \[[A-Z_]+\])?: /mu;
 
 export class AppRuntimeProofError extends Data.TaggedError('AppRuntimeProofError')<{ readonly message: string }> {}
 
@@ -461,7 +462,7 @@ interface EntryFinding {
 const counted = (message: string): EntryFinding => ({ failure: Option.some(message), note: Option.none() });
 const reported = (message: string): EntryFinding => ({ failure: Option.none(), note: Option.some(message) });
 
-const ERROR_LINE = /\bError\b(?: \[[A-Z_]+\])?: /u;
+const ERROR_LINE = /\b(?:Error|ReferenceError|SyntaxError)\b(?: \[[A-Z_]+\])?: /u;
 
 /** The line that says why an import failed: the error's own message line, else any line naming the failure. */
 const failureReason = (stderr: string) => {
@@ -474,9 +475,9 @@ const failureReason = (stderr: string) => {
   return line.trim();
 };
 
-/** A failure counts when it is a resolution failure; any other failure is only reported. */
+/** Count resolution and unambiguous programming failures, not missing-environment or generic TypeError failures. */
 const classified = (name: string, reason: string): EntryFinding =>
-  RESOLUTION_FAILURE.test(reason)
+  RESOLUTION_FAILURE.test(reason) || PROGRAMMING_FAILURE.test(reason)
     ? counted(`${name}: ${failureReason(reason)}`)
     : reported(`${name} (not counted): ${failureReason(reason)}`);
 
@@ -576,8 +577,8 @@ export const unitProcesses = (units: readonly HostedUnit[]): readonly (readonly 
   );
 
 /**
- * Check 4 over every unit process (each its entries, in load order), the processes side by side: resolution failures
- * count, any other failure is only reported. Each entry has <budget> (ENTRY_BUDGET) of its own.
+ * Check 4 over every unit process (each its entries, in load order), the processes side by side: resolution failures,
+ * ReferenceError and SyntaxError count; other failures are only reported. Each entry has <budget> of its own.
  */
 export const entryImportFindings = (
   root: string,
