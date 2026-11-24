@@ -1,0 +1,63 @@
+name: Stage Availability
+
+on:
+  workflow_dispatch:
+    inputs:
+      failure_drill:
+        description: 'SIMULATED 502 only: prove rejection, then deliberately fail (no public requests)'
+        type: boolean
+        default: false
+  push:
+    branches: [demo/sales-crm]
+    paths:
+      - .github/workflows/stage-availability.yml
+      - .github/workflows/support/stage-availability.mjs
+      - .github/workflows/support/stage-availability.test.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage-availability
+  cancel-in-progress: false
+
+jobs:
+  stage-availability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (repository pin)
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Test the checker with runner-provided Node
+        id: tests
+        run: |
+          node -e 'if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("Node >=22 required")'
+          node --test .github/workflows/support/stage-availability.test.mjs
+
+      - name: Probe public stage (or SIMULATED failure drill)
+        env:
+          FAILURE_DRILL: ${{ github.event_name == 'workflow_dispatch' && inputs.failure_drill }}
+        shell: bash
+        run: |
+          args=()
+          label='Public stage'
+          if [[ "$FAILURE_DRILL" == true ]]; then
+            args=(--failure-drill)
+            label='SIMULATED failure drill (not a production outage)'
+          fi
+          status=0
+          output="$(node .github/workflows/support/stage-availability.mjs "${args[@]}" 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          if [[ "$status" -ne 0 ]]; then
+            printf '### %s failed\n\n~~~text\n%s\n~~~\n' "$label" "$output" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+      - name: Summarize checker test failure
+        if: always() && steps.tests.outcome != 'success'
+        run: |
+          echo '### Stage availability checker tests did not pass; no live health verdict. See the failed step.' >> "$GITHUB_STEP_SUMMARY"
