@@ -513,12 +513,6 @@ it.effect('observes a placed unit on Cloudflare at the Worker URL its edge build
   }),
 );
 
-it('refreshes well inside the validity window on the configured schedule', () => {
-  const { refreshCron, refreshInterval, validity } = ACTIVE_APPLICATION_COMPOSITION_POLICY;
-  expect(Duration.toMillis(validity)).toBeGreaterThanOrEqual(3 * Duration.toMillis(refreshInterval));
-  expect(refreshCron).toMatch(/^\d+ \*\/6 \* \* \*$/u);
-});
-
 it('reads quoted Zerops env-file values', () => {
   const environment = parseZeropsEnvFile('catalog_zeropsSubdomain="https://catalog.example"\nPLAIN=value\ninvalid\n');
   expect(environment.get('catalog_zeropsSubdomain')).toBe('https://catalog.example');

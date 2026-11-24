@@ -108,6 +108,8 @@ const initialCutoverProof = verifyInitialCutoverProviderInventory({
   zeropsServiceIds: [LEGACY_NODE_SERVICE_ID],
 });
 const OBSERVED_AT = '2026-10-02T16:00:00.000Z';
+/** Time that passes between the original observation and the operator's `refresh`; well inside the validity window. */
+const OPERATOR_REFRESH_DELAY = Duration.hours(6);
 const JsonText = Schema.fromJsonString(Schema.Unknown);
 const artifact = (url: string, document: typeof JsonText.Type) => ({
   bytes: new TextEncoder().encode(Schema.encodeSync(JsonText)(document)),
@@ -557,12 +559,11 @@ it.effect('refreshes exact active content and freshness despite an exercised bus
         Effect.provide(layer),
       );
       expect(probe.status).toBe(businessStatus);
-      yield* TestClock.adjust(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval);
+      yield* TestClock.adjust(OPERATOR_REFRESH_DELAY);
       const renewed = yield* refreshApplicationComposition('stage').pipe(Effect.provide(layer));
       expect(renewed.composition).toEqual(fixture.snapshot.composition);
       expect(DateTime.toEpochMillis(renewed.observedAt)).toBe(
-        DateTime.toEpochMillis(fixture.snapshot.observedAt) +
-          Duration.toMillis(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval),
+        DateTime.toEpochMillis(fixture.snapshot.observedAt) + Duration.toMillis(OPERATOR_REFRESH_DELAY),
       );
       expect(DateTime.toEpochMillis(renewed.validUntil)).toBe(
         DateTime.toEpochMillis(renewed.observedAt) + Duration.toMillis(ACTIVE_APPLICATION_COMPOSITION_POLICY.validity),
@@ -619,7 +620,7 @@ it.effect(
           overrides,
           fixture.snapshot,
         );
-        yield* TestClock.adjust(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval);
+        yield* TestClock.adjust(OPERATOR_REFRESH_DELAY);
         expect(
           Exit.isFailure(yield* refreshApplicationComposition('stage').pipe(Effect.provide(layer), Effect.exit)),
         ).toBe(true);
@@ -647,7 +648,7 @@ it.effect('bounds stalled identity observation and leaves the original snapshot 
       new Map([[fixture.module.contract.url, new Response(new ReadableStream<Uint8Array>())]]),
       fixture.snapshot,
     );
-    yield* TestClock.adjust(ACTIVE_APPLICATION_COMPOSITION_POLICY.refreshInterval);
+    yield* TestClock.adjust(OPERATOR_REFRESH_DELAY);
     const refreshing = yield* refreshApplicationComposition('stage').pipe(Effect.provide(layer), Effect.forkChild);
     yield* TestClock.adjust(ARTIFACT_FETCH_TIMEOUT);
     const failure = yield* Fiber.join(refreshing).pipe(Effect.flip);
