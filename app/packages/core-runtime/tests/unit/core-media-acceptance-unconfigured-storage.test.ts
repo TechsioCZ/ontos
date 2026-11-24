@@ -38,7 +38,7 @@ const readyAssetOn = (storageProvider: string): MediaVerifiableAsset => ({
 const unconfigured = <Value, Failure>(effect: Effect.Effect<Value, Failure, ObjectStorage>) =>
   effect.pipe(Effect.provideService(ObjectStorage, unconfiguredObjectStorage));
 
-it.effect('refuses every use of the port with a retryable network failure, and stores or returns nothing', () =>
+it.effect('refuses every use of the port with a typed network failure, and stores or returns nothing', () =>
   Effect.gen(function* refuses() {
     const failures = yield* Effect.all(
       [
@@ -70,29 +70,51 @@ it.effect('is a provider that no row names and that cannot be taken for the in-m
 
 it.effect('answers a Current stat, a full verification and an upload verification as unavailable, never as proof', () =>
   Effect.gen(function* unavailable() {
-    const inMemoryAsset = readyAssetOn('in-memory-test-double');
-    // Whatever provider the row names, the unconfigured port is neither it nor a way to confirm it.
-    for (const asset of [inMemoryAsset, readyAssetOn('core-media-unconfigured')]) {
-      const stat = yield* unconfigured(statReadyMediaAsset(asset));
-      expect(stat.outcome).toBe('unavailable');
-      const verified = yield* unconfigured(verifyReadyMediaAsset(asset));
-      expect(verified.outcome).toBe('unavailable');
-      // Current turns that into the retryable answer: never AVAILABLE, never ABSENT, never CURRENT_UNVERIFIED.
-      const resourceRef = {
-        moduleId: 'core.media',
-        resourceId: assetId,
-        resourceType: 'core.media.asset',
-        tenantId,
-      } as const;
-      expect(currentEntryOf(resourceRef, stat).kind).toBe('UNAVAILABLE');
-    }
+    // The row names the provider that stored it, here the unconfigured one: the port is reached and fails.
+    const asset = readyAssetOn('core-media-unconfigured');
+    const stat = yield* unconfigured(statReadyMediaAsset(asset));
+    expect(stat).toEqual({
+      outcome: 'unavailable',
+      providerFailure: 'object_storage_network_error',
+      reason: 'provider_failure',
+    });
+    const verified = yield* unconfigured(verifyReadyMediaAsset(asset));
+    expect(verified).toEqual({
+      outcome: 'unavailable',
+      providerFailure: 'object_storage_network_error',
+      reason: 'provider_failure',
+    });
+    // Current turns that into the retryable answer: never AVAILABLE, never ABSENT, never CURRENT_UNVERIFIED.
+    const resourceRef = {
+      moduleId: 'core.media',
+      resourceId: assetId,
+      resourceType: 'core.media.asset',
+      tenantId,
+    } as const;
+    expect(currentEntryOf(resourceRef, stat).kind).toBe('UNAVAILABLE');
     const upload = yield* unconfigured(
       verifyStoredMediaObject({
         expected: { byteSize: bytes.byteLength, contentSha256: 'a'.repeat(64) },
         storageKey: key,
-        storageProvider: 'in-memory-test-double',
+        storageProvider: 'core-media-unconfigured',
       }),
     );
-    expect(upload.outcome).toBe('unverifiable');
+    expect(upload).toMatchObject({ outcome: 'unverifiable', reason: 'provider_failure' });
   }),
+);
+
+it.effect(
+  'also answers unavailable for a row that names another provider: the unconfigured port is never that provider',
+  () =>
+    Effect.gen(function* otherProvider() {
+      const asset = readyAssetOn('in-memory-test-double');
+      expect(yield* unconfigured(statReadyMediaAsset(asset))).toMatchObject({
+        outcome: 'unavailable',
+        reason: 'provider_mismatch',
+      });
+      expect(yield* unconfigured(verifyReadyMediaAsset(asset))).toMatchObject({
+        outcome: 'unavailable',
+        reason: 'provider_mismatch',
+      });
+    }),
 );
