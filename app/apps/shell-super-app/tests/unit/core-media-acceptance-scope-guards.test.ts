@@ -3,7 +3,7 @@ import { Effect, FileSystem, Path } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 /*
- * STRUCTURAL GUARD (lane 16 of the D20 finishing work). The scope of Core Media excludes a set of concepts
+ * STRUCTURAL GUARD. The scope of Core Media excludes a set of concepts
  * (#1431, #1437 to #1441, #1444 are closed `not_planned`; ADR-0031): a Document or DocumentVersion store, V2+ and
  * revision publishing, an own ACL, a raw reusable provider URL or a public CDN, a physical delete, a UI, a product
  * size cap or MIME allowlist, a new MicroVertical. An absent concept leaves nothing to assert on but its absence, so
@@ -29,7 +29,7 @@ const codeOf = (text: string): string =>
 
 const pathOf = Effect.fn('CoreMediaScopeGuards.path')(function* pathOf(relative: string) {
   const path = yield* Path.Path;
-  return yield* path.fromFileUrl(new URL(relative, APP_ROOT));
+  return yield* path.fromFileUrl(new URL(relative, APP_ROOT)).pipe(Effect.orDie);
 });
 
 const readText = Effect.fn('CoreMediaScopeGuards.read')(function* readText(relative: string) {
@@ -99,13 +99,15 @@ const loadCoreMediaCode = Effect.fn('CoreMediaScopeGuards.coreMedia')(function* 
     ...MEDIA_READ_FILES.map((name) => `${PRODUCT_ROOTS.coreReads}/${name}`),
     PRODUCT_ROOTS.catalog,
   ];
-  return yield* Effect.forEach(files, (file) =>
-    readText(file).pipe(Effect.map((text) => [file, codeOf(text)] as const)),
+  return yield* Effect.all(
+    files.map((file) => readText(file).pipe(Effect.map((text) => [file, codeOf(text)] as const))),
+    { concurrency: 1 },
   );
 });
 
-const loadShellMediaCode = Effect.forEach(SHELL_MEDIA_FILES, (file) =>
-  readText(file).pipe(Effect.map((text) => [file, codeOf(text)] as const)),
+const loadShellMediaCode = Effect.all(
+  SHELL_MEDIA_FILES.map((file) => readText(file).pipe(Effect.map((text) => [file, codeOf(text)] as const))),
+  { concurrency: 1 },
 );
 
 const forbid = (sources: readonly (readonly [string, string])[], name: string, pattern: RegExp) => {
@@ -147,9 +149,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
           /presign|X-Amz-(?:Signature|Expires|Credential)|signedUrl|signed_url/iu,
         );
         forbid(sources, 'a CDN or public bucket URL', /\bcdn\b|cloudfront|publicUrl|public_url|\br2\.dev\b/iu);
-        // The byte hops answer bytes themselves: no media code points a client at another location.
+        // The byte hops (core-runtime `media/edge.ts` and its siblings) answer bytes themselves: no media code points a
+        // client at another location. The Shell `api/index.ts` only composes them and also serves unrelated redirects.
         forbid(
-          sources.filter(([file]) => !file.endsWith('index.ts')),
+          sources.filter(([file]) => file !== 'apps/shell-super-app/api/index.ts'),
           'a redirect',
           /Response\.redirect|\bLocation\b|status:\s*30[1-8]\b/u,
         );
@@ -201,9 +204,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
         expect(migrations.length).toBeGreaterThan(0);
         const created = new Set<string>();
         for (const file of migrations) {
-          const sql = yield* readText(file);
-          for (const match of sql.matchAll(/create table (?:if not exists )?"?(?:core"?\.)?"?(\w+)"?/giu)) {
-            created.add(match[1] ?? '');
+          // A commented-out statement is not a table.
+          const sql = (yield* readText(file)).replaceAll(/^\s*--.*$/gmu, '');
+          for (const match of sql.matchAll(/create table (?:if not exists )?"?(?:core"?\.)?"?(?<table>\w+)"?/giu)) {
+            created.add(match.groups?.['table'] ?? '');
           }
         }
         // The only media tables ever created in Core: the asset and the link a business owner writes.
