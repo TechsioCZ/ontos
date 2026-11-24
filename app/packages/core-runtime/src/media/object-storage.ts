@@ -141,7 +141,10 @@ export class ObjectStorage extends Context.Service<ObjectStorage, ObjectStorageS
 
 const notConfigured = () =>
   Effect.fail(
-    new ObjectStorageNetworkError({ code: 'object_storage_network_error', reason: 'No object store is configured' }),
+    new ObjectStorageNetworkErrorValue({
+      code: 'object_storage_network_error',
+      reason: 'No object store is configured',
+    }),
   );
 
 /**
