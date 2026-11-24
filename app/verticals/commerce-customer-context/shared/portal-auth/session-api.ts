@@ -249,7 +249,7 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
       ],
       payload: CustomerOwnAddressBookCommandSchema,
       success: Schema.Struct({ outcome: Schema.Literal('SAVED') }),
-    }).annotate(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' }),
+    }),
   )
   /** Pricing's catalogue page Prices for the signed-in customer, with the customer's own Price Group (no profile is sent). */
   .add(
@@ -259,6 +259,7 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
       success: CatalogPagePricesResponseSchema,
     }),
   )
+  .annotateEndpoints(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' })
   .middleware(CommercePortalAuthSessionSchemaErrorMiddleware);
 
 export type CommercePortalAuthSessionGroupContract = HttpApiGroup.HttpApiGroup<
