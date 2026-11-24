@@ -122,6 +122,12 @@ import { assert, expect } from 'effect-rstest';
 import { commercialFeePersistenceForScope } from '../../src/services/commercial-fee-persistence.service.ts';
 import { contractualDiscountPersistenceForScope } from '../../src/services/contractual-discount-persistence.service.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
+import { declaredMarketOwnerFor } from './declared-market-timeline.ts';
+import type {
+  DeclaredMarketAnswerObservation,
+  DeclaredMarketLifecyclePeriod,
+  DeclaredMarketRevision,
+} from './declared-market-timeline.ts';
 import type { DefinePricePersistenceCommand } from '../../src/services/price-persistence.service.ts';
 import { quantityTierPersistenceForScope } from '../../src/services/quantity-tier-persistence.service.ts';
 import { currencySupportPersistenceForScope } from '../../src/persistence/currency-support-persistence.ts';
@@ -775,6 +781,16 @@ export interface HarnessFenceObservation {
   readonly owner: string;
 }
 
+/** One Current Market fact exactly as the Read retained it for its owner fence: the Market revision actually used. */
+export interface HarnessMarketFactObservation {
+  readonly effectiveFrom: DateTime.Utc;
+  readonly effectiveTo: Option.Option<DateTime.Utc>;
+  readonly factRef: string;
+  readonly factRevisionRef: string;
+  /** The owner completeness generation the retained Market receipt commits to. */
+  readonly generation: number;
+}
+
 /** One whole-attempt result, so a customer-safe non-success stays diagnosable. */
 export interface HarnessWholeAttemptObservation {
   /** The requested as-of instant of the owner fence request the attempt retained, when it retained one. */
@@ -782,6 +798,8 @@ export interface HarnessWholeAttemptObservation {
   /** The Commercial Fee Current sets the attempt retained for its owner final fence, as the owner issued them. */
   readonly feeSets: readonly HarnessFeeSetObservation[];
   readonly kind: string;
+  /** The Current Market facts the attempt retained for its owner final fence, as the owner issued them. */
+  readonly marketFacts: readonly HarnessMarketFactObservation[];
   readonly outcome: string;
   readonly reason?: string;
 }
@@ -842,6 +860,39 @@ const feeSetObservationsOf = (materials: readonly unknown[]): readonly HarnessFe
           ownerReceiptObservedAt: ownerReadReceipt.authority.observedAt,
         },
       ],
+    }),
+  );
+
+const MarketAuthorityMaterialSchema = Schema.Struct({
+  kind: Schema.Literal('MARKET_CONTEXT_AUTHORITY'),
+  receipt: Schema.Struct({
+    authority: Schema.Struct({ generation: Schema.Int }),
+    currentFacts: Schema.Array(
+      Schema.Struct({
+        effectivePeriod: Schema.Struct({
+          endsAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+          startsAt: Schema.DateTimeUtcFromString,
+        }),
+        factRef: Schema.String,
+        factRevisionRef: Schema.String,
+      }),
+    ),
+  }),
+});
+const decodeMarketAuthorityMaterial = Schema.decodeUnknownOption(MarketAuthorityMaterialSchema);
+
+const marketFactObservationsOf = (materials: readonly unknown[]): readonly HarnessMarketFactObservation[] =>
+  materials.flatMap((material) =>
+    Option.match(decodeMarketAuthorityMaterial(material), {
+      onNone: () => [],
+      onSome: ({ receipt }) =>
+        receipt.currentFacts.map(({ effectivePeriod, factRef, factRevisionRef }) => ({
+          effectiveFrom: effectivePeriod.startsAt,
+          effectiveTo: Option.fromNullishOr(effectivePeriod.endsAt),
+          factRef,
+          factRevisionRef,
+          generation: receipt.authority.generation,
+        })),
     }),
   );
 
@@ -921,15 +972,15 @@ const recordWholeAttempt = (
     const fenceRequest = retained.pipe(
       Option.map(({ materialEvidence }) => materialEvidence.sourceEvidence.ownerFenceRequest),
     );
+    const retainedMaterials = Option.match(fenceRequest, {
+      onNone: () => [],
+      onSome: ({ sources }) => sources.map(({ verificationMaterial }) => verificationMaterial),
+    });
     const entry = {
       effectiveAt: fenceRequest.pipe(Option.map(({ effectiveAt }) => effectiveAt)),
-      feeSets: feeSetObservationsOf(
-        Option.match(fenceRequest, {
-          onNone: () => [],
-          onSome: ({ sources }) => sources.map(({ verificationMaterial }) => verificationMaterial),
-        }),
-      ),
+      feeSets: feeSetObservationsOf(retainedMaterials),
       kind: attempt.kind,
+      marketFacts: marketFactObservationsOf(retainedMaterials),
       outcome: outcome.outcome,
     };
     observed.push(attempt.reason === undefined ? entry : { ...entry, reason: attempt.reason });
@@ -1425,8 +1476,32 @@ export interface PublicPricingReadHarness {
     readonly subject?: 'GUEST' | 'OTHER_GROUP_PROFILE' | 'PROFILE';
   }) => HarnessEffect<typeof CurrentPricingDecisionRequestSchema.Type>;
   readonly managerPrincipalId: string;
+  /**
+   * The DECLARED Commerce Market owner with a parameterizable revision timeline (#1250). Until `declare` is called the
+   * harness keeps its fixed revision-1 stand-in; afterwards the Market evidence contract is answered from the declared
+   * timeline (immutable revisions of the one harness Market, each with its own effective period and channels).
+   */
+  readonly market: {
+    /** The next PRESENT answer binds ANOTHER Market identity (a body the published contract refuses). */
+    readonly answerForeignMarket: (on: boolean) => Effect.Effect<void>;
+    /** What the declared owner answered each request with, in order (including final-fence replays). */
+    readonly answers: readonly DeclaredMarketAnswerObservation[];
+    /** Declares the timeline and advances the owner's completeness generation once. Seller defaults to the harness's. */
+    readonly declare: (input: {
+      readonly lifecycles?: readonly DeclaredMarketLifecyclePeriod[];
+      readonly revisions: readonly DeclaredMarketRevision[];
+      readonly sellingLegalEntityId?: string;
+    }) => Effect.Effect<void>;
+    readonly generation: () => number;
+    /** The next `count` Market reads are refused with the owner's retryable UNAVAILABLE (0 clears). */
+    readonly refuse: (count: number) => Effect.Effect<void>;
+    /** A write that changes no Current fact still advances the owner's completeness generation. */
+    readonly republish: () => Effect.Effect<void>;
+  };
   /** Requests the declared Commerce Market stand-in answered through the published contract. */
   readonly marketRequests: readonly PricingCurrentMarketEvidenceRequest[];
+  /** The harness's one commercial Market scope: every produced Price and every request uses it. */
+  readonly marketScope: { readonly channelId: string; readonly marketId: string };
   readonly operationTime: string;
   /** A Profile the declared Customer Context assigns to a DIFFERENT Price Group than `priceGroupRef`. */
   readonly otherGroupProfileSubject: HarnessProfileSubject;
@@ -1850,6 +1925,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         Match.orElse(() => marketPath),
       );
     const marketRequests: PricingCurrentMarketEvidenceRequest[] = [];
+    const declaredMarket = declaredMarketOwnerFor({ marketId: HARNESS_MARKET.marketId });
     const priceGroupRequests: CustomerPriceGroupResolutionRequest[] = [];
     const priceGroupCompatibilityRequests: ValidatePriceGroupCompatibilityRequest[] = [];
     const shellRefusals: string[] = [];
@@ -1923,6 +1999,12 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
             Effect.mapError(() => unavailable('fixture-market-request')),
           );
           marketRequests.push(decoded);
+          if (declaredMarket.isDeclared()) {
+            // A scenario declared a Market timeline (#1250): the declared owner answers from it, mirroring the owner.
+            return yield* HttpServerResponse.json(
+              yield* declaredMarket.answer(decoded).pipe(Effect.orDie, Effect.provideService(Clock.Clock, nativeClock)),
+            );
+          }
           return yield* HttpServerResponse.json(yield* declaredMarketPrerequisite1225(decoded, nativeClock));
         }
         if (url.pathname === `${customerContextPath}/reads/customer-price-group-resolution`) {
@@ -2240,7 +2322,20 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       legalEntityId: fixture.legalEntityId,
       makeRequest: (input: Parameters<typeof makeRequest>[0]) => confine('make-request', makeRequest(input)),
       managerPrincipalId: fixture.manager.principalId,
+      market: {
+        answerForeignMarket: declaredMarket.answerForeignMarket,
+        answers: declaredMarket.answers,
+        declare: (input: Parameters<PublicPricingReadHarness['market']['declare']>[0]) =>
+          declaredMarket.declare({
+            ...input,
+            sellingLegalEntityId: input.sellingLegalEntityId ?? fixture.legalEntityId,
+          }),
+        generation: declaredMarket.generation,
+        refuse: declaredMarket.refuse,
+        republish: declaredMarket.republish,
+      },
       marketRequests,
+      marketScope: HARNESS_MARKET,
       operationTime,
       otherGroupProfileSubject,
       prepareFreshHandoff: (selection: Parameters<typeof prepareFreshHandoff>[0]) =>
