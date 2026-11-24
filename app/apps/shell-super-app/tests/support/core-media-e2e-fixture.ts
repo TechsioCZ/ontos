@@ -510,6 +510,8 @@ export interface MediaE2eWorld {
   ) => Effect.Effect<{ readonly principal: TrustedPrincipalContext; readonly principalId: string }>;
   /** The revision of the active Application Composition every request of this world runs under. */
   readonly compositionRevision: string;
+  /** The active Application Composition itself (the sealed document the harness serves and published as authority). */
+  readonly compositionSnapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type;
   readonly databases: DatabaseConnectionPair;
   readonly enrolSystemWorkload: (
     workloadKey: string,
@@ -529,6 +531,8 @@ export interface MediaE2eWorld {
     capabilityKeys: readonly string[],
     options?: { readonly mode?: 'propose' | 'run'; readonly targets?: readonly [string, ...string[]] },
   ) => Effect.Effect<{ readonly incarnationId: AssignmentIncarnationId }>;
+  /** The company the stage install created for the tenant: the one a person of this world can select. */
+  readonly legalEntityId: string;
   readonly people: ReadonlyMap<string, E2eActor>;
   /** The Read runtime over the same database and engine (the Core owner reads that have no Shell route). */
   readonly reads: ReadRuntimeService;
@@ -919,6 +923,7 @@ export const withMediaE2eWorld = <Value, Failure>(
             tenantId,
           )(workloadKey).pipe(Effect.provideService(Crypto.Crypto, crypto)),
         compositionRevision: composition.composition.revision,
+        compositionSnapshot: composition,
         databases,
         enrolSystemWorkload: (workloadKey, enrolledTenantId, enrolment) =>
           enrolSystemWorkloadOf(admin)(workloadKey, enrolledTenantId, enrolment).pipe(
@@ -927,6 +932,7 @@ export const withMediaE2eWorld = <Value, Failure>(
         faultInjection,
         foreign: foreignRoster.actors,
         grant: commands.grant,
+        legalEntityId: roster.bootstrap.tenant.legalEntity.legalEntityId,
         people: roster.actors,
         reads: runtimes.reads,
         replaceStoredObject: replaceStored(storage, tenantId),
