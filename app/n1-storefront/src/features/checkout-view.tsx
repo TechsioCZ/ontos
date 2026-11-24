@@ -197,9 +197,24 @@ const ConfirmedCheckout = ({
         className="flex w-full flex-col gap-1 rounded-xs border border-border-success bg-bg-success/15 p-4"
       >
         <h1 className="text-lg font-semibold leading-7" ref={heading} tabIndex={-1}>
-          {d.checkout.confirmed}
+          {checkout.restoredReceipt ? d.checkout.previousOrder : d.checkout.confirmed}
         </h1>
-        <p className="text-sm text-fg-secondary">{d.checkout.thankYou}</p>
+        <p className="text-sm text-fg-secondary">
+          {checkout.restoredReceipt ? d.checkout.previousOrderDescription : d.checkout.thankYou}
+        </p>
+        {checkout.cart !== null && checkout.cart.entries.length > 0 && (
+          <div className="mt-2">
+            <Button
+              disabled={checkout.progress !== "idle"}
+              onClick={() => checkout.dismiss()}
+              size="md"
+              theme="solid"
+              variant="primary"
+            >
+              {d.checkout.continueWithCart}
+            </Button>
+          </div>
+        )}
       </div>
       <div className="flex w-full max-w-3xl flex-col gap-5">
         <ReceiptHeader checkout={checkout} dictionary={d} locale={locale} result={result} />

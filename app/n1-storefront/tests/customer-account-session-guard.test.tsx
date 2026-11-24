@@ -12,6 +12,7 @@ import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.
 import { AccountView } from "../src/features/account-view";
 import { CustomerOrderDetailView } from "../src/features/customer-order-detail";
 import { PortalSessionProvider } from "../src/features/auth-view";
+import { MiniLogin } from "../src/features/mini-login";
 import { getDictionary } from "../src/i18n";
 import type { CustomerProfilePageState } from "../src/ontos/customer-profile";
 import { CustomerOrderSchema } from "../src/ontos/customer-orders";
@@ -243,6 +244,25 @@ afterEach(async () => {
   });
   container.remove();
   window.happyDOM.settings.fetch.interceptor = previousInterceptor;
+});
+
+it("replaces the header login popover with a localized profile link for an admitted customer", async () => {
+  const gate = holdAccountRead();
+  accountGate = gate;
+  const onOpenChange = rs.fn((_open: boolean): void => {});
+  await mount(<MiniLogin dictionary={dictionary} locale="en" onOpenChange={onOpenChange} open />);
+  await gate.arrived.promise;
+  expect(container.querySelector('[aria-haspopup="dialog"]')).not.toBeNull();
+  expect(container.querySelector('a[href="/en/ucet"]')).toBeNull();
+  await admit(gate);
+
+  await eventually(() => {
+    expect(container.querySelector('[aria-haspopup="dialog"]')).toBeNull();
+    const link = container.querySelector('a[href="/en/ucet"]');
+    expect(link?.getAttribute("aria-label")).toBe(dictionary.account);
+    expect(document.activeElement).toBe(link);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
 });
 
 it.each(["profile", "orders", "addresses"] as const)(

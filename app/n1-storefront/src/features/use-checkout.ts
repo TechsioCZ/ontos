@@ -359,6 +359,21 @@ const useCheckoutContext = (key: string, sessionGeneration: number, locale: stri
   return { contextKey, currentScope };
 };
 
+interface ReceiptPresentation {
+  context: string;
+  restored: boolean;
+}
+
+const receiptForContext = (
+  receipt: CheckoutResult | null,
+  presentation: ReceiptPresentation | null,
+  context: string,
+  key: string,
+) =>
+  receipt !== null && presentation?.context === context && checkoutGuardKey(receipt.scope) === key
+    ? { currentReceipt: receipt, restoredReceipt: presentation.restored }
+    : { currentReceipt: null, restoredReceipt: false };
+
 /** An intent survives reloads; only explicit receipt dismissal permits another order. */
 export const useCheckout = (options: ReadyOptions, locale: string, locks?: CheckoutLockManager) => {
   const cart = useCart();
@@ -373,7 +388,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
     (QuoteSelection & { result: CheckoutResult }) | null
   >(null);
   const [receipt, setReceipt] = useState<CheckoutResult | null>(null);
-  const [receiptContext, setReceiptContext] = useState<string | null>(null);
+  const [receiptPresentation, setReceiptPresentation] = useState<ReceiptPresentation | null>(null);
   const receiptGuard = useRef<CheckoutGuard | null>(null);
   const automaticAttempts = useRef(new Set<string>());
   const [receiptEntries, setReceiptEntries] = useState<readonly CartEntry[]>([]);
@@ -388,10 +403,12 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
     editVersion,
     sessionGeneration,
   ]);
-  const currentReceipt =
-    receipt !== null && receiptContext === contextKey && checkoutGuardKey(receipt.scope) === key
-      ? receipt
-      : null;
+  const { currentReceipt, restoredReceipt } = receiptForContext(
+    receipt,
+    receiptPresentation,
+    contextKey,
+    key,
+  );
   const [previousSelection, setPreviousSelection] = useState<QuoteSelection>({
     generation: 0,
     key: selectionKey,
@@ -410,7 +427,12 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
       clientRuntime.runSync(observeGuard(options.scope, contextKey, setGuardState));
     }
   };
-  const complete = (result: CheckoutResult, submitted: CheckoutGuard, generation: number) => {
+  const complete = (
+    result: CheckoutResult,
+    submitted: CheckoutGuard,
+    generation: number,
+    restored: boolean,
+  ) => {
     if (
       currentSession.current !== generation ||
       currentScope.current !== contextKey ||
@@ -423,9 +445,10 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
       setReceiptEntries(cart.entries);
     }
     setReceipt(result);
-    setReceiptContext(contextKey);
+    setReceiptPresentation({ context: contextKey, restored });
     receiptGuard.current = submitted;
-    const cleared = cart?.clearSubmitted(submitted.lines) ?? false;
+    // A restored receipt cannot tell the submitted cart apart from a new cart with identical lines.
+    const cleared = !restored && (cart?.clearSubmitted(submitted.lines) ?? false);
     if (cart !== null && cart.entries.length > 0 && !cleared) {
       setNotice("cart-preserved");
     }
@@ -495,7 +518,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
               return Effect.void;
             }
             if (result.outcome === "PLACED" || result.outcome === "REPLAYED") {
-              complete(result, guard, requestSession);
+              complete(result, guard, requestSession, false);
               if (result.receipt === null || result.receipt === undefined) {
                 setProgress("recovery");
                 return recoverConfirmedCheckoutProgram({
@@ -578,7 +601,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
           currentSession.current === requestSession && currentScope.current === contextKey,
         locale,
         locks,
-        onConfirmed: (result) => complete(result, guard, requestSession),
+        onConfirmed: (result) => complete(result, guard, requestSession, true),
         onUnavailable: () => {
           setNotice("uncertain");
           restore();
@@ -618,7 +641,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
     window.addEventListener("storage", changed);
     return () => window.removeEventListener("storage", changed);
   }, [contextKey, key, options.scope]);
-  const dismiss = (onDone: () => void) => {
+  const dismiss = (onDone?: () => void) => {
     if (busy.current || currentReceipt === null || receiptGuard.current === null) {
       return;
     }
@@ -629,7 +652,19 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
           onFailure: () => setNotice("storage"),
           onSuccess: () => {
             restore();
-            onDone();
+            if (
+              currentSession.current !== sessionGeneration ||
+              currentScope.current !== contextKey
+            ) {
+              return;
+            }
+            setReceipt(null);
+            setReceiptPresentation(null);
+            setReceiptEntries([]);
+            setQuoteSnapshot(null);
+            setNotice(null);
+            receiptGuard.current = null;
+            onDone?.();
           },
         }),
         Effect.ensuring(
@@ -655,6 +690,7 @@ export const useCheckout = (options: ReadyOptions, locale: string, locks?: Check
     receipt: currentReceipt,
     receiptEntries: currentReceipt === null ? [] : receiptEntries,
     recover,
+    restoredReceipt,
     submit,
   };
 };

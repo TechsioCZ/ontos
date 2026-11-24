@@ -191,7 +191,8 @@ const amount = (label: string) =>
     ?.nextElementSibling?.textContent;
 const ordersLink = () => container.querySelector('a[href="/cs/ucet?tab=orders"]');
 const expectConfirmed = () => {
-  expect(container.querySelector("h1")?.textContent).toBe(d.checkout.confirmed);
+  expect(container.querySelector("h1")?.textContent).toBe(d.checkout.previousOrder);
+  expect(container.textContent).not.toContain(d.checkout.thankYou);
   expect(container.querySelector('button[type="submit"]')).toBeNull();
   expect(container.textContent).not.toContain(d.checkout.uncertain);
 };
@@ -230,6 +231,30 @@ afterEach(async () => {
 });
 
 describe("checkout through public session, cart and owner boundaries", () => {
+  it.each([true, false])(
+    "preserves the current cart after restoring a previous order (edited: %s)",
+    async (edited) => {
+      seed({ edited });
+      recovery = { result: confirmed, state: "confirmed" };
+      const editedCart = window.localStorage.getItem(cartStorageKey(options.scope));
+      await mount();
+      await eventually(expectConfirmed);
+      expect(container.textContent).toContain(d.checkout.previousOrderDescription);
+      await act(async () => {
+        button(d.checkout.continueWithCart).click();
+      });
+      await eventually(() => {
+        expect(container.querySelector("h1")?.textContent).toBe(d.checkout.heading);
+        expect(container.querySelector("form")).not.toBeNull();
+      });
+      expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBeNull();
+      expect(window.localStorage.getItem(cartStorageKey(options.scope))).toBe(editedCart);
+      expect(
+        requests.filter((request) => new URL(request.url).pathname === "/api/checkout"),
+      ).toHaveLength(0);
+    },
+  );
+
   it("keeps an uncertain persisted order blocked until a recovery read confirms it", async () => {
     seed();
     await mount();
@@ -251,7 +276,7 @@ describe("checkout through public session, cart and owner boundaries", () => {
     expect(amount(d.checkout.netIncludesShipping)).toBe("107,44\u00A0Kč");
     expect(amount(d.shopping.vat)).toBe("22,56\u00A0Kč");
     expect(ordersLink()).toBeNull();
-    expect(window.localStorage.getItem(cartStorageKey(options.scope))).toBeNull();
+    expect(window.localStorage.getItem(cartStorageKey(options.scope))).not.toBeNull();
     expect(window.localStorage.getItem(checkoutGuardKey(options.scope))).toBe(
       JSON.stringify(guard),
     );

@@ -288,6 +288,7 @@ const MiniCartCheckoutAction = ({
   locale,
   onContinue,
   onRetry,
+  pending,
   ready,
   unavailable,
 }: {
@@ -295,6 +296,7 @@ const MiniCartCheckoutAction = ({
   locale: string;
   onContinue: () => void;
   onRetry: () => void;
+  pending: boolean;
   ready: boolean;
   unavailable: boolean;
 }) => {
@@ -321,7 +323,15 @@ const MiniCartCheckoutAction = ({
     );
   }
   return (
-    <Button block disabled size="md" theme="solid" variant="secondary">
+    <Button
+      block
+      disabled
+      isLoading={pending}
+      loadingText={d.loadingPrice}
+      size="md"
+      theme="solid"
+      variant="secondary"
+    >
       {d.shopping.checkout}
     </Button>
   );
@@ -502,6 +512,7 @@ export const MiniCart = ({
                     locale={locale}
                     onContinue={continueShopping}
                     onRetry={() => quote.verify()}
+                    pending={quote.state === "pending"}
                     ready={canCheckout}
                     unavailable={quote.state === "unavailable"}
                   />
