@@ -1,4 +1,7 @@
-import type { ExactPriceLookupRequest } from '@app/pricing-contracts/domain/exact-price-lookup';
+import type {
+  ExactPriceLookupAbsentSchema,
+  ExactPriceLookupRequest,
+} from '@app/pricing-contracts/domain/exact-price-lookup';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
 import {
   PricingUnitPriceBasisFailure,
@@ -25,6 +28,24 @@ const encodePriceIdentityKey = Schema.encodeUnknownResult(Schema.fromJsonString(
 /** Stable owner predicate for the complete Current set at one exact Group Price key. */
 export const unitPriceGroupAbsencePredicateRef = (request: ExactPriceLookupRequest): string =>
   `commerce.pricing.current-exact-group-price:${Hex.encode(sha256(utf8ToBytes(Result.getOrThrow(encodePriceIdentityKey(request.exactKey)))))}`;
+
+/**
+ * The Group-price absence proof a Tier path must retain when the no-group Price was used after proven Group absence:
+ * the exact-predicate completeness evidence of the absent Group lookup, which `pricePathIsPreserved` re-derives.
+ */
+export const unitPriceGroupAbsenceEvidence = (
+  groupAbsence: typeof ExactPriceLookupAbsentSchema.Type,
+): OwnerVerifiableSetCompletenessEvidence => {
+  const { evidence, request } = groupAbsence;
+  const base = {
+    observedAt: DateTime.makeUnsafe(evidence.observedAt),
+    ownerRevision: evidence.ownerRevision,
+    scope: { kind: 'EXACT_PREDICATE' as const, predicateRef: unitPriceGroupAbsencePredicateRef(request) },
+  };
+  return evidence.nextApplicabilityBoundary === undefined
+    ? base
+    : { ...base, nextApplicabilityBoundary: DateTime.makeUnsafe(evidence.nextApplicabilityBoundary) };
+};
 
 /** The only safely broader scope accepted by this gate: the Tenant's complete Current Price set. */
 export const unitPriceGroupAbsenceDeclaredScopeRef = (request: ExactPriceLookupRequest): string =>

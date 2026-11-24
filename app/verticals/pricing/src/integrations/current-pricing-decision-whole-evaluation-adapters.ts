@@ -51,6 +51,7 @@ import {
   PricingDiscountIdentityBasisSchema,
   PricingDiscountIdentityKeySchema,
 } from '@app/pricing-contracts/domain/discount';
+import type { PricingDiscountCompositionCandidate } from '@app/pricing-contracts/domain/discount-composition';
 import {
   PriceGroupAssignmentProfileSchema,
   PriceGroupInterpretationInputSchema,
@@ -112,6 +113,7 @@ import {
 import { PricingPromotionUnavailable } from '../services/pricing-promotion-unavailable.ts';
 import type { PriceGroupInterpretationService as PriceGroupInterpretationPort } from '../services/price-group-interpretation.service.ts';
 import { makePriceGroupInterpretationService } from '../services/price-group-interpretation.service.ts';
+import { unitPriceGroupAbsenceEvidence } from '../services/unit-price-material-evidence.service.ts';
 import type { ExactPriceCandidateSetPersistence, PricePersistence } from '../services/price-persistence.service.ts';
 import { pricePersistenceForScope } from '../services/price-persistence.service.ts';
 import type { QuantityTierPersistence } from '../services/quantity-tier-persistence.service.ts';
@@ -692,7 +694,16 @@ const tierReaderFor = (
           return yield* failure('UNVERIFIABLE', 'pricing-price:schedule', 'Exact Price schedule is not Current');
         }
         const exactPriceEffect = {
-          path: { priceGroupSelector: usedPrice.request.exactKey.priceGroupSelector, requiredAbsenceEvidence: [] },
+          path: {
+            priceGroupSelector: usedPrice.request.exactKey.priceGroupSelector,
+            // The no-group Price used after proven Group absence must carry that absence proof into the Tier path.
+            requiredAbsenceEvidence: Match.value(exactPrice.path).pipe(
+              Match.tag('NO_GROUP_AFTER_PROVEN_GROUP_ABSENCE', ({ groupAbsence }) => [
+                unitPriceGroupAbsenceEvidence(groupAbsence),
+              ]),
+              Match.orElse(() => []),
+            ),
+          },
           price: priceSchedule.schedule.current,
           scheduleRevision: priceSchedule.schedule.scheduleRevision,
         };
@@ -884,6 +895,21 @@ const assignedDiscountAudienceFor = (
   );
 };
 
+/** One Discount revision read for several occurrences of one Variant is one applicability. */
+const distinctByRevision = <Input>(
+  entries: readonly { readonly input: Input; readonly revisionId: string }[],
+): readonly Input[] => {
+  const seen = new Set<string>();
+  const distinct: Input[] = [];
+  for (const { input, revisionId } of entries) {
+    if (!seen.has(revisionId)) {
+      seen.add(revisionId);
+      distinct.push(input);
+    }
+  }
+  return distinct;
+};
+
 const makeDiscountReader = (
   persistence: ContractualDiscountPersistence,
 ): CurrentPricingDecisionDiscountSetReaderPort => ({
@@ -1010,11 +1036,10 @@ const makeDiscountReader = (
       function* resolveRevisionProgram(input: {
         readonly assigned: NonNullable<DiscountDescriptor['assigned']>;
         readonly basePricePath: Exclude<DiscountDescriptor['basePricePath'], null>;
-        readonly currentSet: DiscountCurrentSet;
         readonly revision: DiscountCurrentSet['currentDiscounts'][number];
         readonly unitPrice: DiscountDescriptor['unitPrice'];
       }) {
-        const { assigned, basePricePath, currentSet, revision, unitPrice } = input;
+        const { assigned, basePricePath, revision, unitPrice } = input;
         const currentResolution = yield* resolveCurrentPricingDiscountRevisions(
           revision.definition.identityKey,
           [revision],
@@ -1029,13 +1054,15 @@ const makeDiscountReader = (
             ),
           ),
         );
-        return {
+        const applicabilityInput = {
           audienceBinding: {
             applicabilityBasis: {
               basis: revision.definition.identityKey.basis,
               commercialScope: request.decision.commercialScope,
               currencyCode: request.decision.currencyCode,
-              observedAt: currentSet.authority.observedAt,
+              // Applicability is judged at the decision instant, like the Current resolution and Currency Support
+              // it is bound to; the owner's own observation time stays in the Current-set receipt.
+              observedAt: request.decision.operationTime,
             },
             basePricePath,
             evidence: assigned.evidence,
@@ -1044,6 +1071,7 @@ const makeDiscountReader = (
           currencySupport: unitPrice.input.exactPrice.currencySupport,
           currentResolution,
         };
+        return { input: applicabilityInput, revisionId: revision.definition.revision.revisionId };
       },
     );
     const readDescriptor = Effect.fn('CurrentPricingDecisionDiscountSetReader.readDescriptor')(
@@ -1068,28 +1096,31 @@ const makeDiscountReader = (
           .pipe(Effect.mapError(unavailable(DISCOUNT_OWNER_REF, 'Contractual Discount authority is unavailable')));
         const applicabilityInputs = yield* Effect.forEach(
           currentSet.currentDiscounts,
-          (revision) => resolveRevision({ assigned, basePricePath, currentSet, revision, unitPrice }),
+          (revision) => resolveRevision({ assigned, basePricePath, revision, unitPrice }),
           { concurrency: 16 },
         );
         return { applicabilityInputs, currentSets: [currentSet] };
       },
     );
+    // Every occurrence keeps its own owner Current-set receipt, but a Discount revision shared by several original
+    // occurrences of one Variant is ONE applicability: it is applied to each covered occurrence when candidates are built.
     return Effect.forEach(descriptors, readDescriptor, { concurrency: 16 }).pipe(
       Effect.map((reads) => ({
-        applicabilityInputs: reads.flatMap(({ applicabilityInputs }) => applicabilityInputs),
+        applicabilityInputs: distinctByRevision(reads.flatMap(({ applicabilityInputs }) => applicabilityInputs)),
         currentSets: reads.flatMap(({ currentSets }) => currentSets),
       })),
     );
   },
 });
 
-const discountCandidate = (
+/** One Discount candidate per original occurrence the applicable Discount covers; none when it is not applicable. */
+export const discountCandidates = (
   applicability: PricingDiscountApplicability,
   request: CurrentPricingDecisionRequest,
   unitPrices: readonly Parameters<CurrentPricingDecisionFeeSetReaderPort['loadCurrent']>[2][],
-) => {
+): readonly PricingDiscountCompositionCandidate[] => {
   if (applicability.outcome !== 'DISCOUNT_APPLICABLE') {
-    return null;
+    return [];
   }
   const { definition } = applicability;
   const { identityKey } = definition;
@@ -1106,26 +1137,25 @@ const discountCandidate = (
   };
   if (applicability.applicationCount === 'ONCE_PER_PRICING_DECISION') {
     if (applicability.applicability.outcome !== 'WHOLE_PURCHASE_DISCOUNT_APPLICABLE') {
-      return null;
+      return [];
     }
-    return {
-      applicability: applicability.applicability,
-      applicationCount: applicability.applicationCount,
-      audienceBinding,
-      decision: request.decision,
-      definition,
-      kind: 'WHOLE_PURCHASE' as const,
-      layer: 'COUNTERPARTY_WHOLE_PURCHASE' as const,
-      outcome: applicability.outcome,
-    };
+    return [
+      {
+        applicability: applicability.applicability,
+        applicationCount: applicability.applicationCount,
+        audienceBinding,
+        decision: request.decision,
+        definition,
+        kind: 'WHOLE_PURCHASE' as const,
+        layer: 'COUNTERPARTY_WHOLE_PURCHASE' as const,
+        outcome: applicability.outcome,
+      },
+    ];
   }
-  const unitPrice = unitPrices.find((candidate) => {
+  const coveredUnitPrices = unitPrices.filter((candidate) => {
     const basis = discountBasisFor(candidate);
     return basis !== undefined && sameDiscountBasis(basis, identityKey.basis);
   });
-  if (unitPrice === undefined) {
-    return null;
-  }
   let layer: 'CATALOG' | 'COUNTERPARTY_CONTRACTUAL' | 'PRICE_GROUP_CONTRACTUAL';
   if (identityKey.audience.kind === 'CATALOG_PATH') {
     layer = 'CATALOG';
@@ -1134,7 +1164,7 @@ const discountCandidate = (
   } else {
     layer = 'COUNTERPARTY_CONTRACTUAL';
   }
-  return {
+  return coveredUnitPrices.map((unitPrice) => ({
     applicationCount: applicability.applicationCount,
     audienceBinding,
     definition,
@@ -1142,7 +1172,7 @@ const discountCandidate = (
     layer,
     occurrenceId: unitPrice.input.line.occurrenceId,
     outcome: applicability.outcome,
-  };
+  }));
 };
 
 const stableSortedSet = (values: readonly string[]): readonly string[] => [...new Set(values)].toSorted();
@@ -1724,10 +1754,10 @@ export const makeCurrentPricingDecisionWholeComposition = (): CurrentPricingDeci
     ) {
       return Effect.fail(failure('CONFLICT', DISCOUNT_OWNER_REF, 'Contractual Discount Current set is conflicting'));
     }
-    const candidates = applicability.map((result) => discountCandidate(result, request, unitPrices));
+    const candidatesByApplicability = applicability.map((result) => discountCandidates(result, request, unitPrices));
     if (
-      candidates.some(
-        (candidate, index) => candidate === null && applicability[index]?.outcome === 'DISCOUNT_APPLICABLE',
+      candidatesByApplicability.some(
+        (candidates, index) => candidates.length === 0 && applicability[index]?.outcome === 'DISCOUNT_APPLICABLE',
       )
     ) {
       return Effect.fail(
@@ -1738,9 +1768,7 @@ export const makeCurrentPricingDecisionWholeComposition = (): CurrentPricingDeci
         ),
       );
     }
-    const readyCandidates = candidates.filter(
-      (candidate): candidate is Exclude<typeof candidate, null> => candidate !== null,
-    );
+    const readyCandidates = candidatesByApplicability.flat();
     const wholePurchaseCandidate = readyCandidates.find(
       (candidate): candidate is Extract<(typeof readyCandidates)[number], { readonly kind: 'WHOLE_PURCHASE' }> =>
         candidate.kind === 'WHOLE_PURCHASE',

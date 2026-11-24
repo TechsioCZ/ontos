@@ -11,6 +11,7 @@ import {
   PriceIdentityKeySchema,
   PriceGroupSelectorSchema,
   PriceUnitBasisSchema,
+  priceDecimalValuesEqual,
 } from '@app/pricing-contracts/domain/price-definition';
 import { ScheduledPriceRevisionSchema } from '@app/pricing-contracts/domain/price-schedule';
 import { PricingCommercialScopeSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
@@ -27,7 +28,12 @@ const sameIdentityKey = Schema.toEquivalence(PriceIdentityKeySchema);
 const sameLine = Schema.toEquivalence(PricingLineSchema);
 const samePath = Schema.toEquivalence(QuantityTierPricePathSchema);
 const samePriceGroupSelector = Schema.toEquivalence(PriceGroupSelectorSchema);
-const samePriceUnitBasis = Schema.toEquivalence(PriceUnitBasisSchema);
+// The owner persists a Price's unit basis at fixed scale ("1.000000000") while a purchase line carries the canonical
+// decimal ("1"). They are the same basis: compare the Unit exactly and the quantity by decimal value, as Tier
+// selection already does, so a pooled equivalent group is not refused for a textual scale difference.
+const sameUnitRef = Schema.toEquivalence(PriceUnitBasisSchema.fields.unitRef);
+const samePriceUnitBasis = (left: typeof PriceUnitBasisSchema.Type, right: typeof PriceUnitBasisSchema.Type): boolean =>
+  sameUnitRef(left.unitRef, right.unitRef) && priceDecimalValuesEqual(left.quantity, right.quantity);
 const sameQuantityBasis = Schema.toEquivalence(QuantityTierQuantityBasisSchema);
 const sameScheduledPriceRevision = Schema.toEquivalence(ScheduledPriceRevisionSchema);
 
