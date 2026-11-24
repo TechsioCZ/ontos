@@ -423,5 +423,3 @@ export const declaredMarketOwnerFor = (identity: { readonly marketId: string }) 
       }),
   } as const;
 };
-
-export type DeclaredMarketOwner = ReturnType<typeof declaredMarketOwnerFor>;
