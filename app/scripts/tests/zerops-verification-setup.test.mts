@@ -23,6 +23,9 @@ const PROOFS_START = 'bash scripts/zerops/stage-proofs.sh start';
 const PROOFS_FINISH = 'bash scripts/zerops/stage-proofs.sh finish';
 const PROOFS_SCRIPT = path.resolve(import.meta.dirname, '../zerops/stage-proofs.sh');
 const OAUTH_SIGNAL = 'oauth-started';
+const CHECKOUT_SIGNAL = 'checkout-started';
+const SERVICE_SIGNAL = 'service-started';
+const PACKAGED_BUILD_FLAG = '--expect-build-id=-packaged-build';
 const CACHE_KEY = `zerops-verify-browsers-v1-\${{ runner.os }}-\${{ runner.arch }}-\${{ hashFiles('app/pnpm-lock.yaml', 'app/.mise.toml') }}`;
 const Step = Schema.Struct({
   'continue-on-error': Schema.optionalKey(Schema.Boolean),
@@ -291,8 +294,27 @@ case "$*" in
     echo oauth-output
     exit "$OAUTH_EXIT"
     ;;
-  *"scripts/ops/stage-n1-checkout.mts quote "*) echo checkout-output; exit "$CHECKOUT_EXIT" ;;
-  *"scripts/zerops/verify-service.mjs "*) echo "service-output $*"; exit "$SERVICE_EXIT" ;;
+  *"scripts/ops/stage-n1-checkout.mts quote "*)
+    exec 3<>"$CHECKOUT_STARTED"
+    exec 4<>"$SERVICE_STARTED"
+    printf 'checkout-started\\n' >&3
+    IFS= read -r -t 2 started <&4
+    test "$started" = service-started
+    echo checkout-output
+    exit "$CHECKOUT_EXIT"
+    ;;
+  *"scripts/zerops/verify-service.mjs "*)
+    if [[ "$*" == *"verify-service.mjs app" ]]; then
+      # Open read/write so opening the FIFO cannot block. A serial quote cannot release this service probe.
+      exec 3<>"$CHECKOUT_STARTED"
+      exec 4<>"$SERVICE_STARTED"
+      IFS= read -r -t 2 started <&3
+      test "$started" = checkout-started
+      printf 'service-started\\n' >&4
+    fi
+    echo "service-output $*"
+    exit "$SERVICE_EXIT"
+    ;;
   *) echo "unexpected mise invocation: $*" >&2; exit 98 ;;
 esac
 `;
@@ -327,7 +349,7 @@ it.effect('the native checkout CLI accepts a leading-dash build identity as one 
     const result = yield* collectToolingProcess(
       ChildProcess.make(
         process.execPath,
-        ['scripts/ops/stage-n1-checkout.mts', 'quote', '--expect-build-id=-packaged-build', '--help'],
+        ['scripts/ops/stage-n1-checkout.mts', 'quote', PACKAGED_BUILD_FLAG, '--help'],
         { cwd: path.join(repository, 'app') },
       ),
     );
@@ -390,11 +412,17 @@ for (const scenario of [
           yield* fs.chmod(executable, 0o700);
         }
         expect(
-          (yield* collectToolingProcess(ChildProcess.make('mkfifo', [path.join(directory, OAUTH_SIGNAL)]))).status,
+          (yield* collectToolingProcess(
+            ChildProcess.make(
+              'mkfifo',
+              [OAUTH_SIGNAL, CHECKOUT_SIGNAL, SERVICE_SIGNAL].map((name) => path.join(directory, name)),
+            ),
+          )).status,
         ).toBe(0);
         const environment = {
           APT_ARCHIVES: archives,
           CHECKOUT_EXIT: String(scenario.checkout),
+          CHECKOUT_STARTED: path.join(directory, CHECKOUT_SIGNAL),
           GITHUB_ENV: githubEnv,
           GITHUB_OUTPUT: githubOutput,
           HOME: home,
@@ -406,6 +434,7 @@ for (const scenario of [
           PUSH_N1: app === 'pushed' ? 'true' : 'false',
           RUNNER_TEMP: directory,
           SERVICE_EXIT: String(scenario.services),
+          SERVICE_STARTED: path.join(directory, SERVICE_SIGNAL),
           SETUP_CALLS: calls,
           STAGE_N1_BUILD_ID: '-packaged-build',
           STAGE_N1_URL: 'https://n1.example.test',
@@ -462,22 +491,18 @@ for (const scenario of [
         expect(outputs).not.toContain('20261115');
         const recorded = yield* fs.readFileString(calls);
         const invocations = recorded.trim().split('\n');
+        const expectedBuildFlag = app === 'pushed' ? ` ${PACKAGED_BUILD_FLAG}` : '';
+        const quoteCommand = `exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${expectedBuildFlag}`;
         expect(invocations.filter((call) => call === OAUTH_INSTALL.replace('mise ', ''))).toHaveLength(1);
         expect(invocations.filter((call) => call === WARMUP_INSTALL.replace('mise ', ''))).toHaveLength(1);
         // A failed verification stops at the failing service; otherwise every service is verified.
         for (const service of scenario.services === 0 ? ['app', 'storefront', 'shop', 'n1'] : ['app']) {
           expect(recorded).toContain(`exec -- node scripts/zerops/verify-service.mjs ${service}`);
         }
-        expect(
-          invocations.filter(
-            (call) =>
-              call ===
-              `exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id=-packaged-build' : ''}`,
-          ),
-        ).toHaveLength(1);
+        expect(invocations.filter((call) => call === quoteCommand)).toHaveLength(1);
         expect(recorded).not.toContain('stage-n1-checkout.mts place');
         expect(invocations.filter((call) => call.startsWith('timeout '))).toEqual([
-          `timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote --origin https://n1.example.test${app === 'pushed' ? ' --expect-build-id=-packaged-build' : ''}`,
+          `timeout --kill-after=3s 10m mise ${quoteCommand}`,
         ]);
         expect(recorded).toContain('sudo find ');
         expect(yield* fs.readFileString(path.join(archives, 'restored.deb'))).toBe('restored package');
@@ -498,7 +523,12 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
     yield* fs.chmod(path.join(bin, 'mise'), 0o700);
     const searchPath = `${bin}:${yield* Config.String('PATH')}`;
     expect(
-      (yield* collectToolingProcess(ChildProcess.make('mkfifo', [path.join(directory, OAUTH_SIGNAL)]))).status,
+      (yield* collectToolingProcess(
+        ChildProcess.make(
+          'mkfifo',
+          [OAUTH_SIGNAL, CHECKOUT_SIGNAL, SERVICE_SIGNAL].map((name) => path.join(directory, name)),
+        ),
+      )).status,
     ).toBe(0);
     const run = (command: string) =>
       collectToolingProcess(
@@ -506,12 +536,14 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
           cwd: directory,
           env: {
             CHECKOUT_EXIT: '0',
+            CHECKOUT_STARTED: path.join(directory, CHECKOUT_SIGNAL),
             OAUTH_EXIT: '0',
             OAUTH_STARTED: path.join(directory, OAUTH_SIGNAL),
             PATH: searchPath,
             PUSH_N1: 'false',
             RUNNER_TEMP: directory,
             SERVICE_EXIT: '0',
+            SERVICE_STARTED: path.join(directory, SERVICE_SIGNAL),
             SETUP_CALLS: path.join(directory, 'calls'),
             STAGE_N1_BUILD_ID: 'packaged-build',
             STAGE_N1_URL: 'https://n1.example.test',

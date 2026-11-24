@@ -2,8 +2,8 @@
 # The stage proofs of the delivery (.github/actions/deliver-stage), run from app/ against the live app.
 #
 #   stage-proofs.sh start    starts the warm-up and the MCP OAuth proof side by side in the background and returns
-#   stage-proofs.sh finish   verifies every service against the live app while they run, then waits for both, prints
-#                            their logs and fails when the verification or either proof failed, or none was started
+#   stage-proofs.sh finish   verifies services and the read-only N1 quote concurrently, then waits for every proof,
+#                            prints their logs and fails when any proof failed, or none was started
 #
 # The background proofs do not read a storefront; finish also verifies N1 checkout in quote-only mode. A run that
 # pushes the app starts them once the app is live; a run that does not starts them as soon as the browsers are installed,
@@ -63,13 +63,12 @@ verify_services() {
 }
 
 finish() {
-  local verified=0 checkout=0 warmup oauth
+  local verified=0 checkout=0 warmup oauth checkout_pid
   local checkout_args=(--origin "${STAGE_N1_URL:?STAGE_N1_URL is required}")
   if [ ! -d "$state" ]; then
     echo '::error::the warm-up and the MCP OAuth proof never started in this job'
     return 1
   fi
-  verify_services || verified=$?
   # All selected services are live here in both delivery paths. Quote never confirms a stock-debiting order.
   E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
   export E2E_PLAYWRIGHT_MODULE
@@ -79,7 +78,12 @@ finish() {
     echo 'N1 kept: checkout is not verified yet; a VALID quote is required for the currently served build and live owner contract, not this commit.'
   fi
   # A bound on the check, not a retry: the probe also owns a 10-minute total deadline (exit 4).
-  timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote "${checkout_args[@]}" >"$E2E_OUT_DIR/n1-checkout.log" 2>&1 || checkout=$?
+  # Quote owns its guest browser; the service probes own their separate signed-in session. Neither consumes the
+  # other's result or places an order, and both still finish before the verdict (including on either failure).
+  timeout --kill-after=3s 10m mise exec -- node scripts/ops/stage-n1-checkout.mts quote "${checkout_args[@]}" >"$E2E_OUT_DIR/n1-checkout.log" 2>&1 &
+  checkout_pid=$!
+  verify_services || verified=$?
+  wait "$checkout_pid" || checkout=$?
   until [ -e "$state/warmup.status" ] && [ -e "$state/oauth.status" ]; do sleep 1; done
   warmup="$(cat "$state/warmup.status")"
   oauth="$(cat "$state/oauth.status")"

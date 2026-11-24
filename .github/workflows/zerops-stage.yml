@@ -116,6 +116,22 @@ jobs:
             exit 1
           fi
 
+      # Run history, not caches: the newest green run is the verified base, and every later run that changed stage
+      # without being verified hands its services on. Only gh, jq and unzip: overlap the API reads with installation
+      # (history took 74 s in run 45228629460). Neither writes the other's inputs or changes stage.
+      - name: Start reading the delivery history
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/zerops-delivery"
+          (
+            status=0
+            bash scripts/zerops/read-delivery-history.sh >"$RUNNER_TEMP/zerops-delivery/history.json" || status=$?
+            echo "$status" >"$RUNNER_TEMP/zerops-delivery/history.status.next"
+            mv "$RUNNER_TEMP/zerops-delivery/history.status.next" "$RUNNER_TEMP/zerops-delivery/history.status"
+          ) </dev/null >"$RUNNER_TEMP/zerops-delivery/history.log" 2>&1 &
+
       # The planner (effect, @effect/platform-node) and the unit identities read only the root importer's packages; the
       # whole workspace installs after the app upload (.github/actions/deliver-stage).
       - name: Install the planner and identity tooling
@@ -123,15 +139,13 @@ jobs:
         with:
           install-args: --trust-lockfile --filter app
 
-      # Run history, not caches: the newest green run is the verified base, and every later run that changed stage
-      # without being verified hands its services on. Anything unreadable deploys every service.
-      - name: Read the delivery history
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # The reader retains its conservative unreadable-history behavior. A reader process that fails unexpectedly
+      # fails preparation instead of letting the planner race a partial history file.
+      - name: Finish reading the delivery history
         run: |
-          mkdir -p "$RUNNER_TEMP/zerops-delivery"
-          bash scripts/zerops/read-delivery-history.sh >"$RUNNER_TEMP/zerops-delivery/history.json"
+          until [ -f "$RUNNER_TEMP/zerops-delivery/history.status" ]; do sleep 1; done
+          cat "$RUNNER_TEMP/zerops-delivery/history.log"
+          test "$(cat "$RUNNER_TEMP/zerops-delivery/history.status")" -eq 0
           jq -c '{runs: (.runs | length?), mutations, comparison: (.comparison | if . then {base, ancestor, truncated, changed: (.changedPaths | length)} else null end)}' \
             "$RUNNER_TEMP/zerops-delivery/history.json"
 
