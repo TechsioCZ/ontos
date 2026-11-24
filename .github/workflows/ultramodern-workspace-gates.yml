@@ -1546,9 +1546,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Reject failed or cancelled prerequisites
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<<"$NEEDS_JSON" >/dev/null; then
+            echo '::error title=Workspace gates failed::A prerequisite failed or was cancelled.'
+            exit 1
+          fi
       - name: Checkout the gate verifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          filter: blob:none
+          sparse-checkout: app/scripts/check-ci-gates.sh
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Require selected gates and reject unplanned skips
         env:
