@@ -1086,6 +1086,20 @@ const PLANNED_HELPERS = [
   [DEFERRED_BROWSER_JOB, 'integrationBrowserAfterStatic'],
 ] as const;
 
+it('rejects failed or cancelled prerequisites before checking out the final gate verifier', () => {
+  const { steps } = readTargetWorkflow().jobs['workspace-gates'];
+  const checkout = steps.findIndex(({ name }) => name === 'Checkout the gate verifier');
+  const reject = steps.findIndex(({ name }) => name === 'Reject failed or cancelled prerequisites');
+  expect(reject).toBeGreaterThanOrEqual(0);
+  expect(reject).toBeLessThan(checkout);
+  const command = steps[reject]?.run ?? 'exit 0';
+  for (const result of ['success', 'skipped', 'failure', 'cancelled']) {
+    expect(stepPasses(command, { NEEDS_JSON: JSON.stringify({ check: { result } }) }), result).toBe(
+      result === 'success' || result === 'skipped',
+    );
+  }
+});
+
 it('requires the exact CI plan and rejects missing, failed or unplanned skipped gates', () => {
   const gates = readTargetWorkflow().jobs['workspace-gates'];
   expect(gates.name).toBe('Workspace gates');
@@ -2399,6 +2413,11 @@ it('covers every integration file exactly once across the owner rows', () => {
       sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)),
     );
     expect(count, family).toBeLessThanOrEqual(familyFiles(family).length);
+    if (family === './apps/shell-super-app') {
+      // The access-admin and privacy-dispatch files serialized into a 358 s task in run 45161037039.
+      // Keep batches small without adding hosted jobs or sharing a database between test processes.
+      expect(count).toBeGreaterThanOrEqual(Math.ceil(familyFiles(family).length / 2));
+    }
     if (family === 'root') {
       // One file per root task: ICO and Membership must not silently recombine as files are added.
       expect(count).toBe(familyFiles(family).length);
