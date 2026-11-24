@@ -35,7 +35,8 @@ identity) and its Commerce-owned Order Commitment Time. An evaluation candidate 
 evidence was invalidated before finalization cannot become that final Tax Decision, and a failed or
 uncommitted final result remains prospective evidence. The stored final Tax Decision may be
 recovered historically under the current Permission, Selling Legal Entity scope and Application
-Composition, even when the TAX module is inactive, suspended or archived; Module State Gate
+Composition, even when the TAX module is inactive, suspended or archived (never when quarantined or without a
+stored final), through the explicit recovery of the exact stored submission only; Module State Gate
 availability is separate from authorization, and recovery is never a new evaluation or finalization
 (gate matrix: [MODULE_ENTRYPOINTS](../../../app/docs/architecture/MODULE_ENTRYPOINTS.md#authoritative-matrix)).
 _Avoid_: VAT identifier as tax decision, B2B Channel as tax treatment, retained preview as Accepted
