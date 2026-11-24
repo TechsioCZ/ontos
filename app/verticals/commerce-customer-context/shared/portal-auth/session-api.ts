@@ -13,7 +13,13 @@ import {
 } from '../../api/portal-auth/session/contracts.ts';
 import { EnrollmentPartyResourceIdSchema, EnrollmentTenantIdSchema } from '../enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID, CommerceSessionReferenceSchema } from '../portal-auth-contracts.ts';
-import { ActiveSavedAddressSchema, SavedAddressDefaultsSchema } from '../domain/address-book.ts';
+import {
+  ActiveSavedAddressSchema,
+  PostalAddressSchema,
+  SavedAddressDefaultsSchema,
+  SavedAddressPurposesSchema,
+} from '../domain/address-book.ts';
+import { SavedAddressRefSchema } from '../resources/saved-address.ts';
 
 /** Subject selection stays inside the owner; callers provide no profile or account identifier. */
 export const CustomerOwnAddressBookSchema = Schema.Struct({
@@ -21,6 +27,30 @@ export const CustomerOwnAddressBookSchema = Schema.Struct({
   defaults: SavedAddressDefaultsSchema,
 });
 export type CustomerOwnAddressBook = typeof CustomerOwnAddressBookSchema.Type;
+
+const addressWriteFields = {
+  postalAddress: PostalAddressSchema,
+  purposes: SavedAddressPurposesSchema,
+};
+const addressWriteTarget = {
+  addressId: SavedAddressRefSchema.fields.resourceId,
+  revision: ActiveSavedAddressSchema.fields.revision,
+};
+const operationId = { operationId: Schema.String.check(Schema.isUUID()) };
+/** The operation targets the session's own retail profile. No caller-provided principal, profile or origin. */
+export const CustomerOwnAddressBookCommandSchema = Schema.Union([
+  Schema.Struct({ operation: Schema.Literal('add'), ...operationId, ...addressWriteFields }),
+  Schema.Struct({ operation: Schema.Literal('update'), ...operationId, ...addressWriteTarget, ...addressWriteFields }),
+  Schema.Struct({ operation: Schema.Literal('remove'), ...operationId, ...addressWriteTarget }),
+]);
+export type CustomerOwnAddressBookCommand = typeof CustomerOwnAddressBookCommandSchema.Type;
+
+export const CUSTOMER_ADDRESS_BOOK_CONFLICT_STATUS = 409;
+export const CustomerOwnAddressBookConflictProblemSchema = makeProblemDetailsSchema(
+  'CustomerOwnAddressBookConflictProblem',
+  CUSTOMER_ADDRESS_BOOK_CONFLICT_STATUS,
+  { code: Schema.Literal('address_conflict') },
+);
 
 /**
  * The declared endpoint paths mirror the owner route allowlist
@@ -209,6 +239,17 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
       error: getSessionErrors,
       success: CustomerOwnAddressBookSchema,
     }),
+  )
+  .add(
+    HttpApiEndpoint.post('changeCustomerAddressBook', '/api/portal-auth/customer-address-book', {
+      error: [
+        ...getSessionErrors,
+        CommercePortalAuthSessionInvalidProblemSchema,
+        CustomerOwnAddressBookConflictProblemSchema,
+      ],
+      payload: CustomerOwnAddressBookCommandSchema,
+      success: Schema.Struct({ outcome: Schema.Literal('SAVED') }),
+    }).annotate(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' }),
   )
   /** Pricing's catalogue page Prices for the signed-in customer, with the customer's own Price Group (no profile is sent). */
   .add(

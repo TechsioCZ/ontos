@@ -66,6 +66,7 @@ it.effect(
             label: "Domů",
             location: { address: postalAddress, state: "available" },
             purposes: ["BILLING", "DELIVERY"],
+            revision: 1,
           },
         ],
         state: "ready",

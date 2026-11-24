@@ -251,6 +251,22 @@ export const readPortalOwnAddressBook = (
       client.portalAuthSession.getCustomerAddressBook().pipe(Effect.timeout(readDeadline)),
     ),
   );
+type OwnAddressCommand = Parameters<
+  PortalOwnerClient["portalAuthSession"]["changeCustomerAddressBook"]
+>[0]["payload"];
+export const changePortalOwnAddressBook = (
+  config: StorefrontConfiguration,
+  payload: OwnAddressCommand,
+  request: PortalRequestContext,
+) =>
+  makeOwnerClient(config, request).pipe(
+    Effect.flatMap((client) =>
+      client.portalAuthSession
+        .changeCustomerAddressBook({ payload })
+        .pipe(Effect.timeout(writeDeadline)),
+    ),
+  );
+
 type PortalEnrollmentCallFailure = Effect.Error<
   | ReturnType<PortalOwnerClient["portalAuthEnrollment"]["startEnrollment"]>
   | ReturnType<PortalOwnerClient["portalAuthEnrollment"]["resumeCurrentEnrollment"]>

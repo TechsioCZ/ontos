@@ -30,6 +30,7 @@ const address = {
     state: "available" as const,
   },
   purposes: ["DELIVERY" as const],
+  revision: 1,
 };
 const snapshot: CustomerAddressesSnapshot = {
   identity,

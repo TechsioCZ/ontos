@@ -33,6 +33,7 @@ const address: CustomerAddress = {
   label: "Not a recipient either",
   location: { address: postal, state: "available" },
   purposes: ["DELIVERY"],
+  revision: 1,
 };
 const snapshot: CustomerAddressesSnapshot = {
   identity,

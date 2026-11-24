@@ -10,6 +10,7 @@ import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'e
 
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
 import { readCustomerOwnAddressBook } from './customer-address-book.ts';
+import { changeCustomerOwnAddressBook } from './customer-address-book-write.ts';
 import { readCustomerOwnCatalogPagePrices } from './customer-catalog-page-prices.ts';
 import { logCustomerAddressBookBoundaryFailure } from './customer-address-book-diagnostics.ts';
 import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
@@ -24,7 +25,10 @@ import {
   CommercePortalAuthSessionSchemaErrorMiddleware,
   CommercePortalAuthSessionUnavailableProblemSchema,
 } from '../../../shared/portal-auth/session-api.ts';
-import type { CommercePortalAuthSessionSnapshotWire } from '../../../shared/portal-auth/session-api.ts';
+import type {
+  CommercePortalAuthSessionSnapshotWire,
+  CustomerOwnAddressBookCommand,
+} from '../../../shared/portal-auth/session-api.ts';
 import {
   forwardSetCookieHeaders,
   hashSubjectKey,
@@ -760,6 +764,41 @@ const getCustomerAddressBook = Effect.fn('CommercePortalAuthSessionHttp.getCusto
   },
 );
 
+const changeCustomerAddressBook = Effect.fn('CommercePortalAuthSessionHttp.changeCustomerAddressBook')(
+  function* changeCustomerAddressBookEffect(
+    request: HttpServerRequest.HttpServerRequest,
+    input: CustomerOwnAddressBookCommand,
+  ) {
+    yield* noStoreHeaders;
+    yield* requireTrustedOrigin(request.headers, untrustedOriginProblem);
+    const current = yield* admitCustomerAccount(request, 'retail.address_book.manage');
+    if (current.state === 'anonymous') {
+      return yield* Effect.fail(authenticationProblem('authentication_failed'));
+    }
+    const { legalEntityId } = current.workloadPrincipal;
+    if (legalEntityId === undefined) {
+      return yield* Effect.fail(unavailableProblem());
+    }
+    yield* changeCustomerOwnAddressBook(
+      {
+        authority: current.customerAuthority,
+        legalEntityId,
+        sessionRef: current.session.sessionRef,
+        tenantId: current.account.tenantId,
+        workloadPrincipal: current.workloadPrincipal,
+      },
+      input,
+      {
+        authentication: () => authenticationProblem('authentication_failed'),
+        forbidden: () => forbiddenProblem('account_disabled'),
+        invalid: invalidProblem,
+        unavailable: unavailableProblem,
+      },
+    );
+    return { outcome: 'SAVED' } as const;
+  },
+);
+
 const portalAuthSessionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthSessionSchemaErrorMiddleware,
   () => Effect.fail(invalidProblem()),
@@ -804,6 +843,7 @@ export const portalAuthSessionApiLive = HttpApiBuilder.group(
       .handle('getSession', ({ request }) => getSession(request))
       .handle('getCustomerAccount', ({ request }) => getCustomerAccount(request))
       .handle('getCustomerAddressBook', ({ request }) => getCustomerAddressBook(request))
+      .handle('changeCustomerAddressBook', ({ payload, request }) => changeCustomerAddressBook(request, payload))
       .handle('getCustomerCatalogPagePrices', ({ payload, request }) => getCustomerCatalogPagePrices(request, payload)),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 
@@ -830,6 +870,7 @@ export const portalAuthSessionStandaloneApiLive = HttpApiBuilder.group(
       .handle('getSession', ({ request }) => getSession(request))
       .handle('getCustomerAccount', () => Effect.fail(unavailableProblem()))
       .handle('getCustomerAddressBook', () => Effect.fail(unavailableProblem()))
+      .handle('changeCustomerAddressBook', () => Effect.fail(unavailableProblem()))
       .handle('getCustomerCatalogPagePrices', () => Effect.fail(unavailableProblem())),
 ).pipe(Layer.provide(portalAuthSessionSchemaErrorLive));
 

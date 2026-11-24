@@ -3,7 +3,7 @@
 import { Effect, Match } from "effect";
 import { HttpApiClient } from "effect/http-api";
 import { CustomerProfileApi } from "./customer-profile";
-import type { CustomerAddressesRead } from "./customer-addresses";
+import type { CustomerAddressCommand, CustomerAddressesRead } from "./customer-addresses";
 import type { PortalOutcome } from "./portal";
 
 export type CustomerAddressIdentity = Extract<PortalOutcome, { state: "admitted" }>;
@@ -42,3 +42,21 @@ export const customerAddressesForIdentity = (
     ? { state: "unavailable" }
     : snapshot.result;
 };
+
+export const changeCustomerAddress = (command: CustomerAddressCommand) =>
+  client.pipe(
+    Effect.flatMap((api) => api.customerProfile.changeAddress({ payload: command })),
+    Effect.timeout("65 seconds"),
+    Effect.match({
+      onFailure: (error) =>
+        Match.value(error).pipe(
+          Match.tag("CustomerProfileInvalidProblem", () => "invalid" as const),
+          Match.tag("CustomerProfileAuthenticationProblem", () => "anonymous" as const),
+          Match.tag("CustomerProfileForbiddenProblem", () => "forbidden" as const),
+          Match.tag("CustomerProfileConflictProblem", () => "conflict" as const),
+          Match.tag("CustomerProfileUnavailableProblem", () => "unavailable" as const),
+          Match.orElse(() => "unconfirmed" as const),
+        ),
+      onSuccess: () => "saved" as const,
+    }),
+  );

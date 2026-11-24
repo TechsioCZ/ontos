@@ -29,8 +29,8 @@ import { portalRequestContext } from "./portal-server";
 import type { PortalRequestContext } from "./portal-server";
 import { isPortalOrigin } from "./portal-model";
 import { normalizePublicRequest } from "./request-origin";
-import { readCustomerAddresses } from "./customer-addresses-server";
-import { CustomerAddressesReadSchema } from "./customer-addresses";
+import { changeCustomerAddress, readCustomerAddresses } from "./customer-addresses-server";
+import { CustomerAddressesReadSchema, CustomerAddressSavedSchema } from "./customer-addresses";
 
 const maxBodyBytes = 16_384;
 const problemContentType = "application/problem+json";
@@ -94,6 +94,7 @@ const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
 type ProfileProgram =
   | ReturnType<typeof readCustomerProfile>
   | ReturnType<typeof readCustomerAddresses>
+  | ReturnType<typeof changeCustomerAddress>
   | ReturnType<typeof updateCustomerProfile>;
 const channel = (
   request: HttpServerRequest.HttpServerRequest,
@@ -136,16 +137,24 @@ const profileChannel = (
   );
 const addressResponse = (value: typeof CustomerAddressesReadSchema.Type) =>
   HttpServerResponse.schemaJson(CustomerAddressesReadSchema)(value).pipe(Effect.orDie);
+const savedAddressResponse = (value: typeof CustomerAddressSavedSchema.Type) =>
+  HttpServerResponse.schemaJson(CustomerAddressSavedSchema)(value).pipe(Effect.orDie);
 const makeHandlers = (
   readAddresses: typeof readCustomerAddresses,
   readProfile: typeof readCustomerProfile,
   updateProfile: typeof updateCustomerProfile,
+  changeAddress: typeof changeCustomerAddress,
 ) =>
   HttpApiBuilder.group(CustomerProfileApi, "customerProfile", (group) =>
     group
       .handle("read", ({ request }) => profileChannel(request, readProfile))
       .handle("readAddresses", ({ request }) =>
         channel(request, (context) => readAddresses(context).pipe(Effect.flatMap(addressResponse))),
+      )
+      .handle("changeAddress", ({ payload, request }) =>
+        channel(request, (context) =>
+          changeAddress(payload, context).pipe(Effect.flatMap(savedAddressResponse)),
+        ),
       )
       .handle("update", ({ payload, request }) =>
         profileChannel(request, (context) => updateProfile(payload, context)),
@@ -180,16 +189,18 @@ const responsePolicy = HttpRouter.middleware(
   { global: true },
 );
 export const makeCustomerProfileWeb = ({
+  changeAddress = changeCustomerAddress,
   readAddresses = readCustomerAddresses,
   readProfile = readCustomerProfile,
   updateProfile = updateCustomerProfile,
 }: {
+  changeAddress?: typeof changeCustomerAddress;
   readAddresses?: typeof readCustomerAddresses;
   readProfile?: typeof readCustomerProfile;
   updateProfile?: typeof updateCustomerProfile;
 } = {}) => {
   const application = Layer.merge(HttpApiBuilder.layer(CustomerProfileApi), responsePolicy).pipe(
-    Layer.provide(makeHandlers(readAddresses, readProfile, updateProfile)),
+    Layer.provide(makeHandlers(readAddresses, readProfile, updateProfile, changeAddress)),
     Layer.provide(HttpServer.layerServices),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(

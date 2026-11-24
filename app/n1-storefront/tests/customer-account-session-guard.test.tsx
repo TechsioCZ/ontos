@@ -17,7 +17,12 @@ import { getDictionary } from "../src/i18n";
 import type { CustomerProfilePageState } from "../src/ontos/customer-profile";
 import { CustomerOrderSchema } from "../src/ontos/customer-orders";
 import type { CustomerOrdersView } from "../src/ontos/customer-orders";
-import type { CustomerAddressesRead } from "../src/ontos/customer-addresses";
+import { CustomerAddressCommandSchema } from "../src/ontos/customer-addresses";
+import type {
+  CustomerAddress,
+  CustomerAddressCommand,
+  CustomerAddressesRead,
+} from "../src/ontos/customer-addresses";
 import type { PortalOutcome } from "../src/ontos/portal";
 
 const initial: CustomerProfilePageState = {
@@ -96,6 +101,7 @@ const addresses = {
         state: "available",
       },
       purposes: ["DELIVERY"],
+      revision: 1,
     },
   ],
   state: "ready",
@@ -122,16 +128,24 @@ const holdAccountRead = () => ({
   arrived: Promise.withResolvers<Request>(),
   response: Promise.withResolvers<Response>(),
 });
+let addressWriter: ((command: CustomerAddressCommand) => Response) | null;
+let addressRows: readonly CustomerAddress[];
 let accountGate: ReturnType<typeof holdAccountRead> | null;
 let container: HTMLDivElement;
 let root: Root;
 let previousInterceptor: typeof window.happyDOM.settings.fetch.interceptor;
 
 const fetchOwner = async (request: Request): Promise<Response> => {
+  const path = new URL(request.url).pathname;
+  if (request.method === "POST" && path === "/api/customer-addresses" && addressWriter !== null) {
+    return addressWriter(
+      Schema.decodeUnknownSync(CustomerAddressCommandSchema)(await request.json()),
+    );
+  }
   if (request.method !== "GET") {
     throw new Error(`Unexpected account write: ${request.method} ${request.url}`);
   }
-  switch (new URL(request.url).pathname) {
+  switch (path) {
     case "/api/account": {
       const gate = accountGate;
       if (gate !== null) {
@@ -144,7 +158,7 @@ const fetchOwner = async (request: Request): Promise<Response> => {
       return Response.json(orderInitial.data);
     }
     case "/api/customer-addresses": {
-      return Response.json(addresses);
+      return Response.json({ ...addresses, addresses: addressRows });
     }
     default: {
       throw new Error(`Unexpected customer HTTP request: ${request.url}`);
@@ -220,6 +234,8 @@ const admit = async (gate: ReturnType<typeof holdAccountRead>) => {
 
 beforeEach(() => {
   accountGate = null;
+  addressRows = addresses.addresses;
+  addressWriter = null;
   previousInterceptor = window.happyDOM.settings.fetch.interceptor;
   // Use happy-dom's HTTP boundary; no hook, panel, module or global is replaced.
   window.happyDOM.settings.fetch.interceptor = {
@@ -340,4 +356,90 @@ it("shows the actual verified own order detail after session revalidation", asyn
   expect(container.textContent).toContain(dictionary.accountPage.loading);
   await admit(gate);
   await eventually(expectOrderDetail);
+});
+
+const click = (label: string, scope: ParentNode = container) => {
+  const button = [...scope.querySelectorAll("button")].find(
+    (node) => node.textContent?.trim() === label,
+  );
+  expect(button).toBeDefined();
+  act(() => {
+    button?.click();
+  });
+};
+const field = (name: string) => {
+  const input = container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+  if (input === null) {
+    throw new Error(`Expected an address form with the ${name} field`);
+  }
+  return input;
+};
+
+it("adds an address, edits the latest revision and removes it after confirmation", async () => {
+  addressRows = [];
+  const commands: CustomerAddressCommand[] = [];
+  const addressId = "new-address";
+  addressWriter = (command) => {
+    commands.push(command);
+    addressRows =
+      command.operation === "remove"
+        ? []
+        : [
+            {
+              id: addressId,
+              isBillingDefault: false,
+              isDeliveryDefault: false,
+              location: { address: command.postalAddress, state: "available" },
+              purposes: command.purposes,
+              revision: command.operation === "add" ? 1 : command.revision + 1,
+            },
+          ];
+    return Response.json({ outcome: "SAVED" });
+  };
+  await mount(
+    <AccountView dictionary={dictionary} initial={initial} initialTab="addresses" locale="cs" />,
+  );
+  await eventually(() =>
+    expect(container.textContent).toContain(dictionary.accountPage.emptyAddresses),
+  );
+  const labels = dictionary.accountPage.addressEditor;
+  click(labels.add);
+  field("addressLine1").value = "Testovací 10";
+  field("city").value = "Praha";
+  field("postalCode").value = "11000";
+  act(() => {
+    field("addressLine1").form?.requestSubmit();
+  });
+  await eventually(() => expect(container.textContent).toContain("Testovací 10"));
+
+  click(labels.edit);
+  expect(field("addressLine1").value).toBe("Testovací 10");
+  field("addressLine1").value = "Testovací 20";
+  act(() => {
+    field("addressLine1").form?.requestSubmit();
+  });
+  await eventually(() => expect(container.textContent).toContain("Testovací 20"));
+
+  click(labels.remove);
+  expect(commands).toHaveLength(2);
+  await eventually(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
+  const dialog = document.querySelector('[role="alertdialog"]');
+  if (dialog === null) {
+    throw new Error("Expected a confirmation dialog before deleting the address");
+  }
+  click(labels.remove, dialog);
+  await eventually(() =>
+    expect(container.textContent).toContain(dictionary.accountPage.emptyAddresses),
+  );
+  expect(commands).toMatchObject([
+    { operation: "add", postalAddress: { addressLine1: "Testovací 10", countryCode: "CZ" } },
+    {
+      addressId,
+      operation: "update",
+      postalAddress: { addressLine1: "Testovací 20" },
+      revision: 1,
+    },
+    { addressId, operation: "remove", revision: 2 },
+  ]);
+  expect(new Set(commands.map((command) => command.operationId)).size).toBe(3);
 });

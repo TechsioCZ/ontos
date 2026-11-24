@@ -19,6 +19,17 @@ export type CustomerOwnAddressBookScope = CustomerOwnPortalScope;
 
 export type CustomerOwnAddressBook = SavedAddressListResponse & SavedAddressDefaultsResponse;
 
+export const customerAddressBookProfile = (scope: CustomerOwnAddressBookScope) =>
+  ({
+    kind: 'RETAIL',
+    profileRef: {
+      moduleId: 'commerce.customer-context',
+      resourceId: scope.authority.profileId,
+      resourceType: 'commerce.customer-context.retail-customer-profile',
+      tenantId: scope.tenantId,
+    },
+  }) as const;
+
 const unavailable = () =>
   new ReadHandlerUnavailable({
     code: 'read_handler_unavailable',
@@ -52,15 +63,7 @@ export const readCustomerOwnAddressBook = Effect.fn('CustomerOwnAddressBook.read
   scope: CustomerOwnAddressBookScope,
 ) {
   const principal = yield* admittedCustomerPrincipal(scope, unavailable);
-  const profile = {
-    kind: 'RETAIL',
-    profileRef: {
-      moduleId: 'commerce.customer-context',
-      resourceId: scope.authority.profileId,
-      resourceType: 'commerce.customer-context.retail-customer-profile',
-      tenantId: scope.tenantId,
-    },
-  } as const;
+  const profile = customerAddressBookProfile(scope);
   const runtime = yield* ReadRuntime;
   const crypto = yield* Crypto.Crypto;
   const correlationId = yield* crypto

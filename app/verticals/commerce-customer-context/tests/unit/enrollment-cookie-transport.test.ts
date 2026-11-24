@@ -54,7 +54,7 @@ it.effect.each([
   { method: 'GET', path: '/api/portal-auth/enrollment/current/extra' },
   { method: 'POST', path: '/api/portal-auth/enrollment/start' },
   { method: 'POST', path: '/actions/terminate-portal-enrollment' },
-  { method: 'POST', path: '/api/portal-auth/customer-address-book' },
+  { method: 'PUT', path: '/api/portal-auth/customer-address-book' },
   { method: 'GET', path: '/api/portal-auth/customer-address-book/extra' },
   { method: 'GET', path: '/api/portal-auth/customer-address-book-other' },
 ])('keeps cookie transport closed for undeclared methods and routes: $method $path', ({ method, path }) =>

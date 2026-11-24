@@ -1,10 +1,11 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import {
   ActiveApplicationCompositionService,
+  ActionRuntime,
   ReadRuntime,
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
-import type { ReadRuntimeService } from '@app/core-runtime';
+import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
   bindGatewayPrincipalVerifier,
@@ -14,7 +15,7 @@ import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { Clock, ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
+import { Clock, ConfigProvider, Effect, Layer, Match, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -155,7 +156,7 @@ const signedFixtureCustomer = Effect.fn('AddressBookFixture.signedCustomer')(fun
   };
 });
 
-const makeFixture = (mode: Mode) =>
+const makeFixture = (mode: Mode, write?: { readonly body: unknown; readonly origin?: string }) =>
   Effect.gen(function* addressBookTransportFixture() {
     // The real provider stays entirely in memory and never has an e-mail dispatcher.
     const realm = betterAuth({
@@ -284,7 +285,36 @@ const makeFixture = (mode: Mode) =>
           : signedFixtureCustomer(input, snapshot.composition.revision, privateKey, issuer, now);
       },
     };
+    const actions: {
+      readonly key: string;
+      readonly payload: unknown;
+      readonly principal: unknown;
+      readonly transport: unknown;
+    }[] = [];
+    const actionRuntime: ActionRuntimeService = {
+      resolveActionCommit: () => Effect.die('Unexpected Action commit lookup'),
+      resolveActionExecution: () => Effect.die('Unexpected Action invocation lookup'),
+      runAction: (input) => {
+        const key = input.registration.descriptor.actionKey;
+        actions.push({ key, payload: input.payload, principal: input.principal, transport: input.transport });
+        const result = Match.value(key).pipe(
+          Match.when('commerce.customer-context.add-saved-address', () => ({ address, outcome: 'ADDED' })),
+          Match.when('commerce.customer-context.update-saved-address', () => ({
+            address,
+            clearedDefaults: [],
+            outcome: 'UPDATED',
+          })),
+          Match.orElse(() => ({
+            address: { ...address, lifecycle: 'REMOVED' },
+            clearedDefaults: [],
+            outcome: 'REMOVED',
+          })),
+        );
+        return Schema.decodeUnknownEffect(input.registration.descriptor.resultSchema)(result).pipe(Effect.orDie);
+      },
+    };
     const services = Layer.mergeAll(
+      Layer.succeed(ActionRuntime, actionRuntime),
       Layer.succeed(CommercePortalAuthService, { api: realm.api }),
       Layer.succeed(CommercePortalAuthSessionLifecycle, lifecycle),
       Layer.succeed(CommerceCustomerAuthority, authority),
@@ -319,16 +349,21 @@ const makeFixture = (mode: Mode) =>
       Effect.sync(() => HttpRouter.toWebHandler(layer, { disableLogger: true })),
       (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
     );
-    const response = yield* Effect.promise(() =>
-      app.handler(
-        new Request(`${origin}/api/portal-auth/customer-address-book`, {
-          headers: { authorization: `Bearer ${assertion}`, cookie: mode === 'no-session' ? '' : cookie },
-          method: 'GET',
-        }),
-        handlerContext,
-      ),
-    );
-    return { authorityCalls, evidenceCalls, providerSubjectId, reads, response };
+    const headers = new Headers({
+      authorization: `Bearer ${assertion}`,
+      cookie: mode === 'no-session' ? '' : cookie,
+    });
+    if (write !== undefined) {
+      headers.set('content-type', 'application/json');
+      headers.set('origin', write.origin ?? origin);
+    }
+    const request = new Request(`${origin}/api/portal-auth/customer-address-book`, {
+      body: write === undefined ? null : JSON.stringify(write.body),
+      headers,
+      method: write === undefined ? 'GET' : 'POST',
+    });
+    const response = yield* Effect.promise(() => app.handler(request, handlerContext));
+    return { actions, authorityCalls, evidenceCalls, providerSubjectId, reads, response };
   });
 
 it.effect('composed address-book GET uses the admitted customer principal and exact generated owner reads', () =>
@@ -388,5 +423,70 @@ for (const [mode, status, code] of [
         expect(f.response.headers.getSetCookie()).toEqual([]);
       }),
     ),
+  );
+}
+
+const operationId = '00000000-0000-4000-8000-000000000010';
+const fields = { postalAddress: address.origin.postalAddress, purposes: address.purposes };
+const target = { addressId: addressRef.resourceId, revision: address.revision };
+const add = { operation: 'add', operationId, ...fields };
+
+for (const [operation, body, expected] of [
+  ['add', add, { origin: address.origin, purposes: address.purposes }],
+  [
+    'update',
+    { operation: 'update', operationId, ...fields, ...target },
+    {
+      expectedRevision: target.revision,
+      origin: address.origin,
+      savedAddressRef: addressRef,
+    },
+  ],
+  [
+    'remove',
+    { operation: 'remove', operationId, ...target },
+    {
+      expectedRevision: target.revision,
+      savedAddressRef: addressRef,
+    },
+  ],
+] as const) {
+  it.effect(`only runs the admitted customer's native ${operation} Address Action`, () =>
+    Effect.gen(function* changeOwnAddress() {
+      const f = yield* makeFixture('admitted', { body });
+      expect(f.response.status).toBe(200);
+      expect(yield* jsonBody(f.response)).toEqual({ outcome: 'SAVED' });
+      expect(f.response.headers.get('cache-control')).toBe('no-store');
+      expect(f.authorityCalls).toEqual([expect.objectContaining({ permission: 'retail.address_book.manage' })]);
+      expect(f.actions).toEqual([
+        {
+          key: `commerce.customer-context.${operation}-saved-address`,
+          payload: expect.objectContaining({ ...expected, profile }),
+          principal: expect.objectContaining({
+            authMethod: 'session',
+            legalEntityId,
+            principalId: customerPrincipalId,
+          }),
+          transport: { correlationId: expect.any(String), idempotencyKey: `portal-address:${operationId}` },
+        },
+      ]);
+      expect(f.reads).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+}
+
+for (const [mode, write, status] of [
+  ['no-session', { body: add }, 401],
+  ['denied', { body: add }, 403],
+  ['admitted', { body: add, origin: 'https://untrusted.example.test' }, 403],
+  ['admitted', { body: { ...add, profile: { resourceId: 'other-account' } } }, 400],
+  ['admitted', { body: { addressId: addressRef.resourceId, operation: 'remove', operationId } }, 400],
+] as const) {
+  it.effect(`refuses address POST before any Action for ${mode} (${status})`, () =>
+    Effect.gen(function* refusedAddressChange() {
+      const f = yield* makeFixture(mode, write);
+      expect(f.response.status).toBe(status);
+      expect(f.actions).toEqual([]);
+    }).pipe(Effect.scoped),
   );
 }

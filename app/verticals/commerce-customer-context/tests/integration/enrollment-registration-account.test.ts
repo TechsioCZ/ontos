@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { ContextAccessLive, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { ActionRuntime, ContextAccessLive, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { ResolveExternalSubjectResultSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { productionReadRuntimeLive } from '../../api/index.ts';
@@ -679,6 +679,11 @@ it.live('admits the new provider account immediately after verification and one 
             GatewayPrincipalVerifierLive.pipe(Layer.provide(gateway.verificationLive)),
             enrollmentApplicationCompositionLayer,
             Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
+            Layer.succeed(ActionRuntime, {
+              resolveActionCommit: () => Effect.die('Account GET must not resolve an Action commit'),
+              resolveActionExecution: () => Effect.die('Account GET must not resolve an Action'),
+              runAction: () => Effect.die('Account GET must not execute an Action'),
+            }),
             Layer.succeed(CommercePortalAuthService, { api: auth.api }),
             Layer.succeed(CommercePortalAuthSessionLifecycle, lifecycle),
             Layer.succeed(CommercePortalAuthConfig, configuration),

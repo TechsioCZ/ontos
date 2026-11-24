@@ -2,11 +2,19 @@ import "server-only";
 import { CustomerOwnAddressBookSchema } from "@app/commerce-customer-context/api";
 import type { CustomerOwnAddressBook } from "@app/commerce-customer-context/api";
 import { Effect, Match, Schema } from "effect";
-import type { CustomerAddressViewer, CustomerAddressesRead } from "./customer-addresses";
+import type {
+  CustomerAddressCommand,
+  CustomerAddressViewer,
+  CustomerAddressesRead,
+} from "./customer-addresses";
 import { CustomerProfileFailure } from "./customer-profile-server";
 import { readConfiguration } from "./config";
 import type { StorefrontConfiguration } from "./config";
-import { readPortalOwnAddressBook, readPortalIdentityWithConfiguration } from "./portal-server";
+import {
+  changePortalOwnAddressBook,
+  readPortalOwnAddressBook,
+  readPortalIdentityWithConfiguration,
+} from "./portal-server";
 import type { PortalRequestContext } from "./portal-server";
 
 const unavailable = () => new CustomerProfileFailure({ state: "unavailable" });
@@ -60,6 +68,7 @@ export const projectCustomerAddresses = Effect.fn("N1.projectCustomerAddresses")
           ? { address: address.origin.postalAddress, state: "available" as const }
           : { state: "unresolved" as const },
       purposes: address.purposes,
+      revision: address.revision,
     })),
     state: "ready" as const,
     viewerEmail: viewer.viewerEmail,
@@ -125,3 +134,41 @@ export const readCustomerAddresses = (request: PortalRequestContext) =>
     Effect.flatMap((config) => readCustomerAddressesWithConfiguration(config, request)),
     Effect.map((result): CustomerAddressesRead => result),
   );
+
+const changeFailure = (error: Effect.Error<ReturnType<typeof changePortalOwnAddressBook>>) =>
+  Match.value(error).pipe(
+    Match.tag(
+      "CommercePortalAuthSessionInvalidProblem",
+      () => new CustomerProfileFailure({ state: "invalid" }),
+    ),
+    Match.tag(
+      "CustomerOwnAddressBookConflictProblem",
+      () => new CustomerProfileFailure({ state: "conflict" }),
+    ),
+    Match.tag(
+      "CommercePortalAuthSessionAuthenticationProblem",
+      () => new CustomerProfileFailure({ state: "anonymous" }),
+    ),
+    Match.tag(
+      "CommercePortalAuthSessionForbiddenProblem",
+      () => new CustomerProfileFailure({ state: "forbidden" }),
+    ),
+    Match.tag(
+      "PortalFailure",
+      (failure) =>
+        new CustomerProfileFailure({
+          state: failure.reason === "refused" ? "forbidden" : "unavailable",
+        }),
+    ),
+    Match.orElse(() => new CustomerProfileFailure({ state: "unconfirmed" })),
+  );
+
+export const changeCustomerAddress = Effect.fn("N1.changeCustomerAddress")(function* changeAddress(
+  command: CustomerAddressCommand,
+  request: PortalRequestContext,
+) {
+  const config = yield* readConfiguration(process.env).pipe(Effect.mapError(unavailable));
+  return yield* changePortalOwnAddressBook(config, command, request).pipe(
+    Effect.mapError(changeFailure),
+  );
+});

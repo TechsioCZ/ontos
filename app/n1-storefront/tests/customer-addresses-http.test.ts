@@ -4,7 +4,10 @@ import { Clock, Context, Deferred, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 import { makeCustomerProfileWeb } from "../src/ontos/customer-profile-http";
 import { CustomerProfileFailure } from "../src/ontos/customer-profile-server";
-import type { readCustomerAddresses } from "../src/ontos/customer-addresses-server";
+import type {
+  changeCustomerAddress,
+  readCustomerAddresses,
+} from "../src/ontos/customer-addresses-server";
 import type { CustomerAddressesRead } from "../src/ontos/customer-addresses";
 
 const request = () =>
@@ -89,6 +92,7 @@ it.effect(
             isDeliveryDefault: true,
             location: { address: postal, state: "available" },
             purposes: ["DELIVERY"],
+            revision: 1,
           },
         ],
         state: "ready",
@@ -114,4 +118,54 @@ it.effect(
       expect(JSON.stringify(body)).not.toContain("profileRef");
       expect(JSON.stringify(body)).not.toContain("partyRef");
     }).pipe(Effect.scoped),
+);
+
+const removeCommand = {
+  addressId: "own-address",
+  operation: "remove",
+  operationId: "00000000-0000-4000-8000-000000000010",
+  revision: 2,
+} as const;
+
+it.effect("preserves the address revision and operation identity on an own-address mutation", () =>
+  Effect.gen(function* changeAddresses() {
+    const calls: unknown[] = [];
+    const changeAddress: typeof changeCustomerAddress = (command, context) =>
+      Effect.sync(() => {
+        calls.push(command);
+        expect(context.cookie).toBe("commerce-portal.session=customer-session");
+        return { outcome: "SAVED" as const };
+      });
+    const web = yield* Effect.acquireRelease(
+      Effect.sync(() => makeCustomerProfileWeb({ changeAddress })),
+      (handler) => Effect.promise(() => handler.dispose()),
+    );
+    const send = (origin: string, body: typeof removeCommand & { profileId?: string }) =>
+      Effect.promise(() =>
+        web.handler(
+          new Request(request(), {
+            body: JSON.stringify(body),
+            headers: {
+              ...Object.fromEntries(request().headers),
+              "content-type": "application/json",
+              origin,
+            },
+            method: "POST",
+          }),
+        ),
+      );
+    const invalidSubject = yield* send("https://n1.example", {
+      ...removeCommand,
+      profileId: "foreign",
+    });
+    const invalidOrigin = yield* send("https://other.example", removeCommand);
+    expect(invalidSubject.status).toBe(400);
+    expect(invalidOrigin.status).toBe(403);
+    expect(calls).toEqual([]);
+    const accepted = yield* send("https://n1.example", removeCommand);
+    expect(accepted.status).toBe(200);
+    expect(accepted.headers.get("cache-control")).toBe("no-store");
+    expect(yield* Effect.promise(() => accepted.json())).toEqual({ outcome: "SAVED" });
+    expect(calls).toEqual([removeCommand]);
+  }).pipe(Effect.scoped),
 );

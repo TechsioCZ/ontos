@@ -1,7 +1,11 @@
 import { makeProblemDetailsSchema } from "@app/shared-contracts/problem-details";
 import { Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
-import { CustomerAddressesReadSchema } from "./customer-addresses";
+import {
+  CustomerAddressesReadSchema,
+  CustomerAddressCommandSchema,
+  CustomerAddressSavedSchema,
+} from "./customer-addresses";
 
 /** Native own-profile value only. It contains neither login identity nor Party/customer references. */
 export const CustomerProfileSchema = Schema.Struct({
@@ -102,6 +106,13 @@ export const CustomerProfileApi = HttpApi.make("N1CustomerProfile")
         HttpApiEndpoint.get("readAddresses", "/api/customer-addresses", {
           error: problems,
           success: CustomerAddressesReadSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post("changeAddress", "/api/customer-addresses", {
+          error: problems,
+          payload: CustomerAddressCommandSchema,
+          success: CustomerAddressSavedSchema,
         }),
       )
       .add(
