@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { TemplateResolutionFailed } from '../../shared/template-revision-errors.ts';
@@ -45,7 +45,7 @@ describe('Built-in template defaults on native PostgreSQL as the runtime role', 
         }),
       );
       expect(dayOne.pin.source).toBe('BUILT_IN_DEFAULT');
-      expect(dayOne.text._tag).toBe('Some');
+      expect(Option.isSome(dayOne.text)).toBe(true);
       // the Tenant's authorised user replaces the Czech text with an own revision
       const replacer = { ...actorWith(yield* nextId), principalId: yield* nextId };
       const replaced = yield* database.withPort(tenant, (port) =>
