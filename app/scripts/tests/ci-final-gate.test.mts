@@ -13,6 +13,13 @@ const WorkflowSchema = Schema.Struct({
         Schema.Struct({
           name: Schema.String,
           run: Schema.optional(Schema.String),
+          with: Schema.optional(
+            Schema.Struct({
+              filter: Schema.optional(Schema.String),
+              'sparse-checkout': Schema.optional(Schema.String),
+              'sparse-checkout-cone-mode': Schema.optional(Schema.Boolean),
+            }),
+          ),
         }),
       ),
     }),
@@ -32,6 +39,11 @@ it.effect('rejects failed or cancelled prerequisites before preparing the final 
     const checkout = gate.steps.findIndex(({ name }) => name === 'Checkout the gate verifier');
     expect(reject).toBeGreaterThanOrEqual(0);
     expect(reject).toBeLessThan(checkout);
+    expect(gate.steps[checkout]?.with).toEqual({
+      filter: 'blob:none',
+      'sparse-checkout': 'app/scripts/check-ci-gates.sh',
+      'sparse-checkout-cone-mode': false,
+    });
     const command = gate.steps[reject]?.run ?? 'exit 99';
     for (const result of ['success', 'skipped', 'failure', 'cancelled']) {
       const child = spawnSync('/bin/bash', ['-eo', 'pipefail', '-c', command], {
