@@ -591,8 +591,8 @@ it.live(
               compositionRevision: composition.composition.revision,
               idempotencyKey: yield* nextId,
             },
-          ).pipe(Effect.provideService(FetchHttpClient.Fetch, swapBody), Effect.exit);
-          expect(outcome._tag).toBe('Failure');
+          ).pipe(Effect.provideService(FetchHttpClient.Fetch, swapBody), Effect.result);
+          expect(Result.isFailure(outcome)).toBe(true);
           return recordedStatuses;
         },
       );
