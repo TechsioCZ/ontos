@@ -73,7 +73,9 @@ import {
  *  3. THE DELEGATION EXCHANGE: `GatewayDelegation.acquire` (the seam `makeModuleCallRoute` is built over) signs with the
  *     Shell's real issuer in process instead of calling the Shell's delegation route with a module API key. The
  *     delegation issuer's admission rules (62 unit tests) and the module credential are therefore not exercised here.
- *  4. AUTHENTICATION of the requester is the header-named actor of the E2E world, as in every `core-media-e2e-*` file.
+ *  4. The requirement's `condition` and `evidence` keys, and the consumer read's own descriptor, are this fixture's, not
+ *     Catalog's (the provider, entrypoint, schema version, callers and the declared call are Catalog's).
+ *  5. AUTHENTICATION of the requester is the header-named actor of the E2E world, as in every `core-media-e2e-*` file.
  */
 
 const platform = {

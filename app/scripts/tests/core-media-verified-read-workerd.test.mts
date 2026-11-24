@@ -54,7 +54,7 @@ const installStall = (stall, stallMs) => {
       const outer = new WritableStream({
         async write(chunk) {
           writes += 1;
-          if (where === 'write' && writes === Number(which)) {
+          if (where === 'write' && (which === 'all' || writes === Number(which))) {
             await wait();
           }
           await writer.write(chunk);
@@ -79,7 +79,8 @@ const outcomeOf = (exit) => {
     return { kind: 'value', value: exit.value };
   }
   if (exit.cause.reasons.some(Cause.isDieReason)) {
-    return { kind: 'defect' };
+    const die = exit.cause.reasons.find(Cause.isDieReason);
+    return { defect: String(die.defect), kind: 'defect' };
   }
   return { kind: 'failure', failure: Option.getOrUndefined(Cause.findErrorOption(exit.cause)) };
 };
@@ -212,7 +213,7 @@ const ProbeAnswerSchema = Schema.Struct({
   native: Schema.Boolean,
   outcome: Schema.Union([
     Schema.Struct({ kind: Schema.Literal('value'), value: Schema.Any }),
-    Schema.Struct({ kind: Schema.Literal('defect') }),
+    Schema.Struct({ defect: Schema.String, kind: Schema.Literal('defect') }),
     Schema.Struct({ failure: Schema.optionalKey(Schema.Any), kind: Schema.Literal('failure') }),
   ]),
   streamDelivered: Schema.Number,
@@ -253,6 +254,8 @@ const askWorker = (worker: Miniflare, probe: Probe) =>
   });
 
 const SMALL = 3 * 64 * 1024 + 7919;
+/** The defect `content-digest.ts` dies with when a platform digest step does not answer within the guard. */
+const DIGEST_GUARD_DEFECT = 'The platform digest did not answer';
 
 it.live(
   'verifies a multi-chunk object with the native DigestStream on workerd, and a same-length swap is integrity_failed',
@@ -315,7 +318,9 @@ it.live('an early clean end and an aborted stream are unavailable on workerd, ne
       failure: { read: { outcome: 'unavailable', reason: 'framing_inconsistent' } },
       kind: 'failure',
     });
-    expect(streamed.streamDelivered).toBeLessThan(SMALL);
+    // The store sent 65536 + 7919 bytes and ended cleanly: some of them were delivered, the held last chunk was not.
+    expect(streamed.streamDelivered).toBeGreaterThan(0);
+    expect(streamed.streamDelivered).toBeLessThan(65_536 + 7919);
   }).pipe(Effect.scoped),
 );
 
@@ -332,7 +337,7 @@ it.live(
         query: { ...slowStep, stepMs: '50' },
         recorded: original,
       });
-      expect(tripped.outcome).toEqual({ kind: 'defect' });
+      expect(tripped.outcome).toEqual({ defect: DIGEST_GUARD_DEFECT, kind: 'defect' });
       expect(tripped.elapsedMs).toBeLessThan(2000);
       // The same stall under the built-in guard is only a slow step: the object verifies.
       const patient = yield* askWorker(worker, { delivered: original, query: slowStep, recorded: original });
@@ -345,9 +350,14 @@ it.live(
         query: { stall: 'close', stallMs: '300', stepMs: '50' },
         recorded: original,
       });
-      expect(closing.outcome).toEqual({ kind: 'defect' });
-      // A guard shorter than the whole object but longer than each step passes: it bounds a step, not the object.
-      const perStep = yield* askWorker(worker, { delivered: original, query: { stepMs: '1000' }, recorded: original });
-      expect(perStep.outcome).toMatchObject({ kind: 'value', value: { outcome: 'verified' } });
+      expect(closing.outcome).toEqual({ defect: DIGEST_GUARD_DEFECT, kind: 'defect' });
+      // Every write is slow but each under the guard, and together they exceed it: the guard bounds a step, not the object.
+      const everyStep = yield* askWorker(worker, {
+        delivered: original,
+        query: { stall: 'write:all', stallMs: '60', stepMs: '150' },
+        recorded: original,
+      });
+      expect(everyStep.outcome).toMatchObject({ kind: 'value', value: { outcome: 'verified' } });
+      expect(everyStep.elapsedMs).toBeGreaterThan(150);
     }).pipe(Effect.scoped),
 );
