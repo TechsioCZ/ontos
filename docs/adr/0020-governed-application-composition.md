@@ -78,8 +78,8 @@ The publisher's `refresh` command re-observes only the exact approved revision a
 artifacts; renewal does not require restarting consumers to load process-start JSON. The scheduled
 workflow that ran it was removed in
 [TechsioCZ/ontos#1496](https://github.com/TechsioCZ/ontos/pull/1496), so automatic periodic renewal is
-not currently provided: `ACTIVE_APPLICATION_COMPOSITION_POLICY` still owns the validity window and the
-intended cadence, but renewal runs only when an operator invokes `refresh` or `publish`. Code/configuration
+not currently provided: `ACTIVE_APPLICATION_COMPOSITION_POLICY` owns the validity window, and renewal
+runs only when an operator invokes `refresh` or `publish`. Code/configuration
 changes may still require ordinary deployment. Publication readback does not promise immediate global KV
 propagation or add automatic fallback. The current operator commands, source configuration, refresh status
 and failure steps are owned by the [deployment playbook](../../app/docs/architecture/DEPLOYMENT.md#current-composition-transport). Binding revisions
