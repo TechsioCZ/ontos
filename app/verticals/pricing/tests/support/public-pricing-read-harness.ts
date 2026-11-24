@@ -3,6 +3,8 @@ import type { CurrentPricingDecisionEvaluationFactoryService } from '../../src/s
 import type { PricingOwnerMaterialEvidenceFenceGateway } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/quantity-preparation-client';
 import { currentPricingDecisionRead } from '../../src/api/current-pricing-decision.read.ts';
+import { sql } from 'drizzle-orm';
+import { makeCoreDatabase } from '@app/core-runtime/db/client';
 import { pricingRegistration } from '../../vertical.registration.ts';
 import { CurrentPricingDecisionSubjectAuthority } from '../../src/services/current-pricing-decision-subject-authority.service.ts';
 import {
@@ -83,6 +85,7 @@ import {
   shellGatewayContextContract,
 } from '@app/shared-contracts';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
+import { PricingZeroFloorAuthorizationSchema } from '@app/pricing-contracts/domain/line-composition';
 import { PricingDiscountIdentityKeySchema } from '@app/pricing-contracts/domain/discount';
 import type { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
@@ -107,7 +110,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import type { Cause, Scope } from 'effect';
+import type { Cause, Scope, Exit } from 'effect';
 import { ChildProcess } from 'effect/process';
 import type { ChildProcessSpawner } from 'effect/process';
 import {
@@ -121,6 +124,8 @@ import {
 import { assert, expect } from 'effect-rstest';
 import { commercialFeePersistenceForScope } from '../../src/services/commercial-fee-persistence.service.ts';
 import { contractualDiscountPersistenceForScope } from '../../src/services/contractual-discount-persistence.service.ts';
+import { zeroFloorSetHeads } from '../../src/database/schema.ts';
+import { zeroFloorAuthorizationPersistenceForScope } from '../../src/services/zero-floor-authorization-persistence.service.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
 import { declaredMarketOwnerFor } from './declared-market-timeline.ts';
 import type {
@@ -151,6 +156,10 @@ const isAssertionSubject = (subject: (typeof GatewayDelegatedContextRequestSchem
 const PRICING_MODULE = 'commerce.pricing' as const;
 const CATALOG_MODULE = 'commerce.catalog' as const;
 const HARNESS_MARKET = { channelId: 'B2C', marketId: 'component-test' } as const;
+/** How far before the host clock the harness's Currency support starts, to tolerate host/database clock skew. */
+const HARNESS_CLOCK_SKEW_SECONDS = 5;
+const HARNESS_CONTEXT_REF = 'TEST:harness:declared-purchase-context';
+const HARNESS_CONTEXT_REVISION = '1';
 const CUSTOMER_CONTEXT_AUDIENCE = 'commerce-customer-context' as const;
 const CUSTOMER_CONTEXT_MODULE = 'commerce.customer-context' as const;
 const PRICE_GROUP_CATALOG_AUDIENCE = 'price-group-catalog' as const;
@@ -365,7 +374,8 @@ const produceNativeComponents = (
       (handoff) =>
         Effect.gen(function* produceOnePriceAndTier() {
           const command = yield* makeNativePrice(scope, handoff, operationTime);
-          expect(yield* prices.define(command)).toMatchObject({ outcome: 'CREATED' });
+          const created = yield* prices.define(command);
+          assert(created.outcome === 'CREATED');
           const identityKey = yield* Schema.decodeUnknownEffect(QuantityTierIdentityKeySchema)({
             priceRef: command.priceRef,
             quantityBasis: {
@@ -387,7 +397,7 @@ const produceNativeComponents = (
               trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(operationTime)),
             }),
           ).toMatchObject({ outcome: 'QUANTITY_TIER_CREATED' });
-          return { handoff, priceRef: command.priceRef };
+          return { handoff, priceRef: command.priceRef, priceRevisionId: created.definition.revision.revisionId };
         }),
       { concurrency: 1 },
     );
@@ -791,6 +801,20 @@ export interface HarnessMarketFactObservation {
   readonly generation: number;
 }
 
+/** One ZERO_FLOOR Current-set read exactly as the Read retained it for its owner fence: the owner's own evidence. */
+export interface HarnessZeroFloorReadObservation {
+  readonly authorizationRefs: readonly string[];
+  /** The owner set generation the retained receipt commits to. */
+  readonly generation: number;
+  readonly materialRevisionRefs: readonly string[];
+  readonly observedAt: DateTime.Utc;
+  readonly occurrenceId: string;
+  /** The owner's predicate reference of the read (`pricing-zero-floor-current-set:v1:<fingerprint>`). */
+  readonly predicateRef: string;
+  /** The `exactPredicateRef` the production floor reader sent in its query. */
+  readonly queryPredicateRef: string;
+}
+
 /** One whole-attempt result, so a customer-safe non-success stays diagnosable. */
 export interface HarnessWholeAttemptObservation {
   /** The requested as-of instant of the owner fence request the attempt retained, when it retained one. */
@@ -802,6 +826,8 @@ export interface HarnessWholeAttemptObservation {
   readonly marketFacts: readonly HarnessMarketFactObservation[];
   readonly outcome: string;
   readonly reason?: string;
+  /** The ZERO_FLOOR owner reads the attempt retained for its final fence (only an APPLIED floor is retained). */
+  readonly zeroFloorReads: readonly HarnessZeroFloorReadObservation[];
 }
 
 const recordFence = (observed: HarnessFenceObservation[], entry: HarnessFenceObservation) =>
@@ -896,6 +922,44 @@ const marketFactObservationsOf = (materials: readonly unknown[]): readonly Harne
     }),
   );
 
+const emptyText = () => '';
+const OccurrenceIdSchema = Schema.String.pipe(Schema.brand('OccurrenceId'));
+const ZeroFloorAuthorityMaterialSchema = Schema.Struct({
+  kind: Schema.Literal('PRICING_ZERO_FLOOR_AUTHORITY'),
+  occurrenceId: OccurrenceIdSchema,
+  ownerReadReceipt: Schema.Struct({
+    authority: Schema.Struct({
+      generation: Schema.Int,
+      observedAt: Schema.DateTimeUtcFromString,
+      predicateRef: Schema.String,
+    }),
+    factProofs: Schema.Array(Schema.Struct({ factRef: Schema.String })),
+  }),
+  query: Schema.Struct({
+    exactPredicateRef: Schema.String,
+    materialRevisionRefs: Schema.Array(Schema.String),
+  }),
+});
+const decodeZeroFloorAuthorityMaterial = Schema.decodeUnknownOption(ZeroFloorAuthorityMaterialSchema);
+
+const zeroFloorReadObservationsOf = (materials: readonly unknown[]): readonly HarnessZeroFloorReadObservation[] =>
+  materials.flatMap((material) =>
+    Option.match(decodeZeroFloorAuthorityMaterial(material), {
+      onNone: () => [],
+      onSome: ({ occurrenceId, ownerReadReceipt, query }) => [
+        {
+          authorizationRefs: ownerReadReceipt.factProofs.map(({ factRef }) => factRef),
+          generation: ownerReadReceipt.authority.generation,
+          materialRevisionRefs: query.materialRevisionRefs,
+          observedAt: ownerReadReceipt.authority.observedAt,
+          occurrenceId,
+          predicateRef: ownerReadReceipt.authority.predicateRef,
+          queryPredicateRef: query.exactPredicateRef,
+        },
+      ],
+    }),
+  );
+
 const fenceObservationOf = (
   input: ObservedTypedSources,
   entry: Pick<HarnessFenceObservation, 'failure' | 'operation' | 'owner'>,
@@ -982,6 +1046,7 @@ const recordWholeAttempt = (
       kind: attempt.kind,
       marketFacts: marketFactObservationsOf(retainedMaterials),
       outcome: outcome.outcome,
+      zeroFloorReads: zeroFloorReadObservationsOf(retainedMaterials),
     };
     observed.push(attempt.reason === undefined ? entry : { ...entry, reason: attempt.reason });
   });
@@ -1170,6 +1235,100 @@ const reviseHarnessCommercialFee = Effect.fn('PublicPricingReadHarness.reviseCom
 );
 
 /**
+ * A governed ZERO_FLOOR approval and (by default) its redemption into a Current Authorization, through Pricing's own
+ * scoped persistence. The approval evidence reference is unique per Authorization and approval revision.
+ */
+const produceHarnessZeroFloorAuthorization = Effect.fn('PublicPricingReadHarness.produceZeroFloorAuthorization')(
+  function* produceHarnessZeroFloorAuthorization(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    input: Parameters<PublicPricingReadHarness['produceZeroFloorAuthorization']>[0] & {
+      readonly audienceRefs: readonly string[];
+      readonly operationTime: string;
+    },
+  ) {
+    const { legalEntityId } = scope;
+    if (legalEntityId === undefined) {
+      return yield* unavailable('harness-floor-requires-legal-entity-scope');
+    }
+    const persistence = yield* zeroFloorAuthorizationPersistenceForScope(transaction, scope);
+    const headGeneration = Effect.fn('PublicPricingReadHarness.floorHeadGeneration')(function* headGeneration() {
+      const [head] = yield* transaction
+        .select({ generation: zeroFloorSetHeads.generation })
+        .from(zeroFloorSetHeads)
+        .limit(1);
+      return head?.generation ?? 1;
+    });
+    const endsAt = '2099-01-01T00:00:00.000Z';
+    const authorizationRef = input.authorizationRef ?? 'TEST:1277:zero-floor-authorization';
+    const approvalRevision = input.approvalRevision ?? 'TEST:1277:zero-floor-approval:r1';
+    const floorAuthorization = yield* Schema.decodeUnknownEffect(PricingZeroFloorAuthorizationSchema)({
+      authorizationRef,
+      authorizationRevision: `${authorizationRef}:r1`,
+      businessScope: {
+        catalogSelection: input.handoff.selection,
+        commercialScope: { ...HARNESS_MARKET, sellingLegalEntityId: legalEntityId },
+        pricingBasis: { quantity: '1', unitRef: input.handoff.unitRef },
+        tenantId: scope.tenantId,
+      },
+      coveredMeaning: { audienceRefs: input.audienceRefs, materialRevisionRefs: input.materialRevisionRefs },
+      currencyCode: 'CZK' as const,
+      economicCoverage: {
+        maximumFloorAdjustment: input.maximumFloorAdjustment,
+        minimumRawAmount: input.minimumRawAmount,
+      },
+      effectivePeriod: { endsAt, startsAt: input.operationTime },
+      governanceEvidence: {
+        approvalEvidenceRef: `TEST:1277:approval-evidence:${authorizationRef}:${approvalRevision}`,
+        approvedByPrincipalRef: scope.principalId,
+        reason: 'Pricing public Read harness bounded ZERO_FLOOR approval',
+      },
+    });
+    const approved = yield* persistence.manage({
+      actingPrincipalId: scope.principalId,
+      actionInvocationId: yield* nextId,
+      approvalRevision,
+      authorization: floorAuthorization,
+      expectedSetGeneration: yield* headGeneration(),
+      intent: 'APPROVE' as const,
+      reason: 'Pricing public Read harness ZERO_FLOOR approval',
+      requestCorrelationId: 'TEST:1277:zero-floor-approve',
+      trustedOperationAt: input.operationTime,
+      validityPeriod: { endsAt, startsAt: input.operationTime },
+    });
+    if (approved.outcome !== 'ZERO_FLOOR_GOVERNANCE_APPROVAL_RECORDED') {
+      return yield* unavailable(
+        `harness-floor-approval:${approved.outcome}:${'reason' in approved ? approved.reason : ''}`,
+      );
+    }
+    if (input.redeem !== false) {
+      const proof = yield* persistence.readGovernanceProof({
+        authorization: floorAuthorization,
+        effectiveAt: input.operationTime,
+      });
+      if (proof.outcome !== 'ZERO_FLOOR_AUTHORIZATION_GOVERNANCE_PROOF_CURRENT') {
+        return yield* unavailable('harness-floor-governance-proof-not-current');
+      }
+      const created = yield* persistence.create({
+        actingPrincipalId: scope.principalId,
+        actionInvocationId: yield* nextId,
+        authorization: floorAuthorization,
+        expectedSetGeneration: yield* headGeneration(),
+        governanceProof: proof.governanceProof,
+        reason: 'Pricing public Read harness ZERO_FLOOR redemption',
+        requestCorrelationId: 'TEST:1277:zero-floor-create',
+        trustedOperationAt: input.operationTime,
+      });
+      expect(created.outcome).toBe('ZERO_FLOOR_AUTHORIZATION_CREATED');
+    }
+    return {
+      authorizationRef: floorAuthorization.authorizationRef,
+      authorizationRevision: floorAuthorization.authorizationRevision,
+    };
+  },
+);
+
+/**
  * Re-produces a Pricing Quantity Tier under a revised Catalog Unit rule through Pricing's own scoped persistence: the
  * Tier bound to the superseded rule is retired and an equivalent Tier is defined for the fresh Quantity Basis.
  * Pricing never rebinds a Tier on its own; selection fails closed while a Tier for another rule is still Current.
@@ -1280,8 +1439,12 @@ const defineHarnessContractualDiscount = Effect.fn('PublicPricingReadHarness.def
       requestCorrelationId: actionInvocationId,
       trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.effectiveFrom)),
     });
-    expect(result.outcome).toBe('CONTRACTUAL_DISCOUNT_CREATED');
-    return result;
+    assert(result.outcome === 'CONTRACTUAL_DISCOUNT_CREATED');
+    const { current } = result.schedule;
+    if (current === undefined) {
+      return yield* unavailable('harness-discount-not-current');
+    }
+    return { revisionId: current.definition.revision.revisionId };
   },
 );
 
@@ -1446,6 +1609,31 @@ interface HarnessProfileSubject {
 }
 type HarnessCatalogSelection = typeof CatalogSelectionSchema.Type;
 
+/** One ZERO_FLOOR proof receipt the registered Read COMMITTED, with the owner's own native fingerprint of its query. */
+export interface HarnessCommittedFloorReceipt {
+  readonly effectiveAt: DateTime.Utc;
+  readonly factCount: number;
+  readonly generation: number;
+  readonly materialRevisionRefs: readonly string[];
+  /** `pricing.zero_floor_predicate_ref_v1(query)` computed by PostgreSQL over the stored query. */
+  readonly nativePredicateRef: string;
+  readonly observedAt: DateTime.Utc;
+  /** The predicate reference the owner stored with the receipt. */
+  readonly predicateRef: string;
+  /** The `exactPredicateRef` the production floor reader sent. */
+  readonly queryPredicateRef: string;
+}
+
+/** Read-only snapshot of the COMMITTED state of this harness's Tenant (what a failed attempt must not leave behind). */
+export interface HarnessCommittedEvidence {
+  /** Core read-evidence rows (`core.data_access_events`), in order. */
+  readonly coreReadEvents: readonly { readonly outcome: string; readonly outcomeCode: string }[];
+  /** Number of committed Pricing proof receipts per family. */
+  readonly proofReceiptCounts: Readonly<Record<string, number>>;
+  readonly zeroFloorHeadGeneration: Option.Option<number>;
+  readonly zeroFloorReceipts: readonly HarnessCommittedFloorReceipt[];
+}
+
 /** What a scenario may rely on; every member is produced through a supported owner path or the registered Read. */
 export interface PublicPricingReadHarness {
   /**
@@ -1456,6 +1644,11 @@ export interface PublicPricingReadHarness {
   /** Catalog-signed owner credential, for direct Catalog owner reads. */
   readonly authorization: (issuedAt: DateTime.Utc) => HarnessEffect<string>;
   readonly clearAfterWholeAttempt: () => Effect.Effect<void>;
+  /**
+   * Read-only observation of the COMMITTED Pricing/Core state of this Tenant through an administrative connection
+   * that the Read itself never uses.
+   */
+  readonly committedEvidence: () => HarnessEffect<HarnessCommittedEvidence>;
   readonly composition: typeof ActiveApplicationCompositionSnapshotSchema.Type;
   readonly endpoint: { readonly baseUrl: URL; readonly compositionRevision: string };
   /** Every owner final-fence call of the registered Read, in order. */
@@ -1509,6 +1702,8 @@ export interface PublicPricingReadHarness {
   readonly priceComponents: readonly {
     readonly handoff: HarnessCatalogHandoff;
     readonly priceRef: typeof PriceRefSchema.Type;
+    /** The Price Revision the owner created for this Variant (a material revision of every line that uses it). */
+    readonly priceRevisionId: string;
   }[];
   /** Requests the declared Price Group Catalog stand-in answered. */
   readonly priceGroupCompatibilityRequests: readonly ValidatePriceGroupCompatibilityRequest[];
@@ -1533,7 +1728,23 @@ export interface PublicPricingReadHarness {
   readonly produceContractualDiscount: (input: {
     readonly amount: string;
     readonly handoff: HarnessCatalogHandoff;
-  }) => HarnessEffect<void>;
+  }) => HarnessEffect<{ readonly revisionId: string }>;
+  /**
+   * A governed ZERO_FLOOR approval (and, by default, its redemption into a Current Authorization) through Pricing's
+   * own scoped persistence, for exactly one Variant line. `redeem: false` records only a further approval revision,
+   * which advances the owner's set generation without changing any Authorization.
+   */
+  readonly produceZeroFloorAuthorization: (input: {
+    readonly approvalRevision?: string;
+    /** Identity of the Authorization; a second, differently covering Authorization needs its own. */
+    readonly authorizationRef?: string;
+    readonly handoff: HarnessCatalogHandoff;
+    readonly materialRevisionRefs: readonly string[];
+    readonly maximumFloorAdjustment: string;
+    readonly minimumRawAmount: string;
+    readonly redeem?: boolean;
+    readonly subject: 'GUEST' | 'PROFILE';
+  }) => HarnessEffect<{ readonly authorizationRef: string; readonly authorizationRevision: string }>;
   /** The harness Profile subject (RETAIL), assigned to `priceGroupRef` by the declared Customer Context. */
   readonly profileSubject: HarnessProfileSubject;
   /**
@@ -1559,6 +1770,13 @@ export interface PublicPricingReadHarness {
   readonly runRegisteredRead: (
     request: typeof CurrentPricingDecisionRequestSchema.Type,
   ) => HarnessEffect<typeof CurrentPricingDecisionResponseSchema.Type>;
+  /**
+   * One call through the registered production Read, observed as an Exit so a Read that FAILS (or dies) is reported
+   * instead of aborting the scenario; nothing below the Read boundary is substituted.
+   */
+  readonly runRegisteredReadExit: (
+    request: typeof CurrentPricingDecisionRequestSchema.Type,
+  ) => Effect.Effect<Exit.Exit<typeof CurrentPricingDecisionResponseSchema.Type, unknown>, never, Crypto.Crypto>;
   readonly selections: {
     readonly p1: HarnessCatalogSelection;
     readonly p2: HarnessCatalogSelection;
@@ -1566,12 +1784,23 @@ export interface PublicPricingReadHarness {
   };
   /** Paths the fixture Shell refused (an owner call it could not route). */
   readonly shellRefusals: readonly string[];
+  /**
+   * TEST-ONLY SQL fault injection (never production behaviour): a trigger, created through an administrative
+   * connection in this harness's isolated database only, that raises inside the native ZERO_FLOOR Current-set routine
+   * whenever it writes this Tenant's proof receipt. `clear` removes it again; `installed` observes it in the catalog.
+   */
+  readonly sqlFault: {
+    readonly clear: () => HarnessEffect<void>;
+    readonly failZeroFloorProofReceiptWrite: () => HarnessEffect<void>;
+    readonly installed: () => HarnessEffect<boolean>;
+  };
   readonly tenantId: string;
   /** Each whole-attempt result of the registered Read, so a customer-safe non-success stays diagnosable. */
   readonly wholeAttempts: readonly HarnessWholeAttemptObservation[];
 }
 
 const hasMessage = Schema.is(Schema.Struct({ message: Schema.String }));
+const hasReason = Schema.is(Schema.Struct({ reason: Schema.String }));
 
 /** Narrows every owner/runtime failure to this harness's one nameable, tagged failure. */
 const confine = <Success, Failure extends { readonly _tag: string }, Requirements>(
@@ -1861,6 +2090,12 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     // These are actual Catalog-issued handoffs. No receipt, validity time or owner
     // generation below is manufactured by the Pricing fixture.
     const operationTime = DateTime.formatIso(yield* DateTime.now);
+    // The owner stamps its observation with the DATABASE clock and answers CONFLICT for a Currency support that takes
+    // effect after it. The host and database container clocks can differ by milliseconds (minutes after a VM sleep),
+    // so the Currency support starts safely in the past; it still covers every instant at or after `operationTime`.
+    const currencyEffectiveFrom = DateTime.formatIso(
+      DateTime.subtract(DateTime.makeUnsafe(operationTime), { seconds: HARNESS_CLOCK_SKEW_SECONDS }),
+    );
     yield* fixture.prepareOwner(
       Effect.fn('WholeCandidate.establishCurrency')(function* establishCurrency(transaction, scope) {
         const currency = yield* currencySupportPersistenceForScope(
@@ -1870,7 +2105,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         );
         const payload = yield* Schema.decodeUnknownEffect(SetSupportedCurrenciesV2PayloadSchema)({
           expectedState: { state: 'ABSENT' },
-          intendedEffectivePeriod: { effectiveFrom: operationTime, effectiveTo: null },
+          intendedEffectivePeriod: { effectiveFrom: currencyEffectiveFrom, effectiveTo: null },
           intent: 'ESTABLISH_CURRENT',
           reason: 'Pricing native component setup',
           schemaVersion: '2',
@@ -1882,7 +2117,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
             actingPrincipalId: scope.principalId,
             actionInvocationId: yield* nextId,
             tenantId: scope.tenantId,
-            trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(operationTime)),
+            trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(currencyEffectiveFrom)),
           }),
         ).toMatchObject({ outcome: 'CREATED' });
       }),
@@ -2129,17 +2364,166 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       readonly amount: string;
       readonly handoff: typeof CatalogQuantityHandoffReadySchema.Type;
     }) =>
-      fixture
-        .prepareOwner(
-          (transaction, scope) =>
-            defineHarnessContractualDiscount(transaction, scope, {
-              ...input,
-              effectiveFrom: operationTime,
-              priceGroupRef,
-            }),
-          'required',
+      fixture.prepareOwner(
+        (transaction, scope) =>
+          defineHarnessContractualDiscount(transaction, scope, {
+            ...input,
+            effectiveFrom: operationTime,
+            priceGroupRef,
+          }),
+        'required',
+      );
+
+    type AdminExecutor = Effect.Success<ReturnType<typeof makeCoreDatabase>>['executor'];
+    // ---- Test-only observation and fault injection through an administrative connection (#1277) ----
+    // The Read never uses this connection: it only observes COMMITTED state and installs/removes one labelled trigger.
+    // A short-lived pool per call: nothing is opened at harness start and nothing stays open.
+    const withAdmin = <Success, Failure, Requirements>(
+      use: (executor: AdminExecutor) => Effect.Effect<Success, Failure, Requirements>,
+    ) =>
+      Effect.scoped(makeCoreDatabase(isolated.connections.admin).pipe(Effect.flatMap(({ executor }) => use(executor))));
+    const FLOOR_FAULT_NAME = 'test_1277_fail_zero_floor_proof_receipt_write';
+    const CommittedReceiptRowsSchema = Schema.Array(
+      Schema.Struct({
+        effective_at: Schema.DateTimeUtcFromString,
+        fact_count: Schema.Number,
+        family: Schema.String,
+        generation: Schema.Number,
+        native_predicate_ref: Schema.OptionFromNullOr(Schema.String),
+        observed_at: Schema.DateTimeUtcFromString,
+        predicate_ref: Schema.String,
+        query: Schema.fromJsonString(
+          Schema.Struct({
+            exactPredicateRef: Schema.optionalKey(Schema.String),
+            materialRevisionRefs: Schema.optionalKey(Schema.Array(Schema.String)),
+          }),
+        ),
+      }),
+    );
+    const CommittedEventRowsSchema = Schema.Array(
+      Schema.Struct({ outcome: Schema.String, outcome_code: Schema.String }),
+    );
+    const CommittedHeadRowsSchema = Schema.Array(Schema.Struct({ generation: Schema.Number }));
+    const committedEvidenceWith = Effect.fn('PublicPricingReadHarness.committedEvidence')(function* committedEvidence(
+      executor: AdminExecutor,
+    ) {
+      const receiptRows = yield* executor
+        .execute(
+          sql`select family, predicate_ref, generation,
+            to_char(observed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as observed_at,
+            to_char(effective_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as effective_at,
+            jsonb_array_length(current_facts) as fact_count, query::text as query,
+            case when family = 'ZERO_FLOOR' then pricing.zero_floor_predicate_ref_v1(query) end as native_predicate_ref
+            from pricing.material_evidence_proof_receipts
+            where tenant_id = ${fixture.tenantId}::uuid
+            order by recorded_at, material_evidence_proof_receipt_id`,
+          'objects',
         )
-        .pipe(Effect.asVoid);
+        .pipe(Effect.flatMap(Schema.decodeUnknownEffect(CommittedReceiptRowsSchema)));
+      const eventRows = yield* executor
+        .execute(
+          sql`select outcome, outcome_code from core.data_access_events
+            where tenant_id = ${fixture.tenantId}::uuid order by occurred_at, data_access_event_id`,
+          'objects',
+        )
+        .pipe(Effect.flatMap(Schema.decodeUnknownEffect(CommittedEventRowsSchema)));
+      const headRows = yield* executor
+        .execute(
+          sql`select generation from pricing.zero_floor_set_heads where tenant_id = ${fixture.tenantId}::uuid`,
+          'objects',
+        )
+        .pipe(Effect.flatMap(Schema.decodeUnknownEffect(CommittedHeadRowsSchema)));
+      const proofReceiptCounts: Record<string, number> = {};
+      for (const { family } of receiptRows) {
+        proofReceiptCounts[family] = (proofReceiptCounts[family] ?? 0) + 1;
+      }
+      return {
+        coreReadEvents: eventRows.map(({ outcome, outcome_code }) => ({ outcome, outcomeCode: outcome_code })),
+        proofReceiptCounts,
+        zeroFloorHeadGeneration: Option.fromNullishOr(headRows[0]?.generation),
+        zeroFloorReceipts: receiptRows
+          .filter(({ family }) => family === 'ZERO_FLOOR')
+          .map((row) => ({
+            effectiveAt: row.effective_at,
+            factCount: row.fact_count,
+            generation: row.generation,
+            materialRevisionRefs: row.query.materialRevisionRefs ?? [],
+            nativePredicateRef: Option.getOrElse(row.native_predicate_ref, emptyText),
+            observedAt: row.observed_at,
+            predicateRef: row.predicate_ref,
+            queryPredicateRef: row.query.exactPredicateRef ?? '',
+          })),
+      } satisfies HarnessCommittedEvidence;
+    }, Effect.orDie);
+    const committedEvidence = () => withAdmin(committedEvidenceWith);
+
+    const clearSqlFaultWith = Effect.fn('PublicPricingReadHarness.clearSqlFault')(function* clearSqlFault(
+      executor: AdminExecutor,
+    ) {
+      yield* executor.execute(
+        sql.raw(`drop trigger if exists ${FLOOR_FAULT_NAME} on pricing.material_evidence_proof_receipts`),
+        'objects',
+      );
+      yield* executor.execute(sql.raw(`drop function if exists pricing.${FLOOR_FAULT_NAME}()`), 'objects');
+    }, Effect.orDie);
+    const clearSqlFault = () => withAdmin(clearSqlFaultWith).pipe(Effect.orDie);
+    yield* Effect.addFinalizer(() => clearSqlFault());
+    const installSqlFaultWith = Effect.fn('PublicPricingReadHarness.installSqlFault')(function* installSqlFault(
+      executor: AdminExecutor,
+    ) {
+      // The tenant id is this harness's own generated UUID, never external input.
+      const tenantLiteral = yield* Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(fixture.tenantId);
+      yield* executor
+        .execute(
+          sql.raw(`create or replace function pricing.${FLOOR_FAULT_NAME}() returns trigger language plpgsql as $f$
+            begin
+              raise exception 'TEST-ONLY #1277 injected ZERO_FLOOR proof receipt write failure' using errcode = 'XX000';
+            end $f$`),
+          'objects',
+        )
+        .pipe(Effect.orDie);
+      yield* executor
+        .execute(
+          sql.raw(`create or replace trigger ${FLOOR_FAULT_NAME} before insert on pricing.material_evidence_proof_receipts
+            for each row when (new.family = 'ZERO_FLOOR' and new.tenant_id = '${tenantLiteral}'::uuid)
+            execute function pricing.${FLOOR_FAULT_NAME}()`),
+          'objects',
+        )
+        .pipe(Effect.orDie);
+    });
+    const installSqlFault = () => withAdmin(installSqlFaultWith);
+    const sqlFaultInstalledWith = Effect.fn('PublicPricingReadHarness.sqlFaultInstalled')(function* sqlFaultInstalled(
+      executor: AdminExecutor,
+    ) {
+      const rows = yield* executor
+        .execute(
+          sql`select count(*)::int as installed from pg_trigger where tgname = ${FLOOR_FAULT_NAME} and not tgisinternal`,
+          'objects',
+        )
+        .pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ installed: Schema.Number })))),
+          Effect.orDie,
+        );
+      return (rows[0]?.installed ?? 0) > 0;
+    });
+    const sqlFaultInstalled = () => withAdmin(sqlFaultInstalledWith);
+
+    /** Records a governed ZERO_FLOOR approval and (default) redeems it, through Pricing's own scoped persistence. */
+    const produceZeroFloorAuthorization = (
+      input: Parameters<PublicPricingReadHarness['produceZeroFloorAuthorization']>[0],
+    ) =>
+      fixture.prepareOwner(
+        (transaction, scope) =>
+          produceHarnessZeroFloorAuthorization(transaction, scope, {
+            ...input,
+            audienceRefs:
+              input.subject === 'PROFILE'
+                ? [HARNESS_CONTEXT_REF, HARNESS_CONTEXT_REVISION, priceGroupRef.resourceId]
+                : [HARNESS_CONTEXT_REF, HARNESS_CONTEXT_REVISION],
+            operationTime,
+          }),
+        'required',
+      );
 
     /** Retires the Tier bound to the superseded Unit rule and defines its equivalent for the fresh Quantity Basis. */
     const reproduceTier = Effect.fn('PublicPricingReadHarness.reproduceTierForRevisedRule')(
@@ -2234,8 +2618,8 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
             accessDecision: { decisionRef: 'TEST:harness:access', decisionRevision: '1' },
             actor: profile ? { kind: 'PRINCIPAL', principalId: fixture.manager.principalId } : guestSubject,
             commercialSettingsDecision: { decisionRef: 'TEST:harness:commercial-settings', decisionRevision: '1' },
-            contextRef: 'TEST:harness:declared-purchase-context',
-            contextRevision: '1',
+            contextRef: HARNESS_CONTEXT_REF,
+            contextRevision: HARNESS_CONTEXT_REVISION,
             currencyResolution: {
               currencyCode: 'CZK',
               resolutionRef: 'TEST:harness:currency',
@@ -2305,6 +2689,9 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         );
     });
 
+    const runRegisteredReadExit = (request: typeof CurrentPricingDecisionRequestSchema.Type) =>
+      Effect.exit(runRegisteredRead(request));
+
     return {
       afterWholeAttempt: (hook: Parameters<PublicPricingReadHarness['afterWholeAttempt']>[0]) =>
         Effect.sync(() => {
@@ -2315,6 +2702,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         Effect.sync(() => {
           attemptHooks.afterWholeAttempt = null;
         }),
+      committedEvidence: () => confine('committed-evidence', committedEvidence()),
       composition,
       endpoint,
       fenceCalls,
@@ -2348,6 +2736,8 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
         confine('produce-commercial-fee', produceCommercialFee(input)),
       produceContractualDiscount: (input: Parameters<typeof produceContractualDiscount>[0]) =>
         confine('produce-contractual-discount', produceContractualDiscount(input)),
+      produceZeroFloorAuthorization: (input: Parameters<typeof produceZeroFloorAuthorization>[0]) =>
+        confine('produce-zero-floor-authorization', produceZeroFloorAuthorization(input)),
       profileSubject,
       reproduceTier: (input: Parameters<typeof reproduceTier>[0]) =>
         confine('reproduce-tier', reproduceTier(input).pipe(Effect.asVoid)),
@@ -2356,12 +2746,23 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
       reviseFirstUnitRule: () => confine('revise-first-unit-rule', reviseFirstUnitRule()),
       runRegisteredRead: (request: Parameters<typeof runRegisteredRead>[0]) =>
         confine('registered-read', runRegisteredRead(request)),
+      runRegisteredReadExit,
       selections: { p1, p2, q1 },
       shellRefusals,
+      sqlFault: {
+        clear: () => confine('clear-sql-fault', clearSqlFault()),
+        failZeroFloorProofReceiptWrite: () => confine('install-sql-fault', installSqlFault()),
+        installed: () => confine('sql-fault-installed', sqlFaultInstalled()),
+      },
       tenantId: fixture.tenantId,
       wholeAttempts,
     } as const;
-  }).pipe(Effect.mapError((cause) => unavailable(`harness-start:${cause._tag}`)));
+  }).pipe(
+    Effect.mapError((cause) => {
+      const detail = hasReason(cause) ? `:${cause.reason.slice(0, 600)}` : '';
+      return unavailable(`harness-start:${cause._tag}${detail}`);
+    }),
+  );
 
 export const startPublicPricingReadHarness: (
   options: PublicPricingReadHarnessOptions,
