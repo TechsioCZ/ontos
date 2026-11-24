@@ -718,6 +718,35 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media acceptance
       }).pipe(Effect.scoped),
   );
 
+  // L1433-BDD-08: the one content-independent prohibition Core Media enforces, a name that could pass for another file
+  suite.effect('refuses an unsafe display name at the reservation: no row, no provider call, nothing reserved', () =>
+    Effect.gen(function* unsafeName() {
+      const harness = yield* openHarness();
+      const world = yield* makeWorld(harness.admin, harness.database.executor);
+      const names = [
+        'invoice\u202Efdp.exe',
+        '../../etc/passwd',
+        String.raw`folder\file.pdf`,
+        'null\u0000byte.pdf',
+        '   ',
+      ];
+      for (const [index, displayFilename] of names.entries()) {
+        const exit = yield* Effect.exit(
+          reserveAsset(harness, world, world.human, bytesOf('named unsafely'), {
+            key: `unsafe-${index}`,
+            overrides: { displayFilename },
+          }),
+        );
+        expect(Exit.isFailure(exit), displayFilename).toBe(true);
+      }
+      expect(yield* harness.countOf('core.media_assets', world.tenantId)).toBe(0);
+      expect(yield* harness.storage.calls).toEqual([]);
+      // The control: the same reservation with a plain name is accepted.
+      const accepted = yield* reserveAsset(harness, world, world.human, bytesOf('named unsafely'), { key: 'safe' });
+      expect(accepted.processingStatus).toBe('uploaded');
+    }).pipe(Effect.scoped),
+  );
+
   // L1433-D13, L1443-D20 (the code side): Core imposes no product size ceiling on a reservation
   suite.effect('reserves a very large declared size without a product cap and holds no byte for it', () =>
     Effect.gen(function* noCap() {
