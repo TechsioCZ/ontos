@@ -154,6 +154,38 @@ Account Subject under approved recovery evidence. It does not silently reactivat
 Binding, Retail Portal Profile Binding or Permission Grant, Counterparty Permission, or Guest Order
 visibility.
 
+## Storefront routing and public presentation
+
+**Storefront Host Binding** — Authorized association of one public hostname with exactly one
+Storefront Application and its Tenant in the applicable serving scope. The association identifies
+presentation scope, not Commerce Market, Selling Legal Entity, Price or a visitor's Permission.
+
+**Storefront Route Target** — Explicit typed subject of a Storefront page: a Product, Product
+Category or Content with its exact page use; its identity persists when Current public use is
+unavailable. A Variant can be an exact choice within a Product page; a homepage is the Storefront
+presentation root, not a new Catalog or Content Resource.
+_Avoid_: slug as Resource identity, unqualified Category, implicit Content use.
+
+**Canonical Storefront URL** — The preferred public address of an exact Storefront Route Target
+in one Storefront Application and actual language; a Product has at most one indexable canonical
+address in that scope. It neither grants public visibility nor changes with a visitor's purchasing
+context, Product Category ordering or Variant choice.
+_Avoid_: first Product Category URL, Variant canonical, Storefront URL as Catalog Selection.
+
+**Storefront URL Alias** — A historical public address reserved for its original target and
+Storefront scope after an authorized URL change. It preserves address continuity without transferring
+Resource identity or granting permission to disclose the destination.
+_Avoid_: Resource Alias used for a URL change, reusable slug, automatic alias expiry.
+
+**Storefront URL Retirement** — Authorized permanent end of public use of an address without an
+approved usable replacement. It preserves the historical address reservation and is distinct from
+Content Withdrawal, missing translation, denied visibility or an owner outage.
+
+**Storefront URL Resolution** — Current result establishing whether an exact Storefront Route Target
+has a safely usable address for the requested Storefront, actual language and disclosure context.
+Each Content language representation requires its own explicit Content Variant Selection for the
+same page use, without automatic substitution by language or scope.
+
 ## Customers, profiles, and channels
 
 **B2C Channel** — Retail Channel in which a visitor may browse and purchase as a Guest or an
