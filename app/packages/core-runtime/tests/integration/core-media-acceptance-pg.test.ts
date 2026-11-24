@@ -55,7 +55,7 @@ import { makeTestPgClient } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 /*
- * Lane 16 acceptance proofs of the D20 finishing work on real PostgreSQL, through the real Action and Read runtimes.
+ * Acceptance proofs for Core Media (#1428) on real PostgreSQL, through the real Action and Read runtimes.
  * Fixtures first: a tenant with a company and two principals, the real Action and Read runtimes on real PostgreSQL, the in-memory
  * ObjectStorage double (never storage proof) and a whole upload through the real reserve, byte hop and confirm.
  * Human callers pass a scripted allow; the machine caller passes the real access seam over the real principal-kind
@@ -475,7 +475,7 @@ const insertLink = (world: World, mediaAssetId: string, targetResourceId: string
   );
 
 /*
- * Lane 16 acceptance proofs on real PostgreSQL through the real Action and Read runtimes (the in-memory provider
+ * Acceptance proofs on real PostgreSQL through the real Action and Read runtimes (the in-memory provider
  * double stands in for storage and is never storage proof). Each test names the matrix rows it lifts. What they
  * prove is Core's own behavior: the recorded type is a claim and never a check, a system file needs no original
  * name, and neither an upload, a rename, nor the removal of a business reference touches another asset, another
@@ -682,7 +682,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media acceptance
       Effect.gen(function* unsealable() {
         const harness = yield* openHarness();
         const world = yield* makeWorld(harness.admin, harness.database.executor);
-        const run = Effect.fn('CoreMediaAcceptanceTest.confirm')(function* run(status: 'failed' | 'scanning') {
+        const run = Effect.fn('CoreMediaAcceptanceTest.confirm')(function* run(
+          status: 'failed' | 'scanning' | 'uploaded',
+        ) {
           const mediaAssetId = yield* seedAsset(world, { status });
           const before = yield* harness.rowOf(world.tenantId, mediaAssetId);
           // Evidence that fully agrees with the row: size, digest and object are exactly what the row claims.
@@ -704,13 +706,21 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media acceptance
               })
               .pipe(Effect.provideService(StoredMediaObjectVerification, evidence)),
           );
-          expect(Exit.isFailure(exit)).toBe(true);
           const after = yield* harness.rowOf(world.tenantId, mediaAssetId);
+          if (status === 'uploaded') {
+            // The positive control: the very same evidence and seed shape do seal a row that is still `uploaded`.
+            expect(Exit.isSuccess(exit)).toBe(true);
+            expect(after).toMatchObject({ processing_status: 'ready' });
+            expect(after?.sealed_at).not.toBeNull();
+            return 'sealed';
+          }
+          expect(Exit.isFailure(exit)).toBe(true);
           expect(after).toEqual(before);
           expect(after?.processing_status).toBe(status);
           expect(after?.sealed_at).toBeNull();
           return failureTagOf(exit);
         });
+        expect(yield* run('uploaded')).toBe('sealed');
         // A check still running is not a failure and not success: the answer is a retryable unavailability.
         expect(yield* run('scanning')).toBe('MediaUnavailable');
         // A closed asset stays an integrity failure and is never reopened.
@@ -766,7 +776,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media acceptance
 });
 
 /*
- * Lane 16 acceptance proofs for the Current V1 owner read on real PostgreSQL through the real Read runtime. The
+ * Acceptance proofs for the Current V1 owner read on real PostgreSQL through the real Read runtime. The
  * provider is the in-memory double (never storage proof) and, where a test needs a provider fault, a labelled
  * fault around it. What they prove is Core's own judgement: which rows may ever be AVAILABLE, that one ref's
  * outage is its own answer and never another's, and that the provider's technical pin is never a revision.
