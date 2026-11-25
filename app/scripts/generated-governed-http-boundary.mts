@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import { Option, Schema } from 'effect';
-import { parseSync, Visitor } from 'oxc-parser';
+import { parseSync } from 'oxc-parser';
 import type {
   Argument,
   CallExpression,
@@ -40,6 +40,7 @@ import {
   bindingOrigins,
   calleeMember,
   exportOrigins,
+  forEachNode,
   importTypeOrigins,
   isInType,
   isWithin,
@@ -3743,19 +3744,15 @@ const runReadImportViolations = (program: Program): readonly string[] => {
     }
   };
   let requiresModuleOperation = false;
-  new Visitor({
-    ExportAllDeclaration: (declaration) => checkSource(declaration.source),
-    ExportNamedDeclaration: (declaration) => {
-      if (declaration.source !== null) {
-        checkSource(declaration.source);
-      }
-    },
-    Identifier: (identifier) => {
-      requiresModuleOperation ||= identifier.name === 'requireModuleOperation';
-    },
-    ImportDeclaration: (declaration) => checkSource(declaration.source),
-    ImportExpression: (expression) => checkSource(expression.source),
-  }).visit(program);
+  forEachNode(program, (node) => {
+    if (node.type === 'ExportAllDeclaration' || node.type === 'ImportDeclaration' || node.type === 'ImportExpression') {
+      checkSource(node.source);
+    } else if (node.type === 'ExportNamedDeclaration' && node.source !== null) {
+      checkSource(node.source);
+    } else if (node.type === 'Identifier') {
+      requiresModuleOperation ||= node.name === 'requireModuleOperation';
+    }
+  });
   if (requiresModuleOperation) {
     violations.push('a { run } read declares its calls instead of using requireModuleOperation');
   }
