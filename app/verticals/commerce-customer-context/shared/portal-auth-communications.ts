@@ -59,6 +59,10 @@ export const PORTAL_AUTH_ISSUANCE_STATE = {
   revoked: 'commerce.customer-context.portal-auth.issuance-revoked',
   superseded: 'commerce.customer-context.portal-auth.issuance-superseded',
 } as const;
+/** An issuance is stated once and never revised, so its occurrence revision is always this one. */
+export const PORTAL_AUTH_ISSUANCE_REVISION = 1;
+
+export type PortalAuthIssuanceState = (typeof PORTAL_AUTH_ISSUANCE_STATE)[keyof typeof PORTAL_AUTH_ISSUANCE_STATE];
 
 /**
  * Opaque identity of ONE Auth issuance (one verification link, one reset link or one one-time code). It is neither the

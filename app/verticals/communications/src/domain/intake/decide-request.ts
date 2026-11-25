@@ -16,11 +16,16 @@ import type {
   RecipientFact,
   SourceOccurrenceFacts,
 } from '../catalog/decision-request.ts';
-import { resendPolicyOf } from '../catalog/message-type.ts';
+import { ownerPermittedLanguagesOf, resendPolicyOf } from '../catalog/message-type.ts';
 import type { TransactionalMessageType } from '../catalog/message-type.ts';
 import { resourceRefKey, SourceStateKeySchema } from '../catalog/vocabulary.ts';
-import type { CommunicationResourceRef, ResendRefusal } from '../catalog/vocabulary.ts';
-import type { LanguagePolicySnapshot } from '../language/vocabulary.ts';
+import type {
+  CommunicationResourceRef,
+  IntentStopReason,
+  ResendRefusal,
+  SourceUnresolvedReason,
+} from '../catalog/vocabulary.ts';
+import type { LanguagePolicySnapshot, NotSentReason } from '../language/vocabulary.ts';
 import { assessPrivacyEligibility, PrivacyAssessment, privacyEvidenceOf } from '../privacy/assess-privacy.ts';
 import type { PrivacyAssessmentCase } from '../privacy/assess-privacy.ts';
 import type { ProcessingScope } from '../privacy/processing-scope.ts';
@@ -41,6 +46,7 @@ import { RecipientLanguageAuthority } from './recipient-language.ts';
 import { safeCauseOf } from './safe-cause.ts';
 import { ProcessingScopeDeclaration } from './scope-declaration.ts';
 import { SourceOccurrenceAuthority } from './source-authority.ts';
+import type { SourceOccurrenceUnavailable } from './source-authority-errors.ts';
 
 /**
  * Decision orchestration (#1401): ONE committed source request in, a complete durable `DecisionPlan` out, composed only
@@ -110,21 +116,40 @@ const resendRefusalFor = Effect.fn('Communications.admitResend')(function* admit
   return resendRefusalOf(type.value, request.source.moduleKey, scopeKey(request.scope), original);
 });
 
+/** The closed reason a source owner that stated nothing stands for; the request is decided as that, never left undecided. */
+const SOURCE_UNRESOLVED_REASON = {
+  OCCURRENCE_UNKNOWN: 'SOURCE_OCCURRENCE_UNKNOWN',
+  OWNER_UNAVAILABLE: 'SOURCE_AUTHORITY_UNAVAILABLE',
+} as const satisfies Record<SourceOccurrenceUnavailable['reason'], SourceUnresolvedReason>;
+
+interface SourceReading {
+  readonly source: SourceOccurrenceFacts;
+  /** Why the owner stated nothing (#1401 I-07); the facts then only echo the request and are never stored. */
+  readonly unresolved: Option.Option<SourceUnresolvedReason>;
+}
+
+/**
+ * The source owner's Current facts. An owner that cannot state them (an outage, a timeout, or no answer about the occurrence) is
+ * not a retryable failure with nothing stored: no source authority means no legal Message Intent, so the request is decided as a
+ * durable not-sent outcome with its closed reason (#1401 I-07, #1400 LC-05).
+ */
 const factsFor = Effect.fn('Communications.readSourceFacts')(function* readFacts(
   request: CommunicationDecisionRequest,
   type: Option.Option<TransactionalMessageType>,
 ) {
   if (Option.isNone(ownedType(type, request))) {
-    return echoFactsOf(request);
+    return { source: echoFactsOf(request), unresolved: Option.none() } satisfies SourceReading;
   }
   const authority = yield* SourceOccurrenceAuthority;
-  return yield* authority
-    .read(request)
-    .pipe(
-      Effect.mapError((failure) =>
-        unavailable(`The source owner could not state the current occurrence (${failure.reason})`, failure),
-      ),
-    );
+  return yield* authority.read(request).pipe(
+    Effect.map((source): SourceReading => ({ source, unresolved: Option.none() })),
+    Effect.catchTag('SourceOccurrenceUnavailable', ({ reason }) =>
+      Effect.succeed<SourceReading>({
+        source: echoFactsOf(request),
+        unresolved: Option.some(SOURCE_UNRESOLVED_REASON[reason]),
+      }),
+    ),
+  );
 });
 
 interface AskedRecipient {
@@ -170,6 +195,43 @@ const askPrivacy = Effect.fn('Communications.assessPrivacyForRecipient')(functio
   return { evaluated, privacy, scope } satisfies AskedRecipient;
 });
 
+/** The ambiguity the decision itself would find: an EXACTLY_ONE slot that has more than one distinct recipient of its role. */
+const ambiguousRoles = (type: TransactionalMessageType, evaluated: readonly EvaluatedRecipient[]) => {
+  const ambiguous = new Set<string>();
+  const { result } = type;
+  if (result.kind !== 'MESSAGE_INTENTS') {
+    return ambiguous;
+  }
+  const recipientsByRole = new Map<string, Set<string>>();
+  for (const { assessment } of evaluated) {
+    const { recipientRef, role } = assessment.subject.binding;
+    const recipients = recipientsByRole.get(role) ?? new Set<string>();
+    recipientsByRole.set(role, recipients.add(resourceRefKey(recipientRef)));
+  }
+  for (const [role, recipients] of recipientsByRole) {
+    const slots = result.slots.filter((slot) => slot.recipientRole === role);
+    if (recipients.size > 1 && slots.length > 0 && slots.every((slot) => slot.cardinality === 'EXACTLY_ONE')) {
+      ambiguous.add(role);
+    }
+  }
+  return ambiguous;
+};
+
+/**
+ * A recipient of an ambiguous slot is discarded by the decision whatever Privacy or its owner would say, so neither is asked
+ * (#1401, T4-02). Its stop is the unresolved context it truly is, and the slot is reported as `RECIPIENT_AMBIGUOUS`.
+ */
+const discardedByAmbiguousSlot = Effect.fn('Communications.discardAmbiguousRecipient')(function* discard(
+  evaluated: EvaluatedRecipient,
+) {
+  const assessedAt = yield* DateTime.now;
+  return {
+    evaluated,
+    privacy: PrivacyAssessment.Unavailable({ assessedAt, reason: 'CONTEXT_AMBIGUOUS', scopeKey: '' }),
+    scope: Option.none<ProcessingScope>(),
+  } satisfies AskedRecipient;
+});
+
 const recipientKey = (slotKey: string, ref: CommunicationResourceRef) => `${slotKey}|${resourceRefKey(ref)}`;
 
 const endpointPinOf = (evaluated: EvaluatedRecipient | undefined): Option.Option<EndpointPin> => {
@@ -186,6 +248,15 @@ const templateScopeOf = ({ scope }: CommunicationRequest): TemplateScope =>
   scope.legalEntityId === undefined
     ? { kind: 'tenant' }
     : { kind: 'legal-entity', legalEntityId: TemplateLegalEntityIdSchema.make(scope.legalEntityId) };
+
+/** The closed stop reason of each language `not-sent` reason; no text is derived from another by case. */
+const LANGUAGE_STOP_REASON = {
+  czech_revision_required_by_mode_b: 'CZECH_REVISION_REQUIRED_BY_MODE_B',
+  czech_revision_unavailable: 'CZECH_REVISION_UNAVAILABLE',
+  language_policy_unreadable: 'LANGUAGE_POLICY_UNREADABLE',
+  owner_required_language_unavailable: 'OWNER_REQUIRED_LANGUAGE_UNAVAILABLE',
+  template_revision_ambiguous: 'TEMPLATE_REVISION_AMBIGUOUS',
+} as const satisfies Record<NotSentReason, IntentStopReason>;
 
 interface Candidate {
   readonly asked: AskedRecipient | undefined;
@@ -219,26 +290,30 @@ const intentOf = Effect.fn('Communications.planIntent')(function* planIntent(
     role: candidate.recipient.role,
     scope: asked?.scope ?? Option.none<ProcessingScope>(),
   };
-  const suppressed = (reason: string): IntentPlan => ({
+  const stopped = (reason: IntentStopReason): IntentPlan => ({
     ...base,
     language: Option.none(),
     reason: Option.some(reason),
     status: 'SUPPRESSED',
   });
   if (RecipientDecision.$is('Suppressed')(candidate.recipient)) {
-    return suppressed(candidate.recipient.reason);
+    return stopped(candidate.recipient.reason);
   }
-  if (Option.isNone(base.endpoint) || Option.isNone(policy)) {
-    return suppressed('RECIPIENT_BASIS_MISSING');
+  if (Option.isNone(base.endpoint)) {
+    return stopped('RECIPIENT_BASIS_MISSING');
+  }
+  if (Option.isNone(policy)) {
+    // the Tenant mode is read for every eligible candidate, so a missing one is a stop of its own, never a missing recipient basis
+    return stopped('LANGUAGE_POLICY_UNREADABLE');
   }
   if (base.endpoint.value.channel !== 'email') {
-    return suppressed('CHANNEL_NOT_SUPPORTED');
+    return stopped('CHANNEL_NOT_SUPPORTED');
   }
   const recipientLanguage = yield* (yield* RecipientLanguageAuthority).languageOf(original);
   const language = yield* decideMessageLanguageUnderPolicy(stores.templates, policy.value, {
     base: { channel: 'email', messageType: type.typeId, scope: templateScopeOf(input.request) },
-    // Both languages are permitted for every approved type until an owner declares one; the choice is Communications'.
-    ownerPermittedLanguages: ['cs', 'en'],
+    // The type's own owner declaration: the one language it requires, else both, where the choice is Communications'.
+    ownerPermittedLanguages: ownerPermittedLanguagesOf(type),
     // The trusted language comes from its owner authority only; with none published it is not established.
     recipient: recipientLanguage,
   }).pipe(
@@ -257,7 +332,7 @@ const intentOf = Effect.fn('Communications.planIntent')(function* planIntent(
     : ({
         ...base,
         language: Option.some(language),
-        reason: Option.some(language.reason.toUpperCase()),
+        reason: Option.some(LANGUAGE_STOP_REASON[language.reason]),
         status: 'NOT_SENT',
       } satisfies IntentPlan);
 });
@@ -281,22 +356,25 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
   const catalog = yield* MessageTypeCatalog;
   const evaluator = yield* CommunicationDecisionService;
   const typeOption = catalog.byPurpose(input.decisionRequest.purpose);
-  const { resendRefusal, source } = yield* Effect.all(
+  const { resendRefusal, source: reading } = yield* Effect.all(
     {
       resendRefusal: resendRefusalFor(request, ownedType(typeOption, input.decisionRequest), stores),
       source: factsFor(input.decisionRequest, typeOption),
     },
     { concurrency: 2 },
   );
+  const { source } = reading;
   const evaluate = (recipients: readonly RecipientFact[]) =>
     evaluator
-      .decide(
-        input.decisionRequest,
-        Option.match(resendRefusal, {
-          onNone: () => ({ recipients, source }),
-          onSome: (refusal) => ({ recipients, resendRefusal: refusal, source }),
+      .decide(input.decisionRequest, {
+        recipients,
+        source,
+        ...Option.match(resendRefusal, { onNone: () => ({}), onSome: (refusal) => ({ resendRefusal: refusal }) }),
+        ...Option.match(reading.unresolved, {
+          onNone: () => ({}),
+          onSome: (sourceUnresolved) => ({ sourceUnresolved }),
         }),
-      )
+      })
       .pipe(
         Effect.mapError((mismatch) => unavailable('Facts of another occurrence or tenant were supplied', mismatch)),
       );
@@ -322,9 +400,15 @@ export const decideRequest = Effect.fn('Communications.decideRequest')(function*
     scope: input.scope,
     type: type.value,
   });
-  const asked = yield* Effect.forEach(evaluatedRecipients, (evaluated) => askPrivacy(input, type.value, evaluated), {
-    concurrency: OWNER_CALL_CONCURRENCY,
-  });
+  const ambiguous = ambiguousRoles(type.value, evaluatedRecipients);
+  const asked = yield* Effect.forEach(
+    evaluatedRecipients,
+    (evaluated) =>
+      ambiguous.has(evaluated.assessment.subject.binding.role)
+        ? discardedByAmbiguousSlot(evaluated)
+        : askPrivacy(input, type.value, evaluated),
+    { concurrency: OWNER_CALL_CONCURRENCY },
+  );
   const decision = yield* evaluate(
     asked.map(({ evaluated, privacy }) =>
       recipientFactOf(evaluated.assessment, input.decisionRequest, privacyEvidenceOf(privacy)),

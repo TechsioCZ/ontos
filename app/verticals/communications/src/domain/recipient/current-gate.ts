@@ -64,8 +64,9 @@ export class RecipientCurrentGate extends Context.Service<RecipientCurrentGate, 
 ) {}
 
 /**
- * The only production composition today: no owner publishes a recipient authority yet, so every check fails closed
- * with an unavailable source owner. It is explicit so nothing is ever allowed by default or by a missing adapter.
+ * The explicit fail-closed form for a deployment or test that composes no recipient owner: every check fails closed with an
+ * unavailable source owner. Production composes Portal Auth's published Read instead (`portalAuthRecipientCurrentGateOver`), and a
+ * source with no adapter there is the same unavailable owner. Nothing is ever allowed by default or by a missing adapter.
  */
 export const unavailableRecipientCurrentGateLayer = (settings: RecipientGateSettings) =>
   Layer.succeed(RecipientCurrentGate, {

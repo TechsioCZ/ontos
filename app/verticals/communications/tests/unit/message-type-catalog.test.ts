@@ -155,13 +155,22 @@ describe('#1394 Rule: the catalog approves types explicitly', () => {
   });
 
   it('BR-11: type data has no place for message copy, language, address or secret material', () => {
-    const fields = Object.keys(TransactionalMessageTypeSchema.fields);
+    // The one language field is the OWNER's binding condition (#1399 L-02), a closed key of the supported languages: never a text,
+    // a locale of the recipient or a choice of Communications.
+    const OWNER_LANGUAGE_CONDITION = 'ownerRequiredLanguage';
+    const fields = Object.keys(TransactionalMessageTypeSchema.fields).filter(
+      (field) => field !== OWNER_LANGUAGE_CONDITION,
+    );
 
     for (const forbidden of ['template', 'language', 'locale', 'address', 'email', 'token', 'otp', 'secret', 'proof']) {
       expect(fields.filter((field) => field.toLowerCase().includes(forbidden))).toEqual([]);
     }
     const withSecret = { ...fixtureType(), otpValue: '123456' };
     expect(Result.isFailure(decodeType(withSecret))).toBe(true);
+    // nearby invalid controls: any other language-shaped field, and an owner language that is not a supported key
+    expect(Result.isFailure(decodeType({ ...fixtureType(), language: 'cs' }))).toBe(true);
+    expect(Result.isFailure(decodeType({ ...fixtureType(), ownerRequiredLanguage: 'de' }))).toBe(true);
+    expect(Result.isSuccess(decodeType({ ...fixtureType(), ownerRequiredLanguage: 'en' }))).toBe(true);
   });
 
   it('#1395 Rule: an indivisible audience binds only slots the type has, once each, and only for messages', () => {

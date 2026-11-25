@@ -43,6 +43,18 @@ export const SourceStopReasonSchema = Schema.Literals([
   'SOURCE_SUPERSEDED',
 ]);
 
+/**
+ * The closed reasons the SOURCE OWNER could not state the current facts of the occurrence at the decision (#1401 I-07, #1400 LC-05).
+ * A missing source authority is no legal Message Intent, so the request is decided as a durable `NO_MESSAGE` with this reason
+ * instead of nothing at all: the owner was unreachable (SOURCE_AUTHORITY_UNAVAILABLE) or answered nothing about the occurrence
+ * (SOURCE_OCCURRENCE_UNKNOWN). Neither is a lifecycle fact of the source, so neither is a stale-source stop.
+ */
+export const SourceUnresolvedReasonSchema = Schema.Literals([
+  'SOURCE_AUTHORITY_UNAVAILABLE',
+  'SOURCE_OCCURRENCE_UNKNOWN',
+]);
+export type SourceUnresolvedReason = typeof SourceUnresolvedReasonSchema.Type;
+
 /** Reference to a Privacy purpose; resolved by the Privacy gate, never interpreted by the catalog. */
 export const PrivacyPurposeKeySchema = lowerDottedText.pipe(Schema.brand('CommunicationPrivacyPurposeKey'));
 export type PrivacyPurposeKey = typeof PrivacyPurposeKeySchema.Type;
@@ -122,7 +134,7 @@ export const RecipientStopReasonSchema = Schema.Literals([
  * is uncertainty about a mandatory owner, never a proven prohibition; AUDIENCE_GROUP_INCOMPLETE stops an otherwise
  * eligible member of an approved indivisible audience because another required member could not proceed.
  */
-const CandidateStopReasonSchema = Schema.Literals([
+export const CandidateStopReasonSchema = Schema.Literals([
   'PRIVACY_NOT_ALLOWED',
   'PRIVACY_INDETERMINATE',
   'RECIPIENT_NOT_ELIGIBLE',
@@ -131,6 +143,23 @@ const CandidateStopReasonSchema = Schema.Literals([
   'AUDIENCE_GROUP_INCOMPLETE',
 ]);
 export type CandidateStopReason = typeof CandidateStopReasonSchema.Type;
+
+/**
+ * Why a message the decision gave a concrete candidate still cannot be pinned to an approved text and channel, so it is stored as a
+ * not-sent intent (never delivered). The language reasons are the closed `not-sent` reasons of the language decision, one for one.
+ */
+export const IntentNotSentReasonSchema = Schema.Literals([
+  'CHANNEL_NOT_SUPPORTED',
+  'CZECH_REVISION_REQUIRED_BY_MODE_B',
+  'CZECH_REVISION_UNAVAILABLE',
+  'LANGUAGE_POLICY_UNREADABLE',
+  'OWNER_REQUIRED_LANGUAGE_UNAVAILABLE',
+  'TEMPLATE_REVISION_AMBIGUOUS',
+]);
+
+/** Every reason a stored intent can carry besides being pending: the recipient or Privacy stop, or the not-sent reason. */
+export const IntentStopReasonSchema = Schema.Union([CandidateStopReasonSchema, IntentNotSentReasonSchema]);
+export type IntentStopReason = typeof IntentStopReasonSchema.Type;
 
 /**
  * Why an Explicit Resend request (#1403) produced no message. They are NO_MESSAGE reasons of the decision, so the source

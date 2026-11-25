@@ -152,6 +152,8 @@ import { PaymentTermPolicyCurrentApi } from './shared/apis/payment-term-policy-c
 import { paymentTermPolicyResourceDescriptor } from './shared/resources/payment-term-policy.ts';
 import { PaymentTermsResolutionApi } from './shared/apis/payment-terms-resolution.ts';
 import { paymentTermsResolutionRead } from './src/api/payment-terms-resolution.read.ts';
+import { PortalAuthIssuanceSourceApi } from './shared/apis/portal-auth-issuance-source.ts';
+import { portalAuthIssuanceSourceRead } from './src/api/portal-auth-issuance-source.read.ts';
 import { preparePurchaseProposalBasisAction } from './src/actions/prepare-purchase-proposal-basis.action.ts';
 import { PricingPurchaseContextVerificationApi } from './shared/apis/pricing-purchase-context-verification.ts';
 import { pricingPurchaseContextVerificationRead } from './src/api/pricing-purchase-context-verification.read.ts';
@@ -435,6 +437,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'payment-term-affected-use-assessment': PaymentTermAffectedUseAssessmentApi,
       'payment-term-policy-current': PaymentTermPolicyCurrentApi,
       'payment-terms-resolution': PaymentTermsResolutionApi,
+      'portal-auth-issuance-source': PortalAuthIssuanceSourceApi,
       'pricing-purchase-context-verification': PricingPurchaseContextVerificationApi,
       'privacy-measure-execution': PrivacyMeasureExecutionApi,
       'profile-reconciliation-read': ProfileReconciliationReadApi,
@@ -634,6 +637,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'payment-terms-resolution',
         operationKey: 'paymentTermsResolution.execute',
         registration: paymentTermsResolutionRead,
+      },
+      {
+        apiKey: 'portal-auth-issuance-source',
+        operationKey: 'portalAuthIssuanceSource.execute',
+        registration: portalAuthIssuanceSourceRead,
       },
       {
         apiKey: 'pricing-purchase-context-verification',

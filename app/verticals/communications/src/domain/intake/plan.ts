@@ -10,7 +10,7 @@ import type {
 
 import type { CommunicationDecision, MessageIntentIdentity } from '../catalog/decision.ts';
 import { resourceRefKey } from '../catalog/vocabulary.ts';
-import type { CommunicationResourceRef, RecipientRole } from '../catalog/vocabulary.ts';
+import type { CommunicationResourceRef, IntentStopReason, RecipientRole } from '../catalog/vocabulary.ts';
 import type { LanguageDecision, LanguagePolicySnapshot } from '../language/vocabulary.ts';
 import type { ProcessingScope } from '../privacy/processing-scope.ts';
 import type { OriginalRecipientBinding } from '../recipient/original-binding.ts';
@@ -47,7 +47,7 @@ export interface IntentPlan {
   readonly intentKey: string;
   readonly language: Option.Option<LanguageDecision>;
   readonly purpose: string;
-  readonly reason: Option.Option<string>;
+  readonly reason: Option.Option<IntentStopReason>;
   readonly role: RecipientRole;
   readonly scope: Option.Option<ProcessingScope>;
   readonly status: IntentStatus;

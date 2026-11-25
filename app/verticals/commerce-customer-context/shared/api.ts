@@ -101,6 +101,7 @@ import { OrganizationCustomerProfileIcoMigrationApi } from './apis/organization-
 import { PaymentTermAffectedUseAssessmentApi } from './apis/payment-term-affected-use-assessment.ts';
 import { PaymentTermPolicyCurrentApi } from './apis/payment-term-policy-current.ts';
 import { PaymentTermsResolutionApi } from './apis/payment-terms-resolution.ts';
+import { PortalAuthIssuanceSourceApi } from './apis/portal-auth-issuance-source.ts';
 import { PreparePurchaseProposalBasisActionApi } from './apis/prepare-purchase-proposal-basis-action.ts';
 import { PricingPurchaseContextVerificationApi } from './apis/pricing-purchase-context-verification.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
@@ -285,6 +286,7 @@ type CommerceCustomerContextApiGroups = GroupsOf<
   | typeof PaymentTermAffectedUseAssessmentApi
   | typeof PaymentTermPolicyCurrentApi
   | typeof PaymentTermsResolutionApi
+  | typeof PortalAuthIssuanceSourceApi
   | typeof PreparePurchaseProposalBasisActionApi
   | typeof PricingPurchaseContextVerificationApi
   | typeof PrivacyMeasureExecutionApi
@@ -437,6 +439,7 @@ export const commerceCustomerContextApi: CommerceCustomerContextHttpApi = HttpAp
   .addHttpApi(PaymentTermAffectedUseAssessmentApi)
   .addHttpApi(PaymentTermPolicyCurrentApi)
   .addHttpApi(PaymentTermsResolutionApi)
+  .addHttpApi(PortalAuthIssuanceSourceApi)
   .addHttpApi(PreparePurchaseProposalBasisActionApi)
   .addHttpApi(PricingPurchaseContextVerificationApi)
   .addHttpApi(PrivacyMeasureExecutionApi)

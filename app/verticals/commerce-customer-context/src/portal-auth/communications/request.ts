@@ -5,6 +5,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import {
   PORTAL_AUTH_COMMUNICATION_SOURCE_MODULE,
   PORTAL_AUTH_ISSUANCE_REFERENCE_KEY,
+  PORTAL_AUTH_ISSUANCE_REVISION,
   PORTAL_AUTH_RECIPIENT_ROLE,
   PORTAL_AUTH_RESOURCE_TYPE,
   portalAuthCommunicationPurposeOf,
@@ -49,7 +50,7 @@ export const portalAuthCommunicationRequest = (
     // stops a handoff past it and never extends it
     occurrence: {
       occurrenceId: issuance.issuanceRef,
-      revision: 1,
+      revision: PORTAL_AUTH_ISSUANCE_REVISION,
       validUntil: DateTime.formatIso(issuance.expiresAt),
     },
     originalRecipients: [

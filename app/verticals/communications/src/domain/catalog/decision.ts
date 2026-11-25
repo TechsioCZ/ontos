@@ -6,7 +6,12 @@ import type { CommunicationDecisionContext, CommunicationDecisionRequest, Recipi
 import type { AudienceSlot, TransactionalMessageType } from './message-type.ts';
 import { findMessageTypeByPurpose } from './registry.ts';
 import type { MessageTypeRegistry } from './registry.ts';
-import { ResendRefusalSchema, resourceRefKey, SourceStopReasonSchema } from './vocabulary.ts';
+import {
+  ResendRefusalSchema,
+  resourceRefKey,
+  SourceStopReasonSchema,
+  SourceUnresolvedReasonSchema,
+} from './vocabulary.ts';
 import type {
   ApprovedRuleKey,
   AudienceSlotKey,
@@ -34,6 +39,8 @@ import type {
  * - SOURCE_NOT_AUTHORIZED_FOR_TYPE: the approved type belongs to another source owner than the issuer;
  * - TYPE_DEACTIVATED, TYPE_STALE: the approved type is switched off or its approved rule is no longer current;
  * - SOURCE_ONBOARDING_INACTIVE: the type is approved but its source owner has not activated its producer;
+ * - SOURCE_AUTHORITY_UNAVAILABLE, SOURCE_OCCURRENCE_UNKNOWN: the source owner could not state, or answered nothing about, the
+ *   occurrence, so no legal Message Intent exists (#1401 I-07); see `SourceUnresolvedReasonSchema`;
  * - SOURCE_STATE_INELIGIBLE: the source occurrence is in a state the type does not cover;
  * - SOURCE_REVISION_NOT_CURRENT: the request reflects a source revision that is not the current one;
  * - APPROVED_NO_MESSAGE: the approved rule for this context is an explicit zero-message rule;
@@ -53,6 +60,7 @@ export const NoMessageReasonSchema = Schema.Union([
     'RECIPIENT_AUTHORITY_MISSING',
   ]),
   SourceStopReasonSchema,
+  SourceUnresolvedReasonSchema,
   ResendRefusalSchema,
 ]);
 export type NoMessageReason = typeof NoMessageReasonSchema.Type;
@@ -208,6 +216,10 @@ const admissionBlock = (
   }
   if (type.onboarding !== 'ACTIVE') {
     return 'SOURCE_ONBOARDING_INACTIVE';
+  }
+  // a source that could not be asked states no state: the type stops with that fact, never on the echoed placeholder state
+  if (context.sourceUnresolved !== undefined) {
+    return context.sourceUnresolved;
   }
   if (!type.eligibleSourceStates.includes(context.source.state)) {
     return ineligibleStateReasonOf(type, context.source.state);

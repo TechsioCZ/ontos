@@ -262,6 +262,7 @@ import { organizationCustomerProfileIcoReadApiLive } from './organization-custom
 import { paymentTermAffectedUseAssessmentReadApiLive } from './payment-term-affected-use-assessment-read-server.ts';
 import { paymentTermPolicyCurrentReadApiLive } from './payment-term-policy-current-read-server.ts';
 import { paymentTermsResolutionReadApiLive } from './payment-terms-resolution-read-server.ts';
+import { portalAuthIssuanceSourceReadApiLive } from './portal-auth-issuance-source-read-server.ts';
 import { preparePurchaseProposalBasisActionApiLive } from './prepare-purchase-proposal-basis-action-server.ts';
 import { pricingPurchaseContextVerificationReadApiLive } from './pricing-purchase-context-verification-read-server.ts';
 import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
@@ -1225,6 +1226,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     paymentTermAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    portalAuthIssuanceSourceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     preparePurchaseProposalBasisActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     pricingPurchaseContextVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     privacyMeasureExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

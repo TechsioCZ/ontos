@@ -5,8 +5,8 @@ import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts
 import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Crypto, Effect, Layer, Option, Schema } from 'effect';
-import type { Duration } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
+import type { Crypto, Duration } from 'effect';
 
 import { ProcessingEligibilityUnavailable } from '../domain/privacy/eligibility-errors.ts';
 import { ProcessingEligibilityGate } from '../domain/privacy/eligibility-gate.ts';
@@ -173,27 +173,22 @@ export const privacyProcessingEligibilityGateOver = (
 ) => Layer.succeed(ProcessingEligibilityGate, { ...settings, check: checkOver(transport) });
 
 /**
- * Privacy's PUBLIC Reads through their generated clients, with a fresh delegated assertion on EVERY check under the
- * authority of the operation in progress (`CurrentOwnerCall`), naming the exact declaration of the Read it asks.
+ * Privacy's PUBLIC Reads through their generated clients, as the transport of one gate: a fresh delegated assertion on EVERY
+ * check under the authority of the operation in progress (`CurrentOwnerCall`), naming the exact declaration of the Read it asks.
  */
-export const privacyProcessingEligibilityGateLive = (settings: { readonly checkTimeout: Duration.Input }) =>
-  Layer.unwrap(
-    Effect.gen(function* privacyEligibilityGate() {
-      const crypto = yield* Crypto.Crypto;
-      const transport: PrivacyOwnerTransport = (question, call) =>
-        acquireDelegatedGatewayContext(
-          {
-            audience: 'privacy',
-            legalEntityScope: 'subject',
-            requestCorrelation: call.correlation(),
-            subject: call.subjectFor({
-              declarationKey: question.declarationKey,
-              decodedRequest: question.request,
-              operationRequirementKey: PRIVACY_ELIGIBILITY_REQUIREMENT_KEY,
-            }),
-          },
-          crypto,
-        ).pipe(Effect.flatMap((issued) => askOwnerWith(question, issued, call.correlation())));
-      return privacyProcessingEligibilityGateOver(settings, transport);
-    }),
-  );
+export const privacyOwnerTransportLive =
+  (crypto: Crypto.Crypto): PrivacyOwnerTransport =>
+  (question, call) =>
+    acquireDelegatedGatewayContext(
+      {
+        audience: 'privacy',
+        legalEntityScope: 'subject',
+        requestCorrelation: call.correlation(),
+        subject: call.subjectFor({
+          declarationKey: question.declarationKey,
+          decodedRequest: question.request,
+          operationRequirementKey: PRIVACY_ELIGIBILITY_REQUIREMENT_KEY,
+        }),
+      },
+      crypto,
+    ).pipe(Effect.flatMap((issued) => askOwnerWith(question, issued, call.correlation())));

@@ -244,20 +244,23 @@ describe('Communication Request intake: one stored decision per source identity 
   );
 
   it.live(
-    '[AC-02 S11] a source that could not be asked leaves nothing stored; the retry after recovery stores exactly one set',
+    '[I-07 LC-05] a source that could not be asked is decided as a durable NO_MESSAGE with its closed reason; the retry replays that decision and stores no second set',
     () =>
-      Effect.gen(function* restart() {
+      Effect.gen(function* unresolvedSource() {
         const t = yield* setup();
         t.source.state.available = false;
-        const failed = yield* Effect.exit(t.runner.submit(t.tenantId, requestFor(t.tenantId)));
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect(yield* t.read((tx) => tx.select().from(communicationRequests))).toEqual([]);
+        const first = decided(yield* t.runner.submit(t.tenantId, requestFor(t.tenantId)));
+        // the request IS decided: no legal Message Intent exists, and the source learns the truthful reason
+        expect(first.replayed).toBe(false);
+        expect(first.decision).toMatchObject({ kind: 'NO_MESSAGE', reason: 'SOURCE_AUTHORITY_UNAVAILABLE' });
+        expect(yield* t.read((tx) => tx.select().from(communicationRequests))).toHaveLength(1);
+        expect(yield* t.read((tx) => tx.select().from(messageIntents))).toEqual([]);
+        // the owner recovering later does not re-decide the same request: a new occurrence is a new request
         t.source.state.available = true;
-        const retried = decided(yield* t.runner.submit(t.tenantId, requestFor(t.tenantId)));
         const again = decided(yield* t.runner.submit(t.tenantId, requestFor(t.tenantId)));
-        expect(retried.replayed).toBe(false);
         expect(again.replayed).toBe(true);
-        expect(yield* t.read((tx) => tx.select().from(messageIntents))).toHaveLength(1);
+        expect(again.decision).toMatchObject({ kind: 'NO_MESSAGE', reason: 'SOURCE_AUTHORITY_UNAVAILABLE' });
+        expect(yield* t.read((tx) => tx.select().from(messageIntents))).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
