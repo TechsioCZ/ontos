@@ -55,6 +55,9 @@
       "path": "../../packages/payment-term-catalog-contracts"
     },
     {
+      "path": "../../packages/portal-auth-contracts"
+    },
+    {
       "path": "../../packages/pricing-contracts"
     },
     {
