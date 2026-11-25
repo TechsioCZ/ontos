@@ -3,6 +3,7 @@ import type {
   AntiResurrectionNewSourceEvidence,
   AntiResurrectionProtection,
 } from '@app/privacy-contracts/domain/anti-resurrection';
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer, Match } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -11,6 +12,10 @@ import {
   unavailableAntiResurrectionProtectionsLayer,
 } from '../../src/domain/retention/anti-resurrection-protections.ts';
 import type { AntiResurrectionProtections } from '../../src/domain/retention/anti-resurrection-protections.ts';
+import {
+  communicationsProductionOwnerPortsLive,
+  communicationsWorkerOwnerPortsLive,
+} from '../../src/composition/owner-ports.ts';
 import { guardAgainstResurrection } from '../../src/domain/retention/anti-resurrection-guard.ts';
 import { ProtectionLookupUnavailable } from '../../src/domain/retention/protection-lookup-unavailable.ts';
 import { ResurrectionBlocked } from '../../src/domain/retention/resurrection-blocked.ts';
@@ -177,4 +182,27 @@ describe('Anti-Resurrection guard of Communications', () => {
   it('only ever asks: the guard has no write capability to call', () => {
     expect(Object.keys(storeOf([protection()]))).toEqual(['forSubject']);
   });
+});
+
+/**
+ * [#1410 AC-09, PRIV-COM-13, #1408 GOV-14; audit T2-13] The guard is a published CONTRACT, not runtime protection: Communications
+ * has no replay, import, projection-rebuild or restore path of its own (outbox consumers never replay history, the message
+ * history is projected at read time from the stored rows, and backup recovery is a platform act it cannot observe), so nothing
+ * calls the guard today. What IS guaranteed is that the production composition carries the explicit unavailable protection
+ * store, so any path added later that asks the guard fails closed instead of running without a protection store.
+ */
+describe('The production composition and the anti-resurrection guard', () => {
+  for (const [name, composition] of [
+    ['request-path', communicationsProductionOwnerPortsLive],
+    ['worker', communicationsWorkerOwnerPortsLive],
+  ] as const) {
+    it.effect(`provides the fail-closed protection store to the ${name} composition`, () =>
+      Effect.gen(function* body() {
+        const failure = yield* Effect.flip(
+          guardAgainstResurrection(attempt()).pipe(Effect.provide(composition), Effect.provide(NodeCrypto.layer)),
+        );
+        expect(failure).toBeInstanceOf(ProtectionLookupUnavailable);
+      }),
+    );
+  }
 });
