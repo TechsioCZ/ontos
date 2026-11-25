@@ -19,7 +19,8 @@ export const storefrontRegistryRegistration = defineVerticalRuntimeRegistration(
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
-      'current-storefront-application': () => import('@app/storefront-registry-contracts/current-storefront-application/client'),
+      'current-storefront-application': () =>
+        import('@app/storefront-registry-contracts/current-storefront-application/client'),
       'verify-current-storefront-application-v1': () =>
         import('@app/storefront-registry-contracts/verify-current-storefront-application-v1/client'),
       // </generated-module-registration-apis>
