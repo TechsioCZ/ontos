@@ -60,54 +60,69 @@ process.stdout.write(JSON.stringify(logs.slice(-limit)));
 const LabelledSummary = Schema.Struct({ ...RuntimeSummarySchema.fields, label: Schema.String });
 
 for (const noisy of deployments) {
-  it.effect(`${noisy.label}: real proof CLI finds telemetry behind more than 200 request logs`, () =>
-    Effect.gen(function* busyDeployment() {
-      const fs = yield* FileSystem.FileSystem;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const executable = path.join(directory, 'zcli');
-      const fixtureFile = path.join(directory, 'logs.json');
-      const now = yield* Clock.currentTimeMillis;
-      const logs = Object.fromEntries(
-        deployments.map(({ family, service }) => {
-          const summary = { ...sample, at: now, family, service };
-          const telemetry = records({ ...summary, at: now - 1, event: bootEvent, node: '26' }, summary);
-          const requests =
-            service === noisy.service
-              ? records(...Array.from({ length: 250 }, () => ({ event: 'http.request', query: privateValue })))
-              : [];
-          return [service, [...telemetry, ...requests]];
-        }),
-      );
-      yield* fs.writeFileString(fixtureFile, JSON.stringify(logs));
-      yield* fs.writeFileString(executable, fakeZcli);
-      yield* fs.chmod(executable, 0o700);
-      const result = yield* collectToolingProcess(
-        ChildProcess.make(
-          process.execPath,
-          [path.join(import.meta.dirname, 'prove-storefront-runtime.mts'), revision],
-          {
-            env: {
-              PATH: `${directory}:${yield* Config.String('PATH')}`,
-              RUNTIME_LOG_FIXTURE: fixtureFile,
-            },
-            extendEnv: true,
-            stdin: 'ignore',
-          },
-        ),
-      );
-      expect(result.status, result.stdout + result.stderr).toBe(0);
-      const summaries = yield* Effect.forEach(result.stdout.trim().split('\n'), (line) =>
-        Schema.decodeUnknownEffect(Schema.fromJsonString(LabelledSummary))(line),
-      );
-      expect(summaries.map(({ family, label, service }) => ({ family, label, service }))).toEqual(deployments);
-      for (const summary of summaries) {
-        expect(summary.revision).toBe(revision);
-        expect(summary.bootId).toBe(sample.bootId);
-        expect(summary.at).toBe(now);
-      }
-      expect(result.stdout + result.stderr).not.toContain(privateValue);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
-  );
+  for (const tooLarge of noisy.label === 'AKROS' ? [false, true] : [false]) {
+    it.effect(
+      `${noisy.label}: ${tooLarge ? 'rejects a log window beyond the character bound' : 'real proof CLI finds telemetry behind more than 200 request logs'}`,
+      () =>
+        Effect.gen(function* busyDeployment() {
+          const fs = yield* FileSystem.FileSystem;
+          const directory = yield* fs.makeTempDirectoryScoped();
+          const executable = path.join(directory, 'zcli');
+          const fixtureFile = path.join(directory, 'logs.json');
+          const now = yield* Clock.currentTimeMillis;
+          const logs = Object.fromEntries(
+            deployments.map(({ family, service }) => {
+              const summary = { ...sample, at: now, family, service };
+              const telemetry = records({ ...summary, at: now - 1, event: bootEvent, node: '26' }, summary);
+              const requests =
+                service === noisy.service
+                  ? records(
+                      ...Array.from({ length: 250 }, () => ({
+                        event: 'http.request',
+                        padding: 'x'.repeat(tooLarge ? 10_000 : 5000),
+                        query: privateValue,
+                      })),
+                    )
+                  : [];
+              return [service, [...telemetry, ...requests]];
+            }),
+          );
+          yield* fs.writeFileString(fixtureFile, JSON.stringify(logs));
+          yield* fs.writeFileString(executable, fakeZcli);
+          yield* fs.chmod(executable, 0o700);
+          const result = yield* collectToolingProcess(
+            ChildProcess.make(
+              process.execPath,
+              [path.join(import.meta.dirname, 'prove-storefront-runtime.mts'), revision],
+              {
+                env: {
+                  PATH: `${directory}:${yield* Config.String('PATH')}`,
+                  RUNTIME_LOG_FIXTURE: fixtureFile,
+                },
+                extendEnv: true,
+                stdin: 'ignore',
+              },
+            ),
+          );
+          expect(result.status, result.stdout + result.stderr).toBe(tooLarge ? 1 : 0);
+          expect(result.stdout + result.stderr).not.toContain(privateValue);
+          if (tooLarge) {
+            expect(result.stdout).not.toContain('"event":"storefront.runtime.summary"');
+            return;
+          }
+          const summaries = yield* Effect.forEach(result.stdout.trim().split('\n'), (line) =>
+            Schema.decodeUnknownEffect(Schema.fromJsonString(LabelledSummary))(line),
+          );
+          expect(summaries.map(({ family, label, service }) => ({ family, label, service }))).toEqual(deployments);
+          for (const summary of summaries) {
+            expect(summary.revision).toBe(revision);
+            expect(summary.bootId).toBe(sample.bootId);
+            expect(summary.at).toBe(now);
+          }
+          expect(result.stdout + result.stderr).not.toContain(privateValue);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+    );
+  }
 }
 
 it.effect('requires measured telemetry for the current release and emits only contract fields', () =>

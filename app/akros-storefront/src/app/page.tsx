@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import { ErpHomeStrip } from "@/components/erp-home-strip";
 import { FeaturedProductGrid } from "@/components/featured-product-grid";
 import { HomeCarousel } from "@/components/home-carousel";
@@ -30,9 +29,7 @@ export default async function HomePage() {
         <FeaturedProductGrid products={getHomepageFeaturedProducts().map(toProductSummary)} />
       </section>
 
-      <Suspense fallback={null}>
-        <ErpHomeStrip />
-      </Suspense>
+      <ErpHomeStrip />
 
       <section
         aria-label={copy.companyIntro.label}

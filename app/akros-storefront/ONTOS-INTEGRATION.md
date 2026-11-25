@@ -39,6 +39,8 @@ runs the same `setup: storefront` (`app/zerops.yaml`). A storefront takes the en
 `ONTOS_STOREFRONT_LEGAL_ENTITY_ID`; no entry turns the pages off. Every entry must be valid:
 `{"<Legal Entity UUID>":{"customerConfigurationId":"…","channelId":"B2C","marketId":"…","currencyCode":"CZK","unitId":"<Catalog Product Unit UUID>","unitQuantity":"1"}}`.
 Imported products cannot be ordered yet and show the no-image placeholder (no admitted read serves Catalog media).
+The homepage links to the ERP listing without reading ERP products. Product previews load only on the ERP pages,
+so ERP reads cannot hold the homepage response open.
 
 ## Production deploy
 

@@ -123,7 +123,7 @@ const platformLogs = (service: string) =>
       Stream.runFoldEffect(
         () => '',
         (text, chunk) =>
-          text.length + chunk.length <= 1_048_576
+          text.length + chunk.length <= 2_097_152
             ? Effect.succeed(text + chunk)
             : Effect.fail(new RuntimeProofFailed({ reason: 'Platform log output exceeded the proof bound' })),
       ),
