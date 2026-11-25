@@ -1,9 +1,8 @@
-import { Data, DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect } from 'effect';
 
 import { isGroupComplete, isGroupMember } from '../catalog/audience.ts';
 import type { AudiencePolicy } from '../catalog/audience.ts';
 import type { MessageIntentIdentity } from '../catalog/decision.ts';
-import { resourceRefKey } from '../catalog/vocabulary.ts';
 import { GATE_CONCURRENCY } from '../recipient/assess-recipients.ts';
 import type { RecipientEvaluationInput } from '../recipient/assess-recipients.ts';
 import type { OriginalRecipientBinding } from '../recipient/original-binding.ts';
@@ -11,7 +10,7 @@ import { HandoffVerdict, recheckBeforeHandoff } from '../recipient/recheck-befor
 import type { HandoffPin } from '../recipient/recheck-before-handoff.ts';
 import { assessPrivacyEligibility, PrivacyAssessment } from './assess-privacy.ts';
 import type { PrivacyAssessmentCase } from './assess-privacy.ts';
-import type { EligibilityEvidence, ProcessingEligibilityGate } from './eligibility-gate.ts';
+import type { ProcessingEligibilityGate } from './eligibility-gate.ts';
 import { processingScopeKey } from './processing-scope.ts';
 import type { ProcessingScope } from './processing-scope.ts';
 import { decideMessage, decideUnaskedMessage, HandoffFact, MessageHandoffDecision } from './suppression.ts';
@@ -194,92 +193,3 @@ export const decideMessageHandoffs = Effect.fn('Communications.decideMessageHand
   });
   return applyAudienceGroup(input.recipient.type.audience, decisions, input.withheld ?? []);
 });
-
-/**
- * Recovery after a stop (BR-13): only a NEW Current evaluation that lets the same message proceed may admit another
- * attempt; the earlier stop and its evidence stay exactly as recorded. "New" is the Privacy owner's own decision: the
- * proceeding message needs an `ALLOWED` whose trusted decision time is later than the owner decision behind the stop
- * (or, when the stop had none, later than the stop itself), never merely a later local clock reading. A message that
- * already left, or whose provider effect is unknown, is never admitted here: reconciliation, not a retry, decides it.
- * Idempotence of the later send belongs to the intent (#1401).
- */
-export type RecoveryAdmissionCase = Data.TaggedEnum<{
-  /** `priorStop` is the unchanged record the admission was decided against; recovery never replaces it. */
-  Admitted: { readonly identity: MessageIntentIdentity; readonly priorStop: StopRecord };
-  Refused: {
-    readonly identity: MessageIntentIdentity;
-    readonly reason:
-      | 'ALREADY_HANDED_OFF'
-      | 'DIFFERENT_MESSAGE'
-      | 'NOT_A_NEW_EVALUATION'
-      | 'RECONCILIATION_REQUIRED'
-      | 'STILL_SUPPRESSED';
-  };
-}>;
-export const RecoveryAdmission = Data.taggedEnum<RecoveryAdmissionCase>();
-
-export interface StopRecord {
-  /** When Communications evaluated the stop. */
-  readonly evaluatedAt: DateTime.Utc;
-  readonly identity: MessageIntentIdentity;
-  /** The Privacy owner's trusted decision time behind the stop, when the owner evidenced a decision. */
-  readonly ownerDecidedAt: Option.Option<DateTime.Utc>;
-}
-
-const decisionTimeOf = (evidence: EligibilityEvidence | undefined): Option.Option<DateTime.Utc> =>
-  evidence === undefined ? Option.none() : Option.some(evidence.trustedDecisionTime);
-
-const ownerDecisionTimeOf = (assessment: PrivacyAssessmentCase): Option.Option<DateTime.Utc> =>
-  PrivacyAssessment.$match(assessment, {
-    Allowed: ({ evidence }) => decisionTimeOf(evidence),
-    Indeterminate: ({ evidence }) => decisionTimeOf(evidence),
-    NotAllowed: ({ evidence }) => decisionTimeOf(evidence),
-    Unavailable: () => Option.none(),
-  });
-
-/** The record of a stop, taken from the stop decision itself so a caller cannot invent its time. */
-export const stopRecordOf = (
-  decision: Extract<MessageHandoffDecisionCase, { readonly _tag: 'Suppressed' }>,
-): StopRecord => ({
-  evaluatedAt: decision.evidence.evaluatedAt,
-  identity: decision.identity,
-  ownerDecidedAt: ownerDecisionTimeOf(decision.evidence.privacy),
-});
-
-const messageKey = (identity: MessageIntentIdentity) =>
-  [
-    identity.tenantId,
-    identity.sourceModule,
-    identity.occurrenceId,
-    identity.revision,
-    identity.typeId,
-    identity.slotKey,
-    resourceRefKey(identity.recipient),
-  ].join('|');
-
-export const admitRecoveryAfterStop = (prior: StopRecord, next: MessageHandoffDecisionCase): RecoveryAdmissionCase => {
-  const { identity } = next;
-  const sameMessage = messageKey(identity) === messageKey(prior.identity);
-  if (!sameMessage) {
-    return RecoveryAdmission.Refused({ identity, reason: 'DIFFERENT_MESSAGE' });
-  }
-  const since = Option.getOrElse(prior.ownerDecidedAt, () => prior.evaluatedAt);
-  return MessageHandoffDecision.$match(next, {
-    AlreadyHandedOff: () => RecoveryAdmission.Refused({ identity, reason: 'ALREADY_HANDED_OFF' }),
-    Proceed: ({ evidence }) => {
-      // Only an ALLOWED the owner decided after the stop is a new evaluation; its own decision time is what counts.
-      const decidedAt = PrivacyAssessment.$is('Allowed')(evidence.privacy)
-        ? decisionTimeOf(evidence.privacy.evidence)
-        : Option.none();
-      const isNew = Option.match(decidedAt, {
-        onNone: () => false,
-        onSome: (time) => DateTime.isGreaterThan(time, since),
-      });
-      return isNew
-        ? RecoveryAdmission.Admitted({ identity, priorStop: prior })
-        : RecoveryAdmission.Refused({ identity, reason: 'NOT_A_NEW_EVALUATION' });
-    },
-    ReconciliationRequired: () => RecoveryAdmission.Refused({ identity, reason: 'RECONCILIATION_REQUIRED' }),
-    Suppressed: () => RecoveryAdmission.Refused({ identity, reason: 'STILL_SUPPRESSED' }),
-  });
-};

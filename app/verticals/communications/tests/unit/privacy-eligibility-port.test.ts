@@ -7,16 +7,17 @@ import type { MessageIntentCandidate } from '../../src/domain/catalog/decision.t
 import { CommunicationResourceRefSchema, RecipientRoleSchema } from '../../src/domain/catalog/vocabulary.ts';
 import {
   assessPrivacyEligibility,
-  assessmentCoversScope,
   PrivacyAssessment,
   privacyEvidenceOf,
 } from '../../src/domain/privacy/assess-privacy.ts';
+import type { PrivacyAssessmentCase } from '../../src/domain/privacy/assess-privacy.ts';
 import {
   ProcessingEligibilityVerdict,
   unavailableProcessingEligibilityGateLayer,
 } from '../../src/domain/privacy/eligibility-gate.ts';
 import type { ProcessingEligibilityQuery } from '../../src/domain/privacy/eligibility-gate.ts';
 import { processingScopeKey, ProcessingScopeSchema } from '../../src/domain/privacy/processing-scope.ts';
+import type { ProcessingScope } from '../../src/domain/privacy/processing-scope.ts';
 import {
   eligibilityVerdictOf,
   PrivacySourceEligibilityResponseSchema,
@@ -50,6 +51,10 @@ import {
 import type { PrivacyAnswer } from './support/privacy-fixtures.ts';
 import { assessmentSummary, verdictSummary } from './support/privacy-summaries.ts';
 import { binding, evaluationInput, gateDouble, TEST_GATE_CHECK_TIMEOUT, usable } from './support/recipient-fixtures.ts';
+
+/** Whether a retained assessment covers this exact question. It never does for any other scope. */
+const assessmentCoversScope = (assessment: PrivacyAssessmentCase, scope: ProcessingScope) =>
+  assessment.scopeKey === processingScopeKey(scope);
 
 const sourceOf = processingScope('recipient-a').subject;
 const otherSource = processingScope('recipient-b').subject;

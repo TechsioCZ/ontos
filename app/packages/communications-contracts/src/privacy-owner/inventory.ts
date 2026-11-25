@@ -515,15 +515,15 @@ export const assessCategoryConfiguration = (
 /**
  * #1410 (comment, J): "a complete approved set of values for all three Auth types is not evidenced; the evidence must
  * name which owner supplies each missing input or takes over the open obligation". These records ARE that evidence. The
- * Auth types are not in the approved catalog yet (it approves no type; d21-12 activates them), so each one names its
- * owners for the inputs that are not Communications' to invent. Secrets and proofs stay with Portal Auth and #326.
+ * Auth types are approved in the production catalog (`approved-registry.ts`) under type ids the Portal Auth owner
+ * supplied, so each one names its owners for the inputs that are not Communications' to invent. Secrets and proofs stay with Portal Auth and #326.
  */
 export const AUTH_MESSAGE_KINDS = ['VERIFY_EMAIL', 'RESET_PASSWORD', 'ONE_TIME_PASSWORD'] as const;
 export type AuthMessageKind = (typeof AUTH_MESSAGE_KINDS)[number];
 
 export interface AuthTypeEvidence {
   readonly kind: AuthMessageKind;
-  /** The catalog type id is the Portal Auth owner's to approve (d21-12); none is invented here. */
+  /** The catalog type id is the Portal Auth owner's to approve; none is invented here. */
   readonly missingInputs: readonly (MissingInput & { readonly note: string })[];
   readonly secretOwner: 'PORTAL_AUTH_OWNER';
 }

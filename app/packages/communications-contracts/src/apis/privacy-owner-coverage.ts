@@ -69,6 +69,7 @@ export const PrivacyOwnerCoverageRequestSchema = Schema.Struct({
   /** The right the contribution is for; without it only coverage and content references are returned. */
   right: Schema.optionalKey(Schema.Literals(PRIVACY_RIGHTS)),
   scope: PrivacyOwnerScopeSchema,
+  // an input bound of one coverage Read (each lookup is answered from the owner's own store): a platform guard, not a business number
   trustedLookups: Schema.Array(CommunicationsOwnerLookupSchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
 }).check(
   Schema.makeFilter(({ scope, trustedLookups }) => {

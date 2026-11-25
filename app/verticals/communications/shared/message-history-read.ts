@@ -35,8 +35,6 @@ export const MESSAGE_HISTORY_MAX_PAGE_SIZE = 50;
 
 /** Closed marker every returned template pin carries: the revision is a preview, not proof of the sent text. */
 export const TEMPLATE_PREVIEW_MARKER = 'TEMPLATE_PREVIEW_NOT_EXACT_SENT_EMAIL';
-/** The fixed wording a surface shows for the marker. Never a template text. */
-export const TEMPLATE_PREVIEW_NOTICE = 'template preview, not the exact sent e-mail';
 
 /** A closed code: a letter, then letters, digits and underscores. No free text, address, link or markup fits. */
 const ClosedCodeSchema = Schema.String.check(Schema.isMaxLength(80), Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]*$/u));

@@ -15,8 +15,9 @@ import {
 import type { PrivacyOwnerTransport } from '../integrations/privacy-eligibility-gate.ts';
 
 /**
- * Owner-decided deadline of one Current-gate check. The domain has no default on purpose: a check that cannot be
- * bounded cannot be wired, and a check past this deadline fails closed as an unavailable owner.
+ * Deadline of one Current-gate check. The domain has no default on purpose: a check that cannot be bounded cannot be wired, and
+ * a check past this deadline fails closed as an unavailable owner. The number is a platform guard so that a hung owner call
+ * cannot hang a decision; no owner approved it (open question for the Core owner).
  */
 const GATE_CHECK_TIMEOUT = '10 seconds';
 

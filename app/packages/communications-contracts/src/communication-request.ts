@@ -123,6 +123,7 @@ export const CommunicationSafeReferenceSchema = Schema.Struct({
 });
 export type CommunicationSafeReference = typeof CommunicationSafeReferenceSchema.Type;
 
+/** Input bound of one request (a request is read in full by every decision): a platform guard, not a business number. */
 const MAX_SAFE_REFERENCES = 16;
 
 const SafeReferencesSchema = Schema.Array(CommunicationSafeReferenceSchema).check(
@@ -195,6 +196,7 @@ export const CommunicationDocumentRefSchema = Schema.Struct({
 });
 export type CommunicationDocumentRef = typeof CommunicationDocumentRefSchema.Type;
 
+/** Input bound of one request, and of one irreversible attachment batch: a platform guard, not a business number. */
 const MAX_DOCUMENTS = 4;
 
 const DocumentsSchema = Schema.NonEmptyArray(CommunicationDocumentRefSchema).check(
