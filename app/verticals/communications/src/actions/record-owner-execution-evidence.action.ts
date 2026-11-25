@@ -5,7 +5,10 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 
-import { OwnerExecutionEvidenceErrorSchema } from '../../shared/owner-execution-evidence-errors.ts';
+import {
+  OwnerExecutionEvidenceErrorSchema,
+  OwnerExecutionEvidenceRejected,
+} from '../../shared/owner-execution-evidence-errors.ts';
 import {
   RecordOwnerExecutionEvidencePayloadSchema,
   RecordOwnerExecutionEvidenceResultSchema,
@@ -26,7 +29,9 @@ interface Services {
 }
 
 /**
- * Records ONE authorized human's confirmation about a measure's execution, for exactly the recorded handoff. It is the only
+ * Records ONE authorized human's confirmation about a measure's execution, for exactly the recorded handoff. Only an
+ * interactive human session may confirm: a service, system job or impersonating principal is refused, because the
+ * invocation is what Privacy later reads as the confirming human. It is the only
  * way a measure leaves the received state, and it never executes, changes or removes anything: an owner operation is a
  * separate, separately approved act that the human confirms here afterwards. Newly stored evidence also queues ONE
  * self-outbox message naming the original Privacy dispatch and the next receipt attempt, so the owner's continuation worker
@@ -37,6 +42,14 @@ export const handleRecordOwnerExecutionEvidence = Effect.fn('RecordOwnerExecutio
     payload: RecordOwnerExecutionEvidencePayload,
     context: ActionHandlerContext<typeof domainEvents, Services>,
   ) {
+    if (context.scope.authMethod !== 'session') {
+      // The invocation becomes Privacy's `confirmedByHumanRef`: only an interactive human session may carry a confirmation.
+      return yield* new OwnerExecutionEvidenceRejected({
+        code: 'owner_execution_evidence_rejected',
+        reason: 'Only an authenticated human session may confirm an owner Action',
+        refusal: 'CONFIRMATION_REQUIRES_A_HUMAN_PRINCIPAL',
+      });
+    }
     const { continuation, result } = yield* context.services.evidence.record(payload, context.actionInvocationId);
     if (Option.isSome(continuation)) {
       const event = yield* context.addDomainEvent({
