@@ -6,6 +6,7 @@ import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormInput } from "./form-controls";
 import { Select } from "@techsio/ui-kit/molecules/select";
 import type { Dictionary } from "@/i18n";
+import { countryName } from "@/i18n/country-name";
 import {
   customerAddressesForIdentity,
   readCustomerAddresses,
@@ -67,10 +68,6 @@ const checkoutFieldStateForIdentity = (
   };
 };
 
-const countryNames = {
-  cs: new Intl.DisplayNames(["cs"], { type: "region" }),
-  en: new Intl.DisplayNames(["en"], { type: "region" }),
-};
 /** Native order fields with explicit, lossless reuse of the admitted customer's saved postal data. */
 export const CheckoutFields = ({
   countryCodes,
@@ -150,7 +147,7 @@ export const CheckoutFields = ({
     (item) => item.addressId === currentPostal.selectedAddressId && !item.disabled,
   );
   const countries = countryCodes.map((value) => ({
-    label: countryNames[locale === "en" ? "en" : "cs"].of(value) ?? value,
+    label: countryName(value, locale),
     value,
   }));
   const input = (field: Field) => {

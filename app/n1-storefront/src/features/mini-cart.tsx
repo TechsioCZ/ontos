@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import NextImage from "next/image";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
-import { Struct } from "effect";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Image } from "@techsio/ui-kit/atoms/image";
@@ -410,17 +409,7 @@ export const MiniCart = ({
   if (drafts !== storedDrafts) {
     setStoredDrafts(drafts);
   }
-  const request =
-    open && state === "filled" && cart?.scope !== null && cart !== null
-      ? {
-          lines: entries.map((entry) =>
-            Struct.pick(entry, ["productId", "variantId", "quantity", "expectedUnitPriceMinor"]),
-          ),
-          locale: locale === "en" ? ("en" as const) : ("cs" as const),
-          scope: cart.scope,
-        }
-      : null;
-  const quote = useCartQuote(request, true);
+  const quote = useCartQuote(open);
   const invalid = hasInvalidCartDraft(
     drafts,
     entries.map((entry) =>

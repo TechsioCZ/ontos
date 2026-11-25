@@ -1,7 +1,7 @@
 import { expect, it } from "@rstest/core";
 import { subscribePortalSessionRefresh } from "../src/features/portal-session-events";
 
-it("requests immediate re-admission on visible refocus and visibility restoration, and cleans up both listeners", () => {
+it("rechecks immediately on activation, ignores a paired event and cleans up listeners", () => {
   const browser = new EventTarget();
   class SessionPage extends EventTarget {
     visibility: DocumentVisibilityState = "visible";
@@ -25,6 +25,8 @@ it("requests immediate re-admission on visible refocus and visibility restoratio
     browser.dispatchEvent(new Event("focus"));
     expect(pending).toBe(true);
     expect(refreshes).toBe(1);
+    page.dispatchEvent(new Event("visibilitychange"));
+    expect(refreshes).toBe(1);
     page.visibility = "hidden";
     pending = false;
     page.dispatchEvent(new Event("visibilitychange"));
@@ -37,14 +39,19 @@ it("requests immediate re-admission on visible refocus and visibility restoratio
     page.dispatchEvent(new Event("visibilitychange"));
     expect(pending).toBe(true);
     expect(refreshes).toBe(2);
+    browser.dispatchEvent(new Event("focus"));
+    expect(refreshes).toBe(2);
+    browser.dispatchEvent(new Event("blur"));
+    browser.dispatchEvent(new Event("focus"));
+    expect(refreshes).toBe(3);
     unsubscribe();
     pending = false;
     browser.dispatchEvent(new Event("focus"));
     expect(pending).toBe(false);
-    expect(refreshes).toBe(2);
+    expect(refreshes).toBe(3);
     page.dispatchEvent(new Event("visibilitychange"));
     expect(pending).toBe(false);
-    expect(refreshes).toBe(2);
+    expect(refreshes).toBe(3);
   } finally {
     unsubscribe();
   }

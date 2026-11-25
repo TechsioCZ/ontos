@@ -131,6 +131,7 @@ const holdAccountRead = () => ({
 let addressWriter: ((command: CustomerAddressCommand) => Response) | null;
 let addressRows: readonly CustomerAddress[];
 let accountGate: ReturnType<typeof holdAccountRead> | null;
+const ownerReads: string[] = [];
 let container: HTMLDivElement;
 let root: Root;
 let previousInterceptor: typeof window.happyDOM.settings.fetch.interceptor;
@@ -145,6 +146,7 @@ const fetchOwner = async (request: Request): Promise<Response> => {
   if (request.method !== "GET") {
     throw new Error(`Unexpected account write: ${request.method} ${request.url}`);
   }
+  ownerReads.push(path);
   switch (path) {
     case "/api/account": {
       const gate = accountGate;
@@ -233,6 +235,7 @@ const admit = async (gate: ReturnType<typeof holdAccountRead>) => {
 };
 
 beforeEach(() => {
+  ownerReads.length = 0;
   accountGate = null;
   addressRows = addresses.addresses;
   addressWriter = null;
@@ -367,6 +370,57 @@ const click = (label: string, scope: ParentNode = container) => {
     button?.click();
   });
 };
+const selectAccountTab = async (label: string) => {
+  const trigger = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+    (button) => button.textContent?.trim() === label,
+  );
+  expect(trigger).toBeDefined();
+  await act(async () => {
+    trigger?.click();
+  });
+};
+
+it("reuses already loaded address and order reads while navigating tabs in the same session", async () => {
+  await mount(
+    <AccountView dictionary={dictionary} initial={initial} initialTab="addresses" locale="cs" />,
+  );
+  await eventually(() => expectPanel("addresses"));
+  await selectAccountTab(dictionary.accountPage.orders);
+  await eventually(() => expectPanel("orders"));
+  await selectAccountTab(dictionary.accountPage.addresses);
+  expectPanel("addresses");
+  await selectAccountTab(dictionary.accountPage.orders);
+  expectPanel("orders");
+  await act(async () => {
+    await nextTurn(0);
+  });
+
+  expect(ownerReads).toEqual(["/api/account", "/api/customer-addresses", "/api/customer-orders"]);
+});
+
+it("makes one admission read for a focus and visibility pair before reading private data again", async () => {
+  await mount(
+    <AccountView dictionary={dictionary} initial={initial} initialTab="addresses" locale="cs" />,
+  );
+  await eventually(() => expectPanel("addresses"));
+  const gate = holdAccountRead();
+  accountGate = gate;
+  await act(async () => {
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await gate.arrived.promise;
+  });
+  expect(container.textContent).not.toContain("PRIVATE_ADDRESS_RECORD");
+  await admit(gate);
+  await eventually(() => expectPanel("addresses"));
+  expect(ownerReads).toEqual([
+    "/api/account",
+    "/api/customer-addresses",
+    "/api/account",
+    "/api/customer-addresses",
+  ]);
+});
+
 const field = (name: string) => {
   const input = container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
   if (input === null) {
@@ -412,7 +466,7 @@ it("adds an address, edits the latest revision and removes it after confirmation
   });
   await eventually(() => expect(container.textContent).toContain("Testovací 10"));
 
-  click(labels.edit);
+  click(labels.editAction);
   expect(field("addressLine1").value).toBe("Testovací 10");
   field("addressLine1").value = "Testovací 20";
   act(() => {
@@ -420,7 +474,7 @@ it("adds an address, edits the latest revision and removes it after confirmation
   });
   await eventually(() => expect(container.textContent).toContain("Testovací 20"));
 
-  click(labels.remove);
+  click(labels.removeAction);
   expect(commands).toHaveLength(2);
   await eventually(() => expect(document.querySelector('[role="alertdialog"]')).not.toBeNull());
   const dialog = document.querySelector('[role="alertdialog"]');
@@ -436,7 +490,7 @@ it("adds an address, edits the latest revision and removes it after confirmation
     {
       addressId,
       operation: "update",
-      postalAddress: { addressLine1: "Testovací 20" },
+      postalAddress: { addressLine1: "Testovací 20", countryCode: "CZ" },
       revision: 1,
     },
     { addressId, operation: "remove", revision: 2 },

@@ -11,8 +11,9 @@ import type { CustomerProfilePageState } from "@/ontos/customer-profile";
 import { logoutPortal } from "@/ontos/portal-client";
 import { usePortalAuth } from "./auth-view";
 import { CustomerProfileForm } from "./customer-profile-form";
-import { CustomerOrdersPanel } from "./customer-orders-panel";
-import { CustomerAddressesPanel } from "./customer-addresses-panel";
+import type { CustomerAddressIdentity } from "@/ontos/customer-addresses-client";
+import { CustomerOrdersPanel, useCustomerOrders } from "./customer-orders-panel";
+import { CustomerAddressesPanel, useCustomerAddresses } from "./customer-addresses-panel";
 
 const subscribeDesktop = (listener: () => void) => {
   const media = window.matchMedia("(min-width: 48rem)");
@@ -21,6 +22,36 @@ const subscribeDesktop = (listener: () => void) => {
 };
 const desktopSnapshot = () => window.matchMedia("(min-width: 48rem)").matches;
 const serverSnapshot = () => false;
+
+/** Retain reads across tab changes inside this admission only. */
+const AccountDataPanels = ({
+  dictionary,
+  identity,
+  locale,
+  tab,
+}: {
+  dictionary: Dictionary;
+  identity: CustomerAddressIdentity;
+  locale: string;
+  tab: string;
+}) => {
+  const addresses = useCustomerAddresses(identity, tab === "addresses");
+  const orders = useCustomerOrders(identity, locale, tab === "orders");
+  return (
+    <>
+      <Tabs.Content value="addresses">
+        {tab === "addresses" && (
+          <CustomerAddressesPanel dictionary={dictionary} locale={locale} query={addresses} />
+        )}
+      </Tabs.Content>
+      <Tabs.Content value="orders">
+        {tab === "orders" && (
+          <CustomerOrdersPanel dictionary={dictionary} locale={locale} query={orders} />
+        )}
+      </Tabs.Content>
+    </>
+  );
+};
 
 /** A fresh native profile is bound to its verified Portal viewer, never to its editable contact email. */
 export const AccountView = ({
@@ -117,16 +148,9 @@ export const AccountView = ({
                 )}
               </div>
             </Tabs.Content>
-            <Tabs.Content value="addresses">
-              {tab === "addresses" && auth.outcome.state === "admitted" && (
-                <CustomerAddressesPanel dictionary={d} identity={auth.outcome} />
-              )}
-            </Tabs.Content>
-            <Tabs.Content value="orders">
-              {tab === "orders" && (
-                <CustomerOrdersPanel dictionary={d} key={email} locale={locale} />
-              )}
-            </Tabs.Content>
+            {auth.outcome.state === "admitted" && (
+              <AccountDataPanels dictionary={d} identity={auth.outcome} locale={locale} tab={tab} />
+            )}
           </div>
         </div>
       </Tabs>

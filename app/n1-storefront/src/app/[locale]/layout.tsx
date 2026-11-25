@@ -37,7 +37,7 @@ const LocaleLayout = async ({
       ? "Sales demo: nothing is paid or delivered. Orders are demo-only."
       : "Demo prodejní ukázka: nic se neplatí ani nedoručuje. Objednávky jsou pouze ukázkové.";
   return (
-    <CartProvider imageHosts={imageHosts} key={JSON.stringify(scope)} scope={scope}>
+    <CartProvider imageHosts={imageHosts} key={JSON.stringify(scope)} locale={locale} scope={scope}>
       <PortalSessionProvider>
         <p className="bg-black px-4 py-2 text-center text-sm font-medium text-white" role="note">
           {demoNotice}

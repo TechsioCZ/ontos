@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import NextLink from "next/link";
 import { useEffect, useState } from "react";
 import { Effect, Exit, Fiber, Match } from "effect";
@@ -7,10 +8,12 @@ import { HttpApiClient } from "effect/http-api";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
+import { Image } from "@techsio/ui-kit/atoms/image";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import type { Dictionary } from "@/i18n";
+import type { CustomerAddressIdentity } from "@/ontos/customer-addresses-client";
 import { CustomerOrdersApi } from "@/ontos/customer-orders";
 import type { CustomerOrder, CustomerOrdersResult } from "@/ontos/customer-orders";
 import { clientRuntime } from "@/ontos/client-runtime";
@@ -49,23 +52,47 @@ export const CustomerOrderStatus = ({
   size?: "sm" | "md";
   status: CustomerOrder["status"];
 }) => (
-  <Badge size={size} variant={status === "CANCELLED" ? "danger" : "info"}>
+  <Badge
+    className="shrink-0 whitespace-nowrap"
+    size={size}
+    variant={status === "CANCELLED" ? "danger" : "info"}
+  >
     {d.checkout.statuses[status]}
   </Badge>
 );
 
 const OrderPreview = ({ order }: { order: CustomerOrder }) => (
   <div className="flex min-w-0 flex-col gap-1">
-    {order.preview.map((line) => (
-      <div key={JSON.stringify([line.productId, line.variantId, line.sku])}>
-        <p className="text-sm wrap-break-word">{line.name}</p>
-        <p className="text-xs text-fg-secondary">
-          {line.variantName}
-          {line.variantName !== null && line.variantName !== "" ? " · " : ""}
-          {line.quantity}×
-        </p>
-      </div>
-    ))}
+    {order.preview.map((line) => {
+      const image =
+        order.productPresentation?.find((item) => item.productId === line.productId)?.image ?? "";
+      return (
+        <div
+          className="flex min-w-0 items-center gap-2"
+          key={JSON.stringify([line.productId, line.variantId, line.sku])}
+        >
+          {image === "" ? null : (
+            <Image
+              alt=""
+              as={NextImage}
+              className="size-10 shrink-0 object-contain"
+              height={40}
+              size="custom"
+              src={image}
+              width={40}
+            />
+          )}
+          <div className="min-w-0">
+            <p className="text-sm wrap-break-word">{line.name}</p>
+            <p className="text-xs text-fg-secondary">
+              {line.variantName}
+              {line.variantName !== null && line.variantName !== "" ? " · " : ""}
+              {line.quantity}×
+            </p>
+          </div>
+        </div>
+      );
+    })}
   </div>
 );
 const DetailLink = ({
@@ -79,6 +106,7 @@ const DetailLink = ({
 }) => (
   <LinkButton
     as={NextLink}
+    className="shrink-0 whitespace-nowrap"
     href={`/${locale}/ucet/objednavky/${encodeURIComponent(order.id)}`}
     size="md"
     theme="solid"
@@ -131,28 +159,28 @@ export const CustomerOrdersList = ({
                 <Table.ColumnHeader>{d.accountPage.createdAt}</Table.ColumnHeader>
                 <Table.ColumnHeader>{d.accountPage.items}</Table.ColumnHeader>
                 <Table.ColumnHeader numeric>{d.accountPage.total}</Table.ColumnHeader>
-                <Table.ColumnHeader>{d.detail}</Table.ColumnHeader>
+                <Table.ColumnHeader>{d.accountPage.actions}</Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
               {data.orders.map((order) => (
                 <Table.Row key={order.id}>
-                  <Table.Cell>
+                  <Table.Cell className="w-px whitespace-nowrap">
                     <div className="flex flex-col items-start gap-1">
                       <span>{order.number}</span>
                       <CustomerOrderStatus dictionary={d} size="sm" status={order.status} />
                     </div>
                   </Table.Cell>
-                  <Table.Cell>
+                  <Table.Cell className="w-px whitespace-nowrap">
                     {customerOrderDate(order.createdAt, locale, d.accountPage.unknown)}
                   </Table.Cell>
                   <Table.Cell>
                     <OrderPreview order={order} />
                   </Table.Cell>
-                  <Table.Cell numeric>
+                  <Table.Cell className="w-px whitespace-nowrap" numeric>
                     {formatMarketAmount(order.totalMinor, locale, order.currency)}
                   </Table.Cell>
-                  <Table.Cell>
+                  <Table.Cell className="w-px whitespace-nowrap">
                     <DetailLink dictionary={d} locale={locale} order={order} />
                   </Table.Cell>
                 </Table.Row>
@@ -192,48 +220,67 @@ export const CustomerOrdersList = ({
   </div>
 );
 
-export const CustomerOrdersPanel = ({
-  dictionary: d,
-  locale,
-}: {
-  dictionary: Dictionary;
-  locale: string;
-}) => {
-  const [request, setRequest] = useState<OrdersRequest>({ offset: 0 });
+export const useCustomerOrders = (
+  identity: CustomerAddressIdentity,
+  locale: string,
+  active: boolean,
+) => {
+  const [selection, setSelection] = useState({ identity, locale, request: { offset: 0 } });
+  const sameSelection = selection.identity === identity && selection.locale === locale;
+  if (!sameSelection) {
+    setSelection({ identity, locale, request: { offset: 0 } });
+  }
+  const { request } = selection;
   const [snapshot, setSnapshot] = useState<{
-    locale: string;
-    request: OrdersRequest;
     result: OrderPageState;
+    selection: typeof selection;
   } | null>(null);
+  const state: OrderPageState =
+    sameSelection && snapshot?.selection === selection ? snapshot.result : { state: "loading" };
+  const shouldRead = active && sameSelection && state.state === "loading";
   useEffect(() => {
     let current = true;
-    const fiber = clientRuntime.runFork(
-      readOrders(locale, request).pipe(
-        Effect.match({
-          onFailure: readFailure,
-          onSuccess: (data): OrderPageState => ({ data, state: "ready" }),
-        }),
-      ),
-    );
-    fiber.addObserver((exit) => {
+    const fiber = shouldRead
+      ? clientRuntime.runFork(
+          readOrders(locale, request).pipe(
+            Effect.match({
+              onFailure: readFailure,
+              onSuccess: (data): OrderPageState => ({ data, state: "ready" }),
+            }),
+          ),
+        )
+      : null;
+    fiber?.addObserver((exit) => {
       if (current) {
         setSnapshot({
-          locale,
-          request,
           result: Exit.isSuccess(exit) ? exit.value : { state: "unavailable" },
+          selection,
         });
       }
     });
     return () => {
       current = false;
-      clientRuntime.runFork(Fiber.interrupt(fiber));
+      if (fiber !== null) {
+        clientRuntime.runFork(Fiber.interrupt(fiber));
+      }
     };
-  }, [locale, request]);
-  const state: OrderPageState =
-    snapshot?.request === request && snapshot.locale === locale
-      ? snapshot.result
-      : { state: "loading" };
+  }, [locale, request, selection, shouldRead]);
   const { offset } = request;
+  const readPage = (newOffset: number) =>
+    setSelection((previous) => ({ ...previous, request: { offset: newOffset } }));
+  return { offset, readPage, state };
+};
+
+export const CustomerOrdersPanel = ({
+  dictionary: d,
+  locale,
+  query,
+}: {
+  dictionary: Dictionary;
+  locale: string;
+  query: ReturnType<typeof useCustomerOrders>;
+}) => {
+  const { offset, readPage, state } = query;
   let body;
   if (state.state === "ready") {
     body = (
@@ -243,11 +290,7 @@ export const CustomerOrdersPanel = ({
           <nav aria-label={d.accountPage.orders} className="flex flex-wrap justify-between gap-2">
             <Button
               disabled={offset === 0}
-              onClick={() =>
-                setRequest((previous) => ({
-                  offset: Math.max(0, previous.offset - state.data.pageSize),
-                }))
-              }
+              onClick={() => readPage(Math.max(0, offset - state.data.pageSize))}
               size="sm"
               theme="outlined"
               variant="secondary"
@@ -256,9 +299,7 @@ export const CustomerOrdersPanel = ({
             </Button>
             <Button
               disabled={offset + state.data.pageSize >= state.data.total}
-              onClick={() =>
-                setRequest((previous) => ({ offset: previous.offset + state.data.pageSize }))
-              }
+              onClick={() => readPage(offset + state.data.pageSize)}
               size="sm"
               theme="outlined"
               variant="secondary"
@@ -277,12 +318,7 @@ export const CustomerOrdersPanel = ({
         <StatusText align="center" showIcon={false} size="md" status="error">
           {d.accountPage.ordersUnavailable}
         </StatusText>
-        <Button
-          onClick={() => setRequest((previous) => ({ ...previous }))}
-          size="sm"
-          theme="solid"
-          variant="secondary"
-        >
+        <Button onClick={() => readPage(offset)} size="sm" theme="solid" variant="secondary">
           {d.retry}
         </Button>
       </div>
@@ -292,12 +328,7 @@ export const CustomerOrdersPanel = ({
     body = (
       <div className="flex flex-col items-start gap-4">
         <output>{message}</output>
-        <Button
-          onClick={() => setRequest((previous) => ({ ...previous }))}
-          size="md"
-          theme="outlined"
-          variant="secondary"
-        >
+        <Button onClick={() => readPage(offset)} size="md" theme="outlined" variant="secondary">
           {d.accountPage.reload}
         </Button>
       </div>

@@ -59,6 +59,7 @@ const order = {
 } satisfies typeof OrderSchema.Encoded;
 interface BackendOptions {
   anonymous?: boolean;
+  catalogProducts?: readonly unknown[];
   foreignTenant?: boolean;
   gatewayStatus?: number;
   invalidCurrency?: boolean;
@@ -103,6 +104,7 @@ const backend = (options: BackendOptions = {}) => {
       if (options.recordsStatus !== undefined) {
         return Response.json({}, { status: options.recordsStatus });
       }
+      const input = await request.json();
       const orders = options.orders ?? [order];
       const wireOrders =
         options.invalidCurrency === true
@@ -118,12 +120,17 @@ const backend = (options: BackendOptions = {}) => {
             }))
           : orders;
       return Response.json(
-        {
-          movements: [],
-          orders: wireOrders,
-          products: options.products ?? [],
-          totalOrders: options.total ?? orders.length,
-        },
+        input.query.view.storefrontCatalog === undefined
+          ? {
+              movements: [],
+              orders: wireOrders,
+              products: options.products ?? [],
+              totalOrders: options.total ?? orders.length,
+            }
+          : {
+              market: { ...order.market, configured: true },
+              products: options.catalogProducts ?? [],
+            },
         {
           headers: {
             "x-ontos-gateway-context": JSON.stringify({
@@ -155,6 +162,38 @@ const provided = <A, E>(
   );
 
 describe("fresh authenticated own-order read", () => {
+  it.effect(
+    "adds public media only for products from the owned order without changing stored lines",
+    () =>
+      Effect.gen(function* enrichOwnedOrder() {
+        const product = {
+          id: "product-1",
+          imageSrc: "media:a973f79c-0f97-476f-a003-f6db822156fb",
+          name: "Current catalog name",
+          slug: "current-shirt",
+        };
+        const input = { locale: "cs", orderId: order.id } as const;
+        const owner = backend({ catalogProducts: [product] });
+        const result = yield* provided(
+          readCustomerOrdersWithConfiguration(config, input, context()),
+          owner,
+        );
+        expect(result.orders[0]?.productPresentation).toEqual([
+          {
+            image: "/obrazky/product-1/a973f79c-0f97-476f-a003-f6db822156fb",
+            productId: "product-1",
+            slug: "current-shirt",
+          },
+        ]);
+        expect(result.orders[0]?.detail?.lines).toEqual(order.lines);
+        const rejected = yield* provided(
+          readCustomerOrdersWithConfiguration(config, input, context()),
+          backend({ catalogProducts: [{ ...product, id: "unrelated-product" }] }),
+        );
+        expect(rejected.orders[0]?.productPresentation).toBeUndefined();
+        expect(rejected.orders[0]?.detail?.lines).toEqual(order.lines);
+      }),
+  );
   it.effect(
     "derives the subject from native admission and returns compact list data in stored currency",
     () =>

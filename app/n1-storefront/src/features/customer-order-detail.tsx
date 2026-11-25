@@ -1,5 +1,6 @@
 "use client";
 
+import NextImage from "next/image";
 import NextLink from "next/link";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -58,23 +59,56 @@ export const CustomerOrderContent = ({
       <section className="flex flex-col gap-3">
         <h2 className="text-lg leading-n1-copy font-bold">{d.accountPage.orderedProducts}</h2>
         <div className="n1-order-items grid min-w-0 gap-3 md:grid-cols-3">
-          {detail.lines.map((line) => (
-            <ProductCard
-              key={`${line.productId}-${line.variantId ?? ""}-${line.sku}`}
-              layout="column"
-              shadow={false}
-            >
-              <div>
-                <Badge size="sm" variant="secondary">{`${line.quantity}×`}</Badge>
-              </div>
-              <ProductCard.Name>{line.productName}</ProductCard.Name>
-              {line.variantName !== undefined && line.variantName !== "" && (
-                <p className="text-sm text-fg-secondary">{line.variantName}</p>
-              )}
-              <p className="text-xs text-fg-secondary">{d.accountPage.unitPrice}</p>
-              <ProductCard.Price>{money(line.unitPriceMinor)}</ProductCard.Price>
-            </ProductCard>
-          ))}
+          {detail.lines.map((line) => {
+            const product = order.productPresentation?.find(
+              (item) => item.productId === line.productId,
+            );
+            const image = product?.image ?? "";
+            const quantity = <Badge size="sm" variant="secondary">{`${line.quantity}×`}</Badge>;
+            return (
+              <ProductCard
+                key={`${line.productId}-${line.variantId ?? ""}-${line.sku}`}
+                layout="column"
+                shadow={false}
+              >
+                {image === "" ? (
+                  <div>{quantity}</div>
+                ) : (
+                  <div className="relative -mx-2 -mt-2 aspect-square">
+                    <ProductCard.Image
+                      alt=""
+                      as={NextImage}
+                      fill
+                      objectFit="contain"
+                      sizes="(max-width: 767px) calc(100vw - 64px), 320px"
+                      src={image}
+                    />
+                    <div className="absolute top-2 right-2">{quantity}</div>
+                  </div>
+                )}
+                <ProductCard.Name>
+                  {product === undefined ? (
+                    line.productName
+                  ) : (
+                    <Link
+                      as={NextLink}
+                      className="underline"
+                      href={`/${locale}/produkt/${encodeURIComponent(product.slug)}`}
+                    >
+                      {line.productName}
+                    </Link>
+                  )}
+                </ProductCard.Name>
+                {line.variantName !== undefined && line.variantName !== "" && (
+                  <p className="text-sm text-fg-secondary">{line.variantName}</p>
+                )}
+                <div>
+                  <p className="text-xs text-fg-secondary">{d.accountPage.unitPrice}</p>
+                  <ProductCard.Price>{money(line.unitPriceMinor)}</ProductCard.Price>
+                </div>
+              </ProductCard>
+            );
+          })}
         </div>
       </section>
       <div className="grid min-w-0 gap-4 md:grid-cols-2">

@@ -6,6 +6,8 @@ import { Effect, Schema } from "effect";
 import type { CartScope, CartQuoteRequest } from "@/ontos/cart-quote";
 import { clientRuntime } from "@/ontos/client-runtime";
 import { clearSubmittedCart } from "./checkout-guard";
+import { requestForCart } from "./cart-quote-request";
+import { CartQuoteContext, useCartQuoteRequest } from "./use-cart-quote";
 import type { CheckoutGuardStorage } from "./checkout-guard";
 import {
   addCartEntry,
@@ -62,11 +64,13 @@ const readSavedCart = (key: string, scope: CartScope, storage?: CheckoutGuardSto
 export const CartProvider = ({
   children,
   imageHosts,
+  locale = "cs",
   scope,
   storage,
 }: {
   children: ReactNode;
   imageHosts: readonly string[];
+  locale?: string;
   scope: CartScope | null;
   storage?: CheckoutGuardStorage;
 }) => {
@@ -77,6 +81,10 @@ export const CartProvider = ({
     key: null,
     loaded: false,
   });
+  const active = state.key === key;
+  const quotes = useCartQuoteRequest(
+    requestForCart({ ...state, loaded: active && state.loaded, scope }, locale, false),
+  );
   useEffect(() => {
     const restore = () => {
       if (scope === null || key === null) {
@@ -108,7 +116,9 @@ export const CartProvider = ({
       <StorageContext value={storage}>
         <ImagesContext value={imageHosts}>
           <StateContext value={state}>
-            <DispatchContext value={setState}>{children}</DispatchContext>
+            <DispatchContext value={setState}>
+              <CartQuoteContext value={quotes}>{children}</CartQuoteContext>
+            </DispatchContext>
           </StateContext>
         </ImagesContext>
       </StorageContext>

@@ -14,6 +14,7 @@ import type {
   CustomerOrdersView,
 } from "./customer-orders";
 import { readOwner } from "./gateway";
+import { readOrderedProducts } from "./ordered-product-server";
 import { portalFailureOutcome, readPortalIdentityWithConfiguration } from "./portal-server";
 import type { PortalRequestContext } from "./portal-server";
 import { storefrontRuntime } from "./runtime";
@@ -72,6 +73,47 @@ const projectCustomerOrder = (order: typeof OrderSchema.Type, includeDetail: boo
       updatedAt: stored.updatedAt,
     };
     return result;
+  });
+
+const marketKey = (market: NonNullable<CustomerOrder["market"]>) =>
+  `${market.marketId}:${market.currency}`;
+
+/** Resolve public presentation only after all returned orders pass customer ownership checks. */
+const presentOrderProducts = (config: StorefrontConfiguration, orders: readonly CustomerOrder[]) =>
+  Effect.gen(function* presentOrderProductsProgram() {
+    const groups = new Map<
+      string,
+      { market: NonNullable<CustomerOrder["market"]>; products: Set<string> }
+    >();
+    for (const order of orders) {
+      if (order.market === null) {
+        continue;
+      }
+      const key = marketKey(order.market);
+      let group = groups.get(key);
+      if (group === undefined) {
+        group = { market: order.market, products: new Set() };
+        groups.set(key, group);
+      }
+      for (const line of order.preview) {
+        group.products.add(line.productId);
+      }
+    }
+    const resolved = yield* Effect.forEach(
+      [...groups.entries()].slice(0, 4),
+      ([key, { market, products }]) =>
+        readOrderedProducts(config, market, [...products].slice(0, 50)).pipe(
+          Effect.map((items) => [key, items] as const),
+        ),
+      { concurrency: 4 },
+    );
+    const byMarket = new Map(resolved);
+    return orders.map((order) => {
+      const products = order.market === null ? undefined : byMarket.get(marketKey(order.market));
+      const ownIds = new Set(order.preview.map((line) => line.productId));
+      const presentation = products?.filter((product) => ownIds.has(product.productId)) ?? [];
+      return presentation.length === 0 ? order : { ...order, productPresentation: presentation };
+    });
   });
 
 /** The owner binds tenant/seller from the gateway assertion; customer ownership is checked again here. */
@@ -149,7 +191,7 @@ const readCustomerOrdersSnapshot = (
       }
       const data = yield* Schema.decodeEffect(CustomerOrdersResultSchema)({
         offset: pageOffset,
-        orders,
+        orders: yield* presentOrderProducts(config, orders),
         pageSize: 50,
         total: snapshot.totalOrders,
       }).pipe(Effect.mapError(() => new CustomerOrdersFailure({ state: "unavailable" })));

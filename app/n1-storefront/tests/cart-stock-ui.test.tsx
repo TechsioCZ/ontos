@@ -10,7 +10,8 @@ import type { Root } from "react-dom/client";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { CartView } from "../src/features/cart-view";
-import { CartProvider } from "../src/features/cart-provider";
+import { CartProvider, useCart } from "../src/features/cart-provider";
+import { MiniCart } from "../src/features/mini-cart";
 import { cartStorageKey } from "../src/features/cart-state";
 import type { CartEntry } from "../src/features/cart-state";
 import { CartQuoteApi, CartQuoteSchemaErrorMiddleware } from "../src/ontos/cart-quote";
@@ -80,12 +81,42 @@ let network: ReturnType<typeof startNetwork>;
 let root: Root;
 let container: HTMLDivElement;
 const storedCart = JSON.stringify({ entries: [entry], scope, version: 1 });
-const mount = async (locale: "cs" | "en") => {
+const SetCartQuantity = () => {
+  const cart = useCart();
+  return (
+    <>
+      <button
+        onClick={() => {
+          cart?.update(entry, 1);
+        }}
+        type="button"
+      >
+        Set one
+      </button>
+      <button
+        onClick={() => {
+          cart?.update(entry, 2);
+        }}
+        type="button"
+      >
+        Set two
+      </button>
+    </>
+  );
+};
+const mount = async (locale: "cs" | "en", miniOpen = false, showCart = true) => {
   await act(async () => {
     root.render(
       <AppRouterContext.Provider value={router}>
-        <CartProvider imageHosts={[]} scope={scope}>
-          <CartView dictionary={getDictionary(locale)} locale={locale} />
+        <CartProvider imageHosts={[]} locale={locale} scope={scope}>
+          <MiniCart
+            dictionary={getDictionary(locale)}
+            locale={locale}
+            onOpenChange={() => {}}
+            open={miniOpen}
+          />
+          {showCart && <CartView dictionary={getDictionary(locale)} locale={locale} />}
+          <SetCartQuantity />
         </CartProvider>
       </AppRouterContext.Provider>,
     );
@@ -139,6 +170,14 @@ afterEach(async () => {
   await network.dispose();
 });
 
+const changeQuantity = async (label: string) => {
+  await act(async () => {
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === label)
+      ?.click();
+  });
+};
+
 describe("cart controls use current owner stock", () => {
   it.each(["cs", "en"] as const)(
     "bounds a legacy hintless cart and disables increment at max in %s",
@@ -166,6 +205,54 @@ describe("cart controls use current owner stock", () => {
       ).toBe("2");
     },
   );
+  it("warms a saved cart before opening and coalesces background quantity changes", async () => {
+    await mount("cs", false, false);
+    await eventually(() => expect(requests).toHaveLength(1));
+    await network.runPromise(networkIdle);
+    await mount("cs", true, false);
+    await eventually(() => {
+      expect(document.body.querySelectorAll('a[href="/cs/pokladna"]')).toHaveLength(1);
+    });
+    await expectQuoteRequest("cs");
+    await mount("cs", false, false);
+    await changeQuantity("Set one");
+    await changeQuantity("Set two");
+    await act(async () => {
+      await nextTurn(250);
+    });
+    await network.runPromise(networkIdle);
+    expect(requests.map((request) => request.lines[0]?.quantity)).toEqual([2, 2]);
+  });
+
+  it("shares one quote with the mini-cart and reuses it on reopen", async () => {
+    await mount("cs", true);
+    await eventually(() => {
+      expect(document.body.querySelectorAll('a[href="/cs/pokladna"]')).toHaveLength(2);
+    });
+    await expectQuoteRequest("cs");
+    await mount("cs", false, false);
+    await mount("cs", true, false);
+    await eventually(() => {
+      expect(document.body.querySelectorAll('a[href="/cs/pokladna"]')).toHaveLength(1);
+    });
+    await expectQuoteRequest("cs");
+  });
+
+  it("quotes a new quantity even when the cart returns to a previous selection", async () => {
+    await mount("cs");
+    await eventually(() =>
+      expect(requests.map((request) => request.lines[0]?.quantity)).toEqual([2]),
+    );
+    await changeQuantity("Set one");
+    await eventually(() =>
+      expect(requests.map((request) => request.lines[0]?.quantity)).toEqual([2, 1]),
+    );
+    await changeQuantity("Set two");
+    await eventually(() =>
+      expect(requests.map((request) => request.lines[0]?.quantity)).toEqual([2, 1, 2]),
+    );
+  });
+
   it("blocks checkout when fresh catalog stock falls below the saved quantity", async () => {
     stockQuantity = 1;
     await mount("cs");

@@ -3,7 +3,9 @@
 import { Predicate } from "effect";
 import type { SubmitEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { Select } from "@techsio/ui-kit/molecules/select";
 import type { Dictionary } from "@/i18n";
+import { countryName } from "@/i18n/country-name";
 import type { CustomerAddress, CustomerAddressCommand } from "@/ontos/customer-addresses";
 import { FormInput } from "./form-controls";
 
@@ -13,11 +15,28 @@ interface OptionalPostalFields {
   region?: string;
 }
 
+// ISO 3166-1 alpha-2. The address book accepts addresses outside the current delivery market.
+const postalCountryCodes = (
+  "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ " +
+  "BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ " +
+  "CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ " +
+  "DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR " +
+  "GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY " +
+  "HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP " +
+  "KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY " +
+  "MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ " +
+  "NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA " +
+  "RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ " +
+  "TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ " +
+  "VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW"
+).split(" ");
+
 export const CustomerAddressForm = ({
   address,
   dictionary: d,
   disabled,
   error,
+  locale,
   onCancel,
   onSubmit,
   pending,
@@ -26,12 +45,17 @@ export const CustomerAddressForm = ({
   dictionary: Dictionary;
   disabled: boolean;
   error: string | null;
+  locale: string;
   onCancel: () => void;
   onSubmit: (command: PostalCommand) => void;
   pending: boolean;
 }) => {
   const postal = address?.location.state === "available" ? address.location.address : undefined;
   const labels = d.accountPage.addressEditor;
+  const selectedCountry = postal?.countryCode ?? "CZ";
+  const countries = [...new Set([...postalCountryCodes, selectedCountry])]
+    .map((value) => ({ label: countryName(value, locale), value }))
+    .toSorted((a, b) => a.label.localeCompare(b.label, locale));
   const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const values = new FormData(event.currentTarget);
@@ -71,8 +95,8 @@ export const CustomerAddressForm = ({
       onSubmit={submit}
     >
       <h3 className="text-md font-semibold">{address === undefined ? labels.add : labels.edit}</h3>
-      <fieldset className="grid min-w-0 gap-3 sm:grid-cols-2" disabled={disabled || pending}>
-        <div className="sm:col-span-2">
+      <fieldset className="grid min-w-0 grid-cols-2 items-end gap-3" disabled={disabled || pending}>
+        <div className="col-span-2">
           <FormInput
             autoComplete="address-line1"
             defaultValue={postal?.addressLine1}
@@ -83,7 +107,7 @@ export const CustomerAddressForm = ({
             required
           />
         </div>
-        <div className="sm:col-span-2">
+        <div className="col-span-2">
           <FormInput
             autoComplete="address-line2"
             defaultValue={postal?.addressLine2}
@@ -101,6 +125,38 @@ export const CustomerAddressForm = ({
           pattern={String.raw`.*\S.*`}
           required
         />
+        <Select
+          className="min-w-0"
+          defaultValue={[selectedCountry]}
+          disabled={disabled || pending}
+          items={countries}
+          name="countryCode"
+          required
+        >
+          <Select.Label>{labels.country}</Select.Label>
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText placeholder={d.checkout.countryPlaceholder} />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {countries.map((item) => (
+                <Select.Item item={item} key={item.value}>
+                  <Select.ItemText />
+                  <Select.ItemIndicator />
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select>
+        <FormInput
+          autoComplete="address-level1"
+          defaultValue={postal?.region}
+          label={labels.region}
+          maxLength={300}
+          name="region"
+        />
         <FormInput
           autoComplete="postal-code"
           defaultValue={postal?.postalCode}
@@ -110,25 +166,9 @@ export const CustomerAddressForm = ({
           pattern={String.raw`.*\S.*`}
           required
         />
-        <FormInput
-          autoComplete="address-level1"
-          defaultValue={postal?.region}
-          label={labels.region}
-          maxLength={300}
-          name="region"
-        />
-        <FormInput
-          autoComplete="country"
-          defaultValue={postal?.countryCode ?? "CZ"}
-          label={labels.countryCode}
-          maxLength={2}
-          name="countryCode"
-          pattern="[A-Za-z]{2}"
-          required
-        />
       </fieldset>
       {error !== null && <output className="text-fg-secondary">{error}</output>}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button disabled={pending} onClick={onCancel} size="sm" type="button" variant="secondary">
           {labels.cancel}
         </Button>
@@ -140,7 +180,7 @@ export const CustomerAddressForm = ({
           type="submit"
           variant="primary"
         >
-          {d.accountPage.save}
+          {address === undefined ? labels.create : d.accountPage.save}
         </Button>
       </div>
     </form>

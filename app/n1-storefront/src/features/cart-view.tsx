@@ -18,7 +18,6 @@ import type { CartQuote } from "@/ontos/cart-quote";
 import { publicImage } from "@/ontos/catalog-model";
 import { useCart } from "./cart-provider";
 import { CartQuoteFeedback } from "./cart-quote-feedback";
-import { requestForCart } from "./cart-quote-request";
 import { verifiedCartQuote } from "./cart-quote-state";
 import { cartLineKey, cartQuantityMaximum, cartQuantityStep } from "./cart-state";
 import type { CartEntry } from "./cart-state";
@@ -318,7 +317,7 @@ export const CartView = ({ dictionary: d, locale }: { dictionary: Dictionary; lo
     setDrafts(reconciledDrafts);
   }
   // Quote the saved selection; unfinished input is gated separately below.
-  const quote = useCartQuote(requestForCart(cart, locale, false), true);
+  const quote = useCartQuote();
   const invalid = hasInvalidCartDraft(
     drafts,
     entries.map((entry) =>

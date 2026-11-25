@@ -9,6 +9,7 @@ import { StorefrontOrderLineResultSchema } from "@app/merchandise/contracts/appl
 import { Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
 import { CartQuoteRequestSchema, CartQuoteSchema, CartScopeSchema } from "./cart-quote";
+import { OrderedProductPresentationSchema } from "./ordered-product";
 
 const minor = Schema.Int.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }));
 const name = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200));
@@ -38,18 +39,6 @@ const CheckoutReceiptSchema = Schema.Struct({
   shippingMethod: Schema.NullOr(ShippingMethodSchema),
 });
 
-export const CheckoutProductPresentationSchema = Schema.Array(
-  Schema.Struct({
-    image: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
-    productId: StorefrontOrderLineResultSchema.fields.productId,
-    slug: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-  }),
-).check(
-  Schema.isMaxLength(50),
-  Schema.makeFilter((items) => new Set(items.map((item) => item.productId)).size === items.length),
-);
-
-/** Amounts include the selected shipping method. Never reuse the goods-only CartQuote. */
 export const CheckoutResultSchema = Schema.Struct({
   issues: CartQuoteSchema.fields.issues,
   lines: Schema.Array(
@@ -62,7 +51,7 @@ export const CheckoutResultSchema = Schema.Struct({
   orderId: Schema.NullOr(Schema.String.check(Schema.isMinLength(1))),
   orderNumber: Schema.NullOr(Schema.String.check(Schema.isMinLength(1))),
   outcome: Schema.Literals(["VALID", "REJECTED", "PLACED", "REPLAYED"]),
-  productPresentation: Schema.optionalKey(CheckoutProductPresentationSchema),
+  productPresentation: Schema.optionalKey(OrderedProductPresentationSchema),
   receipt: Schema.optionalKey(Schema.NullOr(CheckoutReceiptSchema)),
   scope: CartScopeSchema,
   shippingPriceMinor: Schema.NullOr(minor),

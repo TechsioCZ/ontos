@@ -1,5 +1,6 @@
 import { expect, it } from "@rstest/core";
 import { renderToStaticMarkup } from "react-dom/server";
+import { CustomerAddressForm } from "../src/features/customer-address-form";
 import { CustomerAddressesList } from "../src/features/customer-addresses-panel";
 import { customerAddressesForIdentity } from "../src/ontos/customer-addresses-client";
 import type {
@@ -62,11 +63,38 @@ it("distinguishes unresolved source data and a genuine empty book", () => {
     <CustomerAddressesList
       addresses={[{ ...address, location: { state: "unresolved" } }]}
       dictionary={d}
+      locale="en"
     />,
   );
   expect(unresolved).toContain(d.accountPage.addressUnresolved);
   expect(unresolved).not.toContain("Ulice 1");
-  const empty = renderToStaticMarkup(<CustomerAddressesList addresses={[]} dictionary={d} />);
+  const empty = renderToStaticMarkup(
+    <CustomerAddressesList addresses={[]} dictionary={d} locale="en" />,
+  );
   expect(empty).toContain(d.accountPage.emptyAddresses);
   expect(empty).not.toContain(d.accountPage.addressUnavailable);
+});
+
+it("keeps an existing country code selectable when editing an address", () => {
+  const markup = renderToStaticMarkup(
+    <CustomerAddressForm
+      address={{
+        ...address,
+        location: {
+          ...address.location,
+          address: { ...address.location.address, countryCode: "XK" },
+        },
+      }}
+      dictionary={getDictionary("cs")}
+      disabled={false}
+      error={null}
+      locale="cs"
+      onCancel={() => {}}
+      onSubmit={() => {}}
+      pending={false}
+    />,
+  );
+  expect(markup).toContain('name="countryCode"');
+  expect(markup).toContain('<option value="XK" selected="">Kosovo</option>');
+  expect(markup).toContain('<option value="CZ">Česko</option>');
 });

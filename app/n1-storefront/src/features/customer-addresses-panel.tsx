@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { useToast } from "@techsio/ui-kit/molecules/toast";
 import { Exit, Fiber } from "effect";
 import type { Effect } from "effect";
 import type { Dictionary } from "@/i18n";
+import { countryName } from "@/i18n/country-name";
 import type { CustomerAddress, CustomerAddressCommand } from "@/ontos/customer-addresses";
 import {
   changeCustomerAddress,
@@ -30,13 +31,15 @@ type WriteFiber = Fiber.Fiber<WriteResult>;
 const AddressCard = ({
   address,
   dictionary: d,
+  locale,
   onAction,
 }: {
   address: CustomerAddress;
   dictionary: Dictionary;
+  locale: string;
   onAction?: ((action: EditorAction, trigger: HTMLButtonElement) => void) | undefined;
 }) => (
-  <article className="flex w-full flex-col gap-2 border border-border-primary bg-fill-surface p-2 md:w-[364px]">
+  <article className="flex w-full flex-col gap-3 border border-border-primary bg-fill-surface p-4 sm:max-w-sm">
     {address.label !== undefined && <h3 className="text-md font-medium">{address.label}</h3>}
     {address.location.state === "available" ? (
       <div className="text-sm text-fg-secondary">
@@ -48,7 +51,7 @@ const AddressCard = ({
           {address.location.address.postalCode} {address.location.address.city}
         </p>
         {address.location.address.region !== undefined && <p>{address.location.address.region}</p>}
-        <p>{address.location.address.countryCode}</p>
+        <p>{countryName(address.location.address.countryCode, locale)}</p>
       </div>
     ) : (
       <p className="text-sm text-fg-secondary">{d.accountPage.addressUnresolved}</p>
@@ -67,7 +70,7 @@ const AddressCard = ({
           type="button"
           variant="secondary"
         >
-          {d.accountPage.addressEditor.edit}
+          {d.accountPage.addressEditor.editAction}
         </Button>
         <Button
           aria-haspopup="dialog"
@@ -76,7 +79,7 @@ const AddressCard = ({
           type="button"
           variant="danger"
         >
-          {d.accountPage.addressEditor.remove}
+          {d.accountPage.addressEditor.removeAction}
         </Button>
       </div>
     )}
@@ -86,10 +89,12 @@ const AddressCard = ({
 export const CustomerAddressesList = ({
   addresses,
   dictionary: d,
+  locale,
   onAction,
 }: {
   addresses: readonly CustomerAddress[];
   dictionary: Dictionary;
+  locale: string;
   onAction?: ((action: EditorAction, trigger: HTMLButtonElement) => void) | undefined;
 }) =>
   addresses.length === 0 ? (
@@ -99,7 +104,13 @@ export const CustomerAddressesList = ({
   ) : (
     <div className="flex flex-wrap gap-4">
       {addresses.map((address) => (
-        <AddressCard address={address} dictionary={d} key={address.id} onAction={onAction} />
+        <AddressCard
+          address={address}
+          dictionary={d}
+          key={address.id}
+          locale={locale}
+          onAction={onAction}
+        />
       ))}
     </div>
   );
@@ -107,10 +118,12 @@ export const CustomerAddressesList = ({
 const AddressBookEditor = ({
   addresses,
   dictionary: d,
+  locale,
   refresh,
 }: {
   addresses: readonly CustomerAddress[];
   dictionary: Dictionary;
+  locale: string;
   refresh: () => void;
 }) => {
   const [action, setAction] = useState<EditorAction | null>(null);
@@ -121,12 +134,14 @@ const AddressBookEditor = ({
   const trigger = useRef<HTMLButtonElement | null>(null);
   const toast = useToast();
   const labels = d.accountPage.addressEditor;
+  const invalidateInterruptedWrite = useEffectEvent(refresh);
   useEffect(
     () => () => {
       const fiber = running.current;
       running.current = null;
       if (fiber !== null) {
         clientRuntime.runFork(Fiber.interrupt(fiber));
+        invalidateInterruptedWrite();
       }
     },
     [],
@@ -224,7 +239,7 @@ const AddressBookEditor = ({
     <>
       <Button
         aria-disabled={action !== null}
-        className="self-start sm:self-end"
+        className="justify-self-end"
         onClick={(event) => open({ operation: "add" }, event.currentTarget)}
         size="sm"
         type="button"
@@ -232,21 +247,29 @@ const AddressBookEditor = ({
       >
         {labels.add}
       </Button>
-      {action !== null && action.operation !== "remove" && (
-        <>
-          <CustomerAddressForm
-            address={action.operation === "update" ? action.address : undefined}
-            dictionary={d}
-            disabled={blocked || reload}
-            error={error}
-            onCancel={close}
-            onSubmit={save}
-            pending={pending}
-          />
-          {recover}
-        </>
-      )}
-      <CustomerAddressesList addresses={addresses} dictionary={d} onAction={open} />
+      <div className="col-span-full grid min-w-0 gap-4">
+        {action !== null && action.operation !== "remove" && (
+          <>
+            <CustomerAddressForm
+              address={action.operation === "update" ? action.address : undefined}
+              dictionary={d}
+              disabled={blocked || reload}
+              error={error}
+              locale={locale}
+              onCancel={close}
+              onSubmit={save}
+              pending={pending}
+            />
+            {recover}
+          </>
+        )}
+        <CustomerAddressesList
+          addresses={addresses}
+          dictionary={d}
+          locale={locale}
+          onAction={open}
+        />
+      </div>
       <Dialog
         actions={
           <div className="flex flex-wrap gap-2">
@@ -292,21 +315,20 @@ const AddressBookEditor = ({
   );
 };
 
-export const CustomerAddressesPanel = ({
-  dictionary: d,
-  identity,
-}: {
-  dictionary: Dictionary;
-  identity: CustomerAddressIdentity;
-}) => {
+export const useCustomerAddresses = (identity: CustomerAddressIdentity, active: boolean) => {
   const [generation, setGeneration] = useState(0);
   const [snapshot, setSnapshot] = useState<
     (CustomerAddressesSnapshot & { generation: number }) | null
   >(null);
+  const state = customerAddressesForIdentity(
+    snapshot?.generation === generation ? snapshot : null,
+    identity,
+  );
+  const shouldRead = active && state.state === "loading";
   useEffect(() => {
     let current = true;
-    const fiber = clientRuntime.runFork(readCustomerAddresses());
-    fiber.addObserver((exit) => {
+    const fiber = shouldRead ? clientRuntime.runFork(readCustomerAddresses()) : null;
+    fiber?.addObserver((exit) => {
       if (current) {
         setSnapshot({
           generation,
@@ -317,19 +339,34 @@ export const CustomerAddressesPanel = ({
     });
     return () => {
       current = false;
-      clientRuntime.runFork(Fiber.interrupt(fiber));
+      if (fiber !== null) {
+        clientRuntime.runFork(Fiber.interrupt(fiber));
+      }
     };
-  }, [identity, generation]);
-  const state = customerAddressesForIdentity(
-    snapshot?.generation === generation ? snapshot : null,
-    identity,
-  );
-  const refresh = () => {
-    setGeneration((value) => value + 1);
-  };
+  }, [identity, generation, shouldRead]);
+  return { refresh: () => setGeneration((value) => value + 1), state };
+};
+
+export const CustomerAddressesPanel = ({
+  dictionary: d,
+  locale,
+  query,
+}: {
+  dictionary: Dictionary;
+  locale: string;
+  query: ReturnType<typeof useCustomerAddresses>;
+}) => {
+  const { refresh, state } = query;
   let body;
   if (state.state === "ready") {
-    body = <AddressBookEditor addresses={state.addresses} dictionary={d} refresh={refresh} />;
+    body = (
+      <AddressBookEditor
+        addresses={state.addresses}
+        dictionary={d}
+        locale={locale}
+        refresh={refresh}
+      />
+    );
   } else {
     let message = d.accountPage.addressUnavailable;
     if (state.state === "loading") {
@@ -340,7 +377,7 @@ export const CustomerAddressesPanel = ({
       message = d.accountPage.forbidden;
     }
     body = (
-      <div className="flex flex-col items-start gap-2">
+      <div className="col-span-full flex flex-col items-start gap-2">
         <output aria-live="polite">{message}</output>
         {state.state === "unavailable" && (
           <Button onClick={refresh} size="sm" type="button" variant="secondary">
@@ -351,8 +388,10 @@ export const CustomerAddressesPanel = ({
     );
   }
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="text-lg leading-normal font-semibold">{d.accountPage.addresses}</h2>
+    <section className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
+      <h2 className="self-center text-lg leading-normal font-semibold">
+        {d.accountPage.addresses}
+      </h2>
       {body}
     </section>
   );

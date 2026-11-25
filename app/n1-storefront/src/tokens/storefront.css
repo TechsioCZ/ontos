@@ -267,10 +267,9 @@
   --font-weight-table-header: var(--font-weight-medium);
 }
 
-/* Order item333:4990/4997: natural names and14px/medium unit prices.
- * The stored order has no photo, product slug or authoritative line total;
- * do not invent those fields to fill the reference card. */
+/* Order item333:4990/4997: square catalog media, natural names and14px/medium unit prices. */
 @utility n1-order-items {
+  --aspect-product-card-image: var(--aspect-square);
   --spacing-product-card-padding: var(--dimension-8);
   --spacing-product-card-col-layout: var(--dimension-8);
   --spacing-product-card-name: var(--dimension-0);

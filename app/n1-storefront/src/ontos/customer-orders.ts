@@ -12,6 +12,7 @@ import {
 import { MarketCurrencySchema, OrderMarketSchema } from "@app/merchandise/domain/market-offers";
 import { Schema } from "effect";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
+import { OrderedProductPresentationSchema } from "./ordered-product";
 
 const offset = Schema.Int.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }));
 const minor = Schema.Int.check(Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }));
@@ -63,6 +64,7 @@ export const CustomerOrderSchema = Schema.Struct({
     }),
   ).check(Schema.isMaxLength(200)),
   pricesIncludeVat: Schema.NullOr(Schema.Boolean),
+  productPresentation: Schema.optionalKey(OrderedProductPresentationSchema),
   shipping: Schema.NullOr(Schema.toEncoded(OrderShippingSchema)),
   status: OrderStatusSchema,
   totalMinor: minor,
