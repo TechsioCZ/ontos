@@ -1,9 +1,7 @@
-import {
-  CatalogSelectionSchema,
-  CatalogSelectionValidEvidenceSchema,
-} from '@app/catalog/domain/catalog-selection-evidence';
-import { ProductRefSchema } from '@app/catalog/resources/product';
-import { VariantRefSchema } from '@app/catalog/resources/variant';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
 

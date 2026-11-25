@@ -1,7 +1,7 @@
 import { PrincipalRefSchema as CorePrincipalRefSchema } from '@app/core-runtime';
 import type { PrincipalRef as CorePrincipalRef } from '@app/core-runtime';
-import { CounterpartyRefSchema as PartyCounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
-import type { CounterpartyRef as PartyCounterpartyRef } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema as PartyCounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
+import type { CounterpartyRef as PartyCounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 import { CounterpartyPermissionCodeSchema } from './permission-catalog.ts';
 import { CounterpartyCommerceAccessGrantRefSchema } from '../resources/counterparty-commerce-access-grant.ts';

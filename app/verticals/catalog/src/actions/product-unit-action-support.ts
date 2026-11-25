@@ -19,18 +19,10 @@ export const mapProductUnitPersistenceError = () =>
     reason: 'Authoritative Product Unit persistence or Current basis is unavailable',
   });
 
-export const resolveProductUnitMutation = (outcome: ProductUnitMutationOutcome) =>
+export const resolveProductUnitMutationFailure = (
+  outcome: Extract<ProductUnitMutationOutcome, { readonly _tag: 'invalid' | 'not_found' | 'stale' }>,
+) =>
   Match.value(outcome).pipe(
-    Match.whenOr(
-      { _tag: 'created' },
-      { _tag: 'revised' },
-      { _tag: 'retired' },
-      { _tag: 'divisibility_set' },
-      ({ ruleRevision, targetDivisibility, unit }) =>
-        Effect.succeed(
-          targetDivisibility === undefined ? { ruleRevision, unit } : { ruleRevision, targetDivisibility, unit },
-        ),
-    ),
     Match.tag('invalid', ({ reason }) =>
       Effect.fail(new ProductUnitActionError({ code: 'product_unit_invalid', reason })),
     ),
@@ -48,4 +40,19 @@ export const resolveProductUnitMutation = (outcome: ProductUnitMutationOutcome) 
       ),
     ),
     Match.exhaustive,
+  );
+
+export const resolveProductUnitMutation = (outcome: ProductUnitMutationOutcome) =>
+  Match.value(outcome).pipe(
+    Match.whenOr(
+      { _tag: 'created' },
+      { _tag: 'revised' },
+      { _tag: 'retired' },
+      { _tag: 'divisibility_set' },
+      ({ ruleRevision, targetDivisibility, unit }) =>
+        Effect.succeed(
+          targetDivisibility === undefined ? { ruleRevision, unit } : { ruleRevision, targetDivisibility, unit },
+        ),
+    ),
+    Match.orElse(resolveProductUnitMutationFailure),
   );

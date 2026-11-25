@@ -3,14 +3,14 @@ import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { CatalogSelection, CatalogSelectionRevision } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   CatalogSelectionRevisionSchema,
   CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection';
 import type { QuantityNormalization, QuantityPhase } from '../../shared/domain/purchase-quantity.ts';
 import { normalizePurchaseQuantity } from '../../shared/domain/purchase-quantity.ts';
-import type { CatalogResourceRef } from '../../shared/domain/catalog-revision-reference.ts';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
   packageDefinitions,
   packageContentRevisions,

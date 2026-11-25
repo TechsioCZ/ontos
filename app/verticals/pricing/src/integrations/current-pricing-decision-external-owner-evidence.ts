@@ -1,9 +1,9 @@
 import {
   CatalogQuantityBasisSchema,
   CatalogQuantityHandoffReadySchema,
-} from '@app/catalog/domain/catalog-quantity-handoff';
-import { CatalogResourceRefSchema } from '@app/catalog/domain/catalog-revision-reference';
-import { CatalogSelectionBasisListSchema } from '@app/catalog/domain/catalog-selection-evidence';
+} from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionBasisListSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type { PricingPurchaseContextVerificationEvidence } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import type { CurrentPricingDecisionRequest } from '@app/pricing-contracts/current-pricing-decision';

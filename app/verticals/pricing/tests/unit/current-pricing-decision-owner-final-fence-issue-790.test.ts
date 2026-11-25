@@ -4,7 +4,7 @@ import {
   PricingCurrentMarketEvidenceRequestSchema,
   PricingCurrentMarketEvidenceResponseSchema,
 } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
-import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
+import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
 import type { Crypto } from 'effect';
 import { DateTime, Redacted, Context, Effect, Exit, Layer, Schema } from 'effect';

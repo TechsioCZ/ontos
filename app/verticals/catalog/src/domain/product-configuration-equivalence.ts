@@ -1,10 +1,10 @@
 import { Schema } from 'effect';
 
-import { catalogUnitConversionProves } from '../../shared/domain/catalog-unit-conversion-evidence.ts';
+import { catalogUnitConversionProves } from '@app/catalog-selection-contracts/catalog-unit-conversion-evidence';
 import type {
   CatalogUnitConversionEvidence,
   CatalogUnitRevisionReference,
-} from '../../shared/domain/catalog-unit-conversion-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-unit-conversion-evidence';
 import { sameProductConfigurationSelectionAcrossRevisions } from '../../shared/domain/product-configuration.ts';
 import type {
   ConfigurationRuleRevisionEvidence,

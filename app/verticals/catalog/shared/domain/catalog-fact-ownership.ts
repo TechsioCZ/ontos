@@ -1,14 +1,17 @@
 import { Schema } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import {
   CatalogDocumentOwnerRevisionSchema,
   CatalogDocumentResourceRefSchema,
   sameCatalogDocumentResourceRef,
 } from './catalog-media-assignment.ts';
 import type { CatalogDocumentOwnerRevision, CatalogDocumentResourceRef } from './catalog-media-assignment.ts';
-import { CatalogResourceRefSchema, CatalogRevisionInstantSchema } from './catalog-revision-reference.ts';
+import {
+  CatalogResourceRefSchema,
+  CatalogRevisionInstantSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 /**
  * One fact has exactly one authoritative owner, decided by business meaning rather than by the

@@ -86,13 +86,13 @@ const catalogRef = (tenantId: string, type: string, resourceId: string) => ({
 
 /**
  * The public body of the first job: a product with an initial variant (localized text and a price) and a further
- * variant, plus every field no intent writes, so the job reports each group as unsupported.
+ * variant, plus unsupported fields. It stays category-free: Category refs now request real owner assignments, not
+ * unsupported hints, and this Product recovery route enrolls no assignment authority.
  */
 export const makeInternalC14ProductBody = (tenantId: string): Schema.Json => ({
   products: [
     {
       attributes: [{ attributeDefinitionRef: catalogRef(tenantId, 'attribute-definition', randomUUID()), values: [] }],
-      categories: [catalogRef(tenantId, 'product-category', randomUUID())],
       identifier: { type: 'erpId', value: internalProductSource.productIdentifier },
       media: [
         {

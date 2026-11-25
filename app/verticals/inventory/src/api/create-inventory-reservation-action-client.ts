@@ -47,6 +47,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: CreateInventoryReservationActionApi,
       credential,
       defaultApiPrefix: '/inventory-api',
+      idempotencyKey: options.idempotencyKey,
       intent: options.intent,
       requestCorrelation,
     },
@@ -60,12 +61,7 @@ export const executeCreateInventoryReservationWithAuthorization = (
   Schema.encodeUnknownEffect(CreateInventoryReservationPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.createInventoryReservationAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.createInventoryReservationAction.execute({ payload: encoded })),
       ),
     ),
   );

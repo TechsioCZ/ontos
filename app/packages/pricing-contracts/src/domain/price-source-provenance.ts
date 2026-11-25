@@ -1,4 +1,4 @@
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { Schema } from 'effect';
 
 import { PricingCurrencyCodeSchema, PricingInstantSchema } from '../apis/current-supported-currencies.ts';
@@ -14,6 +14,11 @@ import {
 import { PriceSourceProvenanceRefSchema } from './price-source-ref.ts';
 
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
+const exactSourceReference = stableReference.check(
+  Schema.makeFilter((value) =>
+    value === '*' ? 'Price source authority and mapping references must be exact' : undefined,
+  ),
+);
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 const sourceAssertionIdEquivalence = Schema.toEquivalence(checkedUuid);
 const productUnitRefEquivalence = Schema.toEquivalence(ProductUnitRefSchema);
@@ -54,14 +59,14 @@ export const PriceSourceRecordSchema = Schema.Struct({
 export type PriceSourceRecord = typeof PriceSourceRecordSchema.Type;
 
 export const PriceSourceAuthoritySchema = Schema.Struct({
-  sourceAuthorityRef: stableReference,
-  sourceAuthorityVersion: stableReference,
+  sourceAuthorityRef: exactSourceReference,
+  sourceAuthorityVersion: exactSourceReference,
 });
 export type PriceSourceAuthority = typeof PriceSourceAuthoritySchema.Type;
 
 export const PriceSourceMappingSchema = Schema.Struct({
-  mappingContractRef: stableReference,
-  mappingContractVersion: stableReference,
+  mappingContractRef: exactSourceReference,
+  mappingContractVersion: exactSourceReference,
 });
 export type PriceSourceMapping = typeof PriceSourceMappingSchema.Type;
 

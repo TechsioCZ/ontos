@@ -61,6 +61,7 @@ import { definePriceActionApiLive } from './define-price-action-server.ts';
 import { exactPriceResolutionReadApiLive } from './exact-price-resolution-read-server.ts';
 import { manageCommitmentConfirmationActionApiLive } from './manage-commitment-confirmation-action-server.ts';
 import { manageContractualDiscountActionApiLive } from './manage-contractual-discount-action-server.ts';
+import { manageExternalPriceSourcePolicyActionApiLive } from './manage-external-price-source-policy-action-server.ts';
 import { manageProductCommercialFeesBulkActionApiLive } from './manage-product-commercial-fees-bulk-action-server.ts';
 import { manageProductPricesBulkActionApiLive } from './manage-product-prices-bulk-action-server.ts';
 import { manageQuantityTierActionApiLive } from './manage-quantity-tier-action-server.ts';
@@ -199,6 +200,7 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   exactPriceResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   manageCommitmentConfirmationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageContractualDiscountActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  manageExternalPriceSourcePolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageProductCommercialFeesBulkActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageProductPricesBulkActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageQuantityTierActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

@@ -94,7 +94,7 @@ import { executeQuantityBasisCompatibilityWithAuthorization } from '@app/catalog
 import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import type { QuantityBasisCompatibilityRequest } from '@app/catalog/api/quantity-basis-compatibility';
 import { executePricingPurposeEquivalenceWithAuthorization } from '@app/catalog/api/pricing-purpose-equivalence-client';
-import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
+import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
 
 type PricingSetBackedFenceSource = Extract<PricingMaterialEvidenceFenceSource, { readonly sourceEvidence: unknown }>;

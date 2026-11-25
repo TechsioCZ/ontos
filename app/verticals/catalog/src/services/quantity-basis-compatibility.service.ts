@@ -4,9 +4,9 @@ import type {
   CatalogQuantityBasis,
   CatalogQuantityHandoff,
   CatalogQuantityHandoffReady,
-} from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogQuantityBasisSchema } from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
   QuantityBasisCompatibilityRequest,
   QuantityBasisCompatibilityResponse,

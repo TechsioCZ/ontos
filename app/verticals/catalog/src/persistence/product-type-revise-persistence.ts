@@ -7,9 +7,9 @@ import { ReviseProductTypeResultSchema } from '../../shared/actions/revise-produ
 import type { CartOpenSelectionPopulationPort } from '../../shared/domain/catalog-open-selection-population.ts';
 import { canonicalizeProductTypeMeaning } from '../../shared/domain/product-type-meaning.ts';
 import type { ProductTypeAttributeRule } from '../../shared/domain/product-type-rules.ts';
-import type { CatalogRevisionNumber } from '../../shared/domain/catalog-revision-reference.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { CatalogRevisionNumber } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { ProductTypeRef } from '../../shared/resources/product-type.ts';
 import {
   attributeDefinitions,

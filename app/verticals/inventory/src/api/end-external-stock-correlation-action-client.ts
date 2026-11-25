@@ -47,6 +47,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: EndExternalStockCorrelationActionApi,
       credential,
       defaultApiPrefix: '/inventory-api',
+      idempotencyKey: options.idempotencyKey,
       intent: options.intent,
       requestCorrelation,
     },
@@ -60,12 +61,7 @@ export const executeEndExternalStockCorrelationWithAuthorization = (
   Schema.encodeUnknownEffect(EndExternalStockCorrelationPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.endExternalStockCorrelationAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.endExternalStockCorrelationAction.execute({ payload: encoded })),
       ),
     ),
   );

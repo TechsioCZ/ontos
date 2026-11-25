@@ -89,6 +89,7 @@ import {
   inventorySourceConflictScopeVerifierContract,
 } from '../../src/persistence/inventory-source-conflict-table.ts';
 import { inventorySourceImportLedgerVerifierContract } from '../../src/persistence/inventory-source-import-ledger-table.ts';
+import { inventorySourceProvisioningDatabaseContract } from '../../src/persistence/source-provisioning-table.ts';
 import {
   inventoryStockCorrectionExactScopeVerifierContract,
   inventoryStockCorrectionImmutabilityContract,
@@ -123,7 +124,7 @@ const requireMigrationFolder = (folder: string | undefined, suffix: string): str
   return folder ?? '';
 };
 
-it('owns thirty-five governed Inventory tables and one exact pre-Tenant ingress receipt store', () => {
+it('owns thirty-eight governed Inventory tables and one exact pre-Tenant ingress receipt store', () => {
   expect(INVENTORY_SCHEMA_NAME).toBe('inventory');
   expect(INVENTORY_TABLE_INVENTORY).toEqual([
     'backend_configurations',
@@ -151,6 +152,9 @@ it('owns thirty-five governed Inventory tables and one exact pre-Tenant ingress 
     'source_assertions',
     'source_conflict_revisions',
     'source_import_ledger',
+    'source_provisioning_policies',
+    'source_provisioning_policy_locations',
+    'source_stock_item_provisionings',
     'stock_correction_open_reconciliations',
     'stock_correction_source_evidence',
     'stock_correction_source_evidence_coverage',
@@ -172,7 +176,7 @@ it('owns thirty-five governed Inventory tables and one exact pre-Tenant ingress 
       Order.String,
     ),
   ).toEqual(INVENTORY_TABLE_INVENTORY.map((name) => `inventory.${name}`));
-  expect(INVENTORY_GOVERNED_TABLES).toHaveLength(35);
+  expect(INVENTORY_GOVERNED_TABLES).toHaveLength(38);
   const ingress = getTableConfig(inventoryGatewayAssertionRedemptions);
   expect(ingress.enableRLS).toBe(false);
   expect(ingress.columns.map((column) => column.name)).toEqual([
@@ -835,6 +839,25 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
   expect(bindingCorrectionWorkerFence).toContain("request_json #>> '{authority,selection,exactReservationCapability}'");
   expect(bindingCorrectionWorkerFence).toContain("request_json #>> '{authority,selection,stockCorrectionCapability}'");
   expect(bindingCorrectionWorkerFence).not.toContain('CREATE TRIGGER');
+  // Stock Position establishment locks the backend configuration before the Stock Item. The latest reservation
+  // finalizer keeps that order: its Obligation insert (KEY SHARE on the configuration) precedes its Requirement
+  // insert (KEY SHARE on the Item).
+  const finalizerDefinition =
+    /CREATE (?:OR REPLACE )?FUNCTION "inventory"\."finalize_reservation_create_effect_for_worker"\(/u;
+  const latestFinalizerMigration =
+    EffectArray.reverse(folders)
+      .map(readMigration)
+      .find((migration) => finalizerDefinition.test(migration)) ?? '';
+  const latestFinalizerStart = latestFinalizerMigration.search(finalizerDefinition);
+  const latestFinalizer = latestFinalizerMigration.slice(
+    latestFinalizerStart,
+    latestFinalizerMigration.indexOf('\n$$;', latestFinalizerStart),
+  );
+  const obligationInsert = latestFinalizer.indexOf('INSERT INTO "inventory"."obligations"');
+  expect(obligationInsert).toBeGreaterThan(-1);
+  expect(latestFinalizer.indexOf('INSERT INTO "inventory"."obligation_requirements"')).toBeGreaterThan(
+    obligationInsert,
+  );
   expect(bindingCorrectionImpact).toContain(
     'ALTER TABLE "inventory"."binding_correction_reconciliations" FORCE ROW LEVEL SECURITY',
   );
@@ -1226,4 +1249,29 @@ it('exact Inventory catalog comparison rejects missing and unexpected tables', (
     missing: [],
     unexpected: ['inventory.unowned'],
   });
+});
+
+it('retains source provisioning authority, exact receipt scope and immutable history behind private trigger functions', () => {
+  const migration = readMigration('20261122090000_inventory-source-provisioning');
+  const seal = readMigration('20261122100000_seal-source-provisioning-locations');
+  for (const trigger of inventorySourceProvisioningDatabaseContract.triggers) {
+    expect(migration + seal).toContain(`CREATE TRIGGER "${trigger}"`);
+  }
+  for (const table of inventorySourceProvisioningDatabaseContract.tables) {
+    expect(migration).toContain(`ALTER TABLE "inventory"."${table}" FORCE ROW LEVEL SECURITY`);
+  }
+  expect(migration).toContain('config.selected_at IS DISTINCT FROM NEW.effective_from');
+  expect(migration).toContain('config.backend_id IS DISTINCT FROM NEW.issuer_backend_id');
+  expect(migration).toContain('inventory_source_provisioning_receipt_scope_ck');
+  expect(migration).toContain('inventory_source_provisioning_immutable_ck');
+  expect(migration).toContain('correlation.effective_from <= NEW.recorded_at');
+  expect(migration).toContain('correlation.effective_to > NEW.recorded_at');
+  expect(migration).toContain("binding.catalog_selection = NEW.input_json -> 'catalogSelection'");
+  expect(migration.match(/SET search_path = pg_catalog, pg_temp/gu)).toHaveLength(2);
+  expect(migration.match(/REVOKE ALL ON FUNCTION/gu)).toHaveLength(2);
+  expect(migration).toContain('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE');
+  const verifier = readFileSync(fileURLToPath(new URL('../../scripts/verify-db-schema.mts', import.meta.url)), 'utf-8');
+  expect(verifier).toContain('inventorySourceProvisioningDatabaseContract.manifestFunction');
+  expect(verifier).toContain('provisioning.foreign_key_count !== 5');
+  expect(verifier).toContain('provisioning.private_functions_executable');
 });

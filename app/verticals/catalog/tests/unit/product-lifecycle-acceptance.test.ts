@@ -7,9 +7,9 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { catalogReadiness, productActivationBlockers, ProductSchema } from '../../shared/domain/product.ts';
 import type { CatalogSelectionEvidenceReader } from '../../shared/domain/catalog-open-selection-population.ts';
-import { CatalogSelectionEvidenceSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   ProductLifecycleConflict,
   ProductNotCatalogReady,

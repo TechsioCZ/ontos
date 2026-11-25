@@ -2,6 +2,7 @@ import { defineScopedRoutine, registeredAdmissionAuthContextRef } from '@app/cor
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { readVerifiedGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
+  computeCanonicalValueHash,
   openScopedSourceExecutionFence,
   readScopedOriginalActionInvocation,
   readScopedSourceExecutionFence,
@@ -45,6 +46,8 @@ import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-co
 import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
 import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batch.ts';
 import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
+import { SymmyCustomerGroupRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
+import type { SymmyCustomerGroupRows } from '../../shared/domain/symmy-customer-group-batch.ts';
 import { SymmyPriceBatchSchema } from '../../shared/domain/symmy-price-batch.ts';
 import type { SymmyPriceBatch, SymmyPriceReviseFacts } from '../../shared/domain/symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema, SymmyRequestTenantSchema } from '../../shared/domain/symmy-price-list-batch.ts';
@@ -54,12 +57,14 @@ import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
 import { buildSymmyCustomerPlan } from './symmy-customer-plan.ts';
+import { buildSymmyCustomerGroupPlan } from './symmy-customer-group-plan.ts';
 import { buildSymmyPriceBatchPlan } from './symmy-price-batch-plan.ts';
 import { buildSymmyPriceListPlan } from './symmy-price-list-plan.ts';
 import { buildSymmyProductPlan } from './symmy-product-plan.ts';
 import { buildSymmyStockPlan } from './symmy-stock-plan.ts';
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
+import type { AdmitSymmySyncPayload } from '../../shared/actions/admit-symmy-sync.ts';
 import type { SymmyDecodedSourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import {
   mapSymmyPolicyFixtureIntent,
@@ -70,12 +75,19 @@ import { symmyExecutionRegistration } from '../services/symmy-worker-identity.se
 import { SymmyRouteContextResponseSchema } from '../../shared/apis/symmy-route-context.ts';
 
 export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()('SymmyJobStoreError', {
-  code: Schema.Literals(['route_denied', 'idempotency_conflict', 'stock_assertion_denied', 'unavailable']),
+  code: Schema.Literals([
+    'route_denied',
+    'idempotency_conflict',
+    'plan_limit_exceeded',
+    'stock_assertion_denied',
+    'unavailable',
+  ]),
 }) {}
 
 export interface SymmyJobAdmissionRequest {
   readonly code?: string;
   readonly contractVersion?: 'INTERNAL_C14';
+  readonly customerGroups?: SymmyCustomerGroupRows;
   readonly customers?: SymmyCustomerRows;
   readonly fixtureId?: string;
   readonly idempotencyKey: string;
@@ -157,6 +169,31 @@ const sourceWorkloads = new Map([
   ['commerce.customer-context', 'commerce.customer-context.source-write'],
 ]);
 const sourceWorkloadFor = (moduleId: string) => sourceWorkloads.get(moduleId);
+const inventorySourceAllowed = (
+  template: SymmyFixtureExecutionPlan,
+  intent: NonNullable<SymmyPinnedEffect['intent']>,
+) => {
+  const matches = (source: NonNullable<SymmyFixtureExecutionPlan['inventorySource']>) =>
+    template.inventorySource !== undefined &&
+    computeCanonicalValueHash(source) === computeCanonicalValueHash(template.inventorySource);
+  return Match.value(intent).pipe(
+    Match.tag('CatalogProductDependentEffect', ({ request }) =>
+      Match.value(request).pipe(
+        Match.tag('ProvisionSourceStockItem', ({ source }) => matches(source)),
+        Match.tag(
+          'CatalogReadiness',
+          ({ divisible, kind, locale, unitRef }) =>
+            template.catalogReadiness !== undefined &&
+            computeCanonicalValueHash({ divisible, kind, locale, unitRef }) ===
+              computeCanonicalValueHash(template.catalogReadiness),
+        ),
+        Match.orElse(() => true),
+      ),
+    ),
+    Match.tag('InventoryProvision', ({ source }) => matches(source)),
+    Match.orElse(() => true),
+  );
+};
 const inputPlanAllowed = (
   template: SymmyFixtureExecutionPlan,
   plan: SymmyFixtureExecutionPlan,
@@ -183,6 +220,7 @@ const inputPlanAllowed = (
     return effects.every(
       ({ intent, operation, originalTarget }) =>
         intent !== undefined &&
+        inventorySourceAllowed(template, intent) &&
         enrolledEffects.some(
           ({ operation: allowed }) =>
             allowed.moduleId === operation.moduleId &&
@@ -290,6 +328,13 @@ const encodeCallerPayload = Effect.fn('SymmyJobStore.encodeCallerPayload')(funct
       Effect.map(Option.some),
     );
   }
+  if (input.customerGroups !== undefined) {
+    // What the owner held for each code is a fence read when the request arrived, not caller intent.
+    return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyCustomerGroupRowsSchema))(input.customerGroups).pipe(
+      Effect.mapError(unavailable),
+      Effect.map(Option.some),
+    );
+  }
   if (input.products !== undefined) {
     // The price lists the price group codes name are facts read when the request arrived, not caller intent.
     return yield* Schema.encodeEffect(Schema.fromJsonString(SymmyProductRowsSchema))(input.products).pipe(
@@ -378,10 +423,11 @@ const requirePinnedPolicyFixture = (
     : Effect.fail(routeDenied());
 };
 
-const routeSourceAuthority = (
-  route: typeof symmyJobRoutes.$inferSelect,
-  template: SymmyFixtureExecutionPlan | null,
-) => ({
+type SourceRouteAuthority = Pick<
+  SymmyFixtureExecutionPlan,
+  'sourceMappingVersion' | 'sourceRouteId' | 'sourceRouteRevision'
+>;
+const routeSourceAuthority = (route: typeof symmyJobRoutes.$inferSelect, template: SourceRouteAuthority | null) => ({
   sourceMappingVersion: template?.sourceMappingVersion ?? route.mappingVersion,
   sourceRouteId: template?.sourceRouteId ?? route.routeId,
   sourceRouteRevision: template?.sourceRouteRevision ?? route.routeRevision,
@@ -390,7 +436,7 @@ const routeSourceAuthority = (
 const exactRouteProofMatches = (
   route: typeof symmyJobRoutes.$inferSelect,
   scope: OperationalScope,
-  template: SymmyFixtureExecutionPlan | null,
+  template: SourceRouteAuthority | null,
   idempotencyDigest?: string,
 ): boolean => {
   const proof = readVerifiedGatewayRouteScope(scope);
@@ -512,7 +558,11 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
           rows: input.products,
           template,
           tenantId: scope.tenantId,
-        });
+        }).pipe(
+          Effect.catchTag('SymmyProductPlanLimitError', () =>
+            Effect.fail(new SymmyJobStoreError({ code: 'plan_limit_exceeded' })),
+          ),
+        );
   }
   if (input.priceBatch !== undefined) {
     return input.reviseFacts === undefined
@@ -694,9 +744,20 @@ const syncReceipt = Effect.fn('SymmyJobStore.syncReceipt')(function* syncReceipt
 const syncAdmissionReceipt = Effect.fn('SymmyJobStore.syncAdmissionReceipt')(function* syncAdmissionReceipt(
   transaction: ScopedTransactionExecutor,
   saved: typeof symmySyncAdmissions.$inferSelect,
-  attempt: { readonly invocationId: string; readonly replayed: boolean },
+  attempt: { readonly invocationId: string; readonly replayed: boolean; readonly retiredRoute?: true },
 ) {
   const receipt = yield* syncReceipt(transaction, saved, attempt.replayed);
+  // A retired route can recover committed history, never resume an unexecuted import.
+  if (
+    attempt.retiredRoute === true &&
+    receipt.plan.items.some(({ effects }) =>
+      effects.some(
+        (effect) => effect.originalInvocationId === undefined || effect.originalInvocationStatus !== 'succeeded',
+      ),
+    )
+  ) {
+    return yield* routeDenied();
+  }
   yield* transaction
     .insert(symmySyncAdmissionAttempts)
     .values({ admissionId: saved.admissionId, invocationId: attempt.invocationId, tenantId: saved.tenantId })
@@ -858,6 +919,7 @@ const qualifiedSelectorMatches = Effect.fn('SymmyJobStore.qualifiedSelectorMatch
 });
 interface ConfiguredRouteContext {
   readonly allowedOwnerOperations: readonly SymmyFixtureExecutionPlan['items'][number]['effects'][number]['operation'][];
+  readonly inventorySource?: SymmyFixtureExecutionPlan['inventorySource'];
   readonly issuerId: SymmyFixtureExecutionPlan['items'][number]['source']['issuerId'];
   readonly legalEntityId?: string;
   readonly mappingVersion: string;
@@ -877,7 +939,7 @@ const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(fun
   row: typeof symmyJobRoutes.$inferSelect,
   original: SymmyPinnedJobPlan,
   digest: string,
-  template: SymmyFixtureExecutionPlan | null = null,
+  template: SourceRouteAuthority | null = null,
 ): Effect.fn.Return<ConfiguredRouteContext, SymmyJobStoreError> {
   const [item] = original.items;
   const [effect] = item.effects;
@@ -911,28 +973,111 @@ const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(fun
   }
   return result;
 });
+/**
+ * The context of a key's saved sync admission, even while its route is still configured: a saved admission is
+ * answered from what it saved, never from a new owner read. A key whose
+ * admission retention purged is refused here, as its admission refuses it, before any owner read.
+ */
 const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRoute')(function* qualifyRetainedSyncRoute(
   transaction: ScopedTransactionExecutor,
   row: typeof symmyJobRoutes.$inferSelect,
   digest: string,
 ): Effect.fn.Return<Option.Option<ConfiguredRouteContext>, SymmyJobStoreError> {
-  if (row.fixturePlan !== null || !isSyncAdmissionRoute(row.routeKey) || row.routeCode !== null) {
+  if (!isSyncAdmissionRoute(row.routeKey) || row.routeCode !== null) {
     return Option.none();
   }
   const [saved, duplicate] = yield* transaction
-    .select({ executionPlan: symmySyncAdmissions.executionPlan })
+    .select({
+      executionPlan: symmySyncAdmissions.executionPlan,
+      retentionReceipt: symmySyncAdmissions.retentionReceipt,
+    })
     .from(symmySyncAdmissions)
-    .where(and(syncAdmissionKey(row, row.routeKey, digest), isNull(symmySyncAdmissions.retentionReceipt)))
+    .where(syncAdmissionKey(row, row.routeKey, digest))
     .limit(2)
     .pipe(Effect.mapError(unavailable));
   if (saved === undefined || duplicate !== undefined) {
     return Option.none();
   }
+  if (saved.retentionReceipt !== null) {
+    return yield* routeDenied();
+  }
   const original = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(saved.executionPlan).pipe(
     Effect.mapError(unavailable),
   );
-  return Option.some(yield* retainedRouteContext(row, original, digest));
+  return Option.some(yield* retainedRouteContext(row, original, digest, yield* decodeRouteTemplate(row)));
 });
+
+/**
+ * A disabled stock enrollment is not a write authority. Only its one exact saved logical key can still carry a
+ * history read; source identity comes from the saved plan, never from decoding a retired stockScope template.
+ */
+const retiredStockSyncAdmission = Effect.fn('SymmyJobStore.retiredStockSyncAdmission')(
+  function* retiredStockSyncAdmission(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    digest: string,
+    purpose: 'consume' | 'context',
+  ) {
+    const [entry, duplicate] = yield* transaction
+      .select({ route: symmyJobRoutes, saved: symmySyncAdmissions })
+      .from(symmySyncAdmissions)
+      .innerJoin(
+        symmyJobRoutes,
+        and(
+          eq(symmyJobRoutes.tenantId, symmySyncAdmissions.tenantId),
+          eq(symmyJobRoutes.routeId, symmySyncAdmissions.routeId),
+        ),
+      )
+      .where(
+        purpose === 'context' && scope.legalEntityId === undefined
+          ? and(
+              eq(symmySyncAdmissions.tenantId, scope.tenantId),
+              eq(symmySyncAdmissions.principalId, scope.principalId),
+              eq(symmySyncAdmissions.routeKey, 'inventoryStockBatch'),
+              eq(symmySyncAdmissions.idempotencyDigest, digest),
+            )
+          : syncAdmissionKey(scope, 'inventoryStockBatch', digest),
+      )
+      .limit(2)
+      .pipe(Effect.mapError(unavailable));
+    if (duplicate !== undefined) {
+      return yield* routeDenied();
+    }
+    if (entry === undefined) {
+      return Option.none();
+    }
+    const { route, saved } = entry;
+    if (
+      route.tenantId !== saved.tenantId ||
+      route.principalId !== saved.principalId ||
+      route.legalEntityId !== saved.legalEntityId ||
+      route.routeKey !== saved.routeKey ||
+      route.routeCode !== null
+    ) {
+      return yield* routeDenied();
+    }
+    if (route.active) {
+      return Option.none();
+    }
+    if (
+      scope.authMethod !== 'api_key' ||
+      saved.retentionReceipt !== null ||
+      route.mappingVersion !== saved.mappingVersion ||
+      route.routeRevision !== saved.routeRevision
+    ) {
+      return yield* routeDenied();
+    }
+    yield* lockRoute(transaction, route);
+    const original = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(saved.executionPlan).pipe(
+      Effect.mapError(unavailable),
+    );
+    // The tenant Read resolves a unique company for Shell to validate and sign; only its consumer has that proof.
+    if (purpose === 'consume' && !exactRouteProofMatches(route, scope, original, digest)) {
+      return yield* routeDenied();
+    }
+    return Option.some({ original, route, saved });
+  },
+);
 const qualifyRetainedJobRoute = Effect.fn('SymmyJobStore.qualifyRetainedJobRoute')(function* qualifyRetainedJobRoute(
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
@@ -1023,6 +1168,9 @@ const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')
     sourceNamespace: first.source.sourceNamespace,
     tenantId: scope.tenantId,
   };
+  if (plan.inventorySource !== undefined) {
+    Object.assign(result, { inventorySource: plan.inventorySource });
+  }
   if (row.routeCode !== null) {
     Object.assign(result, { resolvedCode: row.routeCode });
   }
@@ -1038,42 +1186,61 @@ const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')
   return Option.some(result);
 });
 
+/** The plan a synchronous admission pins: the one of its public customer groups or of its stock rows. */
+const syncPlanSource = Effect.fn('SymmyJobStore.syncPlanSource')(function* syncPlanSource(
+  route: typeof symmyJobRoutes.$inferSelect,
+  input: AdmitSymmySyncPayload,
+  template: SymmyFixtureExecutionPlan,
+) {
+  if (input.customerGroups !== undefined) {
+    const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
+    return yield* buildSymmyCustomerGroupPlan({
+      authority: { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision },
+      digest: hash,
+      facts: input.groupFacts,
+      idempotencyKey: input.idempotencyKey,
+      rows: input.customerGroups,
+      template,
+    });
+  }
+  if (input.stock === undefined) {
+    return Option.none<SymmyFixtureExecutionPlan>();
+  }
+  // Every row needs a current public Inventory resolution under the one source policy.
+  // One unresolved or out-of-policy row rejects the batch before any native command is pinned.
+  return yield* buildSymmyStockPlan({
+    digest: hash,
+    facts: input.stockFacts,
+    idempotencyKey: input.idempotencyKey,
+    receivedAt: yield* DateTime.now,
+    rows: input.stock,
+    template,
+  });
+});
+
 const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* prepareSyncPlan(
   route: typeof symmyJobRoutes.$inferSelect,
-  input: SymmyJobAdmissionRequest,
+  input: AdmitSymmySyncPayload,
   scope: OperationalScope,
   template: SymmyFixtureExecutionPlan | null,
 ) {
-  if (template === null || !permitsNewAdmission(route, scope, input.fixtureId ?? 'INTERNAL_C14')) {
+  if (template === null || !permitsNewAdmission(route, scope, 'INTERNAL_C14')) {
     return yield* routeDenied();
   }
   const isStockRoute = input.routeKey === 'inventoryStockBatch';
   if (isStockRoute !== (input.stock !== undefined) || (isStockRoute && template.inventoryBackendId === undefined)) {
     return yield* routeDenied();
   }
-  yield* requireLifecyclePolicy(
-    route,
-    input.plan !== undefined ||
-      input.stock !== undefined ||
-      template.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)),
-  );
-  if (input.plan !== undefined && !inputPlanAllowed(template, input.plan, scope)) {
+  if ((input.routeKey === 'customerGroupsBatch') !== (input.customerGroups !== undefined)) {
     return yield* routeDenied();
   }
-  // A stock row is admitted for the enrolled positions only. One row outside them rejects the whole
-  // request before any plan is pinned, so no owner call is made for any row.
-  const source =
-    input.stock === undefined
-      ? Option.some(input.plan ?? template)
-      : yield* buildSymmyStockPlan({
-          digest: hash,
-          idempotencyKey: input.idempotencyKey,
-          receivedAt: yield* DateTime.now,
-          rows: input.stock,
-          template,
-        });
+  // Public groups and stock rows are caller payload the admission retains.
+  yield* requireLifecyclePolicy(route, true);
+  const source = yield* syncPlanSource(route, input, template);
   if (Option.isNone(source)) {
-    return yield* new SymmyJobStoreError({ code: 'stock_assertion_denied' });
+    return yield* new SymmyJobStoreError({
+      code: input.stock === undefined ? 'route_denied' : 'stock_assertion_denied',
+    });
   }
   const plan = configuredPlan(source.value, template);
   if (plan.items.some(({ effects }) => effects.some(({ intent }) => !syncIntentAllowed(input.routeKey, intent)))) {
@@ -1128,7 +1295,7 @@ interface SymmyJobStore {
     beforeInsert?: BeforeJobInsert<R>,
   ) => Effect.Effect<SymmyJobAdmissionReceipt, SymmyJobStoreError, R>;
   readonly admitSync: (
-    input: SymmyJobAdmissionRequest,
+    input: AdmitSymmySyncPayload,
     admissionId: string,
   ) => Effect.Effect<SymmySyncAdmissionReceipt, SymmyJobStoreError>;
   readonly poll: (jobId: string) => Effect.Effect<Option.Option<SymmyJobPollResult>, SymmyJobStoreError>;
@@ -1311,13 +1478,16 @@ export const symmyJobStoreFactory = (
       );
     }),
     admitSync: Effect.fn('SymmyJobStore.admitSync')(function* admitSync(
-      input: SymmyJobAdmissionRequest,
+      input: AdmitSymmySyncPayload,
       admissionId: string,
     ) {
       if (!isSyncAdmissionRoute(input.routeKey)) {
         return yield* routeDenied();
       }
-      const fixtureId = input.fixtureId ?? 'INTERNAL_C14';
+      const callerIntent = yield* encodeCallerIntent(input, 'INTERNAL_C14');
+      const [keyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
+        concurrency: 2,
+      });
       const rows = yield* transaction
         .select()
         .from(symmyJobRoutes)
@@ -1335,18 +1505,24 @@ export const symmyJobStoreFactory = (
         )
         .limit(2)
         .pipe(Effect.mapError(unavailable));
+      // Retired history is a separate read-only authority only when no current receiving route exists.
+      if (rows.length === 0 && input.routeKey === 'inventoryStockBatch') {
+        const retired = yield* retiredStockSyncAdmission(transaction, scope, keyDigest, 'consume');
+        if (Option.isSome(retired)) {
+          yield* verifySyncReplay(retired.value.saved, intentDigest);
+          return yield* syncAdmissionReceipt(transaction, retired.value.saved, {
+            invocationId: admissionId,
+            replayed: true,
+            retiredRoute: true,
+          });
+        }
+      }
       const [route] = rows;
       if (rows.length !== 1 || route === undefined) {
         return yield* routeDenied();
       }
       yield* lockRoute(transaction, route);
-      const [template, callerIntent] = yield* Effect.all(
-        [decodeRouteTemplate(route), encodeCallerIntent(input, fixtureId)],
-        { concurrency: 2 },
-      );
-      const [keyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
-        concurrency: 2,
-      });
+      const template = yield* decodeRouteTemplate(route);
       if (!exactRouteProofMatches(route, scope, template, keyDigest)) {
         return yield* routeDenied();
       }
@@ -1546,6 +1722,32 @@ export const symmyJobStoreFactory = (
         )
         .limit(2)
         .pipe(Effect.mapError(unavailable));
+      if (
+        rows.length === 0 &&
+        input.routeKey === 'inventoryStockBatch' &&
+        input.code === undefined &&
+        input.replayIdempotencyKey !== undefined
+      ) {
+        const digest = yield* hash(input.replayIdempotencyKey);
+        const retired = yield* retiredStockSyncAdmission(transaction, scope, digest, 'context');
+        if (Option.isSome(retired)) {
+          const { original, route } = retired.value;
+          return yield* retainedRouteContext(route, original, digest, original);
+        }
+      }
+      // A saved sync key resolves before fresh owner facts, even on a still-configured route.
+      const [groupRow, competingGroupRoute] = rows;
+      if (
+        isSyncAdmissionRoute(input.routeKey) &&
+        input.replayIdempotencyKey !== undefined &&
+        groupRow !== undefined &&
+        competingGroupRoute === undefined
+      ) {
+        const saved = yield* qualifyRetainedSyncRoute(transaction, groupRow, yield* hash(input.replayIdempotencyKey));
+        if (Option.isSome(saved)) {
+          return saved.value;
+        }
+      }
       const checked = yield* Effect.forEach(rows, (row) => qualifyConfiguredRoute({ decoded, scope }, row), {
         concurrency: 1,
       });

@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { BrandRefSchema } from '../resources/brand.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const ProductBrandCurrentRequestSchema = Schema.Struct({ productRef: ProductRefSchema });
 export type ProductBrandCurrentRequest = typeof ProductBrandCurrentRequestSchema.Type;

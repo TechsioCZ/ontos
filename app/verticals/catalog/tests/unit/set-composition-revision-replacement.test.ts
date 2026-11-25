@@ -1,8 +1,8 @@
 import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { SetComponentCurrentProof } from '../../shared/domain/set-component-validation.ts';
 import { validateSetComponents } from '../../shared/domain/set-component-validation.ts';
 import {

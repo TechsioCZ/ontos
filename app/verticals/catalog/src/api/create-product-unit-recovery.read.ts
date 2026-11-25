@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-product-unit', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CreateProductUnitResultSchema),
-      encode: Schema.encodeEffect(CreateProductUnitResultSchema),
     },
   );
 

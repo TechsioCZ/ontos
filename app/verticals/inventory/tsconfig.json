@@ -30,6 +30,9 @@
     },
     {
       "path": "../commerce-customer-context"
+    },
+    {
+      "path": "../../packages/catalog-selection-contracts"
     }
   ]
 }

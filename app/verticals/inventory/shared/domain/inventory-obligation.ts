@@ -1,4 +1,4 @@
-import type { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import type { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { Effect, Schema } from 'effect';
 
 import { ResolvedCatalogStockDemandSchema } from './catalog-to-stock-binding.ts';

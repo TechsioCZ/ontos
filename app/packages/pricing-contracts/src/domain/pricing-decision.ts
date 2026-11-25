@@ -1,9 +1,9 @@
 import {
   CatalogQuantityHandoffReadySchema,
   CatalogQuantityHandoffSchema,
-} from '@app/catalog/domain/catalog-quantity-handoff';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+} from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
 

@@ -1,14 +1,34 @@
+import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
+import { computeActionRequestHash } from '@app/core-runtime/access/enforcement';
+import { executeProvisionSourceStockItemWithAuthorization } from '@app/inventory/api/client';
+import {
+  ProvisionSourceStockItemInputSchema,
+  ProvisionSourceStockItemPayloadSchema,
+  SourceStockItemProvisioningSchema,
+} from '@app/inventory/source-provisioning';
 import { CreateProductRecoveryForbiddenProblemSchema } from '@app/catalog/api/create-product-recovery';
 import { CreateProductActionAlreadyCommittedProblemSchema } from '@app/catalog/api/create-product-action';
+import { GovernVariantAxesActionConflictProblemSchema } from '@app/catalog/api/govern-variant-axes-action';
 import { PriceGroupResultLookupResponseSchema } from '@app/price-group-catalog/apis/price-group-result-lookup';
 import { DefinePriceResultSchema } from '@app/pricing/actions/define-price';
 import { PriceSourceResultLookupResponseSchema } from '@app/pricing/apis/price-source-result-lookup';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Effect, Exit, Match, Option, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  Logger,
+  Match,
+  Option,
+  Schema,
+  Struct,
+} from 'effect';
 import type { Crypto } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
   SymmyCatalogPricingInventoryIntentSchema,
@@ -607,6 +627,105 @@ const pricingOwnerMock = (
     : undefined;
 };
 
+const provisionRef = (resourceType: string, resourceId: string) => ({
+  moduleId: 'commerce.inventory',
+  resourceId,
+  resourceType: `commerce.inventory.${resourceType}`,
+  tenantId,
+});
+const provisioningSource = {
+  customerConfigurationId: 'source-configuration',
+  externalScope: 'source-scope',
+  issuer: { backendId: 'native-backend-A', backendKind: 'external_business_system' },
+  locations: [
+    {
+      locationKey: 'warehouse-1',
+      stockLocationRef: provisionRef('stock-location', '10000000-0000-4000-8000-000000000061'),
+    },
+  ],
+  namespace: 'source-inventory',
+  policyRef: provisionRef('source-provisioning-policy', '10000000-0000-4000-8000-000000000062'),
+  unitRef,
+};
+const provisioningResult = Schema.decodeUnknownSync(SourceStockItemProvisioningSchema)({
+  binding: {
+    disposition: 'ESTABLISHED',
+    ref: provisionRef('catalog-to-stock-binding', '10000000-0000-4000-8000-000000000063'),
+  },
+  itemCorrelation: {
+    disposition: 'ESTABLISHED',
+    ref: provisionRef('external-stock-correlation', '10000000-0000-4000-8000-000000000064'),
+  },
+  itemKey: 'unseen-SKU',
+  policyRef: provisioningSource.policyRef,
+  positions: [
+    {
+      disposition: 'ESTABLISHED',
+      locationKey: 'warehouse-1',
+      positionRef: provisionRef('stock-position', '10000000-0000-4000-8000-000000000065'),
+      stockLocationRef: provisioningSource.locations[0]?.stockLocationRef,
+    },
+  ],
+  stockItem: { disposition: 'ESTABLISHED', ref: provisionRef('stock-item', '10000000-0000-4000-8000-000000000066') },
+});
+const inventoryProvisioningMock = (request: Request) => {
+  if (request.url.includes('/actions/provision-source-stock-item')) {
+    return Option.some({
+      event: 'owner-write',
+      response: Promise.resolve(
+        Response.json(Schema.encodeSync(SourceStockItemProvisioningSchema)(provisioningResult)),
+      ),
+    });
+  }
+  if (request.url.includes('/reads/source-stock-item-provisioning-receipt')) {
+    return Option.some({
+      event: 'owner-recovery',
+      response: request
+        .clone()
+        .json()
+        .then(Schema.decodeUnknownSync(SourceStockItemProvisioningReceiptRequestSchema))
+        .then((query) =>
+          Response.json({
+            _tag: 'RECORDED',
+            receipt: {
+              actionInvocationId: invocationId,
+              input: Schema.encodeSync(SourceStockItemProvisioningReceiptRequestSchema)(query).input,
+              provisioning: Schema.encodeSync(SourceStockItemProvisioningSchema)(provisioningResult),
+              recordedAt: '2026-11-07T10:00:02.000Z',
+            },
+          }),
+        ),
+    });
+  }
+  return Option.none();
+};
+
+interface ReadinessWire {
+  readonly action: string;
+  readonly recoveryResponse?: object;
+  readonly response: object;
+}
+
+const readinessMock = (request: Request, selected?: ReadinessWire) => {
+  if (selected !== undefined && request.url.includes(selected.action)) {
+    return Option.some({
+      event: 'owner-readiness',
+      response: Promise.resolve(
+        Response.json(
+          request.url.includes('/reads/') ? (selected.recoveryResponse ?? selected.response) : selected.response,
+        ),
+      ),
+    });
+  }
+  return request.url.includes('/actions/govern-variant-axes') ||
+    request.url.includes('/reads/govern-variant-axes-recovery')
+    ? Option.some({
+        event: 'owner-readiness',
+        response: Promise.resolve(Response.json({ axisRevision: 1, changed: true, productRef })),
+      })
+    : Option.none();
+};
+
 const harness = (
   replay: boolean,
   selectedEffect = effect,
@@ -621,6 +740,7 @@ const harness = (
   variantBindingReceipt?: { readonly changed?: boolean },
   definitionGroup = priceGroupA,
   reviseProblem?: ReviseProblem,
+  readinessWire?: ReadinessWire,
 ) => {
   const requests: Request[] = [];
   const events: string[] = [];
@@ -668,7 +788,10 @@ const harness = (
         }),
       );
     }
-    const pricingMock = pricingOwnerMock(request, { definitionGroup, reviseProblem });
+    const pricingMock = readinessMock(request, readinessWire).pipe(
+      Option.orElse(() => inventoryProvisioningMock(request)),
+      Option.getOrElse(() => pricingOwnerMock(request, { definitionGroup, reviseProblem })),
+    );
     if (pricingMock !== undefined) {
       events.push(pricingMock.event);
       return Promise.resolve(pricingMock.response);
@@ -828,8 +951,19 @@ const harness = (
       Effect.provideService(ConfigProvider.ConfigProvider, configuration),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
-  return { adapter, events, input, provide, receipts, requests, resolvedEffects };
+  return { adapter, events, fetch, input, provide, receipts, requests, resolvedEffects };
 };
+
+const preDispatchLogs = (entries: unknown[]) =>
+  Logger.layer([
+    Logger.make(({ message }) => {
+      if (Array.isArray(message)) {
+        entries.push(...message);
+      } else {
+        entries.push(message);
+      }
+    }),
+  ]);
 
 const gatewayRequestsFor = Effect.fn('CpiAdapterFixture.gatewayRequests')(function* gatewayRequests(
   requests: readonly Request[],
@@ -844,6 +978,66 @@ const gatewayRequestsFor = Effect.fn('CpiAdapterFixture.gatewayRequests')(functi
 });
 
 describe('Symmy native public owner adapter transport', () => {
+  it.effect('identifies owner request persistence failure without replacing or logging the original cause', () => {
+    const h = harness(false);
+    const entries: unknown[] = [];
+    const original = symmyJobWorkerUnavailable(new Error('private-token-payload-digest'));
+    return h.provide(
+      Effect.gen(function* persistenceFailure() {
+        const adapter = yield* h.adapter;
+        const exit = yield* Effect.exit(
+          adapter.execute({ ...h.input, recordOwnerRequest: () => Effect.fail(original) }),
+        );
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(original);
+        } else {
+          assert.fail('The original owner request failure must survive diagnostics');
+        }
+        expect(entries).toContainEqual({
+          effectId,
+          operation: 'CatalogCreateProduct',
+          stage: 'record-owner-request',
+          status: 'failed',
+        });
+        expect(entries).toContainEqual({
+          effectId,
+          operation: 'CatalogCreateProduct',
+          stage: 'request-hash',
+          status: 'succeeded',
+        });
+        expect(JSON.stringify(entries)).not.toContain('private-token-payload-digest');
+        expect(JSON.stringify(entries)).not.toContain('assertion-');
+        expect(h.events).not.toContain('owner-write');
+      }).pipe(Effect.provide(preDispatchLogs(entries))),
+    );
+  });
+
+  it.effect('keeps execution and the original failure intact when the diagnostic logger throws', () => {
+    const h = harness(false);
+    const original = symmyJobWorkerUnavailable(new Error('private-cause'));
+    const brokenLogger = Logger.layer([
+      Logger.make(() => {
+        throw new Error('diagnostic-capture-failed');
+      }),
+    ]);
+    return h.provide(
+      Effect.gen(function* diagnosticFailure() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute(h.input);
+        expect(outcome.status).toBe('accepted_change');
+        const exit = yield* Effect.exit(
+          adapter.execute({ ...h.input, recordOwnerRequest: () => Effect.fail(original) }),
+        );
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toBe(original);
+        } else {
+          assert.fail('The original owner request failure must survive a broken logger');
+        }
+        expect(h.events.filter((event) => event === 'owner-write')).toHaveLength(1);
+      }).pipe(Effect.provide(brokenLogger)),
+    );
+  });
+
   it.effect('requires a fresh postcommit native fact for Stock instead of an admission-time absent snapshot', () => {
     const h = harness(false, stockEffectForBackend('native-backend-A'));
     return h.provide(
@@ -1134,7 +1328,7 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
-  it.effect('distinguishes invalid, held and unavailable native assessments from uncertain commits', () =>
+  it.effect('reports payload-free native Price assessment codes without changing settlement or retrying', () =>
     Effect.gen(function* test() {
       const inputs = [
         {
@@ -1145,6 +1339,14 @@ describe('Symmy native public owner adapter transport', () => {
             sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
           },
         },
+        ...['CANONICAL_CONFLICT_HELD', 'DUPLICATE_CORRELATION_HELD'].map((reason) => ({
+          expected: 'unresolved',
+          wire: {
+            outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+            reason,
+            sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
+          },
+        })),
         {
           expected: 'unavailable',
           wire: {
@@ -1161,22 +1363,67 @@ describe('Symmy native public owner adapter transport', () => {
       ];
       for (const input of inputs) {
         const assessment = yield* Schema.decodeUnknownEffect(DefinePriceResultSchema)(input.wire);
+        if (assessment.outcome === 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED') {
+          assert.fail('Expected a nonaccepted native Price assessment');
+        }
         const encoded = yield* Schema.encodeEffect(DefinePriceResultSchema)(assessment);
         const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupA, false, {
           assessment: encoded,
           receipt: unavailablePriceReceipt,
         });
+        const entries: unknown[] = [];
         const outcome = yield* h.provide(
           Effect.gen(function* attempt() {
             const adapter = yield* h.adapter;
             return yield* adapter.execute({ ...h.input, legalEntityId });
-          }),
+          }).pipe(Effect.provide(preDispatchLogs(entries))),
         );
         expect(outcome.status).toBe(input.expected);
+        const detail = 'reason' in assessment ? { reason: assessment.reason } : { dependency: assessment.dependency };
+        expect(entries).toContainEqual({
+          ...detail,
+          effectId,
+          invocationId,
+          operation: 'PriceDefine',
+          outcome: assessment.outcome,
+        });
+        expect(JSON.stringify(entries)).not.toContain('monetaryAmount');
+        expect(JSON.stringify(entries)).not.toContain('sourceAssertion');
+        expect(JSON.stringify(entries)).not.toContain('assertion-');
+        expect(h.requests.filter((request) => request.url.includes('/actions/define-price'))).toHaveLength(1);
         expect(h.events).not.toContain('owner-price-recovery');
       }
     }),
   );
+  it.effect('keeps a native held Price unresolved without retrying when its diagnostic logger throws', () => {
+    const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupA, false, {
+      assessment: Schema.encodeSync(DefinePriceResultSchema)(
+        Schema.decodeUnknownSync(DefinePriceResultSchema)({
+          outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+          reason: 'DUPLICATE_CORRELATION_HELD',
+          sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
+        }),
+      ),
+      receipt: unavailablePriceReceipt,
+    });
+    return h.provide(
+      Effect.gen(function* brokenPriceDiagnostic() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, legalEntityId });
+        expect(outcome.status).toBe('unresolved');
+        expect(h.requests.filter((request) => request.url.includes('/actions/define-price'))).toHaveLength(1);
+        expect(h.events).not.toContain('owner-price-recovery');
+      }).pipe(
+        Effect.provide(
+          Logger.layer([
+            Logger.make(() => {
+              throw new Error('diagnostic-capture-failed');
+            }),
+          ]),
+        ),
+      ),
+    );
+  });
   it.effect('rejects an unconfigured native Price source-system pair before any owner request', () => {
     const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupA, false, {
       assessment: canonicalPriceAssessment,
@@ -2141,4 +2388,1262 @@ describe('Symmy commands on the Product the same job creates', () => {
       expect(refused.h.resolvedEffects).toHaveLength(0);
     }),
   );
+});
+
+const provisionOperation = {
+  entrypointKey: 'commerce.inventory.provision-source-stock-item',
+  moduleId: 'commerce.inventory',
+  schemaVersion: '1',
+};
+const provisionEffectOf = () => {
+  const provision = dependentEffect(
+    {
+      _tag: 'ProvisionSourceStockItem',
+      itemKey: 'unseen-SKU',
+      source: provisioningSource,
+    },
+    provisionOperation,
+  );
+  return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+    ...provision,
+    itemId: '10000000-0000-4000-8000-000000000071',
+    ref: { ...provision.ref, effectId: '10000000-0000-4000-8000-000000000072' },
+  });
+};
+const provisionPlan = (provision: SymmyPinnedEffect) =>
+  Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+    items: [
+      { effects: [effect], itemId: effect.itemId, itemKey: 'product-item' },
+      { effects: [provision], itemId: provision.itemId, itemKey: 'provision-item' },
+    ],
+  });
+
+describe('Symmy source-supplied Category assignment', () => {
+  const categoryRef = {
+    ...productRef,
+    resourceId: '10000000-0000-4000-8000-000000000091',
+    resourceType: 'commerce.catalog.product-category',
+  };
+  const operation = {
+    entrypointKey: 'commerce.catalog.add-product-category-assignment',
+    moduleId: 'commerce.catalog',
+    schemaVersion: '1',
+  };
+  const sourceEffect = () => {
+    const selected = dependentEffect(
+      {
+        _tag: 'AddProductCategoryAssignment',
+        payload: { categoryRef, reason: 'Symmy product import' },
+      },
+      operation,
+    );
+    return Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...selected,
+      itemId: '10000000-0000-4000-8000-000000000071',
+      ref: { ...selected.ref, effectId: '10000000-0000-4000-8000-000000000072' },
+    });
+  };
+
+  for (const changed of [true, false]) {
+    it.effect(`preserves native assignment disposition and recovers without write authority: ${changed}`, () => {
+      const original = sourceEffect();
+      const h = harness(false, original);
+      const writes: Request[] = [];
+      const reads: Request[] = [];
+      const response = { assignmentRevision: 1, categoryRef, changed, productRef };
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        if (request.url.includes('add-product-category-assignment')) {
+          (request.url.includes('/reads/') ? reads : writes).push(request);
+          return Promise.resolve(Response.json(response));
+        }
+        return h.fetch(request);
+      };
+      return h.provide(
+        Effect.gen(function* assignmentAndRecovery() {
+          const adapter = yield* h.adapter;
+          const input = { ...h.input, acceptedPlan: provisionPlan(original), dependencies: [parentState] };
+          expect((yield* adapter.execute(input)).status).toBe(changed ? 'accepted_change' : 'accepted_no_change');
+          const [resolved] = h.resolvedEffects;
+          assert.isDefined(resolved);
+          expect(Schema.is(Schema.TaggedStruct('CatalogAddProductCategoryAssignment', {}))(resolved.intent)).toBe(true);
+          expect(resolved.intent).toMatchObject({
+            payload: { categoryRef, productRef, reason: 'Symmy product import' },
+          });
+          const proof = yield* originalProof({ ...input, effect: resolved });
+          expect(
+            yield* adapter.recover({ ...proof, canExecuteNewEffects: false, originalInvocationId: invocationId }),
+          ).toMatchObject({
+            outcome: { status: changed ? 'accepted_change' : 'accepted_no_change' },
+            status: 'settled',
+          });
+          expect(writes).toHaveLength(1);
+          expect(reads).toHaveLength(1);
+          expect(writes[0]?.headers.get('idempotency-key')).toBe(original.ref.effectId);
+          const tampered = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+            ...resolved,
+            intent: {
+              _tag: 'CatalogAddProductCategoryAssignment',
+              payload: {
+                categoryRef: { ...categoryRef, resourceId: productId },
+                productRef,
+                reason: 'Symmy product import',
+              },
+            },
+          });
+          expect(Exit.isFailure(yield* Effect.exit(adapter.recover({ ...proof, effect: tampered })))).toBe(true);
+          expect(reads).toHaveLength(1);
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
+      );
+    });
+  }
+
+  it.effect('requires the named Product receipt and rejects a foreign source Category before any owner request', () =>
+    Effect.gen(function* categoryAuthority() {
+      const original = sourceEffect();
+      const foreign = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+        ...original,
+        intent: {
+          _tag: 'CatalogProductDependentEffect',
+          parent: productParent,
+          request: {
+            _tag: 'AddProductCategoryAssignment',
+            payload: { categoryRef: { ...categoryRef, tenantId: productId }, reason: 'Symmy product import' },
+          },
+        },
+      });
+      for (const [selected, dependencies] of [
+        [original, []],
+        [foreign, [parentState]],
+      ] as const) {
+        const h = harness(false, selected);
+        yield* h.provide(
+          Effect.gen(function* rejectUnprovenAssignment() {
+            const adapter = yield* h.adapter;
+            expect(
+              Exit.isFailure(
+                yield* Effect.exit(
+                  adapter.execute({
+                    ...h.input,
+                    acceptedPlan: provisionPlan(selected),
+                    dependencies,
+                  }),
+                ),
+              ),
+            ).toBe(true);
+            expect(h.requests).toEqual([]);
+            expect(h.resolvedEffects).toEqual([]);
+          }),
+        );
+      }
+    }),
+  );
+
+  it.effect('recovers a lost assignment ACK and rejects unrelated, absent and forbidden owner receipts', () => {
+    const original = sourceEffect();
+    const h = harness(false, original);
+    let writes = 0;
+    let wrongReceipt = false;
+    let recoveryStatus = 200;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      const request = new Request(input, init);
+      if (request.url.includes('/actions/add-product-category-assignment')) {
+        writes += 1;
+        return Promise.reject(new Error('committed ACK lost'));
+      }
+      if (request.url.includes('/reads/add-product-category-assignment-recovery')) {
+        if (recoveryStatus !== 200) {
+          return Promise.resolve(
+            Response.json(
+              {
+                _tag:
+                  recoveryStatus === 404
+                    ? 'AddProductCategoryAssignmentRecoveryNotFoundProblem'
+                    : 'AddProductCategoryAssignmentRecoveryForbiddenProblem',
+                detail: 'The exact original receipt cannot be released',
+                status: recoveryStatus,
+                title: 'Receipt unavailable',
+                type: 'https://ontos.dev/problems/receipt-unavailable',
+              },
+              { headers: { 'content-type': 'application/problem+json' }, status: recoveryStatus },
+            ),
+          );
+        }
+        return Promise.resolve(
+          Response.json({
+            assignmentRevision: 1,
+            categoryRef: wrongReceipt ? { ...categoryRef, resourceId: productId } : categoryRef,
+            changed: true,
+            productRef,
+          }),
+        );
+      }
+      return h.fetch(request);
+    };
+    return h.provide(
+      Effect.gen(function* lostAssignmentAck() {
+        const adapter = yield* h.adapter;
+        const input = { ...h.input, acceptedPlan: provisionPlan(original), dependencies: [parentState] };
+        expect(Exit.isFailure(yield* Effect.exit(adapter.execute(input)))).toBe(true);
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        const proof = yield* originalProof({ ...input, effect: resolved });
+        expect(yield* adapter.recover({ ...proof, canExecuteNewEffects: false })).toMatchObject({
+          outcome: { status: 'accepted_change' },
+          status: 'settled',
+        });
+        wrongReceipt = true;
+        expect(Exit.isFailure(yield* Effect.exit(adapter.recover(proof)))).toBe(true);
+        for (const status of [404, 403]) {
+          recoveryStatus = status;
+          expect(Exit.isFailure(yield* Effect.exit(adapter.recover(proof)))).toBe(true);
+        }
+        expect(writes).toBe(1);
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
+    );
+  });
+
+  for (const [status, code, tag, expected] of [
+    [403, 'action_permission_denied', 'Forbidden', 'denied'],
+    [404, 'category_not_found', 'NotFound', 'unresolved'],
+    [409, 'category_reference_conflict', 'Conflict', 'conflict'],
+    [422, 'action_policy_denied', 'Ineligible', 'invalid'],
+  ] as const) {
+    it.effect(`never accepts a native assignment refusal: ${status}`, () => {
+      const original = sourceEffect();
+      const h = harness(false, original);
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        return request.url.includes('/actions/add-product-category-assignment')
+          ? Promise.resolve(
+              Response.json(
+                {
+                  _tag: `AddProductCategoryAssignmentAction${tag}Problem`,
+                  code,
+                  detail: 'Explicit native refusal',
+                  status,
+                  title: 'Refused',
+                  type: 'https://ontos.dev/problems/refused',
+                },
+                { headers: { 'content-type': 'application/problem+json' }, status },
+              ),
+            )
+          : h.fetch(request);
+      };
+      return h.provide(
+        Effect.gen(function* nativeRefusal() {
+          const adapter = yield* h.adapter;
+          expect(
+            (yield* adapter.execute({ ...h.input, acceptedPlan: provisionPlan(original), dependencies: [parentState] }))
+              .status,
+          ).toBe(expected);
+          expect(h.receipts).toEqual([]);
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)),
+      );
+    });
+  }
+});
+
+describe('Symmy committed Catalog selection provisions Inventory through its public owner Action', () => {
+  for (const stage of ['fresh-gateway', 'machine-context', 'record-owner-request', 'success'] as const) {
+    it.effect(`reports the first provisioning pre-dispatch boundary: ${stage}`, () => {
+      const h = harness(false, provisionEffectOf());
+      const entries: unknown[] = [];
+      const original = symmyJobWorkerUnavailable(new Error('private-provisioning-cause'));
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        if (
+          request.url.includes('/auth/delegated/gateway-context') &&
+          (stage === 'fresh-gateway' || stage === 'machine-context')
+        ) {
+          return request
+            .clone()
+            .json()
+            .then(Schema.decodeUnknownSync(GatewayDelegatedContextRequestSchema))
+            .then((query) => {
+              if (query.audience !== 'inventory') {
+                return h.fetch(request);
+              }
+              return stage === 'fresh-gateway'
+                ? Response.json({ detail: 'private-gateway-cause' }, { status: 503 })
+                : Response.json({
+                    apiBaseUrl: '/inventory-api',
+                    compositionRevision,
+                    expiresAt: 1_700_000_300,
+                    token: 'private-gateway-token',
+                  });
+            });
+        }
+        return h.fetch(request);
+      };
+      return h.provide(
+        Effect.gen(function* provisioningBoundary() {
+          const adapter = yield* h.adapter;
+          const exit = yield* Effect.exit(
+            adapter.execute({
+              ...h.input,
+              acceptedPlan: provisionPlan(h.input.effect),
+              dependencies: [parentState],
+              inventoryBackendId: 'native-backend-A',
+              recordOwnerRequest:
+                stage === 'record-owner-request' ? () => Effect.fail(original) : h.input.recordOwnerRequest,
+            }),
+          );
+          expect(h.resolvedEffects).toHaveLength(1);
+          expect(entries).toContainEqual({
+            effectId: h.input.effect.ref.effectId,
+            operation: 'InventoryProvision',
+            stage: 'target-validation',
+            status: 'succeeded',
+          });
+          const failures = entries.filter(Schema.is(Schema.Struct({ status: Schema.Literal('failed') })));
+          if (stage === 'success' && Exit.isSuccess(exit)) {
+            expect(exit.value.status).toBe('accepted_change');
+            expect(failures).toEqual([]);
+            expect(h.events).toContain('owner-write');
+            expect(h.events.indexOf(`executor:${executorId}`)).toBeLessThan(h.events.indexOf('owner-write'));
+          } else if (stage !== 'success' && Exit.isFailure(exit)) {
+            const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+            expect(error).toMatchObject({ code: 'symmy_job_worker_unavailable' });
+            if (stage === 'record-owner-request') {
+              expect(error).toBe(original);
+            }
+            expect(failures).toEqual([
+              {
+                effectId: h.input.effect.ref.effectId,
+                operation: 'InventoryProvision',
+                stage,
+                status: 'failed',
+              },
+            ]);
+            expect(h.events).not.toContain('owner-write');
+            expect(h.events).not.toContain(`executor:${executorId}`);
+          } else {
+            assert.fail(`The ${stage} boundary changed its original execution result`);
+          }
+          expect(JSON.stringify(entries)).not.toContain('private-');
+          expect(JSON.stringify(entries)).not.toContain('assertion-');
+          expect(JSON.stringify(entries)).not.toContain('unseen-SKU');
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.provide(preDispatchLogs(entries))),
+      );
+    });
+  }
+
+  it.effect('hashes reordered locations exactly as the native Inventory HTTP client sends them', () => {
+    const h = harness(false, provisionEffectOf());
+    return h.provide(
+      Effect.gen(function* canonicalProvisioningHash() {
+        const input = Schema.decodeUnknownSync(ProvisionSourceStockItemInputSchema)({
+          catalogSelection: { productRef, variantRef },
+          exactSelectionMeaning: { id: `catalog-variant:${variantId}`, kind: 'PRODUCT_VARIANT' },
+          expectedPolicy: {
+            ...provisioningSource,
+            locations: [
+              {
+                locationKey: 'warehouse-2',
+                stockLocationRef: provisionRef('stock-location', '10000000-0000-4000-8000-000000000067'),
+              },
+              ...provisioningSource.locations,
+            ],
+          },
+          itemKey: 'unseen-SKU',
+          policyRef: provisioningSource.policyRef,
+        });
+        const principal = { principalId: executorId, tenantId };
+        const intent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[15])({
+          _tag: 'InventoryProvision',
+          payload: input,
+          source: provisioningSource,
+        });
+        const hashes: string[] = [];
+        for (const payload of [
+          input,
+          {
+            ...input,
+            expectedPolicy: { ...input.expectedPolicy, locations: EffectArray.reverse(input.expectedPolicy.locations) },
+          },
+        ]) {
+          hashes.push(yield* prepareSymmyCatalogPricingInventoryRequestHash({ ...intent, payload }, principal));
+          yield* executeProvisionSourceStockItemWithAuthorization(payload, 'assertion', 'provision-test', {
+            baseUrl: 'https://inventory.test/inventory-api',
+            compositionRevision,
+            idempotencyKey: 'provision-test',
+          });
+        }
+        const writes = h.requests.filter((request) => request.url.includes('/actions/provision-source-stock-item'));
+        expect(writes).toHaveLength(2);
+        for (const request of writes) {
+          const wire: unknown = yield* Effect.promise(() => request.clone().json());
+          const normalizedPayload = Schema.encodeSync(ProvisionSourceStockItemPayloadSchema)(
+            Schema.decodeUnknownSync(ProvisionSourceStockItemPayloadSchema)(wire),
+          );
+          expect(wire).toEqual(normalizedPayload);
+          expect(
+            computeActionRequestHash({
+              actionKey: provisionOperation.entrypointKey,
+              normalizedPayload,
+              owningModuleKey: provisionOperation.moduleId,
+              principal,
+              schemaVersion: provisionOperation.schemaVersion,
+              target: {},
+            }),
+          ).toBe(hashes[0]);
+        }
+        expect(hashes[1]).toBe(hashes[0]);
+      }),
+    );
+  });
+
+  it.effect(
+    'pins the receipt-selected Product and Variant, never the planned UUIDs, before the native provisioning call',
+    () => {
+      const h = harness(false, provisionEffectOf());
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          const outcome = yield* adapter.execute({
+            ...h.input,
+            acceptedPlan: provisionPlan(h.input.effect),
+            dependencies: [parentState],
+            inventoryBackendId: 'native-backend-A',
+          });
+          expect(outcome.status).toBe('accepted_change');
+          const [resolved] = h.resolvedEffects;
+          expect(resolved?.ref.originalTarget).toEqual(provisioningSource.policyRef);
+          expect(Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[15])(resolved?.intent)).toBe(true);
+          expect(resolved?.intent).toMatchObject({
+            payload: {
+              catalogSelection: { productRef, variantRef },
+              exactSelectionMeaning: { id: `catalog-variant:${variantId}`, kind: 'PRODUCT_VARIANT' },
+              expectedPolicy: {
+                customerConfigurationId: provisioningSource.customerConfigurationId,
+                externalScope: provisioningSource.externalScope,
+                issuer: provisioningSource.issuer,
+                locations: provisioningSource.locations,
+                namespace: provisioningSource.namespace,
+                unitRef: provisioningSource.unitRef,
+              },
+              itemKey: 'unseen-SKU',
+              policyRef: provisioningSource.policyRef,
+            },
+          });
+          expect(h.events.indexOf('resolved-target')).toBeLessThan(h.events.indexOf('owner-write'));
+          const gateways = yield* gatewayRequestsFor(h.requests);
+          expect(gateways[0]).toMatchObject({ audience: 'inventory' });
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    'recovers an interrupted committed provisioning from the exact receipt without another write or target resolution',
+    () => {
+      const h = harness(false, provisionEffectOf());
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          const first = yield* Effect.exit(
+            adapter.execute({
+              ...h.input,
+              acceptedPlan: provisionPlan(h.input.effect),
+              dependencies: [parentState],
+              inventoryBackendId: 'native-backend-A',
+              recordInvocationId: () => Effect.fail(symmyJobWorkerUnavailable()),
+            }),
+          );
+          expect(Exit.isFailure(first)).toBe(true);
+          const [resolved] = h.resolvedEffects;
+          assert.isDefined(resolved);
+          const native = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[15])(
+            resolved.intent,
+          );
+          const requestHash = yield* prepareSymmyCatalogPricingInventoryRequestHash(native, {
+            principalId: executorId,
+            tenantId,
+          });
+          const recovered = yield* adapter.recover({
+            ...h.input,
+            acceptedPlan: provisionPlan(h.input.effect),
+            dependencies: [parentState],
+            effect: resolved,
+            inventoryBackendId: 'native-backend-A',
+            originalAuthContextRef: authContextRef,
+            originalExecutorPrincipalId: executorId,
+            originalInvocationId: invocationId,
+            originalRequestHash: requestHash,
+          });
+          expect(recovered.status).toBe('settled');
+          expect(
+            h.requests.filter((request) => request.url.includes('/actions/provision-source-stock-item')),
+          ).toHaveLength(1);
+          expect(
+            h.requests.filter((request) => request.url.includes('/reads/source-stock-item-provisioning-receipt')),
+          ).toHaveLength(1);
+          expect(h.resolvedEffects).toHaveLength(1);
+        }),
+      );
+    },
+  );
+
+  it.effect('refuses corrupted resumed provisioning before a write or receipt read', () => {
+    const h = harness(false, provisionEffectOf());
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const acceptedPlan = provisionPlan(h.input.effect);
+        yield* adapter.execute({
+          ...h.input,
+          acceptedPlan,
+          dependencies: [parentState],
+          inventoryBackendId: 'native-backend-A',
+        });
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        const intent = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[15])(resolved.intent);
+        const changedVariant = { ...variantRef, resourceId: '10000000-0000-4000-8000-000000000099' };
+        const corruptions = [
+          { ...intent, payload: { ...intent.payload, itemKey: 'other-SKU' } },
+          { ...intent, source: { ...intent.source, externalScope: 'other-scope' } },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              policyRef: { ...intent.payload.policyRef, resourceId: changedVariant.resourceId },
+            },
+          },
+          { ...intent, payload: { ...intent.payload, catalogSelection: { productRef, variantRef: changedVariant } } },
+          {
+            ...intent,
+            payload: { ...intent.payload, expectedPolicy: { ...intent.payload.expectedPolicy, namespace: 'other' } },
+          },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              expectedPolicy: {
+                ...intent.payload.expectedPolicy,
+                unitRef: { ...intent.payload.expectedPolicy.unitRef, resourceId: changedVariant.resourceId },
+              },
+            },
+          },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              expectedPolicy: {
+                ...intent.payload.expectedPolicy,
+                locations: intent.payload.expectedPolicy.locations.map((location) => ({
+                  ...location,
+                  locationKey: 'other-location',
+                })),
+              },
+            },
+          },
+          {
+            ...intent,
+            payload: {
+              ...intent.payload,
+              exactSelectionMeaning: { ...intent.payload.exactSelectionMeaning, id: 'catalog-variant:other' },
+            },
+          },
+        ];
+        for (const corrupted of corruptions) {
+          const changed = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({ ...resolved, intent: corrupted });
+          const input = {
+            ...h.input,
+            acceptedPlan,
+            dependencies: [parentState],
+            effect: changed,
+            inventoryBackendId: 'native-backend-A',
+            originalAuthContextRef: authContextRef,
+            originalExecutorPrincipalId: executorId,
+            originalInvocationId: invocationId,
+            originalRequestHash: 'a'.repeat(64),
+          };
+          const before = h.requests.length;
+          expect(Exit.isFailure(yield* Effect.exit(adapter.execute(input)))).toBe(true);
+          expect(Exit.isFailure(yield* Effect.exit(adapter.recover(input)))).toBe(true);
+          expect(h.requests).toHaveLength(before);
+        }
+        const missingParent = {
+          ...h.input,
+          acceptedPlan,
+          dependencies: [],
+          effect: resolved,
+          inventoryBackendId: 'native-backend-A',
+        };
+        expect(Exit.isFailure(yield* Effect.exit(adapter.execute(missingParent)))).toBe(true);
+      }),
+    );
+  });
+
+  it.effect('rechecks the named further Variant receipt on resumed provisioning', () => {
+    const base = provisionEffectOf();
+    const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...base,
+      dependsOn: [productParent, variantParent],
+      intent: { ...base.intent, variantParent },
+    });
+    const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+      items: [
+        { effects: [effect], itemId: effect.itemId, itemKey: 'product-item' },
+        { effects: [dependentVariantEffect], itemId: dependentVariantEffect.itemId, itemKey: 'variant-item' },
+        { effects: [original], itemId: original.itemId, itemKey: 'provision-item' },
+      ],
+    });
+    const h = harness(false, original);
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        yield* adapter.execute({
+          ...h.input,
+          acceptedPlan,
+          dependencies: [parentState, variantParentState],
+          inventoryBackendId: 'native-backend-A',
+        });
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        expect(resolved.intent).toMatchObject({
+          payload: { catalogSelection: { productRef, variantRef: furtherVariantRef } },
+        });
+        const wrongReceipt = {
+          ...variantParentState,
+          ownerReceipt: Option.some(
+            Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[1])({
+              _tag: 'VariantCreated',
+              productRef,
+              variantRef,
+            }),
+          ),
+        };
+        const before = h.requests.length;
+        const exit = yield* Effect.exit(
+          adapter.execute({
+            ...h.input,
+            acceptedPlan,
+            dependencies: [parentState, wrongReceipt],
+            effect: resolved,
+            inventoryBackendId: 'native-backend-A',
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.requests).toHaveLength(before);
+      }),
+    );
+  });
+
+  it.effect('refuses a missing Catalog commit or a foreign selected backend before Inventory sees a call', () =>
+    Effect.gen(function* test() {
+      for (const dependencies of [[], [parentState]]) {
+        const h = harness(false, provisionEffectOf());
+        yield* h.provide(
+          Effect.gen(function* refusal() {
+            const adapter = yield* h.adapter;
+            const exit = yield* Effect.exit(
+              adapter.execute({
+                ...h.input,
+                acceptedPlan: provisionPlan(h.input.effect),
+                dependencies,
+                inventoryBackendId: 'foreign-backend',
+              }),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(h.requests).toHaveLength(0);
+          }),
+        );
+      }
+    }),
+  );
+});
+
+const readinessState = (effectKey: string, receipt: typeof Schema.Json.Type) => ({
+  ...parentState,
+  effect: Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({ ...effect, effectKey }),
+  ownerReceipt: Option.some(Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema)(receipt)),
+});
+
+const readinessCreatePlan = () => {
+  const readiness = dependentEffect(
+    {
+      _tag: 'CatalogReadiness',
+      divisible: false,
+      evidenceRefs: ['symmy-product:source'],
+      kind: 'AXIS_FREE_UNTYPED',
+      locale: 'cs-CZ',
+      name: 'Internal Product',
+      step: 'AXES',
+      unitRef,
+    },
+    {
+      entrypointKey: 'commerce.catalog.govern-variant-axes',
+      moduleId: 'commerce.catalog',
+      schemaVersion: '1',
+    },
+  );
+  return provisionPlan(
+    Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...readiness,
+      itemId: '10000000-0000-4000-8000-000000000071',
+      ref: { ...readiness.ref, effectId: '10000000-0000-4000-8000-000000000072' },
+    }),
+  );
+};
+
+describe('Symmy Product readiness', () => {
+  for (const code of GovernVariantAxesActionConflictProblemSchema.fields.code.literals) {
+    it.effect(`preserves the native axes conflict and records only its finite code: ${code}`, () => {
+      const acceptedPlan = readinessCreatePlan();
+      const selected = acceptedPlan.items
+        .flatMap(({ effects }) => effects)
+        .find(({ ref }) => ref.operation.entrypointKey === 'commerce.catalog.govern-variant-axes');
+      assert.isDefined(selected);
+      const h = harness(false, selected);
+      const entries: unknown[] = [];
+      const parent = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: variantRef,
+            productRef,
+            productRevision: 1,
+            variantRevision: 1,
+          }),
+        ),
+      };
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        if (!request.url.endsWith('/actions/govern-variant-axes')) {
+          return h.fetch(request);
+        }
+        const problem = GovernVariantAxesActionConflictProblemSchema.make({
+          code,
+          detail: 'private-owner-detail',
+          status: 409,
+          title: 'Conflict',
+          type: 'https://ontos.dev/problems/conflict',
+        });
+        return Promise.resolve(
+          Response.json(Schema.encodeSync(GovernVariantAxesActionConflictProblemSchema)(problem), {
+            headers: { 'content-type': 'application/problem+json' },
+            status: 409,
+          }),
+        );
+      };
+      return h.provide(
+        Effect.gen(function* nativeAxesConflict() {
+          const adapter = yield* h.adapter;
+          expect((yield* adapter.execute({ ...h.input, acceptedPlan, dependencies: [parent] })).status).toBe(
+            'conflict',
+          );
+          expect(entries).toContainEqual({
+            code,
+            effectId: selected.ref.effectId,
+            operation: 'CatalogReadinessAxes',
+          });
+          expect(JSON.stringify(entries)).not.toContain('private-owner-detail');
+          expect(h.receipts).toEqual([]);
+        }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.provide(preDispatchLogs(entries))),
+      );
+    });
+  }
+
+  it.effect('settles old create snapshots without original revision evidence as unresolved, not ready', () =>
+    Effect.gen(function* absentOriginalRevision() {
+      const acceptedPlan = readinessCreatePlan();
+      for (const replay of [false, true]) {
+        const h = harness(replay);
+        yield* h.provide(
+          Effect.gen(function* test() {
+            const adapter = yield* h.adapter;
+            const outcome = yield* adapter.execute({ ...h.input, acceptedPlan });
+            expect(outcome.status).toBe('unresolved');
+            expect(h.receipts).toEqual([]);
+            const recovered = yield* adapter.recover({ ...(yield* originalProof(h.input)), acceptedPlan });
+            expect(recovered).toMatchObject({ outcome: { status: 'unresolved' }, status: 'settled' });
+            expect(h.receipts).toEqual([]);
+            expect(h.events).not.toContain('owner-readiness');
+          }),
+        );
+      }
+    }),
+  );
+
+  it.effect('retains the authoritative original revisions on create dispatch and recovery', () => {
+    const h = harness(
+      false,
+      effect,
+      productId,
+      priceGroupA,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      priceGroupA,
+      undefined,
+      { action: 'create-product', response: { ...result, initialVariantRevision: 7 } },
+    );
+    const acceptedPlan = readinessCreatePlan();
+    return h.provide(
+      Effect.gen(function* originalRevisions() {
+        const adapter = yield* h.adapter;
+        expect((yield* adapter.execute({ ...h.input, acceptedPlan })).status).toBe('accepted_change');
+        const recovered = yield* adapter.recover({ ...(yield* originalProof(h.input)), acceptedPlan });
+        expect(recovered).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
+        const expectedReceipt = {
+          _tag: 'ProductCreated',
+          actionInvocationId: invocationId,
+          initialVariantRef: variantRef,
+          productRef,
+          productRevision: 1,
+          variantRevision: 7,
+        };
+        expect(h.receipts).toEqual([expectedReceipt, expectedReceipt]);
+      }),
+    );
+  });
+
+  it.effect('does not require readiness revision evidence for an independent sibling Product', () => {
+    const sibling = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...effect,
+      itemId: '10000000-0000-4000-8000-000000000073',
+      ref: { ...effect.ref, effectId: '10000000-0000-4000-8000-000000000074' },
+    });
+    const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+      items: [
+        ...readinessCreatePlan().items,
+        { effects: [sibling], itemId: sibling.itemId, itemKey: 'sibling-product' },
+      ],
+    });
+    const h = harness(false, sibling);
+    return h.provide(
+      Effect.gen(function* independentSibling() {
+        const adapter = yield* h.adapter;
+        expect((yield* adapter.execute({ ...h.input, acceptedPlan })).status).toBe('accepted_change');
+        expect(h.receipts).toEqual([
+          { _tag: 'ProductCreated', actionInvocationId: invocationId, initialVariantRef: variantRef, productRef },
+        ]);
+      }),
+    );
+  });
+
+  it.effect('does not dispatch readiness from a legacy parent receipt without original revisions', () => {
+    const acceptedPlan = readinessCreatePlan();
+    const readiness = acceptedPlan.items
+      .flatMap(({ effects }) => effects)
+      .find(({ ref }) => ref.operation.entrypointKey === 'commerce.catalog.govern-variant-axes');
+    assert.isDefined(readiness);
+    const h = harness(false, readiness);
+    return h.provide(
+      Effect.gen(function* noLegacyCitation() {
+        const adapter = yield* h.adapter;
+        const exit = yield* Effect.exit(adapter.execute({ ...h.input, acceptedPlan, dependencies: [parentState] }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.requests).toEqual([]);
+        expect(h.resolvedEffects).toEqual([]);
+      }),
+    );
+  });
+
+  it.effect('preserves current readiness disposition and keeps historical recovery unresolved', () =>
+    Effect.gen(function* ownerDispositions() {
+      const parent = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: variantRef,
+            productRef,
+            productRevision: 1,
+            variantRevision: 1,
+          }),
+        ),
+      };
+      const dependencies = [
+        parent,
+        readinessState('readiness-axes', { _tag: 'ReadinessAxes', axisRevision: 1 }),
+        readinessState('readiness-confirm', { _tag: 'ReadinessVariant', variantRevision: 2 }),
+        readinessState('readiness-activate', { _tag: 'ReadinessProduct', productRevision: 2 }),
+      ];
+      for (const changed of [true, false]) {
+        const cases = [
+          {
+            action: 'confirm-variant-combination',
+            response: {
+              changed,
+              combinationAxisRevision: 1,
+              combinationKey: 'a'.repeat(64),
+              variant: result.product.variants[0],
+              variantRevision: 2,
+            },
+            step: 'CONFIRM',
+          },
+          {
+            action: 'set-product-unit-target-divisibility',
+            response: {
+              changed,
+              ruleRevision: { revision: 1, rounding: 'UP', step: '1', unit: unitRef },
+              unit: unitRef,
+            },
+            step: 'UNIT',
+          },
+          {
+            action: 'decide-product-type-unnecessary',
+            response: { changed, decisionRevision: 1, decisionState: 'CONFIRMED', productRef },
+            step: 'UNTYPED',
+          },
+        ] as const;
+        for (const { action, response, step } of cases) {
+          const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+            ...dependentEffect(
+              {
+                _tag: 'CatalogReadiness',
+                divisible: false,
+                evidenceRefs: ['symmy-product:source'],
+                kind: 'AXIS_FREE_UNTYPED',
+                locale: 'cs-CZ',
+                name: 'Real source name',
+                step,
+                unitRef,
+              },
+              { entrypointKey: `commerce.catalog.${action}`, moduleId: 'commerce.catalog', schemaVersion: '1' },
+            ),
+            dependsOn: [
+              productParent,
+              ...['readiness-axes', 'readiness-confirm', 'readiness-activate'].map((effectKey) => ({
+                effectKey,
+                itemKey: productParent.itemKey,
+              })),
+            ],
+            itemId: '10000000-0000-4000-8000-000000000071',
+            ref: {
+              ...effect.ref,
+              effectId: '10000000-0000-4000-8000-000000000072',
+              operation: {
+                entrypointKey: `commerce.catalog.${action}`,
+                moduleId: 'commerce.catalog',
+                schemaVersion: '1',
+              },
+            },
+          });
+          const h = harness(
+            false,
+            original,
+            productId,
+            priceGroupA,
+            false,
+            undefined,
+            undefined,
+            undefined,
+            priceGroupA,
+            undefined,
+            {
+              action,
+              recoveryResponse: { _tag: 'CurrentReceipt', result: response },
+              response,
+            },
+          );
+          yield* h.provide(
+            Effect.gen(function* testDisposition() {
+              const adapter = yield* h.adapter;
+              const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+                items: [
+                  {
+                    effects: [
+                      effect,
+                      ...['readiness-axes', 'readiness-confirm', 'readiness-activate'].map((effectKey, index) => ({
+                        ...effect,
+                        effectKey,
+                        ref: { ...effect.ref, effectId: `10000000-0000-4000-8000-00000000008${index}` },
+                      })),
+                    ],
+                    itemId: effect.itemId,
+                    itemKey: productParent.itemKey,
+                  },
+                  { effects: [original], itemId: original.itemId, itemKey: 'provision-item' },
+                ],
+              });
+              const outcome = yield* adapter.execute({ ...h.input, acceptedPlan, dependencies });
+              expect(outcome.status).toBe(changed ? 'accepted_change' : 'accepted_no_change');
+              const [resolved] = h.resolvedEffects;
+              assert.isDefined(resolved);
+              const proof = yield* originalProof({ ...h.input, acceptedPlan, dependencies, effect: resolved });
+              const recovered = yield* adapter.recover({
+                ...proof,
+                canExecuteNewEffects: false,
+                originalInvocationId: invocationId,
+              });
+              expect(recovered).toMatchObject({
+                outcome: { status: changed ? 'accepted_change' : 'accepted_no_change' },
+                status: 'settled',
+              });
+              expect(h.events.filter((event) => event === 'owner-readiness')).toHaveLength(2);
+              const { changed: _changed, ...withoutDisposition } = response;
+              const historicalResult =
+                'variantRevision' in withoutDisposition
+                  ? Struct.omit(withoutDisposition, ['variantRevision'])
+                  : withoutDisposition;
+              const historical = harness(
+                false,
+                resolved,
+                productId,
+                priceGroupA,
+                false,
+                undefined,
+                undefined,
+                undefined,
+                priceGroupA,
+                undefined,
+                {
+                  action,
+                  response: {
+                    _tag: 'HistoricalReceipt',
+                    executionProof: 'NOT_RECORDED',
+                    original: historicalResult,
+                  },
+                },
+              );
+              yield* historical.provide(
+                Effect.gen(function* historicalRecovery() {
+                  const historicalAdapter = yield* historical.adapter;
+                  const historicalProof = yield* originalProof({
+                    ...historical.input,
+                    acceptedPlan,
+                    dependencies,
+                    effect: resolved,
+                  });
+                  for (const canExecuteNewEffects of [false, true]) {
+                    const recoveredHistorical = yield* historicalAdapter.recover({
+                      ...historicalProof,
+                      canExecuteNewEffects,
+                      originalInvocationId: invocationId,
+                    });
+                    expect(recoveredHistorical).toMatchObject({
+                      outcome: { status: 'unresolved' },
+                      status: 'settled',
+                    });
+                  }
+                  expect(historical.events).toEqual(['owner-readiness', 'owner-readiness']);
+                  expect(historical.requests.filter((request) => request.url.includes('/reads/'))).toHaveLength(2);
+                  expect(historical.requests.some((request) => request.url.includes('/actions/'))).toBe(false);
+                  expect(historical.receipts).toEqual([]);
+                  expect(historical.resolvedEffects).toEqual([]);
+                }),
+              );
+            }),
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect('uses owner revisions to materialize every remaining readiness command', () =>
+    Effect.gen(function* ownerRevisions() {
+      const parent = {
+        ...parentState,
+        ownerReceipt: Option.some(
+          Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+            _tag: 'ProductCreated',
+            actionInvocationId: invocationId,
+            initialVariantRef: variantRef,
+            productRef,
+            productRevision: 4,
+            variantRevision: 7,
+          }),
+        ),
+      };
+      const axes = readinessState('readiness-axes', { _tag: 'ReadinessAxes', axisRevision: 3 });
+      const confirmed = readinessState('readiness-confirm', { _tag: 'ReadinessVariant', variantRevision: 8 });
+      const activated = readinessState('readiness-activate', { _tag: 'ReadinessProduct', productRevision: 5 });
+      const cases = [
+        ['CONFIRM', 'confirm-variant-combination', { expectedAxisRevision: 3, expectedVariantRevision: 7 }],
+        [
+          'NAME',
+          'set-product-localized-facts',
+          { expectedRevision: 0, facts: { name: 'Real source name' }, locale: 'cs-CZ' },
+        ],
+        ['ACTIVATE', 'update-product', { expectedRevision: 4, targetLifecycle: 'ACTIVE' }],
+        [
+          'UNIT',
+          'set-product-unit-target-divisibility',
+          {
+            divisible: false,
+            expectedSources: {
+              product: { resourceRef: productRef, revision: 5 },
+              variant: { resourceRef: variantRef, revision: 8 },
+            },
+            target: {
+              targetId: variantRef.resourceId,
+              targetType: 'commerce.catalog.variant',
+              tenantId,
+              unit: unitRef,
+            },
+          },
+        ],
+        [
+          'UNTYPED',
+          'decide-product-type-unnecessary',
+          {
+            decisionState: 'CONFIRMED',
+            expectedAxisRevision: 3,
+            expectedDecisionRevision: 0,
+            expectedProductRevision: 5,
+            expectedValueRevisionTokens: [],
+            expectedVariantRevisionTokens: [`${variantRef.resourceId}:8`],
+            structuredAttributesRequired: false,
+            variantAxesRequired: false,
+          },
+        ],
+      ] as const;
+      for (const [step, action, expected] of cases) {
+        const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+          ...effect,
+          dependsOn: [
+            productParent,
+            ...['readiness-axes', 'readiness-confirm', 'readiness-activate'].map((effectKey) => ({
+              effectKey,
+              itemKey: productParent.itemKey,
+            })),
+          ],
+          intent: {
+            _tag: 'CatalogProductDependentEffect',
+            parent: productParent,
+            request: {
+              _tag: 'CatalogReadiness',
+              divisible: false,
+              evidenceRefs: ['symmy-product:source'],
+              kind: 'AXIS_FREE_UNTYPED',
+              locale: 'cs-CZ',
+              name: 'Real source name',
+              step,
+              unitRef,
+            },
+          },
+          ref: {
+            ...effect.ref,
+            operation: {
+              entrypointKey: `commerce.catalog.${action}`,
+              moduleId: 'commerce.catalog',
+              schemaVersion: '1',
+            },
+          },
+        });
+        const h = harness(false, original);
+        yield* h.provide(
+          Effect.gen(function* test() {
+            const adapter = yield* h.adapter;
+            const exit = yield* Effect.exit(
+              adapter.execute({
+                ...h.input,
+                dependencies: [parent, axes, confirmed, activated],
+                recordResolvedEffect: (resolved) =>
+                  Effect.sync(() => h.resolvedEffects.push(resolved)).pipe(
+                    Effect.andThen(Effect.fail(symmyJobWorkerUnavailable())),
+                  ),
+              }),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(h.resolvedEffects).toHaveLength(1);
+            expect(h.resolvedEffects[0]?.intent).toMatchObject({
+              payload: { ...expected, sourceProduct: { name: 'Internal Product', sourceCorrelation } },
+            });
+            expect(h.requests).toHaveLength(0);
+          }),
+        );
+      }
+    }),
+  );
+
+  it.effect('pins the explicitly enrolled empty-axis action and refuses a tampered recovery', () => {
+    const original = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+      ...dependentEffect(
+        {
+          _tag: 'CatalogReadiness',
+          divisible: false,
+          evidenceRefs: ['symmy-product:source'],
+          kind: 'AXIS_FREE_UNTYPED',
+          locale: 'cs-CZ',
+          name: 'Real source name',
+          step: 'AXES',
+          unitRef,
+        },
+        {
+          entrypointKey: 'commerce.catalog.govern-variant-axes',
+          moduleId: 'commerce.catalog',
+          schemaVersion: '1',
+        },
+      ),
+      itemId: '10000000-0000-4000-8000-000000000071',
+      ref: {
+        ...effect.ref,
+        effectId: '10000000-0000-4000-8000-000000000072',
+        operation: {
+          entrypointKey: 'commerce.catalog.govern-variant-axes',
+          moduleId: 'commerce.catalog',
+          schemaVersion: '1',
+        },
+      },
+    });
+    const h = harness(false, original);
+    const acceptedPlan = provisionPlan(original);
+    const parent = {
+      ...parentState,
+      ownerReceipt: Option.some(
+        Schema.decodeUnknownSync(SymmyCatalogPricingInventoryReceiptSchema.members[0])({
+          _tag: 'ProductCreated',
+          actionInvocationId: invocationId,
+          initialVariantRef: variantRef,
+          productRef,
+          productRevision: 1,
+          variantRevision: 1,
+        }),
+      ),
+    };
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute({ ...h.input, acceptedPlan, dependencies: [parent] });
+        expect(outcome.status).toBe('accepted_change');
+        const [resolved] = h.resolvedEffects;
+        assert.isDefined(resolved);
+        expect(Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[16])(resolved.intent)).toBe(true);
+        expect(resolved.intent).toMatchObject({
+          payload: { axes: [], classification: { kind: 'AXIS_INITIALIZATION' }, expectedAxisRevision: 0, productRef },
+        });
+        expect(
+          h.receipts.some(
+            (receipt) =>
+              Schema.is(SymmyCatalogPricingInventoryReceiptSchema.members[3])(receipt) && receipt.axisRevision === 1,
+          ),
+        ).toBe(true);
+        const native = Schema.decodeUnknownSync(SymmyCatalogPricingInventoryIntentSchema.members[16])(resolved.intent);
+        const requestHash = yield* prepareSymmyCatalogPricingInventoryRequestHash(native, {
+          principalId: executorId,
+          tenantId,
+        });
+        const recovered = yield* adapter.recover({
+          ...h.input,
+          acceptedPlan,
+          dependencies: [parent],
+          effect: resolved,
+          originalAuthContextRef: authContextRef,
+          originalExecutorPrincipalId: executorId,
+          originalInvocationId: invocationId,
+          originalRequestHash: requestHash,
+        });
+        expect(recovered.status).toBe('settled');
+        const changed = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+          ...resolved,
+          intent: { ...native, payload: { ...native.payload, expectedAxisRevision: 1 } },
+        });
+        const exit = yield* Effect.exit(
+          adapter.execute({ ...h.input, acceptedPlan, dependencies: [parent], effect: changed }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(h.events.filter((event) => event === 'owner-readiness')).toHaveLength(2);
+      }),
+    );
+  });
 });

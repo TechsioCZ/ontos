@@ -5,7 +5,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyRolePeriodRefSchema } from '@app/party-registry/resources/counterparty-role-period';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CommerceCustomerProfileStateSchema } from '../domain/profile-contracts.ts';

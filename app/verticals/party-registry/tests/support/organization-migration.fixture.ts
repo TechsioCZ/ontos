@@ -15,7 +15,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { sql } from 'drizzle-orm';
 import { Config, Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 
-import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import {

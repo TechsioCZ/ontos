@@ -1,4 +1,4 @@
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { PricingMaterialChangeClassificationSchema } from '@app/pricing-contracts/domain/material-change';
 import type {
   PricingMaterialBinding,

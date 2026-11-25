@@ -3,8 +3,8 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { CatalogMediaAssignmentSchema } from '../domain/catalog-media-assignment.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 export const CatalogMediaCurrentRequestSchema = Schema.Struct({
   target: Schema.Union([ProductRefSchema, VariantRefSchema]),

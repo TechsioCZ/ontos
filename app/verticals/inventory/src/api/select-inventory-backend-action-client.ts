@@ -35,7 +35,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: SelectInventoryBackendActionApi, credential, defaultApiPrefix: '/inventory-api', requestCorrelation },
+    {
+      api: SelectInventoryBackendActionApi,
+      credential,
+      defaultApiPrefix: '/inventory-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -46,12 +52,7 @@ export const executeSelectInventoryBackendWithAuthorization = (
   Schema.encodeUnknownEffect(SelectInventoryBackendPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.selectInventoryBackendAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.selectInventoryBackendAction.execute({ payload: encoded })),
       ),
     ),
   );

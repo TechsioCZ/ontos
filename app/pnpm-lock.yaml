@@ -304,9 +304,15 @@ importers:
       '@app/catalog':
         specifier: workspace:*
         version: link:verticals/catalog
+      '@app/catalog-selection-contracts':
+        specifier: workspace:*
+        version: link:packages/catalog-selection-contracts
       '@app/commerce-market-catalog':
         specifier: workspace:*
         version: link:verticals/commerce-market-catalog
+      '@app/party-registry-contracts':
+        specifier: workspace:*
+        version: link:packages/party-registry-contracts
       '@app/pricing':
         specifier: workspace:*
         version: link:verticals/pricing
@@ -681,6 +687,9 @@ importers:
 
   packages/catalog-selection-contracts:
     dependencies:
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
       effect:
         specifier: 4.0.7
         version: 4.0.7
@@ -890,6 +899,16 @@ importers:
         specifier: 1.0.0
         version: 1.0.0(@rstest/core@0.12.6(core-js@3.50.0)(happy-dom@20.8.3))(effect@4.0.7)
 
+  packages/party-registry-contracts:
+    dependencies:
+      effect:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@types/node':
+        specifier: 20.19.43
+        version: 20.19.43
+
   packages/payment-term-catalog-contracts:
     dependencies:
       '@app/core-runtime':
@@ -936,15 +955,15 @@ importers:
 
   packages/pricing-contracts:
     dependencies:
-      '@app/catalog':
+      '@app/catalog-selection-contracts':
         specifier: workspace:*
-        version: link:../../verticals/catalog
+        version: link:../catalog-selection-contracts
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../core-runtime
-      '@app/party-registry':
+      '@app/party-registry-contracts':
         specifier: workspace:*
-        version: link:../../verticals/party-registry
+        version: link:../party-registry-contracts
       '@app/price-group-catalog-contracts':
         specifier: workspace:*
         version: link:../price-group-catalog-contracts
@@ -1167,9 +1186,9 @@ importers:
 
   verticals/availability:
     dependencies:
-      '@app/catalog':
+      '@app/catalog-selection-contracts':
         specifier: workspace:*
-        version: link:../catalog
+        version: link:../../packages/catalog-selection-contracts
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../commerce-customer-context
@@ -1539,6 +1558,9 @@ importers:
       '@app/party-registry':
         specifier: workspace:*
         version: link:../party-registry
+      '@app/party-registry-contracts':
+        specifier: workspace:*
+        version: link:../../packages/party-registry-contracts
       '@app/payment-term-catalog-contracts':
         specifier: workspace:*
         version: link:../../packages/payment-term-catalog-contracts
@@ -1978,9 +2000,9 @@ importers:
 
   verticals/inventory:
     dependencies:
-      '@app/catalog':
+      '@app/catalog-selection-contracts':
         specifier: workspace:*
-        version: link:../catalog
+        version: link:../../packages/catalog-selection-contracts
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../commerce-customer-context
@@ -2138,6 +2160,9 @@ importers:
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
+      '@app/party-registry-contracts':
+        specifier: workspace:*
+        version: link:../../packages/party-registry-contracts
       '@app/privacy':
         specifier: workspace:*
         version: link:../privacy
@@ -2553,6 +2578,9 @@ importers:
       '@app/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@app/catalog-selection-contracts':
+        specifier: workspace:*
+        version: link:../../packages/catalog-selection-contracts
       '@app/commerce-cart-finalization-contracts':
         specifier: workspace:*
         version: link:../../packages/commerce-cart-finalization-contracts
@@ -2662,6 +2690,9 @@ importers:
       '@app/party-registry':
         specifier: workspace:*
         version: link:../party-registry
+      '@app/party-registry-contracts':
+        specifier: workspace:*
+        version: link:../../packages/party-registry-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -3107,6 +3138,9 @@ importers:
       '@app/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@app/catalog-selection-contracts':
+        specifier: workspace:*
+        version: link:../../packages/catalog-selection-contracts
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../commerce-customer-context
@@ -3122,6 +3156,9 @@ importers:
       '@app/party-registry':
         specifier: workspace:*
         version: link:../party-registry
+      '@app/party-registry-contracts':
+        specifier: workspace:*
+        version: link:../../packages/party-registry-contracts
       '@app/price-group-catalog':
         specifier: workspace:*
         version: link:../price-group-catalog

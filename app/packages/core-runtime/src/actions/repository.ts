@@ -219,6 +219,7 @@ export interface PrepareActionInvocationInput {
 }
 
 interface ResolveActionInvocationInput {
+  readonly expectedActionKey?: string | undefined;
   readonly invocationId: string;
   readonly principal: TrustedPrincipalContext;
 }
@@ -509,6 +510,9 @@ const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executo
         .where(
           and(
             eq(actionInvocations.actionInvocationId, input.invocationId),
+            input.expectedActionKey === undefined
+              ? undefined
+              : eq(actionInvocations.actionKey, input.expectedActionKey),
             eq(actionInvocations.tenantId, input.principal.tenantId),
             eq(actionInvocations.principalId, recovery?.originalPrincipalId ?? input.principal.principalId),
             ...(recovery === undefined

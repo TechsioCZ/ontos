@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { SetCompositionRevisionSchema } from '../../shared/domain/set-composition.ts';
 import type { SetComponentCurrentProof } from '../../shared/domain/set-component-validation.ts';
 import { validateSetComponents } from '../../shared/domain/set-component-validation.ts';

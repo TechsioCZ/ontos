@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { ProductUnitRefSchema } from '../resources/product-unit.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import {
   ProductUnitEvidenceRefsSchema,
   ProductUnitMutationResultSchema,

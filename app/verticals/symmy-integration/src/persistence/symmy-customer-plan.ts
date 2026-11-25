@@ -36,16 +36,16 @@ const party = 'party.registry';
 const commerce = 'commerce.customer-context';
 const operation = (moduleId: string, entrypointKey: string) =>
   ({ entrypointKey, moduleId, schemaVersion: '1' }) as const;
-const createPartyOperation = operation(party, 'party.registry.create-party');
-const addContactOperation = operation(party, 'party.registry.add-contact-point');
-const onboardOperation = operation(party, 'party.registry.counterparty-customer-onboard');
-const retailProfileOperation = operation(commerce, 'commerce.customer-context.ensure-retail-customer-profile');
-const counterpartyProfileOperation = operation(
+export const createPartyOperation = operation(party, 'party.registry.create-party');
+export const addContactOperation = operation(party, 'party.registry.add-contact-point');
+export const onboardOperation = operation(party, 'party.registry.counterparty-customer-onboard');
+export const retailProfileOperation = operation(commerce, 'commerce.customer-context.ensure-retail-customer-profile');
+export const counterpartyProfileOperation = operation(
   commerce,
   'commerce.customer-context.create-counterparty-purchasing-profile',
 );
-const addAddressOperation = operation(commerce, 'commerce.customer-context.add-saved-address');
-const organizationIcoOperation = operation(
+export const addAddressOperation = operation(commerce, 'commerce.customer-context.add-saved-address');
+export const organizationIcoOperation = operation(
   commerce,
   'commerce.customer-context.change-organization-customer-profile-ico',
 );

@@ -1,5 +1,5 @@
-import type { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import type { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import type { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import type { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
 import type { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
 import { ExternalPriceSourceAuthorityGrantSchema } from '@app/pricing/testing/c14-source-authority';

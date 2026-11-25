@@ -76,7 +76,7 @@ import { observeCustomerGroupSourceNativeFixture } from '@app/commerce-customer-
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
 import { DateTime, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema } from 'effect';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyPurchasingProfileRefSchema } from '@app/commerce-customer-context/resources/counterparty-purchasing-profile';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { FetchHttpClient } from 'effect/http';

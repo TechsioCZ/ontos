@@ -1,4 +1,4 @@
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyContactPointRefSchema } from '@app/party-registry/resources/party-contact-point';
 import { PartyOfficialIdentifierRefSchema } from '@app/party-registry/resources/party-official-identifier';
 import { PartyRefSchema } from '@app/party-registry/resources/party';

@@ -1,8 +1,8 @@
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
-import { ProductRevisionReferenceSchema } from './catalog-revision-reference.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
+import { ProductRevisionReferenceSchema } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import type { CatalogSelectionOwnerAssessmentResult } from './catalog-selection-owner-contract.ts';
 
 export const ProductLifecycleSchema = Schema.Literals(['DRAFT', 'ACTIVE', 'RETIRED']);

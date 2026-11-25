@@ -3,8 +3,8 @@
 // @ontos-outbox-topic commerce.catalog.package-definition-revised.v1
 import { Schema } from 'effect';
 
-import { CatalogRevisionInstantSchema } from '../domain/catalog-revision-reference.ts';
-import { PackageDefinitionSelectionRevisionSchema } from '../domain/catalog-selection-evidence.ts';
+import { CatalogRevisionInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { PackageDefinitionRefSchema } from '../resources/package-definition.ts';
 
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());

@@ -7,7 +7,7 @@ import {
 import { ProfileInstantSchema } from './profile-contracts.ts';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import {
   CustomerProfilePartySourceReferenceSchema,
   CustomerProfileSourceAssertionSchema,

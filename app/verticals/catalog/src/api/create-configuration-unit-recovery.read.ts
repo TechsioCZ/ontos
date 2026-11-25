@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-configuration-unit', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CreateConfigurationUnitResultSchema),
-      encode: Schema.encodeEffect(CreateConfigurationUnitResultSchema),
     },
   );
 

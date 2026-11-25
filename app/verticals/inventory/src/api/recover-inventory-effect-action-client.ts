@@ -49,6 +49,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: RecoverInventoryEffectActionApi,
       credential,
       defaultApiPrefix: '/inventory-api',
+      idempotencyKey: options.idempotencyKey,
       intent: options.intent,
       requestCorrelation,
     },
@@ -68,12 +69,7 @@ export const executeRecoverInventoryEffectWithAuthorization = (
   Schema.encodeUnknownEffect(RecoverInventoryEffectPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.recoverInventoryEffectAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.recoverInventoryEffectAction.execute({ payload: encoded })),
       ),
     ),
   );

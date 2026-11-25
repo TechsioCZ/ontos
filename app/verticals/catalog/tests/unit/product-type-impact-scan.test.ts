@@ -1,7 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 
 import type { productTypeAssignments } from '../../src/database/schema.ts';
 import { productTypeRevisions, productTypes } from '../../src/database/schema.ts';

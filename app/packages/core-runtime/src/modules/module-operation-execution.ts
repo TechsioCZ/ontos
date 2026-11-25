@@ -4,8 +4,12 @@ import {
   readPrincipalBinding,
   resolveExternalSubjectRead,
 } from '../auth/external-identity/read.ts';
+import { assetCurrentRead } from '../generated-reads/asset-current.ts';
+import { assetByteSourceRead } from '../generated-reads/asset-byte-source.ts';
+import { assetDownloadRead } from '../generated-reads/asset-download.ts';
+import { assetMetadataRead } from '../generated-reads/asset-metadata.ts';
 import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
-import { coreOperations } from '../sdk/core-operations.ts';
+import { SHELL_HOST_APP_ID, coreOperations } from '../sdk/core-operations.ts';
 import type { AnyReadOperationRef, RequirementCaller } from '../sdk/index.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import {
@@ -26,6 +30,8 @@ import { copyOntosModuleRequirements } from './manifest.ts';
 import type { OntosDeploymentIdentitySchema } from './manifest.ts';
 import {
   isCoreOperationProvider,
+  isShellHostedCoreProvider,
+  sameOperationProvider,
   OntosModuleRequirementsSchema,
   OntosOperationContractSchema,
   tenantModuleIntrinsicDependencyClosure,
@@ -190,6 +196,14 @@ export const coreOperationRegistrations: readonly CoreOperationRegistration[] = 
   Object.freeze({ operation: coreOperations.legalEntityDetail, registration: legalEntityDetailRead }),
 ]);
 
+/**
+ * The Core operations the Shell host serves to modules over the module route, each with the governed Core read that
+ * answers it there. They are NOT in `coreOperationRegistrations`: no module host runs them in-process.
+ */
+const shellHostedCoreOperationRegistrations: readonly CoreOperationRegistration[] = Object.freeze([
+  Object.freeze({ operation: coreOperations.assetCurrent, registration: assetCurrentRead }),
+]);
+
 const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequirement')(
   function* resolveExecutingRequirement(lease: ModuleOperationExecutionLease, requirementKey: string) {
     const { registration } = lease.input;
@@ -246,6 +260,17 @@ const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequiremen
         requirement,
       };
     }
+    // A Core operation the Shell host serves is satisfied by that closed registry and answered by the Shell
+    // deployment, never by a module of the composition.
+    if (isShellHostedCoreProvider(requirement.provider)) {
+      const hosted = shellHostedCoreOperationRegistrations.find(({ operation }) =>
+        sameOperationProvider(operation.provider, requirement.provider),
+      );
+      if (hosted === undefined) {
+        return yield* unsatisfied();
+      }
+      return { catalog, consumer, ownerRegistration: owner, providerAppId: SHELL_HOST_APP_ID, requirement };
+    }
     const provider = catalog.getByModuleId(requirement.provider.moduleId);
     if (
       provider === undefined ||
@@ -293,6 +318,10 @@ const coreReads = Object.freeze([
   selfApiKeyBindingsRead,
   managedPrincipalsRead,
   legalEntityDetailRead,
+  assetMetadataRead,
+  assetByteSourceRead,
+  assetDownloadRead,
+  assetCurrentRead,
   readPrincipalBinding,
   bindingSubjectRead,
   resolveExternalSubjectRead,

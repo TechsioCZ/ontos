@@ -10,7 +10,7 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionOwnerAssessmentResult } from '../../shared/domain/catalog-selection-owner-contract.ts';
 import { catalogSelectionValidityAttestationFor } from '../../shared/domain/catalog-selection-validity.ts';
 import {

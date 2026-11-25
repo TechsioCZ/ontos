@@ -4,8 +4,8 @@ import { Effect, Option, Schema } from 'effect';
 import { isDeepStrictEqual } from 'node:util';
 
 import { AttributeDefinitionSchema, validateAttributeValues } from '../../shared/domain/attribute-values.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import {
   attributeDefinitionRevisions,
   attributeDefinitions,

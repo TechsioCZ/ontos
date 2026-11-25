@@ -7,22 +7,20 @@ import { Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import type { Crypto } from 'effect';
 
-import type { CatalogQuantityHandoffReady } from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogQuantityBasisSchema } from '../../shared/domain/catalog-quantity-handoff.ts';
-import {
-  CatalogSelectionBasisListSchema,
-  CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import type { CatalogQuantityHandoffReady } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogSelectionBasisListSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogPricingPurposeEquivalenceAssessment } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import type {
-  CatalogPricingPurposeEquivalenceAssessment,
   PricingPurposeEquivalenceRequest,
   PricingPurposeEquivalenceResponse,
 } from '../../shared/apis/pricing-purpose-equivalence.ts';
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '../../shared/apis/pricing-purpose-equivalence.ts';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import { catalogQuantityHandoffForScope } from '../persistence/catalog-quantity-handoff.ts';
 
 const pricingPurposeEquivalenceEntrypoint = defineTenantModuleEntrypoint({

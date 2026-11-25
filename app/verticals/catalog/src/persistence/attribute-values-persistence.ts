@@ -7,8 +7,8 @@ import type { AttributeValue, UnitConversion } from '../../shared/domain/attribu
 import type { VariantAttributeChangeClassification } from '../../shared/actions/attribute-value-mutations.ts';
 import { AttributeDefinitionSchema, validateAttributeValues } from '../../shared/domain/attribute-values.ts';
 import type { AttributeDefinitionRef } from '../../shared/resources/attribute-definition.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import {
   attributeDefinitions,
   attributeValueItems,

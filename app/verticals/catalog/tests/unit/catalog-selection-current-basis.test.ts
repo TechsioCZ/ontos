@@ -4,10 +4,11 @@ import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogSelectionBasisSchema, CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionBasisSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
 import {
   attributeDefinitionRevisions,

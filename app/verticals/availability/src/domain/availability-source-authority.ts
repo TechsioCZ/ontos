@@ -1,4 +1,4 @@
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { InventoryBackendConfigurationSchema } from '@app/inventory/backend-configuration';
 import type { InventoryBackendConfiguration } from '@app/inventory/backend-configuration';
 import { Effect, Match, Schema } from 'effect';

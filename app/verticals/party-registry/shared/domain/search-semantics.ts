@@ -1,6 +1,6 @@
 import { DateTime, Option, Schema } from 'effect';
 
-import type { CounterpartyRef } from '../resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { PartyRef } from '../resources/party.ts';
 import type { CounterpartySearchProjectionHit, PartySearchProjectionHit } from './search-projection-gateway.ts';
 import type { CounterpartySearchResult, CurrentCounterpartyRole, PartySearchResult } from './search-result.ts';

@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.retire-brand', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RetireBrandResultSchema),
-      encode: Schema.encodeEffect(RetireBrandResultSchema),
     },
   );
 

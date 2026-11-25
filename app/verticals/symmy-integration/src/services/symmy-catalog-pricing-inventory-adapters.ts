@@ -7,7 +7,34 @@ import {
   setVariantLocalizedFactsRequestIdentity,
   updateProductRequestIdentity,
 } from '@app/catalog/api/native-action-request-identity';
+import { AddProductCategoryAssignmentPayloadSchema } from '@app/catalog/api/add-product-category-assignment-action';
+import { executeAddProductCategoryAssignmentWithAuthorization } from '@app/catalog/api/client';
+import { executeAddProductCategoryAssignmentRecoveryWithAuthorization } from '@app/catalog/api/add-product-category-assignment-recovery-client';
 import { CreateProductRecoveryRequestSchema } from '@app/catalog/api/create-product-recovery';
+import {
+  GovernVariantAxesActionConflictProblemSchema,
+  GovernVariantAxesPayloadSchema,
+} from '@app/catalog/api/govern-variant-axes-action';
+import { ConfirmVariantCombinationPayloadSchema } from '@app/catalog/api/confirm-variant-combination-action';
+import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
+import { SetProductUnitTargetDivisibilityPayloadSchema } from '@app/catalog/api/set-product-unit-target-divisibility-action';
+import { DecideProductTypeUnnecessaryPayloadSchema } from '@app/catalog/api/decide-product-type-unnecessary-action';
+import { executeGovernVariantAxesWithAuthorization } from '@app/catalog/api/govern-variant-axes-action-client';
+import { executeGovernVariantAxesRecoveryWithAuthorization } from '@app/catalog/api/govern-variant-axes-recovery-client';
+import { executeConfirmVariantCombinationWithAuthorization } from '@app/catalog/api/confirm-variant-combination-action-client';
+import { executeConfirmVariantCombinationRecoveryWithAuthorization } from '@app/catalog/api/confirm-variant-combination-recovery-client';
+import { executeSetProductLocalizedFactsWithAuthorization } from '@app/catalog/api/set-product-localized-facts-action-client';
+import { executeSetProductLocalizedFactsRecoveryWithAuthorization } from '@app/catalog/api/set-product-localized-facts-recovery-client';
+import { executeSetProductUnitTargetDivisibilityWithAuthorization } from '@app/catalog/api/set-product-unit-target-divisibility-action-client';
+import { executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization } from '@app/catalog/api/set-product-unit-target-divisibility-recovery-client';
+import { executeDecideProductTypeUnnecessaryWithAuthorization } from '@app/catalog/api/decide-product-type-unnecessary-action-client';
+import { executeDecideProductTypeUnnecessaryRecoveryWithAuthorization } from '@app/catalog/api/decide-product-type-unnecessary-recovery-client';
+import {
+  ProvisionSourceStockItemPayloadSchema,
+  SourceProvisioningExpectedPolicySchema,
+} from '@app/inventory/source-provisioning';
+import type { SourceStockItemProvisioning } from '@app/inventory/source-provisioning';
+import { SourceStockItemProvisioningReceiptRequestSchema } from '@app/inventory/api/source-stock-item-provisioning-receipt';
 import { InventorySourceImportReceiptRequestSchema } from '@app/inventory/api/inventory-source-import-receipt';
 import { prepareImportSourceAssertionRequestIdentity } from '@app/inventory/source-import';
 import type { PriceGroupSourceCorrelation } from '@app/price-group-catalog/apis/price-group-source-associations';
@@ -37,10 +64,13 @@ import { executeUpdateProductWithAuthorization } from '@app/catalog/api/update-p
 import { executeUpdateProductRecoveryWithAuthorization } from '@app/catalog/api/update-product-recovery-client';
 import type { CreateProductRecoveryResponseSchema } from '@app/catalog/api/create-product-recovery';
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
+import { UpdateProductPayloadSchema } from '@app/catalog/api/update-product-action';
 import type { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
-import type { ProductRef } from '@app/catalog/resources/product';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import {
+  executeProvisionSourceStockItemWithAuthorization,
+  executeSourceStockItemProvisioningReceiptWithAuthorization,
   executeImportSourceAssertionWithAuthorization,
   executeInventorySourceImportReceiptWithAuthorization,
 } from '@app/inventory/api/client';
@@ -62,7 +92,7 @@ import {
 } from '@app/pricing/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Match, Option, Schema, Stream } from 'effect';
+import { Context, Crypto, Effect, Exit, Layer, Match, Option, Schema, Stream } from 'effect';
 
 import {
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -85,6 +115,9 @@ import { readOriginalOwnerAttempt } from './symmy-owner-request-recovery.ts';
 
 const committedEvidence = Schema.Struct({ invocationId: ProductActionInvocationIdSchema });
 const problemStatus = Schema.Struct({ status: Schema.Int });
+const readinessActivateKey = 'readiness-activate';
+const decodeReadinessInput = <Decoded>(schema: Schema.Decoder<Decoded>, value: typeof Schema.Json.Type) =>
+  Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(symmyJobWorkerInvalid));
 const sameRef = (
   left: {
     readonly moduleId: string;
@@ -120,6 +153,46 @@ const safeOutcome = (
   owner: input.effect.ref.operation.moduleId,
   status,
 });
+const readinessResolvedIntentSchema = Schema.Union([
+  Schema.TaggedStruct('CatalogReadinessAxes', {}),
+  Schema.TaggedStruct('CatalogReadinessConfirm', {}),
+  Schema.TaggedStruct('CatalogReadinessName', {}),
+  Schema.TaggedStruct('CatalogReadinessUnit', {}),
+  Schema.TaggedStruct('CatalogReadinessUntyped', {}),
+  Schema.TaggedStruct('CatalogAddProductCategoryAssignment', {}),
+]);
+const readinessEffectInPlan = (input: SymmyEffectAdapterInput) => {
+  const item = input.acceptedPlan?.items.find(({ itemId }) => itemId === input.effect.itemId);
+  return (
+    item !== undefined &&
+    input.acceptedPlan?.items.some(({ effects }) =>
+      effects.some(({ intent }) =>
+        Schema.is(
+          Schema.TaggedStruct('CatalogProductDependentEffect', {
+            parent: Schema.Struct({
+              effectKey: Schema.Literal(input.effect.effectKey),
+              itemKey: Schema.Literal(item.itemKey),
+            }),
+            request: Schema.TaggedStruct('CatalogReadiness', {}),
+          }),
+        )(intent),
+      ),
+    ) === true
+  );
+};
+
+const provisioningOutcome = (
+  input: SymmyEffectAdapterInput,
+  provisioning: SourceStockItemProvisioning,
+): SymmyExecutionOutcome =>
+  safeOutcome(
+    input,
+    [provisioning.stockItem, provisioning.binding, provisioning.itemCorrelation, ...provisioning.positions].some(
+      ({ disposition }) => disposition === 'ESTABLISHED',
+    )
+      ? 'accepted_change'
+      : 'accepted_no_change',
+  );
 
 const initialVariantBindingOutcome = (input: SymmyEffectAdapterInput, { changed }: { readonly changed?: boolean }) => {
   if (changed === undefined) {
@@ -292,6 +365,8 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
     ref.tenantId === tenantId && target !== undefined && sameRef(target, ref);
   const valid = Match.value(decodedIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: ({ payload }) =>
+        entityKind === 'PRODUCT' && expectedTarget(payload.productRef) && payload.categoryRef.tenantId === tenantId,
       CatalogBindInitialVariantSource: ({ payload }) =>
         target !== undefined && qualifiedSource(input, payload.productSource),
       CatalogCorrectProduct: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
@@ -303,6 +378,12 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
         qualifiedSource(input, payload.sourceCorrelation),
       CatalogCreateVariantFromProductEffect: () => false,
       CatalogProductDependentEffect: () => false,
+      CatalogReadinessAxes: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
+      CatalogReadinessConfirm: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
+      CatalogReadinessName: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
+      CatalogReadinessUnit: ({ payload }) =>
+        entityKind === 'PRODUCT' && expectedTarget(payload.expectedSources.product.resourceRef),
+      CatalogReadinessUntyped: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
       CatalogSetVariantLocalizedFacts: ({ payload }) =>
         entityKind === 'VARIANT' && expectedTarget(payload.variantRef) && payload.productRef.tenantId === tenantId,
       CatalogUpdateProduct: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
@@ -310,6 +391,11 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
         input.inventoryBackendId !== undefined &&
         expectedTarget(payload.authorizationTargetRef) &&
         payload.items.every((item) => item.issuer.backendId === input.inventoryBackendId),
+      InventoryProvision: ({ payload, source }) =>
+        input.inventoryBackendId === source.issuer.backendId &&
+        expectedTarget(payload.policyRef) &&
+        sameRef(payload.policyRef, source.policyRef) &&
+        payload.catalogSelection.productRef.tenantId === tenantId,
       PriceDefine: ({ payload }) =>
         expectedTarget(payload.priceRef) && priceSourceMatches(input, payload.sourceAssertion),
       PriceDefineFromGroupEffect: () => false,
@@ -343,11 +429,33 @@ interface AdapterContract {
   readonly tag: IntentTag;
 }
 
+const inventoryModuleId = 'commerce.inventory';
+const inventoryProvisionActionKey = 'commerce.inventory.provision-source-stock-item';
+const inventoryProvisioningReceiptRead = 'commerce.inventory.api.source-stock-item-provisioning-receipt';
 const priceGroupAudience = 'price-group-catalog';
 const priceGroupModuleId = 'pricing.price-group-catalog';
 const catalogAudience = 'catalog';
-const catalogModuleId = 'commerce.catalog';
+const catalogModuleId = 'commerce.catalog' as const;
 const symmyCatalogPricingInventoryContracts: readonly AdapterContract[] = [
+  ...(
+    [
+      ['add-product-category-assignment', 'product-category-assignment.add', 'CatalogAddProductCategoryAssignment'],
+      ['govern-variant-axes', 'variant-axes.govern', 'CatalogReadinessAxes'],
+      ['confirm-variant-combination', 'variant-combination.confirm', 'CatalogReadinessConfirm'],
+      ['set-product-localized-facts', 'product-localized-facts.set', 'CatalogReadinessName'],
+      ['set-product-unit-target-divisibility', 'product-unit-target-divisibility.set', 'CatalogReadinessUnit'],
+      ['decide-product-type-unnecessary', 'product-type-unnecessary.decide', 'CatalogReadinessUntyped'],
+    ] as const
+  ).map(([action, declaration, tag]) => ({
+    audience: catalogAudience,
+    declarationKey: `commerce.catalog.${declaration}`,
+    entrypointKey: `commerce.catalog.${action}`,
+    moduleId: catalogModuleId,
+    recoveryDeclarationKey: `commerce.catalog.${action}-recovery.read`,
+    recoveryEntrypointKey: `commerce.catalog.api.${action}-recovery`,
+    schemaVersion: '1',
+    tag,
+  })),
   {
     audience: catalogAudience,
     declarationKey: 'commerce.catalog.product.create',
@@ -450,9 +558,19 @@ const symmyCatalogPricingInventoryContracts: readonly AdapterContract[] = [
   },
   {
     audience: 'inventory',
+    declarationKey: 'commerce.inventory.source-stock-item.provision',
+    entrypointKey: inventoryProvisionActionKey,
+    moduleId: inventoryModuleId,
+    recoveryDeclarationKey: 'commerce.inventory.source-stock-item-provisioning-receipt.read',
+    recoveryEntrypointKey: inventoryProvisioningReceiptRead,
+    schemaVersion: '1',
+    tag: 'InventoryProvision',
+  },
+  {
+    audience: 'inventory',
     declarationKey: 'commerce.inventory.source-assertion.import',
     entrypointKey: 'commerce.inventory.import-source-assertion',
-    moduleId: 'commerce.inventory',
+    moduleId: inventoryModuleId,
     recoveryDeclarationKey: 'commerce.inventory.inventory-source-import-receipt.read',
     recoveryEntrypointKey: 'commerce.inventory.api.inventory-source-import-receipt',
     schemaVersion: '1',
@@ -608,6 +726,30 @@ type ProductDependentIntent = Extract<
 >;
 type ProductCreatedReceipt = Extract<SymmyCatalogPricingInventoryReceipt, { readonly _tag: 'ProductCreated' }>;
 
+const readinessReceipt = Effect.fn('SymmyOwnerAdapters.readinessReceipt')(function* readinessReceipt(
+  input: SymmyEffectAdapterInput,
+  parent: ProductEffectReference,
+  effectKey: string,
+) {
+  const candidates = input.dependencies.filter(
+    (dependency) => dependency.itemKey === parent.itemKey && dependency.effect.effectKey === effectKey,
+  );
+  const [candidate] = candidates;
+  if (
+    candidates.length !== 1 ||
+    candidate === undefined ||
+    candidate.state !== 'settled' ||
+    Option.isNone(candidate.outcome) ||
+    !Schema.is(settledParentOutcomeSchema)(candidate.outcome.value.status) ||
+    !hasDeclaredParentDependency(input.effect, candidate.effect.itemId, { effectKey, itemKey: parent.itemKey })
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  return yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryReceiptSchema)(
+    Option.getOrUndefined(Option.flatten(Option.fromUndefinedOr(candidate.ownerReceipt))),
+  ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+});
+
 /**
  * The Variant a text or a price of the Product is about: the further Variant its `variantParent` create effect
  * settled on (the owner's own answer, so a replayed source record keeps its Variant) or, without one, the initial
@@ -660,6 +802,14 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
   const { originalTarget: target } = input.effect.ref;
   const { productRef } = product;
   return yield* Match.value(intent.request).pipe(
+    Match.tag('AddProductCategoryAssignment', ({ payload }) =>
+      target === undefined && payload.categoryRef.tenantId === productRef.tenantId && intent.variantParent === undefined
+        ? Effect.succeed({
+            intent: { _tag: 'CatalogAddProductCategoryAssignment', payload: { ...payload, productRef } },
+            target: productRef,
+          })
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
     Match.tag('UpdateProduct', ({ payload }) =>
       target === undefined
         ? Effect.succeed({
@@ -675,6 +825,171 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
               intent: { _tag: 'CatalogSetVariantLocalizedFacts', payload: { ...payload, productRef, variantRef } },
               target: variantRef,
             })),
+          )
+        : Effect.fail(symmyJobWorkerInvalid()),
+    ),
+    Match.tag(
+      'CatalogReadiness',
+      Effect.fn('SymmyOwnerAdapters.readinessIntent')(function* readiness(
+        request: Extract<ProductDependentIntent['request'], { readonly _tag: 'CatalogReadiness' }>,
+      ) {
+        if (
+          target !== undefined ||
+          !input.canExecuteNewEffects ||
+          product.productRevision === undefined ||
+          product.variantRevision === undefined ||
+          request.unitRef.tenantId !== productRef.tenantId
+        ) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        const variantRef = yield* requireCreatedVariant(input, intent, product);
+        const parent = input.dependencies.find(
+          (dependency) =>
+            dependency.itemKey === intent.parent.itemKey && dependency.effect.effectKey === intent.parent.effectKey,
+        );
+        if (parent === undefined || intent.variantParent !== undefined) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        const parentIntent = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema)(
+          parent.effect.intent,
+        ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+        const sourceIntent = materializeSymmyCatalogPricingInventorySourceOccurrence(
+          parentIntent,
+          parent.effect.ref.occurrence.occurrenceId,
+        );
+        if (
+          !Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[0])(sourceIntent) ||
+          !qualifiedSource({ ...input, effect: parent.effect }, sourceIntent.payload.sourceCorrelation)
+        ) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        const sourceProduct = sourceIntent.payload;
+        const reason = 'Symmy product import';
+        const { evidenceRefs } = request;
+        if (request.step === 'AXES') {
+          const payload = yield* decodeReadinessInput(GovernVariantAxesPayloadSchema, {
+            axes: [],
+            classification: { evidenceRefs, kind: 'AXIS_INITIALIZATION', reason },
+            expectedAxisRevision: 0,
+            productRef,
+            reason,
+            sourceProduct,
+          });
+          return { intent: { _tag: 'CatalogReadinessAxes', payload }, target: productRef };
+        }
+        const axes = yield* readinessReceipt(input, intent.parent, 'readiness-axes');
+        if (!Schema.is(SymmyCatalogPricingInventoryReceiptSchema.members[3])(axes)) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        if (request.step === 'CONFIRM') {
+          const payload = yield* decodeReadinessInput(ConfirmVariantCombinationPayloadSchema, {
+            evidenceRefs,
+            expectedAxisRevision: axes.axisRevision,
+            expectedVariantRevision: product.variantRevision,
+            productRef,
+            reason,
+            sourceProduct,
+            variantRef,
+          });
+          return { intent: { _tag: 'CatalogReadinessConfirm', payload }, target: productRef };
+        }
+        const confirmed = yield* readinessReceipt(input, intent.parent, 'readiness-confirm');
+        if (!Schema.is(SymmyCatalogPricingInventoryReceiptSchema.members[4])(confirmed)) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        if (request.step === 'NAME') {
+          const payload = yield* decodeReadinessInput(SetProductLocalizedFactsPayloadSchema, {
+            evidenceRefs,
+            expectedRevision: 0,
+            facts: { name: request.name },
+            locale: request.locale,
+            productRef,
+            reason,
+            sourceProduct,
+          });
+          return { intent: { _tag: 'CatalogReadinessName', payload }, target: productRef };
+        }
+        if (request.step === 'ACTIVATE') {
+          const payload = yield* decodeReadinessInput(UpdateProductPayloadSchema, {
+            expectedRevision: product.productRevision,
+            productRef,
+            reason,
+            sourceProduct,
+            targetLifecycle: 'ACTIVE',
+          });
+          return { intent: { _tag: 'CatalogUpdateProduct', payload }, target: productRef };
+        }
+        const activated = yield* readinessReceipt(input, intent.parent, readinessActivateKey);
+        if (!Schema.is(SymmyCatalogPricingInventoryReceiptSchema.members[5])(activated)) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        if (request.step === 'UNIT') {
+          const payload = yield* decodeReadinessInput(SetProductUnitTargetDivisibilityPayloadSchema, {
+            divisible: request.divisible,
+            evidenceRefs,
+            expectedSources: {
+              product: { resourceRef: productRef, revision: activated.productRevision },
+              variant: { resourceRef: variantRef, revision: confirmed.variantRevision },
+            },
+            reason,
+            sourceProduct,
+            target: {
+              targetId: variantRef.resourceId,
+              targetType: 'commerce.catalog.variant',
+              tenantId: productRef.tenantId,
+              unit: request.unitRef,
+            },
+          });
+          return { intent: { _tag: 'CatalogReadinessUnit', payload }, target: productRef };
+        }
+        const payload = yield* decodeReadinessInput(DecideProductTypeUnnecessaryPayloadSchema, {
+          decisionState: 'CONFIRMED',
+          evidenceRefs,
+          expectedAxisRevision: axes.axisRevision,
+          expectedDecisionRevision: 0,
+          expectedProductRevision: activated.productRevision,
+          expectedValueRevisionTokens: [],
+          expectedVariantRevisionTokens: [`${variantRef.resourceId}:${confirmed.variantRevision}`],
+          productRef,
+          reason,
+          sourceProduct,
+          structuredAttributesRequired: false,
+          variantAxesRequired: false,
+        });
+        return { intent: { _tag: 'CatalogReadinessUntyped', payload }, target: productRef };
+      }),
+    ),
+    Match.tag('ProvisionSourceStockItem', ({ itemKey, source }) =>
+      target === undefined &&
+      input.canExecuteNewEffects &&
+      source.policyRef.tenantId === productRef.tenantId &&
+      input.inventoryBackendId === source.issuer.backendId
+        ? requireCreatedVariant(input, intent, product).pipe(
+            Effect.flatMap((variantRef) =>
+              Schema.decodeUnknownEffect(SourceProvisioningExpectedPolicySchema)({
+                customerConfigurationId: source.customerConfigurationId,
+                externalScope: source.externalScope,
+                issuer: source.issuer,
+                locations: source.locations,
+                namespace: source.namespace,
+                unitRef: source.unitRef,
+              }).pipe(
+                Effect.flatMap((expectedPolicy) =>
+                  Schema.decodeUnknownEffect(ProvisionSourceStockItemPayloadSchema)({
+                    catalogSelection: { productRef, variantRef },
+                    exactSelectionMeaning: { id: `catalog-variant:${variantRef.resourceId}`, kind: 'PRODUCT_VARIANT' },
+                    expectedPolicy,
+                    itemKey,
+                    policyRef: source.policyRef,
+                  }),
+                ),
+              ),
+            ),
+            Effect.map((payload) => ({
+              intent: { _tag: 'InventoryProvision', payload, source },
+              target: source.policyRef,
+            })),
+            Effect.mapError(symmyJobWorkerInvalid),
           )
         : Effect.fail(symmyJobWorkerInvalid()),
     ),
@@ -787,6 +1102,64 @@ const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDep
   );
 });
 
+/** A persisted provisioning command is evidence, not authority to choose a different SKU or Catalog selection. */
+const validateProvisioningResolution = Effect.fn('SymmyOwnerAdapters.validateProvisioningResolution')(
+  function* validate(input: SymmyEffectAdapterInput) {
+    const originals = input.acceptedPlan?.items.flatMap(({ effects }) =>
+      effects.filter(({ ref }) => ref.effectId === input.effect.ref.effectId),
+    );
+    const [original] = originals ?? [];
+    const resolvedProtected =
+      input.effect.effectKey === readinessActivateKey ||
+      Schema.is(Schema.Union([Schema.TaggedStruct('InventoryProvision', {}), readinessResolvedIntentSchema]))(
+        input.effect.intent,
+      );
+    if (originals?.length !== 1 || original === undefined) {
+      if (!resolvedProtected) {
+        return yield* Effect.void;
+      }
+      return yield* symmyJobWorkerInvalid();
+    }
+    const decoded = Schema.decodeUnknownOption(SymmyCatalogPricingInventoryIntentSchema.members[11])(original.intent);
+    if (Option.isNone(decoded)) {
+      if (!resolvedProtected) {
+        return yield* Effect.void;
+      }
+      return yield* symmyJobWorkerInvalid();
+    }
+    const admitted = decoded.value;
+    if (
+      !Schema.is(
+        Schema.Union([
+          Schema.TaggedStruct('ProvisionSourceStockItem', {}),
+          Schema.TaggedStruct('CatalogReadiness', {}),
+          Schema.TaggedStruct('AddProductCategoryAssignment', {}),
+        ]),
+      )(admitted.request)
+    ) {
+      if (!resolvedProtected) {
+        return yield* Effect.void;
+      }
+      return yield* symmyJobWorkerInvalid();
+    }
+    if (Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[11])(input.effect.intent)) {
+      return yield* Effect.void;
+    }
+    const originalInput = { ...input, canExecuteNewEffects: true, effect: original };
+    const receipt = yield* requireCreatedProductParent(originalInput, admitted.parent);
+    const expected = yield* productDependentIntent(originalInput, admitted, receipt);
+    const reconstructed = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+      ...original,
+      intent: expected.intent,
+      ref: { ...original.ref, originalTarget: expected.target },
+    }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+    if (computeCanonicalValueHash(reconstructed) !== computeCanonicalValueHash(input.effect)) {
+      return yield* symmyJobWorkerInvalid();
+    }
+    return yield* Effect.void;
+  },
+);
+
 const recordCurrentNativeInvocation = Effect.fn('SymmyOwnerAdapters.recordCurrentNativeInvocation')(
   function* recordCurrent(input: SymmyEffectAdapterInput, contract: AdapterContract) {
     if (
@@ -846,6 +1219,10 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
         if (variants.length !== 1 || initialVariant === undefined) {
           return yield* symmyJobWorkerUnavailable();
         }
+        const needsReadiness = readinessEffectInPlan(input);
+        if (needsReadiness && result.initialVariantRevision === undefined) {
+          return Option.none<string>();
+        }
         let actionInvocationId = result.businessOriginalCreateInvocationId;
         if (actionInvocationId === undefined) {
           if (expectedInvocationId !== undefined) {
@@ -863,8 +1240,14 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
           initialVariantRef: initialVariant.variantRef,
           productRef: result.product.productRef,
         };
+        if (needsReadiness) {
+          Object.assign(receipt, {
+            productRevision: result.product.revision,
+            variantRevision: result.initialVariantRevision,
+          });
+        }
         yield* input.recordOwnerReceipt(receipt);
-        return actionInvocationId;
+        return Option.some(actionInvocationId);
       }),
     ),
     Match.orElse(() => Effect.fail(symmyJobWorkerInvalid())),
@@ -888,15 +1271,22 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
     };
     const selectedSource = Match.value(requestIntent).pipe(
       Match.tags({
+        CatalogAddProductCategoryAssignment: () => Option.some(occurrenceSource),
         CatalogBindInitialVariantSource: ({ payload }) => Option.some(payload.productSource),
         CatalogCorrectProduct: () => Option.some(occurrenceSource),
         CatalogCreateProduct: () => Option.none(),
         CatalogCreateVariant: ({ productSource }) => Option.some(productSource),
         CatalogCreateVariantFromProductEffect: () => Option.none(),
         CatalogProductDependentEffect: () => Option.none(),
+        CatalogReadinessAxes: () => Option.some(occurrenceSource),
+        CatalogReadinessConfirm: () => Option.some(occurrenceSource),
+        CatalogReadinessName: () => Option.some(occurrenceSource),
+        CatalogReadinessUnit: () => Option.some(occurrenceSource),
+        CatalogReadinessUntyped: () => Option.some(occurrenceSource),
         CatalogSetVariantLocalizedFacts: () => Option.some(occurrenceSource),
         CatalogUpdateProduct: () => Option.some(occurrenceSource),
         InventoryImport: () => Option.none(),
+        InventoryProvision: () => Option.none(),
         PriceDefine: () => Option.none(),
         PriceDefineFromGroupEffect: () => Option.none(),
         PriceGroupCreate: () => Option.none(),
@@ -989,6 +1379,20 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
   )({ invocationId }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: Effect.fn('SymmyOwnerAdapters.recoverCategoryAssignment')(
+        function* recoverCategoryAssignment({ payload }) {
+          const result = yield* executeAddProductCategoryAssignmentRecoveryWithAuthorization(
+            catalogRequest,
+            credential,
+            requestCorrelation,
+            options,
+          ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+          if (!sameRef(result.categoryRef, payload.categoryRef) || !sameRef(result.productRef, payload.productRef)) {
+            return yield* symmyJobWorkerUnavailable();
+          }
+          return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+        },
+      ),
       CatalogBindInitialVariantSource: Effect.fn('SymmyOwnerAdapters.CatalogBindInitialVariantSource')(
         function* CatalogBindInitialVariantSource() {
           const result = yield* executeBindInitialVariantSourceRecoveryWithAuthorization(
@@ -1017,7 +1421,10 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
         const businessOriginalCreateId = yield* captureCreatedProduct(input, result, contract, crypto, invocationId);
-        return createdSourceOutcome(input, invocationId, businessOriginalCreateId);
+        if (Option.isNone(businessOriginalCreateId)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        return createdSourceOutcome(input, invocationId, businessOriginalCreateId.value);
       }),
       CatalogCreateVariant: Effect.fn('SymmyOwnerAdapters.CatalogCreateVariant')(function* CatalogCreateVariant() {
         const result = yield* executeCreateVariantRecoveryWithAuthorization(
@@ -1038,6 +1445,80 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
       }),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogReadinessAxes: Effect.fn('SymmyOwnerAdapters.recoverReadinessAxes')(function* recoverAxes() {
+        const result = yield* executeGovernVariantAxesRecoveryWithAuthorization(
+          catalogRequest,
+          credential,
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        yield* input.recordOwnerReceipt({ _tag: 'ReadinessAxes', axisRevision: result.axisRevision });
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+      }),
+      CatalogReadinessConfirm: Effect.fn('SymmyOwnerAdapters.recoverReadinessConfirm')(function* recoverConfirm() {
+        const receipt = yield* executeConfirmVariantCombinationRecoveryWithAuthorization(
+          catalogRequest,
+          credential,
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        return yield* Match.value(receipt).pipe(
+          Match.tags({
+            CurrentReceipt: Effect.fn('SymmyOwnerAdapters.currentConfirmationReceipt')(
+              function* currentConfirmationReceipt({ result }) {
+                if (result.variantRevision === undefined) {
+                  return yield* symmyJobWorkerUnavailable();
+                }
+                yield* input.recordOwnerReceipt({ _tag: 'ReadinessVariant', variantRevision: result.variantRevision });
+                return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+              },
+            ),
+            HistoricalReceipt: () => Effect.succeed(safeOutcome(input, 'unresolved')),
+          }),
+          Match.exhaustive,
+        );
+      }),
+      CatalogReadinessName: Effect.fn('SymmyOwnerAdapters.recoverReadinessName')(function* recoverName() {
+        const result = yield* executeSetProductLocalizedFactsRecoveryWithAuthorization(
+          catalogRequest,
+          credential,
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+      }),
+      CatalogReadinessUnit: Effect.fn('SymmyOwnerAdapters.recoverReadinessUnit')(function* recoverUnit() {
+        const receipt = yield* executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization(
+          catalogRequest,
+          credential,
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        return Match.value(receipt).pipe(
+          Match.tags({
+            CurrentReceipt: ({ result }) =>
+              safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change'),
+            HistoricalReceipt: () => safeOutcome(input, 'unresolved'),
+          }),
+          Match.exhaustive,
+        );
+      }),
+      CatalogReadinessUntyped: Effect.fn('SymmyOwnerAdapters.recoverReadinessUntyped')(function* recoverUntyped() {
+        const receipt = yield* executeDecideProductTypeUnnecessaryRecoveryWithAuthorization(
+          catalogRequest,
+          credential,
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        return Match.value(receipt).pipe(
+          Match.tags({
+            CurrentReceipt: ({ result }) =>
+              safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change'),
+            HistoricalReceipt: () => safeOutcome(input, 'unresolved'),
+          }),
+          Match.exhaustive,
+        );
+      }),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.recoverVariantLocalizedFacts')(
         function* recoverVariantLocalizedFacts() {
           const result = yield* executeSetVariantLocalizedFactsRecoveryWithAuthorization(
@@ -1056,6 +1537,9 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        if (input.effect.effectKey === readinessActivateKey) {
+          yield* input.recordOwnerReceipt({ _tag: 'ReadinessProduct', productRevision: result.product.revision });
+        }
         return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       InventoryImport: Effect.fn('SymmyOwnerAdapters.InventoryImport')(function* InventoryImport(intent) {
@@ -1075,6 +1559,28 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
         return yield* Match.value(result).pipe(
           Match.tag('RECORDED', ({ receipt }) => Effect.succeed(projectSymmyInventoryOutcome(input, receipt.outcome))),
           Match.tag('INDETERMINATE', () => Effect.fail(symmyJobWorkerUnavailable())),
+          Match.exhaustive,
+        );
+      }),
+      InventoryProvision: Effect.fn('SymmyOwnerAdapters.recoverProvision')(function* recoverProvision({ payload }) {
+        const request = yield* Schema.decodeUnknownEffect(SourceStockItemProvisioningReceiptRequestSchema)({
+          actionInvocationId: invocationId,
+          input: payload,
+        }).pipe(Effect.mapError(symmyJobWorkerInvalid));
+        const result = yield* executeSourceStockItemProvisioningReceiptWithAuthorization(
+          request,
+          credential,
+          requestCorrelation,
+          options,
+        ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+        return yield* Match.value(result).pipe(
+          Match.tag('INDETERMINATE', () => Effect.fail(symmyJobWorkerUnavailable())),
+          Match.tag('RECORDED', ({ receipt }) =>
+            receipt.actionInvocationId === invocationId &&
+            computeCanonicalValueHash(receipt.input) === computeCanonicalValueHash(payload)
+              ? Effect.succeed(provisioningOutcome(input, receipt.provisioning))
+              : Effect.fail(symmyJobWorkerUnavailable()),
+          ),
           Match.exhaustive,
         );
       }),
@@ -1164,12 +1670,18 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
   const group = Schema.decodeUnknownEffect(PriceGroupResultLookupRequestSchema)({ actionInvocationId: invocationId });
   const result = yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: () => catalog,
       CatalogBindInitialVariantSource: () => catalog,
       CatalogCorrectProduct: () => catalog,
       CatalogCreateProduct: () => catalog,
       CatalogCreateVariant: () => catalog,
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogReadinessAxes: () => catalog,
+      CatalogReadinessConfirm: () => catalog,
+      CatalogReadinessName: () => catalog,
+      CatalogReadinessUnit: () => catalog,
+      CatalogReadinessUntyped: () => catalog,
       CatalogSetVariantLocalizedFacts: () => catalog,
       CatalogUpdateProduct: () => catalog,
       InventoryImport: ({ payload }) => {
@@ -1182,6 +1694,11 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
               proposal,
             }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(InventorySourceImportReceiptRequestSchema)));
       },
+      InventoryProvision: ({ payload }) =>
+        Schema.decodeUnknownEffect(SourceStockItemProvisioningReceiptRequestSchema)({
+          actionInvocationId: invocationId,
+          input: payload,
+        }),
       PriceDefine: () => price,
       PriceDefineFromGroupEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       PriceGroupCreate: () => group,
@@ -1264,6 +1781,23 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
   const { credential, options, requestCorrelation } = wire;
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: Effect.fn('SymmyOwnerAdapters.assignCategory')(function* assignCategory({
+        payload,
+      }) {
+        const result = yield* executeAddProductCategoryAssignmentWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        if (!('changed' in result)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        if (!sameRef(result.categoryRef, payload.categoryRef) || !sameRef(result.productRef, payload.productRef)) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+      }),
       CatalogBindInitialVariantSource: Effect.fn('SymmyOwnerAdapters.CatalogBindInitialVariantSource')(
         function* CatalogBindInitialVariantSource(intent) {
           const result = yield* executeBindInitialVariantSourceWithAuthorization(
@@ -1302,7 +1836,10 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           }
           const currentInvocationId = yield* recordCurrentNativeInvocation(input, contract);
           const businessOriginalCreateId = yield* captureCreatedProduct(input, result, contract, crypto);
-          return createdSourceOutcome(input, currentInvocationId, businessOriginalCreateId);
+          if (Option.isNone(businessOriginalCreateId)) {
+            return safeOutcome(input, 'unresolved');
+          }
+          return createdSourceOutcome(input, currentInvocationId, businessOriginalCreateId.value);
         },
       ),
       CatalogCreateVariant: Effect.fn('SymmyOwnerAdapters.CatalogCreateVariant')(
@@ -1330,6 +1867,65 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
       ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogReadinessAxes: Effect.fn('SymmyOwnerAdapters.readinessAxes')(function* axes({ payload }) {
+        const result = yield* executeGovernVariantAxesWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        if (!('axisRevision' in result)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        yield* input.recordOwnerReceipt({ _tag: 'ReadinessAxes', axisRevision: result.axisRevision });
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+      }),
+      CatalogReadinessConfirm: Effect.fn('SymmyOwnerAdapters.readinessConfirm')(function* confirm({ payload }) {
+        const result = yield* executeConfirmVariantCombinationWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        if (!('variant' in result) || result.variantRevision === undefined) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        yield* input.recordOwnerReceipt({ _tag: 'ReadinessVariant', variantRevision: result.variantRevision });
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+      }),
+      CatalogReadinessName: Effect.fn('SymmyOwnerAdapters.readinessName')(function* name({ payload }) {
+        const result = yield* executeSetProductLocalizedFactsWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        return 'changed' in result
+          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
+          : safeOutcome(input, 'unresolved');
+      }),
+      CatalogReadinessUnit: Effect.fn('SymmyOwnerAdapters.readinessUnit')(function* unit({ payload }) {
+        const result = yield* executeSetProductUnitTargetDivisibilityWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        return 'unit' in result
+          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
+          : safeOutcome(input, 'unresolved');
+      }),
+      CatalogReadinessUntyped: Effect.fn('SymmyOwnerAdapters.readinessUntyped')(function* untyped({ payload }) {
+        const result = yield* executeDecideProductTypeUnnecessaryWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        return 'decisionRevision' in result
+          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
+          : safeOutcome(input, 'unresolved');
+      }),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.setVariantLocalizedFacts')(
         function* setVariantLocalizedFacts({ payload }) {
           const result = yield* executeSetVariantLocalizedFactsWithAuthorization(
@@ -1355,6 +1951,9 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           if (!('changed' in result)) {
             return safeOutcome(input, 'unresolved');
           }
+          if (input.effect.effectKey === readinessActivateKey) {
+            yield* input.recordOwnerReceipt({ _tag: 'ReadinessProduct', productRevision: result.product.revision });
+          }
           return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
         },
       ),
@@ -1370,6 +1969,18 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
         }
         return projectSymmyInventoryOutcome(input, result.items[0]);
       }),
+      InventoryProvision: Effect.fn('SymmyOwnerAdapters.provision')(function* provision({ payload }) {
+        const result = yield* executeProvisionSourceStockItemWithAuthorization(
+          payload,
+          credential,
+          requestCorrelation,
+          options,
+        );
+        if (!('stockItem' in result)) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        return provisioningOutcome(input, result);
+      }),
       PriceDefine: Effect.fn('SymmyOwnerAdapters.PriceDefine')(function* PriceDefine(intent) {
         const result = yield* executeDefinePriceWithAuthorization(
           intent.payload,
@@ -1378,6 +1989,15 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           options,
         );
         const currentInvocationId = yield* recordCurrentNativeInvocation(input, contract);
+        if ('outcome' in result && result.outcome !== 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED') {
+          yield* Effect.logInfo('Symmy native Price definition assessment', {
+            effectId: input.effect.ref.effectId,
+            invocationId: currentInvocationId,
+            operation: contract.tag,
+            outcome: result.outcome,
+            ...('reason' in result ? { reason: result.reason } : { dependency: result.dependency }),
+          }).pipe(Effect.ignoreCause);
+        }
         return yield* Match.value(result).pipe(
           Match.when(
             { outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED' },
@@ -1458,12 +2078,35 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
   operationLegalEntityId?: string,
 ) {
   const tenantPrincipal = { principalId: principal.principalId, tenantId: principal.tenantId };
+  const catalogReadinessHash = <Decoded, Encoded>(
+    actionKey: string,
+    schema: Schema.Codec<Decoded, Encoded>,
+    payload: Decoded,
+  ) =>
+    Schema.encodeEffect(schema)(payload).pipe(
+      Effect.map((normalizedPayload) =>
+        computeActionRequestHash({
+          actionKey,
+          normalizedPayload,
+          owningModuleKey: catalogModuleId,
+          principal: tenantPrincipal,
+          schemaVersion: '1',
+          target: {},
+        }),
+      ),
+    );
   const priceLegalEntity: Effect.Effect<string, ReturnType<typeof symmyJobWorkerInvalid>> = operationLegalEntityId ===
   undefined
     ? Effect.fail(symmyJobWorkerInvalid())
     : Effect.succeed(operationLegalEntityId);
   return yield* Match.value(requestIntent).pipe(
     Match.tags({
+      CatalogAddProductCategoryAssignment: ({ payload }) =>
+        catalogReadinessHash(
+          'commerce.catalog.add-product-category-assignment',
+          AddProductCategoryAssignmentPayloadSchema,
+          payload,
+        ),
       CatalogBindInitialVariantSource: ({ payload }) =>
         bindInitialVariantSourceRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
@@ -1482,6 +2125,32 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
         ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
       CatalogProductDependentEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogReadinessAxes: ({ payload }) =>
+        catalogReadinessHash('commerce.catalog.govern-variant-axes', GovernVariantAxesPayloadSchema, payload),
+      CatalogReadinessConfirm: ({ payload }) =>
+        catalogReadinessHash(
+          'commerce.catalog.confirm-variant-combination',
+          ConfirmVariantCombinationPayloadSchema,
+          payload,
+        ),
+      CatalogReadinessName: ({ payload }) =>
+        catalogReadinessHash(
+          'commerce.catalog.set-product-localized-facts',
+          SetProductLocalizedFactsPayloadSchema,
+          payload,
+        ),
+      CatalogReadinessUnit: ({ payload }) =>
+        catalogReadinessHash(
+          'commerce.catalog.set-product-unit-target-divisibility',
+          SetProductUnitTargetDivisibilityPayloadSchema,
+          payload,
+        ),
+      CatalogReadinessUntyped: ({ payload }) =>
+        catalogReadinessHash(
+          'commerce.catalog.decide-product-type-unnecessary',
+          DecideProductTypeUnnecessaryPayloadSchema,
+          payload,
+        ),
       CatalogSetVariantLocalizedFacts: ({ payload }) =>
         setVariantLocalizedFactsRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
@@ -1493,6 +2162,19 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
       InventoryImport: ({ payload }) =>
         prepareImportSourceAssertionRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
+        ),
+      InventoryProvision: ({ payload }) =>
+        Schema.encodeEffect(ProvisionSourceStockItemPayloadSchema)(payload).pipe(
+          Effect.map((normalizedPayload) =>
+            computeActionRequestHash({
+              actionKey: inventoryProvisionActionKey,
+              normalizedPayload,
+              owningModuleKey: inventoryModuleId,
+              principal: tenantPrincipal,
+              schemaVersion: '1',
+              target: {},
+            }),
+          ),
         ),
       PriceDefine: ({ payload }) =>
         priceLegalEntity.pipe(
@@ -1880,7 +2562,6 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
   return sameRef(priceGroupRef, requestedGroup.value);
 });
 
-const isPriceRevise = Schema.is(Schema.TaggedStruct('PriceRevise', {}));
 const heldPriceReviseCode = Schema.Literals([
   'price_schedule_absent',
   'price_schedule_acknowledgement_required',
@@ -1893,6 +2574,15 @@ const heldPriceReviseCode = Schema.Literals([
  */
 const priceReviseRefusalStatus = (error: typeof problemStatus.Type): 'invalid' | 'unresolved' =>
   Schema.is(Schema.Struct({ code: heldPriceReviseCode }))(error) ? 'unresolved' : 'invalid';
+
+const nativeAbsentOrHeldStatus = (intent: SymmyCatalogPricingInventoryIntent, error: typeof problemStatus.Type) =>
+  Match.value(intent).pipe(
+    Match.tag('CatalogAddProductCategoryAssignment', () => (error.status === 404 ? ('unresolved' as const) : null)),
+    Match.tag('PriceRevise', () =>
+      error.status === 404 || error.status === 422 ? priceReviseRefusalStatus(error) : null,
+    ),
+    Match.orElse(() => null),
+  );
 
 const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(function* commandFailure(
   input: SymmyEffectAdapterInput,
@@ -1909,64 +2599,136 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   if (Schema.is(problemStatus)(error) && (error.status === 401 || error.status === 403)) {
     return safeOutcome(input, 'denied');
   }
+  if (
+    Schema.is(problemStatus)(error) &&
+    (error.status === 400 || error.status === 422) &&
+    (Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[15])(intent) ||
+      (input.effect.effectKey === readinessActivateKey &&
+        Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[2])(intent)) ||
+      Schema.is(readinessResolvedIntentSchema)(intent))
+  ) {
+    return safeOutcome(input, 'invalid');
+  }
   if (Schema.is(problemStatus)(error) && error.status === 409) {
+    if (
+      Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[16])(intent) &&
+      Schema.is(GovernVariantAxesActionConflictProblemSchema)(error)
+    ) {
+      yield* Effect.logInfo('Symmy native owner refusal', {
+        code: error.code,
+        effectId: input.effect.ref.effectId,
+        operation: contract.tag,
+      }).pipe(Effect.ignoreCause);
+    }
     return safeOutcome(input, 'conflict');
   }
-  if (Schema.is(problemStatus)(error) && (error.status === 404 || error.status === 422) && isPriceRevise(intent)) {
-    return safeOutcome(input, priceReviseRefusalStatus(error));
+  if (Schema.is(problemStatus)(error)) {
+    const status = nativeAbsentOrHeldStatus(intent, error);
+    if (status !== null) {
+      return safeOutcome(input, status);
+    }
   }
   return yield* symmyJobWorkerUnavailable(error);
 });
 
+const preDispatchStage = Schema.Literals([
+  'product-dependency',
+  'group-dependency',
+  'provisioning-validation',
+  'intent-validation',
+  'batch-price-group',
+  'price-list-dependency',
+  'target-validation',
+  'fresh-gateway',
+  'machine-context',
+  'request-hash',
+  'request-identity',
+  'record-owner-request',
+]);
+
 const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEffectAdapter => ({
   execute: Effect.fn('SymmyOwnerAdapters.execute')(function* execute(originalInput) {
-    const productInput = yield* resolveProductDependency(originalInput, contract, crypto);
-    const input = yield* resolveGroupDependency(productInput, contract, crypto);
-    const intent = yield* checkedIntent(input);
+    const observe = <A, E, R>(stage: typeof preDispatchStage.Type, effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.onExit((exit) =>
+          Effect.logInfo('Symmy owner pre-dispatch stage', {
+            effectId: originalInput.effect.ref.effectId,
+            operation: contract.tag,
+            stage,
+            status: Exit.isSuccess(exit) ? 'succeeded' : 'failed',
+          }).pipe(Effect.ignoreCause),
+        ),
+      );
+    const productInput = yield* observe(
+      'product-dependency',
+      resolveProductDependency(originalInput, contract, crypto),
+    );
+    const input = yield* observe('group-dependency', resolveGroupDependency(productInput, contract, crypto));
+    yield* observe('provisioning-validation', validateProvisioningResolution(input));
+    const intent = yield* observe('intent-validation', checkedIntent(input));
     if (!Schema.is(Schema.Literal(contract.tag))(intent._tag)) {
       return yield* symmyJobWorkerInvalid();
     }
     if (!input.canExecuteNewEffects) {
       return yield* symmyJobWorkerInvalid();
     }
-    const batchGroupMatches = yield* verifyBatchPriceGroup(input, intent, contract, crypto);
+    const batchGroupMatches = yield* observe(
+      'batch-price-group',
+      verifyBatchPriceGroup(input, intent, contract, crypto),
+    );
     if (
       !batchGroupMatches ||
-      !(yield* verifyPriceListDependency(input, originalInput.effect, intent, contract, crypto))
+      !(yield* observe(
+        'price-list-dependency',
+        verifyPriceListDependency(input, originalInput.effect, intent, contract, crypto),
+      ))
     ) {
       return safeOutcome(input, 'unresolved');
     }
-    const boundTarget = yield* verifyExistingCatalogTarget(input, intent, contract, crypto);
+    const boundTarget = yield* observe(
+      'target-validation',
+      verifyExistingCatalogTarget(input, intent, contract, crypto),
+    );
     if (!boundTarget) {
       return safeOutcome(input, 'unresolved');
     }
-    const wire = yield* freshGateway(input, contract, false, crypto);
-    if (wire.machineContext === undefined) {
-      return yield* symmyJobWorkerUnavailable();
-    }
-    const originalRequestHash = yield* prepareSymmyCatalogPricingInventoryRequestHash(
-      intent,
-      { principalId: wire.machineContext.principalId, tenantId: input.effect.ref.occurrence.record.route.tenantId },
-      input.legalEntityId,
+    const wire = yield* observe('fresh-gateway', freshGateway(input, contract, false, crypto));
+    const machineContext = yield* observe(
+      'machine-context',
+      wire.machineContext === undefined
+        ? Effect.fail(symmyJobWorkerUnavailable())
+        : Effect.succeed(wire.machineContext),
     );
-    if (
+    const originalRequestHash = yield* observe(
+      'request-hash',
+      prepareSymmyCatalogPricingInventoryRequestHash(
+        intent,
+        { principalId: machineContext.principalId, tenantId: input.effect.ref.occurrence.record.route.tenantId },
+        input.legalEntityId,
+      ),
+    );
+    yield* observe(
+      'request-identity',
       (input.originalExecutorPrincipalId !== undefined &&
-        input.originalExecutorPrincipalId !== wire.machineContext.principalId) ||
-      (input.originalAuthContextRef !== undefined &&
-        input.originalAuthContextRef !== wire.machineContext.authContextRef) ||
-      (input.originalRequestHash !== undefined && input.originalRequestHash !== originalRequestHash)
-    ) {
-      return yield* symmyJobWorkerInvalid();
-    }
-    yield* input.recordOwnerRequest({
-      authContextRef: wire.machineContext.authContextRef,
-      executorPrincipalId: wire.machineContext.principalId,
-      requestHash: originalRequestHash,
-    });
+        input.originalExecutorPrincipalId !== machineContext.principalId) ||
+        (input.originalAuthContextRef !== undefined &&
+          input.originalAuthContextRef !== machineContext.authContextRef) ||
+        (input.originalRequestHash !== undefined && input.originalRequestHash !== originalRequestHash)
+        ? Effect.fail(symmyJobWorkerInvalid())
+        : Effect.void,
+    );
+    yield* observe(
+      'record-owner-request',
+      input.recordOwnerRequest({
+        authContextRef: machineContext.authContextRef,
+        executorPrincipalId: machineContext.principalId,
+        requestHash: originalRequestHash,
+      }),
+    );
     const executionInput = {
       ...input,
-      originalAuthContextRef: wire.machineContext.authContextRef,
-      originalExecutorPrincipalId: wire.machineContext.principalId,
+      originalAuthContextRef: machineContext.authContextRef,
+      originalExecutorPrincipalId: machineContext.principalId,
       originalRequestHash,
     };
     return yield* executeNative(executionInput, intent, wire, contract, crypto).pipe(
@@ -1995,12 +2757,14 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
     SymmyOriginalEffectRecovery,
     ReturnType<typeof symmyJobWorkerUnavailable>
   > {
+    yield* validateProvisioningResolution(originalInput);
     const original = yield* readOriginalOwnerAttempt(originalInput);
     if (original.status !== 'committed') {
       return original;
     }
     const productInput = yield* resolveProductDependency(originalInput, contract, crypto);
     const input = yield* resolveGroupDependency(productInput, contract, crypto);
+    yield* validateProvisioningResolution(input);
     const intent = yield* checkedIntent(input);
     if (!Schema.is(Schema.Literal(contract.tag))(intent._tag)) {
       return yield* symmyJobWorkerInvalid();

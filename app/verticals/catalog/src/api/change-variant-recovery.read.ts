@@ -37,7 +37,6 @@ export const recoverChangeVariantResult = (
 ) => {
   const codec = {
     decode: Schema.decodeUnknownEffect(ChangeVariantResultSchema),
-    encode: Schema.encodeEffect(ChangeVariantResultSchema),
   };
   return recoverCatalogActionResultVersions([2, 1], (schemaVersion) =>
     schemaVersion === 2

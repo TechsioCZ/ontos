@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '../resources/party.ts';
 import { LegacyIcoSnapshotVersionSchema } from '../actions/fence-legacy-ico-authority.ts';
 import { IcoCorrelationWitnessSchema } from './legacy-ico-inventory.ts';

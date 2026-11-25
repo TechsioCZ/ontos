@@ -9,6 +9,9 @@ import { CallRequirementsLive, selectCaller } from '../../src/execution/requirem
 import { defineOntosModuleManifest, OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import {
   declaredCallsIssues,
+  isCoreOperationProvider,
+  isShellHostedCoreProvider,
+  SHELL_HOSTED_CORE_PROVIDERS,
   moduleDependencyDeclarationsIssue,
   OntosModuleRequirementsSchema,
 } from '../../src/modules/module-dependency-contracts.ts';
@@ -19,11 +22,12 @@ import { OntosRegisteredWorkloadCallsSchema } from '../../src/modules/registered
 import type { OntosRegisteredWorkloadCall } from '../../src/modules/registered-workload-calls.ts';
 import { defineVerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
 import { defineRead } from '../../src/reads/definition.ts';
-import { coreOperations } from '../../src/sdk/core-operations.ts';
+import { SHELL_HOST_APP_ID, coreOperations, shellHostedCoreOperations } from '../../src/sdk/core-operations.ts';
 import {
   declaredCall,
   declaredWriteCall,
   ExecutionIdentitySchema,
+  ModuleOperationRouteSchema,
   moduleOperation,
   RequirementCallerSchema,
 } from '../../src/sdk/index.ts';
@@ -72,6 +76,7 @@ const providerWrite = moduleOperation({
 
 const requirementKey = `${consumerModule}.requirement.provider`;
 const coreRequirementKey = `${consumerModule}.requirement.legal-entity`;
+const hostedRequirementKey = `${consumerModule}.requirement.core-media-current`;
 type CallersInput = readonly (typeof RequirementCallerSchema.Encoded)[];
 const withCallers = <Operation extends object>(operation: Operation, callers: CallersInput | undefined) =>
   callers === undefined ? operation : { ...operation, callers };
@@ -80,6 +85,8 @@ const requirementsWith = (input: {
   readonly callers?: CallersInput;
   readonly coreCallers?: CallersInput;
   readonly entrypointKey?: string;
+  /** A Core operation the Shell host serves: present only when its callers are given. */
+  readonly hostedCallers?: CallersInput;
   readonly provider?: typeof provider;
 }): OntosModuleRequirements => {
   const vertical = {
@@ -99,7 +106,22 @@ const requirementsWith = (input: {
   return Schema.decodeUnknownSync(OntosModuleRequirementsSchema)({
     coreCapabilities: [],
     intrinsic: [],
-    operations: [withCallers(vertical, input.callers), withCallers(core, input.coreCallers)],
+    operations: [
+      withCallers(vertical, input.callers),
+      withCallers(core, input.coreCallers),
+      ...(input.hostedCallers === undefined
+        ? []
+        : [
+            {
+              callers: input.hostedCallers,
+              condition: `${consumerModule}.core-media-branch`,
+              entrypointKey: consumerEntrypoint,
+              evidence: ['core.media.asset'],
+              key: hostedRequirementKey,
+              provider: coreOperations.assetCurrent.provider,
+            },
+          ]),
+    ],
     schemaVersion: '1',
   });
 };
@@ -277,6 +299,41 @@ it('refuses missing or empty callers on a vertical provider and any callers on a
   ]);
 });
 
+it('names the hosted Core providers once as data and once as operation references, and the two agree', () => {
+  expect(
+    shellHostedCoreOperations.map((operation) => ({
+      entrypointKey: operation.provider.entrypointKey,
+      moduleId: operation.provider.moduleId,
+    })),
+  ).toEqual(SHELL_HOSTED_CORE_PROVIDERS);
+});
+
+it('reaches a Core operation the Shell host serves over the module route, relaying only the requester', () => {
+  const hosted = { current: declaredCall(coreOperations.assetCurrent, hostedRequirementKey) };
+  // The reference is a module-route operation of a Core provider that the closed hosted set names.
+  expect(isShellHostedCoreProvider(coreOperations.assetCurrent.provider)).toBe(true);
+  expect(isCoreOperationProvider(coreOperations.assetCurrent.provider)).toBe(false);
+  expect(isCoreOperationProvider(coreOperations.legalEntityDetail.provider)).toBe(true);
+  expect(Schema.is(ModuleOperationRouteSchema)(coreOperations.assetCurrent.route)).toBe(true);
+  expect(validate(hosted, requirementsWith({ hostedCallers: person }))).toEqual([]);
+  // It needs callers like a vertical provider, and the only caller it can carry is the relayed requester.
+  expect(validate(hosted, requirementsWith({ hostedCallers: [] }))).toEqual([
+    expect.stringContaining('must declare the callers'),
+  ]);
+  expect(validate(hosted, requirementsWith({ hostedCallers: registered(true) }), workloadCall)).toEqual([
+    expect.stringContaining('may only relay the requester'),
+  ]);
+  // An in-process route for it, or a module route for an in-process Core operation, is a contradiction.
+  const inProcess = { ...coreOperations.assetCurrent, route: coreOperations.legalEntityDetail.route };
+  expect(
+    validate({ current: declaredCall(inProcess, hostedRequirementKey) }, requirementsWith({ hostedCallers: person })),
+  ).toEqual([expect.stringContaining('a Core provider is reached in-process')]);
+  const hostedAsModule = { ...coreOperations.legalEntityDetail, route: coreOperations.assetCurrent.route };
+  expect(
+    validate({ entity: declaredCall(hostedAsModule, coreRequirementKey) }, requirementsWith({ callers: person })),
+  ).toEqual([expect.stringContaining('a Core provider is reached in-process')]);
+});
+
 it('refuses a registered caller with no matching registeredWorkloadCalls entry', () => {
   const calls = { subject: declaredCall(providerRead, requirementKey) };
   expect(validate(calls, requirementsWith({ callers: registered(false) }))).toEqual([
@@ -337,6 +394,17 @@ it('refuses empty callers on a vertical provider and callers on a Core provider 
   expect(
     manifestIssueOf({ ...encoded, operations: [{ ...vertical, callers: [...person, ...person] }, core] }),
   ).toContain('more than once');
+  // A Shell-hosted Core provider relays the requester and nothing else.
+  const hostedBase = Schema.encodeSync(OntosModuleRequirementsSchema)(requirementsWith({ hostedCallers: person }));
+  const hosted = hostedBase.operations.find(({ key }) => key === hostedRequirementKey);
+  if (hosted === undefined) {
+    throw new Error('Missing hosted requirement fixture');
+  }
+  expect(manifestIssueOf({ ...hostedBase, operations: [hosted] })).toBeUndefined();
+  expect(manifestIssueOf({ ...hostedBase, operations: [{ ...hosted, callers: registered(false) }] })).toContain(
+    'may only relay the requester',
+  );
+  expect(manifestIssueOf({ ...hostedBase, operations: [{ ...hosted, callers: [] }] })).toContain('at least one caller');
 });
 
 /* Registration -------------------------------------------------------------------------------- */
@@ -436,8 +504,11 @@ it('refuses calls on a { load } read at definition, so a registration never sees
 const decodeContract = Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema);
 
 const leaseFixture = () => {
-  const requirements = requirementsWith({ callers: person });
-  const read = runRead({ subject: declaredCall(providerRead, requirementKey) });
+  const requirements = requirementsWith({ callers: person, hostedCallers: person });
+  const read = runRead({
+    current: declaredCall(coreOperations.assetCurrent, hostedRequirementKey),
+    subject: declaredCall(providerRead, requirementKey),
+  });
   const consumerBase = makeModuleContractFixture({ appId: 'consumer-alpha', moduleId: consumerModule });
   const consumer = decodeContract({
     ...consumerBase,
@@ -517,6 +588,15 @@ it.effect('resolves the requirement in the lease with its callers and refuses a 
     });
     const core = yield* inLease(resolve(coreRequirementKey, coreOperations.legalEntityDetail, source));
     expect(core).toMatchObject({ callers: [], providerAppId: 'core.identity' });
+    // A Core operation the Shell host serves is answered by the Shell deployment and relays the requester.
+    const hosted = yield* inLease(resolve(hostedRequirementKey, coreOperations.assetCurrent, source));
+    expect(hosted).toEqual({
+      callers: person,
+      compositionRevision: revision,
+      provider: coreOperations.assetCurrent.provider,
+      providerAppId: SHELL_HOST_APP_ID,
+      requirementKey: hostedRequirementKey,
+    });
     const mismatch = yield* inLease(Effect.flip(resolve(requirementKey, coreOperations.legalEntityDetail, source)));
     expect(mismatch.reason).toBe('provider_mismatch');
     const missing = yield* inLease(Effect.flip(resolve(`${consumerModule}.requirement.unknown`, providerRead, source)));

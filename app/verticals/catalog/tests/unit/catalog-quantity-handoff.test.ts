@@ -5,20 +5,22 @@ import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-s
 import {
   CatalogSelectionBasisSchema,
   CatalogSelectionMembershipSchema,
-  CatalogSelectionSchema,
   CatalogSelectionEvidenceSchema,
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import {
+  CatalogSelectionSchema,
   PackageDefinitionSelectionRevisionSchema,
   VariantSelectionRevisionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection';
 import { resolvePricingPurposeEquivalence } from '../../src/api/pricing-purpose-equivalence.read.ts';
-import { PricingPurposeEquivalenceRequestSchema } from '../../shared/apis/pricing-purpose-equivalence.ts';
+import { PricingPurposeEquivalenceRequestSchema } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 
 import {
   assembleCatalogQuantityHandoff,
   prepareCatalogQuantityHandoff,
 } from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
-import type { CatalogSelectionEvidence } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogSelectionEvidence } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type { PackageContentRevision, PackageResolution } from '../../shared/domain/package-content.ts';
 import type { QuantityNormalization } from '../../shared/domain/purchase-quantity.ts';
 

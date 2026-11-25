@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 import { LegacyIcoSnapshotVersionSchema } from '../actions/fence-legacy-ico-authority.ts';

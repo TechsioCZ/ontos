@@ -31,7 +31,7 @@ import type {
 } from '../../shared/domain/search-projection-gateway.ts';
 import { CurrentCounterpartyRoleSchema } from '../../shared/domain/search-result.ts';
 import { normalizePartySearchHits } from '../../shared/domain/search-semantics.ts';
-import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { resolveSearchNormalization } from '../search-normalization.ts';
 

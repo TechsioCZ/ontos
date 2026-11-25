@@ -6,7 +6,7 @@ import type {
   AssortmentSelectionAssessmentV1ResponseSchema,
   AssortmentSelectionSourceProofV1,
 } from '../../shared/apis/assortment-selection-assessment-v1.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionEvidenceServiceResult } from './catalog-selection-evidence-service.ts';
 import { sameCatalogSelectionValiditySourceToken } from '../../shared/domain/catalog-selection-validity.ts';
 

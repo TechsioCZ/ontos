@@ -42,7 +42,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.import-source-assertion', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ImportSourceAssertionResultSchema),
-      encode: Schema.encodeEffect(ImportSourceAssertionResultSchema),
     },
   );
 

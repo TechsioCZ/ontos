@@ -7,7 +7,7 @@ import type { CreatePackageDefinitionPayload } from '../../shared/actions/create
 import type { RetirePackageDefinitionPayload } from '../../shared/actions/retire-package-definition.ts';
 import type { RevisePackageDefinitionPayload } from '../../shared/actions/revise-package-definition.ts';
 import { PackageDefinitionContentInputSchema } from '../../shared/actions/package-definition-contract.ts';
-import { PackageDefinitionSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { PackageDefinitionRefSchema } from '../../shared/resources/package-definition.ts';
 import { packageContentRevisions, packageDefinitions, productVariants, products } from '../database/schema.ts';
 

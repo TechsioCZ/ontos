@@ -2,7 +2,7 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { productVariants, products } from '../../src/database/schema.ts';
 import { productOnlyVariantResolutionForScope } from '../../src/persistence/product-only-variant-resolution.ts';
 

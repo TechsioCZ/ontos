@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 
 import { ProductInstantSchema, ProductReasonSchema, ProductSchema, ProductRevisionSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const RetireProductPayloadSchema = Schema.Struct({
   effectiveAt: Schema.optionalKey(ProductInstantSchema),

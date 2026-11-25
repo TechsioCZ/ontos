@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyRefSchema } from '../resources/party.ts';
 
 const BoundedTitleSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));

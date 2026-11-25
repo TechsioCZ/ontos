@@ -1,4 +1,4 @@
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { Effect, Match, Schema } from 'effect';
 import type { Result } from 'effect';
 
@@ -196,7 +196,9 @@ export class StockPositionRejected extends Schema.TaggedError<StockPositionRejec
     'ALLOCATION_POSITION_MISMATCH',
     'OWNER_CONFIGURATION_MISMATCH',
     'STOCK_ITEM_NOT_FOUND',
+    'STOCK_ITEM_NOT_CURRENT',
     'STOCK_LOCATION_NOT_FOUND',
+    'STOCK_LOCATION_NOT_ACTIVE',
     'STOCK_UNIT_MISMATCH',
     'INVALID_POSITION',
   ]),

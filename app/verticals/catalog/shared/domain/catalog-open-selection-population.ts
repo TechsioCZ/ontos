@@ -3,11 +3,14 @@ import type { OperationalScope } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import type { Crypto } from 'effect';
 
-import { CatalogRevisionInstantSchema, CatalogRevisionTenantIdSchema } from './catalog-revision-reference.ts';
+import {
+  CatalogRevisionInstantSchema,
+  CatalogRevisionTenantIdSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 import type { CatalogSelectionOwnerAssessmentResult } from './catalog-selection-owner-contract.ts';
 import type { CatalogSelectionPurpose } from './catalog-selection-purpose.ts';
-import { CatalogSelectionSchema } from './catalog-selection-evidence.ts';
-import type { CatalogSelection } from './catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import { CartOpenSelectionPopulationService } from './cart-open-selection-population-service.ts';
 
 export { CartOpenSelectionPopulationService } from './cart-open-selection-population-service.ts';

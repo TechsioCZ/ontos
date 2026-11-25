@@ -1,12 +1,15 @@
 import { Result, Schema } from 'effect';
 
-import { CatalogSelectionSchema, SetCompositionSelectionRevisionSchema } from './catalog-selection-evidence.ts';
-import type { CatalogSelection } from './catalog-selection-evidence.ts';
-import { sameCatalogRevisionReference } from './catalog-revision-reference.ts';
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { ProductUnitRefSchema } from '../resources/product-unit.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import {
+  CatalogSelectionSchema,
+  SetCompositionSelectionRevisionSchema,
+} from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const nonEmptyText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 const componentId = Schema.String.check(Schema.isUUID(), Schema.isTrimmed()).pipe(Schema.brand('SetComponentId'));

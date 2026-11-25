@@ -10,8 +10,8 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { SetCompositionRevisionSchema } from '../../shared/domain/set-composition.ts';
-import { ProductConfigurationSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+import { ProductConfigurationSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   catalogRelations,
   configurationUnitRevisions,

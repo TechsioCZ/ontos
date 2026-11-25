@@ -1,5 +1,5 @@
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
-import type { CounterpartyRef } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { Crypto, Effect, Redacted, Schema } from 'effect';
 import { CounterpartyPurchasingProfileRefSchema } from '../../shared/resources/counterparty-purchasing-profile.ts';
 import { counterpartyPurchasingProfiles, customerProfiles } from '../../src/database/schema.ts';

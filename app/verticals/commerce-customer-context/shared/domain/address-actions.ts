@@ -30,6 +30,18 @@ const originMatchesTenant = (origin: typeof SavedAddressOriginSchema.Type, tenan
   origin.kind === 'COMMERCE_ONLY' ||
   (origin.partyRef.tenantId === tenantId && origin.contactPointRef.tenantId === tenantId);
 
+/**
+ * A source states the postal address it asserts: Party projects a Contact Point value out of every workload read, so a
+ * source write can never prove a Party-backed origin, and its path never reads Party's buyer Contact Point detail.
+ */
+const sourceStatesItsPostalAddress = (
+  source: typeof SavedAddressSourceAssertionSchema.Type | undefined,
+  origin: typeof SavedAddressOriginSchema.Type | undefined,
+) =>
+  source !== undefined && origin?.kind === 'PARTY_BACKED'
+    ? 'A source Saved Address states its own postal address as Commerce-only'
+    : undefined;
+
 /** A command that writes a Commerce-only address states its postal address; only reads may omit it (O58). */
 const originStatesItsPostalAddress = (origin: typeof SavedAddressOriginSchema.Type) =>
   origin.kind !== 'COMMERCE_ONLY' || origin.postalAddress !== undefined
@@ -56,7 +68,7 @@ export const AddSavedAddressPayloadSchema = Schema.Struct({
     if (!originMatchesTenant(origin, profileTenantId(profile))) {
       return 'The address source and profile must belong to the same Tenant';
     }
-    return originStatesItsPostalAddress(origin);
+    return sourceStatesItsPostalAddress(source, origin) ?? originStatesItsPostalAddress(origin);
   }),
 );
 export type AddSavedAddressPayload = typeof AddSavedAddressPayloadSchema.Type;
@@ -93,7 +105,10 @@ export const UpdateSavedAddressPayloadSchema = Schema.Struct({
     if (sourceTransition !== undefined && (origin === undefined || sourceTransition.toKind !== origin.kind)) {
       return 'An explicit source transition must name the supplied address source as its target';
     }
-    return origin === undefined ? undefined : originStatesItsPostalAddress(origin);
+    return (
+      sourceStatesItsPostalAddress(source, origin) ??
+      (origin === undefined ? undefined : originStatesItsPostalAddress(origin))
+    );
   }),
 );
 export type UpdateSavedAddressPayload = typeof UpdateSavedAddressPayloadSchema.Type;

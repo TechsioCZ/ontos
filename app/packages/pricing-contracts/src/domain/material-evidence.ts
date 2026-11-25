@@ -1,19 +1,19 @@
-import { CatalogResourceRefSchema } from '@app/catalog/domain/catalog-revision-reference';
-import { CatalogSelectionBasisListSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionBasisListSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
   CatalogQuantityBasisSchema,
   CatalogQuantityHandoffReadySchema,
-} from '@app/catalog/domain/catalog-quantity-handoff';
+} from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '@app/catalog/api/pricing-purpose-equivalence';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import {
   CatalogQuantityBasisCompatibleConversionSchema,
   CatalogQuantityBasisNoConversionRequiredSchema,
   QuantityBasisCompatibilityRequestSchema,
-} from '@app/catalog/api/quantity-basis-compatibility';
+} from '@app/catalog-selection-contracts/quantity-basis-compatibility';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Match, Schema } from 'effect';
 

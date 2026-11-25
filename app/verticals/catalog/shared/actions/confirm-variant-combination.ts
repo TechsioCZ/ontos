@@ -1,10 +1,11 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductEvidenceReferenceSchema, ProductReasonSchema, ProductVariantSchema } from '../domain/product.ts';
 import { VariantCombinationKeySchema } from '../domain/variant-axes.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 /**
  * Confirms one explicit Variant's complete Current combination. The Variant row is the
@@ -17,6 +18,7 @@ export const ConfirmVariantCombinationPayloadSchema = Schema.Struct({
   expectedVariantRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   productRef: ProductRefSchema,
   reason: ProductReasonSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
   variantRef: VariantRefSchema,
 }).check(
   Schema.makeFilter(({ productRef, variantRef }) =>
@@ -26,8 +28,10 @@ export const ConfirmVariantCombinationPayloadSchema = Schema.Struct({
 export type ConfirmVariantCombinationPayload = typeof ConfirmVariantCombinationPayloadSchema.Type;
 
 export const ConfirmVariantCombinationResultSchema = Schema.Struct({
+  changed: Schema.Boolean,
   combinationAxisRevision: CatalogRevisionNumberSchema,
   combinationKey: VariantCombinationKeySchema,
   variant: ProductVariantSchema,
+  variantRevision: Schema.optionalKey(CatalogRevisionNumberSchema),
 });
 export type ConfirmVariantCombinationResult = typeof ConfirmVariantCombinationResultSchema.Type;

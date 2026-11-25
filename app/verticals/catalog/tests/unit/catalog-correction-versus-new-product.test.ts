@@ -14,7 +14,7 @@ import {
   requireVariantAttributeChange,
 } from '../../shared/actions/attribute-value-mutations.ts';
 import { CorrectProductPayloadSchema } from '../../shared/actions/correct-product.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductChangeClassificationSchema } from '../../shared/domain/product-change-classification.ts';
 import { ProductCorrectionRequired } from '../../shared/domain/product-errors.ts';
 import { ProductSchema } from '../../shared/domain/product.ts';

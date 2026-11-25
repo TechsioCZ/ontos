@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 
 import { StockItemIdSchema, StockItemRefSchema } from '../resources/stock-item.ts';
 
@@ -86,6 +86,7 @@ export class StockItemRejected extends Schema.TaggedError<StockItemRejected>()('
     'stock_item_not_found',
     'stock_item_retired',
     'stock_unit_mismatch',
+    'tenant_scope_mismatch',
   ]),
   stockItemId: Schema.optionalKey(StockItemIdSchema),
 }) {}

@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ReviseProductTypePayloadSchema } from '../../shared/actions/revise-product-type.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
   canonicalProductTypeRevision,
   ProductTypeImpactBasisUnavailable,

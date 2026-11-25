@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.reorder-catalog-media', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(ReorderCatalogMediaResultSchema),
-      encode: Schema.encodeEffect(ReorderCatalogMediaResultSchema),
     },
   );
 

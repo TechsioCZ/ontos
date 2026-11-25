@@ -136,6 +136,77 @@ export const inventoryPublicActionContracts = [
     scopeSubject: 'External source assertion for one exact Stock Position',
   },
   {
+    authority: 'Inventory owns Stock Item identity; Catalog owns the exact Selection meaning and Unit it carries.',
+    boundaries: ['OWNER_CONTRACT_ONLY', 'EXACT_BINDING', 'EXACT_QUANTITY_AND_UNIT'],
+    businessIntent: 'Register the one Stock Item for an exact Catalog Selection meaning and its exact Unit.',
+    idempotency: {
+      identity: 'One owner-scoped registration mutation identity per exact Catalog Selection meaning.',
+      recovery:
+        'A meaning that already has a Current Stock Item, also one a concurrent registration just committed, is refused with exact_selection_meaning_already_registered and that stockItemId; no second Item is created.',
+      retry: 'Retry the same identity and payload; the committed registration is replayed.',
+    },
+    inputPrecision: 'Exact Catalog Selection meaning (kind and id) and exact Catalog Product Unit reference.',
+    key: 'commerce.inventory.register-stock-item',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'RegisterStockItemResultSchema',
+      vocabulary: ['REGISTERED', 'REJECTED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: [
+      'Bind the returned Stock Item to its exact Catalog Selection.',
+      'Correlate external item keys only to the returned Stock Item.',
+    ],
+    scopeSubject: 'Exact Catalog Selection meaning -> Stock Item',
+  },
+  {
+    authority: 'Inventory owns Stock Location identity; the operator declares its operational scope.',
+    boundaries: ['OWNER_CONTRACT_ONLY', 'DISTINCT_MUTATION_IDENTITY'],
+    businessIntent: 'Create one ACTIVE Stock Location for an explicitly declared physical site or logical aggregate.',
+    idempotency: {
+      identity: 'One owner-scoped creation mutation identity per intended Stock Location.',
+      recovery:
+        'A lost response is resolved through the original identity; a new identity creates another Location, also for identical site facts, by design.',
+      retry: 'Retry the same identity and payload; the committed creation is replayed.',
+    },
+    inputPrecision: 'Display name, operational scope with its physical-site evidence keys, optional address evidence.',
+    key: 'commerce.inventory.create-stock-location',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'CreateStockLocationResultSchema',
+      vocabulary: ['CREATED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: ['Correlate external location keys only to the returned Stock Location.'],
+    scopeSubject: 'Stock Location',
+  },
+  {
+    authority: 'Inventory owns Stock Position identity; ON_HAND authority is the selected Inventory Backend.',
+    boundaries: ['ONE_CONFIGURATION_ONE_BACKEND', 'OWNER_CONTRACT_ONLY', 'EXACT_QUANTITY_AND_UNIT'],
+    businessIntent:
+      'Establish the one Current Stock Position for an exact Stock Item, Location and Unit with UNKNOWN ON_HAND.',
+    idempotency: {
+      identity: 'One owner-scoped establishment mutation identity per Customer Configuration, Stock Item and Location.',
+      recovery:
+        'A scope that already has a Current Position, also one a concurrent establishment just committed, is refused with POSITION_SCOPE_ALREADY_CURRENT and that positionRef; no quantity is written.',
+      retry: 'Retry the same identity and payload; the committed establishment is replayed.',
+    },
+    inputPrecision:
+      'Exact Customer Configuration, CURRENT Stock Item, ACTIVE Stock Location, Unit and selected backend configuration.',
+    key: 'commerce.inventory.establish-stock-position',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'EstablishStockPositionResultSchema',
+      vocabulary: ['ESTABLISHED', 'REJECTED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: [
+      'ON_HAND stays UNKNOWN until the selected backend supplies owner evidence.',
+      'Import source assertions only for the returned Position under its selected backend.',
+    ],
+    scopeSubject: 'Exact Stock Item + Stock Location under one Customer Configuration',
+  },
+  {
     authority: 'Inventory resolves its durable source conflict; no provider write is exposed.',
     boundaries: ['OWNER_CONTRACT_ONLY', 'TYPED_SOURCE_COVERAGE', 'NO_AUTOMATIC_BACKEND_FALLBACK'],
     businessIntent: 'Resolve one exact Inventory source conflict using owner-qualified evidence.',
@@ -544,6 +615,59 @@ export const inventoryPublicActionContracts = [
     ],
     scopeSubject: 'Original owner-scoped Inventory Effect + exact durable target',
   },
+  {
+    authority:
+      'Inventory owns the provisioning policy of an external Inventory Backend; the operator declares it once.',
+    boundaries: ['ONE_CONFIGURATION_ONE_BACKEND', 'OWNER_CONTRACT_ONLY', 'EXACT_QUANTITY_AND_UNIT'],
+    businessIntent:
+      'Define once, per selected external backend, the namespace, scope, Unit and Stock Locations its ERP items are provisioned into.',
+    idempotency: {
+      identity: 'One policy per selected external Inventory Backend configuration.',
+      recovery:
+        'Identical content is an EXACT_REPLAY returning the stored policy; other content is refused with POLICY_ALREADY_DEFINED naming it.',
+      retry: 'Retry the same payload under any key; the stored policy is returned unchanged.',
+    },
+    inputPrecision:
+      'Exact Customer Configuration, its selected backend configuration, namespace, external scope, Unit, and ACTIVE Stock Locations with their ERP location keys.',
+    key: 'commerce.inventory.define-source-provisioning-policy',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'DefineSourceProvisioningPolicyResultSchema',
+      vocabulary: ['DEFINED', 'EXACT_REPLAY', 'REJECTED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: [
+      'Provision ERP items only under the returned policyRef.',
+      'Each allowed location key now correlates to its exact Stock Location.',
+    ],
+    scopeSubject: 'Selected external Inventory Backend configuration',
+  },
+  {
+    authority:
+      'Inventory composes its own Stock Item, Stock Position, correlation and binding lifecycles under the backend policy.',
+    boundaries: ['ONE_CONFIGURATION_ONE_BACKEND', 'OWNER_CONTRACT_ONLY', 'EXACT_BINDING', 'EXACT_QUANTITY_AND_UNIT'],
+    businessIntent:
+      'Provision one committed ERP item in one step: its Stock Item, one Stock Position per allowed location, its ITEM correlation and its Catalog binding.',
+    idempotency: {
+      identity: 'The exact Catalog meaning and ERP item key under one provisioning policy.',
+      recovery:
+        'A lost response is read back by the original invocation id; a repeat under a new key changes nothing and returns the same refs.',
+      retry: 'Retry the same input under any key; existing exact parts are ADOPTED and conflicting ones refused.',
+    },
+    inputPrecision: 'Exact Catalog selection and meaning, the ERP item key, and the provisioning policy reference.',
+    key: 'commerce.inventory.provision-source-stock-item',
+    kind: 'ACTION',
+    outcomes: {
+      sourceSchemaName: 'ProvisionSourceStockItemResultSchema',
+      vocabulary: ['ESTABLISHED', 'ADOPTED', 'REJECTED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: [
+      'Import stock rows only for the returned Positions.',
+      'Resolve a typed conflict through the owning lifecycle Action before provisioning again.',
+    ],
+    scopeSubject: 'Exact Catalog meaning + ERP item key under one backend provisioning policy',
+  },
 ] as const satisfies readonly InventoryPublicOperationDescriptor[];
 
 export const inventoryGovernedReadContracts = [
@@ -807,6 +931,48 @@ export const inventoryGovernedReadContracts = [
       'Use the owning mutation/recovery Action for any state change.',
     ],
     scopeSubject: 'Exact authorized historical or reconciliation evidence subject',
+  },
+  {
+    authority: 'Inventory returns the immutable receipt of one committed provisioning invocation.',
+    boundaries: ['RECOVER_ORIGINAL_IDENTITY', 'OWNER_CONTRACT_ONLY'],
+    businessIntent: 'Recover the refs of an ERP item provisioning after a lost response without issuing another write.',
+    idempotency: {
+      identity: 'The read identity is the original Action Invocation and its exact provisioning input.',
+      recovery:
+        'A missing or mismatched receipt is INDETERMINATE; provisioning again is safe and returns the same refs.',
+      retry: 'Repeat the same governed read with the original input.',
+    },
+    inputPrecision: 'Original Action Invocation plus the exact Catalog selection, meaning, item key and policy.',
+    key: 'commerce.inventory.api.source-stock-item-provisioning-receipt',
+    kind: 'GOVERNED_READ',
+    outcomes: {
+      sourceSchemaName: 'SourceStockItemProvisioningReceiptResponseSchema',
+      vocabulary: ['RECORDED', 'INDETERMINATE'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: ['Use the recorded refs.', 'On INDETERMINATE, provision again with the same input.'],
+    scopeSubject: 'Original provisioning of one ERP item',
+  },
+  {
+    authority: 'Inventory resolves the qualified ERP keys through its own policy, correlation and Position records.',
+    boundaries: ['ONE_CONFIGURATION_ONE_BACKEND', 'OWNER_CONTRACT_ONLY', 'EXACT_BINDING'],
+    businessIntent: 'Find the exact provisioned Stock Position of one ERP stock row by its item and location keys.',
+    idempotency: {
+      identity: 'The read identity is the qualified (backend, namespace, scope, item key, location key).',
+      recovery: 'An unprovisioned or unknown key stays a typed UNRESOLVED reason; nothing is guessed.',
+      retry: 'Repeat the same governed read after provisioning.',
+    },
+    inputPrecision:
+      'Exact Customer Configuration, issuer backend, namespace, external scope, ERP item key and ERP location key.',
+    key: 'commerce.inventory.api.source-stock-position-resolution',
+    kind: 'GOVERNED_READ',
+    outcomes: {
+      sourceSchemaName: 'SourceStockPositionResolutionResponseSchema',
+      vocabulary: ['RESOLVED', 'UNRESOLVED'],
+    },
+    owner: INVENTORY_OWNER,
+    safeCallerNextSteps: ['Import the stock row for the returned positionRef.', 'Provision the item when UNRESOLVED.'],
+    scopeSubject: 'Qualified ERP item and location keys -> exact Stock Position',
   },
 ] as const satisfies readonly InventoryPublicOperationDescriptor[];
 

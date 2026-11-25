@@ -1,4 +1,4 @@
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 import { PricingPurchaseContextVerificationRequestSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';

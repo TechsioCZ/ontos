@@ -18,7 +18,7 @@ import { retireControlledAttributeValueAction } from '../../src/actions/retire-c
 import { setProductAttributeValuesAction } from '../../src/actions/set-product-attribute-values.action.ts';
 import { setVariantAttributeOverrideAction } from '../../src/actions/set-variant-attribute-override.action.ts';
 import { catalogResultSnapshots } from '../../src/database/schema.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 const scope = {
   ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({

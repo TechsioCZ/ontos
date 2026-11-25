@@ -5,8 +5,8 @@ import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SetCompositionRevisionSchema } from '../../shared/domain/set-composition.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
   attributeValueSets,
   productTypeAssignments,

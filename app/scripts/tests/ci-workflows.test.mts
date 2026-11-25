@@ -49,6 +49,7 @@ const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 const LEFTHOOK_CONFIG = 'lefthook.yml';
 /** Any pinned download-artifact action; a bare prefix match is what keeps the pin out of these tests. */
 const DOWNLOAD_ARTIFACT = 'actions/download-artifact@';
+const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
 /** A representative changed source path for the format-and-lint selection tests. */
 const CHANGED_SOURCE_PATH = 'app/scripts/check.mts';
 /** The build shard a matrix row carries. */
@@ -116,6 +117,7 @@ const STEP_PATH = '/usr/bin:/bin';
 const INSTALL_APP_STEP = 'Install the app workspace';
 /** The composite action every job uses to install the app workspace. */
 const INSTALL_APP_ACTION = './.github/actions/install-app';
+const INSTALL_APP_ACTION_URL = new URL('../../../.github/actions/install-app/action.yml', import.meta.url);
 /** The last step of a build shard: its consumers need the shard, so they start once this upload exists. */
 const UPLOAD_STEP = "Upload the shard's build outputs";
 const NODE_BUILD_STEP = "Build the shard's Node artifacts";
@@ -159,6 +161,7 @@ it('reports the required Workspace gates check on every pull request and merge g
 const expression = (body: string) => `\${{ ${body} }}`;
 const CURRENT_SOURCE_REVISION = expression('github.sha');
 const GITHUB_TOKEN_EXPRESSION = expression('github.token');
+const RUN_ATTEMPT_EXPRESSION = expression('github.run_attempt');
 
 const WorkflowStepSchema = Schema.Struct({
   'continue-on-error': Schema.optional(Schema.Boolean),
@@ -292,8 +295,6 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
 it('selects work before gates and starts source checks without waiting for artifacts', () => {
   const proof = readTargetWorkflow().jobs[QUEUE_PROOF_JOB];
   expect(proof.if).toContain('inputs.force-ci-full != true');
-  expect(proof.permissions).toEqual({ actions: 'read' });
-  expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven'));
   const lookup = proof.steps.find(({ id }) => id === 'proof')?.run ?? '';
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(readGateWorkflow());
@@ -319,6 +320,104 @@ it('selects work before gates and starts source checks without waiting for artif
   for (const [job, { needs }] of Object.entries(jobs)) {
     expect(needs ?? [], job).not.toContain('bootstrap-proof');
   }
+});
+
+const PULL_REQUEST_PROOF_SCRIPT = 'app/scripts/ci/pull-request-proof.sh';
+const PULL_REQUEST_RECORD = 'ci-comparison';
+const MERGE_GROUP_ONLY = "github.event_name == 'merge_group'";
+const PULL_REQUEST_ONLY = "github.event_name == 'pull_request'";
+const ProofWorkflowSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      if: Schema.optional(Schema.String),
+      outputs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      permissions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      steps: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            'continue-on-error': Schema.optional(Schema.Boolean),
+            env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+            id: Schema.optional(Schema.String),
+            if: Schema.optional(Schema.String),
+            run: Schema.optional(Schema.String),
+            'timeout-minutes': Schema.optional(Schema.Number),
+            uses: Schema.optional(Schema.String),
+            with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
+        ),
+      ),
+      'timeout-minutes': Schema.optional(Schema.Number),
+    }),
+  ),
+});
+const readProofJobs = () => Schema.decodeUnknownSync(ProofWorkflowSchema)(readGateWorkflow()).jobs;
+
+it('lets a merge queue entry stand on the pull request run that tested its exact tree, as a push stands on its entry', () => {
+  const proof = readProofJobs()[QUEUE_PROOF_JOB];
+  const steps = proof?.steps ?? [];
+  // A push or dispatch on main looks for its merge group run; a merge group looks for its pull request run. Both
+  // answer through the same outputs, which the planner and Workspace gates already honour.
+  expect(proof?.if).toBe(
+    `((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && inputs.force-ci-full != true) || ${MERGE_GROUP_ONLY}`,
+  );
+  // actions: read lists runs and downloads their records; contents: read fetches the pull request head.
+  expect(proof?.permissions).toEqual({ actions: 'read', contents: 'read' });
+  expect(proof?.outputs).toEqual({
+    proven: expression('steps.proof.outputs.proven || steps.pull-request-proof.outputs.proven'),
+    run: expression('steps.proof.outputs.run || steps.pull-request-proof.outputs.run'),
+  });
+  expect(steps.find(({ id }) => id === 'proof')?.if).toBe("github.event_name != 'merge_group'");
+  const checkout = steps.find(({ uses }) => uses?.startsWith('actions/checkout@') === true);
+  expect(checkout?.if).toBe(MERGE_GROUP_ONLY);
+  expect(checkout?.with).toEqual({
+    'fetch-depth': 0,
+    filter: 'blob:none',
+    'persist-credentials': false,
+    'sparse-checkout': 'app/scripts/ci',
+  });
+  const find = steps.find(({ id }) => id === 'pull-request-proof');
+  expect(find?.if).toBe(MERGE_GROUP_ONLY);
+  expect(find?.run).toBe(`bash ${PULL_REQUEST_PROOF_SCRIPT} find`);
+  expect(find?.env).toEqual({
+    BASE_SHA: expression('github.event.merge_group.base_sha'),
+    GH_TOKEN: GITHUB_TOKEN_EXPRESSION,
+  });
+  // A proof only saves work. Workspace gates fails on a failed queue-proof job, so a checkout or lookup that fails
+  // or stalls must end as "no proof" inside the job's own limit, never as a failed job.
+  for (const step of [checkout, find]) {
+    expect(step?.['continue-on-error']).toBe(true);
+  }
+  expect((checkout?.['timeout-minutes'] ?? Infinity) + (find?.['timeout-minutes'] ?? Infinity)).toBeLessThan(
+    proof?.['timeout-minutes'] ?? 0,
+  );
+});
+
+it("records what a pull request run tested only after its final plan, under the name the queue's finder reads", () => {
+  const jobs = readProofJobs();
+  const steps = jobs[CI_PLAN_JOB]?.steps ?? [];
+  const classify = steps.find(({ id }) => id === 'changes');
+  expect(classify?.env?.QUEUE_PROVEN).toBe(expression('needs.queue-proof.outputs.proven'));
+  expect(classify?.env?.QUEUE_PROOF_RUN).toBe(expression('needs.queue-proof.outputs.run'));
+  const record = steps.findIndex(({ run }) => run?.startsWith(`bash ${PULL_REQUEST_PROOF_SCRIPT} record`) === true);
+  expect(record).toBeGreaterThan(steps.findIndex(({ id }) => id === 'selection'));
+  expect(steps[record]?.if).toBe(PULL_REQUEST_ONLY);
+  expect(steps[record]?.env?.PLAN_MODE).toBe(expression('steps.selection.outputs.mode || steps.changes.outputs.mode'));
+  const publish = steps[record + 1];
+  expect(publish?.if).toBe(PULL_REQUEST_ONLY);
+  expect(publish?.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}$/u);
+  expect(publish?.with).toMatchObject({
+    'if-no-files-found': 'error',
+    name: PULL_REQUEST_RECORD,
+    path: `${RUNNER_TEMP_EXPRESSION}/ci-comparison/comparison.json`,
+  });
+  const writers = Object.entries(jobs).flatMap(([job, { steps: jobSteps = [] }]) =>
+    jobSteps.filter(({ with: inputs }) => inputs?.name === PULL_REQUEST_RECORD).map(() => job),
+  );
+  expect(writers).toEqual([CI_PLAN_JOB]);
+  const script = readFileSync(new URL('../ci/pull-request-proof.sh', import.meta.url), 'utf-8');
+  expect(script).toContain(`readonly RECORD_ARTIFACT=${PULL_REQUEST_RECORD}\n`);
+  expect(script).toContain('readonly RECORD_FILE=comparison.json\n');
 });
 
 const CANCEL_REPLACED_QUEUE_RUNS_JOB = 'cancel-replaced-queue-runs';
@@ -685,6 +784,298 @@ it('plans without app dependencies and publishes only the exact changed paths', 
   });
 });
 
+const LEAN_CORE_STEP = 'Lean Core Dependencies';
+const BASH_SHEBANG = '#!/bin/bash';
+const COMPARISON_BASE_OUTPUT = 'needs.ci-plan.outputs.base';
+const ComparisonBaseStepSchema = Schema.Struct({
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  name: Schema.optional(Schema.String),
+  run: Schema.optional(Schema.String),
+  uses: Schema.optional(Schema.String),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+const ComparisonBaseWorkflowSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      outputs: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      permissions: Schema.optional(Schema.Unknown),
+      steps: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            ...ComparisonBaseStepSchema.fields,
+            parallel: Schema.optional(Schema.Array(ComparisonBaseStepSchema)),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
+it('publishes the planner comparison base only to the Lean Core row, which fetches that commit alone', () => {
+  const { jobs } = Schema.decodeUnknownSync(ComparisonBaseWorkflowSchema)(readGateWorkflow());
+  expect(jobs[CI_PLAN_JOB]?.outputs?.base).toBe(expression('steps.changes.outputs.base'));
+  const readers = Object.entries(jobs).flatMap(([job, { steps = [] }]) =>
+    steps
+      .flatMap((step) => step.parallel ?? [step])
+      .filter((step) => JSON.stringify(step).includes(COMPARISON_BASE_OUTPUT))
+      .map((step) => `${job}: ${step.name ?? ''}`),
+  );
+  expect(readers).toEqual([`${STATIC_CONTRACTS_JOB}: ${LEAN_CORE_STEP}`]);
+  // The checkout every static check shares stays one commit deep and credential-free, and the job holds no
+  // token: the row fetches its one comparison commit over the public remote.
+  const staticContracts = jobs[STATIC_CONTRACTS_JOB];
+  const checkout = staticContracts?.steps?.find(({ uses }) => uses?.startsWith('actions/checkout@') === true);
+  expect(checkout?.with).toEqual({ 'fetch-depth': 1, 'persist-credentials': false });
+  expect(staticContracts?.permissions).toBeUndefined();
+  expect(JSON.stringify(staticContracts)).not.toMatch(/token|secrets\./iu);
+});
+
+const leanCoreChecked = (comparison: string) => `mise exec -- pnpm lean-core:check --base ${comparison}`;
+
+it.live(
+  'runs the Lean Core shrink-only rule against the planner base on every event, and fails closed without one',
+  () =>
+    Effect.sync(() => {
+      const { jobs } = Schema.decodeUnknownSync(ComparisonBaseWorkflowSchema)(readGateWorkflow());
+      const leanCore = (jobs[STATIC_CONTRACTS_JOB]?.steps ?? [])
+        .flatMap(({ parallel }) => parallel ?? [])
+        .find(({ name }) => name === LEAN_CORE_STEP);
+      expect(leanCore?.env).toEqual({ COMPARISON_BASE: expression(COMPARISON_BASE_OUTPUT) });
+      const base = 'c'.repeat(40);
+      /** Runs the row with a recording git, whose fetch exits with fetchExit, and a recording mise. */
+      const run = (event: string, comparisonBase: string, fetchExit = 0) => {
+        const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lean-core-row-'));
+        try {
+          const calls = path.join(directory, 'calls');
+          writeFileSync(calls, '');
+          const record = `printf '%s\\n' "$(basename "$0") $*" >> '${calls}'`;
+          writeFileSync(
+            path.join(directory, 'git'),
+            [BASH_SHEBANG, record, `[[ "$1" != fetch ]] || exit ${fetchExit}`, ''].join('\n'),
+          );
+          writeFileSync(path.join(directory, 'mise'), [BASH_SHEBANG, record, ''].join('\n'));
+          chmodSync(path.join(directory, 'git'), 0o755);
+          chmodSync(path.join(directory, 'mise'), 0o755);
+          const passed = stepPasses(leanCore?.run ?? 'exit 1', {
+            COMPARISON_BASE: comparisonBase,
+            GITHUB_EVENT_NAME: event,
+            GITHUB_SHA: 'a'.repeat(40),
+            PATH: `${directory}:${STEP_PATH}`,
+          });
+          return { calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean), passed };
+        } finally {
+          rmSync(directory, { force: true, recursive: true });
+        }
+      };
+      const fetched = `git fetch --quiet --no-tags --depth=1 origin ${base}`;
+      // One path for every event: the planner names the base, the row fetches that commit alone and checks it.
+      for (const event of ['pull_request', 'merge_group', 'push', 'schedule', 'workflow_dispatch']) {
+        expect(run(event, base), event).toEqual({ calls: [fetched, leanCoreChecked(base)], passed: true });
+        // No named base, or one that is not a commit name, fails the row before anything runs.
+        for (const missing of ['', 'HEAD~1']) {
+          expect(run(event, missing), `${event} ${missing}`).toEqual({ calls: [], passed: false });
+        }
+        expect(run(event, base, 128), `${event} unfetchable`).toEqual({ calls: [fetched], passed: false });
+      }
+    }),
+);
+
+const NATIVE_GIT = '/usr/bin/git';
+/** Runs git in cwd as the CI test author. */
+const gitIn =
+  (cwd: string) =>
+  (...args: readonly string[]) =>
+    execFileSync(NATIVE_GIT, ['-c', 'user.name=CI test', '-c', 'user.email=ci@example.invalid', ...args], {
+      cwd,
+      encoding: 'utf-8',
+    }).trim();
+
+const PLAN_BRANCH = 'demo';
+const PROVING_RUN = 'https://github.com/TechsioCZ/ontos/actions/runs/44500000001';
+const PLAN_REPOSITORY = 'TechsioCZ/ontos';
+const PLAN_RUN_ID = '44500000000';
+const PLAN_WORKFLOW_ID = 342_952_200;
+
+it.live(
+  "names the base the planner compared with, else a push's event.before and the first parent on schedule and dispatch",
+  () =>
+    Effect.sync(() => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-ci-base-'));
+      const origin = path.join(directory, 'origin');
+      mkdirSync(origin);
+      const git = gitIn(origin);
+      const commits: string[] = [];
+      try {
+        git('init', '--quiet');
+        for (const name of ['c0', 'c1', 'c2', 'c3']) {
+          writeFileSync(path.join(origin, 'runtime.ts'), `${name}\n`);
+          git('add', '.');
+          git('commit', '--quiet', '-m', name);
+          commits.push(git('rev-parse', 'HEAD'));
+        }
+        const [c0 = '', c1 = '', c2 = '', c3 = ''] = commits;
+        /** A checkout of origin's HEAD as deep as ci-plan's checkout is on the event: 0 is the whole history. */
+        const checkout = (name: string, depth: number) => {
+          const target = path.join(directory, name);
+          execFileSync(NATIVE_GIT, [
+            'clone',
+            '--quiet',
+            ...(depth === 0 ? [] : [`--depth=${depth}`]),
+            `file://${origin}`,
+            target,
+          ]);
+          return target;
+        };
+        const depthTwo = checkout('depth-two', 2);
+        const whole = checkout('whole', 0);
+        const depthOne = checkout('depth-one', 1);
+        // A pull request is tested as its merge commit, whose first parent is the base it merges into.
+        const merge = checkout('merge', 2);
+        const mergeGit = gitIn(merge);
+        mergeGit('checkout', '--quiet', '-b', 'feature');
+        writeFileSync(path.join(merge, 'feature.ts'), 'feature\n');
+        mergeGit('add', '.');
+        mergeGit('commit', '--quiet', '-m', 'feature');
+        mergeGit('checkout', '--quiet', '-');
+        mergeGit('merge', '--quiet', '--no-ff', '-m', 'merge', 'feature');
+        // A branch without a merge queue looks up its newest green push run; this gh lists the runs it is given.
+        const bin = path.join(directory, 'bin');
+        mkdirSync(bin);
+        const runs = path.join(directory, 'runs.json');
+        writeFileSync(
+          path.join(bin, 'gh'),
+          [BASH_SHEBANG, `case "$*" in *--jq*) echo ${PLAN_WORKFLOW_ID} ;; *) cat '${runs}' ;; esac`, ''].join('\n'),
+        );
+        chmodSync(path.join(bin, 'gh'), 0o755);
+        const greenPushes = (...shas: readonly string[]) =>
+          writeFileSync(
+            runs,
+            JSON.stringify({
+              workflow_runs: shas.map((sha, index) => ({
+                conclusion: 'success',
+                created_at: new Date(Date.UTC(2026, 10, 20, 12) - index * 60_000).toISOString(),
+                event: 'push',
+                head_branch: PLAN_BRANCH,
+                head_sha: sha,
+                status: 'completed',
+                workflow_id: PLAN_WORKFLOW_ID,
+              })),
+            }),
+          );
+        const plan = (cwd: string, environment: Readonly<Record<string, string>>) => {
+          const output = path.join(directory, 'outputs');
+          writeFileSync(output, '');
+          execFileSync(
+            '/bin/bash',
+            [fileURLToPath(new URL('../plan-ci-changes.sh', import.meta.url)), path.join(directory, 'paths')],
+            {
+              cwd,
+              env: {
+                GITHUB_OUTPUT: output,
+                GITHUB_REF_NAME: PLAN_BRANCH,
+                GITHUB_REPOSITORY: PLAN_REPOSITORY,
+                GITHUB_RUN_ID: PLAN_RUN_ID,
+                HEAD_SHA: gitIn(cwd)('rev-parse', 'HEAD'),
+                PATH: `${bin}:${STEP_PATH}`,
+                ...environment,
+              },
+              stdio: 'pipe',
+            },
+          );
+          const outputs = new Map(
+            readFileSync(output, 'utf-8')
+              .split('\n')
+              .flatMap((line) =>
+                /^(?:base|mode|reason)=/u.test(line)
+                  ? [[line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)] as const]
+                  : [],
+              ),
+          );
+          return `${outputs.get('base') ?? 'unset'} ${outputs.get('mode') ?? 'unset'}: ${outputs.get('reason') ?? 'unset'}`;
+        };
+        const unavailable = 'The exact comparison is unavailable; the complete suite is required.';
+        const complete = 'This event requires the complete suite.';
+        const affected = 'Application impact must be resolved from the complete changed-path list.';
+        const queueBranchPush = { GITHUB_EVENT_NAME: 'push', QUEUE_PROOF: 'success' };
+        const noQueuePush = { BASE_SHA: c2, GITHUB_EVENT_NAME: 'push', QUEUE_PROOF: 'skipped' };
+        greenPushes();
+        const withoutGreenPush = plan(whole, noQueuePush);
+        greenPushes(c1);
+        const withGreenPush = plan(whole, noQueuePush);
+        expect({
+          'merge queue': plan(whole, { BASE_SHA: c0, GITHUB_EVENT_NAME: 'merge_group' }),
+          'merge queue with an unreachable base': plan(whole, {
+            BASE_SHA: 'f'.repeat(40),
+            GITHUB_EVENT_NAME: 'merge_group',
+          }),
+          'pull request': plan(merge, { GITHUB_EVENT_NAME: 'pull_request' }),
+          'pull request that is no merge commit': plan(depthTwo, { GITHUB_EVENT_NAME: 'pull_request' }),
+          'push behind the merge queue, creating the branch': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: '0'.repeat(40),
+          }),
+          'push behind the merge queue, event.before in the checkout': plan(whole, {
+            ...queueBranchPush,
+            BASE_SHA: c0,
+          }),
+          'push behind the merge queue, one commit': plan(depthTwo, { ...queueBranchPush, BASE_SHA: c2 }),
+          'push behind the merge queue, several commits the queue proved': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: c0,
+            QUEUE_PROOF_RUN: PROVING_RUN,
+            QUEUE_PROVEN: 'true',
+          }),
+          'push behind the merge queue, the queue proof lookup failed': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: c0,
+            QUEUE_PROOF: 'failure',
+          }),
+          'push behind the merge queue, without a commit before it': plan(depthTwo, {
+            ...queueBranchPush,
+            BASE_SHA: 'not-a-commit',
+          }),
+          'push past the merge queue by a ruleset bypass, c1..c3': plan(depthTwo, { ...queueBranchPush, BASE_SHA: c0 }),
+          'push without a merge queue, with a green push': withGreenPush,
+          'push without a merge queue, without a green push': withoutGreenPush,
+          schedule: plan(depthTwo, { GITHUB_EVENT_NAME: 'schedule' }),
+          'schedule without the parent in the checkout': plan(depthOne, { GITHUB_EVENT_NAME: 'schedule' }),
+          'workflow dispatch': plan(depthTwo, { GITHUB_EVENT_NAME: 'workflow_dispatch', QUEUE_PROOF: 'success' }),
+          'workflow dispatch with force-ci-full': plan(depthTwo, {
+            FORCE_FULL: 'true',
+            GITHUB_EVENT_NAME: 'workflow_dispatch',
+            QUEUE_PROOF: 'skipped',
+          }),
+        }).toEqual({
+          'merge queue': `${c0} affected: ${affected}`,
+          'merge queue with an unreachable base': ` full: ${unavailable}`,
+          'pull request': `${c3} affected: ${affected}`,
+          'pull request that is no merge commit': ` full: ${unavailable}`,
+          // An all-zero before names no commit, so the push has no base and the Lean Core row fails.
+          'push behind the merge queue, creating the branch': ` full: ${unavailable}`,
+          // The exact comparison stands on event.before whenever the checkout holds it.
+          'push behind the merge queue, event.before in the checkout': `${c0} affected: ${affected}`,
+          'push behind the merge queue, one commit': `${c2} affected: ${affected}`,
+          'push behind the merge queue, several commits the queue proved': `${c0} proven: ${PROVING_RUN} already passed every gate of this workflow on this exact tree.`,
+          'push behind the merge queue, the queue proof lookup failed': `${c0} full: ${unavailable}`,
+          'push behind the merge queue, without a commit before it': ` full: ${unavailable}`,
+          // event.before lies outside the two-commit checkout, so the plan stays complete; the base is still
+          // event.before, never HEAD^1: c2 holds whatever edge and baseline entry c1 added, so comparing with
+          // it would admit them.
+          'push past the merge queue by a ruleset bypass, c1..c3': `${c0} full: ${unavailable}`,
+          'push without a merge queue, with a green push': `${c1} affected: ${affected}`,
+          'push without a merge queue, without a green push': ` full: ${unavailable}`,
+          schedule: `${c2} full: ${complete}`,
+          'schedule without the parent in the checkout': ` full: ${complete}`,
+          'workflow dispatch': `${c2} full: ${complete}`,
+          'workflow dispatch with force-ci-full': `${c2} full: ${complete}`,
+        });
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
+    }),
+);
+
 /** Helper jobs that run a planned list, with the ci-plan output that lists their rows. */
 const PLANNED_HELPERS = [
   [UNIT_AFTER_LINT_JOB, 'unitAfterLint'],
@@ -694,6 +1085,20 @@ const PLANNED_HELPERS = [
   [BROWSER_INTEGRATION_JOB, 'integrationBrowser'],
   [DEFERRED_BROWSER_JOB, 'integrationBrowserAfterStatic'],
 ] as const;
+
+it('rejects failed or cancelled prerequisites before checking out the final gate verifier', () => {
+  const { steps } = readTargetWorkflow().jobs['workspace-gates'];
+  const checkout = steps.findIndex(({ name }) => name === 'Checkout the gate verifier');
+  const reject = steps.findIndex(({ name }) => name === 'Reject failed or cancelled prerequisites');
+  expect(reject).toBeGreaterThanOrEqual(0);
+  expect(reject).toBeLessThan(checkout);
+  const command = steps[reject]?.run ?? 'exit 0';
+  for (const result of ['success', 'skipped', 'failure', 'cancelled']) {
+    expect(stepPasses(command, { NEEDS_JSON: JSON.stringify({ check: { result } }) }), result).toBe(
+      result === 'success' || result === 'skipped',
+    );
+  }
+});
 
 it('requires the exact CI plan and rejects missing, failed or unplanned skipped gates', () => {
   const gates = readTargetWorkflow().jobs['workspace-gates'];
@@ -974,29 +1379,139 @@ it('names every failure-diagnostics upload per job, row and attempt', () => {
   const names = new Map<string, string>();
   for (const [job, { steps = [] }] of Object.entries(jobs)) {
     for (const step of steps) {
-      if (step.uses?.startsWith('actions/upload-artifact@') === true && step.if?.includes('failure()') === true) {
+      if (step.uses?.startsWith(UPLOAD_ARTIFACT) === true && step.if?.includes('failure()') === true) {
         names.set(`${job}: ${String(step.with?.name)}`, String(step.with?.name));
       }
     }
   }
   expect(names.size).toBeGreaterThanOrEqual(4);
   for (const [where, name] of names) {
-    expect(name, where).toContain(expression('github.run_attempt'));
+    expect(name, where).toContain(RUN_ATTEMPT_EXPRESSION);
   }
   for (const job of [OWNER_INTEGRATION_JOB, SERVICE_INTEGRATION_JOB, BROWSER_INTEGRATION_JOB, TOPOLOGY_PROOF_JOB]) {
     expect(
       names.get(
-        `${job}: native-startup-${expression('github.job')}-${expression('strategy.job-index')}-${expression('github.run_attempt')}`,
+        `${job}: native-startup-${expression('github.job')}-${expression('strategy.job-index')}-${RUN_ATTEMPT_EXPRESSION}`,
       ),
       job,
     ).toBeDefined();
   }
 });
 
+const LOCKFILE_VERDICT_INPUT = 'lockfile-verdict';
+const PUBLISH_LOCKFILE_VERDICT = expression("strategy.job-index == 0 && 'publish' || ''");
+const REUSE_LOCKFILE_VERDICT = expression(`needs.${NODE_ARTIFACT_BUILD_JOB}.result == 'success' && 'reuse' || ''`);
+
 it('does not repeat the planner’s installed-workspace publication in the build matrix', () => {
   const { steps } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   const install = steps.find(({ name }) => name === INSTALL_APP_STEP);
-  expect(install?.with).toBeUndefined();
+  // The first shard publishes only pnpm's lockfile verdict; no shard saves a store or an installed workspace.
+  expect(install?.with).toEqual({ [LOCKFILE_VERDICT_INPUT]: PUBLISH_LOCKFILE_VERDICT });
+});
+
+const VerdictWorkflowSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      needs: Schema.optional(Schema.Array(Schema.String)),
+      steps: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            uses: Schema.optional(Schema.String),
+            with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
+// pnpm skips its supply-chain check of the lockfile when it finds its own record of a passed check. A record
+// read by a job that does not need the publisher could come from nothing (a slower publisher) or, with a plain
+// 'reuse', be read in a job that runs beside the publisher; a second publisher would race the first.
+it('publishes the lockfile verdict from one build shard and reuses it only in jobs that need the build', () => {
+  const { jobs } = Schema.decodeUnknownSync(VerdictWorkflowSchema)(readGateWorkflow());
+  const verdicts = new Map<string, unknown>();
+  const installers: string[] = [];
+  for (const [job, { steps = [] }] of Object.entries(jobs)) {
+    for (const step of steps) {
+      if (step.uses === INSTALL_APP_ACTION) {
+        installers.push(job);
+        verdicts.set(job, step.with?.[LOCKFILE_VERDICT_INPUT]);
+      }
+    }
+  }
+  const withVerdict = (value: string) =>
+    sorted([...verdicts].filter(([, verdict]) => verdict === value).map(([job]) => job));
+  expect(withVerdict(PUBLISH_LOCKFILE_VERDICT)).toEqual([NODE_ARTIFACT_BUILD_JOB]);
+  // job-index 0 names exactly one row of the build matrix, whichever shards a plan selects.
+  expect(fullPlanMatrices().integrationBuild.length).toBeGreaterThan(1);
+  for (const [job, verdict] of verdicts) {
+    expect([undefined, PUBLISH_LOCKFILE_VERDICT, REUSE_LOCKFILE_VERDICT], job).toContain(verdict);
+  }
+  // Every job that waits for the build job reuses the verdict, and only those resolve 'reuse': a job sharing
+  // their steps without that need reads a missing needs entry and checks freshly.
+  const readers = installers.filter((job) => (jobs[job]?.needs ?? []).includes(NODE_ARTIFACT_BUILD_JOB));
+  expect(sorted(readers)).toEqual(
+    sorted([
+      OWNER_INTEGRATION_JOB,
+      TOPOLOGY_PROOF_JOB,
+      WORKSPACE_UNIT_JOB,
+      UNIT_AFTER_LINT_JOB,
+      UNIT_AFTER_STATIC_JOB,
+      UNIT_AFTER_TOOLING_JOB,
+    ]),
+  );
+  for (const job of readers) {
+    expect(verdicts.get(job), job).toBe(REUSE_LOCKFILE_VERDICT);
+  }
+  // The verdict travels only inside the install action, never as a workflow step of its own.
+  expect(readFileSync(GATES_WORKFLOW_URL, 'utf-8')).not.toContain('pnpm-lockfile-verdict');
+});
+
+it('carries one record file per run attempt, downloaded before the install and only on the install path', () => {
+  const schema = Schema.Struct({
+    inputs: Schema.Record(Schema.String, Schema.Struct({ default: Schema.String })),
+    runs: Schema.Struct({ steps: Schema.Array(PublicationWorkflowStepSchema) }),
+  });
+  const action = Schema.decodeUnknownSync(schema)(parse(readFileSync(INSTALL_APP_ACTION_URL, 'utf-8')));
+  const { steps } = action.runs;
+  expect(action.inputs[LOCKFILE_VERDICT_INPUT]?.default).toBe('');
+  const index = (name: string) => steps.findIndex((step) => step.name === name);
+  const install = index('Install dependencies from the frozen lockfile');
+  const installPath = steps[install]?.if ?? '';
+  expect(installPath).toBe("steps.restored.outputs.usable != 'true'");
+  const downloads = steps.filter(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT) === true);
+  const uploads = steps.filter(({ uses }) => uses?.startsWith(UPLOAD_ARTIFACT) === true);
+  expect(downloads.map(({ name }) => name)).toEqual(['Download the lockfile verdict of this run attempt']);
+  expect(uploads.map(({ name }) => name)).toEqual(['Publish the lockfile verdict to this run attempt']);
+  const artifact = `pnpm-lockfile-verdict-${RUN_ATTEMPT_EXPRESSION}`;
+  // A pattern, not a name: a run attempt without the record downloads nothing instead of failing. No run id or
+  // token: only this run's artifacts.
+  expect(downloads[0]?.with).toEqual({ path: expression('steps.verdict.outputs.staging'), pattern: artifact });
+  expect(uploads[0]?.with).toEqual({
+    'if-no-files-found': 'error',
+    name: artifact,
+    overwrite: true,
+    path: `${expression('steps.verdict.outputs.staging')}/lockfile-verified.jsonl`,
+    'retention-days': 1,
+  });
+  const order = [
+    "Locate pnpm's lockfile verdict",
+    'Download the lockfile verdict of this run attempt',
+    'Put the lockfile verdict in place',
+    'Install dependencies from the frozen lockfile',
+    'Stage the lockfile verdict this install recorded',
+    'Publish the lockfile verdict to this run attempt',
+  ].map(index);
+  expect(order.every((position) => position >= 0)).toBe(true);
+  expect(order).toEqual(EffectArray.sort(order, Order.Number));
+  for (const position of order.filter((candidate) => candidate !== install)) {
+    const step = steps[position];
+    // A restored workspace runs no pnpm: nothing to reuse and no fresh record to publish.
+    expect(step?.if, step?.name).toContain(installPath);
+    expect(step?.if, step?.name).toContain('inputs.lockfile-verdict');
+  }
 });
 
 it('warms only reusable dependencies and typecheck state on main, never commit-bound releases', () => {
@@ -1054,16 +1569,83 @@ it('saves no toolchain under a merge group ref, which no later run can read', ()
         Schema.Struct({
           name: Schema.optional(Schema.String),
           uses: Schema.optional(Schema.String),
-          with: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+          with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
         }),
       ),
     }),
   });
-  const action = Schema.decodeUnknownSync(schema)(
-    parse(readFileSync(new URL('../../../.github/actions/install-app/action.yml', import.meta.url), 'utf-8')),
-  );
+  const action = Schema.decodeUnknownSync(schema)(parse(readFileSync(INSTALL_APP_ACTION_URL, 'utf-8')));
   const mise = action.runs.steps.filter(({ uses }) => (uses ?? '').startsWith('jdx/mise-action@'));
   expect(mise.map((step) => step.with?.cache_save)).toEqual([expression("github.event_name != 'merge_group'")]);
+});
+
+const lookup = (script: string) => execFileSync('/bin/sh', ['-c', script], { encoding: 'utf-8' }).trim();
+
+it('uses a restored workspace only when pnpm would run in it without installing', () => {
+  const schema = Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(PublicationWorkflowStepSchema) }) });
+  const action = Schema.decodeUnknownSync(schema)(parse(readFileSync(INSTALL_APP_ACTION_URL, 'utf-8')));
+  const verify = action.runs.steps.find(({ id }) => id === 'restored')?.run ?? 'exit 1';
+  // The step needs mapfile, which bash has since version 4 and macOS's /bin/bash (3.2) lacks, so take the
+  // first bash on PATH that has it instead of the first bash. An empty or relative entry is read from the
+  // current directory, as the shell reads it, and printed absolute because the fixture runs elsewhere.
+  const bash = lookup(
+    [
+      'entries="$PATH:"; IFS=:; set -f',
+      'for d in $entries; do',
+      '  case "$d" in /*) ;; *) d="$PWD/$d" ;; esac',
+      '  if "$d/bash" -c "type mapfile" >/dev/null 2>&1; then echo "$d/bash"; break; fi',
+      'done',
+    ].join('\n'),
+  );
+  expect(bash).not.toBe('');
+  const pnpm = lookup('command -v pnpm');
+  const node = lookup('command -v node');
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-restored-workspace-'));
+  const bin = path.join(directory, 'bin');
+  const workspace = path.join(directory, 'app');
+  const bareModules = path.join(workspace, 'packages/bare/node_modules');
+  const linkedModules = path.join(workspace, 'packages/linked/node_modules');
+  const env = { CI: 'true', HOME: directory, PATH: `${bin}:${path.dirname(pnpm)}:${path.dirname(node)}:${STEP_PATH}` };
+  const usable = () => {
+    const output = path.join(directory, 'output');
+    writeFileSync(output, '');
+    execFileSync(bash, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', verify], {
+      cwd: workspace,
+      env: { ...env, GITHUB_OUTPUT: output, PACKAGES: 'packages/bare\npackages/linked', RESTORED: 'true' },
+      stdio: 'pipe',
+    });
+    return readFileSync(output, 'utf-8').trim();
+  };
+  try {
+    mkdirSync(bin);
+    // Only mise is substituted; the dependency check runs the real pnpm against the installed fixture.
+    writeFileSync(path.join(bin, 'mise'), '#!/bin/sh\n[ "$1 $2" = "exec --" ] || exit 2\nshift 2\nexec "$@"\n');
+    chmodSync(path.join(bin, 'mise'), 0o755);
+    for (const [member, dependencies] of [
+      ['bare', {}],
+      ['linked', { bare: 'workspace:*' }],
+    ] as const) {
+      mkdirSync(path.join(workspace, 'packages', member), { recursive: true });
+      writeFileSync(
+        path.join(workspace, 'packages', member, 'package.json'),
+        JSON.stringify({ dependencies, name: member, private: true, version: '1.0.0' }),
+      );
+    }
+    writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ name: 'workspace', private: true }));
+    writeFileSync(path.join(workspace, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+    execFileSync(pnpm, ['install', '--offline', '--no-frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    execFileSync(pnpm, ['install', '--offline', '--frozen-lockfile'], { cwd: workspace, env, stdio: 'pipe' });
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(true);
+    expect(usable()).toBe('usable=true');
+    rmSync(linkedModules, { force: true, recursive: true });
+    expect(usable()).toBe('usable=false');
+    expect(existsSync(path.join(workspace, 'node_modules'))).toBe(false);
+    expect(existsSync(bareModules)).toBe(false);
+    expect(existsSync(linkedModules)).toBe(false);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 const CommandMatrixJobSchema = Schema.Struct({
@@ -1831,6 +2413,11 @@ it('covers every integration file exactly once across the owner rows', () => {
       sorted(Array.from({ length: count }, (_, index) => `${index + 1}/${count}`)),
     );
     expect(count, family).toBeLessThanOrEqual(familyFiles(family).length);
+    if (family === './apps/shell-super-app') {
+      // The access-admin and privacy-dispatch files serialized into a 358 s task in run 45161037039.
+      // Keep batches small without adding hosted jobs or sharing a database between test processes.
+      expect(count).toBeGreaterThanOrEqual(Math.ceil(familyFiles(family).length / 2));
+    }
     if (family === 'root') {
       // One file per root task: ICO and Membership must not silently recombine as files are added.
       expect(count).toBe(familyFiles(family).length);
@@ -1911,6 +2498,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   const run = step?.run ?? 'exit 1';
   // The hook sees the selected files, and a file it fixes fails the gate.
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
+  expect(run).toContain('--no-stage-fixed');
   // A sweep goes through the hook as well: one `pnpm lint` over every file held every type program at once
   // and lost its runner.
   expect(run).not.toMatch(/pnpm lint$/mu);
@@ -2367,7 +2955,6 @@ const RuleWorkflowSchema = Schema.Struct({ jobs: Schema.Record(Schema.String, Ru
 type RuleWorkflow = typeof RuleWorkflowSchema.Type;
 type RuleStep = typeof RuleStepSchema.Type;
 const isSuiteRows = Schema.is(Schema.Array(Schema.Struct({ suite: Schema.optional(Schema.String) })));
-const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
 /** A step that waits for jobs of a run: no job of the workflow may hold a runner for that. */
 const RUN_WAITS = [/wait-for-[\w-]+\.sh/u, /gh run (?:watch|view)\b/u];
 /**

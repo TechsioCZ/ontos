@@ -23,6 +23,13 @@ export const pricingMcpContribution = defineOntosMcpContribution({
         en: 'Manage a contractual discount',
       },
     },
+    'manage-external-price-source-policy': {
+      destructive: true,
+      title: {
+        cs: 'Spravovat trvalý externí zdroj cen',
+        en: 'Manage a standing external price source policy',
+      },
+    },
     'manage-product-commercial-fees-bulk': {
       title: {
         cs: 'Hromadně spravovat poplatky produktů',

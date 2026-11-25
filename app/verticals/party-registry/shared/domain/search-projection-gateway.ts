@@ -3,7 +3,7 @@ import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list
 import { Context, Option } from 'effect';
 import type { Effect, Schema } from 'effect';
 
-import type { CounterpartyRef } from '../resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { PartyRef } from '../resources/party.ts';
 import type { CounterpartyIsoTimestampSchema } from './counterparty-contract.ts';
 import type { PartySearchProjectionUnavailable } from './search-projection-error.ts';

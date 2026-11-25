@@ -57,7 +57,28 @@ import type {
   LegalEntityDetailRequest,
   LegalEntityDetailResponse,
 } from '../../shared/core-reads/legal-entity-detail.ts';
+
+// @ontos-core-read asset-metadata
+import type { AssetMetadataRequest, AssetMetadataResponse } from '../../shared/core-reads/asset-metadata.ts';
 // @ontos-codesmith-core-read-client-imports:end
+
+// @ontos-codesmith-core-action-client-imports:start
+
+// @ontos-core-action rename-display-filename
+import { encodeRenameDisplayFilenamePayload } from '../../shared/core-actions/rename-display-filename.ts';
+import type {
+  RenameDisplayFilenamePayload,
+  RenameDisplayFilenameResult,
+} from '../../shared/core-actions/rename-display-filename.ts';
+
+// @ontos-core-action confirm-asset
+import { encodeConfirmAssetPayload } from '../../shared/core-actions/confirm-asset.ts';
+import type { ConfirmAssetPayload, ConfirmAssetResult } from '../../shared/core-actions/confirm-asset.ts';
+
+// @ontos-core-action upload-asset
+import { encodeUploadAssetPayload } from '../../shared/core-actions/upload-asset.ts';
+import type { UploadAssetPayload, UploadAssetResult } from '../../shared/core-actions/upload-asset.ts';
+// @ontos-codesmith-core-action-client-imports:end
 import type {
   AvailableLegalEntitiesResponse,
   AvailableTenantsResponse,
@@ -478,7 +499,59 @@ export const executeLegalEntityDetail = (
   invokeShellAuthenticationClient(options, (client) =>
     client.coreReadLegalEntityDetail.executeLegalEntityDetail({ payload }),
   );
+
+// @ontos-core-read asset-metadata
+export const executeAssetMetadata = (
+  payload: AssetMetadataRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<AssetMetadataResponse, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.coreReadAssetMetadata.executeAssetMetadata({ payload }));
 // @ontos-codesmith-core-read-client-operations:end
+
+// @ontos-codesmith-core-action-client-operations:start
+
+// @ontos-core-action rename-display-filename
+export const executeRenameDisplayFilename = (
+  payload: RenameDisplayFilenamePayload,
+  options: IdentityClientOptions,
+): Effect.Effect<RenameDisplayFilenameResult, IdentityClientError> =>
+  encodeRenameDisplayFilenamePayload(payload).pipe(
+    Effect.flatMap((encoded) =>
+      invokeShellAuthenticationClient(options, (client) =>
+        client.coreActionRenameDisplayFilename.executeRenameDisplayFilename({
+          headers: identityHeaders(options),
+          payload: encoded,
+        }),
+      ),
+    ),
+  );
+
+// @ontos-core-action confirm-asset
+export const executeConfirmAsset = (
+  payload: ConfirmAssetPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<ConfirmAssetResult, IdentityClientError> =>
+  encodeConfirmAssetPayload(payload).pipe(
+    Effect.flatMap((encoded) =>
+      invokeShellAuthenticationClient(options, (client) =>
+        client.coreActionConfirmAsset.executeConfirmAsset({ headers: identityHeaders(options), payload: encoded }),
+      ),
+    ),
+  );
+
+// @ontos-core-action upload-asset
+export const executeUploadAsset = (
+  payload: UploadAssetPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<UploadAssetResult, IdentityClientError> =>
+  encodeUploadAssetPayload(payload).pipe(
+    Effect.flatMap((encoded) =>
+      invokeShellAuthenticationClient(options, (client) =>
+        client.coreActionUploadAsset.executeUploadAsset({ headers: identityHeaders(options), payload: encoded }),
+      ),
+    ),
+  );
+// @ontos-codesmith-core-action-client-operations:end
 
 // All administration calls use the typed native HttpApi client. The authenticated tenant is
 // resolved again by the BFF; neither a company selection nor a browser tenant id grants access.

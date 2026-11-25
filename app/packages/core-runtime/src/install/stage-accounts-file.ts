@@ -51,6 +51,8 @@ const StageAccountSchema = Schema.Struct({
 export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.storefront-client',
   'core.identity-provider',
+  'core.media.ingest',
+  'core.media.integrity',
   'payment.source-ingress',
   'payment.provider-notification-ingress',
   'payment.provider-reconciliation',
@@ -63,6 +65,7 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.assortment.symmy-fixture-currentness',
   'commerce.inventory.source-write',
   'commerce.inventory.source-read',
+  'commerce.inventory.source-provision',
   'commerce.pricing.source-write',
   'commerce.pricing.source-read',
   'pricing.price-group-catalog.source-write',

@@ -17,7 +17,7 @@ import {
   SetProductBrandPayloadSchema,
 } from '../../shared/actions/brand-mutations.ts';
 import { BrandRefSchema } from '../../shared/resources/brand.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import {
   brandRevisions,
   brands,

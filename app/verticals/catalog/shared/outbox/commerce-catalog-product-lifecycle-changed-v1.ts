@@ -3,7 +3,7 @@
 // @ontos-outbox-topic commerce.catalog.product-lifecycle-changed.v1
 import { Schema } from 'effect';
 import { ProductLifecycleSchema, ProductRevisionSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const OutboxPayloadSchema = Schema.Struct({
   changeKind: Schema.Literals(['ACTIVATED', 'RETIRED']),

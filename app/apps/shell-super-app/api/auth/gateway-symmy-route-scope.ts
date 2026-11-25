@@ -16,11 +16,7 @@ import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog
 import { resolveSymmyOwnerReleaseBase } from '../symmy/owner-release-transport.ts';
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { gatewayPublishedOperationAccess } from './gateway-delegation-policy.ts';
-import {
-  issueGatewayContextAssertion,
-  issueRouteScopedGatewayContextAssertion,
-  issueSymmyGatewayContextAssertion,
-} from './gateway-issuer.ts';
+import { issueRouteScopedGatewayContextAssertion, issueSymmyGatewayContextAssertion } from './gateway-issuer.ts';
 
 const symmyAudience = 'symmy-integration';
 type Route = typeof SymmyRouteContextResponseSchema.Type;
@@ -202,6 +198,63 @@ export const readSymmyRouteScope = Effect.fn('SymmyRouteScope.read')(function* r
   );
 });
 
+type InstalledContract = ShellInstalledCatalog['contracts'][number];
+/**
+ * The one owner read an admission route makes before it admits: the customer groups route reads Commerce's
+ * definition of each group code it names, or Inventory’s current position of a stock key pair. Other admission routes reach no owner read.
+ */
+const admissionOwnerReads = [
+  {
+    entrypointKey: 'commerce.customer-context.api.customer-group-definition-source',
+    moduleId: 'commerce.customer-context',
+    requiresCompany: true,
+    routeKey: 'customerGroupsBatch',
+    schemaVersion: '1',
+  },
+  {
+    entrypointKey: 'commerce.inventory.api.source-stock-position-resolution',
+    moduleId: 'commerce.inventory',
+    requiresCompany: false,
+    routeKey: 'inventoryStockBatch',
+    schemaVersion: '1',
+  },
+] as const;
+/**
+ * The owner reads of the destination that an assertion for this route proof may name. A read proof names every
+ * enrolled, published read. An admission proof names only its exact configured pre-admission read, once however many enrollment
+ * items name it, requiring a company only for Commerce’s company-scoped definition read, and
+ * only where the destination publishes it as a current read.
+ */
+const ownerReadOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
+  if (facts.sourcePurpose === 'admit') {
+    const read = admissionOwnerReads.find(({ routeKey }) => routeKey === facts.routeKey);
+    if (read === undefined) {
+      return [];
+    }
+    const { entrypointKey, moduleId, requiresCompany, schemaVersion } = read;
+    return (!requiresCompany || route.legalEntityId !== undefined) &&
+      destination.manifest.module.id === moduleId &&
+      route.allowedOwnerOperations.some(
+        (operation) =>
+          operation.moduleId === moduleId &&
+          operation.entrypointKey === entrypointKey &&
+          operation.schemaVersion === schemaVersion,
+      ) &&
+      gatewayPublishedOperationAccess(destination, entrypointKey, schemaVersion) === 'read'
+      ? [{ entrypointKey, schemaVersion }]
+      : [];
+  }
+  return route.allowedOwnerOperations.flatMap((operation) => {
+    if (operation.moduleId !== destination.manifest.module.id) {
+      return [];
+    }
+    const access = gatewayPublishedOperationAccess(destination, operation.entrypointKey, operation.schemaVersion);
+    return access === 'read' || access === 'historical_read'
+      ? [{ entrypointKey: operation.entrypointKey, schemaVersion: operation.schemaVersion }]
+      : [];
+  });
+};
+
 export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projectPrincipal')(function* project(
   proof: SymmyRouteScopeProof,
   input: { readonly audience: string; readonly legalEntityId?: string; readonly principal: TrustedPrincipalContext },
@@ -212,7 +265,10 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   }
   const principal = yield* validateRoutePrincipal(input.principal, facts.sourcePurpose);
   const route = yield* readSymmyRouteScope(proof);
-  if (input.legalEntityId !== route.legalEntityId) {
+  const inventoryTenantRead =
+    facts.sourcePurpose === 'admit' && facts.routeKey === 'inventoryStockBatch' && input.audience === 'inventory';
+  const receiverCompany = inventoryTenantRead ? undefined : route.legalEntityId;
+  if (input.legalEntityId !== receiverCompany) {
     return yield* delegationForbidden();
   }
   yield* validateCompany(route, principal.tenantId);
@@ -223,25 +279,13 @@ export const projectSymmyRouteScopePrincipal = Effect.fn('SymmyRouteScope.projec
   }
   if (input.audience !== symmyAudience) {
     const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
-    if (
-      facts.sourcePurpose !== 'read' ||
-      destination === undefined ||
-      !route.allowedOwnerOperations.some(
-        (operation) =>
-          operation.moduleId === destination.manifest.module.id &&
-          ['read', 'historical_read'].some(
-            (access) =>
-              gatewayPublishedOperationAccess(destination, operation.entrypointKey, operation.schemaVersion) === access,
-          ),
-      )
-    ) {
+    if (destination === undefined || ownerReadOperations(destination, route, facts).length === 0) {
       return yield* delegationForbidden();
     }
   }
-  return route.legalEntityId === undefined ? principal : { ...principal, legalEntityId: route.legalEntityId };
+  return receiverCompany === undefined ? principal : { ...principal, legalEntityId: receiverCompany };
 });
 
-type InstalledContract = ShellInstalledCatalog['contracts'][number];
 const symmyAdmissionActions: ReadonlySet<string> = new Set([
   'integration.symmy.admit-symmy-job',
   'integration.symmy.admit-symmy-sync',
@@ -278,15 +322,7 @@ const routeScopeOperations = (destination: InstalledContract, route: Route, fact
         : [],
     );
   }
-  return route.allowedOwnerOperations.flatMap((operation) => {
-    if (operation.moduleId !== destination.manifest.module.id) {
-      return [];
-    }
-    const access = gatewayPublishedOperationAccess(destination, operation.entrypointKey, operation.schemaVersion);
-    return access === 'read' || access === 'historical_read'
-      ? [{ entrypointKey: operation.entrypointKey, schemaVersion: operation.schemaVersion }]
-      : [];
-  });
+  return ownerReadOperations(destination, route, facts);
 };
 
 /**
@@ -300,20 +336,14 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
   const [principal, facts] = yield* Effect.all([projectSymmyRouteScopePrincipal(proof, input), proofFacts(proof)], {
     concurrency: 2,
   });
-  if (principal.legalEntityId === undefined) {
-    return yield* (
-      input.audience === symmyAudience
-        ? issueSymmyGatewayContextAssertion({
-            compositionRevision: facts.compositionRevision,
-            principal,
-            principalKind: 'integration',
-          })
-        : issueGatewayContextAssertion({
-            audience: input.audience,
-            compositionRevision: facts.compositionRevision,
-            principal,
-          })
-    ).pipe(Effect.mapError(delegationUnavailable));
+  // Symmy resolves its own companyless admission by route and principal. Delegation to an owner
+  // always carries the signed operation restriction, regardless of the owner's company scope.
+  if (input.audience === symmyAudience && principal.legalEntityId === undefined) {
+    return yield* issueSymmyGatewayContextAssertion({
+      compositionRevision: facts.compositionRevision,
+      principal,
+      principalKind: 'integration',
+    }).pipe(Effect.mapError(delegationUnavailable));
   }
   const route = yield* readSymmyRouteScope(proof);
   const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(delegationUnavailable));
@@ -322,7 +352,6 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     return yield* delegationForbidden();
   }
   const routeScopeInput = {
-    legalEntityId: principal.legalEntityId,
     mappingVersion: route.mappingVersion,
     operations: routeScopeOperations(destination, route, facts),
     principalId: principal.principalId,
@@ -334,6 +363,9 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     sourceRouteRevision: route.sourceRouteRevision,
     tenantId: principal.tenantId,
   };
+  if (principal.legalEntityId !== undefined) {
+    Object.assign(routeScopeInput, { legalEntityId: principal.legalEntityId });
+  }
   if (route.replayIdempotencyDigest !== undefined) {
     Object.assign(routeScopeInput, { replayIdempotencyDigest: route.replayIdempotencyDigest });
   }

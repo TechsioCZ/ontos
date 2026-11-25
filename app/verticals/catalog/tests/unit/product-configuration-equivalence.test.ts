@@ -4,15 +4,15 @@ import { describe, expect, it } from 'effect-rstest';
 import {
   CatalogResourceRefSchema,
   CatalogRevisionNumberSchema,
-} from '../../shared/domain/catalog-revision-reference.ts';
-import { CatalogUnitConversionEvidenceSchema } from '../../shared/domain/catalog-unit-conversion-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogUnitConversionEvidenceSchema } from '@app/catalog-selection-contracts/catalog-unit-conversion-evidence';
 import type {
   ProductConfiguration,
   ProductConfigurationDefinitionRevision,
   ProductConfigurationRevisionEquivalenceAttestation,
 } from '../../shared/domain/product-configuration.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import {
   assessProductConfigurationEquivalence,
   productConfigurationRevisionEquivalenceAttestationFor,

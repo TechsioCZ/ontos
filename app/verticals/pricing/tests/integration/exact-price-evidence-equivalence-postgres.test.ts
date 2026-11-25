@@ -5,7 +5,7 @@ import {
   PricingMaterialEvidenceFenceSourceSchema,
 } from '@app/pricing-contracts/domain/material-evidence';
 import { assemblePricingMaterialEvidence } from '../../src/services/material-evidence-assembly.service.ts';
-import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
+import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import { PricingCurrentMarketEvidenceResponseSchema } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
 import { PricingSourceEvidenceVerifiedPresentSchema } from '@app/pricing-contracts/domain/source-revision-evidence';

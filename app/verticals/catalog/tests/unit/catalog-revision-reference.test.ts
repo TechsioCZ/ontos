@@ -8,7 +8,7 @@ import {
   CatalogRevisionReferenceSchema,
   catalogRevisionLookupPreservesReference,
   sameCatalogRevisionReference,
-} from '../../shared/domain/catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-revision-reference';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenantId = '99999999-9999-4999-8999-999999999999';

@@ -13,9 +13,9 @@ import {
   openSelectionReferencesProduct,
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
-import { CatalogSelectionEvidenceSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionEvidenceSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type { AttributeDefinitionRef } from '../../shared/resources/attribute-definition.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import {
   attributeDefinitions,
   attributeValueSets,

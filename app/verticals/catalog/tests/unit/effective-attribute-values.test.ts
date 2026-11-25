@@ -7,9 +7,9 @@ import {
   ProductTypeCurrentBasisSchema,
   ProductTypeCurrentRulesRevisionSchema,
 } from '../../shared/domain/product-type-rules.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductTypeRefSchema } from '../../shared/resources/product-type.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const ref = (resourceType: string, resourceId: string) => ({

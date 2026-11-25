@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import { CatalogResourceRefSchema } from './catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { CatalogLocaleSchema } from './product-descriptive-facts.ts';
 
 const text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed());

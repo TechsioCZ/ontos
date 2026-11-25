@@ -20,7 +20,7 @@ import {
 } from './symmy-price-list-plan.ts';
 import type { Digest, PriceContext } from './symmy-price-list-plan.ts';
 
-const reviseOperation = {
+export const reviseOperation = {
   entrypointKey: 'commerce.pricing.revise-price',
   moduleId: 'commerce.pricing',
   schemaVersion: '2',

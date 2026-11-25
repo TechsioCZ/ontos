@@ -1,5 +1,5 @@
 /* oxlint-disable sonarjs/no-nested-functions -- The race harness deliberately nests transaction, candidate, and fiber seams so their shared lock lifetime stays explicit; expires: 2027-03-31. */
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { Effect, Ref, Schema, Semaphore } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 

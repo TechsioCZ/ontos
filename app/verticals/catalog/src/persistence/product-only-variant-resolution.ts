@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 
 import { resolveProductOnlyVariant } from '../../shared/domain/variant-exact-form.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import { productVariants, products } from '../database/schema.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
 

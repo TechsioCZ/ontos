@@ -74,12 +74,15 @@ read the native `ONTOS_ACTIVE_APPLICATION_COMPOSITION` KV binding, key `active`.
 admission independently checks the DB authority revision, phase and deadline. KV publication and DB
 settlement are distinct boundaries; source availability alone is not business admission.
 
-The scheduled refresh re-observes only the exact approved revision and refuses changed artifacts;
-renewal does not require restarting consumers to load process-start JSON. Code/configuration changes
-may still require ordinary deployment. Publication readback does not promise immediate global KV
-propagation or add automatic fallback. The current operator commands, source configuration and failure
-steps are owned by the [deployment playbook](../../app/docs/architecture/DEPLOYMENT.md#current-composition-transport).
-`ACTIVE_APPLICATION_COMPOSITION_POLICY` owns the validity window and refresh policy. Binding revisions
+The publisher's `refresh` command re-observes only the exact approved revision and refuses changed
+artifacts; renewal does not require restarting consumers to load process-start JSON. The scheduled
+workflow that ran it was removed in
+[TechsioCZ/ontos#1496](https://github.com/TechsioCZ/ontos/pull/1496), so automatic periodic renewal is
+not currently provided: `ACTIVE_APPLICATION_COMPOSITION_POLICY` owns the validity window, and renewal
+runs only when an operator invokes `refresh` or `publish`. Code/configuration
+changes may still require ordinary deployment. Publication readback does not promise immediate global KV
+propagation or add automatic fallback. The current operator commands, source configuration, refresh status
+and failure steps are owned by the [deployment playbook](../../app/docs/architecture/DEPLOYMENT.md#current-composition-transport). Binding revisions
 to immutable executable release records for rollback remains a follow-up in
 [TechsioCZ/ontos#374](https://github.com/TechsioCZ/ontos/issues/374); accepted governance and the historical
 decision above are unchanged.

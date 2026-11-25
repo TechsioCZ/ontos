@@ -5,8 +5,8 @@ import { and, eq } from 'drizzle-orm';
 import { Effect } from 'effect';
 import { Hex } from 'effect/encoding';
 
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import { productVariants, products } from '../database/schema.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
 import { variantAxisPersistenceForScope } from './variant-axis-persistence.ts';

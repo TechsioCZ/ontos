@@ -10,7 +10,7 @@ import type {
   CatalogSelectionEvidenceReader,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import { readCartOpenSelectionPopulation } from '../../shared/domain/catalog-open-selection-population.ts';
-import type { CatalogSelectionEvidence } from '../../shared/domain/catalog-selection-evidence.ts';
+import type { CatalogSelectionEvidence } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import type { CatalogSelectionPurpose } from '../../shared/domain/catalog-selection-purpose.ts';
 import { catalogSelectionEvidenceForScope } from './catalog-selection-evidence-service.ts';
 

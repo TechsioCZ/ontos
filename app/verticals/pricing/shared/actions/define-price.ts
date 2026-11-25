@@ -1,4 +1,4 @@
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import { PricingCurrencyCodeSchema, PricingInstantSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { PriceIdentityKeySchema, PriceNonNegativeDecimalSchema } from '@app/pricing-contracts/domain/price-definition';
 import {

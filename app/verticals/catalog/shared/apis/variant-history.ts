@@ -2,10 +2,10 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductActionInvocationIdSchema, ProductInstantSchema, ProductReasonSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 /** Variant history is sequence-addressed; retained rows do not issue revision IDs. */
 const VariantHistoryReferenceSchema = Schema.Struct({

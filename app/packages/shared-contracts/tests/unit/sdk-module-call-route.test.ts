@@ -2,6 +2,7 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/princip
 import { RouteAnswerSchema } from '@app/core-runtime/execution/module-call-route';
 import type { CallRouteRequest, RouteAnswer, SelectedCaller } from '@app/core-runtime/execution/module-call-route';
 import { moduleOperation } from '@app/core-runtime/sdk';
+import { SHELL_HOST_APP_ID, coreOperations } from '@app/core-runtime/sdk/core';
 import { Effect, Fiber, Match, Option, Predicate, Schema } from 'effect';
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 import type { HttpClientRequest } from 'effect/http';
@@ -184,6 +185,56 @@ it.effect('relays a person as an Assertion and sends the governed headers', () =
       'x-trace-id': 'trace-route',
     });
     expect(sent[0]?.headers).not.toHaveProperty('idempotency-key');
+  }),
+);
+
+it.effect('relays the requester to the Shell host for a Core operation it hosts, at the operation path', () =>
+  Effect.gen(function* hosted() {
+    const request: CallRouteRequest = {
+      ...requestOf({ kind: 'person', legalEntityScope: 'subject' }, revision),
+      encodedInput: { mediaAssetRefs: [] },
+      operation: coreOperations.assetCurrent,
+      requirement: {
+        callers: [{ kind: 'person', legalEntityScope: 'subject' }],
+        compositionRevision: revision,
+        provider: coreOperations.assetCurrent.provider,
+        providerAppId: SHELL_HOST_APP_ID,
+        requirementKey: 'commerce.catalog.requirement.core-media-current',
+      },
+    };
+    const shellBase = { ...delegated, apiBaseUrl: 'https://shell.example.test/shell-super-app-api' };
+    const delegations: GatewayDelegationRequest[] = [];
+    const sent: Sent[] = [];
+    const route = yield* makeModuleCallRoute({
+      acquire: (input: GatewayDelegationRequest) => {
+        delegations.push(input);
+        return Effect.succeed(shellBase);
+      },
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((outgoing, url) => {
+          sent.push({
+            body: bodyTextOf(outgoing),
+            headers: outgoing.headers,
+            method: outgoing.method,
+            url: url.toString(),
+          });
+          return Effect.succeed(HttpClientResponse.fromWeb(outgoing, Response.json({ entries: [] })));
+        }),
+      ),
+    );
+    const answer = yield* route.send(request);
+    expect(isAnswered(answer)).toBe(true);
+    // The audience is the Shell deployment, the subject is the requester's own verified scope, never a service's.
+    expect(delegations).toHaveLength(1);
+    expect(delegations[0]).toMatchObject({ audience: SHELL_HOST_APP_ID, legalEntityScope: 'subject' });
+    expect(assertedScopeOf(delegations[0])).toBe(principal);
+    expect(sent[0]).toMatchObject({
+      method: 'POST',
+      url: 'https://shell.example.test/shell-super-app-api/core/operations/asset-current',
+    });
+    expect(sent[0]?.headers).toMatchObject({ authorization: 'Bearer delegated-token' });
   }),
 );
 

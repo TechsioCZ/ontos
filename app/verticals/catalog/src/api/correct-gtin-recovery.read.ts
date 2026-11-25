@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.correct-gtin', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CorrectGtinResultSchema),
-      encode: Schema.encodeEffect(CorrectGtinResultSchema),
     },
   );
 

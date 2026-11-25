@@ -4,8 +4,11 @@ import { DateTime, Effect, Equal, Schema } from 'effect';
 
 /* oxlint-disable perfectionist/sort-objects, anti-slop/no-conditional-empty-object-spread -- Typed Drizzle insert order follows relational keys; optional result fields are omitted to preserve absence. expires: 2027-03-31. */
 
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
+import type { CreateProductPayload } from '../../shared/actions/create-product.ts';
+import { StoredCatalogLocaleSchema, CatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
+import { catalogSourceProductIntentMatches } from './catalog-source-product-intent.ts';
 import {
   productLocalizedFactRevisions,
   productLocalizedFacts,
@@ -29,7 +32,10 @@ interface Change {
   readonly reason: string;
   readonly value: { readonly kind: 'REMOVE' } | { readonly facts: Facts; readonly kind: 'SET' };
 }
-export type ProductLocalizedChange = Change & { readonly productRef: ProductRef };
+export type ProductLocalizedChange = Change & {
+  readonly productRef: ProductRef;
+  readonly sourceProduct?: CreateProductPayload | undefined;
+};
 export type VariantLocalizedChange = Change & { readonly productRef: ProductRef; readonly variantRef: VariantRef };
 export type LocalizedFactOutcome =
   | { readonly kind: 'CHANGED' | 'REPLAYED'; readonly revision: number }
@@ -61,16 +67,8 @@ const unavailable = (cause?: unknown) => {
   return failure;
 };
 const uuid = (value: string) => Schema.is(Schema.String.check(Schema.isUUID()))(value);
-const canonicalLocale = (value: string) => {
-  if (value.length < 2 || value.length > 64 || value !== value.trim()) {
-    return false;
-  }
-  try {
-    return Intl.getCanonicalLocales(value)[0] === value;
-  } catch {
-    return false;
-  }
-};
+const canonicalLocale = Schema.is(CatalogLocaleSchema);
+const storedLocale = Schema.is(StoredCatalogLocaleSchema);
 const validText = (value: string | undefined, limit: number) =>
   value === undefined || (value.length > 0 && value.length <= limit && value === value.trim());
 const validChange = (input: Change) => {
@@ -148,7 +146,7 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
       eq(variantLocalizedFacts.locale, locale),
     );
   const readProduct = Effect.fn('LocalizedFacts.readProduct')(function* readProduct(ref: ProductRef, locale: string) {
-    if (!validProduct(ref, tenantId) || !canonicalLocale(locale)) {
+    if (!validProduct(ref, tenantId) || !storedLocale(locale)) {
       return { kind: 'MISSING_TRANSLATION', locale, revision: 0 } as const;
     }
     const [owner] = yield* transaction
@@ -171,7 +169,7 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
     variantRef: VariantRef,
     locale: string,
   ) {
-    if (!validProduct(productRef, tenantId) || !validVariant(variantRef, tenantId) || !canonicalLocale(locale)) {
+    if (!validProduct(productRef, tenantId) || !validVariant(variantRef, tenantId) || !storedLocale(locale)) {
       return { kind: 'MISSING_TRANSLATION', locale, revision: 0 } as const;
     }
     const [owner] = yield* transaction
@@ -213,6 +211,13 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
     if (owner === undefined) {
       return { kind: 'NOT_FOUND' };
     }
+    const sourceMatches = yield* catalogSourceProductIntentMatches(transaction, scope, {
+      productRef: input.productRef,
+      sourceProduct: input.sourceProduct,
+    }).pipe(Effect.mapError(unavailable));
+    if (input.sourceProduct !== undefined && (!sourceMatches || owner.lifecycleState === 'RETIRED')) {
+      return { kind: 'INVALID' };
+    }
     const [prior] = yield* transaction
       .select()
       .from(productLocalizedFactRevisions)
@@ -246,6 +251,16 @@ export const localizedProductFactsPersistenceForScope = (transaction: ScopedTran
       .limit(1)
       .pipe(Effect.mapError(unavailable));
     const actualRevision = current?.currentRevision ?? 0;
+    if (
+      sourceMatches &&
+      input.expectedRevision === 0 &&
+      actualRevision === 1 &&
+      current?.state === value.state &&
+      current.name === value.name &&
+      current.description === value.description
+    ) {
+      return { kind: 'REPLAYED', revision: actualRevision };
+    }
     if (actualRevision !== input.expectedRevision) {
       return { kind: 'STALE', actualRevision };
     }

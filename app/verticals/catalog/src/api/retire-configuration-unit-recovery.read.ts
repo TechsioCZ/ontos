@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.retire-configuration-unit', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(RetireConfigurationUnitResultSchema),
-      encode: Schema.encodeEffect(RetireConfigurationUnitResultSchema),
     },
   );
 

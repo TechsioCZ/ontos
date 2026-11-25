@@ -12,7 +12,7 @@ import {
   SetProductAttributeValuesPayloadSchema,
 } from '../../shared/actions/attribute-value-mutations.ts';
 import { OutboxPayloadSchema as SelectionSourceChangedEventSchema } from '../../shared/outbox/commerce-catalog-selection-source-changed-v1.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import { handleRemoveProductAttributeValues } from '../../src/actions/remove-product-attribute-values.action.ts';
 import { handleSetProductAttributeValues } from '../../src/actions/set-product-attribute-values.action.ts';
 import type { AttributeValuesPersistence } from '../../src/persistence/attribute-values-persistence.ts';

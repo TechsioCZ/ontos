@@ -8,7 +8,7 @@ Application Composition validation and native publication are implemented; live 
 
 ## Current Composition transport
 
-The source-owned publisher is `scripts/publish-active-application-composition.mts`. After the deployed candidate artifacts are observable, the environment's serialized deploy workflow supplies its reviewed candidate file:
+The source-owned publisher is `scripts/publish-active-application-composition.mts`. No GitHub workflow on `main` runs `publish`, `prepare`, `capture-approved-snapshot`, `refresh` or `configure-source`. PR #1496 deleted the deploy chain, the composition refresh workflow and the first-cutover workflow, and `ultramodern-workspace-gates.yml` only calls the offline `prove-build` command. Publication is therefore an operator-run or separately provisioned automation step. After the deployed candidate artifacts are observable, the operator supplies the reviewed intent, selection, candidate and expected-composition files:
 
 ```sh
 mise exec -- pnpm active-composition:publish publish --environment <environment> \
@@ -16,18 +16,18 @@ mise exec -- pnpm active-composition:publish publish --environment <environment>
   --candidate-file <candidate.json> --expected-composition-file <expected-composition.json>
 ```
 
-The publisher observes served contracts, Module Federation manifests and Shell runtime evidence with bounded reads, validates the whole candidate, and derives its immutable content revision. It validates the provider-native KV value endpoint from `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, authenticates publication with the operator's `CLOUDFLARE_API_TOKEN`, performs a native HTTP PUT and waits for matching readback. This is authorized operator/CI publication, not a new snapshot-signature protocol. Runtime readers use a separate read-only credential; neither credentials nor complete snapshots belong in logs.
+The publisher observes served contracts, Module Federation manifests and Shell runtime evidence with bounded reads, validates the whole candidate, and derives its immutable content revision. It validates the provider-native KV value endpoint from `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, authenticates publication with the operator's `CLOUDFLARE_API_TOKEN`, performs a native HTTP PUT and waits for matching readback. This is authorized operator (or separately provisioned automation) publication, not a new snapshot-signature protocol. Runtime readers use a separate read-only credential; neither credentials nor complete snapshots belong in logs.
 
 Core DB authority coordinates publication and transaction admission with revision, phase and deadline fences. A successful HTTP/KV read alone does not authorize a business operation. Storage publication and DB settlement are distinct boundaries, not one atomic distributed transaction: failed PUT/readback or uncertain settlement must stop promotion and be resolved against the actual publication/authority state before retry. Preserve the exact candidate/revision and failure evidence.
 
 - **Node:** `active-application-composition-source.node.ts` lazily reads `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, with optional `ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN`. It enforces the source URL contract, bounded body/read time and a short successful-read cache capped by the snapshot's original authority deadline. Failures are not cached. Reading the same old content never extends its lease. The source constants own the timeout/cache limits.
 - **Workers:** `active-application-composition-source.workerd.ts` reads native binding `ONTOS_ACTIVE_APPLICATION_COMPOSITION`, key `active`, as defined in `active-application-composition-edge.ts`. Missing binding/key, invalid content or bounded-read failure fail closed. KV propagation is distinct from publication readback; this playbook promises no immediate global cutover SLA.
 
-The current policy refreshes every six hours and gives each successful observation a 24-hour validity window. A business endpoint returning HTTP 500 does not by itself prevent identity observation. Missing or changed artifact bytes, failed backend-identity observation, or a stalled identity response can prevent renewal of the complete snapshot. Without another successful authorized observation, admission expires at the original `validUntil`, including otherwise healthy operations; cached bytes and an old hash do not extend that deadline. This shared observation failure domain remains part of the bounded MIN behavior, rather than a new availability guarantee.
+`ACTIVE_APPLICATION_COMPOSITION_POLICY` (`scripts/active-application-composition.mts`) gives each successful observation a 24-hour validity window; it holds no refresh cadence. **Scheduled refresh is not supported on this branch:** the workflow that ran it was removed (#1496) and nothing schedules the `refresh` command. Renewal happens only when an operator runs `mise exec -- pnpm active-composition:publish refresh --environment <environment>` (or a new `publish`) before the current `validUntil`; it needs the same publication configuration as `publish`. If neither runs, admission stops at the original `validUntil` and the rest of this section applies. Do not state or assume automatic renewal. A business endpoint returning HTTP 500 does not by itself prevent identity observation. Missing or changed artifact bytes, failed backend-identity observation, or a stalled identity response can prevent renewal of the complete snapshot. Without another successful authorized observation, admission expires at the original `validUntil`, including otherwise healthy operations; cached bytes and an old hash do not extend that deadline. This shared observation failure domain remains part of the bounded MIN behavior, rather than a new availability guarantee.
 
-Renewal preserves the Composition revision and existing admission phase. It does not make an ended business assignment Current, restore a revoked permission or rewrite accepted business history. Restore the failed identity-observation dependency and use the existing authorized refresh/recovery path; draining or sealed authority still requires its existing lifecycle handling.
+Renewal preserves the Composition revision and existing admission phase. It does not make an ended business assignment Current, restore a revoked permission or rewrite accepted business history. Restore the failed identity-observation dependency and rerun `refresh --environment <environment>` (it refuses changed artifacts and requires an explicit promotion instead); draining or sealed authority still requires its existing lifecycle handling.
 
-For Node source configuration the publisher's `configure-source` command installs the stable URL and read-only token through the existing provider configuration path; Workers placement supplies the native binding. Code or configuration changes may still require normal deployment/restart, but routine snapshot publication/renewal is consumed through these native sources. Do not restore `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` or use a restart to bypass missing, expired, inconsistent or draining/sealed authority. Check configured source/binding, published revision/deadline and DB phase, then use the existing authorized publication/recovery path. Readiness and the authenticated smoke suite still gate activation. Installation is not activation, and Tenant Module State never selects a different runtime graph.
+For Node source configuration the publisher's `configure-source` command installs the stable URL and read-only token through the existing provider configuration path; Workers placement supplies the native binding. Code or configuration changes (including a first `configure-source`) may still require normal deployment/restart, but publishing or renewing a snapshot never does: consumers pick it up through these native sources, so a restart is neither a prerequisite for a new publication nor a recovery step for it. Do not restore `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` or use a restart to bypass missing, expired, inconsistent or draining/sealed authority. Check configured source/binding, published revision/deadline and DB phase, then rerun `refresh` (same approved revision) or `publish` (new reviewed candidate). Readiness and the [required smoke suite](#required-smoke-suite) still gate activation; that suite is an operator checklist, not a command in `app/package.json`. Installation is not activation, and Tenant Module State never selects a different runtime graph.
 
 Rollback remains an explicit audited promotion of a previously validated immutable revision with compatible artifact evidence (see [Rollback](#rollback)); there is no automatic last-known-good or untrusted fallback. Accepted future manifest/artifact fields in the warning above remain target architecture, not prerequisites that current tooling silently implements.
 
@@ -45,8 +45,8 @@ not delete its retained artifacts. Zero source impact can retain every slot whil
 complete desired candidate. Migration requirements remain a separate closure, including retained
 owner and Core verification where required.
 
-The workflow captures the approved baseline **B** before selection under the existing publication
-lock. `capture-approved-snapshot --allow-absent --baseline-only` records literal JSON `null` only when
+The operator captures the approved baseline **B** before selection under the existing publication
+lock (no workflow on `main` does this for you). `capture-approved-snapshot --allow-absent --baseline-only` records literal JSON `null` only when
 both native storage and Core authority prove absence. Transport errors, invalid/expired snapshots and
 unapproved pointers are failures. Baseline-only capture permits a valid legacy graph to be replaced by
 an explicit full build; it does not approve reusing mutable legacy URLs. Default capture still requires
@@ -524,8 +524,8 @@ environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The
 `CLOUDFLARE_API_TOKEN`. The SpiceDB TLS step also needs `ZEROPS_TOKEN`, because `zcli` cannot set
 service secrets, and a `CLOUDFLARE_API_TOKEN` with the stage zone permission "SSL and
 Certificates: Edit" for the Origin CA.
-`provision` creates the composition KV namespace, and CI writes its `active` key with the
-`stage-edge` token, so both tokens need the account permission "Workers KV Storage: Edit".
+`provision` creates the composition KV namespace, and the publisher writes its `active` key with
+the `CLOUDFLARE_API_TOKEN` it is run with, so both tokens need the account permission "Workers KV Storage: Edit".
 
 The same file holds the Shell's two secrets, because the Zerops Shell they used to live on is
 retired: `shellsuperapp_BETTER_AUTH_SECRET` (at least 32 characters) and
@@ -567,8 +567,8 @@ node -e "const c=require('node:crypto');const k=c.generateKeyPairSync('ed25519')
   `db18_password`. Service values such as that password come from the service's data through the
   Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`.
   The db18 hop is encrypted but not certificate-checked; see "Why db18 TLS is not CA-verified" below.
-  It creates the KV namespace `ontos-stage-active-application-composition`, empty until CI writes the
-  first publication. It writes the IDs
+  It creates the KV namespace `ontos-stage-active-application-composition`, empty until the publisher
+  writes the first publication. It writes the IDs
   and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
   `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
   placed Worker's secrets with `wrangler secret bulk`: the Shell's secrets from the settings file, the
@@ -672,7 +672,7 @@ applications:
   the more specific path application before the hostname one. Pages and BFF calls still need a login;
   the browser reaches the BFFs through the Shell, which calls verticals over service bindings.
 - `ontos-stage-contracts` bypasses Access for the build-time contracts the Application Composition
-  publisher reads from CI: the Shell's `/.well-known/ontos-shell-runtime.json` and `/mf-manifest.json`,
+  publisher reads: the Shell's `/.well-known/ontos-shell-runtime.json` and `/mf-manifest.json`,
   and every vertical's `/.well-known/ontos-module-manifest.json`. They hold build metadata, never data.
   Access caps one application's destinations, so they do not fit into `ontos-stage-public-paths`.
 
@@ -695,7 +695,7 @@ Edit.
 
 `node scripts/ops/stage-zerops-services.mts retire|restore [--dry-run]` handles the 9 stage
 application services that Cloudflare mode no longer uses. The migrator, SpiceDB, `outboxworkerhost`
-and the 3 per-vertical outbox workers stay: the workers remain stopped, and the deploy workflow reads
+and the 3 per-vertical outbox workers stay: the workers remain stopped, and `active-composition:publish worker-mode-drift` reads
 their status to reconcile Outbox Workers after an Outbox Worker mode switch. The script never changes
 `zerops.yaml`, `zerops-import.yaml`, a deploy script, or a GitHub variable.
 
@@ -910,6 +910,16 @@ check failed and cancels the run. `Workspace gates` still runs on the cancelled 
 queue removes the entry without waiting for the owner rows. Pull request runs still run every job, so
 their authors see every failure.
 
+A merge-group entry of one pull request skips its gates when that pull request's own run already
+tested the same tree on the same base. Each pull-request run records the tree, base, head and plan mode
+of the merge commit it tested (the `ci-comparison` artifact, kept 30 days). The entry's `queue-proof`
+job merges the pull request's current head onto the entry's base itself (`git merge-tree`). It accepts a
+record only when that merge is exactly the entry's tree, the run is a successful `pull_request` run of
+this workflow from a head in this repository, and its record names that tree, base and head with a full
+or affected plan. `Workspace gates` then passes on that proof and the plan summary names the run. A group
+of several pull requests, a moved base, a fork head or any failed lookup gives no proof, so the gates run
+(`app/scripts/ci/pull-request-proof.sh`).
+
 The push that lands the commit deploys nothing. `queue-proof` looks for a successful `merge_group`
 run of the workflow on that commit; when one exists every gate job is skipped and `Workspace gates`
 passes on that proof. A commit without one (a dispatch on a commit pushed before the queue) runs the
@@ -956,7 +966,7 @@ Production has no fixed accounts and no operator stage accounts file. Its promot
 
 Before first authority publication, the first active-to-draining fence, a recovered migration, and a replacement pointer publication, the administrative publisher rechecks the configured retired-provider inventory and requires the published owner legacy-completion verifier. Missing verifier, incomplete observation, unknown owner database, unresolved legacy work, or failed evidence retention refuses publication. Closing new durable admission does not itself establish legacy absence.
 
-The operator sets `ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY` to an absolute private directory. Deployment and refresh jobs create that mode-0700 directory under `runner.temp` and upload its sanitized evidence with `always()` retention for 30 days, including failed attempts. The publisher retains each sanitized native identity/result observation as an exclusive mode-0600 JSON artifact there. A retained observation cannot authorize a later attempt: its live callback, exact database/system/runtime identity, native transaction and revision must match the current transition. Provider credentials and database URLs remain the existing distinct operator/runtime configuration; evidence contains no handoff payload or credentials.
+The operator sets `ONTOS_LEGACY_COMPLETION_EVIDENCE_DIRECTORY` to an absolute private directory. Whoever runs the publisher (an operator or separately provisioned automation; no workflow on `main` does since #1496) creates that mode-0700 directory and keeps its sanitized evidence, including failed attempts, outside the logs. The publisher retains each sanitized native identity/result observation as an exclusive mode-0600 JSON artifact there. A retained observation cannot authorize a later attempt: its live callback, exact database/system/runtime identity, native transaction and revision must match the current transition. Provider credentials and database URLs remain the existing distinct operator/runtime configuration; evidence contains no handoff payload or credentials.
 
 Privacy observes all tenants through its deployment-only administrative verifier, with native full-visibility and READ COMMITTED checks. It holds its own dispatch/outcome table locks while Core verifies its immutable message evidence and commits the fence in a separate transaction. No raw executor crosses the published interface. Unmarked legacy obligations remain unresolved; the gateway never invents an original release, adopts work, marks delivery done, or treats a fresh environment as evidence about another environment. Current marked completion requires the exact owner handoff and immutable successful outcome.
 

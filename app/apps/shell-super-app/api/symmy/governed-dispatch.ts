@@ -1,6 +1,7 @@
 import { SYMMY_FIXTURE_ROUTES } from '@app/shared-contracts/symmy';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { executeAdmitSymmyJobWithAuthorization } from '@app/symmy-integration/api/admit-symmy-job-action/client';
+import { SYMMY_PRODUCT_PLAN_LIMIT_REASON } from '@app/symmy-integration/symmy-internal-contracts';
 import { executeAdmitSymmySyncWithAuthorization } from '@app/symmy-integration/api/admit-symmy-sync-action/client';
 import { AdmitSymmySyncPayloadSchema } from '@app/symmy-integration/api/admit-symmy-sync-action';
 import { executeSymmyJobStatusWithAuthorization } from '@app/symmy-integration/api/symmy-job-status/client';
@@ -19,6 +20,8 @@ import {
   SymmyInternalPlanPayloadSchema,
 } from './contract.ts';
 import type { SymmyIngressDispatch, SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
+import { readSymmyStockBatchFacts } from './stock-batch-facts.ts';
+import { readSymmyCustomerGroupDefinitionFacts } from './customer-group-batch-facts.ts';
 import { readSymmyPriceBatchFacts } from './price-batch-facts.ts';
 import { readSymmyProductPriceGroupFacts } from './product-batch-facts.ts';
 import {
@@ -157,15 +160,42 @@ const acquireScopedRouteContext = Effect.fn('SymmyGovernedDispatch.acquireScoped
   return { route, scoped: Option.none<SymmyOwnerAssertion>() };
 });
 
-/** The stock route sends only its rows; the group route sends a fixture identity or a versioned plan. */
-const syncAdmissionSource = (request: Parameters<SymmyIngressDispatch['apply']>[0]['request']) => {
+/**
+ * What a synchronous admission carries besides its key and route. Stock and group routes send their rows and fresh public owner facts. The group route
+ * sends its groups and, for a new admission, what the owner holds for each code, which the owner admission fences its
+ * plan on. The owner resolves a key that already has a saved group admission to that admission first, even on a route
+ * still configured, and such a context enrolls no read: the groups go alone, and the owner answers from that admission
+ * or refuses a different body as a conflict.
+ */
+const syncAdmissionSource = Effect.fn('SymmyGovernedDispatch.syncAdmissionSource')(function* syncAdmissionSource(
+  request: Parameters<SymmyIngressDispatch['apply']>[0]['request'],
+  route: typeof SymmyRouteContextResponseSchema.Type,
+  admission: SymmyIngressAdmission,
+  newRequestIdentifier: Effect.Effect<string, typeof symmyUnavailableProblem>,
+) {
   if ('stock' in request) {
-    return { stock: request.stock };
+    if (route.replayIdempotencyDigest !== undefined) {
+      return { stock: request.stock };
+    }
+    return {
+      stock: request.stock,
+      stockFacts: yield* readSymmyStockBatchFacts(
+        { admission, routeScope: route, rows: request.stock },
+        newRequestIdentifier,
+      ),
+    };
   }
-  return 'fixtureId' in request
-    ? { fixtureId: request.fixtureId }
-    : { contractVersion: request.contractVersion, plan: request.plan };
-};
+  if (route.replayIdempotencyDigest !== undefined) {
+    return { customerGroups: request.customerGroups };
+  }
+  return {
+    customerGroups: request.customerGroups,
+    groupFacts: yield* readSymmyCustomerGroupDefinitionFacts(
+      { admission, groups: request.customerGroups, routeScope: route },
+      newRequestIdentifier,
+    ),
+  };
+});
 
 /**
  * What a durable job carries besides its key and route. The price lists carry nothing more: the adapter reads the
@@ -261,7 +291,7 @@ export const makeSymmyGovernedDispatch = (
     const scoped = Option.isSome(prepared.scoped)
       ? prepared.scoped.value
       : yield* acquireSymmyReadAssertion(admission, symmyAudience, prepared.route.legalEntityId);
-    const source = syncAdmissionSource(request);
+    const source = yield* syncAdmissionSource(request, prepared.route, admission, newRequestIdentifier);
     const payload = yield* Schema.decodeUnknownEffect(AdmitSymmySyncPayloadSchema)({
       ...source,
       idempotencyKey: request.idempotencyKey ?? (yield* newRequestIdentifier),
@@ -461,6 +491,10 @@ export const makeSymmyGovernedDispatch = (
           Match.when('AdmitSymmyJobActionAuthenticationProblem', () => authenticationRequired),
           Match.whenOr('AdmitSymmyJobActionForbiddenProblem', 'AdmitSymmyJobRouteDeniedProblem', () => forbidden),
           Match.when('AdmitSymmyJobIntentConflictProblem', () => symmyFixtureIntentConflictProblem),
+          Match.when('AdmitSymmyJobPlanLimitProblem', () => ({
+            ...symmyInvalidProblem,
+            detail: SYMMY_PRODUCT_PLAN_LIMIT_REASON,
+          })),
           Match.orElse(() => symmyUnavailableProblem),
         ),
       ),

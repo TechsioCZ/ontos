@@ -2,7 +2,7 @@ import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 
 import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
-import type { CounterpartyRef } from '../../shared/party-registry-references.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { LookupResult } from '../services/counterparty-persistence.service.ts';
 
 const notFound = (context: string) =>

@@ -3340,6 +3340,64 @@ it.effect('a valid owner preflight permit cannot override definitive executor de
   }),
 );
 
+/** The production shape of an invitation claim: a `protected` carrier, so the one access gate answers it. */
+const protectedRegistration = () =>
+  defineAction(
+    {
+      accessDeclaration: fixtureActionAccess('core.shell'),
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.protected.v1' },
+      actionKey: 'shell.counter.protected-change',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'protected' },
+        entrypointKey: 'shell.counter.protected-change',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityScope: 'optional',
+      owningModuleKey: 'core.shell',
+      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+      policies: [],
+      resultSchema: Schema.Struct({ total: Schema.Finite }),
+      schemaVersion: '1',
+    },
+    (payload) => Effect.succeed({ total: payload.amount }),
+  );
+
+it.effect('a valid owner preflight permit cannot override a definitive access-gate denial on a protected Action', () =>
+  Effect.gen(function* gateDenialWithPreflight() {
+    const permit = makeActionAuthorizationPreflightPermit({
+      actionInvocationId: 'invocation-1',
+      actionKey: 'shell.counter.protected-change',
+      principalId: principal.principalId,
+    });
+    const harness = yield* makeHarness({
+      access: 'denied',
+      authorizationPreflight: { prepare: () => Effect.succeed({ outcome: 'allowed', permit }) },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: protectedRegistration(),
+        transport: transport('preflight-gate-denied'),
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
+    expect(harness.permissionCounts().rejectionCount).toBe(1);
+    expect(harness.counts().transitionCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    expect(harness.flushed).toEqual([]);
+    expect(harness.rejections[0]?.actionInvocationId).toBe('invocation-1');
+    // The definitive denial came before the permit was consumed: the owner proof is still spendable.
+    yield* permit.consume;
+  }),
+);
+
 it.effect('requires executor permission and an independent owner preflight on the allowed path', () =>
   Effect.gen(function* allowedExecutorWithPreflight() {
     const permit = makeActionAuthorizationPreflightPermit({
@@ -4566,6 +4624,23 @@ it.effect(
     }
     expect(Cause.hasInterrupts(exit.cause)).toBe(true);
     expect(harness.flushed.length).toBe(1);
+  }),
+);
+
+it.effect(
+  'rejects an invalid expected Action key before resolving commit state',
+  Effect.fn(function* invalidResolutionKey() {
+    const harness = yield* makeHarness({});
+    for (const expectedActionKey of ['', ' shell.counter.change', 'shell.counter.change ']) {
+      const failure = yield* Effect.flip(
+        harness.runtime.resolveActionCommit({
+          expectedActionKey,
+          invocationId: '00000000-0000-4000-8000-000000000099',
+          principal,
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
+    }
   }),
 );
 

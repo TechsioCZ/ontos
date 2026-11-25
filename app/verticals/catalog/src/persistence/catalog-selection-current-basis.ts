@@ -2,16 +2,14 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Match, Option, Schema } from 'effect';
 
-import {
-  CatalogRevisionNumberSchema,
-  sameCatalogRevisionReference,
-} from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { sameCatalogRevisionReference } from '@app/catalog-selection-contracts/catalog-revision-reference';
 import {
   CatalogSelectionBasisSchema,
   CatalogSelectionMembershipSchema,
   sameCatalogSelectionBasis,
-} from '../../shared/domain/catalog-selection-evidence.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import { deriveClassification } from '../../shared/domain/category-classification.ts';
 import { catalogSelectionPurposeRequiresCategory } from '../../shared/domain/catalog-selection-purpose.ts';

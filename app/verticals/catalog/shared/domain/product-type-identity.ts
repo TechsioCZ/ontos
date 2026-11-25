@@ -1,8 +1,8 @@
 import { Effect, Schema } from 'effect';
 
-import type { ProductRef } from '../resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { ProductTypeRef } from '../resources/product-type.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import { ProductTypeRefSchema } from '../resources/product-type.ts';
 
 /** A Product has at most one current type; a draft may have none. */

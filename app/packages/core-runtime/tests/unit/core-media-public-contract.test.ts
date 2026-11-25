@@ -1,0 +1,161 @@
+import { DateTime, Effect, Exit, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { MediaUnavailable } from '../../src/media/errors.ts';
+import {
+  MediaAssetMetadataSchema,
+  MediaByteSizeSchema,
+  MediaContentSha256Schema,
+  MediaProcessingStatusSchema,
+  canTransitionMediaStatus,
+  mediaStatusesThatMayEnter,
+  toMediaAssetMetadata,
+} from '../../src/media/public-contract.ts';
+import { TenantMediaAssetKeySchema } from '../../src/media/identity.ts';
+
+const key = Schema.decodeUnknownSync(TenantMediaAssetKeySchema)({
+  mediaAssetId: '00000000-0000-4000-8000-000000000002',
+  tenantId: '00000000-0000-4000-8000-000000000001',
+});
+const digest = 'a'.repeat(64);
+const source = {
+  ...key,
+  byteSize: 1234n,
+  contentSha256: digest,
+  displayFilename: 'Brochure.pdf',
+  ingestionSource: 'user',
+  mimeType: 'application/pdf',
+  originalFilename: 'brochure-final.pdf',
+  processingStatus: 'ready',
+  sealedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-19T10:00:00.000Z')),
+  // Persisted columns that must never leave Core.
+  storageKey: 'core-media/v1/secret-key',
+  storageObjectVersionRef: 'provider-version-9',
+  storageProvider: 'provider-x',
+};
+
+const FORBIDDEN_PUBLIC_FIELDS = [
+  'storageProvider',
+  'storageKey',
+  'storageObjectVersionRef',
+  'credentials',
+  'url',
+  'revision',
+  'revisionId',
+  'version',
+] as const;
+
+it('never lets a storage, credential, URL or revision field into the public metadata schema', () => {
+  for (const field of FORBIDDEN_PUBLIC_FIELDS) {
+    expect(Object.keys(MediaAssetMetadataSchema.fields)).not.toContain(field);
+  }
+});
+
+it.effect('projects a ready asset without any storage value, as the owner-qualified ref plus plain metadata', () =>
+  Effect.gen(function* readyProjection() {
+    const metadata = yield* toMediaAssetMetadata(source);
+    expect(metadata).toEqual({
+      byteSize: 1234,
+      contentSha256: digest,
+      contentVerified: true,
+      displayFilename: 'Brochure.pdf',
+      ingestionSource: 'user',
+      mediaAssetRef: {
+        moduleId: 'core.media',
+        resourceId: key.mediaAssetId,
+        resourceType: 'core.media.asset',
+        tenantId: key.tenantId,
+      },
+      mimeType: 'application/pdf',
+      originalFilename: 'brochure-final.pdf',
+      processingStatus: 'ready',
+    });
+    const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(MediaAssetMetadataSchema))(metadata);
+    for (const secret of ['secret-key', 'provider-version-9', 'provider-x', 'storage']) {
+      expect(serialized).not.toContain(secret);
+    }
+  }),
+);
+
+it.effect('withholds an absent original file name', () =>
+  Effect.gen(function* absentOriginal() {
+    const metadata = yield* toMediaAssetMetadata({ ...source, originalFilename: null });
+    expect(metadata).not.toHaveProperty('originalFilename');
+  }),
+);
+
+it.effect('reports the size and digest only at the verification level reached: sealed and ready', () =>
+  Effect.gen(function* verificationLevels() {
+    // `uploaded`, `scanning` and `failed` rows hold the caller's declared size and digest as a claim. A claim is
+    // not a stored fact, so neither value leaves Core and the content is explicitly not verified.
+    for (const processingStatus of ['uploaded', 'scanning', 'failed']) {
+      const metadata = yield* toMediaAssetMetadata({ ...source, processingStatus, sealedAt: null });
+      expect(metadata).not.toHaveProperty('byteSize');
+      expect(metadata).not.toHaveProperty('contentSha256');
+      expect(metadata.contentVerified).toBe(false);
+      expect(metadata.processingStatus).toBe(processingStatus);
+    }
+    // A once-sealed asset later proven corrupt keeps its seal on the row but is no longer verified content.
+    const corrupt = yield* toMediaAssetMetadata({ ...source, processingStatus: 'failed' });
+    expect(corrupt).not.toHaveProperty('byteSize');
+    expect(corrupt).not.toHaveProperty('contentSha256');
+    expect(corrupt.contentVerified).toBe(false);
+    const ready = yield* toMediaAssetMetadata(source);
+    expect(ready).toMatchObject({ byteSize: 1234, contentSha256: digest, contentVerified: true });
+  }),
+);
+
+it.effect('fails closed on a ready asset that carries no seal or no digest rather than presenting it as usable', () =>
+  Effect.gen(function* unprovenReady() {
+    for (const broken of [{ sealedAt: null }, { contentSha256: null }]) {
+      const exit = yield* Effect.exit(toMediaAssetMetadata({ ...source, ...broken }));
+      expect(
+        Exit.isFailure(exit) &&
+          exit.cause.reasons.some((reason) => 'error' in reason && Schema.is(MediaUnavailable)(reason.error)),
+      ).toBe(true);
+    }
+  }),
+);
+
+it.effect('fails closed on a status or source outside the public vocabulary', () =>
+  Effect.gen(function* outside() {
+    for (const broken of [{ processingStatus: 'archived' }, { ingestionSource: 'scraper' }, { byteSize: -1n }]) {
+      const exit = yield* Effect.exit(toMediaAssetMetadata({ ...source, ...broken }));
+      expect(
+        Exit.isFailure(exit) &&
+          exit.cause.reasons.some((reason) => 'error' in reason && Schema.is(MediaUnavailable)(reason.error)),
+      ).toBe(true);
+    }
+  }),
+);
+
+it('lets a status move only forward and never regress from ready or failed', () => {
+  const statuses = MediaProcessingStatusSchema.literals;
+  const allowed = statuses.flatMap((from) =>
+    statuses.filter((to) => canTransitionMediaStatus(from, to)).map((to) => `${from}->${to}`),
+  );
+  expect(allowed.toSorted()).toEqual([
+    'scanning->failed',
+    'scanning->ready',
+    'uploaded->failed',
+    'uploaded->ready',
+    'uploaded->scanning',
+  ]);
+  expect(canTransitionMediaStatus('ready', 'uploaded')).toBe(false);
+  expect(canTransitionMediaStatus('ready', 'ready')).toBe(false);
+  expect(mediaStatusesThatMayEnter('ready')).toEqual(['uploaded', 'scanning']);
+  expect(mediaStatusesThatMayEnter('uploaded')).toEqual([]);
+});
+
+it('accepts only a byte count and a digest the database and the public contract can hold', () => {
+  for (const valid of [0, 1, Number.MAX_SAFE_INTEGER]) {
+    expect(Schema.is(MediaByteSizeSchema)(valid)).toBe(true);
+  }
+  for (const invalid of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 1e300, '5']) {
+    expect(Schema.is(MediaByteSizeSchema)(invalid)).toBe(false);
+  }
+  expect(Schema.is(MediaContentSha256Schema)('a'.repeat(64))).toBe(true);
+  for (const invalid of ['A'.repeat(64), 'a'.repeat(63), 'g'.repeat(64), '']) {
+    expect(Schema.is(MediaContentSha256Schema)(invalid)).toBe(false);
+  }
+});

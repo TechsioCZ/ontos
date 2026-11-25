@@ -5,7 +5,7 @@ import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { RevisePackageDefinitionPayloadSchema } from '../../shared/actions/revise-package-definition.ts';
-import { PackageDefinitionSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-package-definition-revised-v1.ts';
 import { PackageDefinitionRefSchema } from '../../shared/resources/package-definition.ts';
 import type { revisePackageDefinitionAction } from '../../src/actions/revise-package-definition.action.ts';

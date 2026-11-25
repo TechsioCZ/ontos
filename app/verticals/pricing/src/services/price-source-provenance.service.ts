@@ -95,7 +95,10 @@ export const preparePriceSourceEvidence = (input: PreparePriceSourceEvidenceInpu
     identityKey !== undefined &&
     (!priceDecimalValuesEqual(originalAssertion.unitBasis.quantity, identityKey.unitBasis.quantity) ||
       originalAssertion.unitBasis.unitRef.moduleId !== identityKey.unitBasis.unitRef.moduleId ||
-      originalAssertion.unitBasis.unitRef.resourceId !== identityKey.unitBasis.unitRef.resourceId ||
+      // Both references are schema-validated native UUIDs. Authority lookup canonicalizes a
+      // historical Price's Unit spelling, but its immutable source assertion must stay verbatim.
+      originalAssertion.unitBasis.unitRef.resourceId.toLowerCase() !==
+        identityKey.unitBasis.unitRef.resourceId.toLowerCase() ||
       originalAssertion.unitBasis.unitRef.resourceType !== identityKey.unitBasis.unitRef.resourceType ||
       originalAssertion.unitBasis.unitRef.tenantId !== identityKey.unitBasis.unitRef.tenantId)
   ) {

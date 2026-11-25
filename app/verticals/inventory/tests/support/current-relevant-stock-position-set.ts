@@ -1,5 +1,5 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { Schema } from 'effect';
 
 import { RelevantStockPositionSetRequestSchema } from '../../shared/domain/current-relevant-stock-position-set.ts';

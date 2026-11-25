@@ -41,6 +41,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: StockIssueActionApi,
       credential,
       defaultApiPrefix: '/inventory-api',
+      idempotencyKey: options.idempotencyKey,
       intent: options.intent,
       requestCorrelation,
     },
@@ -54,12 +55,7 @@ export const executeStockIssueWithAuthorization = (
   Schema.encodeUnknownEffect(StockIssuePayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.stockIssueAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.stockIssueAction.execute({ payload: encoded })),
       ),
     ),
   );

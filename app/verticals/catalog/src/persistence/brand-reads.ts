@@ -4,8 +4,8 @@ import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { BrandRef } from '../../shared/resources/brand.ts';
 import { BrandRefSchema } from '../../shared/resources/brand.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 import {
   brandRevisions,
   brands,

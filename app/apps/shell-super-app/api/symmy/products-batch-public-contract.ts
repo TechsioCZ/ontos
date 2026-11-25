@@ -22,7 +22,6 @@ const hasText = ({ description, name }: Text): boolean => description !== undefi
 const unsupportedGroups = (product: Product): readonly SymmyProductHintKind[] => {
   const { variants } = product;
   const groups: readonly (readonly [SymmyProductHintKind, boolean])[] = [
-    ['CategoryHint', filled(product.categories)],
     ['AttributeHint', filled(product.attributes) || variants.some(({ attributes }) => filled(attributes))],
     ['MediaHint', filled(product.media)],
     [
@@ -101,6 +100,9 @@ const mapProduct = (product: Product): ProductRow => {
     unsupported: unsupportedGroups(product),
     variants: [mapVariant(initial), ...further.map(mapVariant)],
   };
+  if (product.categories !== undefined) {
+    mapped.categories = product.categories;
+  }
   if (product.description !== undefined) {
     mapped.description = product.description;
   }

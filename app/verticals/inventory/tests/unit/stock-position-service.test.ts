@@ -111,6 +111,7 @@ const makePersistence = Effect.gen(function* makePersistence() {
           ),
         ),
       ),
+    lockEstablishmentTargets: () => Effect.void,
     read: (ref) =>
       Ref.get(positions).pipe(
         Effect.map((stored) => {

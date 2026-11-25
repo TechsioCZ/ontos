@@ -1,8 +1,11 @@
 import { Schema } from 'effect';
 
-import { CatalogRevisionIdSchema, CatalogRevisionNumberSchema } from './catalog-revision-reference.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import {
+  CatalogRevisionIdSchema,
+  CatalogRevisionNumberSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const uuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 const ownerKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160), Schema.isTrimmed());

@@ -45,7 +45,6 @@ const recoverResult = (
     },
     {
       decode: Schema.decodeUnknownEffect(RemoveProductLocalizedFactsResultSchema),
-      encode: Schema.encodeEffect(RemoveProductLocalizedFactsResultSchema),
     },
   );
 

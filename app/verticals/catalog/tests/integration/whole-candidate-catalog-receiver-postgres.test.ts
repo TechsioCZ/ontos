@@ -46,10 +46,8 @@ import {
   QuantityPreparationForbiddenProblemSchema,
   QuantityPreparationUnavailableProblemSchema,
 } from '../../shared/apis/quantity-preparation.ts';
-import {
-  PricingPurposeEquivalenceRequestSchema,
-  PricingPurposeEquivalenceForbiddenProblemSchema,
-} from '../../shared/apis/pricing-purpose-equivalence.ts';
+import { PricingPurposeEquivalenceRequestSchema } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
+import { PricingPurposeEquivalenceForbiddenProblemSchema } from '../../shared/apis/pricing-purpose-equivalence.ts';
 import { QuantityBasisCompatibilityForbiddenProblemSchema } from '../../shared/apis/quantity-basis-compatibility.ts';
 import { CatalogMediaCurrentForbiddenProblemSchema } from '../../shared/apis/catalog-media-current.ts';
 import { deriveActualCatalogCompositionSnapshot } from '../support/actual-catalog-composition.fixture.ts';

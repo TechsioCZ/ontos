@@ -1,4 +1,6 @@
 import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
+import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
+import { SetProductUnitTargetDivisibilityPayloadSchema } from '@app/catalog/api/set-product-unit-target-divisibility-action';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
@@ -22,7 +24,7 @@ import {
 
 import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.ts';
 import { SymmyPriceSourceSchema } from './symmy-price-list-batch.ts';
-import { SymmyStockScopeSchema } from './symmy-stock-batch.ts';
+import { SymmyInventorySourceSchema } from './symmy-stock-batch.ts';
 
 export const SymmyOwnerIntentSchema = Schema.Union([
   SymmyCatalogPricingInventoryIntentSchema,
@@ -63,12 +65,13 @@ const unsupportedBranchSchema = Schema.Struct({
     'DescriptiveHint',
     'ClassificationHint',
     'PriceHint',
+    'StockProvisioningHint',
     'IdentifierHint',
   ]),
 });
 const unsupportedBranches = Schema.optionalKey(
   Schema.Array(unsupportedBranchSchema).check(
-    Schema.isMaxLength(7),
+    Schema.isMaxLength(8),
     Schema.makeFilter(
       (branches) =>
         (new Set(branches.map(({ branchKey }) => branchKey)).size === branches.length &&
@@ -83,7 +86,7 @@ const pinnedUnsupportedBranches = Schema.optionalKey(
       ...unsupportedBranchSchema.fields,
       branchId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyUnsupportedBranchId')),
     }),
-  ).check(Schema.isMaxLength(7)),
+  ).check(Schema.isMaxLength(8)),
 );
 
 const effectDefinition = Schema.Struct({
@@ -164,11 +167,7 @@ const executionPlanItem = Schema.Struct({
 });
 
 const executionPlanDefinition = Schema.Struct({
-  inventoryBackendId: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed()).pipe(
-      Schema.brand('SymmyInventoryBackendId'),
-    ),
-  ),
+  inventoryBackendId: Schema.optionalKey(SymmyInventorySourceSchema.fields.issuer.fields.backendId),
   items: Schema.NonEmptyArray(executionPlanItem).check(Schema.isMaxLength(16)),
   pricingSourceSystem: Schema.optionalKey(
     DefinePricePayloadSchema.fields.sourceAssertion.fields.sourceRecord.fields.sourceSystem,
@@ -197,8 +196,17 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
   ).check(Schema.isMaxLength(16)),
   /** Only the price list routes: the grant refs a price assertion names. Prices are never enrolled themselves. */
   priceSource: Schema.optionalKey(SymmyPriceSourceSchema),
-  /** Only the stock route: the positions it is enrolled for. The row values are never enrolled. */
-  stockScope: Schema.optionalKey(SymmyStockScopeSchema),
+  /** One integration-wide Inventory policy, shared by product completion and stock resolution. */
+  inventorySource: Schema.optionalKey(SymmyInventorySourceSchema),
+  /** Explicit operator authority for source-requested ACTIVE, axis-free, untyped Products. */
+  catalogReadiness: Schema.optionalKey(
+    Schema.Struct({
+      divisible: SetProductUnitTargetDivisibilityPayloadSchema.fields.divisible,
+      kind: Schema.Literal('AXIS_FREE_UNTYPED'),
+      locale: SetProductLocalizedFactsPayloadSchema.fields.locale,
+      unitRef: SetProductUnitTargetDivisibilityPayloadSchema.fields.target.fields.unit,
+    }),
+  ),
 }).check(validPlanGraph);
 
 /** Explicit normalized internal business inputs; real Symmy wire acceptance is separate. */
@@ -352,6 +360,11 @@ const unsupportedBranchOutcomes = {
   MediaHint: { ...unsupportedCatalogMeaning, branchKind: 'MediaHint' },
   PriceHint: { branchKind: 'PriceHint', owner: 'commerce.pricing', reason: 'missing_context' },
   ReservedQuantityHint: { owner: 'commerce.inventory', reason: 'unsupported_meaning' },
+  StockProvisioningHint: {
+    branchKind: 'StockProvisioningHint',
+    owner: 'commerce.inventory',
+    reason: 'missing_context',
+  },
   TaxHint: { owner: 'commerce.tax', reason: 'owner_not_activated' },
   VariantUpdateHint: { ...unsupportedCatalogMeaning, branchKind: 'VariantUpdateHint', reason: 'missing_context' },
 } as const;

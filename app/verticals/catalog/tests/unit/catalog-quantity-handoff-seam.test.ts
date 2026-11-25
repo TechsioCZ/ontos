@@ -2,18 +2,20 @@ import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogQuantityHandoffSchema } from '../../shared/domain/catalog-quantity-handoff.ts';
+import { CatalogQuantityHandoffSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import type { CatalogQuantityHandoffBasisFacts } from '../../shared/domain/catalog-quantity-handoff.ts';
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
-import type { CatalogResourceRef } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import {
   CatalogSelectionBasisSchema,
   CatalogSelectionMembershipSchema,
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import {
   CatalogSelectionRevisionSchema,
   CatalogSelectionSchema,
   PackageDefinitionSelectionRevisionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection';
 import type { PackageContentRevision, PackageResolution } from '../../shared/domain/package-content.ts';
 import type { QuantityNormalization } from '../../shared/domain/purchase-quantity.ts';
 import { catalogQuantityHandoffWith } from '../../src/persistence/catalog-quantity-handoff.ts';

@@ -12,7 +12,7 @@ import { Context, Effect, Layer, Option } from 'effect';
 
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
-import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import {
   counterparties,
   counterpartyRolePeriods,

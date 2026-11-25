@@ -222,6 +222,7 @@ describe('Product Type untyped decision persistence', () => {
       const tx = transaction();
       const result = yield* decide(tx);
       expect(result.reason).toBeNull();
+      expect(result.result).toMatchObject({ changed: true, decisionRevision: 1 });
       expect(tx.inserted).toMatchObject([
         {
           axisRevision: 0,

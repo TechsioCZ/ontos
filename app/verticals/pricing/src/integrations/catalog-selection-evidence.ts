@@ -1,6 +1,6 @@
 import { executeSelectionEvidenceWithAuthorization } from '@app/catalog/api/client';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import type { CatalogSelection } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionOwnerAssessmentResult } from '@app/catalog/domain/catalog-selection-owner-contract';
 import type { OperationalScope } from '@app/core-runtime';
 import { Context, Crypto, Effect, Redacted, Schema } from 'effect';
@@ -113,6 +113,17 @@ export const makeCatalogSelectionAssessmentPort = (dependencies: {
             Schema.is(PricingCatalogSelectionUnavailable)(cause)
               ? cause
               : unavailable('Catalog selection assessment is unavailable', cause),
+          ),
+          Effect.tap((response) =>
+            'status' in response.evidence && response.evidence.status === 'VALID' && response.missingRoles.length === 0
+              ? Effect.void
+              : Effect.logInfo('Pricing Catalog selection did not validate', {
+                  missingRoles: response.missingRoles,
+                  outcome: 'status' in response.evidence ? response.evidence.status : response.evidence.kind,
+                  productId: selection.productRef.resourceId,
+                  requestCorrelation: dependencies.context.requestCorrelation,
+                  variantId: selection.variantRef.resourceId,
+                }).pipe(Effect.ignoreCause),
           ),
           Effect.flatMap((response) => {
             if (!assessmentMatchesRequest(response.evidence, selection)) {

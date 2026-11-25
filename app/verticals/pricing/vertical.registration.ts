@@ -11,6 +11,7 @@ import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.a
 import { definePriceAction } from './src/actions/define-price.action.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
 import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
+import { manageExternalPriceSourcePolicyAction } from './src/actions/manage-external-price-source-policy.action.ts';
 import { manageProductCommercialFeesBulkAction } from './src/actions/manage-product-commercial-fees-bulk.action.ts';
 import { manageProductPricesBulkAction } from './src/actions/manage-product-prices-bulk.action.ts';
 import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.action.ts';
@@ -33,6 +34,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
     definePriceAction,
     manageCommitmentConfirmationAction,
     manageContractualDiscountAction,
+    manageExternalPriceSourcePolicyAction,
     manageProductCommercialFeesBulkAction,
     manageProductPricesBulkAction,
     manageQuantityTierAction,

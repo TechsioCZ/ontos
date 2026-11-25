@@ -20,7 +20,7 @@ import {
 } from '@app/party-registry/apis/counterparty-organization-ico-facts';
 import { executeCounterpartyOrganizationIcoFactsWithAuthorization } from '@app/party-registry/apis/counterparty-organization-ico-facts/client';
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
-import type { CounterpartyRef } from '@app/party-registry/resources/counterparty';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { CustomerProfileIcoMigrationRejected } from '../../shared/domain/customer-profile-ico-migration.ts';

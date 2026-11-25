@@ -7,8 +7,8 @@ import {
   CatalogMediaPurposeSchema,
 } from '../domain/catalog-media-assignment.ts';
 import { ProductEvidenceReferenceSchema, ProductReasonSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const CatalogMediaSubjectRefSchema = Schema.Union([ProductRefSchema, VariantRefSchema]);
 export type CatalogMediaSubjectRef = typeof CatalogMediaSubjectRefSchema.Type;

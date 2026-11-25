@@ -103,7 +103,7 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
               }),
             );
           }
-          return Effect.succeed({ decisionRevision: 1, decisionState: 'CONFIRMED', productRef });
+          return Effect.succeed({ changed: true, decisionRevision: 1, decisionState: 'CONFIRMED', productRef });
         },
       };
       const readRuntime: ReadRuntimeService = { runRead: () => Effect.die('No read expected') };
@@ -148,6 +148,7 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
       const allowed = yield* Effect.promise(() => runtime.handler(request(`Bearer ${token}`)));
       expect(allowed.status, yield* Effect.promise(() => allowed.clone().text())).toBe(200);
       expect(yield* Effect.promise(() => allowed.json())).toMatchObject({
+        changed: true,
         decisionRevision: 1,
         decisionState: 'CONFIRMED',
         productRef,

@@ -1,8 +1,8 @@
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
-import type { CatalogResourceRef } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { CatalogExternalSourceRecordRefSchema } from '../../shared/domain/external-identifier-boundary.ts';
 import type { CatalogExternalSourceRecordRef } from '../../shared/domain/external-identifier-boundary.ts';
 import {

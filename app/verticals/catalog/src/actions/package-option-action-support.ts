@@ -3,7 +3,7 @@ import { Effect, Match, Schema } from 'effect';
 
 import type { ActivatePackageOptionPayload } from '../../shared/actions/activate-package-option.ts';
 import { PackageOptionActionError } from '../../shared/actions/package-option-contract.ts';
-import { PackageDefinitionSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { PackageDefinitionSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { PackageDefinitionRefSchema } from '../../shared/resources/package-definition.ts';
 import {
   packageOptionPersistenceForScope,

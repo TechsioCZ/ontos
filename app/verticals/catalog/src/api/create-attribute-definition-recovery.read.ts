@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.create-attribute-definition', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(CreateAttributeDefinitionResultSchema),
-      encode: Schema.encodeEffect(CreateAttributeDefinitionResultSchema),
     },
   );
 

@@ -1,5 +1,5 @@
 import type { executePricingPurposeEquivalenceWithAuthorization } from '@app/catalog/api/pricing-purpose-equivalence-client';
-import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
+import { CatalogQuantityHandoffReadySchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import { QuantityTierAggregationAttemptSchema } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
 import { Effect, Redacted, Schema } from 'effect';
 import { HttpClientError, HttpClientRequest } from 'effect/http';

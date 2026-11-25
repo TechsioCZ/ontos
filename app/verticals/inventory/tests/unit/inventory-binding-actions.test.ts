@@ -1,4 +1,4 @@
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { DateTime, Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';

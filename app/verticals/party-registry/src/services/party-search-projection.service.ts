@@ -15,7 +15,7 @@ import type {
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
-import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
+import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { PartySearchProjectionSource } from './party-search-projection-source.service.ts';
 

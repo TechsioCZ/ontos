@@ -1,4 +1,4 @@
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { Context, Effect, Schema } from 'effect';
 
 import { ProfileBoundedKeySchema, ProfileInstantSchema, SellingLegalEntityRefSchema } from './profile-contracts.ts';

@@ -3,7 +3,7 @@ import { Schema } from 'effect';
 import { AttributeDefinitionSchema } from '../domain/attribute-values.ts';
 import { ControlledAttributeValueSchema } from '../domain/attribute-vocabulary.ts';
 import { ColorLocalizedNamesSchema } from '../domain/color.ts';
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductReasonSchema } from '../domain/product.ts';
 import { AttributeDefinitionRefSchema } from '../resources/attribute-definition.ts';
 import { ControlledAttributeValueRefSchema } from '../resources/controlled-attribute-value.ts';

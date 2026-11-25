@@ -3,6 +3,7 @@
 // @ontos-action-http-slug release-inventory-reservation
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/release-inventory-reservation.ts';
 
 export { ReleaseInventoryReservationPayloadSchema } from '../actions/release-inventory-reservation.ts';
-const ReleaseInventoryReservationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ReleaseInventoryReservationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReleaseInventoryReservationActionInvalidProblem',
@@ -144,7 +143,6 @@ export const releaseInventoryReservationActionGroupDefinition = HttpApiGroup.mak
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/release-inventory-reservation', {
       error: actionErrors,
-      headers: ReleaseInventoryReservationActionHeadersSchema,
       payload: Schema.toEncoded(ReleaseInventoryReservationPayloadSchema),
       success: [ActionProposalAcceptedSchema, ReleaseInventoryReservationResultSchema],
     }),

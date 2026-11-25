@@ -133,6 +133,9 @@ const routeAllows = (scope: SymmySourceReadScope, moduleId: string, entrypointKe
   );
 export const requireRouteRead = (scope: SymmySourceReadScope, moduleId: string, entrypointKey: string) =>
   routeAllows(scope, moduleId, entrypointKey) ? Effect.void : Effect.fail(forbidden);
+/** The company the route is enrolled for, before an owner that holds its data per company is asked for anything. */
+export const requireRouteCompany = (scope: SymmySourceReadScope) =>
+  scope.legalEntityId === undefined ? Effect.fail(forbidden) : Effect.succeed(scope.legalEntityId);
 /** The paging and `q` the products read takes. The route has no cursor and no single-record lookup. */
 type ProductsQuery = Pick<ReadQuery, 'limit' | 'offset'> & { readonly q?: string };
 const catalogItemsAreValid = (

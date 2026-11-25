@@ -15,6 +15,7 @@ const WORKSPACE_FILE = 'pnpm-workspace.yaml';
 /** The only programs the listing step runs (sha256sum is in /sbin on macOS); a fixed PATH keeps the run hermetic. */
 const STEP_PATH = '/usr/bin:/bin:/sbin';
 const KEY_STEP = 'Name the installed workspace';
+const GITHUB_OUTPUT_FILE = 'github-output';
 const APP = fileURLToPath(new URL('../..', import.meta.url));
 const expression = (body: string) => `\${{ ${body} }}`;
 const DERIVED_PATHS = expression('steps.packages.outputs.paths');
@@ -25,7 +26,7 @@ const StepSchema = Schema.Struct({
   if: Schema.optional(Schema.String),
   name: Schema.String,
   run: Schema.optional(Schema.String),
-  with: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  with: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean]))),
 });
 const ActionSchema = Schema.Struct({ runs: Schema.Struct({ steps: Schema.Array(StepSchema) }) });
 const WorkspaceSchema = Schema.Struct({ packages: Schema.Array(Schema.String) });
@@ -47,7 +48,7 @@ const blocks = /^(?<name>\w+)<<EOF\n(?<body>[\s\S]*?)\nEOF$/gmu;
 /** Runs the action's package listing in `workspace`, as the composite step does in app/. */
 const derive = (workspace: string) => {
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-output-'));
-  const output = path.join(scratch, 'github-output');
+  const output = path.join(scratch, GITHUB_OUTPUT_FILE);
   writeFileSync(output, '');
   let text = '';
   try {
@@ -260,7 +261,7 @@ it('keys the installed workspace on its install code and both hosted runner imag
   expect(key.id).toBe('workspace-key');
   expect(key.run).toContain("hashFiles('.github/actions/install-app/action.yml',");
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-key-'));
-  const output = path.join(scratch, 'github-output');
+  const output = path.join(scratch, GITHUB_OUTPUT_FILE);
   try {
     // GitHub evaluates these expressions before bash runs; leave the image reads to the actual step.
     const run = (key.run ?? '').replaceAll(/\$\{\{.*?\}\}/gu, 'hash');
@@ -294,5 +295,80 @@ it('never saves an exact hit again and lets a caller opt out of the gates tree',
   for (const name of ['Check that the installed workspace may be published', 'Save the installed workspace']) {
     expect(step(name).if, name).toContain(optedIn);
     expect(step(name).if, name).toContain("steps.workspace.outputs.cache-hit != 'true'");
+  }
+});
+
+/** Runs one lockfile-verdict step of the action with bash, as the composite step does, and returns its outputs. */
+const runVerdictStep = (name: string, env: Readonly<Record<string, string>>) => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'install-app-verdict-output-'));
+  const output = path.join(scratch, GITHUB_OUTPUT_FILE);
+  writeFileSync(output, '');
+  try {
+    const stdout = execFileSync(
+      '/bin/bash',
+      ['--noprofile', '--norc', '-eo', 'pipefail', '-c', step(name).run ?? 'exit 1'],
+      {
+        encoding: UTF8,
+        env: { GITHUB_OUTPUT: output, PATH: STEP_PATH, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    const outputs = Object.fromEntries(
+      readFileSync(output, UTF8)
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+    );
+    return { outputs, status: 0, stdout };
+  } catch (error) {
+    const failed = Schema.decodeUnknownSync(Schema.Struct({ status: Schema.Number, stdout: Schema.String }))(error);
+    return { outputs: {}, status: failed.status, stdout: failed.stdout };
+  } finally {
+    rmSync(scratch, { force: true, recursive: true });
+  }
+};
+const RECORD_FILE = 'lockfile-verified.jsonl';
+
+// pnpm reads and writes its record in ${XDG_CACHE_HOME:-$HOME/.cache}/pnpm on Linux; a record put anywhere else,
+// or a publish that uploads nothing, would silently bring the supply-chain check back to every job.
+it('moves only pnpm’s lockfile record between pnpm’s cache directory and the artifact', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'install-app-verdict-'));
+  try {
+    const temp = path.join(home, 'runner-temp');
+    const locate = (mode: string, xdg?: string) => {
+      const env = { HOME: home, MODE: mode, RUNNER_TEMP: temp };
+      return runVerdictStep(
+        "Locate pnpm's lockfile verdict",
+        xdg === undefined ? env : { ...env, XDG_CACHE_HOME: xdg },
+      );
+    };
+    expect(locate('reuse', path.join(home, 'xdg')).outputs.record).toBe(path.join(home, 'xdg/pnpm', RECORD_FILE));
+    expect(locate('publish').status).toBe(0);
+    expect(locate('save').status).not.toBe(0);
+    const { record = '', staging = '' } = locate('reuse').outputs;
+    expect(record).toBe(path.join(home, '.cache/pnpm', RECORD_FILE));
+    expect(staging).toBe(path.join(temp, 'pnpm-lockfile-verdict'));
+    const env = { HOME: home, RECORD: record, STAGING: staging };
+
+    // Nothing published in this attempt: no record, and pnpm runs its check.
+    expect(runVerdictStep('Put the lockfile verdict in place', env).status).toBe(0);
+    expect(existsSync(record)).toBe(false);
+    // A publisher whose pnpm wrote no record fails instead of uploading nothing.
+    expect(runVerdictStep('Stage the lockfile verdict this install recorded', env).stdout).toContain('wrote no record');
+
+    mkdirSync(path.dirname(record), { recursive: true });
+    writeFileSync(record, '{"lockfile":{"hash":"published"}}\n');
+    expect(runVerdictStep('Stage the lockfile verdict this install recorded', env).status).toBe(0);
+    expect(readdirSync(staging)).toEqual([RECORD_FILE]);
+    rmSync(path.join(home, '.cache'), { force: true, recursive: true });
+
+    // The downloaded artifact may hold more than the record; only the record reaches pnpm's cache directory.
+    mkdirSync(path.join(staging, 'v12/metadata'), { recursive: true });
+    writeFileSync(path.join(staging, 'v12/metadata/forged.json'), '{}');
+    expect(runVerdictStep('Put the lockfile verdict in place', env).stdout).toContain('reuses the lockfile check');
+    expect(readFileSync(record, UTF8)).toBe('{"lockfile":{"hash":"published"}}\n');
+    expect(readdirSync(path.dirname(record))).toEqual([RECORD_FILE]);
+  } finally {
+    rmSync(home, { force: true, recursive: true });
   }
 });

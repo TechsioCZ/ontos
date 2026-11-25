@@ -4,7 +4,13 @@ import { describe, expect, it } from 'effect-rstest';
 
 /* oxlint-disable anti-slop/no-unknown-parameters -- Query-table mocks intentionally accept opaque Drizzle table identities and assert exact instances. expires: 2027-03-31. */
 
-import { productLocalizedFactRevisions, productLocalizedFacts, products } from '../../src/database/schema.ts';
+import {
+  productLocalizedFactRevisions,
+  productLocalizedFacts,
+  products,
+  productVariants,
+  variantLocalizedFacts,
+} from '../../src/database/schema.ts';
 import { localizedProductFactsPersistenceForScope } from '../../src/persistence/localized-product-facts-persistence.ts';
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -39,6 +45,58 @@ const selected = (rows: readonly object[]) => ({
 });
 
 describe('localized Product facts persistence', () => {
+  it.effect('keeps new writes canonical without rejecting exact stored locale lookups', () =>
+    Effect.gen(function* readStoredWriteCanonical() {
+      const variantId = '00000000-0000-4000-8000-000000000005';
+      const variantRef = {
+        moduleId: 'commerce.catalog',
+        resourceId: variantId,
+        resourceType: 'commerce.catalog.variant',
+        tenantId,
+      } as const;
+      const transaction = {
+        insert: () => {
+          throw new Error('noncanonical write inserted a revision');
+        },
+        select: () => ({
+          from: (table: unknown) =>
+            selected(
+              table === products || table === productVariants
+                ? [{ productId, variantId }]
+                : [
+                    {
+                      currentRevision: 1,
+                      description: null,
+                      locale: 'cs-cz',
+                      name: table === variantLocalizedFacts ? 'Původní varianta' : 'Původní název',
+                      state: 'SET',
+                    },
+                  ],
+            ),
+        }),
+      };
+      // @ts-expect-error Focused mock implements only queried Drizzle chains.
+      const service = localizedProductFactsPersistenceForScope(transaction, scope);
+      expect(yield* service.readProduct(productRef, 'cs-cz')).toEqual({
+        kind: 'PRESENT',
+        locale: 'cs-cz',
+        name: 'Původní název',
+        revision: 1,
+      });
+      expect(yield* service.readVariant(productRef, variantRef, 'cs-cz')).toEqual({
+        kind: 'PRESENT',
+        locale: 'cs-cz',
+        name: 'Původní varianta',
+        revision: 1,
+      });
+      for (const locale of ['cs-cz', 'x']) {
+        const input = { ...base, locale, value: { facts: { name: 'Nový název' }, kind: 'SET' } as const };
+        expect(yield* service.changeProduct(input)).toEqual({ kind: 'INVALID' });
+        expect(yield* service.changeVariant({ ...input, variantRef })).toEqual({ kind: 'INVALID' });
+      }
+    }),
+  );
+
   it.effect('rejects cross-tenant writes before touching the transaction', () =>
     Effect.gen(function* rejectCrossTenant() {
       const transaction = new Proxy(

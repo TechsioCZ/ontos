@@ -93,6 +93,7 @@
     "@app/communications": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/party-registry": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/symmy-integration": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",

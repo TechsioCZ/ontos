@@ -1,6 +1,6 @@
 import { Schema } from 'effect'; // oxlint-disable-line eslint/max-classes-per-file -- Product domain failures share one exported error vocabulary so Actions and Reads expose a single closed contract. expires: 2027-03-31.
 
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export class ProductNotFound extends Schema.TaggedError<ProductNotFound>()('ProductNotFound', {
   code: Schema.Literal('product_not_found'),

@@ -2,8 +2,6 @@ import { Schema } from 'effect';
 
 import { ConfigurationUnitRefSchema } from '../resources/configuration-unit.ts';
 
-export { CatalogRevisionInstantSchema as ConfigurationUnitInstantSchema } from '../domain/catalog-revision-reference.ts';
-
 export const ConfigurationUnitTextSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(1000),

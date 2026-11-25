@@ -2,13 +2,11 @@ import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '@app/catalog/api/pricing-purpose-equivalence';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import { executePricingPurposeEquivalenceWithAuthorization } from '@app/catalog/api/pricing-purpose-equivalence-client';
 import type { QuantityBasisCompatibilityRequest } from '@app/catalog/api/quantity-basis-compatibility';
-import {
-  QuantityBasisCompatibilityRequestSchema,
-  QuantityBasisCompatibilityResponseSchema,
-} from '@app/catalog/api/quantity-basis-compatibility';
+import { QuantityBasisCompatibilityRequestSchema } from '@app/catalog-selection-contracts/quantity-basis-compatibility';
+import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import { executeQuantityBasisCompatibilityWithAuthorization } from '@app/catalog/api/quantity-basis-compatibility-client';
 import type { CustomerPriceGroupResolutionRequest } from '@app/commerce-customer-context/api/customer-price-group-resolution';
 import {

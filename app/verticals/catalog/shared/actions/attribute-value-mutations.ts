@@ -1,11 +1,11 @@
 import { Effect, Schema } from 'effect';
 
 import { AttributeValueSchema } from '../domain/attribute-values.ts';
-import { CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { ProductEvidenceReferenceSchema, ProductReasonSchema } from '../domain/product.ts';
 import { AttributeDefinitionRefSchema } from '../resources/attribute-definition.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { VariantAttributeChangeConflict } from './variant-attribute-change-conflict.ts';
 
 export { VariantAttributeChangeConflict } from './variant-attribute-change-conflict.ts';

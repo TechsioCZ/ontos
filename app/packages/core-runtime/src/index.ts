@@ -186,6 +186,18 @@ export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-
 
 // @ontos-core-read legal-entity-detail
 export { legalEntityDetailRead } from './generated-reads/legal-entity-detail.ts';
+
+// @ontos-core-read asset-metadata
+export { assetMetadataRead } from './generated-reads/asset-metadata.ts';
+
+// @ontos-core-read asset-download
+export { assetDownloadRead } from './generated-reads/asset-download.ts';
+
+// @ontos-core-read asset-current
+export { assetCurrentRead } from './generated-reads/asset-current.ts';
+
+// @ontos-core-read asset-byte-source
+export { assetByteSourceRead } from './generated-reads/asset-byte-source.ts';
 // @ontos-codesmith-core-read-exports:end
 export {
   LegalEntityContext,
@@ -825,7 +837,10 @@ export {
   canonicalOntosPublicApiKey,
   projectOntosModuleOperationContracts,
 } from './modules/manifest.ts';
-export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from './modules/module-dependency-contracts.ts';
+export {
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
+  isShellHostedCoreProvider,
+} from './modules/module-dependency-contracts.ts';
 export {
   OntosRegisteredWorkloadCallSchema,
   OntosRegisteredWorkloadCallsSchema,
@@ -962,11 +977,15 @@ export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action
 export { changePrincipalBindingStatusAction } from './modules/actions/change-principal-binding-status.action.ts';
 export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
+export { confirmAssetAction } from './modules/actions/confirm-asset.action.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
+export { recordAssetIntegrityFailureAction } from './modules/actions/record-asset-integrity-failure.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { renameDisplayFilenameAction } from './modules/actions/rename-display-filename.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
+export { uploadAssetAction } from './modules/actions/upload-asset.action.ts';
 // </generated-core-action-exports>
 
 export {

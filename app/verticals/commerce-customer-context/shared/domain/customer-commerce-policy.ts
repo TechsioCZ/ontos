@@ -1,5 +1,5 @@
 import { Result, Schema } from 'effect';
-import { CatalogResourceRefSchema } from '@app/catalog/domain/catalog-revision-reference';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { CurrencyCodeSchema } from './currency.ts';
 import { ProfileInstantSchema } from './profile-contracts.ts';
 

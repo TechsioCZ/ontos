@@ -1,6 +1,6 @@
 import { Equal, Schema } from 'effect';
 
-import { CatalogResourceRefSchema } from './catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 const AttributeDefinitionRefSchema = CatalogResourceRefSchema.check(
   Schema.makeFilter((ref) =>

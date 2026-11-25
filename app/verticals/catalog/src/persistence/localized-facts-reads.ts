@@ -2,9 +2,10 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
 
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import type { ProductHistoryResponse } from '../../shared/apis/product-history.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
+import { StoredCatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
 import {
   productLocalizedFactRevisions,
   productLocalizedFacts,
@@ -79,16 +80,7 @@ const unavailable = (cause?: unknown) => {
   return failure;
 };
 const uuid = (value: string) => Schema.is(Schema.String.check(Schema.isUUID()))(value);
-const validLocale = (value: string) => {
-  if (value.length < 2 || value.length > 64 || value !== value.trim()) {
-    return false;
-  }
-  try {
-    return Intl.getCanonicalLocales(value)[0] === value;
-  } catch {
-    return false;
-  }
-};
+const validLocale = Schema.is(StoredCatalogLocaleSchema);
 const validProduct = (ref: ProductRef, tenantId: string) =>
   ref.tenantId === tenantId &&
   ref.moduleId === 'commerce.catalog' &&

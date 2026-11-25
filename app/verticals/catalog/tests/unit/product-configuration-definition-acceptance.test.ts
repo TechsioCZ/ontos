@@ -5,7 +5,7 @@ import { PublishProductConfigurationPayloadSchema } from '../../shared/actions/p
 import {
   CatalogResourceRefSchema,
   CatalogRevisionNumberSchema,
-} from '../../shared/domain/catalog-revision-reference.ts';
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 import {
   classifyConfigurationChoiceKind,
   configurationChoiceKindMeaning,
@@ -24,8 +24,8 @@ import type {
   ProductConfiguration,
   ProductConfigurationDefinitionRevision,
 } from '../../shared/domain/product-configuration.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenantId = '99999999-9999-4999-8999-999999999999';

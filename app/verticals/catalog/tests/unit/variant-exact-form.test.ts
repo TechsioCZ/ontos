@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Option, Schema } from 'effect';
 
-import {
-  resolveProductOnlyVariant,
-  resolveVariantExactForm,
-  VariantExactFormSchema,
-} from '../../shared/domain/variant-exact-form.ts';
+import { resolveProductOnlyVariant, resolveVariantExactForm } from '../../shared/domain/variant-exact-form.ts';
+import { CatalogIdentityScopeSchema } from '@app/catalog-selection-contracts/identity-scope';
 import { ProductVariantSchema } from '../../shared/domain/product.ts';
-import { ProductRefSchema } from '../../shared/resources/product.ts';
-import { VariantRefSchema } from '../../shared/resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenantId = '99999999-9999-4999-8999-999999999999';
@@ -65,7 +62,7 @@ describe('Variant exact form foundation', () => {
     ).toEqual(Option.some({ productRef, variantRef }));
   });
   it('requires Product and Variant ResourceRefs from one Tenant', () => {
-    const decode = Schema.decodeUnknownSync(VariantExactFormSchema, { onExcessProperty: 'error' });
+    const decode = Schema.decodeUnknownSync(CatalogIdentityScopeSchema, { onExcessProperty: 'error' });
     expect(decode({ productRef, variantRef })).toEqual({ productRef, variantRef });
     expect(() => decode({ productRef, variantRef: { ...variantRef, tenantId: otherTenantId } })).toThrow();
     expect(() => decode({ productRef, sku: 'NOT_AN_IDENTITY', variantRef })).toThrow();

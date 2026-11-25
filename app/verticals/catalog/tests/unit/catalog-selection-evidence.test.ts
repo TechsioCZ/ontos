@@ -6,11 +6,13 @@ import {
   CatalogSelectionAssessmentResultSchema,
   CatalogSelectionBasisSchema,
   CatalogSelectionEvidenceSchema,
-  CatalogSelectionSchema,
   CatalogSelectionWithQuantitySchema,
-  ProductSelectionRevisionSchema,
   sameCatalogSelectionBasis,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import {
+  CatalogSelectionSchema,
+  ProductSelectionRevisionSchema,
+} from '@app/catalog-selection-contracts/catalog-selection';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const ref = (resourceType: string, resourceId: string, scopedTenantId = tenantId) => ({

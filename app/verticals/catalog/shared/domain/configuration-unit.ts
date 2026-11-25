@@ -1,4 +1,4 @@
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 export const CONFIGURATION_UNIT_RESOURCE_TYPE = 'commerce.catalog.unit';
 

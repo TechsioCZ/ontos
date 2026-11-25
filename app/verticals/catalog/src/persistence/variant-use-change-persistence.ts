@@ -16,8 +16,8 @@ import {
   openSelectionReferencesProduct,
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
-import type { VariantRef } from '../../shared/resources/variant.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
+import type { VariantRef } from '@app/catalog-selection-contracts/resources/variant';
 import { packageDefinitions, packageOptionRoleRevisions, products } from '../database/schema.ts';
 import { catalogSelectionEvidenceForScope } from './catalog-selection-evidence-service.ts';
 import { axisFreeCombinationKey } from './variant-current-basis.ts';

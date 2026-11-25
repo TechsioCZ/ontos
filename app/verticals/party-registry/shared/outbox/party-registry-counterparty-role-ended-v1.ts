@@ -5,7 +5,7 @@ import { Schema } from 'effect';
 
 import { CounterpartyIsoTimestampSchema, CounterpartyRoleTypeSchema } from '../domain/counterparty-contract.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 
 export const OutboxPayloadSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

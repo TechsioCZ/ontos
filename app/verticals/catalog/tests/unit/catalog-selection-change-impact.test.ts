@@ -11,14 +11,14 @@ import {
   CartOpenSelectionPopulationUnavailable,
   CartOpenSelectionReferenceSchema,
 } from '../../shared/domain/catalog-open-selection-population.ts';
-import { CatalogResourceRefSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import {
   CatalogSelectionBasisSchema,
   CatalogSelectionMembershipSchema,
-  CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
-import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import { assembleCatalogSelectionEvidence } from '../../src/persistence/catalog-selection-evidence-service.ts';
 import type { CatalogSelectionEvidenceServiceResult } from '../../src/persistence/catalog-selection-evidence-service.ts';
 import {

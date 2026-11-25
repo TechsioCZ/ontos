@@ -11,10 +11,10 @@ import {
   CatalogSourceTargetIdSchema,
   CatalogSourceTargetKindSchema,
 } from '../actions/catalog-source-resolution.ts';
-import { CatalogSelectionRevisionSchema } from '../domain/catalog-selection-evidence.ts';
+import { CatalogSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { ProductActionInvocationIdSchema } from '../domain/product.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 const TenantIdSchema = checkedUuid.pipe(Schema.brand('CatalogTenantId'), Schema.decodeTo(checkedUuid));

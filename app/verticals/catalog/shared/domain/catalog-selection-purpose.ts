@@ -1,11 +1,10 @@
 import { Match, Schema } from 'effect';
 
+import type { CatalogSelection, CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
-  CatalogSelection,
   CatalogSelectionBasis,
   CatalogSelectionBasisRole,
-  CatalogSelectionRevision,
-} from './catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
 
 /**
  * Closed purpose taxonomy. Every purpose decides which Catalog facts are the smallest complete

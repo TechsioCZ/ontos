@@ -382,6 +382,19 @@ interface PricingOwnerFencePhaseOneResult {
   readonly typedSources: readonly PricingMaterialEvidenceFenceSource[];
 }
 
+/** One proof read for several original occurrences keeps the first read, the one its expectation was built from. */
+export const firstTypedSourceByProof = (
+  entries: readonly (readonly [proofRef: string, source: PricingMaterialEvidenceFenceSource])[],
+): ReadonlyMap<string, PricingMaterialEvidenceFenceSource> => {
+  const byProof = new Map<string, PricingMaterialEvidenceFenceSource>();
+  for (const [proofRef, source] of entries) {
+    if (!byProof.has(proofRef)) {
+      byProof.set(proofRef, source);
+    }
+  }
+  return byProof;
+};
+
 export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
   gateways: Readonly<Record<PricingMaterialEvidenceOwnerModule, PricingOwnerMaterialEvidenceFenceGateway>>,
   compositionRevision: string,
@@ -412,10 +425,7 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
           ? [[source.sourceEvidence.completeness.verification.verificationRef, source] as const]
           : [],
       );
-      const typedByProof =
-        typedEntries === undefined
-          ? new Map<string, PricingMaterialEvidenceFenceSource>()
-          : new Map<string, PricingMaterialEvidenceFenceSource>(typedEntries);
+      const typedByProof = firstTypedSourceByProof(typedEntries ?? []);
       const ownerResults = yield* Effect.forEach(
         groups,
         ([ownerModuleId, ownerSources]): Effect.Effect<

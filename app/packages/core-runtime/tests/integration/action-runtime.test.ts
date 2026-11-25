@@ -1766,6 +1766,13 @@ const testProgram12 = () =>
         .where(eq(actionInvocations.idempotencyKey, key));
       const invocationId = invocations[0]?.actionInvocationId;
       expect(invocationId).not.toBe(undefined);
+      const wrongActionResolution = yield* Effect.exit(
+        resolvingRuntime.resolveActionCommit({
+          expectedActionKey: 'commerce.inventory.define-source-provisioning-policy',
+          invocationId,
+          principal,
+        }),
+      );
       const unauthorizedResolution = yield* Effect.exit(
         resolvingRuntime.resolveActionCommit({
           invocationId,
@@ -1799,6 +1806,7 @@ const testProgram12 = () =>
       );
       const committedResolution = yield* Effect.exit(
         resolvingRuntime.resolveActionCommit({
+          expectedActionKey: actionRegistration.descriptor.actionKey,
           invocationId,
           principal,
         }),
@@ -1817,6 +1825,7 @@ const testProgram12 = () =>
         .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
 
       expect(hasFailure(committedResolution, 'ActionAlreadyCommitted')).toBe(true);
+      expect(hasFailure(wrongActionResolution, 'ActionInvocationNotFound')).toBe(true);
       expect(hasFailure(unauthorizedResolution, 'ActionInvocationNotFound')).toBe(true);
       expect(hasFailure(unavailableResolution, 'ActionCommitIndeterminate')).toBe(true);
       expect(resolved).toEqual({ stateId: states[0]?.tenantModuleStateId, value: 'committed-with-lost-ack' });

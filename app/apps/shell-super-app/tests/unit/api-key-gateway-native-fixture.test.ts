@@ -31,6 +31,7 @@ import {
   ShellNativeSetupKeyIssueCommandSchema,
   ShellNativeSetupKeyIssuedResponseSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
+  ShellNativeTenantSetupGatewayRequestSchema,
   makeApiKeyGatewayNativeFixture,
   openShellNativePrivateChannel,
   observeShellNativeRequestDispatch,
@@ -253,6 +254,13 @@ it('bounds fixture setup assertions to finite audiences and their declared scope
   const decode = Schema.decodeUnknownResult(ShellNativeSetupGatewayRequestSchema, { onExcessProperty: 'error' });
   expect(Result.isSuccess(decode({ audience: 'catalog' }))).toBe(true);
   expect(Result.isSuccess(decode({ audience: 'pricing' }))).toBe(true);
+  const companyPricing = {
+    audience: 'pricing',
+    legalEntityId: '33333333-3333-4333-8333-333333333333',
+  };
+  expect(Result.isSuccess(decode(companyPricing))).toBe(true);
+  expect(Schema.is(ShellNativeTenantSetupGatewayRequestSchema)(companyPricing)).toBe(false);
+  expect(Result.isFailure(decode({ ...companyPricing, legalEntityId: 'invalid' }))).toBe(true);
   expect(
     Result.isSuccess(
       decode({ audience: 'commerce-market-catalog', legalEntityId: '33333333-3333-4333-8333-333333333333' }),
@@ -277,7 +285,6 @@ it('bounds fixture setup assertions to finite audiences and their declared scope
     { audience: 'commerce-market-catalog' },
     { audience: 'commerce-market-catalog', legalEntityId: 'invalid' },
     { audience: 'catalog', legalEntityId: '33333333-3333-4333-8333-333333333333' },
-    { audience: 'pricing', legalEntityId: '33333333-3333-4333-8333-333333333333' },
     { audience: 'catalog', compositionRevision: 'a'.repeat(64) },
     { audience: 'catalog', principalId: '33333333-3333-4333-8333-333333333333' },
     { audience: 'catalog', cookie: 'caller-selected' },
@@ -556,6 +563,17 @@ it('keeps startup phases and private human setup commands closed to bounded data
   const tenant = Schema.decodeUnknownResult(ShellNativeTenantSetupGatewayCommandSchema, { onExcessProperty: 'error' });
   const request = { audience: 'catalog', compositionRevision: 'a'.repeat(64) };
   expect(Result.isSuccess(tenant({ _tag: 'tenant-setup-gateway', request }))).toBe(true);
+  expect(
+    Result.isSuccess(tenant({ _tag: 'tenant-setup-gateway', request: { ...request, audience: 'inventory' } })),
+  ).toBe(true);
+  expect(
+    Result.isFailure(
+      tenant({
+        _tag: 'tenant-setup-gateway',
+        request: { ...request, audience: 'inventory', legalEntityId: '22222222-2222-4222-8222-222222222222' },
+      }),
+    ),
+  ).toBe(true);
   expect(Result.isFailure(tenant({ _tag: 'tenant-setup-gateway', request: { ...request, audience: 'privacy' } }))).toBe(
     true,
   );

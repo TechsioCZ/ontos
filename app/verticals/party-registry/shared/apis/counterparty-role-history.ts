@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { CounterpartyRolePeriodSchema } from '../domain/counterparty-contract.ts';
-import { CounterpartyRefSchema } from '../resources/counterparty.ts';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 
 export const CounterpartyRoleHistoryRequestSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

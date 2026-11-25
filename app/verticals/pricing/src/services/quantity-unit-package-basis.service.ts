@@ -1,8 +1,8 @@
 import { pricingQuantityBasisTemporalBindingIsValid } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
-import { CatalogQuantityBasisSchema } from '@app/catalog/domain/catalog-quantity-handoff';
-import type { CatalogResourceRef } from '@app/catalog/domain/catalog-revision-reference';
-import { ProductUnitRefSchema } from '@app/catalog/resources/product-unit';
-import type { ProductUnitRef } from '@app/catalog/resources/product-unit';
+import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
+import type { ProductUnitRef } from '@app/catalog-selection-contracts/resources/product-unit';
 import type {
   PricingCatalogCompatibleConversion,
   PricingCatalogNoConversionRequired,

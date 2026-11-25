@@ -103,16 +103,20 @@ Quantity Tier, Pricing-owned Discount, Pricing Commercial Fee, ZERO_FLOOR Author
 canonical Pricing monetary result.
 _Avoid_: Storefront price list, Storefront price override, frontend-owned monetary calculation.
 
-**Storefront Client** — Tenant-bound service Principal and rotatable credential identifying one
-Storefront Application, never the browsing customer or acting customer Principal.
+**Storefront Client** — Tenant-bound service Principal identifying the backend of one Storefront
+Application. Its own rotatable credentials authenticate the application. A protected customer
+operation separately establishes the acting Principal, the target and the required Current
+Permissions.
 
-**Commerce Storefront API** — Thin Channel edge that authenticates the Storefront Client and
-Commerce Portal Account or Guest context independently, resolves trusted Commerce Purchasing
-Context, authorizes, translates contracts, aggregates bounded reads, and invokes public Actions. It
-owns no canonical facts or durable workflows.
+**Commerce Storefront API** — Native server-to-server Channel edge for the backend of a Storefront
+Application. It verifies the Storefront Client, establishes the acting Principal or Guest context
+required by the operation, resolves trusted Commerce Purchasing Context, and exposes explicitly
+approved public owner reads and Actions. The Storefront Application owns its browser-facing boundary.
+Each owner retains its canonical facts and business effects. The edge owns no durable business workflows.
 
-**Medusa Store Compatibility Facade** — Temporary translation surface for required legacy Store API
-shapes. It is not a Medusa runtime, canonical contract, commerce foundation, or fact owner.
+**Medusa Store Compatibility Facade** — Optional legacy translation surface described by ADR-0017.
+The approved native Commerce Storefront API excludes this facade. Its public contract and
+versioning apply to native OntOS operations.
 
 **Commerce Operations** — Purpose-built staff application for permissioned Commerce workflows and
 Assisted Support over public module contracts. It is not Shell/Core or a fact owner.
@@ -154,6 +158,38 @@ Account Subject under approved recovery evidence. It does not silently reactivat
 Binding, Retail Portal Profile Binding or Permission Grant, Counterparty Permission, or Guest Order
 visibility.
 
+## Storefront routing and public presentation
+
+**Storefront Host Binding** — Authorized association of one public hostname with exactly one
+Storefront Application and its Tenant in the applicable serving scope. The association identifies
+presentation scope, not Commerce Market, Selling Legal Entity, Price or a visitor's Permission.
+
+**Storefront Route Target** — Explicit typed subject of a Storefront page: a Product, Product
+Category or Content with its exact page use; its identity persists when Current public use is
+unavailable. A Variant can be an exact choice within a Product page; a homepage is the Storefront
+presentation root, not a new Catalog or Content Resource.
+_Avoid_: slug as Resource identity, unqualified Category, implicit Content use.
+
+**Canonical Storefront URL** — The preferred public address of an exact Storefront Route Target
+in one Storefront Application and actual language; a Product has at most one indexable canonical
+address in that scope. It neither grants public visibility nor changes with a visitor's purchasing
+context, Product Category ordering or Variant choice.
+_Avoid_: first Product Category URL, Variant canonical, Storefront URL as Catalog Selection.
+
+**Storefront URL Alias** — A historical public address reserved for its original target and
+Storefront scope after an authorized URL change. It preserves address continuity without transferring
+Resource identity or granting permission to disclose the destination.
+_Avoid_: Resource Alias used for a URL change, reusable slug, automatic alias expiry.
+
+**Storefront URL Retirement** — Authorized permanent end of public use of an address without an
+approved usable replacement. It preserves the historical address reservation and is distinct from
+Content Withdrawal, missing translation, denied visibility or an owner outage.
+
+**Storefront URL Resolution** — Current result establishing whether an exact Storefront Route Target
+has a safely usable address for the requested Storefront, actual language and disclosure context.
+Each Content language representation requires its own explicit Content Variant Selection for the
+same page use, without automatic substitution by language or scope.
+
 ## Customers, profiles, and channels
 
 **B2C Channel** — Retail Channel in which a visitor may browse and purchase as a Guest or an
@@ -163,10 +199,24 @@ authenticated Retail Portal Principal.
 Assortment, Pricing, Availability, ordering, approval, and history require explicit Current
 Permissions.
 
-**Guest Purchase Context** — Bounded anonymous B2C context for browsing, Cart, and Checkout. It is
-not a Principal, Commerce Portal Account, durable-history entitlement, Retail Portal Profile
-Binding, or Counterparty authority. At Accepted Order time the purchase is attributable to a Party,
-which may still be sparse or Unresolved under Party Registry rules.
+**Guest** — Visitor acting without authentication to a Commerce Portal Account. Public B2C browsing
+can start without a pre-existing Guest session. Product disclosure still requires Assortment
+authority for the applicable context.
+
+**Guest session** — Technical continuity for an unauthenticated visit. A purchasing capability can
+require Current, owner-verifiable evidence of this continuity for a particular operation. It confers
+no Commerce Portal identity, Retail Portal Permission Grant or Counterparty Commerce Permission.
+
+**Guest Purchase Context** — Bounded anonymous B2C commercial context for a specific browse or
+purchase operation. The owner determines which facts it must verify, including Guest session
+evidence where applicable. It is distinct from the acting Guest and the Commerce Portal Session and
+confers no profile binding, Counterparty access or history entitlement.
+
+**Guest Checkout** — B2C purchase through to an Accepted Order without requiring registration or
+sign-in to a Commerce Portal Account. At acceptance the purchase is attributable to a Party, which
+may still be sparse or Unresolved under Party Registry rules, and to the applicable Commerce Retail
+Customer Profile and Selling Legal Entity. The purchase grants no automatic profile access, order
+history or Guest Order Claim.
 
 **Retail Customer** — Party buying or considering a purchase through a B2C Channel. It is not a
 profile, account, Principal, or `B2C/B2B` discriminator.
@@ -656,17 +706,19 @@ structured fact merely because it is newer or more prominent.
 or another fact owner. A missing requested locale is explicit; Storefront presentation fallback does
 not create the absent translation.
 
-**Catalog Document Reference** — Catalog-owned applicability relation from Product/Variant to a
-Documents Center Resource. Live use follows that same Resource's Current version without a separate
-Catalog approval for each compatible version; replacing the Resource is an explicit relation change.
-Applicability and access still govern. Evidence required for an Accepted result pins the actual
-version/bytes, not the later live reference. Catalog owns no duplicate document store.
+**Catalog Document Reference** — Catalog-owned relation that identifies which document applies to a
+Product or Variant. At Launch the referenced Resource is a Core Media Asset. Live use follows the
+same Resource's owner-issued Current, subject to applicability and Permission. A compatible revision
+requires no new Catalog approval. Using a different Resource requires an explicit change to the
+Catalog relation. Evidence for an Accepted result pins the exact revision and content used. The file
+stays with its owner.
 
 **Catalog Media Assignment** — Catalog-owned relation recording media Resource, Product/Variant
 applicability, purpose and explicit order. Variant media takes precedence; absent Variant media uses
 the Product media set. Main medium means the first item, including after removal, regardless of
 purpose. A fallback depicting another realization is illustrative, not proof of the selected Color
-or dimensions. Presentation must preserve this distinction; access and bytes remain document-owned.
+or dimensions. Presentation must preserve this distinction. For a Core Media Asset, Core Media
+governs access to the file and owns its bytes.
 
 **Catalog Permission** — Atomic OntOS Permission for a declared Catalog Action or governed read in
 an explicit Resource/Tenant scope. Purchasing access, job title, identity relations, client identity
@@ -711,6 +763,48 @@ Quantity in a trusted Commerce Purchasing Context, retaining rule/assignment rev
 basis. It distinguishes permitted quantity, known violated commercial conditions and explicit
 missing/conflicting/unverifiable inputs. It never silently changes the requested Quantity or creates
 Permission, Price, Availability or an Order.
+
+## Editorial Content
+
+**Content** — Tenant-scoped editorial material such as a page, article, banner, buying guide or
+marketing copy. A change to its title, public URL or translation preserves its identity. Catalog
+owns the Product's descriptive facts and classification.
+
+**Content Variant** — One expression of Content in its actual language, shared within the Tenant
+or intended for a stated Channel or Storefront. A missing translation stays missing.
+
+**Content Revision** — The exact wording, block order, editorial metadata and owner-qualified
+references of a Content Variant at one point in its editorial history. A later edit produces a
+distinguishable revision. A reference preserves the target's identity while its owner governs
+Current facts and Permission at use.
+
+**Content Block** — An editorial unit such as a paragraph, comparison table or ordered procedure.
+Its position and the relationships that give it meaning, such as which Product and unit belong to a
+comparison value, are part of the Content Revision. A separately selected block has its own variant
+and revision.
+
+**Content Variant Selection** — The Tenant's explicit choice of one Content Variant, or none, for a
+particular use, actual language and target scope. Several uses may select the same shared variant.
+An absent or unusable selection authorizes no substitution by language, scope or publication date.
+
+**Content Publication** — The authorized release of one exact Content Revision for its variant.
+At most one revision is published as Current per variant. A new draft leaves that revision in place. Public use also requires a matching Content Variant Selection.
+
+**Content Withdrawal** — The authorized end of public use of a variant's Current published
+revision. The earlier selection and historical revisions remain distinguishable within applicable
+retention rules. Reusing another revision or variant requires an explicit authorized choice.
+
+**Content Collection** — An editorially ordered list of independently referenced targets. Its order
+is part of the Content Revision. Customer-facing inclusion of a Product follows Assortment for the
+exact request context.
+
+**Content Media Reference** — The link from an editorial placement to a specific Media Asset,
+together with the placement's purpose and any Tenant-supplied alternative text or caption. Core
+Media governs access to the bytes. Catalog owns its separate Catalog Media Assignments.
+
+**Content Change Signal** — A notice that Content Publication, Content Withdrawal, a selection or
+another Content-owned change may affect a consumer's copy. The consumer establishes the Current
+result through an authorized read for the affected use and scope.
 
 ## Purchasing limits and approval
 

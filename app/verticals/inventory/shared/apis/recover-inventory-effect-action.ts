@@ -11,9 +11,6 @@ import {
 } from '../actions/recover-inventory-effect.ts';
 
 export { RecoverInventoryEffectPayloadSchema } from '../actions/recover-inventory-effect.ts';
-const RecoverInventoryEffectActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
 
 export const RecoverInventoryEffectActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecoverInventoryEffectActionInvalidProblem',
@@ -160,7 +157,7 @@ type RecoverInventoryEffectActionEndpointContract = HttpApiEndpoint.HttpApiEndpo
   never,
   never,
   Schema.toCodecJson<Schema.toEncoded<typeof RecoverInventoryEffectPayloadSchema>>,
-  Schema.toCodecStringTree<typeof RecoverInventoryEffectActionHeadersSchema>,
+  never,
   Schema.toCodecJson<typeof RecoverInventoryEffectResultSchema | typeof ActionProposalAcceptedSchema>,
   Schema.toCodecJson<(typeof actionErrors)[number]>
 >;
@@ -170,7 +167,6 @@ const recoverInventoryEffectActionEndpoint: RecoverInventoryEffectActionEndpoint
   '/inventory/actions/recover-inventory-effect',
   {
     error: actionErrors,
-    headers: RecoverInventoryEffectActionHeadersSchema,
     payload: Schema.toEncoded(RecoverInventoryEffectPayloadSchema),
     success: [ActionProposalAcceptedSchema, RecoverInventoryEffectResultSchema],
   },

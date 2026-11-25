@@ -1,6 +1,6 @@
 /* oxlint-disable anti-slop/no-unknown-parameters, sonarjs/no-nested-functions -- Focused Drizzle transaction mocks accept opaque table identities and mirror fluent query-builder chains; expires: 2027-03-31. */
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Cause, DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';

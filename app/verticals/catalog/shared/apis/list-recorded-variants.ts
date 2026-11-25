@@ -5,8 +5,8 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { AttributeValueSchema } from '../domain/attribute-values.ts';
 import { VariantCombinationKeySchema } from '../domain/variant-axes.ts';
 import { AttributeDefinitionRefSchema } from '../resources/attribute-definition.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const positiveRevision = Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 2_147_483_647, minimum: 1 }));
 

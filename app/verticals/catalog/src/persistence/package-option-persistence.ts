@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import { assessPackageOption } from '../../shared/domain/package-option.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { resolveEffectiveRevision } from './package-persistence.ts';
 import {
   packageContentRevisions,

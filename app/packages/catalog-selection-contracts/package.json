@@ -6,17 +6,24 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./catalog-quantity-handoff": "./src/domain/catalog-quantity-handoff.ts",
     "./catalog-resource-reference": "./src/domain/catalog-resource-reference.ts",
+    "./catalog-revision-reference": "./src/domain/catalog-revision-reference.ts",
     "./catalog-selection": "./src/domain/catalog-selection.ts",
+    "./catalog-selection-evidence": "./src/domain/catalog-selection-evidence.ts",
+    "./catalog-unit-conversion-evidence": "./src/domain/catalog-unit-conversion-evidence.ts",
+    "./identity-scope": "./src/domain/identity-scope.ts",
+    "./pricing-purpose-equivalence": "./src/domain/pricing-purpose-equivalence.ts",
+    "./quantity-basis-compatibility": "./src/domain/quantity-basis-compatibility.ts",
     "./resources/product": "./src/resources/product.ts",
     "./resources/product-unit": "./src/resources/product-unit.ts",
-    "./resources/variant": "./src/resources/variant.ts"
-  },
+    "./resources/variant": "./src/resources/variant.ts"  },
   "scripts": {
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/shared-contracts": "workspace:*",
     "effect": "4.0.7"
   },
   "devDependencies": {

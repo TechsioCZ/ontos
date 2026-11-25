@@ -6,8 +6,8 @@ import type { Crypto } from 'effect';
 import { resolvePackageContent } from '../../shared/domain/package-content.ts';
 import type { PackageContentRevision } from '../../shared/domain/package-content.ts';
 import type { PackageDefinitionContentInputSchema } from '../../shared/actions/package-definition-contract.ts';
-import { CatalogSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
-import type { CatalogSelectionRevision } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionRevisionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelectionRevision } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   packageContentRevisions,
   packageDefinitions,

@@ -1,8 +1,10 @@
 import { Option, Schema } from 'effect';
 
-import { CatalogRevisionInstantSchema } from './catalog-revision-reference.ts';
-import { CatalogSelectionBasisListSchema, CatalogSelectionSchema } from './catalog-selection-evidence.ts';
-import type { CatalogSelection, CatalogSelectionEvidence } from './catalog-selection-evidence.ts';
+import { CatalogRevisionInstantSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionBasisListSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
+import type { CatalogSelectionEvidence } from '@app/catalog-selection-contracts/catalog-selection-evidence';
 import { CatalogSelectionPurposeSchema } from './catalog-selection-purpose.ts';
 import type { CatalogSelectionPurpose } from './catalog-selection-purpose.ts';
 

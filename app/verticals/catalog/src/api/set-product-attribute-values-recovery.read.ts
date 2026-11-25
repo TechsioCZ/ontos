@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.set-product-attribute-values', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(SetProductAttributeValuesResultSchema),
-      encode: Schema.encodeEffect(SetProductAttributeValuesResultSchema),
     },
   );
 

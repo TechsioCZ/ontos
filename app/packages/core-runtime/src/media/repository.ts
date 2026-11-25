@@ -1,0 +1,232 @@
+import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
+import { DateTime, Effect, Option } from 'effect';
+
+import { mediaAssets, principals } from '../db/schema.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import { mediaAssetNotFound, mediaUnavailable } from './errors.ts';
+import type { MediaUnavailable } from './errors.ts';
+import type { MediaAssetId } from './identity.ts';
+import { deriveMediaStorageKey } from './storage-key.ts';
+import type { MediaStorageKey } from './storage-key.ts';
+import { mediaStatusesThatMayEnter } from './public-contract.ts';
+import type {
+  MediaByteSize,
+  MediaContentSha256,
+  MediaIngestionSource,
+  MediaProcessingStatus,
+} from './public-contract.ts';
+
+/** The persisted row, storage columns included. Owner-local: it never leaves Core, only its projection does. */
+export type MediaAssetRecord = typeof mediaAssets.$inferSelect;
+
+/** The reservation of an asset: the row that anchors one intended upload before any byte is stored. */
+export interface ReserveMediaAssetInput {
+  /** The declared size; the confirmed size replaces it when the asset becomes `ready`. */
+  readonly byteSize: MediaByteSize;
+  /**
+   * The SHA-256 the caller declared, held on the row as an unsealed claim: `sealed_at` stays empty, so the
+   * public projection withholds it, until the stored bytes are verified and the asset becomes `ready`.
+   */
+  readonly declaredContentSha256?: MediaContentSha256 | undefined;
+  readonly displayFilename: string;
+  readonly externalSourceRef?: string | undefined;
+  readonly ingestedByPrincipalId?: string | undefined;
+  readonly ingestionSource: MediaIngestionSource;
+  /** Chosen by the owner so the storage key can derive from it before the insert. */
+  readonly mediaAssetId: MediaAssetId;
+  readonly mimeType: string;
+  readonly originalFilename?: string | undefined;
+  readonly storageProvider: string;
+}
+
+/** What the confirmed, verified bytes look like. Only a transition to `ready` carries it. */
+export interface ConfirmedMediaBytes {
+  readonly byteSize: MediaByteSize;
+  readonly contentSha256: MediaContentSha256;
+  /** The provider's technical version pin, when it returned one. Never a revision. */
+  readonly storageObjectVersionRef?: string | undefined;
+}
+
+export type MediaAssetTransition =
+  | { readonly confirmed: ConfirmedMediaBytes; readonly to: 'ready' }
+  | { readonly to: 'failed' | 'scanning' };
+
+const persistenceUnavailable = (cause: unknown): MediaUnavailable =>
+  mediaUnavailable('Media asset persistence is temporarily unavailable', cause);
+
+/**
+ * The Media repository for one Core-owned scoped transaction; its members are the only operations a handler can
+ * perform. It is built from the trusted transaction, takes
+ * the tenant and company from that scope (never from a caller) and exposes no raw executor, so a handler can
+ * only do what this interface names.
+ */
+export const mediaAssetRepositoryFromTransaction = (transaction: ScopedTransactionExecutor) => {
+  const { legalEntityId, tenantId } = transaction.scope;
+  /** An unselected company means tenant-wide; a selected one sees its own and company-less assets only. */
+  const scopePredicate = (mediaAssetId: MediaAssetId) =>
+    and(
+      eq(mediaAssets.tenantId, tenantId),
+      eq(mediaAssets.mediaAssetId, mediaAssetId),
+      legalEntityId === undefined
+        ? undefined
+        : or(isNull(mediaAssets.legalEntityId), eq(mediaAssets.legalEntityId, legalEntityId)),
+    );
+
+  const find = Effect.fn('MediaAssetRepository.find')(function* find(mediaAssetId: MediaAssetId) {
+    const [row, extra] = yield* transaction
+      .select()
+      .from(mediaAssets)
+      .where(scopePredicate(mediaAssetId))
+      .limit(2)
+      .pipe(Effect.mapError(persistenceUnavailable));
+    if (row === undefined) {
+      return yield* mediaAssetNotFound();
+    }
+    if (extra !== undefined) {
+      return yield* mediaUnavailable('Media asset identity is ambiguous');
+    }
+    return row;
+  });
+
+  return {
+    find,
+    findByStorageIdentity: Effect.fn('MediaAssetRepository.findByStorageIdentity')(function* findByStorageIdentity({
+      storageKey,
+      storageProvider,
+    }: {
+      readonly storageKey: MediaStorageKey;
+      readonly storageProvider: string;
+    }) {
+      const [row, extra] = yield* transaction
+        .select()
+        .from(mediaAssets)
+        .where(
+          and(
+            eq(mediaAssets.tenantId, tenantId),
+            eq(mediaAssets.storageProvider, storageProvider),
+            eq(mediaAssets.storageKey, storageKey),
+          ),
+        )
+        .limit(2)
+        .pipe(Effect.mapError(persistenceUnavailable));
+      if (extra !== undefined) {
+        return yield* mediaUnavailable('Media storage identity is ambiguous');
+      }
+      return Option.fromUndefinedOr(row);
+    }),
+    /**
+     * The one regression a ready asset has: PROVEN corruption closes it as `failed`. It only applies to the very
+     * identity the proof was made against, so a stale or foreign finding can never close a different content.
+     * `rejected` carries the untouched row.
+     */
+    recordIntegrityFailure: Effect.fn('MediaAssetRepository.recordIntegrityFailure')(function* recordIntegrityFailure(
+      mediaAssetId: MediaAssetId,
+      recorded: { readonly byteSize: MediaByteSize; readonly contentSha256: MediaContentSha256 },
+    ) {
+      const now = yield* DateTime.nowAsDate;
+      const [row] = yield* transaction
+        .update(mediaAssets)
+        .set({ processingStatus: 'failed' satisfies MediaProcessingStatus, updatedAt: now })
+        .where(
+          and(
+            scopePredicate(mediaAssetId),
+            eq(mediaAssets.processingStatus, 'ready' satisfies MediaProcessingStatus),
+            eq(mediaAssets.byteSize, BigInt(recorded.byteSize)),
+            eq(mediaAssets.contentSha256, recorded.contentSha256),
+            isNotNull(mediaAssets.sealedAt),
+          ),
+        )
+        .returning()
+        .pipe(Effect.mapError(persistenceUnavailable));
+      return row === undefined
+        ? ({ current: yield* find(mediaAssetId), kind: 'rejected' } as const)
+        : ({ asset: row, kind: 'applied' } as const);
+    }),
+    renameDisplayFilename: Effect.fn('MediaAssetRepository.renameDisplayFilename')(function* rename(
+      mediaAssetId: MediaAssetId,
+      displayFilename: string,
+    ) {
+      const now = yield* DateTime.nowAsDate;
+      const [row] = yield* transaction
+        .update(mediaAssets)
+        .set({ displayFilename, updatedAt: now })
+        .where(scopePredicate(mediaAssetId))
+        .returning()
+        .pipe(Effect.mapError(persistenceUnavailable));
+      return row ?? (yield* mediaAssetNotFound());
+    }),
+    /**
+     * The kind Core identity records for a principal of this tenant (a fact of the identity rows, never a caller
+     * claim), or none when the row is absent.
+     */
+    principalKind: Effect.fn('MediaAssetRepository.principalKind')(function* principalKind(principalId: string) {
+      const [row] = yield* transaction
+        .select({ kind: principals.kind })
+        .from(principals)
+        .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
+        .limit(1)
+        .pipe(Effect.mapError(persistenceUnavailable));
+      return Option.fromUndefinedOr(row?.kind);
+    }),
+    reserve: Effect.fn('MediaAssetRepository.reserve')(function* reserve(input: ReserveMediaAssetInput) {
+      const [row] = yield* transaction
+        .insert(mediaAssets)
+        .values({
+          byteSize: BigInt(input.byteSize),
+          contentSha256: input.declaredContentSha256 ?? null,
+          displayFilename: input.displayFilename,
+          externalSourceRef: input.externalSourceRef ?? null,
+          ingestedByPrincipalId: input.ingestedByPrincipalId ?? null,
+          ingestionSource: input.ingestionSource,
+          legalEntityId: legalEntityId ?? null,
+          mediaAssetId: input.mediaAssetId,
+          mimeType: input.mimeType,
+          originalFilename: input.originalFilename ?? null,
+          processingStatus: 'uploaded' satisfies MediaProcessingStatus,
+          storageKey: deriveMediaStorageKey({ mediaAssetId: input.mediaAssetId, tenantId }),
+          storageProvider: input.storageProvider,
+          tenantId,
+        })
+        .returning()
+        .pipe(Effect.mapError(persistenceUnavailable));
+      return row ?? (yield* mediaUnavailable('Media asset was not reserved'));
+    }),
+    /**
+     * A conditional, forward-only status change. `applied` carries the updated row; `rejected` carries the row
+     * that stayed untouched because its status does not allow the move; a missing asset is `MediaAssetNotFound`.
+     */
+    transition: Effect.fn('MediaAssetRepository.transition')(function* applyTransition(
+      mediaAssetId: MediaAssetId,
+      transition: MediaAssetTransition,
+    ) {
+      const now = yield* DateTime.nowAsDate;
+      const changes =
+        transition.to === 'ready'
+          ? {
+              byteSize: BigInt(transition.confirmed.byteSize),
+              contentSha256: transition.confirmed.contentSha256,
+              processingStatus: transition.to,
+              sealedAt: now,
+              storageObjectVersionRef: transition.confirmed.storageObjectVersionRef ?? null,
+              updatedAt: now,
+            }
+          : { processingStatus: transition.to, updatedAt: now };
+      const [row] = yield* transaction
+        .update(mediaAssets)
+        .set(changes)
+        .where(
+          and(
+            scopePredicate(mediaAssetId),
+            inArray(mediaAssets.processingStatus, [...mediaStatusesThatMayEnter(transition.to)]),
+          ),
+        )
+        .returning()
+        .pipe(Effect.mapError(persistenceUnavailable));
+      if (row !== undefined) {
+        return { asset: row, kind: 'applied' } as const;
+      }
+      // Nothing matched: the asset is missing (not found) or its status forbids the move (rejected, untouched).
+      return { current: yield* find(mediaAssetId), kind: 'rejected' } as const;
+    }),
+  };
+};

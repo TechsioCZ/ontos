@@ -11,7 +11,7 @@ import {
   RemoveVariantAttributeOverridePayloadSchema,
   SetVariantAttributeOverridePayloadSchema,
 } from '../../shared/actions/attribute-value-mutations.ts';
-import type { ProductRef } from '../../shared/resources/product.ts';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 import {
   handleRemoveVariantAttributeOverride,
   removeVariantAttributeOverrideAction,

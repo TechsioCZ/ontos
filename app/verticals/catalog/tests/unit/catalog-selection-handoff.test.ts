@@ -5,13 +5,13 @@ import { prepareCatalogAcceptedSelectionHandoff } from '../../shared/domain/cata
 import {
   CatalogSelectionBasisSchema,
   CatalogSelectionEvidenceSchema,
-  CatalogSelectionSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import {
   CatalogRetainedProductSchema,
   CatalogRetainedVariantSchema,
-} from '../../shared/domain/catalog-revision-reference.ts';
-import { CatalogQuantityHandoffSchema } from '../../shared/domain/catalog-quantity-handoff.ts';
+} from '@app/catalog-selection-contracts/catalog-revision-reference';
+import { CatalogQuantityHandoffSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const ref = (resourceType: string, resourceId: string) => ({

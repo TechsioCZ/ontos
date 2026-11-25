@@ -71,6 +71,9 @@
     },
     {
       "path": "../../packages/storefront-registry-contracts"
+    },
+    {
+      "path": "../../packages/party-registry-contracts"
     }
   ],
   "files": [

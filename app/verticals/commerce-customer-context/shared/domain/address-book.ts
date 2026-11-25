@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { PartyContactPointRefSchema } from '@app/party-registry/resources/party-contact-point';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
 import { SavedAddressRefSchema } from '../resources/saved-address.ts';

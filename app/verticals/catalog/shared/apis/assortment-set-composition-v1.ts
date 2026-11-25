@@ -3,10 +3,10 @@ import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contra
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { CatalogResourceRefSchema } from '../domain/catalog-revision-reference.ts';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { SetCompositionRevisionSchema } from '../domain/set-composition.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const setCompositionRef = CatalogResourceRefSchema.check(
   Schema.makeFilter((ref) =>

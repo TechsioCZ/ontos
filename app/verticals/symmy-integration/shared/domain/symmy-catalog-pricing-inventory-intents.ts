@@ -1,13 +1,25 @@
 import { BindInitialVariantSourcePayloadSchema } from '@app/catalog/api/bind-initial-variant-source-action';
+import { AddProductCategoryAssignmentPayloadSchema } from '@app/catalog/api/add-product-category-assignment-action';
 import { CorrectProductPayloadSchema } from '@app/catalog/api/correct-product-action';
 import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-action';
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
 import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
 import { UpdateProductPayloadSchema } from '@app/catalog/api/update-product-action';
-import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
-import { ProductRefSchema } from '@app/catalog/resources/product';
-import { VariantRefSchema } from '@app/catalog/resources/variant';
+import { GovernVariantAxesPayloadSchema } from '@app/catalog/api/govern-variant-axes-action';
+import { ConfirmVariantCombinationPayloadSchema } from '@app/catalog/api/confirm-variant-combination-action';
+import { SetProductLocalizedFactsPayloadSchema } from '@app/catalog/api/set-product-localized-facts-action';
+import { SetProductUnitTargetDivisibilityPayloadSchema } from '@app/catalog/api/set-product-unit-target-divisibility-action';
+import { DecideProductTypeUnnecessaryPayloadSchema } from '@app/catalog/api/decide-product-type-unnecessary-action';
+import {
+  ProductActionInvocationIdSchema,
+  ProductEvidenceReferenceSchema,
+  ProductNameSchema,
+  ProductRevisionSchema,
+} from '@app/catalog/domain/product';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 import { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
+import { ProvisionSourceStockItemPayloadSchema } from '@app/inventory/source-provisioning';
 import { ImportSourceAssertionPayloadSchema } from '@app/inventory/source-import';
 import { CreatePriceGroupPayloadSchema } from '@app/price-group-catalog/actions/create-price-group';
 import { PriceGroupOperationReceiptSchema } from '@app/price-group-catalog/apis/price-group-result-lookup';
@@ -16,6 +28,7 @@ import { DefinePricePayloadSchema } from '@app/pricing/actions/define-price';
 import { RevisePricePayloadSchema } from '@app/pricing/actions/revise-price';
 import { Schema } from 'effect';
 
+import { SymmyInventorySourceSchema } from './symmy-stock-batch.ts';
 import { SymmyPriceGroupRefSchema } from './symmy-price-batch.ts';
 
 const dependencyKey = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/u));
@@ -79,6 +92,12 @@ const pricedIdentity = DefinePricePayloadSchema.fields.identityKey.fields;
  * plain intent.
  */
 const productDependentRequest = Schema.Union([
+  Schema.TaggedStruct('AddProductCategoryAssignment', {
+    payload: Schema.Struct({
+      categoryRef: AddProductCategoryAssignmentPayloadSchema.fields.categoryRef,
+      reason: AddProductCategoryAssignmentPayloadSchema.fields.reason,
+    }),
+  }),
   Schema.TaggedStruct('UpdateProduct', {
     payload: Schema.Struct({
       expectedRevision: updatedProduct.expectedRevision,
@@ -96,6 +115,19 @@ const productDependentRequest = Schema.Union([
     }).check(
       Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
     ),
+  }),
+  Schema.TaggedStruct('ProvisionSourceStockItem', {
+    itemKey: ProvisionSourceStockItemPayloadSchema.fields.itemKey,
+    source: SymmyInventorySourceSchema,
+  }),
+  Schema.TaggedStruct('CatalogReadiness', {
+    divisible: SetProductUnitTargetDivisibilityPayloadSchema.fields.divisible,
+    evidenceRefs: Schema.NonEmptyArray(ProductEvidenceReferenceSchema),
+    kind: Schema.Literal('AXIS_FREE_UNTYPED'),
+    locale: SetProductLocalizedFactsPayloadSchema.fields.locale,
+    name: ProductNameSchema,
+    step: Schema.Literals(['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED']),
+    unitRef: SetProductUnitTargetDivisibilityPayloadSchema.fields.target.fields.unit,
   }),
   Schema.TaggedStruct('DefinePrice', {
     payload: Schema.Struct({
@@ -115,6 +147,8 @@ export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
     actionInvocationId: ProductActionInvocationIdSchema,
     initialVariantRef: VariantRefSchema,
     productRef: ProductRefSchema,
+    productRevision: Schema.optionalKey(ProductRevisionSchema),
+    variantRevision: Schema.optionalKey(ProductRevisionSchema),
   }).check(
     Schema.makeFilter(
       ({ initialVariantRef, productRef }) =>
@@ -128,6 +162,9 @@ export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
     businessOriginalInvocationId: PriceGroupOperationReceiptSchema.fields.actionInvocationId,
     priceGroupRef: PriceGroupOperationReceiptSchema.fields.priceGroupRef,
   }),
+  Schema.TaggedStruct('ReadinessAxes', { axisRevision: ProductRevisionSchema }),
+  Schema.TaggedStruct('ReadinessVariant', { variantRevision: ProductRevisionSchema }),
+  Schema.TaggedStruct('ReadinessProduct', { productRevision: ProductRevisionSchema }),
 ]);
 export type SymmyCatalogPricingInventoryReceipt = typeof SymmyCatalogPricingInventoryReceiptSchema.Type;
 
@@ -178,5 +215,15 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
     ),
   }),
   Schema.TaggedStruct('PriceGroupCreateAtCatalogHead', { payload: Schema.Struct(priceGroupAtHeadFields) }),
+  Schema.TaggedStruct('InventoryProvision', {
+    payload: ProvisionSourceStockItemPayloadSchema,
+    source: SymmyInventorySourceSchema,
+  }),
+  Schema.TaggedStruct('CatalogReadinessAxes', { payload: GovernVariantAxesPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessConfirm', { payload: ConfirmVariantCombinationPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessName', { payload: SetProductLocalizedFactsPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessUnit', { payload: SetProductUnitTargetDivisibilityPayloadSchema }),
+  Schema.TaggedStruct('CatalogReadinessUntyped', { payload: DecideProductTypeUnnecessaryPayloadSchema }),
+  Schema.TaggedStruct('CatalogAddProductCategoryAssignment', { payload: AddProductCategoryAssignmentPayloadSchema }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

@@ -3,6 +3,7 @@
 // @ontos-action-http-slug resolve-inventory-source-conflict
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/resolve-inventory-source-conflict.ts';
 
 export { ResolveInventorySourceConflictPayloadSchema } from '../actions/resolve-inventory-source-conflict.ts';
-const ResolveInventorySourceConflictActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const ResolveInventorySourceConflictActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ResolveInventorySourceConflictActionInvalidProblem',
@@ -152,7 +151,6 @@ export const resolveInventorySourceConflictActionGroupDefinition = HttpApiGroup.
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/resolve-inventory-source-conflict', {
       error: actionErrors,
-      headers: ResolveInventorySourceConflictActionHeadersSchema,
       payload: Schema.toEncoded(ResolveInventorySourceConflictPayloadSchema),
       success: [ActionProposalAcceptedSchema, ResolveInventorySourceConflictResultSchema],
     }),

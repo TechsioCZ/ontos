@@ -3,7 +3,7 @@
 // @ontos-outbox-topic commerce.catalog.product-unit-revised.v1
 import { Schema } from 'effect';
 
-import { ProductUnitRefSchema } from '../resources/product-unit.ts';
+import { ProductUnitRefSchema } from '@app/catalog-selection-contracts/resources/product-unit';
 
 export const OutboxPayloadSchema = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThan(0)),

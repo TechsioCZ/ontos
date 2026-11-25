@@ -6,15 +6,13 @@ import type {
 import {
   PricingPurposeEquivalenceRequestSchema,
   PricingPurposeEquivalenceResponseSchema,
-} from '@app/catalog/api/pricing-purpose-equivalence';
+} from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import { executePricingPurposeEquivalenceWithAuthorization } from '@app/catalog/api/pricing-purpose-equivalence-client';
-import { CatalogQuantityBasisSchema } from '@app/catalog/domain/catalog-quantity-handoff';
-import type { CatalogQuantityHandoffReady } from '@app/catalog/domain/catalog-quantity-handoff';
-import { CatalogResourceRefSchema } from '@app/catalog/domain/catalog-revision-reference';
-import {
-  CatalogSelectionBasisListSchema,
-  CatalogSelectionSchema,
-} from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import type { CatalogQuantityHandoffReady } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
+import { CatalogResourceRefSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import { CatalogSelectionBasisListSchema } from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type {
   CatalogPricingPurposeEquivalenceResolution,
   QuantityTierAggregationAttempt,

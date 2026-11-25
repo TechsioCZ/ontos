@@ -66,6 +66,10 @@ export const decideProductTypeUnnecessaryAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'commerce.catalog.decide-product-type-unnecessary.access.v1',
     },
+    accessWorkload: {
+      reason: 'Govern source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-import'],
+    },
     actionKey,
     auditEvidenceSchema: ProductAuditEvidenceSchema,
     auditProfile: 'standard',

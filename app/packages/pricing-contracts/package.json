@@ -67,9 +67,9 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "@app/catalog": "workspace:*",
+    "@app/catalog-selection-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
-    "@app/party-registry": "workspace:*",
+    "@app/party-registry-contracts": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "effect": "4.0.7"

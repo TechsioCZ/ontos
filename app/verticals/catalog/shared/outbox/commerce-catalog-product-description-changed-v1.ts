@@ -4,7 +4,7 @@
 import { Schema } from 'effect';
 
 import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
-import { ProductRefSchema } from '../resources/product.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 const LocalizedFactsRevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 

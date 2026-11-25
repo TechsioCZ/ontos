@@ -20,6 +20,17 @@ const groupWrite = `${groupModule}.source-write`;
 const groupRead = `${groupModule}.source-read`;
 const inventoryWrite = 'commerce.inventory.source-write';
 const inventoryRead = 'commerce.inventory.source-read';
+const productWorkloads = [
+  'integration.symmy-poll',
+  'commerce.catalog.symmy-product-import',
+  'commerce.catalog.symmy-product-read',
+  'commerce.inventory.source-provision',
+  'commerce.pricing.source-write',
+  'commerce.pricing.source-read',
+  'commerce.market-catalog.source-read',
+  'pricing.price-group-catalog.source-write',
+  'pricing.price-group-catalog.source-read',
+] as const;
 
 type OwnedSyncDatabase = Effect.Success<ReturnType<typeof makeIsolatedNativeDatabaseFixture>>;
 
@@ -30,7 +41,7 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
 ) {
   const admin = yield* PgClient.make({ url: Redacted.make(ownedDatabase.connections.admin.connectionString) });
   const shell = yield* makeApiKeyGatewayNativeFixture({
-    additionalRelaySources: [{ sourceAppId: groupAudience }],
+    additionalRelaySources: [{ sourceAppId: groupAudience }, { sourceAppId: 'pricing' }],
     ownedDatabase,
     productionGate: true,
     relaySource: { sourceAppId: 'symmy-integration' },
@@ -60,8 +71,14 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
     yield* admin`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId},${module.moduleId},'active')`;
   }
   for (const [principalId, workloadKeys] of [
-    [integration.principalId, ['integration.symmy-admit', groupWrite, groupRead, inventoryWrite, inventoryRead]],
-    [systemPrincipalId, [internalSyncJobKey, groupWrite, groupRead, inventoryWrite, inventoryRead]],
+    [
+      integration.principalId,
+      ['integration.symmy-admit', groupWrite, groupRead, inventoryWrite, inventoryRead, ...productWorkloads],
+    ],
+    [
+      systemPrincipalId,
+      [internalSyncJobKey, groupWrite, groupRead, inventoryWrite, inventoryRead, ...productWorkloads],
+    ],
   ] as const) {
     for (const workloadKey of workloadKeys) {
       yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
@@ -74,12 +91,18 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
   const symmyKey = yield* shell.issueFixtureRelaySourceProviderKey(symmyModule);
   yield* bindCustomerFixtureProviderKey(admin, symmyModule, symmyKey.providerKeyId);
   yield* symmyKey.acknowledgeBinding;
-  for (const provider of shell.additionalRelaySourceProviderUsers) {
-    const issuer = yield* seedCustomerFixtureProviderPrincipal(admin, tenantId, 'service', provider.providerUserId);
-    const key = yield* shell.issueFixtureModuleProviderKey({ ...issuer, sourceAppId: provider.sourceAppId });
-    yield* bindCustomerFixtureProviderKey(admin, issuer, key.providerKeyId);
-    yield* key.acknowledgeBinding;
-  }
+  const moduleCredentials = yield* Effect.all(
+    shell.additionalRelaySourceProviderUsers.map(
+      Effect.fn('InternalC14Sync.moduleCredential')(function* moduleCredential(provider) {
+        const issuer = yield* seedCustomerFixtureProviderPrincipal(admin, tenantId, 'service', provider.providerUserId);
+        const key = yield* shell.issueFixtureModuleProviderKey({ ...issuer, sourceAppId: provider.sourceAppId });
+        yield* bindCustomerFixtureProviderKey(admin, issuer, key.providerKeyId);
+        yield* key.acknowledgeBinding;
+        return [provider.sourceAppId, Redacted.value(key.secret)] as const;
+      }),
+    ),
+    { concurrency: 1 },
+  );
   const setupKey = yield* shell.issueFixtureSetupActorKey();
   const actualHuman = yield* Schema.decodeUnknownEffect(
     Schema.Struct({
@@ -105,6 +128,7 @@ export const prepareInternalSyncAuthority = Effect.fn('InternalC14Sync.prepareAu
     ingressKey,
     integration,
     legalEntityId,
+    moduleCredentials: new Map<string, string>(moduleCredentials),
     shell,
     systemPrincipalId,
     tenantId,

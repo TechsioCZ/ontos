@@ -86,6 +86,11 @@ it('catalogs every protected Inventory mutation and audit-read entrypoint under 
     'inventory.migration.manage': [
       'commerce.inventory.select-inventory-backend',
       'commerce.inventory.import-source-assertion',
+      'commerce.inventory.register-stock-item',
+      'commerce.inventory.create-stock-location',
+      'commerce.inventory.establish-stock-position',
+      'commerce.inventory.define-source-provisioning-policy',
+      'commerce.inventory.provision-source-stock-item',
     ],
     'inventory.recovery.execute': [
       'commerce.inventory.recover-inventory-effect',
@@ -198,6 +203,11 @@ it('freezes every published owner descriptor including canonical capability and 
       protectedEntrypoints: [
         'commerce.inventory.select-inventory-backend',
         'commerce.inventory.import-source-assertion',
+        'commerce.inventory.register-stock-item',
+        'commerce.inventory.create-stock-location',
+        'commerce.inventory.establish-stock-position',
+        'commerce.inventory.define-source-provisioning-policy',
+        'commerce.inventory.provision-source-stock-item',
       ],
       schemaVersion: '1',
     },

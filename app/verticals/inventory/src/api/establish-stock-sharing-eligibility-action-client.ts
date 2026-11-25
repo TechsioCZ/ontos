@@ -47,6 +47,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: EstablishStockSharingEligibilityActionApi,
       credential,
       defaultApiPrefix: '/inventory-api',
+      idempotencyKey: options.idempotencyKey,
       intent: options.intent,
       requestCorrelation,
     },
@@ -60,12 +61,7 @@ export const executeEstablishStockSharingEligibilityWithAuthorization = (
   Schema.encodeUnknownEffect(EstablishStockSharingEligibilityPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.establishStockSharingEligibilityAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.establishStockSharingEligibilityAction.execute({ payload: encoded })),
       ),
     ),
   );

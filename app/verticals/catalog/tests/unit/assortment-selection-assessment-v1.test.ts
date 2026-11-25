@@ -5,9 +5,9 @@ import { expect, it } from 'effect-rstest';
 import { AssortmentSelectionAssessmentV1ResponseSchema } from '../../shared/apis/assortment-selection-assessment-v1.ts';
 import {
   CatalogSelectionEvidenceSchema,
-  CatalogSelectionSchema,
   CatalogSelectionValidEvidenceSchema,
-} from '../../shared/domain/catalog-selection-evidence.ts';
+} from '@app/catalog-selection-contracts/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionEvidenceServiceResult } from '../../src/persistence/catalog-selection-evidence-service.ts';
 import type { AssortmentSelectionAssessmentV1Source } from '../../src/persistence/assortment-selection-assessment-v1.ts';
 import { assessOrVerifyAssortmentSelectionV1 } from '../../src/persistence/assortment-selection-assessment-v1.ts';

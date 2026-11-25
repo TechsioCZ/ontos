@@ -1,9 +1,10 @@
 import { Schema } from 'effect';
+import { CreateProductPayloadSchema } from './create-product.ts';
 
 import { ProductEvidenceReferenceSchema, ProductReasonSchema } from '../domain/product.ts';
 import { CatalogLocaleSchema } from '../domain/product-descriptive-facts.ts';
-import { ProductRefSchema } from '../resources/product.ts';
-import { VariantRefSchema } from '../resources/variant.ts';
+import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
+import { VariantRefSchema } from '@app/catalog-selection-contracts/resources/variant';
 
 const RevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const FactualNameSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(240));
@@ -27,6 +28,7 @@ export const SetProductLocalizedFactsPayloadSchema = Schema.Struct({
   ...ChangeFields,
   facts: FactsSchema,
   productRef: ProductRefSchema,
+  sourceProduct: Schema.optionalKey(CreateProductPayloadSchema),
 });
 export type SetProductLocalizedFactsPayload = typeof SetProductLocalizedFactsPayloadSchema.Type;
 export const RemoveProductLocalizedFactsPayloadSchema = Schema.Struct({

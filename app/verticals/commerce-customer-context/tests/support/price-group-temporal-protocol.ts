@@ -30,7 +30,7 @@ import {
   PriceGroupRetirementAcceptanceSchema,
 } from '@app/price-group-catalog-contracts/price-group';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PgClient } from '@effect/sql-pg';
 import {
   Config,

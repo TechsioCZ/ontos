@@ -3,6 +3,7 @@
 // @ontos-action-http-slug establish-stock-sharing-eligibility
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/http-api';
 import {
@@ -11,9 +12,7 @@ import {
 } from '../actions/establish-stock-sharing-eligibility.ts';
 
 export { EstablishStockSharingEligibilityPayloadSchema } from '../actions/establish-stock-sharing-eligibility.ts';
-const EstablishStockSharingEligibilityActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
+export { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 
 export const EstablishStockSharingEligibilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EstablishStockSharingEligibilityActionInvalidProblem',
@@ -152,7 +151,6 @@ export const establishStockSharingEligibilityActionGroupDefinition = HttpApiGrou
   .add(
     HttpApiEndpoint.post('execute', '/inventory/actions/establish-stock-sharing-eligibility', {
       error: actionErrors,
-      headers: EstablishStockSharingEligibilityActionHeadersSchema,
       payload: Schema.toEncoded(EstablishStockSharingEligibilityPayloadSchema),
       success: [ActionProposalAcceptedSchema, EstablishStockSharingEligibilityResultSchema],
     }),

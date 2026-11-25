@@ -16,6 +16,7 @@ export * from './define-commercial-fee-action-client.ts';
 export * from './define-price-action-client.ts';
 export * from './manage-commitment-confirmation-action-client.ts';
 export * from './manage-contractual-discount-action-client.ts';
+export * from './manage-external-price-source-policy-action-client.ts';
 export * from './manage-product-commercial-fees-bulk-action-client.ts';
 export * from './manage-product-prices-bulk-action-client.ts';
 export * from './manage-quantity-tier-action-client.ts';

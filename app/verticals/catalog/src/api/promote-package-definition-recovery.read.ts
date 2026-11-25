@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.promote-package-definition', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(PromotePackageDefinitionResultSchema),
-      encode: Schema.encodeEffect(PromotePackageDefinitionResultSchema),
     },
   );
 

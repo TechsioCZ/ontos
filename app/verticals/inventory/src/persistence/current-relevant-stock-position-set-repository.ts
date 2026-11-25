@@ -3,7 +3,7 @@ import { and, eq, exists, getTableColumns, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { createSelectSchema } from 'drizzle-orm/effect-schema';
 import type { AnyPgColumn, PgTable } from 'drizzle-orm/pg-core';
-import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 import { Effect, Schema } from 'effect';
 
 import { CatalogToStockBindingSchema } from '../../shared/domain/catalog-to-stock-binding.ts';

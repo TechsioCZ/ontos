@@ -14,7 +14,7 @@ import { retirePackageDefinitionAction } from '../../src/actions/retire-package-
 import { retirePackageOptionAction } from '../../src/actions/retire-package-option.action.ts';
 import { revisePackageDefinitionAction } from '../../src/actions/revise-package-definition.action.ts';
 import { catalogResultSnapshots } from '../../src/database/schema.ts';
-import { CatalogRevisionNumberSchema } from '../../shared/domain/catalog-revision-reference.ts';
+import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
 
 const scope = {
   ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({

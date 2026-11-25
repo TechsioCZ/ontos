@@ -2,7 +2,10 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
-import { CatalogResourceRefSchema, CatalogRevisionNumberSchema } from '../domain/catalog-revision-reference.ts';
+import {
+  CatalogResourceRefSchema,
+  CatalogRevisionNumberSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
 import { SetCompositionRevisionSchema } from '../domain/set-composition.ts';
 
 const SetCompositionHistoryReferenceSchema = Schema.Struct({

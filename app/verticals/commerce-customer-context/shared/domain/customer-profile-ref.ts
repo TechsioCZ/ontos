@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-profile.ts';
 

@@ -13,7 +13,7 @@ import {
   variantUnitDivisibility,
 } from '../../src/database/schema.ts';
 import { catalogQuantityPreparationForScope } from '../../src/persistence/catalog-quantity-preparation.ts';
-import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const productId = '22222222-2222-4222-8222-222222222222';

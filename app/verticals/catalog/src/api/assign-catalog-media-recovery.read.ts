@@ -41,7 +41,6 @@ const recoverResult = (
     { actionInvocationId: invocationId, actionKey: 'commerce.catalog.assign-catalog-media', schemaVersion: 1 },
     {
       decode: Schema.decodeUnknownEffect(AssignCatalogMediaResultSchema),
-      encode: Schema.encodeEffect(AssignCatalogMediaResultSchema),
     },
   );
 

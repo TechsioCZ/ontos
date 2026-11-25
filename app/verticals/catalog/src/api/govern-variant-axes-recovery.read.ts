@@ -37,7 +37,6 @@ const recoverResult = (
 ) => {
   const codec = {
     decode: Schema.decodeUnknownEffect(GovernVariantAxesResultSchema),
-    encode: Schema.encodeEffect(GovernVariantAxesResultSchema),
   };
   return recoverCatalogActionResultVersions([1], () =>
     recoverCatalogActionResult(
@@ -88,6 +87,10 @@ export const governVariantAxesRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Recover source-requested Product readiness',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: governVariantAxesRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

@@ -1,8 +1,11 @@
 import { Schema } from 'effect';
 
-import { CatalogRevisionResourceIdSchema, CatalogRevisionTenantIdSchema } from './catalog-revision-reference.ts';
-import type { CatalogResourceRef } from './catalog-revision-reference.ts';
-import type { ProductRef } from '../resources/product.ts';
+import {
+  CatalogRevisionResourceIdSchema,
+  CatalogRevisionTenantIdSchema,
+} from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { CatalogResourceRef } from '@app/catalog-selection-contracts/catalog-resource-reference';
+import type { ProductRef } from '@app/catalog-selection-contracts/resources/product';
 
 /**
  * Catalog-owned Configuration Definition vocabulary (#456).

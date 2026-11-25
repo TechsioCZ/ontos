@@ -1,5 +1,5 @@
 import { makeActiveApplicationCompositionService } from '@app/core-runtime';
-import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog/api/pricing-purpose-equivalence';
+import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import { QuantityBasisCompatibilityResponseSchema } from '@app/catalog/api/quantity-basis-compatibility';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import { PricingCurrentMarketEvidenceResponseSchema } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';

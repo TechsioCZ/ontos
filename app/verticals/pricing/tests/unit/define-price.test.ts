@@ -13,6 +13,7 @@ import type { DefinePriceActionServices } from '../../src/actions/define-price.a
 import type { CommercialContextAssessment } from '../../src/integrations/commercial-context-evidence.ts';
 import { PricePersistenceUnavailable } from '../../src/services/price-persistence.service.ts';
 import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
+import { prepareDefinePriceOriginalRequestIdentity } from '../../shared/source-request-identity.ts';
 import {
   preparePriceSourceEvidence,
   priceSourceFactFingerprint,
@@ -229,6 +230,58 @@ describe('Define Price Action', () => {
       );
       expect(created).toEqual({ outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED', provenance });
       expect(reused).toEqual({ outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED', provenance });
+    }),
+  );
+
+  it.effect('adopts the original canonical Price on a new request only with matching owner source evidence', () =>
+    Effect.gen(function* adoptsCanonicalPrice() {
+      const replay = yield* Schema.decodeUnknownEffect(DefinePricePayloadSchema)({
+        ...payload,
+        priceRef: { ...priceRef, resourceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' },
+        sourceAssertion: {
+          ...payload.sourceAssertion,
+          sourceAssertionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+          timing: { ...payload.sourceAssertion.timing, importedAt: '2026-09-28T10:00:00.500Z' },
+        },
+      });
+      const replayTrusted = {
+        ...trusted,
+        actionInvocationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        requestCorrelationId: 'define-price-new-key',
+        trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-28T10:00:01.000Z')),
+      };
+      const principal = { legalEntityId, principalId: trusted.actingPrincipalId, tenantId };
+      const originalIdentity = yield* prepareDefinePriceOriginalRequestIdentity(payload, principal, legalEntityId);
+      const replayIdentity = yield* prepareDefinePriceOriginalRequestIdentity(replay, principal, legalEntityId);
+      expect(replayIdentity.requestHash).not.toBe(originalIdentity.requestHash);
+      expect(originalIdentity.normalizedPayload).toMatchObject({ sourceAssertion: payload.sourceAssertion });
+      expect(replayIdentity.normalizedPayload).toMatchObject({ sourceAssertion: replay.sourceAssertion });
+      const commands: Parameters<DefinePriceActionServices['define']>[0][] = [];
+      const result = yield* applyPriceDefinition(
+        replay,
+        replayTrusted,
+        servicesFor((command) => {
+          commands.push(command);
+          return Effect.succeed(persistenceSuccess('REUSED'));
+        }),
+      );
+
+      expect(result).toEqual({ outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED', provenance });
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({
+        actingPrincipalId: trusted.actingPrincipalId,
+        actionInvocationId: replayTrusted.actionInvocationId,
+        identityKey: payload.identityKey,
+        priceRef: replay.priceRef,
+        requestCorrelationId: replayTrusted.requestCorrelationId,
+        sourceEvidence: {
+          sourceAssertion: replay.sourceAssertion,
+          sourceFactFingerprint: provenance.evidence.sourceFactFingerprint,
+        },
+      });
+      expect(provenance.canonicalLink.priceRef).toEqual(payload.priceRef);
+      expect(provenance.evidence.sourceAssertion).toEqual(payload.sourceAssertion);
+      expect(provenance.evidence.sourceAssertion.sourceAssertionId).not.toBe(replay.sourceAssertion.sourceAssertionId);
     }),
   );
 
