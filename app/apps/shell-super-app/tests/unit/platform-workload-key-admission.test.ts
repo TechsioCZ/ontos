@@ -30,16 +30,14 @@ describe('workload key admission', () => {
   it.effect('queries only active associations while retaining the permanent platform marker', () =>
     Effect.gen(function* test() {
       for (const row of [
-        { expected: false, internalBound: false, platformRole: null },
-        { expected: true, internalBound: true, platformRole: null },
-        { expected: true, internalBound: false, platformRole: 'internal_workload' },
+        { internalBound: false, platformRole: null, expected: false },
+        { internalBound: true, platformRole: null, expected: true },
+        { internalBound: false, platformRole: 'internal_workload', expected: true },
       ]) {
         let principalReads = 0;
         const database = yield* makeTestDatabase((statement) => {
-          if (!statement.includes('as "internalBound"')) {
-            return Effect.succeed([]);
-          }
-          principalReads += 1;
+          if (!statement.includes('as "internalBound"')) return Effect.succeed([]);
+          principalReads++;
           expect(statement).toContain("b.status = 'active'");
           expect(statement).toContain("registered.status = 'active'");
           expect(statement).toContain("platform.status = 'active'");

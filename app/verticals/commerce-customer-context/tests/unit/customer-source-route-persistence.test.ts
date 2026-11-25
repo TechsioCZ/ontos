@@ -2,10 +2,7 @@ import type { WorkloadBindingHolder } from '@app/core-runtime/access/enforcement
 import { Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  customerSourceRouteEnrollment,
-  customerSourceWriterEnrollment,
-} from '../../src/persistence/customer-source-route-persistence.ts';
+import { customerSourceRouteEnrollment } from '../../src/persistence/customer-source-route-persistence.ts';
 
 // INTERNAL_CONTRACT only: these values are not a claim about any external system's identifiers.
 const writer = '44444444-4444-4444-8444-444444444444';
@@ -23,13 +20,6 @@ const enrolledWriter = Option.some({ principalId: writer });
 const writerOf = (writers: readonly WorkloadBindingHolder[], enrolled = enrolledWriter) =>
   customerSourceRouteEnrollment({ readers: [], requestedReaders: [], writer: enrolled, writers })
     .enrolledWriterPrincipalId;
-
-it('declares canonical company SERVICE enrollment only for this receiver’s source writer', () => {
-  expect(customerSourceWriterEnrollment).toEqual({
-    enrollmentMode: 'system-or-canonical-company-service',
-    workloadKey: 'commerce.customer-context.source-write',
-  });
-});
 
 it("counts the route's writer and readers where Core's company gate admits them in the route's legal entity", () => {
   expect(
@@ -71,10 +61,8 @@ it('counts no reader the company gate refuses in the legal entity, nor a princip
 it('admits a native SYSTEM source reader only through that exact workload binding in the company', () => {
   for (const registration of ['binding', 'other_binding', 'none'] as const) {
     const result = customerSourceRouteEnrollment({
-      readers: [holder('system', reader, registration)],
-      requestedReaders: [reader],
-      writer: enrolledWriter,
-      writers: [holder('system', writer, 'binding')],
+      readers: [holder('system', reader, registration)], requestedReaders: [reader],
+      writer: enrolledWriter, writers: [holder('system', writer, 'binding')],
     });
     expect(result.enrolledReaderPrincipalIds).toEqual(registration === 'binding' ? [reader] : []);
   }

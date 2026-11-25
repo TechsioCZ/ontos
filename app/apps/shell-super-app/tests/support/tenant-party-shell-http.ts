@@ -4,12 +4,7 @@ import { NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node
 import { Cause, Effect, Exit, Layer, Predicate, Schema, Tracer } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
-import {
-  ShellAuthenticationApiRuntime,
-  ShellAuthenticationApiRuntimeConfiguration,
-  ShellAuthenticationApiRuntimeLive,
-  shellProductionRuntimeArguments,
-} from '../../api/index.ts';
+import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
 import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
@@ -62,20 +57,16 @@ const serve = Effect.scoped(
     // A suite that seeds the tenant's v2 access intent starts the Shell with its production gate. Any other
     // suite seeds none for the Shell, so its child must not reach a real access engine: it scripts the one
     // gate every protected surface of this bundle asks.
-    const runtimeArguments = process.argv.includes(serveWithAccessIntent)
-      ? shellProductionRuntimeArguments
-      : ([
+    const runtime = process.argv.includes(serveWithAccessIntent)
+      ? makeShellAuthenticationApiRuntime(...shellProductionRuntimeArguments)
+      : makeShellAuthenticationApiRuntime(
           ...shellProductionRuntimeArguments,
           nativeShellAccessGateLive.pipe(
             Layer.provide(LegalEntityContextLive),
             Layer.provide(CorePersistenceLive),
             Layer.provide(DatabaseConfigLive),
           ),
-        ] satisfies typeof ShellAuthenticationApiRuntimeConfiguration.Service);
-    const runtime = yield* ShellAuthenticationApiRuntime.pipe(
-      Effect.provide(ShellAuthenticationApiRuntimeLive),
-      Effect.provideService(ShellAuthenticationApiRuntimeConfiguration, runtimeArguments),
-    );
+        );
     const observedRuntime = defineEffectBff({
       ...runtime,
       layer: runtime.layer.pipe(Layer.provide(Layer.succeed(Tracer.Tracer, defectTracer))),

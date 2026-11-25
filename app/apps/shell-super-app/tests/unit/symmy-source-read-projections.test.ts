@@ -500,64 +500,6 @@ const scopeWithout = (selected: SymmySourceReadScope, ...removed: readonly strin
     ({ entrypointKey }) => !removed.includes(entrypointKey),
   ),
 });
-const catalogPageReply = (mode: FixtureMode, selectedScope: SymmySourceReadScope) => {
-  if (mode === 'forbidden') {
-    const error = CatalogSourceProductPageForbiddenProblemSchema.make({
-      detail: 'Owner denied',
-      status: CatalogSourceProductPageForbiddenProblemSchema.fields.status.literal,
-      title: 'Forbidden',
-      type: 'https://ontos.dev/problems/catalog-denied',
-    });
-    return Promise.resolve(
-      Response.json(error, { headers: { 'content-type': 'application/problem+json' }, status: 403 }),
-    );
-  }
-  const source = {
-    issuerId: mode === 'foreign_product' ? 'foreign-issuer' : selectedScope.issuerId,
-    mappingRevision: 'map-1',
-    recordId: 'product-record',
-    recordNamespace: selectedScope.sourceNamespace,
-    routeScope: routeId,
-  };
-  const decoded = Schema.decodeUnknownSync(CatalogSourceProductPageResponseSchema)({
-    count: mode === 'absent_product' || mode === 'short_count' ? 0 : 1,
-    items:
-      mode === 'absent_product'
-        ? []
-        : [
-            {
-              entityKind: 'PRODUCT',
-              originalActionInvocationId: invocationId,
-              product: {
-                catalogReady: false,
-                createdAt: at,
-                lifecycle: 'DRAFT',
-                name: 'Native Product',
-                productRef,
-                revision: 1,
-                updatedAt: at,
-                variants: [
-                  {
-                    lifecycle: 'WORK_IN_PROGRESS',
-                    productRef,
-                    variantId,
-                    variantRef: {
-                      moduleId: 'commerce.catalog',
-                      resourceId: variantId,
-                      resourceType: 'commerce.catalog.variant',
-                      tenantId,
-                    },
-                  },
-                ],
-              },
-              source,
-              variantId,
-              variantSources: [{ source, variantId }],
-            },
-          ],
-  });
-  return Promise.resolve(Response.json(Schema.encodeSync(CatalogSourceProductPageResponseSchema)(decoded)));
-};
 const fixture = (
   mode: FixtureMode = 'current',
   recordKey = sourceCorrelation.recordKey,
@@ -590,7 +532,62 @@ const fixture = (
     requests.push(request);
     const { pathname } = new URL(request.url);
     if (pathname.endsWith('/reads/catalog-source-product-page')) {
-      return catalogPageReply(mode, selectedScope);
+      if (mode === 'forbidden') {
+        const error = CatalogSourceProductPageForbiddenProblemSchema.make({
+          detail: 'Owner denied',
+          status: CatalogSourceProductPageForbiddenProblemSchema.fields.status.literal,
+          title: 'Forbidden',
+          type: 'https://ontos.dev/problems/catalog-denied',
+        });
+        return Promise.resolve(
+          Response.json(error, { headers: { 'content-type': 'application/problem+json' }, status: 403 }),
+        );
+      }
+      const source = {
+        issuerId: mode === 'foreign_product' ? 'foreign-issuer' : selectedScope.issuerId,
+        mappingRevision: 'map-1',
+        recordId: 'product-record',
+        recordNamespace: selectedScope.sourceNamespace,
+        routeScope: routeId,
+      };
+      const decoded = Schema.decodeUnknownSync(CatalogSourceProductPageResponseSchema)({
+        count: mode === 'absent_product' || mode === 'short_count' ? 0 : 1,
+        items:
+          mode === 'absent_product'
+            ? []
+            : [
+                {
+                  entityKind: 'PRODUCT',
+                  originalActionInvocationId: invocationId,
+                  product: {
+                    catalogReady: false,
+                    createdAt: at,
+                    lifecycle: 'DRAFT',
+                    name: 'Native Product',
+                    productRef,
+                    revision: 1,
+                    updatedAt: at,
+                    variants: [
+                      {
+                        lifecycle: 'WORK_IN_PROGRESS',
+                        productRef,
+                        variantId,
+                        variantRef: {
+                          moduleId: 'commerce.catalog',
+                          resourceId: variantId,
+                          resourceType: 'commerce.catalog.variant',
+                          tenantId,
+                        },
+                      },
+                    ],
+                  },
+                  source,
+                  variantId,
+                  variantSources: [{ source, variantId }],
+                },
+              ],
+      });
+      return Promise.resolve(Response.json(Schema.encodeSync(CatalogSourceProductPageResponseSchema)(decoded)));
     }
     const searchReply = searchOwnerReply(pathname, request, mode);
     if (searchReply !== undefined) {
@@ -630,9 +627,7 @@ const fixture = (
     }
     if (pathname.endsWith('/reads/source-profile-export')) {
       const replies = Schema.is(Schema.instanceOf(Response))(icoResponse) ? undefined : icoResponse;
-      if (replies?.party !== undefined) {
-        return Promise.resolve(replies.party.clone());
-      }
+      if (replies?.party !== undefined) return Promise.resolve(replies.party.clone());
       return Promise.resolve(
         Response.json(
           mode === 'party_unavailable'
@@ -1809,93 +1804,70 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(companyParty.owners).toEqual(['customer-profile-source-page']);
     }),
   );
-  it.effect(
-    'exports source-sync Counterparty profiles without claiming personal or organization-business authority',
-    () =>
-      Effect.gen(function* sourceSyncCustomerParts() {
-        const { icoAuthority: _classification, ...unclassified } = company;
-        const sourceSync = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)({
-          ...unclassified,
-          sourceProcessingMode: 'SOURCE_SYNC',
-        });
-        const organization = Schema.decodeUnknownSync(SourceProfileExportResponseSchema)({
-          ...partyExport,
-          businessName: 'Synced Organization',
-          firstName: null,
-          lastName: null,
-          partyType: 'ORGANIZATION',
-        });
-        const all = yield* projectCustomerParts(undefined, scope, companyPage(sourceSync), {
-          party: Response.json(Schema.encodeSync(SourceProfileExportResponseSchema)(organization)),
-        });
-        expect(all.owners).toEqual(['customer-profile-source-page', 'source-profile-export']);
-        expect(all.customer?.party).toEqual(organization);
-        expect(all.customer).not.toHaveProperty('ico');
-        expect(all.customer).not.toHaveProperty('business_name');
-        for (const fields of [['ico'], ['businessName'], ['id', 'profile']] as const) {
-          const selected = yield* projectCustomerParts(fields, scope, companyPage(sourceSync));
-          expect(selected.owners).toEqual(['customer-profile-source-page']);
-          expect(selected.customer).not.toHaveProperty('party');
-        }
-        const withoutPermission = yield* projectCustomerParts(
-          undefined,
-          scopeWithout(scope, personalNameRead),
-          companyPage(sourceSync),
-        );
-        expect(withoutPermission.owners).toEqual(['customer-profile-source-page']);
-        expect(withoutPermission.customer).not.toHaveProperty('party');
-        const unavailable = fixture('party_unavailable', sourceCorrelation.recordKey, companyPage(sourceSync));
-        const failure = yield* projectSymmySourceCustomers(
-          scope,
-          {},
-          unavailable.admission,
-          unavailable.newRequestIdentifier,
-        ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, unavailable.fakeFetch));
-        expect(Schema.is(SymmyUnavailableProblemSchema)(failure)).toBe(true);
-        expect(unavailable.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
-          'customer-profile-source-page',
-          'source-profile-export',
-        ]);
-      }),
+  it.effect('exports source-sync Counterparty profiles without claiming personal or organization-business authority', () =>
+    Effect.gen(function* sourceSyncCustomerParts() {
+      const { icoAuthority: _classification, ...unclassified } = company;
+      const sourceSync = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)({
+        ...unclassified,
+        sourceProcessingMode: 'SOURCE_SYNC',
+      });
+      const organization = Schema.decodeUnknownSync(SourceProfileExportResponseSchema)({
+        ...partyExport, partyType: 'ORGANIZATION', firstName: null, lastName: null,
+        businessName: 'Synced Organization',
+      });
+      const all = yield* projectCustomerParts(undefined, scope, companyPage(sourceSync), {
+        party: Response.json(Schema.encodeSync(SourceProfileExportResponseSchema)(organization)),
+      });
+      expect(all.owners).toEqual(['customer-profile-source-page', 'source-profile-export']);
+      expect(all.customer?.party).toEqual(organization);
+      expect(all.customer).not.toHaveProperty('ico');
+      expect(all.customer).not.toHaveProperty('business_name');
+      for (const fields of [['ico'], ['businessName'], ['id', 'profile']] as const) {
+        const selected = yield* projectCustomerParts(fields, scope, companyPage(sourceSync));
+        expect(selected.owners).toEqual(['customer-profile-source-page']);
+        expect(selected.customer).not.toHaveProperty('party');
+      }
+      const withoutPermission = yield* projectCustomerParts(
+        undefined, scopeWithout(scope, personalNameRead), companyPage(sourceSync),
+      );
+      expect(withoutPermission.owners).toEqual(['customer-profile-source-page']);
+      expect(withoutPermission.customer).not.toHaveProperty('party');
+      const unavailable = fixture('party_unavailable', sourceCorrelation.recordKey, companyPage(sourceSync));
+      const failure = yield* projectSymmySourceCustomers(
+        scope, {}, unavailable.admission, unavailable.newRequestIdentifier,
+      ).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, unavailable.fakeFetch));
+      expect(Schema.is(SymmyUnavailableProblemSchema)(failure)).toBe(true);
+      expect(unavailable.requests.map((request) => new URL(request.url).pathname.split('/').at(-1))).toEqual([
+        'customer-profile-source-page', 'source-profile-export',
+      ]);
+    }),
   );
   it.effect('requests and exports source-owned addresses only for an explicit selected source-sync view', () =>
     Effect.gen(function* selectedSourceAddresses() {
       const { icoAuthority: _classification, ...unclassified } = company;
       const { kind: _kind, ...nativeProfileRef } = companyProfileRef;
-      const addresses = [
-        {
-          label: 'Source address',
-          lifecycle: 'ACTIVE',
-          origin: {
-            kind: 'COMMERCE_ONLY',
-            postalAddress: { addressLine1: 'Source 1', city: 'Test City', countryCode: 'CZ', postalCode: '11000' },
-          },
-          profile: {
-            counterpartyRef: { ...partyRef, resourceType: 'party.registry.counterparty' },
-            kind: 'COUNTERPARTY',
-            profileRef: nativeProfileRef,
-          },
-          purposes: ['BILLING', 'DELIVERY'],
-          revision: 1,
-          savedAddressRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: productId,
-            resourceType: 'commerce.customer-context.saved-address',
-            tenantId,
-          },
+      const addresses = [{
+        label: 'Source address', lifecycle: 'ACTIVE', revision: 1,
+        origin: {
+          kind: 'COMMERCE_ONLY',
+          postalAddress: { addressLine1: 'Source 1', city: 'Test City', postalCode: '11000', countryCode: 'CZ' },
         },
-      ];
+        profile: {
+          kind: 'COUNTERPARTY', profileRef: nativeProfileRef,
+          counterpartyRef: { ...partyRef, resourceType: 'party.registry.counterparty' },
+        },
+        purposes: ['BILLING', 'DELIVERY'],
+        savedAddressRef: {
+          moduleId: 'commerce.customer-context', resourceType: 'commerce.customer-context.saved-address',
+          resourceId: productId, tenantId,
+        },
+      }];
       const item = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)({
-        ...unclassified,
-        sourceAddresses: addresses,
-        sourceProcessingMode: 'SOURCE_SYNC',
+        ...unclassified, sourceProcessingMode: 'SOURCE_SYNC', sourceAddresses: addresses,
       });
       const current = fixture('current', sourceCorrelation.recordKey, companyPage(item));
       const result = yield* projectSymmySourceCustomers(
-        scope,
-        { fields: ['addresses'] },
-        current.admission,
-        current.newRequestIdentifier,
+        scope, { fields: ['addresses'] }, current.admission, current.newRequestIdentifier,
       ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
       expect(result.customers[0]?.addresses).toEqual(addresses);
       expect(result.customers[0]).not.toHaveProperty('party');
@@ -1905,8 +1877,7 @@ describe('Symmy source-qualified public owner read projections', () => {
       const unselected = yield* projectCustomerParts(undefined, scope, companyPage(item));
       expect(unselected.customer).not.toHaveProperty('addresses');
       const ordinary = Schema.decodeUnknownSync(CustomerProfileSourceItemSchema)({
-        ...company,
-        sourceAddresses: addresses,
+        ...company, sourceAddresses: addresses,
       });
       const notSourceSync = yield* projectCustomerParts(['addresses'], scope, companyPage(ordinary));
       expect(notSourceSync.customer).not.toHaveProperty('addresses');

@@ -26,18 +26,13 @@ import {
 import { NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices, NodeSocket } from '@effect/platform-node';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
-import { Config, Console, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Context, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Socket } from 'effect/socket';
 import { Reactivity } from 'effect/reactivity';
 
-import {
-  ShellAuthenticationApiRuntime,
-  ShellAuthenticationApiRuntimeConfiguration,
-  ShellAuthenticationApiRuntimeLive,
-  shellProductionRuntimeArguments,
-} from '../../api/index.ts';
+import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
 import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
@@ -99,10 +94,7 @@ const partyModuleCredential = Effect.fn('PrivacyCompletionShell.partyModuleCrede
 const mountShellApiHandler = Effect.fn('PrivacyCompletionShell.mountShellApiHandler')(function* mountShellApiHandler(
   accessGate: Layer.Layer<AccessDecisionGate>,
 ) {
-  const runtime = yield* ShellAuthenticationApiRuntime.pipe(
-    Effect.provide(ShellAuthenticationApiRuntimeLive),
-    Effect.provideService(ShellAuthenticationApiRuntimeConfiguration, [...shellProductionRuntimeArguments, accessGate]),
-  );
+  const runtime = makeShellAuthenticationApiRuntime(...shellProductionRuntimeArguments, accessGate);
   return yield* Effect.acquireRelease(
     Effect.promise(resolveEffectBffModuleHandler.bind(undefined, { default: runtime }, {})).pipe(
       Effect.flatMap((value) =>

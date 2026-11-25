@@ -4,8 +4,7 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/princip
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 
 import { RegisteredGatewayRouteScopeSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { SymmyGatewayRouteScopeSchema } from '@app/shared-contracts';
-import type { SymmyGatewayRouteScope } from '@app/shared-contracts';
+import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type {
   SymmyRouteContextRequestSchema,
   SymmyRouteContextResponseSchema,
@@ -50,29 +49,6 @@ export const requiresSymmyPriceGroupRouteProof = (
 ): boolean =>
   audience === priceGroupAudience &&
   (routeKey === 'priceLists' || routeKey === 'priceListPricesBatch' || routeKey === 'productsBatch');
-
-type SymmyOwnerRouteAdmission =
-  | { readonly kind: 'refused' }
-  | { readonly kind: 'unscoped' }
-  | { readonly kind: 'route-proof'; readonly routeRequest: RouteRequest };
-
-/** The integration owns which owner calls require its already-selected route; hosts only execute that decision. */
-export const decideSymmyOwnerRouteAdmission = (
-  selectedRoute: RouteRequest | undefined,
-  input: { readonly audience: string; readonly legalEntityId?: string },
-): SymmyOwnerRouteAdmission => {
-  if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
-    return { kind: 'refused' };
-  }
-  if (
-    input.legalEntityId === undefined &&
-    input.audience !== 'inventory' &&
-    !requiresSymmyPriceGroupRouteProof(selectedRoute?.routeKey, input.audience)
-  ) {
-    return { kind: 'unscoped' };
-  }
-  return selectedRoute === undefined ? { kind: 'refused' } : { kind: 'route-proof', routeRequest: selectedRoute };
-};
 type InstalledContract = ShellInstalledCatalog['contracts'][number];
 
 const nativeReadOperations = [
@@ -101,7 +77,7 @@ interface NativeReadEvidence {
   readonly audience: string;
   readonly compositionRevision: string;
   readonly principal: TrustedPrincipalContext;
-  readonly routeScope: SymmyGatewayRouteScope;
+  readonly routeScope: RegisteredGatewayRouteScope;
 }
 const nativeReadMintKey = Object.freeze({ kind: 'symmy_native_route_read' });
 class AdmittedSymmyNativeReadValue {
@@ -397,7 +373,7 @@ export const prepareSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.prepar
         originalWorkloadKey: receiver.originalWorkloadKey,
         workloadKey,
       };
-      const nativeScope = yield* Schema.decodeUnknownEffect(SymmyGatewayRouteScopeSchema)({
+      const nativeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
         ...routeScopeInput,
         nativeReadReceiver:
           route.legalEntityId === undefined

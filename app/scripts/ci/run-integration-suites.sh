@@ -17,8 +17,6 @@ if [[ "${1:-}" == --shell-shard ]]; then
       kill -TERM -- "-$task_pid" 2>/dev/null || true
       timeout --kill-after=1s 3s tail --pid="$task_pid" -f /dev/null || true
       kill -KILL -- "-$task_pid" 2>/dev/null || true
-      # Reap the direct child before returning; sending KILL alone does not collect its exit status.
-      wait "$task_pid" 2>/dev/null || true
     fi
     exit 124
   }

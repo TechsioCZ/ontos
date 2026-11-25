@@ -1,14 +1,14 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { CoreReadReceiverBindings, assetCurrentRead, makeCoreReadReceiverBindings } from '@app/core-runtime';
-import { SHELL_HOST_APP_ID, coreOperations } from '@app/core-runtime/sdk/core';
+import { isShellHostedCoreProvider } from '@app/core-runtime';
+import { SHELL_HOST_APP_ID } from '@app/core-runtime/sdk/core';
 import {
   ActionPrincipalScopeErrorSchema,
   ActionPrincipalUnavailableErrorSchema,
   bindGatewayPrincipalVerifier,
 } from '@app/gateway-principal-verifier/server';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
-import { Effect, Layer } from 'effect';
+import { Effect } from 'effect';
 import type { Redacted } from 'effect';
 
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
@@ -40,11 +40,6 @@ import { ShellInstalledModuleCatalog } from './modules/installed-module-catalog.
 
 const principalVerifier = bindGatewayPrincipalVerifier(SHELL_HOST_APP_ID, ultramodernDeliveryUnit);
 
-export const coreHostedReadReceiverBindingsLive = Layer.succeed(
-  CoreReadReceiverBindings,
-  makeCoreReadReceiverBindings([{ callers: ['catalog'], registration: assetCurrentRead }]),
-);
-
 const unauthorized = () =>
   Effect.fail(
     ActionPrincipalScopeErrorSchema.make({ reason: 'The Bearer assertion was not issued for this operation' }),
@@ -69,9 +64,7 @@ const callingModuleDeclaresHostedOperation = Effect.fn('CoreHostedOperation.auth
       contract?.manifest.requirements?.operations.some(
         (requirement) =>
           requirement.callers?.some((caller) => caller.kind === 'person') === true &&
-          requirement.provider.moduleId === coreOperations.assetCurrent.provider.moduleId &&
-          requirement.provider.entrypointKey === coreOperations.assetCurrent.provider.entrypointKey &&
-          requirement.provider.schemaVersion === coreOperations.assetCurrent.provider.schemaVersion,
+          isShellHostedCoreProvider(requirement.provider),
       ) === true;
     return yield* declares ? Effect.void : unauthorized();
   },

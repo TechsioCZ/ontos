@@ -5,18 +5,6 @@ const PostgresFailureConstraintSchema = Schema.Struct({
   constraint: Schema.String,
 });
 const CauseWrapperSchema = Schema.Struct({ cause: Schema.Unknown });
-/** Bounded technical diagnostics; owners must not use these codes to choose business outcomes. */
-export const PostgresDiagnosticSqlStateSchema = Schema.Literals([
-  '23505',
-  '23514',
-  '42501',
-  '42703',
-  '42P01',
-  '23503',
-  '23502',
-  'P0001',
-  '22P02',
-]);
 export type PostgresFailureMetadata = Readonly<{
   readonly code: string;
   readonly constraint?: string;

@@ -128,16 +128,17 @@ export const moduleEntrypointLoadIdentity = (
   });
 };
 
-const browserFederationRuntime = Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(
-  Effect.timeout('5 seconds'),
-);
+const browserFederationRuntime =
+  import.meta.env.MODERN_TARGET === 'browser'
+    ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
+    : Effect.interrupt;
 
 /** Loads only the pinned code identity; the caller's decoder validates its requested export. */
 export const loadBrowserModuleEntrypoint = <Value>(
   target: Parameters<typeof moduleEntrypointLoadIdentity>[0],
   contract: Schema.Decoder<Value>,
 ) =>
-  'document' in globalThis
+  import.meta.env.MODERN_TARGET === 'browser'
     ? pinBrowserModuleTarget(target, document).pipe(
         Effect.andThen(browserFederationRuntime),
         Effect.flatMap(({ getInstance }): Effect.Effect<SettledModuleEntrypointLoad<Value>> => {

@@ -73,7 +73,6 @@ import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import type { TrustedPrincipalContext } from '../../src/actions/principal-context.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { assetCurrentRead } from '../../src/generated-reads/asset-current.ts';
-import { makeCoreReadReceiverBindings, resolveCoreReadReceiverActor } from '../../src/reads/receiver-bindings.ts';
 import { assetDownloadRead } from '../../src/generated-reads/asset-download.ts';
 import { assetMetadataRead } from '../../src/generated-reads/asset-metadata.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
@@ -167,7 +166,6 @@ const RENAME = 'core.media.display-filename.rename';
 const INTEGRITY = 'core.media.asset-integrity.fail';
 const DOWNLOAD = 'core.media.asset-download.read';
 const CURRENT = 'core.media.asset-current.read';
-const receiverBindings = makeCoreReadReceiverBindings([{ callers: ['catalog'], registration: assetCurrentRead }]);
 const INGEST = 'core.media.ingest';
 const INTEGRITY_WORKLOAD = 'core.media.integrity';
 
@@ -345,7 +343,6 @@ const buildRuntime = (input: {
         accessDecision: boundGate,
         databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         ownerAuthorizationOverlay: overlay,
-        receiverBindings,
       },
     );
     return {
@@ -1969,8 +1966,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
           });
           expect(decision.outcome).toBe('DENIED');
           expect(Schema.is(ReadPermissionDenied)(yield* failedWith(downloadAs(world, AGENT, ref)))).toBe(true);
-          // A sensitive assignment written past the grant rules is withheld from the agent's projection,
-          // without stopping the tenant's reconciliation.
+          // A role that would let an agent run the sensitive download is refused when the grant is written to the engine.
           yield* insertRoleWithCells(scenario.admin, scenario.tenantId, {
             capabilityKeys: [DOWNLOAD],
             catalogSnapshotId: seeded.bootstrapped.catalogSnapshotId,
@@ -1990,16 +1986,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
           const projected = yield* Effect.exit(
             scenario.scopeFor(OWNER).pipe(Effect.flatMap((scope) => scenario.writer.reconcileTenant({ scope }))),
           );
-          expect(Exit.isSuccess(projected)).toBe(true);
-          const afterProjection = yield* world.live.boundGate.decide({
-            carrier: carrierOf(assetDownloadRead.descriptor),
-            legalEntityScope: 'optional',
-            now: DECISION_AT,
-            scope: yield* scenario.scopeFor(AGENT),
-            target: targetOf(ref.resourceId),
-          });
-          expect(afterProjection.outcome).toBe('DENIED');
-          expect(Schema.is(ReadPermissionDenied)(yield* failedWith(downloadAs(world, AGENT, ref)))).toBe(true);
+          expect(Exit.isFailure(projected)).toBe(true);
           expect(yield* providerCalls(world)).toBe(callsBefore);
         }),
       ),
@@ -2395,10 +2382,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             const relayedDecision = Effect.fn('CoreMediaAuthorizationTest.relayedCompanyDecision')(
               function* relayedCompanyDecision(principalId: string, legalEntityId: string) {
                 return yield* world.live.boundGate.decide({
-                  carrier: {
-                    ...carrierOf(assetCurrentRead.descriptor),
-                    accessActor: resolveCoreReadReceiverActor(assetCurrentRead, receiverBindings),
-                  },
+                  carrier: carrierOf(assetCurrentRead.descriptor),
                   legalEntityScope: 'optional',
                   now: DECISION_AT,
                   scope: relayedBy(yield* scenario.scopeFor(principalId, legalEntityId), 'catalog'),
@@ -2442,22 +2426,19 @@ it.layer(suiteLayer, { excludeTestServices: true })(
 
             // The gate's answer for a requester relayed by a module: the requester's own right decides, `rights`.
             const decisionFor = Effect.fn('CoreMediaAuthorizationTest.relayedDecision')(function* relayedDecision(
-              carrier: GateInput['carrier'],
+              descriptor: Parameters<typeof carrierOf>[0],
               principalId: string,
               appId: string,
             ) {
               return yield* world.live.boundGate.decide({
-                carrier,
+                carrier: carrierOf(descriptor),
                 legalEntityScope: 'optional',
                 now: DECISION_AT,
                 scope: relayedBy(yield* scenario.scopeFor(principalId), appId),
                 target: targetOf(ref.resourceId),
               });
             });
-            const current = {
-              ...carrierOf(assetCurrentRead.descriptor),
-              accessActor: resolveCoreReadReceiverActor(assetCurrentRead, receiverBindings),
-            };
+            const current = assetCurrentRead.descriptor;
             // Catalog relays a requester who holds Current: allowed, and that very read answers the requester's call.
             expect((yield* decisionFor(current, CURRENT_HOLDER, 'catalog')).outcome).toBe('ALLOWED');
             expect((yield* currentAs(world, CURRENT_HOLDER, [ref])).entries.map(({ kind }) => kind)).toEqual([
@@ -2473,7 +2454,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             expect(otherModule.reasons.map(({ code }) => code)).toContain('deny.actor_unbound');
             // A relayed requester reaches no other Core Media capability: the carriers declare no module actor.
             for (const descriptor of [assetMetadataRead.descriptor, assetDownloadRead.descriptor]) {
-              const decision = yield* decisionFor(carrierOf(descriptor), METADATA_HOLDER, 'catalog');
+              const decision = yield* decisionFor(descriptor, METADATA_HOLDER, 'catalog');
               expect(decision.outcome).toBe('DENIED');
               expect(decision.reasons.map(({ code }) => code)).toContain('deny.actor_forbidden');
             }

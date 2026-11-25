@@ -33,7 +33,6 @@ const foreignHashModule = './foreign-hash.ts';
 const foreignBytesModule = './foreign-bytes.ts';
 const sourceHash = 'sha256(utf8ToBytes(value))';
 const nativeImports = "import { Effect, Schema } from 'effect';";
-const strictParseOptions = "{ onExcessProperty: 'error' }";
 const legacyBranch = "  if (!code.startsWith('~c14s1.'))";
 
 it('proves every actual public source-selector wire codec through its closed data dependencies', () => {
@@ -491,7 +490,7 @@ it('specializes the actual private request metadata codec from its closed publis
 });
 
 for (const [name, before, after] of [
-  ['computed strict option', strictParseOptions, "{ ['onExcessProperty']: 'error' }"],
+  ['computed strict option', "{ onExcessProperty: 'error' }", "{ ['onExcessProperty']: 'error' }"],
   ['unknown schema', 'requestIdentity(CreatePartyPayloadSchema,', 'requestIdentity(Schema.Unknown,'],
   [
     'effectful target callback',
@@ -1017,12 +1016,6 @@ const strictSchemaProof = (filename: string, exportedName: string, snapshot = so
     ownerPath: filename.split('/').slice(0, 2).join('/'),
     sources: snapshot,
   });
-const strictFixtureSchemaProof = (source: string): boolean =>
-  strictSchemaProof(
-    contextCodecFile,
-    'Codec',
-    new Map([...sources, [contextPackageFile, contextPackage], [contextCodecFile, source]]),
-  );
 const problemSchemaFile = 'packages/shared-contracts/src/problem-details.ts';
 const taggedSchemas = [
   [
@@ -1047,39 +1040,6 @@ it('proves actual native schema descriptor producers for tagged middleware witho
   expect(strictSchemaProof(problemSchemaFile, 'RequestSchemaProblemSchema')).toBe(true);
   for (const [filename, name] of taggedSchemas) {
     expect(strictSchemaProof(filename, name), name).toBe(true);
-  }
-});
-
-it('proves native endpoint parse-option annotations without admitting eager work or annotation authority', () => {
-  const baseline = `
-import { Schema, HttpApi, HttpApiGroup, HttpApiEndpoint } from '@modern-js/bff-effect/effect-client';
-export const Codec = Schema.Struct({ message: Schema.String });
-const group = HttpApiGroup.make('probe')
-  .add(HttpApiEndpoint.post('probe', '/probe', { success: Codec }))
-  .annotateEndpoints(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' });
-`;
-  expect(strictFixtureSchemaProof(baseline)).toBe(true);
-  for (const altered of [
-    baseline.replace('HttpApi.PayloadParseOptions', 'foreignKey'),
-    baseline.replace('HttpApi.PayloadParseOptions', "fetch('remote')"),
-    baseline.replace(strictParseOptions, "{ get onExcessProperty() { return fetch('remote'); } }"),
-    baseline.replace(strictParseOptions, "{ onExcessProperty: fetch('remote') }"),
-    baseline.replace(strictParseOptions, "() => fetch('remote')"),
-    baseline.replace("HttpApiGroup.make('probe')", "HttpApi.make('probe')"),
-    baseline.replace(
-      ".annotateEndpoints(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' })",
-      '.annotateEndpoints()',
-    ),
-    baseline.replace(
-      ".annotateEndpoints(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' })",
-      ".annotateEndpoints(HttpApi.PayloadParseOptions, { onExcessProperty: 'error' }, fetch('remote'))",
-    ),
-    `${baseline}\nHttpApiGroup.make = foreign;\n`,
-    `${baseline}\nHttpApi.PayloadParseOptions = foreign;\n`,
-    `${baseline}\nconst eager = fetch('remote');\n`,
-  ]) {
-    expect(altered).not.toBe(baseline);
-    expect(strictFixtureSchemaProof(altered)).toBe(false);
   }
 });
 

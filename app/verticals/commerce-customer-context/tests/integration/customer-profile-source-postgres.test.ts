@@ -1,10 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import {
-  SourceProcessingEligibilityRequestSchema,
-  SourceProcessingEligibilityResponseSchema,
-} from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
 import { ContextAccessLive, ReadRuntime, runAction, makeActiveApplicationCompositionService } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
@@ -127,19 +123,16 @@ it.live(
         const counterpartyEffectId = 'profile-effect-3';
         const admittedPartyReferences = new Map<string, string>();
         let privacyDenied = false;
-        let privacyUnavailable = false;
         let profileTargetDenied = false;
         let partyUnavailable = false;
         let privacyChecks = 0;
         let currentAdmissionRevision = 1;
         const currentDecisionId = randomUUID();
         const sourceAdmissionInvocationId = randomUUID();
-        const privacySubjectId = randomUUID();
         const observedPrivacy: { operation: string; targetKind: string | null }[] = [];
         const observedPartyCitations: unknown[] = [];
         const observedPrivacyRequirements = new Set<string>();
         const observedPartyRequirements = new Set<string>();
-        const now = DateTime.formatIso(yield* DateTime.now);
         // INTERNAL_CONTRACT: Party and Privacy prove their own receivers separately; this fixture
         // provides exact current decisions to exercise Commerce's actual transactional owner boundary.
         const ordinary = Layer.mergeAll(
@@ -246,71 +239,26 @@ it.live(
           }),
           Layer.succeed(CommerceSourceProcessingEligibility, {
             check: (scope, input, operationRequirementKey) => {
-              const request = Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema, {
-                onExcessProperty: 'error',
-              })({ ...input, consumerModuleId: 'commerce.customer-context' });
+              Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema, { onExcessProperty: 'error' })({
+                ...input,
+                consumerModuleId: 'commerce.customer-context',
+              });
               observedPrivacyRequirements.add(operationRequirementKey);
               privacyChecks += 1;
               observedPrivacy.push({ operation: input.operation, targetKind: input.target?.kind ?? null });
               if (input.operation === 'PROFILE_CREATE') {
                 observedPartyCitations.push(input.partySourceReference);
               }
-              if (privacyUnavailable) {
-                return Effect.fail(
-                  new CommerceSourceProcessingRejected({
-                    code: 'UNAVAILABLE',
-                    reason: 'Internal current protected-material authority unavailable',
-                  }),
-                );
-              }
-              if (
-                scope.tenantId !== fixture.tenantId ||
+              return scope.tenantId !== fixture.tenantId ||
                 privacyDenied ||
                 (profileTargetDenied && input.target?.kind === 'RETAIL_CUSTOMER_PROFILE')
-              ) {
-                return Effect.fail(
-                  new CommerceSourceProcessingRejected({
-                    code: 'DENIED',
-                    reason: 'Internal current protected-material decision',
-                  }),
-                );
-              }
-              const requestRef = computeCanonicalValueHash(request);
-              return Effect.succeed(
-                Schema.decodeUnknownSync(SourceProcessingEligibilityResponseSchema.members[1], {
-                  onExcessProperty: 'error',
-                })({
-                  authorityIncarnation: 'internal:source-profile-privacy',
-                  authorityRevision: 'internal:1',
-                  evaluatedAt: now,
-                  evidence: {
-                    authoritativeReferences: [
-                      { kind: 'INTERNAL_REQUEST', reference: requestRef, revision: 'internal:1' },
-                    ],
-                    currentnessConditions: [],
-                    evaluatedScope: {
-                      controllerRef: fixture.legalEntityId,
-                      dataCategoryRefs: ['internal:source-profile'],
-                      operation: request.operation,
-                      processingScopeRef: { scopeId: requestRef, scopeType: 'privacy.processing-scope' },
-                      purposeRef: 'internal:source-profile-test',
-                      purposeVersionId: 'internal:1',
-                      recipientRefs: [request.consumerModuleId],
-                      subjectRef: {
-                        moduleId: 'privacy.core',
-                        resourceId: privacySubjectId,
-                        resourceType: 'privacy.core.privacy-subject',
-                        tenantId: fixture.tenantId,
-                      },
-                    },
-                    outcome: 'ALLOWED',
-                    policyRevisions: [{ policyRef: 'internal:source-profile-privacy', revision: 'internal:1' }],
-                    reasonCodes: ['INTERNAL_CONTRACT_ALLOWED'],
-                    trustedDecisionTime: now,
-                  },
-                  outcome: 'ALLOWED',
-                }),
-              );
+                ? Effect.fail(
+                    new CommerceSourceProcessingRejected({
+                      code: 'DENIED',
+                      reason: 'Internal current protected-material decision',
+                    }),
+                  )
+                : Effect.void;
             },
           }),
           profileReactivationEligibilityEvaluatorFactoryLive,
@@ -318,6 +266,7 @@ it.live(
         ).pipe(Layer.provideMerge(ContextAccessLive), Layer.provide(profileReconfirmationPolicyUnavailableLive));
         const context = yield* Layer.build(ordinary.pipe(Layer.provideMerge(fixture.layer)));
         const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
+        const now = DateTime.formatIso(yield* DateTime.now);
         const source = {
           effectId: 'profile-effect-1',
           issuer: 'internal-ebs',
@@ -630,7 +579,7 @@ it.live(
           code: 'read_handler_unavailable',
         });
         expect(yield* Effect.flip(read({ ...authority, effectId: source.effectId, mode: 'RECEIPT' }))).toMatchObject({
-          code: 'read_permission_denied',
+          code: 'read_handler_unavailable',
         });
         expect(yield* Effect.flip(ensure())).toMatchObject({ code: 'PRIVACY_DENIED' });
         expect(privacyChecks).toBeGreaterThan(callsBefore);
@@ -659,13 +608,6 @@ it.live(
           code: 'read_handler_unavailable',
         });
         privacyDenied = false;
-        privacyUnavailable = true;
-        for (const mode of ['MINIMAL_RECEIPT', 'RECEIPT'] as const) {
-          expect(yield* Effect.flip(read({ ...authority, effectId: source.effectId, mode }))).toMatchObject({
-            code: 'read_handler_unavailable',
-          });
-        }
-        privacyUnavailable = false;
         partyUnavailable = true;
         expect(yield* Effect.flip(read({ ...authority, cursor: null, limit: 10, mode: 'LIST' }))).toMatchObject({
           code: 'read_handler_unavailable',

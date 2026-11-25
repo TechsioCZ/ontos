@@ -1,13 +1,7 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
-import {
-  CoreReadReceiverBindings,
-  GatewayAssertionReplayError,
-  assetCurrentRead,
-  assetMetadataRead,
-  makeActiveApplicationCompositionLayer,
-} from '@app/core-runtime';
+import { GatewayAssertionReplayError, makeActiveApplicationCompositionLayer } from '@app/core-runtime';
 import { GatewayActorClaimSchema } from '@app/shared-contracts';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import {
@@ -21,10 +15,7 @@ import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair } from 'jose';
 
-import {
-  authenticateHostedOperationPrincipal,
-  coreHostedReadReceiverBindingsLive,
-} from '../../api/core-hosted-operations.ts';
+import { authenticateHostedOperationPrincipal } from '../../api/core-hosted-operations.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { GatewayIssuer, issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import {
@@ -67,16 +58,6 @@ const hostedRequirement = {
   key: 'commerce.catalog.requirement.core-media-current',
   provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
 };
-
-it.effect('binds only the original Current read to Catalog with the requester rights unchanged', () =>
-  Effect.gen(function* hostedBinding() {
-    const bindings = yield* CoreReadReceiverBindings;
-    expect(bindings.actorFor(assetCurrentRead)).toMatchObject({ callers: ['catalog'], subject: 'rights' });
-    expect(bindings.actorFor(assetMetadataRead)).toBeUndefined();
-    expect(bindings.actorFor(new Proxy(assetCurrentRead, {}))).toBeUndefined();
-    expect(assetCurrentRead.descriptor.accessActor?.callers).toEqual([]);
-  }).pipe(Effect.provide(coreHostedReadReceiverBindingsLive)),
-);
 const catalogContract = (declaresHosted: boolean) => {
   const catalog = makeModuleContractFixture({ appId: 'catalog', moduleId: 'commerce.catalog' });
   return declaresHosted

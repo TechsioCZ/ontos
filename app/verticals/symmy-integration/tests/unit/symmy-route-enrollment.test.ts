@@ -974,13 +974,12 @@ describe('Symmy route write decisions', () => {
       kind: 'replace',
     });
     const stopped = storedRow(enrollment, { active: false, changeToken: 2, routeRevision: 'route-v0' });
-    expect(refusalCodes(decided(enrollment, { byRouteId: stopped }, replaceAt(1)))).toEqual([
+    expect(refusalCodes(decided(enrollment, { byRouteId: stopped, bySelector: stopped }, replaceAt(1)))).toEqual([
       'change_token_not_current',
     ]);
-    expect(decided(enrollment, { byRouteId: stopped }, replaceAt(2))).toMatchObject({
+    expect(decided(enrollment, { byRouteId: stopped, bySelector: stopped }, replaceAt(2))).toMatchObject({
       changed: ['active', 'routeRevision'],
       kind: 'replace',
-      previous: { changeToken: 2, routeRevision: 'route-v0' },
     });
   });
 

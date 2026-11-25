@@ -211,32 +211,6 @@ const manyQuestions = (count: number): AccessQuestions =>
   Object.fromEntries(Array.from({ length: count }, (_, index) => [`q${index}`, canRun(applyAction)]));
 
 describe('materializeAccessQuestions', () => {
-  it('retains the unresolved host binding on field questions instead of creating an ordinary empty actor', () => {
-    const hostRead = target(`${MODULE}.api.host-records`, {
-      accessActor: {
-        callerBinding: 'receiving-host',
-        callers: [],
-        reason: 'Only the receiving host binds delegated callers',
-        subject: 'rights',
-      },
-      accessDeclaration: declaration(RECORDS_READ_KEY),
-      accessFieldGroups: [restrictedGroup()],
-    });
-    const [question] = materializeAccessQuestions(ownRead, {
-      restricted: canSeeFields(hostRead, RESTRICTED_KEY),
-    });
-    expect(question).toMatchObject({
-      carrier: {
-        accessActor: {
-          callerBinding: 'receiving-host',
-          callers: [],
-          subject: 'rights',
-        },
-      },
-      kind: 'field',
-    });
-  });
-
   it('turns every question into the gate question it asks', () => {
     const [assign, restricted, rows] = materializeAccessQuestions(ownRead, {
       assign: canRun(assignAction),

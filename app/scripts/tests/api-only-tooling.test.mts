@@ -68,9 +68,6 @@ const generatedServiceModuleName = 'api/service';
 const generatedApiServiceModule = 'dist/esm-node/ultramodern-workspace/api/service.js';
 
 const generatedSharedApiImport = '../shared/api.ts';
-const fixtureApiSourceId = 'owner/shared/api.ts';
-const startupDiagnosticsImport = './request-service-diagnostics.ts';
-const codeToolsModuleDirectory = 'node_modules/@modern-js/code-tools';
 
 const generatedSharedRpcImport = '../shared/rpc.ts';
 
@@ -1163,7 +1160,7 @@ it('static API validation proves the imported helper call topology', () => {
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `;
   const sharedApiModule = {
-    id: fixtureApiSourceId,
+    id: 'owner/shared/api.ts',
     resolveImport: unexpectedTopologyImport,
     source: fixtureApiModuleSource,
   };
@@ -1551,202 +1548,12 @@ const reportsAssemblyViolation = (messages: readonly string[]): boolean =>
     ),
   );
 
-const resolveStartupImports = (diagnostics: string) => (specifier: string) => {
-  if (specifier === generatedSharedApiImport) {
-    return { id: fixtureApiSourceId, source: fixtureApiModuleSource };
-  }
-  return specifier === startupDiagnosticsImport
-    ? { id: 'owner/api/request-service-diagnostics.ts', source: diagnostics }
-    : undefined;
-};
-
-const startupRuntimeSource = (
-  declaration: string,
-  startupTransform = 'failShellStartup',
-  transportTransform = startupTransform,
-) => `
-import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Effect } from 'effect';
-import { flow } from 'effect/Function';
-import { fixtureApi } from '../shared/api.ts';
-import { logRequestServicesFailure } from '${startupDiagnosticsImport}';
-${declaration}
-const group = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) => handlers.handle('reachable', () => Effect.void));
-const handlers = Layer.mergeAll(group).pipe(${startupTransform});
-const transport = HttpRouter.add('GET', '/health', () => Effect.void).pipe(${transportTransform});
-export default assembleEffectBffRuntime({ api: fixtureApi, handlers, transport });
-`;
-
-const startupTransformDeclaration =
-  'const failShellStartup = flow(Layer.tapCause(logRequestServicesFailure), Layer.orDie);';
-const StrictStartupRuntimeModuleSchema = Schema.Struct({
-  strictEffectRuntimeTopologyViolation: callable<typeof strictEffectRuntimeTopologyViolation>(),
-});
-const strictStartupRuntimeFormats = [
-  'dist/cjs/strict-effect-runtime.cjs',
-  'dist/esm/strict-effect-runtime.js',
-  'dist/esm-node/strict-effect-runtime.js',
-] as const;
-
-it.live(
-  'closed native startup transforms preserve the real handlers and transport in every published format',
-  Effect.fn(function* nativeStartupTransforms() {
-    const codeToolsRoot = yield* Effect.promise(() => realpath(path.join(workspaceRoot, codeToolsModuleDirectory)));
-    const diagnostics = yield* Effect.promise(() =>
-      readFile(path.join(workspaceRoot, 'apps/shell-super-app/api/request-service-diagnostics.ts'), 'utf-8'),
-    );
-    const resolveImport = resolveStartupImports(diagnostics);
-    for (const format of strictStartupRuntimeFormats) {
-      const imported: unknown = yield* Effect.promise(
-        () => import(pathToFileURL(path.join(codeToolsRoot, format)).href),
-      );
-      const module = yield* Schema.decodeUnknownEffect(StrictStartupRuntimeModuleSchema)(imported);
-      for (const [label, source] of [
-        ['current Shell startup transform', startupRuntimeSource(startupTransformDeclaration)],
-        [
-          'immutable transform alias',
-          startupRuntimeSource(
-            `${startupTransformDeclaration}\nconst startupAlias = failShellStartup;`,
-            'startupAlias',
-          ),
-        ],
-        [
-          'renamed native flow import',
-          startupRuntimeSource(startupTransformDeclaration)
-            .replace("import { flow } from 'effect/Function';", "import { flow as compose } from 'effect';")
-            .replace('= flow(', '= compose('),
-        ],
-        ['direct native pipeline', startupRuntimeSource('', 'Layer.tapCause(logRequestServicesFailure), Layer.orDie')],
-      ] as const) {
-        expect(
-          module.strictEffectRuntimeTopologyViolation(source, resolveImport),
-          `${format}: ${label}`,
-        ).toBeUndefined();
-      }
-    }
-  }),
-);
-
-it.live(
-  'closed native startup transforms reject replacement callbacks, spoofed imports and mutated namespaces',
-  Effect.fn(function* startupTransformSpoofs() {
-    const codeToolsRoot = yield* Effect.promise(() => realpath(path.join(workspaceRoot, codeToolsModuleDirectory)));
-    const resolveImport = resolveStartupImports(`import { Effect } from 'effect';
-export const logRequestServicesFailure = (cause) => Effect.logError('Startup failed').pipe(Effect.annotateLogs({ cause }));`);
-    const nativeAlias = "import { Layer as StartupLayer } from 'effect';";
-    const invalid = [
-      ['replacement callback', startupRuntimeSource('const failShellStartup = () => Layer.empty;')],
-      [
-        'open callback wrapping otherwise native stages',
-        startupRuntimeSource(
-          'const failShellStartup = (layer) => layer.pipe(Layer.tapCause(logRequestServicesFailure), Layer.orDie);',
-        ),
-      ],
-      [
-        'valid handlers cannot excuse replacement transport',
-        startupRuntimeSource(startupTransformDeclaration, 'failShellStartup', '() => Layer.empty'),
-      ],
-      [
-        'valid transport cannot excuse replacement handlers',
-        startupRuntimeSource(startupTransformDeclaration, '() => Layer.empty', 'failShellStartup'),
-      ],
-      [
-        'replacement inside flow',
-        startupRuntimeSource(
-          'const failShellStartup = flow(Layer.tapCause(logRequestServicesFailure), () => Layer.empty);',
-        ),
-      ],
-      ['open transform parameter', startupRuntimeSource('', 'unknownTransform')],
-      [
-        'open observer parameter',
-        startupRuntimeSource('const failShellStartup = flow(Layer.tapCause(unknownObserver), Layer.orDie);'),
-      ],
-      [
-        'observer returning a Layer instead of a diagnostic Effect',
-        startupRuntimeSource(
-          'const observer = () => Layer.empty; const failShellStartup = flow(Layer.tapCause(observer), Layer.orDie);',
-        ),
-      ],
-      [
-        'unproven transform factory',
-        startupRuntimeSource(
-          'const makeTransform = (observer) => flow(Layer.tapCause(observer), Layer.orDie); const failShellStartup = makeTransform(logRequestServicesFailure);',
-        ),
-      ],
-      [
-        'spoofed flow import',
-        startupRuntimeSource(startupTransformDeclaration).replace(
-          "from 'effect/Function'",
-          "from './counterfeit-flow.ts'",
-        ),
-      ],
-      [
-        'wrong export from native flow module',
-        startupRuntimeSource(startupTransformDeclaration).replace('import { flow }', 'import { fake as flow }'),
-      ],
-      [
-        'spoofed Layer import used only by the transform',
-        startupRuntimeSource(
-          `${nativeAlias.replace("from 'effect'", "from './counterfeit-layer.ts'")}
-const failShellStartup = flow(StartupLayer.tapCause(logRequestServicesFailure), StartupLayer.orDie);`,
-        ),
-      ],
-      [
-        'mutation through a second native Layer import',
-        startupRuntimeSource(`import { Layer as OtherLayer } from 'effect';
-OtherLayer.tapCause = () => () => Layer.empty;
-${startupTransformDeclaration}`),
-      ],
-      [
-        'observer mutation through a second native Effect import',
-        startupRuntimeSource(`import { Effect as OtherEffect } from 'effect';
-OtherEffect.logError = () => Layer.empty;
-${startupTransformDeclaration}`),
-      ],
-      ...[
-        'StartupLayer.orDie = () => Layer.empty;',
-        'const alias = StartupLayer; alias.tapCause = () => () => Layer.empty;',
-        'Object.assign(StartupLayer, { orDie: () => Layer.empty });',
-        "Object.defineProperty(StartupLayer, 'tapCause', { value: () => () => Layer.empty });",
-        'unknownMutator(StartupLayer);',
-      ].map(
-        (mutation) =>
-          [
-            mutation,
-            startupRuntimeSource(`${nativeAlias}
-${mutation}
-const failShellStartup = flow(StartupLayer.tapCause(logRequestServicesFailure), StartupLayer.orDie);`),
-          ] as const,
-      ),
-      [
-        'replacement after a valid transform',
-        startupRuntimeSource(startupTransformDeclaration, 'failShellStartup, () => Layer.empty'),
-      ],
-      [
-        'arbitrary observer Effect transformer',
-        startupRuntimeSource(
-          `const observer = (cause) => Effect.logError('Startup failed').pipe(() => Layer.empty);
-const failShellStartup = flow(Layer.tapCause(observer), Layer.orDie);`,
-        ),
-      ],
-    ] as const;
-    for (const format of strictStartupRuntimeFormats) {
-      const imported: unknown = yield* Effect.promise(
-        () => import(pathToFileURL(path.join(codeToolsRoot, format)).href),
-      );
-      const module = yield* Schema.decodeUnknownEffect(StrictStartupRuntimeModuleSchema)(imported);
-      for (const [label, source] of invalid) {
-        expect(module.strictEffectRuntimeTopologyViolation(source, resolveImport), `${format}: ${label}`).toBeDefined();
-      }
-    }
-  }),
-);
-
 it.live(
   'published lint validators reject comment, string, and local strict-root spoofs',
   Effect.fn(function* mergedScenario2() {
-    const codeToolsRoot = yield* Effect.promise(() => realpath(path.join(workspaceRoot, codeToolsModuleDirectory)));
+    const codeToolsRoot = yield* Effect.promise(() =>
+      realpath(path.join(workspaceRoot, 'node_modules/@modern-js/code-tools')),
+    );
     const formats = [
       'dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs',
       'dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js',
@@ -3637,7 +3444,7 @@ it.live(
 const resolveImport = (specifier: string) =>
   specifier === generatedSharedApiImport
     ? {
-        id: fixtureApiSourceId,
+        id: 'owner/shared/api.ts',
         resolveImport: unexpectedTopologyImport,
         source: governedApiModuleSource,
       }

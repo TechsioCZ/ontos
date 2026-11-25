@@ -138,15 +138,9 @@ it('composes the Core access-decision request grants into the Party request iden
       }
     }
   }
-  // Core checks `kind`, active `status`, and the native executor's `platform_role` marker. Composition adds
-  // exactly those declared columns to Party's identity read, never table-wide access or a write privilege.
-  expect(byTable.get('core.principals')?.columns?.select).toEqual([
-    'kind',
-    'platform_role',
-    'principal_id',
-    'status',
-    'tenant_id',
-  ]);
+  // The merge adds the gate's `kind` beside the identity columns Party already read, and never widens
+  // a Party grant: the composed column set is exactly the union of both declarations.
+  expect(byTable.get('core.principals')?.columns?.select).toEqual(['kind', 'principal_id', 'status', 'tenant_id']);
   expect(byTable.get('core.principals')?.privileges).toEqual(['select']);
 });
 

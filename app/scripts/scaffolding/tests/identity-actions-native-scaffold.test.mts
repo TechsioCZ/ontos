@@ -9,10 +9,8 @@ import scaffoldAction from '../action/scaffold.mts';
 import type { ActionScaffoldConfig } from '../shared.mts';
 
 const actions = [
-  { action: 'configure-agent', handler: 'handleConfigureAgent', legalEntityScope: 'required' },
   { action: 'invite-person', handler: 'handleInvitePerson', legalEntityScope: 'required' },
   { action: 'manage-agent-status', handler: 'handleManageAgentStatus', legalEntityScope: 'required' },
-  { action: 'manage-demo-account', handler: 'handleManageDemoAccount', legalEntityScope: 'required' },
   { action: 'mutate-agent-proposals', handler: 'handleMutateAgentProposals', legalEntityScope: 'required' },
   { action: 'replace-agent-operators', handler: 'handleReplaceAgentOperators', legalEntityScope: 'required' },
   { action: 'set-company-membership', handler: 'handleSetCompanyMembership', legalEntityScope: 'required' },
@@ -21,38 +19,6 @@ const actions = [
 afterEach(() => {
   rs.restoreAllMocks();
 });
-
-it.live('inventories every native Core Action in the catalog, independent of generated markers', () =>
-  Effect.gen(function* completeCoreActionCatalog() {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const directory = fileURLToPath(new URL('../../../packages/core-runtime/src/modules/actions/', import.meta.url));
-    const files = (yield* fileSystem.readDirectory(directory, { recursive: true }))
-      .filter((file) => file.endsWith('.action.ts'))
-      .toSorted();
-    const catalog = yield* fileSystem.readFileString(`${directory}/catalog.ts`);
-    const registrations: string[] = [];
-    expect(files.length).toBeGreaterThan(0);
-    for (const file of files) {
-      const source = yield* fileSystem.readFileString(`${directory}/${file}`);
-      const exports = [...source.matchAll(/^export const (?<registration>[a-zA-Z0-9]+Action) = defineAction\(/gmu)];
-      expect(exports, `${file} must declare its native Action`).toHaveLength(1);
-      const registration = exports[0]?.groups?.['registration'];
-      if (registration === undefined) {
-        throw new Error(`${file} has no native Action registration`);
-      }
-      registrations.push(registration);
-      expect(catalog).toContain(`import { ${registration} } from './${file}';`);
-    }
-    const catalogImports = [...catalog.matchAll(/^import \{ \w+Action \} from '\.\/(?<file>[^']+\.action\.ts)';$/gmu)];
-    expect(
-      catalogImports.map((match) => Schema.decodeUnknownSync(Schema.String)(match.groups?.['file'])).toSorted(),
-    ).toEqual(files);
-    const catalogValues = [...catalog.matchAll(/^\s+(?<registration>\w+Action)\.descriptor,$/gmu)];
-    expect(
-      catalogValues.map((match) => Schema.decodeUnknownSync(Schema.String)(match.groups?.['registration'])).toSorted(),
-    ).toEqual(registrations.toSorted());
-  }).pipe(Effect.provide(NodeFileSystem.layer)),
-);
 
 for (const { action, handler, legalEntityScope } of actions) {
   it.live(`maintains ${action} on the actual native Codesmith scaffold without a disk fixture`, () =>

@@ -2416,8 +2416,8 @@ describe('closes strict scalar observations and rejects computed evaluator capab
   ]);
 });
 
-describe('uses the owning Shell runtime Layer and rejects direct composition constructor imports', () => {
-  const { accept, directory, register, reject, write } = recordScenario(serviceRuleTitle);
+describe('proves the actual Shell API composition factory from current owner source without executing it', () => {
+  const { accept, directory, register, write } = recordScenario(serviceRuleTitle);
   const owner = nodePath.join(directory, 'app/apps/shell-super-app');
   // The API root and every module its transport Layer imports: the Shell-owned routes, live changes and the MCP endpoint.
   for (const file of [
@@ -2440,17 +2440,6 @@ describe('uses the owning Shell runtime Layer and rejects direct composition con
       processImports,
       "import { makeShellAuthenticationApiRuntime } from '../../api/index.ts'; void makeShellAuthenticationApiRuntime;",
       directRunMain,
-    ].join('\n'),
-  );
-  reject(consumer, [
-    { message: serviceConstructorMessage.replace('makeCustomerSchema', 'makeShellAuthenticationApiRuntime') },
-  ]);
-  write(
-    consumer,
-    [
-      processImports,
-      "import { ShellAuthenticationApiRuntime, ShellAuthenticationApiRuntimeConfiguration, ShellAuthenticationApiRuntimeLive, shellProductionRuntimeArguments } from '../../api/index.ts';",
-      'NodeRuntime.runMain(ShellAuthenticationApiRuntime.pipe(Effect.provide(ShellAuthenticationApiRuntimeLive), Effect.provideService(ShellAuthenticationApiRuntimeConfiguration, shellProductionRuntimeArguments), Effect.asVoid));',
     ].join('\n'),
   );
   accept(consumer);

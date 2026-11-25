@@ -16,10 +16,7 @@ import {
 import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
 import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
 import { NodeCrypto } from '@effect/platform-node';
-import {
-  ActionPrincipalInvalidErrorSchema,
-  bindGatewayPrincipalVerifier,
-} from '@app/gateway-principal-verifier/server';
+import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -29,7 +26,7 @@ import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
-import { SignJWT, createLocalJWKSet, decodeJwt, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import { createLocalJWKSet, decodeJwt, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import {
   decodeSupportedGatewayContextClaims,
   NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
@@ -47,7 +44,6 @@ import {
 } from '../../api/auth/gateway-issuer.ts';
 import {
   acquireSymmyRouteScopeProof,
-  decideSymmyOwnerRouteAdmission,
   projectSymmyRouteScopePrincipal,
   readSymmyRouteScope,
   readAdmittedSymmyNativeRead,
@@ -66,35 +62,6 @@ import {
   ShellInstalledModuleCatalog,
   InstalledModuleCatalogUnavailableError,
 } from '../../api/modules/installed-module-catalog.ts';
-
-it('requires the exact selected stock route and preserves scoped and native prerequisite admission', () => {
-  const stock = { routeKey: 'inventoryStockBatch' } satisfies NonNullable<
-    Parameters<typeof decideSymmyOwnerRouteAdmission>[0]
-  >;
-  const products = { routeKey: 'productsBatch' } satisfies NonNullable<
-    Parameters<typeof decideSymmyOwnerRouteAdmission>[0]
-  >;
-  expect(decideSymmyOwnerRouteAdmission(undefined, { audience: 'inventory' })).toEqual({ kind: 'refused' });
-  expect(decideSymmyOwnerRouteAdmission(products, { audience: 'inventory' })).toEqual({ kind: 'refused' });
-  expect(decideSymmyOwnerRouteAdmission(stock, { audience: 'inventory' })).toEqual({
-    kind: 'route-proof',
-    routeRequest: stock,
-  });
-  expect(decideSymmyOwnerRouteAdmission(undefined, { audience: 'party-registry' })).toEqual({ kind: 'unscoped' });
-  expect(
-    decideSymmyOwnerRouteAdmission(undefined, { audience: 'party-registry', legalEntityId: 'selected-company' }),
-  ).toEqual({ kind: 'refused' });
-  expect(
-    decideSymmyOwnerRouteAdmission(products, { audience: 'party-registry', legalEntityId: 'selected-company' }),
-  ).toEqual({ kind: 'route-proof', routeRequest: products });
-  expect(decideSymmyOwnerRouteAdmission(products, { audience: 'price-group-catalog' })).toEqual({
-    kind: 'route-proof',
-    routeRequest: products,
-  });
-  expect(decideSymmyOwnerRouteAdmission(undefined, { audience: 'price-group-catalog' })).toEqual({
-    kind: 'unscoped',
-  });
-});
 
 const compositionRevision = 'a'.repeat(64);
 const principal = {
@@ -365,7 +332,6 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     ),
     nativeQueries,
     nativeState,
-    privateKey,
     publicKey,
   };
 });
@@ -1177,69 +1143,6 @@ it.effect(
               })
               .pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))));
             expect(readVerifiedGatewayRouteScope(redeemed)?.nativeReadReceiver?.workloadKey).toBe(workloadKey);
-            if (audience === 'party-registry' && receiver === 'system') {
-              for (const ver of [
-                NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
-                DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
-              ]) {
-                const invalidNativeClaims = {
-                  ...claims,
-                  routeScope: {
-                    ...claims.routeScope,
-                    nativeReadReceiver: {
-                      ...claims.routeScope.nativeReadReceiver,
-                      originalWorkloadKey: 'integration.customer-import-admit',
-                      requestHash: 'b'.repeat(64),
-                    },
-                  },
-                  ver,
-                };
-                const invalidClaims =
-                  ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION
-                    ? {
-                        ...invalidNativeClaims,
-                        act: {
-                          appId: 'symmy-integration',
-                          buildMarker: 'native-route-build',
-                          principalId: '90000000-0000-4000-8000-000000000004',
-                        },
-                      }
-                    : invalidNativeClaims;
-                const token = yield* Effect.promise(() =>
-                  new SignJWT(invalidClaims)
-                    .setProtectedHeader({ alg: 'EdDSA', kid: 'route-test', typ: 'JWT' })
-                    .sign(current.privateKey),
-                );
-                yield* Effect.promise(() =>
-                  jwtVerify(token, current.publicKey, {
-                    algorithms: ['EdDSA'],
-                    audience,
-                    currentDate: new Date(1_700_000_001_000),
-                    issuer: 'https://shell.test',
-                  }),
-                );
-                let redemptions = 0;
-                const refused = yield* bindGatewayPrincipalVerifier(audience, base.deployment)
-                  .verifyAndRedeem(Redacted.make(`Bearer ${token}`), {
-                    currentTimeSeconds: Effect.succeed(1_700_000_001),
-                    environment: {
-                      ONTOS_GATEWAY_ISSUER: 'https://shell.test',
-                      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-                        keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'route-test', use: 'sig' }],
-                      }),
-                    },
-                    redemption: {
-                      consume: () =>
-                        Effect.sync(() => {
-                          redemptions += 1;
-                        }),
-                    },
-                  })
-                  .pipe(Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))), Effect.flip);
-                expect(Schema.is(ActionPrincipalInvalidErrorSchema)(refused)).toBe(true);
-                expect(redemptions).toBe(0);
-              }
-            }
             const raw = {
               audience,
               compositionRevision: snapshot.composition.revision,

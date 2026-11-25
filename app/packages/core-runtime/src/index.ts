@@ -732,8 +732,6 @@ export type {
 } from './reads/context.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive, makeReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
-export { CoreReadReceiverBindings, makeCoreReadReceiverBindings } from './reads/receiver-bindings.ts';
-export type { CoreReadReceiverBinding, CoreReadReceiverBindingRegistry } from './reads/receiver-bindings.ts';
 export {
   ReadEvidencePersistenceError,
   ReadEvidenceValidationError,

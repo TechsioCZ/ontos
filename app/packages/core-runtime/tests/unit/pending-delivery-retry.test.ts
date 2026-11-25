@@ -65,13 +65,13 @@ const fixture = (
         [input.tenantId, input.outboxMessageId, input.workerKey].every((value) => parameters.includes(value))
           ? [
               [
-                state.attemptsCount,
-                state.availableAt,
-                state.claimedAt,
-                state.claimedBy,
-                state.claimExpiresAt,
                 deliveryId,
                 state.status,
+                state.attemptsCount,
+                state.availableAt,
+                state.claimedBy,
+                state.claimedAt,
+                state.claimExpiresAt,
               ],
             ]
           : [],

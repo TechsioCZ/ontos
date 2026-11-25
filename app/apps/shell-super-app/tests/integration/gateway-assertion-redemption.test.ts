@@ -23,7 +23,7 @@ it.live('consumes a delegated assertion once across separate instances and concu
   Effect.scoped(
     Effect.gen(function* durableRedemption() {
       const connections = yield* loadDatabaseConnectionPair();
-      const config = connections.runtime;
+      const config = { connectionString: connections.runtime.connectionString };
       const first = yield* makeAuthDatabase(config);
       const second = yield* makeAuthDatabase(config);
       const jti = randomUUID();
@@ -70,7 +70,7 @@ it.live('refuses an expired assertion and cleans only fully expired evidence', (
   Effect.scoped(
     Effect.gen(function* expiry() {
       const connections = yield* loadDatabaseConnectionPair();
-      const database = yield* makeAuthDatabase(connections.runtime);
+      const database = yield* makeAuthDatabase({ connectionString: connections.runtime.connectionString });
       const staleJti = randomUUID();
       const liveJti = randomUUID();
       const forgottenJti = randomUUID();

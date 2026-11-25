@@ -12,7 +12,6 @@ if [[ -n "$task_pid" ]]; then
 kill -TERM -- "-$task_pid" 2>/dev/null || true
 timeout --kill-after=1s 3s tail --pid="$task_pid" -f /dev/null || true
 kill -KILL -- "-$task_pid" 2>/dev/null || true
-wait "$task_pid" 2>/dev/null || true
 fi
 exit 124
 }

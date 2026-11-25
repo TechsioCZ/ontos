@@ -5,7 +5,6 @@ import {
   GatewayContextV9ClaimsSchema,
   GatewayContextV10ClaimsSchema,
   SupportedGatewayContextClaimsSchema,
-  SymmyGatewayRouteScopeSchema,
 } from '../../src/gateway-context.ts';
 
 const principalId = '10000000-0000-4000-8000-000000000001';
@@ -21,8 +20,8 @@ const claims = {
   iss: 'https://shell.example.test',
   jti: runId,
   principal: {
-    authContextRef: `job:integration.symmy.route-read:run:${runId}`,
     authMethod: 'system',
+    authContextRef: `job:integration.symmy.route-read:run:${runId}`,
     principalId,
     tenantId,
   },
@@ -56,55 +55,17 @@ it('decodes a native synchronous Read without any fabricated invocation or exter
   expect('admissionInvocationId' in claims.routeScope.nativeReadReceiver).toBe(false);
 });
 
-it('admits only the finite Symmy original workloads at issuance and both signed native wire versions', () => {
-  for (const originalWorkloadKey of [
-    'integration.symmy-admit',
-    'integration.symmy-poll',
-    'integration.customer-import-admit',
-    'party.registry.source-write',
-    'integration.symmy-admit.extra',
-    '',
-  ]) {
-    const routeScope = {
-      ...claims.routeScope,
-      nativeReadReceiver: {
-        ...claims.routeScope.nativeReadReceiver,
-        originalWorkloadKey,
-        requestHash: 'b'.repeat(64),
-      },
-    };
-    const allowed =
-      originalWorkloadKey === 'integration.symmy-admit' || originalWorkloadKey === 'integration.symmy-poll';
-    expect(Schema.is(SymmyGatewayRouteScopeSchema)(routeScope)).toBe(allowed);
-    for (const nativeClaims of [
-      { ...claims, routeScope },
-      {
-        ...claims,
-        act: {
-          appId: 'symmy-integration',
-          buildMarker: 'symmy-build',
-          principalId: '10000000-0000-4000-8000-000000000006',
-        },
-        routeScope,
-        ver: 10,
-      },
-    ]) {
-      expect(Schema.is(SupportedGatewayContextClaimsSchema)(nativeClaims)).toBe(allowed);
-    }
-  }
-});
-
 it('requires a distinct calling module on delegated native Reads without changing receiver or original identity rules', () => {
   const delegated = {
     ...claims,
+    routeScope: {
+      ...claims.routeScope,
+      nativeReadReceiver: { ...claims.routeScope.nativeReadReceiver, requestHash: 'b'.repeat(64) },
+    },
     act: {
       appId: 'symmy-integration',
       buildMarker: 'symmy-build',
       principalId: '10000000-0000-4000-8000-000000000006',
-    },
-    routeScope: {
-      ...claims.routeScope,
-      nativeReadReceiver: { ...claims.routeScope.nativeReadReceiver, requestHash: 'b'.repeat(64) },
     },
     ver: 10,
   };
@@ -124,19 +85,17 @@ it('requires a distinct calling module on delegated native Reads without changin
 });
 
 it('rejects native Read evidence on old external claims, or a missing or mismatched receiver identity', () => {
-  expect(
-    Schema.is(GatewayContextV2ClaimsSchema)({
-      ...claims,
-      principal: {
-        ...claims.principal,
-        authBindingId: runId,
-        authenticationNamespaceId: 'staff',
-        authMethod: 'api_key',
-        legalEntityId: companyId,
-      },
-      ver: 2,
-    }),
-  ).toBe(false);
+  expect(Schema.is(GatewayContextV2ClaimsSchema)({
+    ...claims,
+    principal: {
+      ...claims.principal,
+      authMethod: 'api_key',
+      authBindingId: runId,
+      authenticationNamespaceId: 'staff',
+      legalEntityId: companyId,
+    },
+    ver: 2,
+  })).toBe(false);
   const { nativeReadReceiver: _receiver, ...routeScope } = claims.routeScope;
   for (const invalid of [
     { ...claims, routeScope },
@@ -145,16 +104,9 @@ it('rejects native Read evidence on old external claims, or a missing or mismatc
     { ...claims, principal: { ...claims.principal, authenticationNamespaceId: 'staff' } },
     { ...claims, exp: claims.exp + 1 },
     { ...claims, routeScope: { ...claims.routeScope, principalId: originalPrincipalId } },
-    {
-      ...claims,
-      routeScope: {
-        ...claims.routeScope,
-        nativeReadReceiver: {
-          ...claims.routeScope.nativeReadReceiver,
-          originalWorkloadKey: 'party.registry.source-write',
-        },
-      },
-    },
+    { ...claims, routeScope: { ...claims.routeScope, nativeReadReceiver: {
+      ...claims.routeScope.nativeReadReceiver, originalWorkloadKey: 'party.registry.source-write',
+    } } },
   ]) {
     expect(Schema.is(GatewayContextV9ClaimsSchema)(invalid)).toBe(false);
   }

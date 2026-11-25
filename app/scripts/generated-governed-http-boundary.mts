@@ -4644,7 +4644,6 @@ const hasClosedMetadataObject = (source: string): boolean => {
 };
 
 interface NativeOperationInventory {
-  readonly apiEntries: readonly string[];
   readonly contracts: readonly string[];
   readonly publicApiNames: readonly string[];
 }
@@ -4655,19 +4654,17 @@ const nativePublicOperationInventory = (surface: string | undefined): NativeOper
   }
   const api = objectProperty(surface, 'api');
   const apiEntries = api === undefined ? undefined : topLevelObjectEntries(api);
-  if (apiEntries === undefined) {
-    return null;
-  }
-  const publicApiNames = apiEntries.flatMap((entry) => {
+  const publicApiNames = apiEntries?.flatMap((entry) => {
     const key = objectEntryKey(entry);
     return key === undefined ? [] : [key];
   });
   const operations = objectProperty(surface, 'operationContracts');
   const contracts = operations === undefined ? [] : topLevelArrayEntries(operations);
-  return publicApiNames.length === apiEntries.length &&
+  return publicApiNames !== undefined &&
+    publicApiNames.length === apiEntries?.length &&
     new Set(publicApiNames).size === publicApiNames.length &&
     contracts !== undefined
-    ? { apiEntries, contracts, publicApiNames }
+    ? { contracts, publicApiNames }
     : null;
 };
 
@@ -4714,158 +4711,35 @@ const nativeOwnerOperationContracts = (
   return nativePublicOperationInventory(objectProperty(owner.value, 'publicSurface'));
 };
 
-const hasNativeOwnerReadDefinition = (read: string, moduleId: string, key: string): boolean => {
-  const type = toPascalCase(key);
-  const readName = `${toCamelCase(key)}Read`;
-  const readExpression = assignedExpression(read, new RegExp(`export const ${readName}\\s*=\\s*`, 'u'));
-  const descriptor = objectArgument(readExpression, /^defineRead\(/u);
-  const connected = generatedModuleApiEntrypointReference(read, readName);
-  const entrypointExpression = connected?.initializer ?? constInitializer(read, connected?.name ?? '');
-  const entrypoint = objectArgument(entrypointExpression, /^defineTenantModuleEntrypoint\(/u);
-  return (
-    !hasGeneratedSourceHeader(read, MODULE_API_HEADER) &&
-    !hasGeneratedSourceHeader(read, GOVERNED_CONTRIBUTION_HEADER) &&
-    hasGeneratedModuleApiReadContract(read, moduleId, key, undefined, connected?.name) &&
-    descriptor !== undefined &&
-    hasClosedMetadataObject(descriptor) &&
-    entrypoint !== undefined &&
-    hasClosedMetadataObject(entrypoint) &&
-    hasReadDescriptorPolicy(
-      descriptor,
-      contributionProfiles[MODULE_API_KIND].accessKinds,
-      objectProperty(descriptor, 'accessDeclaration') !== undefined,
-    ) &&
-    hasObjectProperties(descriptor, { inputSchema: `${type}RequestSchema`, resultSchema: `${type}ResponseSchema` }) &&
-    hasContractImports(read, {
-      [`${type}RequestSchema`]: `../../shared/apis/${key}.ts`,
-      [`${type}ResponseSchema`]: `../../shared/apis/${key}.ts`,
-    }) &&
-    hasStableReadFactoryBindings(
-      read,
-      new Map([
-        ['defineRead', 0],
-        ['defineTenantModuleEntrypoint', 0],
-        [readName, 1],
-        [`${type}RequestSchema`, 0],
-        [`${type}ResponseSchema`, 0],
-      ]),
-      '',
-    )
-  );
-};
-
-const hasNativeOwnerApiContract = (contract: string, key: string): boolean => {
-  const api = `${toPascalCase(key)}Api`;
-  return (
-    !hasGeneratedSourceHeader(contract, MODULE_API_HEADER) &&
-    !hasGeneratedSourceHeader(contract, GOVERNED_CONTRIBUTION_HEADER) &&
-    hasGeneratedModuleApiContract(contract, api, toCamelCase(key), key) &&
-    [HTTP_API_CONTRACT_MODULE, EFFECT_CLIENT_MODULE].some((modulePath) =>
-      hasContractImports(contract, { HttpApi: modulePath, HttpApiEndpoint: modulePath, HttpApiGroup: modulePath }),
-    ) &&
-    hasStableReadFactoryBindings(
-      contract,
-      new Map([
-        ['HttpApi', 0],
-        ['HttpApiEndpoint', 0],
-        ['HttpApiGroup', 0],
-        [api, 1],
-      ]),
-      '',
-    )
-  );
-};
-
-const hasNativeOwnerReadPublication = (
-  sources: ReadonlyMap<string, string>,
-  inputs: CompleteGeneratedModuleApiSeamInputs,
-  inventory: NativeOperationInventory,
-  entry: string,
-): boolean => {
-  const key = objectEntryKey(entry);
-  if (key === undefined || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(key)) {
-    return false;
-  }
-  const contribution = { contractStem: key, kind: MODULE_API_KIND, name: key } as const;
-  const camel = toCamelCase(key);
-  const api = `${toPascalCase(key)}Api`;
-  const readName = `${camel}Read`;
-  const contract = sources.get(`${inputs.verticalPath}/shared/apis/${key}.ts`);
-  const read = sources.get(`${inputs.verticalPath}/src/api/${key}.read.ts`);
-  const client = sources.get(`${inputs.verticalPath}/src/api/${key}-client.ts`);
-  const claims = inventory.contracts.filter((candidate) =>
-    hasExactSourceTokens(tokenizeGovernedClient(objectProperty(candidate, 'apiKey') ?? ''), `'${key}'`),
-  );
-  return (
-    contract !== undefined &&
-    read !== undefined &&
-    client !== undefined &&
-    claims.length === 1 &&
-    claims.every(
-      (claim) =>
-        hasClosedMetadataObject(claim) &&
-        topLevelObjectEntries(claim)?.length === 3 &&
-        hasExactSourceTokens(
-          tokenizeGovernedClient(objectProperty(claim, 'operationKey') ?? ''),
-          `'${camel}.execute'`,
-        ) &&
-        objectProperty(claim, 'registration') === readName,
-    ) &&
-    hasExactValueImport(inputs.manifest, readName, `./src/api/${key}.read.ts`) &&
-    hasStableReadFactoryBindings(
-      inputs.manifest,
-      new Map([
-        [api, 0],
-        [readName, 0],
-      ]),
-      '',
-    ) &&
-    hasManifestContract(inputs.manifest, contribution, inputs.moduleId) &&
-    hasPublishedRegistration(inputs.registration, contribution) &&
-    hasExactValueImport(client, api, `../../shared/apis/${key}.ts`) &&
-    hasStableReadFactoryBindings(client, new Map([[api, 0]]), '') &&
-    publishesSharedApiContribution(inputs.sharedApi, api, key) &&
-    hasNativeOwnerApiContract(contract, key) &&
-    hasNativeOwnerReadDefinition(read, inputs.moduleId, key)
-  );
-};
-
 const hasMatchingModuleApiSlots = (
-  sources: ReadonlyMap<string, string>,
-  inputs: CompleteGeneratedModuleApiSeamInputs,
+  manifest: string,
+  registration: string,
   contributions: readonly GeneratedContribution[],
+  sources: ReadonlyMap<string, string>,
+  ownerPath: string,
+  moduleId: string,
+  runtimeDeclaration: string | undefined,
 ): boolean => {
-  const { manifest, moduleId, registration, runtimeDeclaration, verticalPath: ownerPath } = inputs;
   const moduleApiCount = contributions.filter((entry) => entry[2]?.kind === MODULE_API_KIND).length;
   const manifestApis = generatedSlotEntries(manifest, MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END);
   const registrationApis = generatedSlotEntries(registration, REGISTRATION_API_SLOT_START, REGISTRATION_API_SLOT_END);
-  if (manifestApis === undefined || registrationApis === undefined) {
+  if (
+    manifestApis === undefined ||
+    registrationApis?.filter((entry) => !isOwnerApprovalLoaderEntry(entry)).length !== moduleApiCount
+  ) {
     return false;
   }
   const readKeys = new Set(
     contributions.flatMap((entry) => (entry[2]?.kind === MODULE_API_KIND ? [entry[2].contractStem] : [])),
   );
+  const readApis = manifestApis.filter((entry) => readKeys.has(objectEntryKey(entry) ?? ''));
+  const actionApis = manifestApis.filter(
+    (entry) => !readKeys.has(objectEntryKey(entry) ?? '') && !isOwnerApprovalApiEntry(entry),
+  );
   const nativeOperations = nativeOwnerOperationContracts(manifest, registration, runtimeDeclaration, ownerPath);
   if (nativeOperations === null) {
     return false;
   }
-  const nativeReads =
-    nativeOperations === undefined
-      ? []
-      : manifestApis.filter(
-          (entry) =>
-            !readKeys.has(objectEntryKey(entry) ?? '') &&
-            !isOwnerApprovalApiEntry(entry) &&
-            hasNativeOwnerReadPublication(sources, inputs, nativeOperations, entry),
-        );
-  const nativeReadKeys = new Set(nativeReads.map(objectEntryKey));
-  const readApis = manifestApis.filter((entry) => readKeys.has(objectEntryKey(entry) ?? ''));
-  const actionApis = manifestApis.filter(
-    (entry) =>
-      !readKeys.has(objectEntryKey(entry) ?? '') &&
-      !nativeReadKeys.has(objectEntryKey(entry)) &&
-      !isOwnerApprovalApiEntry(entry),
-  );
   const operationEntries =
     nativeOperations?.contracts ??
     generatedSlotEntries(
@@ -4876,13 +4750,6 @@ const hasMatchingModuleApiSlots = (
   const keys = manifestApis.map(objectEntryKey);
   const publishedKeys = nativeOperations?.publicApiNames ?? keys;
   return (
-    registrationApis.filter((entry) => !isOwnerApprovalLoaderEntry(entry)).length ===
-      moduleApiCount + nativeReads.length &&
-    (nativeOperations === undefined ||
-      (nativeOperations.apiEntries.length === manifestApis.length &&
-        nativeOperations.apiEntries.every((entry) =>
-          manifestApis.some((published) => hasExactSourceTokens(tokenizeGovernedClient(published), entry)),
-        ))) &&
     readApis.length === moduleApiCount &&
     new Set(keys).size === keys.length &&
     (operationEntries === undefined ||
@@ -6148,7 +6015,17 @@ const hasCompleteGeneratedContributions = (
   if (contributions.length === 0) {
     return false;
   }
-  if (!hasMatchingModuleApiSlots(sources, inputs, contributions)) {
+  if (
+    !hasMatchingModuleApiSlots(
+      inputs.manifest,
+      inputs.registration,
+      contributions,
+      sources,
+      inputs.verticalPath,
+      inputs.moduleId,
+      inputs.runtimeDeclaration,
+    )
+  ) {
     diagnostics?.push('manifest or registration contribution inventory');
     return false;
   }

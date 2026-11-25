@@ -1,10 +1,8 @@
 import type { GatewayActorClaim } from '@app/shared-contracts';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import type {
-  RegisteredGatewayWorkload,
-  RegisteredGatewayRouteScope,
-} from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { RegisteredGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION,
@@ -37,38 +35,32 @@ interface VerifiedAssertionEvidence {
   readonly compositionRevision: string;
   readonly principal: TrustedPrincipalContext;
   readonly providerKeyId: string;
-  readonly routeScope: RegisteredGatewayRouteScope | undefined;
-  readonly sourceActor: GatewayActorClaim | undefined;
   readonly sourceAppId: string;
   readonly sourceBuildMarker: string;
   readonly sourceKey: string;
   readonly sourceValidity: { readonly expiresAt: number; readonly issuedAt: number };
+  readonly routeScope: RegisteredGatewayRouteScope | undefined;
+  readonly sourceActor: GatewayActorClaim | undefined;
   readonly workload: RegisteredGatewayWorkload | undefined;
 }
 const mintKey = Object.freeze({ kind: 'verified_gateway_assertion' });
 class VerifiedGatewayAssertionValue {
   readonly #evidence: VerifiedAssertionEvidence | undefined;
   constructor(key: typeof mintKey, evidence: VerifiedAssertionEvidence) {
-    const routeScope =
-      evidence.routeScope === undefined
-        ? undefined
-        : {
-            ...evidence.routeScope,
-            operations: Object.freeze(
-              evidence.routeScope.operations.map((operation) => Object.freeze({ ...operation })),
-            ),
-          };
-    if (routeScope?.nativeReadReceiver !== undefined) {
-      routeScope.nativeReadReceiver = Object.freeze({ ...routeScope.nativeReadReceiver });
-    }
     this.#evidence =
       key === mintKey
         ? Object.freeze({
             ...evidence,
             principal: Object.freeze({ ...evidence.principal }),
-            routeScope: routeScope === undefined ? undefined : Object.freeze(routeScope),
             sourceActor: evidence.sourceActor === undefined ? undefined : Object.freeze({ ...evidence.sourceActor }),
             sourceValidity: Object.freeze({ ...evidence.sourceValidity }),
+            routeScope: evidence.routeScope === undefined ? undefined : Object.freeze({
+              ...evidence.routeScope,
+              ...(evidence.routeScope.nativeReadReceiver === undefined ? {} : {
+                nativeReadReceiver: Object.freeze({ ...evidence.routeScope.nativeReadReceiver }),
+              }),
+              operations: Object.freeze(evidence.routeScope.operations.map((operation) => Object.freeze({ ...operation }))),
+            }),
             workload:
               evidence.workload === undefined ? undefined : snapshotRegisteredGatewayWorkload(evidence.workload),
           })
@@ -93,9 +85,9 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
     readonly assertion: Redacted.Redacted;
     readonly binding: GatewayModuleBinding;
     readonly currentDate: Date;
-    readonly nativeRouteRead?: boolean;
     readonly now: number;
     readonly registeredWorkload?: boolean;
+    readonly nativeRouteRead?: boolean;
     readonly requestedCompositionRevision: string;
   }) {
     const verification = yield* GatewayDelegationVerification;
@@ -132,10 +124,8 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
     if ('privacyDispatch' in source || 'organizationGovernanceRead' in source) {
       return yield* delegationForbidden('subject_assertion_finite')();
     }
-    if (
-      source.ver === NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ||
-      source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION
-    ) {
+    if (source.ver === NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ||
+      source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION) {
       if (input.nativeRouteRead !== true || input.registeredWorkload === true) {
         return yield* delegationForbidden('subject_assertion_kind_mismatch')();
       }
@@ -156,21 +146,18 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
       expiresAtEpochSeconds: source.exp,
       principal,
       providerKeyId: input.binding.providerKeyId,
-      routeScope:
-        source.ver === EXTERNAL_GATEWAY_ASSERTION_VERSION ||
-        source.ver === NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ||
-        source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION
-          ? source.routeScope
-          : undefined,
       scopePrincipal: trustVerifiedGatewayPrincipalContext(principal, source.compositionRevision, {
         assertion: input.assertion,
         audience: input.binding.sourceAppId,
       }),
-      sourceActor: source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ? source.act : undefined,
       sourceAppId: source.aud,
       sourceBuildMarker: source.targetBuildMarker,
       sourceKey: source.jti,
       sourceValidity: Object.freeze({ expiresAt: source.exp, issuedAt: source.iat }),
+      sourceActor: source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ? source.act : undefined,
+      routeScope: source.ver === EXTERNAL_GATEWAY_ASSERTION_VERSION || source.ver === NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION ||
+        source.ver === DELEGATED_NATIVE_ROUTE_READ_GATEWAY_ASSERTION_VERSION
+        ? source.routeScope : undefined,
       workload: source.ver === 4 ? snapshotRegisteredGatewayWorkload(source.workload) : undefined,
     };
     return { ...evidence, verifiedAssertion: new VerifiedGatewayAssertionValue(mintKey, evidence) };

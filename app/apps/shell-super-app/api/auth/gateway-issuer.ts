@@ -1,4 +1,5 @@
 import {
+  RegisteredGatewayRouteScopeSchema,
   RegisteredGatewayWorkloadSchema,
   RegisteredGatewayPrivacyDispatchSchema,
   RegisteredGatewayOrganizationGovernanceReadSchema,
@@ -27,7 +28,6 @@ import {
   GatewayActorClaimSchema,
   GatewayContextResponseSchema,
   GatewayTrustedPrincipalContextSchema,
-  SymmyGatewayRouteScopeSchema,
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from '@app/shared-contracts';
@@ -300,7 +300,7 @@ const decodeRouteScopedIssuance = Effect.fn('GatewayIssuer.decodeRouteScope')(fu
   ) {
     return yield* unavailable('principal');
   }
-  const routeScope = yield* Schema.decodeUnknownEffect(SymmyGatewayRouteScopeSchema, {
+  const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema, {
     onExcessProperty: 'error',
   })(input.routeScope).pipe(Effect.mapError((cause) => unavailable('principal', cause)));
   const nativeRead = routeScope.nativeReadReceiver !== undefined;

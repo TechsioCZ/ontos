@@ -13,7 +13,7 @@ import type { AccessIntentError } from '../intent/errors.ts';
 
 /*
  * A Tenant's system Principal for one system workload a module declares (`systemWorkloads` in its manifest): the
- * identity Core resolves for that module's own work in that Tenant (`readScopedWorkloadEnrollment`,
+ * identity Core resolves for that module's own work in that Tenant (`readScopedSystemWorkloadEnrollment`,
  * `SystemPrincipalContextResolver.resolveEnrolled`). Only `core.identity.change-system-workload-enrollment`
  * creates such a Principal, always together with its one binding, and ends it. The writer of kind `system` lives
  * here and nowhere else: `core.identity.create-non-human-principal` never creates one.

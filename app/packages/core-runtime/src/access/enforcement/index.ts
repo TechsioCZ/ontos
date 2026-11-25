@@ -116,7 +116,7 @@ export {
 export type { SubjectInspectionCatalog, SubjectInspectionPorts } from './inspection.ts';
 export { SubjectAccessInspectionLive, makeSubjectAccessInspection } from './inspection.ts';
 
-export { readScopedWorkloadEnrollment } from '../workloads/system-enrollment.ts';
+export { readScopedSystemWorkloadEnrollment } from '../workloads/system-enrollment.ts';
 export { readWorkerWorkloadPrincipalEligibility } from '../../outbox/workload-principal-eligibility.ts';
 export { readActiveWorkloadBindingHolders } from '../workloads/binding-holders.ts';
 export type { WorkloadBindingHolder } from '../workloads/binding-holders.ts';

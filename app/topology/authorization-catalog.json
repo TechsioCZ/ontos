@@ -3,6 +3,8 @@
     "commerce.assortment.symmy-fixture-currentness",
     "commerce.assortment.symmy-fixture-rule-import",
     "commerce.catalog.symmy-product-import",
+    "commerce.catalog.symmy-product-localized-facts",
+    "commerce.catalog.symmy-product-localized-facts-recovery",
     "commerce.catalog.symmy-product-read",
     "commerce.catalog.symmy-variant-localized-facts",
     "commerce.catalog.symmy-variant-localized-facts-recovery",
@@ -20,11 +22,7 @@
     "commerce.storefront-client",
     "commerce.tax.symmy-seller-vat-fixture-import",
     "core.identity-provider",
-    "core.media.ingest",
-    "core.media.integrity",
     "demo.crm.party-intake",
-    "demo.merchandise.symmy-catalog-import",
-    "demo.merchandise.symmy-order-export",
     "demo.storefront-client",
     "integration.symmy-admit",
     "integration.symmy-poll",
@@ -17104,58 +17102,6 @@
         },
         {
           "accessDeclaration": {
-            "key": "demo.merchandise.demo-catalog-revision.read",
-            "kind": "read",
-            "modes": [
-              "run"
-            ],
-            "placement": {
-              "group": "merchandise",
-              "level": "basic"
-            },
-            "risk": "routine",
-            "selectors": []
-          },
-          "accessFieldGroups": [],
-          "entrypoint": {
-            "access": "read",
-            "authorization": {
-              "kind": "protected"
-            },
-            "entrypointKey": "demo.merchandise.api.demo-catalog-revision",
-            "moduleKey": "demo.merchandise",
-            "role": "api",
-            "scope": "tenant"
-          }
-        },
-        {
-          "accessDeclaration": {
-            "key": "demo.merchandise.demo-order-export.read",
-            "kind": "read",
-            "modes": [
-              "run"
-            ],
-            "placement": {
-              "group": "merchandise",
-              "level": "basic"
-            },
-            "risk": "sensitive",
-            "selectors": []
-          },
-          "accessFieldGroups": [],
-          "entrypoint": {
-            "access": "read",
-            "authorization": {
-              "kind": "protected"
-            },
-            "entrypointKey": "demo.merchandise.api.demo-order-export",
-            "moduleKey": "demo.merchandise",
-            "role": "api",
-            "scope": "tenant"
-          }
-        },
-        {
-          "accessDeclaration": {
             "key": "demo.merchandise.demo.cleanup",
             "kind": "action",
             "modes": [
@@ -17559,34 +17505,6 @@
             "entrypointKey": "demo.merchandise.search.products",
             "moduleKey": "demo.merchandise",
             "role": "search",
-            "scope": "tenant"
-          }
-        },
-        {
-          "accessDeclaration": {
-            "key": "demo.merchandise.source-catalog.import",
-            "kind": "action",
-            "modes": [
-              "run",
-              "propose",
-              "approve"
-            ],
-            "placement": {
-              "group": "source-catalog",
-              "level": "extended"
-            },
-            "risk": "sensitive",
-            "selectors": []
-          },
-          "accessFieldGroups": [],
-          "entrypoint": {
-            "access": "write",
-            "authorization": {
-              "kind": "protected"
-            },
-            "entrypointKey": "demo.merchandise.import-source-catalog",
-            "moduleKey": "demo.merchandise",
-            "role": "action",
             "scope": "tenant"
           }
         },
@@ -22361,15 +22279,6 @@
             "moduleKey": "party.registry",
             "role": "api",
             "scope": "tenant"
-          },
-          "actor": {
-            "callers": [
-              "commerce-customer-context"
-            ],
-            "subject": "rights",
-            "subjectWorkloads": [
-              "party.registry.source-read"
-            ]
           }
         },
         {

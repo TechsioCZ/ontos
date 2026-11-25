@@ -31,7 +31,7 @@ import {
 import {
   acquireSymmyRouteScopeProof,
   readSymmyRouteScope,
-  decideSymmyOwnerRouteAdmission,
+  requiresSymmyPriceGroupRouteProof,
 } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteScopeProof } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteContextRequestSchema } from '@app/symmy-integration/api/symmy-route-context';
@@ -431,11 +431,7 @@ import { ShellGovernedReadDefinitions } from './modules/shell-governed-read-defi
 import { makeGovernedReadHttpHandler } from '@app/core-runtime/http/governed-read';
 import { SHELL_HOST_APP_ID } from '@app/core-runtime/sdk/core';
 import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
-import {
-  authenticateHostedOperation,
-  coreHostedReadReceiverBindingsLive,
-  hostedOperationProblems,
-} from './core-hosted-operations.ts';
+import { authenticateHostedOperation, hostedOperationProblems } from './core-hosted-operations.ts';
 import { ShellGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.service.ts';
 import {
   ShellGovernedReads,
@@ -2939,19 +2935,17 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
     readonly audience: string;
     readonly legalEntityId?: string;
   }) {
-    const routeAdmission = decideSymmyOwnerRouteAdmission(selectedRoute, input);
-    if (routeAdmission.kind === 'unscoped') {
-      return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
-    }
-    if (routeAdmission.kind === 'refused') {
+    if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
       return yield* Effect.fail(gatewayForbiddenProblem());
     }
-    const proof = yield* acquireSymmyIngressRouteProof(
-      rawKey,
-      request,
-      admission.compositionRevision,
-      routeAdmission.routeRequest,
-    );
+    const nativePriceGroupRead = requiresSymmyPriceGroupRouteProof(selectedRoute?.routeKey, input.audience);
+    if (input.legalEntityId === undefined && input.audience !== 'inventory' && !nativePriceGroupRead) {
+      return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
+    }
+    if (selectedRoute === undefined) {
+      return yield* Effect.fail(gatewayForbiddenProblem());
+    }
+    const proof = yield* acquireSymmyIngressRouteProof(rawKey, request, admission.compositionRevision, selectedRoute);
     return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision, proof);
   });
   return {
@@ -4264,22 +4258,18 @@ const defaultScopedModuleStateFactory: ShellScopedModuleStateFactory = (transact
 type ShellAuthenticationApiRuntimeArguments = readonly [
   authenticationLayer: ShellAuthenticationLayer,
   issuerLayer: ShellGatewayIssuerLayer,
-  moduleStateLayer?: ShellModuleStateLayer | undefined,
+  moduleStateLayer?: ShellModuleStateLayer,
   loadInstalledModuleCatalog?: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError> | undefined,
-  enableInstalledOutboxMatcher?: boolean | undefined,
-  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>> | undefined,
-  resourceGateways?: ShellResourceGateways | undefined,
-  scopedModuleStateFactory?: ShellScopedModuleStateFactory | undefined,
-  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer | undefined,
+  enableInstalledOutboxMatcher?: boolean,
+  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>>,
+  resourceGateways?: ShellResourceGateways,
+  scopedModuleStateFactory?: ShellScopedModuleStateFactory,
+  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
   /** The access gate this composition asks; a suite supplies a scripted one (never a production default). */
-  accessDecisionLayer?: ShellAccessDecisionLayer | undefined,
-  shellReadAuthority?: ActiveApplicationCompositionServiceContract | undefined,
-  runtimeDatabase?: DatabaseConnectionPair | undefined,
+  accessDecisionLayer?: ShellAccessDecisionLayer,
+  shellReadAuthority?: ActiveApplicationCompositionServiceContract,
+  runtimeDatabase?: DatabaseConnectionPair,
 ];
-
-export const ShellAuthenticationApiRuntimeConfiguration = Context.Service<ShellAuthenticationApiRuntimeArguments>(
-  '@app/shell-super-app/api/ShellAuthenticationApiRuntimeConfiguration',
-);
 
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
@@ -4397,7 +4387,6 @@ export const makeShellAuthenticationApiRuntime = (
   // The one read runtime: the canonical access gate's decisions join the read's own transaction, and the Shell's
   // database identity enrollment stays available to owner reads.
   const readRuntimeLayer = ReadRuntimeLive.pipe(
-    Layer.provide(coreHostedReadReceiverBindingsLive),
     Layer.provide(Layer.mergeAll(sharedOperationLayers, accessEnforcementLive)),
     Layer.provide(databaseIdentitiesLive),
   );
@@ -4964,16 +4953,6 @@ export const makeShellAuthenticationApiRuntime = (
     ),
   });
 };
-
-export class ShellAuthenticationApiRuntime extends Context.Service<
-  ShellAuthenticationApiRuntime,
-  ReturnType<typeof makeShellAuthenticationApiRuntime>
->()('@app/shell-super-app/api/ShellAuthenticationApiRuntime') {}
-
-export const ShellAuthenticationApiRuntimeLive = Layer.effect(
-  ShellAuthenticationApiRuntime,
-  ShellAuthenticationApiRuntimeConfiguration.pipe(Effect.map((args) => makeShellAuthenticationApiRuntime(...args))),
-);
 
 /**
  * The production Shell runtime arguments without the access gate. The default export appends the

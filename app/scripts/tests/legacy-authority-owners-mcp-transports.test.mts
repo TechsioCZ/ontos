@@ -29,7 +29,6 @@ import {
   registrations as salesInsightsRegistrations,
 } from '../../verticals/sales-insights/tests/unit/registered-action-http-fixture.ts';
 import { merchandiseManifest } from '../../verticals/merchandise/vertical.manifest.ts';
-import { ImportSourceCatalogPayloadSchema } from '../../verticals/merchandise/shared/actions/import-source-catalog.ts';
 import { workTasksManifest } from '../../verticals/work-tasks/vertical.manifest.ts';
 import {
   cases as merchandiseCases,
@@ -42,15 +41,6 @@ const catalogPath = '/.well-known/ontos-module-mcp-tools.json';
 const expectedRegistration = 'MCP route must have the actual owner registration';
 const createSlug = 'apply-command';
 const salesInsightsAppId = 'sales-insights';
-const sourceImportSlug = 'import-source-catalog';
-const categoryCommandTag = 'CreateCategory';
-const manageCatalogSlug = 'manage-catalog';
-const sourceImportCommands = ['ChangeProductImages', categoryCommandTag, 'CreateProduct'];
-const isSourceImportCommand = Schema.is(
-  Schema.Struct({
-    _tag: Schema.Union(ImportSourceCatalogPayloadSchema.fields.command.members.map((member) => member.fields._tag)),
-  }),
-);
 
 it.effect(
   'tagging derives MCP commands from real closed registrations and executes their published HTTP audit identities',
@@ -343,37 +333,13 @@ for (const { appId, cases, manifest } of splitOwners) {
       expect.unreachable(expectedContribution);
     }
     const { commandActions } = derived.contribution;
-    if (appId === 'merchandise') {
-      // The source-only contract accepts these three tags too, but never order, price or AI-decision commands.
-      expect(
-        Object.entries(commandActions ?? {})
-          .filter(([, slugs]) => slugs.includes(sourceImportSlug))
-          .map(([tag]) => tag)
-          .toSorted(),
-      ).toEqual(sourceImportCommands);
-      expect(commandActions?.CreateCategory).toEqual([sourceImportSlug, manageCatalogSlug]);
-      expect(commandActionSlugOf(commandActions, categoryCommandTag)).toBeUndefined();
-      expect(commandActionSlugOf(commandActions, categoryCommandTag, manageCatalogSlug)).toBe(manageCatalogSlug);
-      expect(commandActionSlugOf(commandActions, categoryCommandTag, sourceImportSlug)).toBe(sourceImportSlug);
-    }
     expect(cases.length).toBeGreaterThan(0);
     for (const { command, slug } of cases) {
       // Hidden commands are published too: approvals and the module's own AI engine run them.
-      const slugs = appId === 'merchandise' && isSourceImportCommand(command) ? [slug, sourceImportSlug] : [slug];
-      expect(commandActions?.[command._tag]).toEqual(slugs);
-      // A tag shared by two closed unions must never silently choose the human or source-import capability.
-      expect(commandActionSlugOf(commandActions, command._tag)).toBe(slugs.length === 1 ? slug : undefined);
-      for (const selected of slugs) {
-        expect(commandActionSlugOf(commandActions, command._tag, selected)).toBe(selected);
-        expect(isProposableModuleCommand(commandActions, selected, command)).toBe(slug !== 'review-order-changes');
-      }
-      if (slugs.length > 1) {
-        expect(commandActionSlugOf(commandActions, command._tag, 'not-an-owner')).toBeUndefined();
-      }
+      expect(commandActions?.[command._tag]).toEqual([slug]);
+      expect(commandActionSlugOf(commandActions, command._tag)).toBe(slug);
       // Decisions on the module's own AI changes stay a person's; every other command is proposable on its Action.
-      if (appId === 'merchandise' && !slugs.includes(sourceImportSlug)) {
-        expect(isProposableModuleCommand(commandActions, sourceImportSlug, command)).toBe(false);
-      }
+      expect(isProposableModuleCommand(commandActions, slug, command)).toBe(slug !== 'review-order-changes');
       if (slug !== createSlug) {
         expect(isProposableModuleCommand(commandActions, createSlug, command)).toBe(false);
       }

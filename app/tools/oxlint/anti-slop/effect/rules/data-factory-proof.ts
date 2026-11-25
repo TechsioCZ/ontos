@@ -876,9 +876,6 @@ class DataFactoryProof {
     const receiver = this.nativeApiMetadataOrigin(node.callee.object, model, new Set(seen));
     if (receiver === null) return null;
     if (method === 'add') return node.arguments.length > 0 && node.arguments.every((argument: Node) => this.nativeApiMetadataOrigin(argument, model, new Set(seen)) === (receiver === 'HttpApi' ? 'HttpApiGroup' : 'HttpApiEndpoint')) ? receiver : null;
-    if (method === 'annotateEndpoints') return receiver === 'HttpApiGroup' && node.arguments.length === 2 &&
-      this.expression(node.arguments[0], model, new Map()).native === 'http:HttpApi.PayloadParseOptions' &&
-      isClosedData(this.expression(node.arguments[1], model, new Map())) ? receiver : null;
     return ['middleware', 'annotate', 'prefix'].includes(method) && node.arguments.length > 0 ? receiver : null;
   }
 

@@ -46,9 +46,9 @@ import {
   SymmyDemoCategoriesBatchRequestSchema,
   SymmyDemoMediaUploadRequestSchema,
   SymmyDemoProductsBatchRequestSchema,
-  SymmyDemoCatalogWriteErrors,
 } from '../api/symmy/demo-catalog-contract.ts';
 import { Schema } from 'effect';
+import { importSourceCatalogActionErrors } from '@app/merchandise/apis/import-source-catalog-action';
 import { ShellAuthenticationApi as ShellBrowserApi } from './browser-api.ts';
 
 // Every request, response and error shape below is a Schema.* value declared in `../api/symmy/*contract.ts`;
@@ -128,7 +128,7 @@ const demoOrderEndpoint = HttpApiEndpoint.get('demoOrder', '/api/symmy/v1/orders
 });
 const demoCategoriesEndpoint = HttpApiEndpoint.post('demoCategories', '/api/symmy/v1/categories/batch', {
   ...symmyWriteOptions,
-  error: SymmyDemoCatalogWriteErrors,
+  error: [...symmyWriteOptions.error, ...importSourceCatalogActionErrors],
   payload: SymmyDemoCategoriesBatchRequestSchema,
   success: SymmyDemoCatalogBatchResponseSchema,
 });
@@ -137,14 +137,14 @@ const demoCatalogProductsEndpoint = HttpApiEndpoint.post(
   '/api/symmy/v1/catalog/products/batch',
   {
     ...symmyWriteOptions,
-    error: SymmyDemoCatalogWriteErrors,
+    error: [...symmyWriteOptions.error, ...importSourceCatalogActionErrors],
     payload: SymmyDemoProductsBatchRequestSchema,
     success: SymmyDemoCatalogBatchResponseSchema,
   },
 );
 const demoMediaEndpoint = HttpApiEndpoint.post('demoMedia', '/api/symmy/v1/products/media', {
   ...symmyWriteOptions,
-  error: SymmyDemoCatalogWriteErrors,
+  error: [...symmyWriteOptions.error, ...importSourceCatalogActionErrors],
   payload: SymmyDemoMediaUploadRequestSchema,
   success: SymmyDemoCatalogBatchResponseSchema,
 });
