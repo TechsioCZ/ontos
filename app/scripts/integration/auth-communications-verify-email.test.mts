@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { eq } from 'drizzle-orm';
-import { Array as EffectArray, DateTime, Effect, Order, Option, Redacted, Ref, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Order, Option, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -15,15 +15,12 @@ import {
   user,
   verification,
 } from '@app/commerce-customer-context/testing/portal-auth-communications';
-import {
-  approvedMessageTypes,
-  nativeServices,
-  portalAuthDefaultCopy,
-  privacyNotAllowed,
-} from '@app/communications/testing/source-owner-world';
+import { approvedMessageTypes, portalAuthDefaultCopy } from '@app/communications/testing/source-owner-world';
+import { testDatabaseClients } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   FICTIONAL_COPY,
   authWorld,
+  worldServices,
   pendingIntentsOf,
   step,
   decisionIdOf,
@@ -45,9 +42,11 @@ import {
  * real public Action. The replay scenarios prove the changed enrollment behaviour (AUTH-COM-09): a replay of the SAME owner
  * invocation correlates the previous issuance, intent and last outcome and sends or issues nothing on uncertainty.
  *
- * Labelled doubles (see `support/auth-communications-world.spec.mts`): the Privacy gate and the missing pre-verification Privacy
- * path, the trusted language, the provider, and the transport to the Communications outcome Read (Auth's REAL reader decodes and reads the
- * feed of the real Communications history). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery or provider evidence.
+ * Owner ports: PRODUCTION (`communicationsOwnerPortsOver`): the Portal Auth source authority and recipient gate asking Auth's
+ * published Read, the Privacy gate over the REAL Privacy owner. Labelled stubs that remain: the producer's Privacy-scope
+ * declaration (production declares none: open owner gate #1396 J), the Messaging Adapter (step 22), the in-process transport to
+ * the public Action and to Auth's Read (HTTP and Shell assertion not run here), and, where a case asks for it, the trusted
+ * language (no owner publishes one). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery evidence.
  */
 
 const decodeInvocation = Schema.decodeSync(EnrollmentActionInvocationIdSchema);
@@ -126,7 +125,43 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
           headline: { deliveryProven: false, providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
           template: { language: 'cs', mode: 'B', revisionNumber: 1 },
         });
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
+  );
+
+  it.live(
+    '[#1392 S3 uncommitted source] a Better Auth write that fails at commit creates no request, no decision and no send',
+    () =>
+      Effect.gen(function* uncommittedSource() {
+        const { create, realm, world } = yield* setup();
+        const { admin } = yield* testDatabaseClients;
+        // The account row is written by Better Auth in its own transaction. A deferred constraint trigger makes that transaction
+        // fail at COMMIT for this account only (a REAL database failure, not a scripted one). Observed sequencing of the real
+        // provider: the verification callback, which holds the issuance and its request, runs only AFTER that write committed, so
+        // an uncommitted source state never reaches Auth's outbox and therefore never reaches Communications.
+        const name = `r11_${randomUUID().replaceAll('-', '')}`;
+        yield* admin.unsafe(
+          `create function commerce_auth.${name}() returns trigger language plpgsql as $$ begin raise exception 'fictional: the Better Auth write failed at commit'; end $$`,
+        );
+        yield* admin.unsafe(
+          `create constraint trigger ${name} after insert on commerce_auth."user" deferrable initially deferred for each row when (new.email = '${realm.email}') execute function commerce_auth.${name}()`,
+        );
+        yield* Effect.addFinalizer(() =>
+          admin
+            .unsafe(`drop trigger if exists ${name} on commerce_auth."user"`)
+            .pipe(Effect.andThen(admin.unsafe(`drop function if exists commerce_auth.${name}()`)), Effect.ignore),
+        );
+        expect((yield* Effect.exit(create()))._tag).toBe('Failure');
+        // the account was never committed, and nothing of it was held by Auth either
+        expect(yield* realm.accountOf(realm.email)).toHaveLength(0);
+        expect(yield* world.outboxRows).toHaveLength(0);
+        // the relay has nothing to submit: Communications decides nothing, stores nothing and no message can be handed off
+        yield* world.relay;
+        expect(world.submissions).toHaveLength(0);
+        expect(yield* world.intentRows).toHaveLength(0);
+        expect(yield* world.attemptRows).toHaveLength(0);
+        expect(world.mailbox).toHaveLength(0);
+        expect((yield* (yield* historyReads(world)).list()).items).toHaveLength(0);
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -144,7 +179,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         const page = yield* (yield* historyReads(world)).list();
         expect(page.items[0]?.headline).toMatchObject({ reasonCodes: ['CZECH_REVISION_UNAVAILABLE'] });
         expect(JSON.stringify(page.items[0])).not.toContain(seed?.subject ?? 'unreachable');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -169,15 +204,20 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         // neither the enrollment operation nor the attempt travel in a request: only the issuance does
         expect(JSON.stringify(world.submissions)).not.toContain(enrollment.ownerInvocationId);
         expect(JSON.stringify(world.submissions)).not.toContain(enrollment.enrollmentAttemptId);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
     '[S1.2 S1.3 outline] language: trusted English is pinned in A without a usable Czech revision and stopped in B; with both approved it is English',
     () =>
       Effect.gen(function* languages() {
-        const modeB = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
-        yield* Ref.set(modeB.world.languageRef, { kind: 'trusted', language: 'en' });
+        const modeB = yield* setup({
+          languages: ['en'],
+          mode: 'B',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeB.world.setTrustedLanguage('en');
         // D1: the account and its issuance commit with the request; Communications then decides that no message can leave,
         // and a replay of the creation reports that stop truthfully, as unavailable, and never repairs it
         yield* modeB.create();
@@ -189,18 +229,23 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(yield* Effect.flip(modeB.create()))).toBe(true);
         expect(modeB.realm.issued.verification).toHaveLength(1);
 
-        const modeA = yield* setup({ languages: ['en'], mode: 'A', retiredLanguages: ['cs'] });
-        yield* Ref.set(modeA.world.languageRef, { kind: 'trusted', language: 'en' });
+        const modeA = yield* setup({
+          languages: ['en'],
+          mode: 'A',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeA.world.setTrustedLanguage('en');
         yield* modeA.create();
         yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));
         expect(modeA.world.mailbox[0]?.language).toBe('en');
 
-        const both = yield* setup({ mode: 'B' });
-        yield* Ref.set(both.world.languageRef, { kind: 'trusted', language: 'en' });
+        const both = yield* setup({ mode: 'B', recipientLanguage: 'LABELLED_DOUBLE' });
+        yield* both.world.setTrustedLanguage('en');
         yield* both.create();
         yield* step(both.world, both.world.messageHandoff, yield* onlyIntent(both.world));
         expect(both.world.mailbox[0]?.language).toBe('en');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -217,8 +262,10 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(later.kind).not.toBe('HANDED_OFF');
         expect(expired.world.mailbox).toHaveLength(0);
         expect(expired.realm.issued.verification).toHaveLength(1);
+        // the source stops it (Auth's own expiry); the REAL Privacy owner adds that its binding, valid only as long as the issuance, has lapsed
         expect((yield* (yield* historyReads(expired.world)).list()).items[0]?.headline.reasonCodes).toEqual([
           'SOURCE_NO_LONGER_VALID',
+          'PRIVACY_INDETERMINATE',
         ]);
 
         const spent = yield* setup();
@@ -231,11 +278,11 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(spent.world.mailbox).toHaveLength(0);
         expect(spent.realm.issued.verification).toHaveLength(1);
         const codes = (yield* (yield* historyReads(spent.world)).list()).items[0]?.headline.reasonCodes ?? [];
-        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
         // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
         expect(codes[0]).toBe('SOURCE_CONSUMED');
         expect(codes).not.toContain('SOURCE_STALE');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -250,7 +297,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
           .where(eq(user.email, realm.email));
         yield* step(world, world.messageHandoff, yield* onlyIntent(world));
         expect(Redacted.value(world.mailbox[0]?.to ?? Redacted.make(''))).toBe(realm.email);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -281,7 +328,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(yield* attemptsOf(world)).toHaveLength(1);
         expect(yield* verificationRows(realm, first.providerSubjectId)).toHaveLength(ledgerBefore);
         expect(yield* intentsOf(world)).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -317,7 +364,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(realm.issued.verification).toHaveLength(1);
         expect(yield* intentsOf(world)).toHaveLength(1);
         expect(world.submissions).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -346,7 +393,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(world.messageHandoff.calls).toHaveLength(1);
         expect(yield* intentsOf(world)).toHaveLength(1);
         expect(yield* attemptsOf(world)).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -370,7 +417,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(world.submissions).toHaveLength(1);
         expect(world.submissions[0]?.request.occurrence.occurrenceId).toBe(held?.issuanceRef);
         expect(yield* intentsOf(world)).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -398,7 +445,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         });
         expect(yield* intentsOf(world)).toHaveLength(1);
         expect((yield* world.outboxRows)[0]?.state).toBe('DECIDED');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -413,7 +460,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
         expect(realm.issued.verification).toHaveLength(1);
         expect(world.submissions).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -439,7 +486,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         const lifetime = issuance.expiresAt.epochMilliseconds - issuance.issuedAt.epochMilliseconds;
         expect(lifetime).toBeLessThanOrEqual(policyMs);
         expect(lifetime).toBeGreaterThan(policyMs - 5000);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -447,8 +494,9 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
     () =>
       Effect.gen(function* stopsAndAccess() {
         const prohibited = yield* setup();
-        const subject = (yield* prohibited.create()).providerSubjectId;
-        prohibited.world.privacyAnswers.set(subject, privacyNotAllowed());
+        yield* prohibited.create();
+        // Privacy ITSELF records the prohibition (a withdrawal) before its next answer
+        prohibited.world.prohibitProcessing();
         // the account was committed before the verdict; a replay finds the stopped message and refuses to repair it
         const intentId = yield* onlyIntent(prohibited.world);
         yield* step(prohibited.world, prohibited.world.messageHandoff, intentId);
@@ -473,7 +521,7 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
           yield* Effect.flip(denied.detail(restartedIntent)),
         ]);
         expect(failures).not.toContain(restarted.realm.email);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -484,6 +532,6 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         yield* create();
         yield* create();
         expect(realm.issued.verification).toHaveLength(2);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 });

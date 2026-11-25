@@ -1,9 +1,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
-import { Effect, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import {
+  privacyDispatchConsumerOfWorker,
+  privacyDispatchConsumers,
+} from '../../packages/shared-contracts/src/privacy-dispatch-consumers.ts';
 import { ApplicationReleaseIntentSchema, selectApplicationReleaseUnits } from '../application-release-intent.mts';
 
 /**
@@ -120,6 +124,9 @@ const PUBLISHED_PRIVACY_TEST_SUBPATHS = [
 const REVIEWED_SOURCE_WORKER_DEPENDENT = 'verticals/commerce-customer-context';
 const PUBLISHED_REQUEST_CONTRACT = '/communication-request';
 const PUBLISHED_SUBMIT_REQUEST_CLIENT = '/submit-communication-request/client';
+// the enrollment replay reads the outcome of its own request through the published, schema-only outcome Read (#1406 T3-16)
+const PUBLISHED_OUTCOME_FEED_CONTRACT = '/communication-outcome-feed';
+const PUBLISHED_COMMUNICATION_HISTORY_CONTRACT = '/communication-history';
 const SOURCE_WORKER_GATEWAY = `${REVIEWED_SOURCE_WORKER_DEPENDENT}/src/workers/portal-auth-communication-source-gateway.ts`;
 const SPECIFIER_SUBPATH = String.raw`(?<subpath>(?:\/[A-Za-z0-9_./-]*)?)`;
 const COMMUNICATIONS_SPECIFIER = /['"`]@app\/communications(?<subpath>(?:\/[A-Za-z0-9_./-]*)?)['"`]/gu;
@@ -179,7 +186,7 @@ it('limits the reviewed Privacy dependency to the published Owner Coverage contr
   ).toEqual([]);
 });
 
-it('limits the reviewed Portal Auth source worker dependency to the published request contract and submit client', () => {
+it('limits the reviewed Portal Auth source worker dependency to the published request, outcome and history contracts and the submit client', () => {
   const dependencies = declaredDependencies(REVIEWED_SOURCE_WORKER_DEPENDENT);
   expect(dependencies.has(COMMUNICATIONS_PACKAGE)).toBe(false);
   expect(importsOf(REVIEWED_SOURCE_WORKER_DEPENDENT, COMMUNICATIONS_PACKAGE)).toEqual([]);
@@ -188,6 +195,8 @@ it('limits the reviewed Portal Auth source worker dependency to the published re
     unpublishedUses(COMMUNICATIONS_CONTRACTS_SPECIFIER, REVIEWED_SOURCE_WORKER_DEPENDENT, [
       PUBLISHED_REQUEST_CONTRACT,
       PUBLISHED_SUBMIT_REQUEST_CLIENT,
+      PUBLISHED_OUTCOME_FEED_CONTRACT,
+      PUBLISHED_COMMUNICATION_HISTORY_CONTRACT,
     ]),
   ).toEqual([]);
   // Only the source worker's gateway names the submit client; no API, page, Action or relay code of the package reaches Communications.
@@ -318,5 +327,141 @@ it.effect('selects Communications only when a reviewed intent names it, and then
       ...without.complete.map(({ id }) => id),
       COMMUNICATIONS_APP_ID,
     ]);
+  }),
+);
+
+/**
+ * E21 on the Communications constants that now live INSIDE lean Core (R-D4): the shared gateway contract, the Privacy dispatch
+ * consumer registry, the stage workload keys, the provenance vocabulary and the Shell's dispatch evidence. They are inert,
+ * frozen data (keys, tags and an appId); no lean-Core source imports Communications, reads its configuration or starts anything of
+ * it. This guard pins EXACTLY which identifiers are allowed to mention Communications in each lean-Core source file, so a new
+ * constant, a new coupling or a new file fails here and has to be reviewed. Comments are not scanned.
+ */
+const LEAN_CORE_SOURCE_DIRECTORIES = [
+  'packages/shared-contracts/src',
+  'packages/core-runtime/src',
+  'packages/gateway-principal-verifier/src',
+  'apps/shell-super-app/api',
+  'apps/shell-super-app/src',
+] as const;
+const RECEIPT_TAG = 'CommunicationsReceipt';
+const COMMUNICATIONS_MODULE = 'communications.core';
+const REVIEWED_COMMUNICATIONS_CONSTANTS = {
+  'apps/shell-super-app/api/auth/gateway-privacy-dispatch-evidence.ts': [RECEIPT_TAG],
+  'packages/core-runtime/src/auth/system-principal-context-provenance.ts': [RECEIPT_TAG],
+  'packages/core-runtime/src/install/stage-accounts-file.ts': [
+    'commerce.customer-context.portal-auth-communication-relay',
+    'communications.core.messaging-adapter',
+    'communications.core.request-source',
+  ],
+  'packages/shared-contracts/src/gateway-context.ts': [
+    RECEIPT_TAG,
+    'communications',
+    COMMUNICATIONS_MODULE,
+    'communications.core.api.privacy-owner-execution-outcome',
+    'communications.core.privacy-owner-execution-outcome.read',
+  ],
+  'packages/shared-contracts/src/privacy-dispatch-consumers.ts': [
+    RECEIPT_TAG,
+    'communications',
+    COMMUNICATIONS_MODULE,
+    'communications.core.owner-execution-evidence-recorded.v1',
+    'communications.core.receive-privacy-measure',
+    'communications.core.record-owner-execution-evidence',
+    'communications.core.report-privacy-owner-outcome',
+    'communications.core.requirement.privacy-report-recorded-owner-outcome',
+    'communications.moduleKey',
+    'privacy.core.requirement.communications-owner-execution-outcome',
+  ],
+} satisfies Record<string, readonly string[]>;
+const COMMUNICATIONS_IDENTIFIER = /[A-Za-z0-9_.-]*[Cc]ommunications?[A-Za-z0-9_.-]*/gu;
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//gu;
+const LINE_COMMENT = /\/\/.*$/gmu;
+
+/** The distinct identifiers of a source that mention Communications, outside comments. */
+const communicationsIdentifiersOf = (source: string): readonly string[] => [
+  ...new Set(
+    [...source.replaceAll(BLOCK_COMMENT, '').replaceAll(LINE_COMMENT, '').matchAll(COMMUNICATIONS_IDENTIFIER)].map(
+      ([identifier]) => identifier,
+    ),
+  ),
+];
+const isTestOrBuildOutput = (file: string) =>
+  /\/(?:tests?|dist|\.output)\//u.test(file) || /\.test\.[cm]?[jt]sx?$/u.test(file);
+
+it('pins every Communications constant inside lean Core, the Shell and the gateway verifier to a reviewed identifier', () => {
+  const found = Object.fromEntries(
+    LEAN_CORE_SOURCE_DIRECTORIES.flatMap((directory) =>
+      sourceFiles(directory)
+        .filter((file) => !isTestOrBuildOutput(file))
+        .flatMap((file) => {
+          const identifiers = communicationsIdentifiersOf(readFileSync(path.join(appRoot, file), 'utf-8'));
+          return identifiers.length === 0 ? [] : [[file, EffectArray.sort(identifiers, Order.String)] as const];
+        }),
+    ),
+  );
+  const reviewed = Object.fromEntries(
+    Object.entries(REVIEWED_COMMUNICATIONS_CONSTANTS).map(([file, identifiers]) => [
+      file,
+      EffectArray.sort(identifiers, Order.String),
+    ]),
+  );
+  expect(found).toEqual(reviewed);
+});
+
+it('keeps the Communications identifier scan honest: it finds an added constant and ignores a comment', () => {
+  expect(communicationsIdentifiersOf("const key = 'communications.core.new-thing';")).toEqual([
+    'communications.core.new-thing',
+  ]);
+  expect(communicationsIdentifiersOf('// Communications is mentioned here only\n/* Communications */')).toEqual([]);
+  // an import of the contracts or the deployment package names Communications as well, so it is found too
+  expect(communicationsIdentifiersOf("import { x } from '@app/communications-contracts/y';")).toEqual([
+    'communications-contracts',
+  ]);
+});
+
+it('keeps the Communications dispatch consumer inert, frozen data that no other consumer depends on', () => {
+  const consumer = privacyDispatchConsumers[COMMUNICATIONS_MODULE];
+  expect(consumer).toBeDefined();
+  expect(Object.isFrozen(consumer)).toBe(true);
+  // every string it carries names Communications' own keys or the Privacy requirement for its receipt: data, never an
+  // endpoint or a credential
+  expect(JSON.stringify(consumer)).not.toMatch(/https?:|secret|password|token/iu);
+  // Symmy's consumer is keyed and resolved independently of it
+  expect(privacyDispatchConsumerOfWorker('integration.symmy.symmy-job-privacy-dispatch')?.moduleKey).toBe(
+    'integration.symmy',
+  );
+  expect(privacyDispatchConsumerOfWorker('communications.core.receive-privacy-measure')?.moduleKey).toBe(
+    'communications.core',
+  );
+  expect(privacyDispatchConsumerOfWorker('unrelated.worker')).toBeUndefined();
+});
+
+it('declares no Communications deployment configuration on the Shell service of the deployment manifest', () => {
+  const manifest = readFileSync(path.join(appRoot, 'zerops.yaml'), 'utf-8');
+  const section = (setup: string) => {
+    const start = manifest.indexOf(`  - setup: '${setup}'`);
+    const next = manifest.indexOf('\n  - setup:', start + 1);
+    return manifest.slice(start, next === -1 ? manifest.length : next);
+  };
+  expect(section('shellsuperapp').length).toBeGreaterThan(0);
+  expect(section('shellsuperapp')).not.toMatch(/communications/iu);
+  // the control: the section that DOES belong to Communications names it, so the pattern is not simply blind
+  expect(section('communications')).toMatch(/communications/iu);
+});
+
+it.effect('releases every single business module without selecting Communications unless it is named', () =>
+  Effect.gen(function* everyModuleAlone() {
+    const businessModules = available.filter(({ id }) => id !== COMMUNICATIONS_APP_ID && id !== 'shell-super-app');
+    expect(businessModules.length).toBeGreaterThan(1);
+    for (const { id } of businessModules) {
+      const selection = yield* selectApplicationReleaseUnits({ modules: [{ appId: id }] }, available, []);
+      expect([id, selection.complete.map(({ id: selected }) => selected)]).toEqual([id, [id]]);
+      expect(selection.fresh.map(({ id: selected }) => selected)).not.toContain(COMMUNICATIONS_APP_ID);
+      expect(selection.retained.map(({ id: selected }) => selected)).not.toContain(COMMUNICATIONS_APP_ID);
+    }
+    // the control: naming it selects it and only it
+    const named = yield* selectApplicationReleaseUnits({ modules: [{ appId: COMMUNICATIONS_APP_ID }] }, available, []);
+    expect(named.complete.map(({ id }) => id)).toEqual([COMMUNICATIONS_APP_ID]);
   }),
 );

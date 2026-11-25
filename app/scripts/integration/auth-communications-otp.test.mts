@@ -1,15 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { inArray, like } from 'drizzle-orm';
-import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
+import { DateTime, Effect, Option, Redacted } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
 import { verification } from '@app/commerce-customer-context/testing/portal-auth-communications';
-import { nativeServices, privacyNotAllowed } from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
+  worldServices,
   pendingIntentsOf,
   step,
   decisionIdOf,
@@ -31,8 +31,11 @@ import {
  * is the only thing that ever hands the code to the labelled Messaging Adapter double. Issuing a code is NOT a verification:
  * the second step stays pending until the account owner presents the code to the provider.
  *
- * Labelled doubles (see `support/auth-communications-world.spec.mts`): the Privacy gate and the missing pre-verification Privacy
- * path, the trusted language, the provider. Every text is FICTIONAL; no approved copy exists.
+ * Owner ports: PRODUCTION (`communicationsOwnerPortsOver`): the Portal Auth source authority and recipient gate asking Auth's
+ * published Read, the Privacy gate over the REAL Privacy owner. Labelled stubs that remain: the producer's Privacy-scope
+ * declaration (production declares none: open owner gate #1396 J), the Messaging Adapter (step 22), the in-process transport to
+ * the public Action and to Auth's Read (HTTP and Shell assertion not run here), and, where a case asks for it, the trusted
+ * language (no owner publishes one). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery evidence.
  */
 
 const MINE = 'user-mine';
@@ -104,7 +107,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
           headline: { deliveryProven: false, providerAccepted: true, status: 'PROVIDER_ACCEPTED' },
           template: { language: 'cs', mode: 'B', revisionNumber: 1 },
         });
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -122,7 +125,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         const found = yield* expectNoSecretAnywhere(world, [code ?? 'no-code', PASSWORD, realm.email], lines);
         expect(found).toStrictEqual([]);
         expect(JSON.stringify(world.mailbox[0]?.text)).toBe('"<redacted>"');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -149,15 +152,20 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
             }),
         );
         expect(verified).toBeDefined();
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
     '[S1.2 S1.4 outline] trusted English with an approved English revision but no usable Czech one: stopped in B, pinned in A',
     () =>
       Effect.gen(function* outline() {
-        const modeB = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
-        yield* Ref.set(modeB.world.languageRef, { kind: 'trusted', language: 'en' });
+        const modeB = yield* setup({
+          languages: ['en'],
+          mode: 'B',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeB.world.setTrustedLanguage('en');
         yield* sendCode(modeB.world, modeB.realm, modeB.challenge.headers);
         expect(modeB.world.mailbox).toHaveLength(0);
         expect(pendingIntentsOf(modeB.world)).toHaveLength(0);
@@ -165,12 +173,17 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
           'CZECH_REVISION_REQUIRED_BY_MODE_B',
         ]);
 
-        const modeA = yield* setup({ languages: ['en'], mode: 'A', retiredLanguages: ['cs'] });
-        yield* Ref.set(modeA.world.languageRef, { kind: 'trusted', language: 'en' });
+        const modeA = yield* setup({
+          languages: ['en'],
+          mode: 'A',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeA.world.setTrustedLanguage('en');
         yield* sendCode(modeA.world, modeA.realm, modeA.challenge.headers);
         yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));
         expect(modeA.world.mailbox[0]?.language).toBe('en');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -186,8 +199,10 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         }).pipe(Effect.provide(TestClock.layer()));
         expect(later.kind).not.toBe('HANDED_OFF');
         expect(expired.world.mailbox).toHaveLength(0);
+        // the source stops it (Auth's own expiry); the REAL Privacy owner adds that its binding, valid only as long as the issuance, has lapsed
         expect((yield* (yield* historyReads(expired.world)).list()).items[0]?.headline.reasonCodes).toEqual([
           'SOURCE_NO_LONGER_VALID',
+          'PRIVACY_INDETERMINATE',
         ]);
 
         const consumed = yield* setup();
@@ -210,11 +225,11 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         expect(consumed.world.mailbox).toHaveLength(0);
         expect(consumed.realm.issued).toHaveLength(1);
         const codes = (yield* (yield* historyReads(consumed.world)).list()).items[0]?.headline.reasonCodes ?? [];
-        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
         // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
         expect(codes[0]).toBe('SOURCE_CONSUMED');
         expect(codes).not.toContain('SOURCE_STALE');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live('[AUTH-COM-07] a newer code revokes the older one: only the current code can be completed', () =>
@@ -235,7 +250,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
       expect(world.mailbox).toHaveLength(1);
       expect(codeIn(textOf(world.mailbox[0]))).toBe(realm.issued[1]);
       expect(new Set(world.submissions.map(({ request }) => request.idempotency.key)).size).toBe(2);
-    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -251,11 +266,11 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued).toHaveLength(1);
         const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
-        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
         // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
         expect(codes[0]).toBe('SOURCE_NOT_RESUMABLE');
         expect(codes).not.toContain('SOURCE_STALE');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -277,7 +292,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         const detail = yield* allowed.detail(intentId);
         expect(JSON.stringify(detail)).not.toContain(realm.issued[0] ?? 'no-code');
         expect(JSON.stringify(detail)).not.toContain(realm.email);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -304,7 +319,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
           providerAccepted: false,
         });
         expect(realm.issued).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -312,7 +327,8 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
     () =>
       Effect.gen(function* privacyStops() {
         const prohibited = yield* setup();
-        prohibited.world.privacyAnswers.set(prohibited.challenge.subjectId, privacyNotAllowed());
+        // Privacy ITSELF records the prohibition (a withdrawal) before it answers
+        prohibited.world.prohibitProcessing();
         yield* sendCode(prohibited.world, prohibited.realm, prohibited.challenge.headers);
         expect(prohibited.world.mailbox).toHaveLength(0);
         expect((yield* (yield* historyReads(prohibited.world)).list()).items[0]?.headline.reasonCodes).toEqual([
@@ -324,7 +340,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         expect(unbound.world.mailbox).toHaveLength(0);
         expect(unbound.world.privacyQueries).toHaveLength(0);
         expect((yield* (yield* historyReads(unbound.world)).list()).items[0]?.headline.status).toBe('SUPPRESSED');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   /**
@@ -398,7 +414,7 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
             }),
           ),
         ).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -429,6 +445,6 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         );
         // the verification consumed the challenge: no row is left, which is "spent", never "current" or "revoked"
         expect(yield* stateOf(second)).toBe('CONSUMED');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 });

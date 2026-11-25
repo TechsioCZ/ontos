@@ -358,7 +358,8 @@ describe('The public history Reads over native PostgreSQL (#1409)', () => {
           descriptor.accessDeclaration?.key ?? '',
           ...(descriptor.accessFieldGroups?.map(({ key }) => key) ?? []),
         ]);
-        expect(declared).toHaveLength(4);
+        // the two Reads' own declarations and field groups (the history of no-message decisions, links and template use added one group)
+        expect(declared).toHaveLength(5);
         expect(declared.every((key) => key.startsWith('communications.core.'))).toBe(true);
         const access = Object.fromEntries(declared.map((key) => [key, 'allowed' as const]));
         const reads = yield* readsOf(client, world, { access, legalEntityId: LEGAL_ENTITY_ONE });
@@ -371,20 +372,24 @@ describe('The public history Reads over native PostgreSQL (#1409)', () => {
         const [item] = page.items;
         // the source is only a reference: no Order, Counterparty, Party or document field exists in the result
         expect(item?.source.scope.counterpartyRef).toMatchObject({ resourceId: 'counterparty-1' });
+        // `documents` and `links` are the references the message carries (#1409): Media Asset and approved link references, never a URL or bytes
         const allowedKeys = new Set([
           'decidedAt',
+          'documents',
           'headline',
           'intentId',
           'lastEventAt',
+          'links',
           'recipient',
           'requestId',
           'slotKey',
           'source',
           'template',
+          'templateUse',
           'type',
         ]);
-        expect(Object.keys(item ?? {}).every((key) => allowedKeys.has(key))).toBe(true);
-        expect(Object.keys(detail.message).every((key) => allowedKeys.has(key))).toBe(true);
+        expect(Object.keys(item ?? {}).filter((key) => !allowedKeys.has(key))).toEqual([]);
+        expect(Object.keys(detail.message).filter((key) => !allowedKeys.has(key))).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -603,9 +608,10 @@ describe('A page of the history is loaded with a bounded number of statements (#
       const many = yield* readsOf(client, world);
       expect((yield* many.list().pipe(Effect.provide(visibility.layer))).items).toHaveLength(5);
       // the page query, the three statements of requests, decisions and intents and one per append-only child table (eight,
-      // with the recovery evaluations and the conflict resolutions of #1403): the same for one message and for five
+      // with the recovery evaluations and the conflict resolutions of #1403, and two more for the provider observations and the
+      // no-message decisions of #1402): the same for one message and for five, which is the N+1 guard
       expect(many.ownerStatements()).toBe(one.ownerStatements());
-      expect(many.ownerStatements()).toBeLessThanOrEqual(12);
+      expect(many.ownerStatements()).toBeLessThanOrEqual(14);
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

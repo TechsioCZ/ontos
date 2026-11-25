@@ -1,29 +1,21 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   ActiveApplicationCompositionService,
-  applicationCompositionContentRevision,
-  closeApplicationCompositionDurableAdmission,
-  drainApplicationCompositionAuthority,
   loadDatabaseConnectionPair,
-  lockApplicationCompositionPublication,
   makeActiveApplicationCompositionService,
-  OntosModuleDeploymentContractSchema,
   OutboxRepositoryLive,
   OutboxRuntime,
   OutboxRuntimeLive,
-  publishApplicationCompositionAuthority,
-  validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import type {
-  ApplicationComposition,
   OutboxCycleError,
   OutboxCycleResult,
   OutboxRuntimeService,
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
-import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
+import type { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
   defineOutboxWorkerEntry,
@@ -31,6 +23,9 @@ import {
   OutboxWorkerTenantScope,
 } from '@app/core-runtime/outbox/worker';
 import { communicationsRegistration } from '../../vertical.registration.ts';
+import { activateCommunications, publishComposition } from '../support/production-composition.fixture.ts';
+import { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
+import { templateContractOf } from '../../src/domain/catalog/template-contract.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
 import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
@@ -49,7 +44,6 @@ import {
   OutboxPayloadSchema as PrivacyMeasureDispatchedSchema,
   outboxTopic as privacyMeasureDispatchedTopic,
 } from '@app/privacy-contracts/outbox/privacy-measure-dispatched';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
@@ -58,9 +52,10 @@ import {
   GatewayDelegatedContextRequestSchema,
   PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
   privacyDispatchConsumers,
+  WORKLOAD_GATEWAY_ASSERTION_VERSION,
 } from '@app/shared-contracts';
 import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import {
   ConfigProvider,
   Context,
@@ -68,7 +63,6 @@ import {
   DateTime,
   Deferred,
   Effect,
-  FileSystem,
   Layer,
   Option,
   Redacted,
@@ -83,13 +77,8 @@ import { describe, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import type { CryptoKey, JWK, JWTPayload } from 'jose';
 
-import { applicationCompositionAuthority, coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { makeTestTenantRoleAccess } from '../../../../packages/core-runtime/src/testing/tenant-access-roles.ts';
-import {
-  makeTestDatabaseFromClient,
-  testDatabaseClients,
-} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { makeCommunicationsApiRuntime } from '../../api/index.ts';
 import type { LanguagePolicyRequestSchema } from '../../shared/apis/language-policy.ts';
 import { PrivacyOwnerCoverageResponseSchema } from '../../shared/apis/privacy-owner-coverage.ts';
@@ -119,8 +108,14 @@ import { EffectiveLanguagePolicySchema, SetLanguagePolicyResultSchema } from '..
 import type { MessageHistoryListRequestFieldsSchema } from '../../shared/message-history-read.ts';
 import { MessageHistoryListResultSchema } from '../../shared/message-history-read.ts';
 import { decided, intakeWorld } from '../support/intake-world.ts';
-import { makeRuntimeDatabase } from '../support/persistence.fixture.ts';
+import { makeRuntimeDatabase, nativeServices } from '../support/persistence.fixture.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { communicationRequests, messageIntents } from '../../src/database/schema.ts';
+import type { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
+import {
+  PortalAuthIssuanceRefSchema,
+  portalAuthCommunicationRequest,
+} from '@app/commerce-customer-context/testing/portal-auth-communications';
 
 /*
  * Q-AUTHZ (#1408, E01/E10/E12/E17): Communications Actions and Reads through the PRODUCTION HTTP assembly of the module
@@ -130,6 +125,14 @@ import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultr
  *
  * What this does NOT cover: the Shell process itself issuing the assertion (the assertion is signed here with a test key
  * the runtime is configured to trust, exactly as other owners' production HTTP acceptance tests do).
+ *
+ * The last describe (T2-17) sends `submit-communication-request` through the same assembly: Shell-shaped registered-workload
+ * assertions (version 4) of the Portal Auth source worker, Core's real access gate and redemption, native PostgreSQL. LABELLED
+ * stubs there: the Shell issuing the workload assertion and Core's native source-admission Action are NOT run, so the rows they
+ * leave (the system principal and its workload bindings, the original integration principal, the open admission fence and the
+ * source's claimed Outbox delivery) are seeded by SQL as the admin role; Auth's published Read and the Shell's delegation
+ * exchange are a loopback peer. Authorization of this workload-only Action is a Core registry decision in PostgreSQL, so SpiceDB
+ * is exercised by the human denial control only. One scenario is marked `fails` for a KNOWN production defect (see its comment).
  */
 
 const ORIGIN = 'http://communications.production-http.test';
@@ -164,125 +167,6 @@ const makeGateway = Effect.fnUntraced(function* makeGateway() {
   return { privateKey, publicJwk } satisfies Gateway;
 });
 
-const digest = (value: string) => createHash('sha256').update(value, 'utf-8').digest('hex');
-
-const ContractDocumentSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
-
-/**
- * One composition module from the actual Codesmith deployment artifact of this workspace. Its deployment identity is the
- * release under test: these source-mode runtime layers always run as the workspace build marker, while the generator stamps
- * a promotable release marker whenever the Git tree is clean, so the approved release is pinned to the runtime's own.
- */
-const publishedModule = Effect.fnUntraced(function* publishedModule(
-  manifestPath: URL,
-  requiredShellAbi: ApplicationComposition['modules'][number]['requiredShellAbi'],
-  pinToThisRuntime: boolean,
-) {
-  const filesystem = yield* FileSystem.FileSystem;
-  const generated = yield* Schema.decodeUnknownEffect(ContractDocumentSchema)(
-    yield* filesystem.readFileString(manifestPath.pathname),
-  );
-  // only the release under test runs here; another module keeps the deployment its generated contract names
-  const contract = pinToThisRuntime
-    ? { ...generated, deployment: { ...generated.deployment, buildMarker: ultramodernDeliveryUnit.buildMarker } }
-    : generated;
-  const document = yield* Schema.encodeEffect(ContractDocumentSchema)(contract);
-  // the composition entry is derived from the contract's own public surface, exactly as Core's published fixture does
-  const { components, shellContributions } = contract.manifest.publicSurface;
-  const [component] = components;
-  const origin = `https://${contract.deployment.appId}.native-tests.example`;
-  return {
-    allowedContributions: Object.values(shellContributions).flatMap((items) =>
-      items.map(({ contributionKey }) => contributionKey),
-    ),
-    backend: { baseUrl: `${origin}/`, transport: 'node-http' },
-    contract: { sha256: digest(document), url: `${origin}/.well-known/ontos-module-manifest.json` },
-    contractDocument: document,
-    dependencies: (contract.manifest.requirements?.intrinsic ?? []).map(({ moduleId }) => moduleId).toSorted(),
-    deployment: contract.deployment,
-    federation:
-      component === undefined
-        ? { execution: 'server' }
-        : {
-            execution: 'browser',
-            exposes: components.map(({ expose }) => expose),
-            manifest: {
-              sha256: digest(`${contract.deployment.buildMarker}-manifest`),
-              url: `${origin}/releases/${contract.deployment.buildMarker}/mf-manifest.json`,
-            },
-            remoteName: component.mfBoundaryId,
-          },
-    moduleId: contract.manifest.module.id,
-    publicContract: { id: contract.manifest.module.id, sha256: digest(document), version: contract.schemaVersion },
-    requiredCoreCapabilities: contract.manifest.requirements?.coreCapabilities ?? [],
-    requiredShellAbi,
-    sharedSingletons: [],
-  } satisfies ApplicationComposition['modules'][number];
-});
-
-/**
- * The active composition with the actual Communications deployment and Privacy's actual published contract (both generated
- * by this package's `test:integration` script), published as the Core authority and served. Privacy is an approved release
- * only (no Privacy process runs here), so a Privacy-delegated assertion names a real calling module and Communications'
- * conditional requirement to report to Privacy resolves against Privacy's genuine `record-owner-execution-outcome` contract.
- */
-const publishComposition = Effect.fnUntraced(function* publishComposition() {
-  const base = yield* makeApplicationCompositionSnapshotFixture([]);
-  const { contributionAbi } = base.composition.shell;
-  const privacy = yield* publishedModule(
-    new URL('../../../privacy/dist/public/.well-known/ontos-module-manifest.json', import.meta.url),
-    contributionAbi,
-    false,
-  );
-  const communications = yield* publishedModule(
-    new URL('../../dist/public/.well-known/ontos-module-manifest.json', import.meta.url),
-    contributionAbi,
-    true,
-  );
-  const modules = [...base.composition.modules, privacy, communications];
-  // the receiving Shell offers every Core capability the composed contracts require (Privacy's dependency contracts)
-  const coreCapabilities = [...new Set(modules.flatMap(({ requiredCoreCapabilities }) => requiredCoreCapabilities))];
-  const input = { ...base.composition, modules, shell: { ...base.composition.shell, coreCapabilities } };
-  const snapshot = yield* validateActiveApplicationCompositionSnapshot({
-    composition: { ...input, revision: yield* applicationCompositionContentRevision(input) },
-    observedAt: base.observedAt,
-    validUntil: base.validUntil,
-  });
-  const { admin } = yield* testDatabaseClients;
-  const core = yield* makeTestDatabaseFromClient(admin, coreRelations);
-  yield* core.transaction((transaction) =>
-    Effect.gen(function* publish() {
-      yield* lockApplicationCompositionPublication(transaction);
-      const [predecessor] = yield* transaction
-        .select({ revision: applicationCompositionAuthority.revision })
-        .from(applicationCompositionAuthority)
-        .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-      if (predecessor !== undefined && predecessor.revision !== snapshot.composition.revision) {
-        yield* closeApplicationCompositionDurableAdmission(transaction, predecessor.revision);
-        yield* drainApplicationCompositionAuthority(transaction, predecessor.revision);
-      }
-      yield* publishApplicationCompositionAuthority(transaction, snapshot);
-    }),
-  );
-  const document = yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(
-    snapshot,
-  );
-  return { core, document, snapshot };
-});
-
-const activateCommunications = (
-  core: Effect.Success<ReturnType<typeof publishComposition>>['core'],
-  tenantId: string,
-) =>
-  core.transaction((transaction) =>
-    transaction.execute(
-      sql`insert into core.tenant_module_states (tenant_id, module_key, state)
-          values (${tenantId}::uuid, 'communications.core', 'active')
-          on conflict (tenant_id, module_key) do update set state = excluded.state`,
-      'objects',
-    ),
-  );
-
 /** The composition document served the way the Node composition source reads it: one loopback HTTP endpoint. */
 const serveComposition = Effect.fnUntraced(function* serveComposition(compositionDocument: string) {
   const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
@@ -305,7 +189,11 @@ const serveComposition = Effect.fnUntraced(function* serveComposition(compositio
 });
 
 /** The production HTTP assembly over this environment's database, SpiceDB and the test gateway's public key. */
-const mountRuntime = Effect.fnUntraced(function* mountRuntime(gateway: Gateway, compositionDocument: string) {
+const mountRuntime = Effect.fnUntraced(function* mountRuntime(
+  gateway: Gateway,
+  compositionDocument: string,
+  extraConfiguration: Readonly<Record<string, string>> = {},
+) {
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
   const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
   // SpiceDB is reached over TLS only; the test environment pins its development certificate.
@@ -318,6 +206,7 @@ const mountRuntime = Effect.fnUntraced(function* mountRuntime(gateway: Gateway, 
     SPICEDB_CA_CERT: caCertificate,
     SPICEDB_ENDPOINT: spiceDb.endpoint,
     SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
+    ...extraConfiguration,
   };
   const assembled = makeCommunicationsApiRuntime(ConfigProvider.fromUnknown(configuration));
   return yield* Effect.acquireRelease(
@@ -452,7 +341,8 @@ type RequestBody =
   | typeof PrivacyOwnerCoverageRequestSchema.Encoded
   | typeof PrivacyOwnerExecutionOutcomeRequestSchema.Encoded
   | typeof RecordOwnerExecutionEvidencePayloadSchema.Encoded
-  | typeof SetLanguagePolicyPayloadSchema.Encoded;
+  | typeof SetLanguagePolicyPayloadSchema.Encoded
+  | typeof SubmitCommunicationRequestPayloadSchema.Encoded;
 
 const ReplyBodySchema = Schema.fromJsonString(Schema.Unknown);
 
@@ -716,17 +606,32 @@ const lookup = {
   resourceType: 'fixture.recipient',
 };
 
+/**
+ * A revision may only be prepared for an APPROVED Transactional Message Type and must fit its placeholder contract (#1398,
+ * #1399): the suite therefore prepares revisions of the approved Portal Auth verification type, carrying exactly the
+ * placeholders that type requires.
+ */
+const approvedAuthType = Option.getOrThrow(
+  Option.fromNullishOr(approvedMessageTypes.find(({ purpose }) => purpose.endsWith('.verify-email'))),
+);
+const APPROVED_TYPE_ID = approvedAuthType.typeId;
+const requiredAuthPlaceholders = templateContractOf(approvedAuthType)
+  .placeholders.filter(({ required }) => required)
+  .map(({ name }) => name);
+
+const placeholderOf = (name: string) => `{{${name}}}`;
+
 /** FICTIONAL labelled template copy: no production wording, recipient or secret. */
 const fictionalTemplate = (messageType: string): typeof PrepareTemplateRevisionPayloadSchema.Encoded => ({
-  body: '[FICTIONAL TEST COPY] Purpose: {{purpose}}.',
+  body: `[FICTIONAL TEST COPY] ${requiredAuthPlaceholders.map(placeholderOf).join(' ')}`,
   channel: 'email',
   language: 'cs',
   messageType,
   optionalPlaceholders: [],
   reason: 'Fictional draft for the authorization tests',
-  requiredPlaceholders: ['purpose'],
+  requiredPlaceholders: requiredAuthPlaceholders,
   scope: { kind: 'tenant' },
-  subject: '[FICTIONAL TEST COPY] {{purpose}}',
+  subject: '[FICTIONAL TEST COPY] verification',
 });
 
 /** One RESTRICT measure Privacy dispatched to Communications over this Tenant's real own records. */
@@ -1068,7 +973,7 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           const prepare = (principal: Principal, messageType: string) =>
             send(principal, '/communications/actions/prepare-template-revision', fictionalTemplate(messageType), true);
           // ALLOWED: the whole lifecycle under the manager's grants
-          const prepared = yield* prepare(manager, 'fixture.authorization-notice');
+          const prepared = yield* prepare(manager, APPROVED_TYPE_ID);
           expect(prepared.status, JSON.stringify(prepared.body)).toBe(200);
           const { revisionId } = Schema.decodeUnknownSync(PrepareTemplateRevisionResultSchema)(prepared.body);
           for (const operation of ['activate', 'deactivate'] as const) {
@@ -1076,7 +981,7 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
             expect(allowed.status, `${operation} ${JSON.stringify(allowed.body)}`).toBe(200);
           }
           // DENIED: a member without any template capability changes nothing
-          expect((yield* prepare(reader, 'fixture.authorization-notice')).status).toBe(403);
+          expect((yield* prepare(reader, APPROVED_TYPE_ID)).status).toBe(403);
           for (const operation of ['activate', 'deactivate', 'invalidate'] as const) {
             expect((yield* templateAction(reader, operation, revisionId)).status).toBe(403);
           }
@@ -1088,20 +993,20 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
             expect(crossed.body).toMatchObject({ code: 'template_revision_not_found' });
           }
           expect([401, 403]).toContain(
-            (yield* prepare({ ...foreignManager, tenantId: tenant.tenantId }, 'fixture.authorization-notice')).status,
+            (yield* prepare({ ...foreignManager, tenantId: tenant.tenantId }, APPROVED_TYPE_ID)).status,
           );
           const invalidated = yield* templateAction(manager, 'invalidate', revisionId);
           expect(invalidated.status, JSON.stringify(invalidated.body)).toBe(200);
           // GRANTED THEN REVOKED: a role of exactly the four template capabilities admits each, then none
           const templateRole = yield* roles.capabilityRole(TEMPLATE_CAPABILITIES);
           yield* templateRole.grant();
-          const readerPrepared = yield* prepare(reader, 'fixture.revocation-notice');
+          const readerPrepared = yield* prepare(reader, APPROVED_TYPE_ID);
           expect(readerPrepared.status, JSON.stringify(readerPrepared.body)).toBe(200);
           const readerRevision = Schema.decodeUnknownSync(PrepareTemplateRevisionResultSchema)(readerPrepared.body);
           expect((yield* templateAction(reader, 'activate', readerRevision.revisionId)).status).toBe(200);
           expect((yield* templateAction(reader, 'deactivate', readerRevision.revisionId)).status).toBe(200);
           yield* templateRole.revoke();
-          expect((yield* prepare(reader, 'fixture.revocation-notice')).status).toBe(403);
+          expect((yield* prepare(reader, APPROVED_TYPE_ID)).status).toBe(403);
           for (const operation of ['activate', 'deactivate', 'invalidate'] as const) {
             expect((yield* templateAction(reader, operation, readerRevision.revisionId)).status).toBe(403);
           }
@@ -1172,11 +1077,12 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
               status: reply.status,
             };
           });
-          // 2. Privacy reads the owner receipt: received, awaiting a human, never a result
+          // 2. Privacy reads the owner receipt: received, never a result. The production composition has NO assessment of
+          // whether a hold or obligation applies to the targets (T2-13), so even the wait for a human is not yet established
           const received = yield* receipt(manager, 1);
           expect(received.status).toBe(200);
           expect(Option.getOrThrow(received.receipt).outcome).toMatchObject({
-            reason: 'AWAITING_HUMAN_CONFIRMED_OWNER_ACTION',
+            reason: 'HOLD_APPLICABILITY_NOT_ASSESSED',
             status: 'RECEIVED',
           });
           const coverageRequest = {
@@ -1362,7 +1268,14 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
           // 6. Privacy reads the receipt of the pushed attempt ITSELF, and its published state machine transitions
           const after = Option.getOrThrow((yield* receipt(manager, pushed.attempt)).receipt);
           expect(after.handoffFingerprint).toBe(fingerprint);
-          expect(after.outcome).toMatchObject({ attempt: 2, status: 'SUCCEEDED' });
+          // a human confirmed the owner Action, but nothing proves a RESTRICT took effect: the production owner never
+          // reports the targets as achieved on the attestation alone (T1-05), it says the enforcement is not verifiable
+          expect(after.outcome).toMatchObject({
+            attempt: 2,
+            includedResourceRefs: [],
+            reason: 'OWNER_RESTRICTION_ENFORCEMENT_NOT_VERIFIABLE',
+            status: 'INDETERMINATE',
+          });
           const before = Option.getOrThrow(received.receipt);
           const request = { attempt: 2, measureId: handoff.measureId, taskId: handoff.taskId };
           const authorityOf = (outcome: typeof after.outcome) => ({
@@ -1391,7 +1304,8 @@ describe('Communications templates, Privacy owner Reads and the owner evidence l
             after.outcome,
             '2026-11-19T10:00:02.000Z',
           );
-          expect(settled.status).toBe('SUCCEEDED');
+          // Privacy's own state machine takes the unverifiable enforcement as unknown, never as a success
+          expect(settled.status).toBe('INDETERMINATE');
           // a receipt for another measure is a rejection, never this measure's result
           const otherMeasure = Option.getOrThrow(
             (yield* receipt(manager, 2, { ...handoff, measureId: 'FICTIONAL-other' })).receipt,
@@ -1720,5 +1634,463 @@ describe('Built-in template defaults with the real authorization engine (SpiceDB
         }),
       ).pipe(Effect.provide(services)),
     120_000,
+  );
+});
+
+/* ------------------------------------------------------------------------------------------------------------------ */
+/* submit-communication-request over the real boundary (#1406 D1, #1411 D.3, T2-17)                                    */
+/* ------------------------------------------------------------------------------------------------------------------ */
+
+/** The question Communications puts to Auth's published Read: the issuance and, for the recipient check, the Auth account. */
+const PortalAuthIssuanceSourceRequestBodySchema = Schema.Struct({
+  issuanceRef: PortalAuthIssuanceRefSchema,
+  recipientSubjectId: Schema.optionalKey(Schema.String.pipe(Schema.brand('PortalAuthRecipientSubjectId'))),
+});
+type PortalAuthIssuanceSourceRequestBody = typeof PortalAuthIssuanceSourceRequestBodySchema.Type;
+
+/**
+ * LABELLED loopback peer of the owner the PRODUCTION Portal Auth ports reach over HTTP: the Shell's delegated-context issuance (a
+ * FICTIONAL token for the admitted release) and Auth's published `portal-auth-issuance-source` Read, which answers what the
+ * suite scripts. The REAL Auth answer body is proven on a real Auth store in `scripts/integration/auth-communications-*`; here
+ * only the generated HTTP client of Communications and its fail-closed reading of the answer are exercised.
+ */
+const serveAuthOwnerPeer = Effect.fnUntraced(function* serveAuthOwnerPeer(
+  readIssuance: (
+    body: PortalAuthIssuanceSourceRequestBody,
+  ) => Effect.Effect<{ readonly body: unknown; readonly status: number }>,
+) {
+  const received = yield* Ref.make<readonly PeerRequest[]>([]);
+  const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+  yield* server.serve(
+    HttpServerRequest.HttpServerRequest.use((request) =>
+      Effect.gen(function* answer() {
+        const path = new URL(request.url, 'http://peer.test').pathname;
+        const body = Schema.decodeUnknownOption(ReceivedJsonSchema)(yield* request.text).pipe(Option.getOrUndefined);
+        yield* Ref.update(received, (all) => [
+          ...all,
+          {
+            authorization: request.headers['authorization'],
+            body,
+            idempotencyKey: request.headers['idempotency-key'],
+            path,
+          },
+        ]);
+        if (path === DELEGATION_PATH) {
+          const delegated = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)(body);
+          const origin = `http://${request.headers['host'] ?? '127.0.0.1'}`;
+          return yield* HttpServerResponse.json({
+            apiBaseUrl: `${origin}/customer-context-api`,
+            compositionRevision: delegated.compositionRevision,
+            expiresAt: 4_070_908_800,
+            token: 'fictional-auth-owner-token',
+          });
+        }
+        if (path.endsWith('/reads/portal-auth-issuance-source')) {
+          const asked = yield* Schema.decodeUnknownEffect(PortalAuthIssuanceSourceRequestBodySchema)(body);
+          const reply = yield* readIssuance(asked);
+          return yield* HttpServerResponse.json(reply.body, { status: reply.status });
+        }
+        return HttpServerResponse.empty({ status: 404 });
+      }).pipe(Effect.orDie),
+    ),
+  );
+  if (!NetAddress.isInetAddress(server.address)) {
+    return yield* Effect.die('The Auth owner peer must bind one loopback TCP server');
+  }
+  return { origin: `http://127.0.0.1:${server.address.port}`, received };
+});
+
+const SUBMIT_PATH = '/communications/actions/submit-communication-request';
+const REQUEST_SOURCE = 'communications.core.request-source';
+const SOURCE_MODULE = 'commerce.customer-context';
+const SOURCE_APP = 'commerce-customer-context';
+const SOURCE_JOB = 'commerce.customer-context.submit-portal-auth-communication-request';
+const SOURCE_ADMISSION_WORKLOAD = 'commerce.customer-context.source-write';
+
+/**
+ * What the Shell and Core establish when the Portal Auth source worker delivers a request, written here as the rows Core's gate
+ * reads (the Shell issuing the assertion and Core's native admission Action are NOT run, so these rows are seeded):
+ * - a real `system` principal of the Tenant bound to the registered workload `communications.core.request-source`
+ *   (`bound: false` leaves it unregistered);
+ * - the original integration principal of the source application with its admission and owner bindings, and the open
+ *   execution fence of its original admission;
+ * - the source's own claimed Outbox delivery that the worker runs in (`processing`, not expired).
+ */
+const bindWorkload = (tenantId: string, principalId: string, workload: string, incarnation: string) =>
+  sql`insert into core.access_workload_bindings (binding_id, tenant_id, principal_id, workload_key, incarnation, status)
+      values (${randomUUID()}::uuid, ${tenantId}::uuid, ${principalId}::uuid, ${workload}, ${incarnation}::uuid, 'active')`;
+
+const seedSourceWorkerDelivery = (
+  core: Effect.Success<ReturnType<typeof publishComposition>>['core'],
+  tenantId: string,
+  options: { readonly bound: boolean },
+) =>
+  Effect.gen(function* seedWorker() {
+    const ids = {
+      admissionInvocationId: randomUUID(),
+      claimId: `claim-${randomUUID()}`,
+      deliveryId: randomUUID(),
+      domainEventId: randomUUID(),
+      messageId: randomUUID(),
+      originalPrincipalId: randomUUID(),
+      originalWorkloadIncarnation: randomUUID(),
+      ownerIncarnation: randomUUID(),
+      principalId: randomUUID(),
+      workerIncarnation: randomUUID(),
+    };
+    yield* core.transaction((transaction) =>
+      Effect.gen(function* insertRows() {
+        for (const [principalId, kind] of [
+          [ids.principalId, 'system'],
+          [ids.originalPrincipalId, 'integration'],
+        ] as const) {
+          yield* transaction.execute(
+            sql`insert into core.principals (principal_id, tenant_id, kind, display_name, status)
+                values (${principalId}::uuid, ${tenantId}::uuid, ${kind}, 'FICTIONAL source application principal', 'active')`,
+            'objects',
+          );
+        }
+        if (options.bound) {
+          yield* transaction.execute(
+            bindWorkload(tenantId, ids.principalId, REQUEST_SOURCE, ids.workerIncarnation),
+            'objects',
+          );
+        }
+        yield* transaction.execute(
+          bindWorkload(tenantId, ids.originalPrincipalId, REQUEST_SOURCE, ids.ownerIncarnation),
+          'objects',
+        );
+        yield* transaction.execute(
+          bindWorkload(tenantId, ids.originalPrincipalId, SOURCE_ADMISSION_WORKLOAD, ids.originalWorkloadIncarnation),
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`insert into core.source_execution_fences (tenant_id, admission_invocation_id, state)
+              values (${tenantId}::uuid, ${ids.admissionInvocationId}::uuid, 'open')`,
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`insert into core.action_invocations (action_invocation_id, tenant_id, principal_id, auth_method, auth_context_ref,
+                action_key, status, request_hash, started_at, completed_at)
+              values (${ids.admissionInvocationId}::uuid, ${tenantId}::uuid, ${ids.originalPrincipalId}::uuid, 'system',
+                ${`job:${SOURCE_ADMISSION_WORKLOAD}:run:${ids.admissionInvocationId}`}, 'commerce.customer-context.fictional-source-write',
+                'succeeded', ${'a'.repeat(64)}, now() - interval '1 minute', now() - interval '1 minute')`,
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`insert into core.domain_events (domain_event_id, tenant_id, action_invocation_id, producer_module_key, event_type,
+                subject_module_key, subject_resource_type, subject_resource_id, payload_json)
+              values (${ids.domainEventId}::uuid, ${tenantId}::uuid, ${ids.admissionInvocationId}::uuid, ${SOURCE_MODULE},
+                'commerce.customer-context.fictional-source-event.v1', ${SOURCE_MODULE}, 'commerce.customer-context.fictional-source',
+                'fictional-1', '{}'::jsonb)`,
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`insert into core.outbox_messages (outbox_message_id, tenant_id, domain_event_id, producer_module_key, topic, payload_json)
+              values (${ids.messageId}::uuid, ${tenantId}::uuid, ${ids.domainEventId}::uuid, ${SOURCE_MODULE},
+                'commerce.customer-context.fictional-source-event.v1', '{}'::jsonb)`,
+          'objects',
+        );
+        yield* transaction.execute(
+          sql`insert into core.outbox_deliveries (outbox_delivery_id, outbox_message_id, worker_key, consumer_module_key, status,
+                attempts_count, claimed_by, claimed_at, claim_expires_at)
+              values (${ids.deliveryId}::uuid, ${ids.messageId}::uuid, ${SOURCE_JOB}, ${SOURCE_MODULE}, 'processing', 1,
+                ${ids.claimId}, now(), now() + interval '1 hour')`,
+          'objects',
+        );
+      }),
+    );
+    return ids;
+  });
+
+/**
+ * One workload assertion in the Shell-signed shape (version 4) of a Portal Auth source-worker delivery calling the
+ * registered workload `communications.core.request-source`. It is signed here with the test key the runtime trusts: the Shell
+ * issuing it is NOT run (see the suite header).
+ */
+const workloadAssertionFor = Effect.fnUntraced(function* workloadAssertionFor(input: {
+  readonly compositionRevision: string;
+  readonly gateway: Gateway;
+  readonly seed: Effect.Success<ReturnType<typeof seedSourceWorkerDelivery>>;
+  readonly sourceBuildMarker: string;
+  readonly sourceModule: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}) {
+  const { seed } = input;
+  const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
+  return yield* signAssertion(
+    input.gateway,
+    {
+      compositionRevision: input.compositionRevision,
+      principal: {
+        authContextRef: `job:${SOURCE_JOB}:run:${seed.deliveryId}`,
+        authMethod: 'system',
+        principalId: seed.principalId,
+        tenantId: input.tenantId,
+      },
+      targetBuildMarker: ultramodernApiMarker.buildMarker,
+      ver: WORKLOAD_GATEWAY_ASSERTION_VERSION,
+      workload: {
+        admissionInvocationId: seed.admissionInvocationId,
+        bindingIncarnation: seed.workerIncarnation,
+        claimId: seed.claimId,
+        declarationKey: 'communications.core.communication-request.submit',
+        entrypointKey: 'communications.core.submit-communication-request',
+        jobKey: SOURCE_JOB,
+        legalEntityScope: 'optional',
+        originalOwnerBindingIncarnation: seed.ownerIncarnation,
+        originalPrincipalId: seed.originalPrincipalId,
+        originalWorkloadBindingIncarnation: seed.originalWorkloadIncarnation,
+        originalWorkloadKey: SOURCE_ADMISSION_WORKLOAD,
+        runReference: seed.deliveryId,
+        schemaVersion: '1',
+        sourceAppId: SOURCE_APP,
+        sourceBuildMarker: input.sourceBuildMarker,
+        sourceMode: 'worker',
+        workerKey: SOURCE_JOB,
+        workerModuleKey: input.sourceModule,
+        workloadKey: input.workloadKey,
+      },
+    },
+    seed.principalId,
+    issuedAt,
+  );
+});
+
+/** What Auth's published Read answers while a scenario runs. */
+interface AuthBehavior {
+  current: 'CURRENT' | 'UNAVAILABLE';
+}
+
+/**
+ * The harness of the submit scenarios: the production HTTP assembly (real gate, real redemption, native PostgreSQL, real
+ * SpiceDB), a real Tenant, the registered workers the Core gate reads, and the loopback owner peer of Auth's Read.
+ */
+const submitHarness = Effect.fnUntraced(function* submitHarness() {
+  const { core, document, snapshot } = yield* publishComposition();
+  const { revision } = snapshot.composition;
+  const gateway = yield* makeGateway();
+  // Auth's published Read, which the production owner ports reach over HTTP, answers what `authBehavior` says
+  const authBehavior: AuthBehavior = { current: 'CURRENT' };
+  const authPeer = yield* serveAuthOwnerPeer((asked) =>
+    Effect.sync(() => {
+      if (authBehavior.current === 'UNAVAILABLE') {
+        return { body: {}, status: 503 };
+      }
+      const facts = {
+        issuanceRef: asked.issuanceRef,
+        kind: 'FACTS',
+        latestRevision: 1,
+        state: 'commerce.customer-context.portal-auth.issuance-current',
+      };
+      return {
+        body:
+          asked.recipientSubjectId === undefined
+            ? facts
+            : { ...facts, originalEndpoint: { kind: 'CURRENT', mask: 'h***@example.test' } },
+        status: 200,
+      };
+    }),
+  );
+  const runtime = yield* mountRuntime(gateway, document, {
+    ONTOS_GATEWAY_MODULE_API_KEY: 'fictional-communications-module-api-key',
+    ONTOS_SHELL_GATEWAY_BASE_URL: `${authPeer.origin}${SHELL_PREFIX}`,
+  });
+  const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+  const fixtureOf = Effect.fnUntraced(function* fixtureOf() {
+    const fixture = yield* makeLiveOperationFixture({
+      access: 'allowed',
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      compositionRevision: revision,
+      runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+    });
+    yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
+    yield* activateCommunications(core, fixture.tenantId);
+    return fixture;
+  });
+  const tenant = yield* fixtureOf();
+  const foreign = yield* fixtureOf();
+  const customerContext = snapshot.composition.modules.find(({ moduleId }) => moduleId === SOURCE_MODULE);
+  const sourceBuildMarker = Option.getOrThrow(Option.fromNullishOr(customerContext)).deployment.buildMarker;
+  // the registered worker holds the request-source workload in THIS Tenant only
+  const worker = yield* seedSourceWorkerDelivery(core, tenant.tenantId, { bound: true });
+  const unregistered = yield* seedSourceWorkerDelivery(core, tenant.tenantId, { bound: false });
+  const foreignWorker = yield* seedSourceWorkerDelivery(core, foreign.tenantId, { bound: true });
+
+  // fixed instants: the request states Auth's own issuance window, far from any clock this suite runs on
+  const issuedAt = DateTime.makeUnsafe('2026-11-25T08:00:00.000Z');
+  const requestOf = (tenantId: string) =>
+    portalAuthCommunicationRequest(
+      {
+        expiresAt: DateTime.makeUnsafe('2099-01-01T00:00:00.000Z'),
+        flow: 'verify-email',
+        issuanceRef: PortalAuthIssuanceRefSchema.make(`pae-${randomUUID().replaceAll('-', '')}`),
+        issuedAt,
+        providerSubjectId: randomUUID(),
+      },
+      { tenantId },
+    );
+  const submitAs = Effect.fnUntraced(function* submitAs(
+    seed: Effect.Success<ReturnType<typeof seedSourceWorkerDelivery>>,
+    tenantId: string,
+    overrides: { readonly sourceModule?: string; readonly workloadKey?: string } = {},
+  ) {
+    const token = yield* workloadAssertionFor({
+      compositionRevision: revision,
+      gateway,
+      seed,
+      sourceBuildMarker,
+      sourceModule: overrides.sourceModule ?? SOURCE_MODULE,
+      tenantId,
+      workloadKey: overrides.workloadKey ?? REQUEST_SOURCE,
+    });
+    return yield* post(runtime, token, SUBMIT_PATH, yield* requestOf(tenantId), true);
+  });
+  const stored = Effect.gen(function* storedRows() {
+    const database = yield* makeRuntimeDatabase();
+    const rows = (tenantId: string) =>
+      database.inTenant(tenantId, (transaction) =>
+        Effect.all({
+          intents: transaction.select({ intentId: messageIntents.intentId }).from(messageIntents),
+          requests: transaction.select({ requestId: communicationRequests.requestId }).from(communicationRequests),
+        }),
+      );
+    return { foreign: yield* rows(foreign.tenantId), tenant: yield* rows(tenant.tenantId) };
+  }).pipe(Effect.provide(nativeServices));
+
+  return {
+    authBehavior,
+    authPeer,
+    foreign,
+    foreignWorker,
+    gateway,
+    requestOf,
+    revision,
+    runtime,
+    sourceBuildMarker,
+    stored,
+    submitAs,
+    tenant,
+    unregistered,
+    worker,
+  };
+});
+
+describe('submit-communication-request over real HTTP, the registered workload gate and native PostgreSQL (#1406 D1, T2-17)', () => {
+  it.live(
+    'admits only the registered Portal Auth source worker of the Tenant to the handler; a human, an unregistered, foreign or other-module worker is refused and creates nothing',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* gate() {
+          const harness = yield* submitHarness();
+          const { foreignWorker, gateway, revision, runtime, stored, submitAs, tenant, unregistered, worker } = harness;
+          const nothing = { foreign: { intents: [], requests: [] }, tenant: { intents: [], requests: [] } };
+
+          // DENIED: a HUMAN staff member of the Tenant, however fully the Tenant grants it: the Action is workload-only
+          const human = yield* assertionFor(gateway, revision, tenant.manager);
+          const asHuman = yield* post(runtime, human, SUBMIT_PATH, yield* harness.requestOf(tenant.tenantId), true);
+          expect(asHuman.status, JSON.stringify(asHuman.body)).toBe(403);
+          // DENIED: a system principal that holds no request-source workload in this Tenant
+          const asUnregistered = yield* submitAs(unregistered, tenant.tenantId);
+          expect(asUnregistered.body, 'unregistered').toMatchObject({
+            reasons: ['deny.workload_unbound'],
+            status: 403,
+          });
+          // DENIED: the registered principal of ANOTHER Tenant never acts in this one
+          const asForeign = yield* submitAs(foreignWorker, tenant.tenantId);
+          expect([401, 403], JSON.stringify(asForeign.body)).toContain(asForeign.status);
+          // DENIED: an assertion naming another registered workload than the one the Action declares
+          const asOtherWorkload = yield* submitAs(worker, tenant.tenantId, { workloadKey: 'payment.source-ingress' });
+          expect([401, 403], JSON.stringify(asOtherWorkload.body)).toContain(asOtherWorkload.status);
+          expect(yield* stored).toEqual(nothing);
+
+          // DENIED: a worker of ANOTHER module than the delivery it claims to run in: Core's delivery liveness check binds the claim
+          // to the source module's own claimed Outbox delivery, so a foreign module is refused by the gate, before any handler
+          const asOtherModule = yield* submitAs(worker, tenant.tenantId, { sourceModule: 'payment.core' });
+          expect(asOtherModule.body, 'other module').toMatchObject({ reasons: ['deny.workload_unbound'], status: 403 });
+          expect(yield* stored).toEqual(nothing);
+
+          // ADMITTED: the registered worker passes the real gate (the redemption, the delivery liveness, the binding incarnation and
+          // the open admission fence) and reaches the handler: it is not refused by authorization
+          const admitted = yield* submitAs(worker, tenant.tenantId);
+          expect([401, 403], JSON.stringify(admitted.body)).not.toContain(admitted.status);
+        }).pipe(Effect.provide(Layer.mergeAll(services, nativeServices))),
+      ),
+  );
+
+  /**
+   * KNOWN PRODUCTION DEFECT, reported and NOT fixed here (this lane owns tests only): through the production HTTP assembly the
+   * handler fails with `Service not found: MessageTypeCatalog`, because `api/index.ts` provides the owner ports to the
+   * construction of the Action runtime and not to the handler's execution. The first real source request would therefore be a
+   * 500, never a decision. This test states the DESIRED behaviour and is marked `fails`, so it keeps passing while the defect
+   * exists and turns red the moment the composition is repaired: delete `.fails` then.
+   */
+  it.live.fails(
+    '[T2-17 DEFECT] an admitted source worker is decided through the production owner ports: stored, suppressed on the undeclared Privacy scope, replayed on a repeat',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* decidedByProduction() {
+          const harness = yield* submitHarness();
+          const {
+            authBehavior,
+            authPeer,
+            gateway,
+            requestOf,
+            revision,
+            runtime,
+            sourceBuildMarker,
+            stored,
+            tenant,
+            worker,
+          } = harness;
+          const nothing = { intents: [], requests: [] };
+          // Auth's published Read unavailable: the production owner ports fail CLOSED (retryable), nothing valid is created
+          authBehavior.current = 'UNAVAILABLE';
+          const request = yield* requestOf(tenant.tenantId);
+          const submitOnce = Effect.fnUntraced(function* submitOnce() {
+            const token = yield* workloadAssertionFor({
+              compositionRevision: revision,
+              gateway,
+              seed: worker,
+              sourceBuildMarker,
+              sourceModule: SOURCE_MODULE,
+              tenantId: tenant.tenantId,
+              workloadKey: REQUEST_SOURCE,
+            });
+            return yield* post(runtime, token, SUBMIT_PATH, request, true);
+          });
+          const whileAuthDown = yield* submitOnce();
+          expect(whileAuthDown.status, JSON.stringify(whileAuthDown.body)).toBe(503);
+          expect((yield* stored).tenant).toEqual(nothing);
+
+          // Auth answers Current: decided and stored. The production composition declares NO Privacy scope (an open owner gate,
+          // #1396 J), so the one message intent is SUPPRESSED as an unresolved Privacy context and nothing is handed off.
+          authBehavior.current = 'CURRENT';
+          const decidedReply = yield* submitOnce();
+          expect(decidedReply.status, JSON.stringify(decidedReply.body)).toBe(200);
+          expect(decidedReply.body).toMatchObject({
+            decision: {
+              intents: [{ reason: 'PRIVACY_CONTEXT_AMBIGUOUS', status: 'SUPPRESSED' }],
+              kind: 'MESSAGE_INTENTS',
+            },
+            outcome: 'DECIDED',
+            replayed: false,
+          });
+          const afterDecision = yield* stored;
+          expect(afterDecision.tenant.requests).toHaveLength(1);
+          expect(afterDecision.tenant.intents).toHaveLength(1);
+          // the same request again (a fresh Idempotency-Key) is a replay of the SAME decision, never a second message
+          const replayed = yield* submitOnce();
+          expect(replayed.body).toMatchObject({ outcome: 'DECIDED', replayed: true });
+          expect((yield* stored).tenant).toEqual(afterDecision.tenant);
+          // every ask of Auth carried fresh delegated authority
+          const asks = (yield* Ref.get(authPeer.received)).filter(({ path }) =>
+            path.endsWith('/reads/portal-auth-issuance-source'),
+          );
+          expect(asks.length).toBeGreaterThanOrEqual(2);
+          expect(asks.every(({ authorization }) => authorization === 'Bearer fictional-auth-owner-token')).toBe(true);
+        }).pipe(Effect.provide(Layer.mergeAll(services, nativeServices))),
+      ),
   );
 });

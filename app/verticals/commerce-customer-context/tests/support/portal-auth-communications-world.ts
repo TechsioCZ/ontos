@@ -132,6 +132,7 @@ export {
 } from '../../src/portal-auth/communications/owner-facts.ts';
 export { fillOwnerRenderedSlots } from '../../src/portal-auth/communications/owner-completion.ts';
 export type { IssuanceLedgerProbe } from '../../src/portal-auth/communications/protected-handoff.ts';
+export { portalAuthIssuanceSourceAnswer } from '../../src/api/portal-auth-issuance-source.read.ts';
 export { portalAuthCommunicationRequest } from '../../src/portal-auth/communications/request.ts';
 export {
   communicationRequestOutbox,

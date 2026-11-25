@@ -5,33 +5,25 @@ import { Effect, Layer, Match, Option, Ref, Result, Schema } from 'effect';
 
 import { CommunicationRequestIdSchema, MessageIntentIdSchema } from '../../shared/communication-intake.ts';
 import { deliveryAttempts, messageIntents } from '../../src/database/schema.ts';
+import { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 import type { TransactionalMessageType } from '../../src/domain/catalog/message-type.ts';
 import type { PinnedHandoff } from '../../src/domain/handoff/message-handoff.ts';
 import { approvedCatalogLayer } from '../../src/domain/intake/message-type-catalog.ts';
 import { RecipientLanguageAuthority } from '../../src/domain/intake/recipient-language.ts';
 import { ProcessingScopeDeclaration } from '../../src/domain/intake/scope-declaration.ts';
 import type { ProcessingScopeDeclarationService } from '../../src/domain/intake/scope-declaration.ts';
-import { SourceOccurrenceAuthority } from '../../src/domain/intake/source-authority.ts';
-import type { SourceOccurrenceAuthorityService } from '../../src/domain/intake/source-authority.ts';
 import { renderMessage } from '../../src/domain/language/interpolation.ts';
 import type { RecipientLanguageContext } from '../../src/domain/language/vocabulary.ts';
-import { ProcessingEligibilityGate } from '../../src/domain/privacy/eligibility-gate.ts';
-import type { ProcessingEligibilityQuery } from '../../src/domain/privacy/eligibility-gate.ts';
-import { RecipientCurrentGate } from '../../src/domain/recipient/current-gate.ts';
-import type { RecipientCurrentGateService } from '../../src/domain/recipient/current-gate.ts';
+import { communicationsOwnerPortsOver } from '../../src/composition/owner-ports.ts';
 import { HandoffStoreUnavailable, processIntentHandoff } from '../../src/handoff/process-intent-handoff.ts';
 import type { ScopedRunner } from '../../src/handoff/process-intent-handoff.ts';
 import { actionOwnerCall, underOwnerCall } from '../../src/integrations/owner-call.ts';
-import { privacyProcessingEligibilityGateOver } from '../../src/integrations/privacy-eligibility-gate.ts';
+import type { PortalAuthOwnerTransport } from '../../src/integrations/portal-auth-owner.ts';
 import type { PrivacyOwnerTransport } from '../../src/integrations/privacy-eligibility-gate.ts';
 import { setLanguageMode } from '../../src/services/language-policy-domain.service.ts';
 import { pinnedTemplateText } from '../../src/services/template-revision-domain.service.ts';
 import { loadRequestHistory } from '../../src/services/message-history.service.ts';
-import { privacyAllowed } from '../unit/support/privacy-fixtures.ts';
-import type { PrivacyAnswer } from '../unit/support/privacy-fixtures.ts';
-import { TEST_GATE_CHECK_TIMEOUT } from '../unit/support/recipient-fixtures.ts';
 import { accessReads, nativeRuntimeClient, visibilityDouble } from './access-reads.ts';
-import { documentOwnerDouble } from './document-owner-double.ts';
 import type { handoffDouble } from './intake-fixtures.ts';
 import { intakeRunnerOver } from './intake-runner.ts';
 import type { RuntimeDatabase } from './intake-runner.ts';
@@ -42,20 +34,25 @@ import { actorFor, domainFor, fictionalDraft, identity } from './template-fixtur
  * PUBLISHED TEST-ONLY seam (`@app/communications/testing/source-owner-world`) for a SOURCE OWNER's end-to-end suite: the REAL
  * Communications owner code over native PostgreSQL as the runtime role (the public `submit-communication-request` handler
  * under the sealed registered-source-worker principal of the source module, the durable decision and intents, the
- * pre-handoff step and the authorized history Reads), with the source owner's answers plugged in as plain values.
+ * pre-handoff step and the authorized history Reads).
  *
- * LABELLED DOUBLES (each stands at the edge of ANOTHER owner and proves how that edge is READ, never that it answers so):
- * - the Privacy gate answers by script per recipient (ALLOWED unless a test sets another answer); it is NOT Privacy evidence.
- *   A suite that proves an answer of the REAL Privacy owner passes `privacyOwner` instead: the world then runs the REAL
- *   Communications Privacy-gate adapter (the request it builds, the decoding of the answer and the verdict) and only the
- *   transport to Privacy's published Read is the suite's;
- * - the trusted recipient language is scripted through `languageRef`;
- * - the document owner is the in-memory double of `document-owner-double.ts`;
- * - the Messaging Adapter is `messagingAdapterDouble`, which only records the handoffs and answers what the test scripts;
- * - every Template Revision is the FICTIONAL copy the suite hands to `revisionOf`; no approved copy is implied.
+ * The OWNER PORTS ARE THE PRODUCTION COMPOSITION (`communicationsOwnerPortsOver`, T1-04): the catalog, the source-occurrence
+ * authority and the recipient gate of Portal Auth (the live adapters over Auth's published Read), the Privacy gate over
+ * Privacy's published Reads, the unavailable document owner and the production recipient language. A suite supplies only how
+ * each owner is REACHED (the two transports) and nothing replaces what is asked or how an answer is read: this seam accepts no
+ * source-authority, recipient-gate or Privacy-gate port, so a test cannot stand one in.
  *
- * A source owner composes ITS side (its source-occurrence authority, its recipient endpoint check and its processing-scope
- * declaration) with `intakeWith`; nothing here imports or knows another owner's code.
+ * LABELLED DOUBLES that remain (each at the edge of ANOTHER owner and open owner gates, never a claim that the owner answers so):
+ * - the producer's Privacy-scope declaration (`producerScope`): production deliberately declares NONE (#1396 J: the source
+ *   producer declares it and the Privacy owner has not confirmed the values), so a suite that proves the positive path supplies
+ *   the declaration the SOURCE would make;
+ * - the trusted recipient language, only when a suite asks for `recipientLanguage: 'LABELLED_DOUBLE'`: no owner publishes one
+ *   (R-D12), so production establishes none and the language is `cs`;
+ * - the Messaging Adapter is `messagingAdapterDouble` (step 22), which only records the handoffs and answers what the test scripts;
+ * - every Template Revision is the FICTIONAL copy the suite hands to `revisionOf`; no approved copy is implied (R-D1).
+ *
+ * `ownerPortSources` states, per port, whether it came from production or is a labelled double, so a suite can fail on a
+ * substitution.
  */
 
 export { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
@@ -70,13 +67,13 @@ export type { TransactionalMessageType } from '../../src/domain/catalog/message-
 export { buildMessageTypeRegistry, findMessageTypeByPurpose } from '../../src/domain/catalog/registry.ts';
 export { CommunicationPurposeKeySchema, SourceStateKeySchema } from '../../src/domain/catalog/vocabulary.ts';
 export type { PinnedHandoff, ProviderEvidenceCase } from '../../src/domain/handoff/message-handoff.ts';
+export type { PortalAuthOwnerTransport } from '../../src/integrations/portal-auth-owner.ts';
 export type { PrivacyOwnerQuestion, PrivacyOwnerTransport } from '../../src/integrations/privacy-eligibility-gate.ts';
 export { ProcessingScopeUndeclared } from '../../src/domain/intake/scope-declaration-errors.ts';
 export { SourceOccurrenceUnavailable } from '../../src/domain/intake/source-authority-errors.ts';
 export { ProcessingScopeSchema } from '../../src/domain/privacy/processing-scope.ts';
 export { RecipientAuthorityUnavailable } from '../../src/domain/recipient/current-gate-errors.ts';
 export { RecipientGateVerdict } from '../../src/domain/recipient/current-gate.ts';
-export { privacyIndeterminate, privacyNotAllowed } from '../unit/support/privacy-fixtures.ts';
 export { handoffDouble as messagingAdapterDouble } from './intake-fixtures.ts';
 export { makeRuntimeDatabase, nativeServices } from './persistence.fixture.ts';
 
@@ -95,11 +92,13 @@ export interface SourceOwnerWorldOptions {
   readonly languages: readonly ('cs' | 'en')[];
   /** The Tenant language mode to set, or none to keep the default. */
   readonly mode?: 'A' | 'B' | undefined;
+  /** How the PRODUCTION Privacy-gate adapter reaches the Privacy owner's published Reads. Required: there is no scripted gate. */
+  readonly privacyOwner: PrivacyOwnerTransport;
   /**
-   * The transport to the REAL Privacy owner's published Reads, under which the REAL Communications Privacy-gate adapter
-   * runs; none keeps the scripted gate (`privacyAnswers`, `privacyQueries`).
+   * Where the recipient language comes from. `PRODUCTION` (default): no owner publishes a trusted language, so none is
+   * established and `cs` applies. `LABELLED_DOUBLE`: the suite scripts it through `setTrustedLanguage`.
    */
-  readonly privacyOwner?: PrivacyOwnerTransport | undefined;
+  readonly recipientLanguage?: 'LABELLED_DOUBLE' | 'PRODUCTION' | undefined;
   /**
    * The languages the Tenant TOOK OVER and then stopped: the FICTIONAL revision is activated and deactivated again, so the
    * identity has no text in force and fails closed.
@@ -111,11 +110,24 @@ export interface SourceOwnerWorldOptions {
   readonly types: readonly TransactionalMessageType[];
 }
 
-/** What the source owner answers at the edges Communications reads it through. */
-export interface SourceOwnerAnswers {
-  readonly recipientGate: Pick<RecipientCurrentGateService, 'check'>;
-  readonly scopeDeclaration: ProcessingScopeDeclarationService;
-  readonly sourceAuthority: SourceOccurrenceAuthorityService;
+/**
+ * What a source owner supplies to compose the intake on the PRODUCTION owner ports: how its published Read is reached and the
+ * scope its producer declares (a labelled double: production declares none yet). It supplies no port of the decision itself.
+ */
+export interface SourceOwnerSeams {
+  readonly portalAuth: PortalAuthOwnerTransport;
+  readonly producerScope: ProcessingScopeDeclarationService;
+}
+
+/** Where each owner port of the intake came from. Anything but `PRODUCTION` is a labelled double. */
+export interface OwnerPortSources {
+  readonly catalog: 'OVERRIDDEN_FOR_THE_CASE' | 'PRODUCTION';
+  readonly documentOwner: 'PRODUCTION_UNAVAILABLE_FORM';
+  readonly privacyGate: 'PRODUCTION_ADAPTER_OVER_PRIVACY_TRANSPORT';
+  readonly recipientGate: 'PRODUCTION_ADAPTER_OVER_AUTH_TRANSPORT';
+  readonly recipientLanguage: 'LABELLED_DOUBLE' | 'PRODUCTION_NOT_ESTABLISHED';
+  readonly scopeDeclaration: 'LABELLED_PRODUCER_DOUBLE';
+  readonly sourceAuthority: 'PRODUCTION_ADAPTER_OVER_AUTH_TRANSPORT';
 }
 
 /** The Messaging Adapter (step 22) double (`messagingAdapterDouble`): it records each pinned handoff and answers what the test scripts. */
@@ -131,7 +143,7 @@ const allowedHistoryAccess: HistoryAccess = {
 
 /**
  * One Tenant with the FICTIONAL approved revisions the suite supplies, over the real Communications persistence that the
- * suite's composition root opens with `makeRuntimeDatabase`. The intake is composed afterwards with `intakeWith`, once the
+ * suite's composition root opens with `makeRuntimeDatabase`. The intake is composed afterwards with `intakeOnProduction`, once the
  * source owner's side exists.
  */
 export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.make')(function* makeWorld(
@@ -175,20 +187,22 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
     }),
   );
 
+  const languageIsDouble = options.recipientLanguage === 'LABELLED_DOUBLE';
   const languageRef = Ref.makeUnsafe<RecipientLanguageContext>({ kind: 'not-established' });
-  const privacyAnswers = new Map<string, PrivacyAnswer>();
-  const privacyQueries: ProcessingEligibilityQuery[] = [];
-  const languageLayer = Layer.succeed(RecipientLanguageAuthority, { languageOf: () => Ref.get(languageRef) });
-  const privacyLayer =
-    options.privacyOwner === undefined
-      ? Layer.succeed(ProcessingEligibilityGate, {
-          check: (query) => {
-            privacyQueries.push(query);
-            return (privacyAnswers.get(query.recipient.recipientRef.resourceId) ?? privacyAllowed)(query);
-          },
-          checkTimeout: TEST_GATE_CHECK_TIMEOUT,
-        })
-      : privacyProcessingEligibilityGateOver({ checkTimeout: TEST_GATE_CHECK_TIMEOUT }, options.privacyOwner);
+  /** The trusted recipient language of the LABELLED DOUBLE; a suite on the production language has no such source and dies here. */
+  const setTrustedLanguage = (language: 'cs' | 'en') =>
+    languageIsDouble
+      ? Ref.set(languageRef, { kind: 'trusted', language })
+      : Effect.die('No owner publishes a trusted recipient language: ask for recipientLanguage LABELLED_DOUBLE');
+  const ownerPortSources = {
+    catalog: options.types === approvedMessageTypes ? 'PRODUCTION' : 'OVERRIDDEN_FOR_THE_CASE',
+    documentOwner: 'PRODUCTION_UNAVAILABLE_FORM',
+    privacyGate: 'PRODUCTION_ADAPTER_OVER_PRIVACY_TRANSPORT',
+    recipientGate: 'PRODUCTION_ADAPTER_OVER_AUTH_TRANSPORT',
+    recipientLanguage: languageIsDouble ? 'LABELLED_DOUBLE' : 'PRODUCTION_NOT_ESTABLISHED',
+    scopeDeclaration: 'LABELLED_PRODUCER_DOUBLE',
+    sourceAuthority: 'PRODUCTION_ADAPTER_OVER_AUTH_TRANSPORT',
+  } as const satisfies OwnerPortSources;
   /** The step runs as the pre-handoff worker would: under the authority of an operation in progress of the Tenant. */
   const preHandoffCall = Effect.gen(function* preHandoffCall() {
     const scope = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
@@ -201,8 +215,6 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
     }).pipe(Effect.orDie);
     return actionOwnerCall({ ...scope, correlationId: 'fixture:pre-handoff-worker' });
   });
-  const documents = documentOwnerDouble();
-
   const scopedRunner: ScopedRunner = (program) =>
     database
       .inTenant(tenantId, (transaction) => program(transaction))
@@ -215,17 +227,20 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
         ),
       );
 
-  /** Composes the intake over the source owner's answers: the catalog, the doubles above and the owner's three edges. */
-  const intakeWith = (answers: SourceOwnerAnswers) => {
+  /**
+   * Composes the intake on the PRODUCTION owner ports over the two transports the source owner supplies, plus the labelled
+   * producer scope. The catalog is the production one unless the case overrides the approved types.
+   */
+  const intakeOnProduction = (seams: SourceOwnerSeams) => {
     const portsFor = (catalog: readonly TransactionalMessageType[]) =>
       Layer.mergeAll(
-        approvedCatalogLayer(catalog),
-        languageLayer,
-        Layer.succeed(SourceOccurrenceAuthority, answers.sourceAuthority),
-        Layer.succeed(ProcessingScopeDeclaration, answers.scopeDeclaration),
-        Layer.succeed(RecipientCurrentGate, { ...answers.recipientGate, checkTimeout: TEST_GATE_CHECK_TIMEOUT }),
-        privacyLayer,
-        documents.layer,
+        communicationsOwnerPortsOver({ portalAuth: seams.portalAuth, privacy: options.privacyOwner }),
+        // a case that overrides the approved types replaces exactly the catalog; the production one is untouched otherwise
+        ...(catalog === approvedMessageTypes ? [] : [approvedCatalogLayer(catalog)]),
+        ...(languageIsDouble
+          ? [Layer.succeed(RecipientLanguageAuthority, { languageOf: () => Ref.get(languageRef) })]
+          : []),
+        Layer.succeed(ProcessingScopeDeclaration, seams.producerScope),
         NodeCrypto.layer,
       );
     const runner = intakeRunnerOver(database, portsFor(options.types));
@@ -347,14 +362,13 @@ export const makeSourceOwnerWorld = Effect.fn('CommunicationsSourceOwnerWorld.ma
     }),
     historyOfRequest,
     historyReads,
-    intakeWith,
+    intakeOnProduction,
     /** The message intents of the Tenant, as the runtime role reads them. */
     intentRows: database.inTenant(tenantId, (transaction) => transaction.select().from(messageIntents)),
-    languageRef,
-    privacyAnswers,
-    privacyQueries,
+    ownerPortSources,
     renderPinned,
     replaceTemplate,
+    setTrustedLanguage,
     tenantId,
   };
 });
