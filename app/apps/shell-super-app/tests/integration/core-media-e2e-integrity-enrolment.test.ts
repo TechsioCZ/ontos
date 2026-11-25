@@ -1,15 +1,21 @@
-import { Effect, Exit } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Effect, Exit, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import { changeSystemWorkloadEnrollmentAction } from '../../../../packages/core-runtime/src/modules/actions/change-system-workload-enrollment.action.ts';
+import {
+  InstalledModuleCatalogService,
+  buildInstalledModuleCatalog,
+} from '../../../../packages/core-runtime/src/modules/catalog.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { templateDatabaseLayer } from '../support/access-admin-real-gate-fixture.ts';
-import { MEDIA_CAPABILITIES, withMediaE2eWorld } from '../support/core-media-e2e-fixture.ts';
+import { MEDIA_CAPABILITIES, principalOf, withMediaE2eWorld } from '../support/core-media-e2e-fixture.ts';
 import type { E2eActor, MediaE2eWorld } from '../support/core-media-e2e-fixture.ts';
-import { patternBytes, putBytes, reserve, rowOf } from '../support/core-media-e2e-steps.ts';
+import { currentOf, patternBytes, putBytes, refOf, reserve, rowOf } from '../support/core-media-e2e-steps.ts';
 
 /*
  * EVIDENCE: INTEGRATION EXECUTED on the real composition (production Shell, Core runtime, PostgreSQL, SpiceDB) over an
@@ -24,8 +30,13 @@ import { patternBytes, putBytes, reserve, rowOf } from '../support/core-media-e2
  * corruption on the next download. A stage accounts file `workloads` entry binds an account (a person), which is such a
  * non-`system` principal; the suite stands a service principal in for it.
  *
- * The enrolment itself is a fixture's SQL (`enrolSystemWorkload`), the way every other end-to-end proof enrols its
- * workload: this suite proves what the Shell does with an enrolment, not how an operator creates one.
+ * Most scenarios here enrol with a fixture's SQL (`enrolSystemWorkload`), the way every other end-to-end proof enrols
+ * its workload: they prove what the Shell does with an enrolment. The last scenario proves how an operator creates one:
+ * the tenant's owner (a tenant administrator holding every capability) runs the real Core Action
+ * `core.identity.change-system-workload-enrollment` for module `core.media` and workload `core.media.integrity`
+ * through the world's Action runtime and the real access gate, with NO `tenant_module_states` row and NO installed
+ * contract for `core.media` (Core declares its own system modules in `core-system-workloads.ts`), and the Shell then
+ * records proven corruption as `failed`.
  */
 
 const platform = {
@@ -99,6 +110,32 @@ const holdersOf = (world: MediaE2eWorld) =>
       [world.tenantId, WORKLOAD_KEY],
     )
     .pipe(Effect.orDie);
+
+const emptyInstalledCatalog = {
+  loadForRevision: () => Effect.succeed(buildInstalledModuleCatalog([])),
+};
+
+/** ENROLL or END of one `core.media` workload, run as the actor through the world's Action runtime and the real gate. */
+const enrolAs = (
+  world: MediaE2eWorld,
+  actor: E2eActor,
+  change: { readonly _tag: 'END' | 'ENROLL'; readonly workloadKey: string },
+  idempotencyKey: string,
+) =>
+  Effect.gen(function* runEnrollment() {
+    return yield* world.actions
+      .runAction({
+        payload: { ...change, moduleKey: 'core.media', reason: 'The tenant records proven Core Media corruption' },
+        principal: yield* principalOf(actor),
+        registration: changeSystemWorkloadEnrollmentAction,
+        savedReply: 'answer',
+        transport: { correlationId: `e2e-enrol-${idempotencyKey}`, idempotencyKey },
+      })
+      .pipe(
+        Effect.provideService(InstalledModuleCatalogService, emptyInstalledCatalog),
+        Effect.provide(NodeCrypto.layer),
+      );
+  });
 
 const unrecordedOf = (entries: readonly string[]) => entries.filter((entry) => entry.includes(UNRECORDED));
 
@@ -184,6 +221,80 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(Exit.isFailure(yield* downloadCorrupt(edge, reader, id))).toBe(true);
               expect((yield* rowOf(world, id))?.processing_status).toBe('failed');
               expect(unrecordedOf(logs)).toHaveLength(4);
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'a tenant administrator enrolls the integrity principal through the real ENROLL Action, with no module state and no installed contract, and the Shell then records proven corruption as failed',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* enrolledThroughTheAction() {
+              const logs: string[] = [];
+              const owner = person(world, 'owner');
+              const reader = person(world, 'downloader');
+              yield* world.grant(person(world, 'uploader'), uploaderCapabilities);
+              yield* world.grant(reader, readerCapabilities);
+              yield* world.grant(person(world, 'currentOnly'), [MEDIA_CAPABILITIES.current]);
+
+              // Nothing is installed for core.media: an empty installed catalog and, below, no module state of the tenant.
+              const moduleStates = (moduleKey: string) =>
+                world.admin
+                  .unsafe<{ readonly state: string }>(
+                    'select state from core.tenant_module_states where tenant_id = $1 and module_key = $2',
+                    [world.tenantId, moduleKey],
+                  )
+                  .pipe(Effect.orDie);
+              // The stage install derives an active module state for every Core module; the enrollment must not need it, so
+              // the privileged identity removes it, as a tenant that never had one would be.
+              expect(yield* moduleStates('core.media')).toEqual([{ state: 'active' }]);
+              yield* world.admin
+                .unsafe('delete from core.tenant_module_states where tenant_id = $1 and module_key = $2', [
+                  world.tenantId,
+                  'core.media',
+                ])
+                .pipe(Effect.orDie);
+              expect(yield* moduleStates('core.media')).toEqual([]);
+              expect(yield* holdersOf(world)).toEqual([]);
+              // A person who is not an administrator holds no enrollment capability and cannot enrol.
+              const asUploader = yield* Effect.flip(
+                enrolAs(
+                  world,
+                  person(world, 'uploader'),
+                  { _tag: 'ENROLL', workloadKey: WORKLOAD_KEY },
+                  'enrol-denied',
+                ),
+              );
+              expect(Predicate.isTagged(asUploader, 'ActionPermissionDenied')).toBe(true);
+              expect(yield* holdersOf(world)).toEqual([]);
+
+              // The administrator enrols: one system principal, bound to this key alone, and still no module state.
+              const answer = yield* enrolAs(world, owner, { _tag: 'ENROLL', workloadKey: WORKLOAD_KEY }, 'enrol-1');
+              expect(Predicate.isTagged(answer, 'ENROLLED')).toBe(true);
+              expect(answer).toMatchObject({ moduleKey: 'core.media', pending: [], workloadKey: WORKLOAD_KEY });
+              expect(yield* holdersOf(world)).toEqual([
+                { binding_status: 'active', bound_keys: WORKLOAD_KEY, kind: 'system', principal_status: 'active' },
+              ]);
+              expect(yield* moduleStates('core.media')).toEqual([]);
+              // A key under core.media that Core does not declare is refused.
+              const undeclared = yield* Effect.flip(
+                enrolAs(world, owner, { _tag: 'ENROLL', workloadKey: 'core.media.other' }, 'enrol-other'),
+              );
+              expect(Predicate.isTagged(undeclared, 'IdentityTargetInvalidError')).toBe(true);
+
+              // The Shell then records proven corruption through that principal.
+              const edge = yield* world.shellWithLogs((entry) => {
+                logs.push(entry);
+              });
+              const id = yield* corruptReadyAsset(world, edge);
+              expect(Exit.isFailure(yield* downloadCorrupt(edge, reader, id))).toBe(true);
+              expect((yield* rowOf(world, id))?.processing_status).toBe('failed');
+              expect(unrecordedOf(logs)).toEqual([]);
+              // Current no longer vouches for the closed asset.
+              const current = yield* currentOf(world, person(world, 'currentOnly'), [refOf(world.tenantId, id)]);
+              expect(current.entries.map(({ kind }) => kind)).toEqual(['CURRENT_UNVERIFIED']);
             }),
           ),
         ),
