@@ -2,7 +2,7 @@ import { APIError } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -26,6 +26,11 @@ import {
   makeCommercePortalAuthAccountCreationService,
 } from '../../api/portal-auth/provider/account-create.ts';
 import { makeCommercePortalAuthOptions } from '../../api/portal-auth/provider/auth.ts';
+import {
+  CommercePortalAuthVerificationReplay,
+  directVerificationReplayLayer,
+} from '../../src/portal-auth/communications/verification-replay.ts';
+import { VerificationReplayUnavailable } from '../../src/portal-auth/communications/verification-replay-unavailable.ts';
 import {
   COMMERCE_PORTAL_AUTH_SCHEMA_NAME,
   COMMERCE_PORTAL_AUTH_TABLE_INVENTORY,
@@ -128,13 +133,19 @@ const runVerification = (
     Effect.flatMap((service) => service.verifyExternalAuthentication(input)),
   );
 
+/**
+ * The verification replay rule is a REQUIRED input of the gateway (#1282): every composition names it. The deployment that did
+ * not move its e-mail onto Communications installs the direct rule explicitly; a test names the rule it proves.
+ */
 const makeAccountGateway = (
   auth: CommercePortalAuthAccountCreationProvider,
   accountLookup: CommercePortalAuthAccountLookup,
+  replay: Layer.Layer<CommercePortalAuthVerificationReplay> = directVerificationReplayLayer,
 ) =>
   makeCommercePortalAuthAccountCreationGateway().pipe(
     Effect.provideService(CommercePortalAuthAccountCreationProviderService, auth),
     Effect.provideService(CommercePortalAuthAccountLookupService, accountLookup),
+    Effect.provide(replay),
   );
 
 const runGatewayCreate = (
@@ -144,7 +155,8 @@ const runGatewayCreate = (
     CommercePortalAccountCreateInput,
     'email' | 'enrollmentAttemptId' | 'name' | 'ownerInvocationId' | 'password' | 'tenantId'
   >,
-) => makeAccountGateway(auth, accountLookup).pipe(Effect.flatMap((gateway) => gateway.create(input)));
+  replay?: Layer.Layer<CommercePortalAuthVerificationReplay>,
+) => makeAccountGateway(auth, accountLookup, replay).pipe(Effect.flatMap((gateway) => gateway.create(input)));
 
 const providerSuccess = (response: CommercePortalAuthAccountCreateResponse) => Effect.succeed(Option.some(response));
 
@@ -692,6 +704,84 @@ it.effect('replays a correlated owner invocation to its committed subject instea
     ),
   );
 });
+
+/** A replay of the SAME owner invocation on a committed account, with the replay rule the test names. */
+const replayCreate = (replay: Layer.Layer<CommercePortalAuthVerificationReplay>, sends: { count: number }) =>
+  runGatewayCreate(
+    {
+      api: {
+        sendVerificationEmail: () => {
+          sends.count += 1;
+          return Effect.void;
+        },
+        signUpEmail: () => providerSuccess({ user: { id: 'a-second-account' } }),
+      },
+    },
+    {
+      existsByEmail: () => Effect.succeed(true),
+      existsByProviderSubject: () => Effect.succeed(true),
+      subjectForOwnerInvocation: () => Effect.succeedSome(providerSubjectId),
+    },
+    {
+      email: 'buyer@example.test',
+      enrollmentAttemptId,
+      name: 'Buyer',
+      ownerInvocationId,
+      password: testPassword,
+      tenantId,
+    },
+    replay,
+  );
+
+it.effect(
+  '[regression] the DIRECT replay rule, installed explicitly, keeps the direct behaviour: a replay reissues the link',
+  () => {
+    const sends = { count: 0 };
+    return replayCreate(directVerificationReplayLayer, sends).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(sends.count).toBe(1);
+        }),
+      ),
+    );
+  },
+);
+
+it.effect('a Communications replay rule that holds the previous issuance owed sends nothing on a replay', () => {
+  const sends = { count: 0 };
+  const owed = Layer.succeed(CommercePortalAuthVerificationReplay, {
+    begin: () => Effect.succeed('NO_NEW_ISSUANCE'),
+    release: () => Effect.void,
+  });
+  return replayCreate(owed, sends).pipe(
+    Effect.tap((account) =>
+      Effect.sync(() => {
+        expect(account).toStrictEqual({ providerSubjectId });
+        expect(sends.count).toBe(0);
+      }),
+    ),
+  );
+});
+
+it.effect(
+  'a replay after a message that will never leave reports the truth: unavailable, nothing sent, never CREATED',
+  () => {
+    const sends = { count: 0 };
+    const stopped = Layer.succeed(CommercePortalAuthVerificationReplay, {
+      begin: () => Effect.fail(new VerificationReplayUnavailable({ reason: 'PREVIOUS_ISSUANCE_STOPPED' })),
+      release: () => Effect.void,
+    });
+    return Effect.flip(replayCreate(stopped, sends)).pipe(
+      Effect.tap((failure) =>
+        Effect.sync(() => {
+          expect(failure).toBeInstanceOf(CommercePortalAuthAccountCreationUnavailable);
+          expect(failure.reason).toContain('no verification message will leave');
+          expect(sends.count).toBe(0);
+        }),
+      ),
+    );
+  },
+);
 
 it.effect('maps a malformed Better Auth success response to unavailable', () => {
   const auth: CommercePortalAuthAccountCreationProvider = {

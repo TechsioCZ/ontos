@@ -190,7 +190,8 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         const stopped = yield* (yield* historyReads(modeB.world)).list();
         expect(stopped.items[0]?.headline).toMatchObject({
           reasonCodes: ['CZECH_REVISION_REQUIRED_BY_MODE_B'],
-          status: 'SUPPRESSED',
+          // no usable language or template is NOT_SENT: its own state, neither suppressed nor a provider failure (#1401 I-07)
+          status: 'NOT_SENT',
         });
 
         const modeA = yield* setup({ languages: ['en'], mode: 'A', retiredLanguages: ['cs'] });
@@ -212,7 +213,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
       expect(world.mailbox).toHaveLength(0);
       expect(pendingIntentsOf(world)).toHaveLength(0);
       const page = yield* (yield* historyReads(world)).list();
-      expect(page.items[0]?.headline.status).toBe('SUPPRESSED');
+      expect(page.items[0]?.headline.status).toBe('NOT_SENT');
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
@@ -263,7 +264,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         const page = yield* (yield* historyReads(world)).list();
         expect(page.items[0]?.headline).toMatchObject({
           reasonCodes: ['CZECH_REVISION_UNAVAILABLE'],
-          status: 'SUPPRESSED',
+          status: 'NOT_SENT',
         });
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
@@ -440,8 +441,8 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         const stop = (yield* (yield* historyReads(unbound.world)).list()).items[0]?.headline;
         expect(stop).toMatchObject({ attention: 'FAILURE', status: 'SUPPRESSED' });
         expect(stop?.reasonCodes).not.toEqual(proven?.reasonCodes);
-        // the stop is Privacy's own class: an unevidenced scope is stored as unresolved and Privacy is never asked about a guess
-        expect(stop?.reasonCodes).toEqual(['PRIVACY_INDETERMINATE']);
+        // the stop is Privacy's own class: an undeclared scope is an unresolved Privacy context and Privacy is never asked about a guess
+        expect(stop?.reasonCodes).toEqual(['PRIVACY_CONTEXT_AMBIGUOUS']);
         expect(unbound.world.privacyQueries).toHaveLength(0);
         expect(held?.reasonCodes).toEqual(['PRIVACY_INDETERMINATE']);
         expect(unproven.world.privacyQueries.length).toBeGreaterThan(0);

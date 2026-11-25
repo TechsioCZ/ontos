@@ -43,7 +43,10 @@ import { commerceEnrollmentPortalAuthOwnerReconciliationForLookup } from '../../
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { CommercePortalAuthCommunicationOutcomeReader } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
 import type { PortalAuthSourceOutcome } from '../../src/portal-auth/communications/communication-outcome-reader.ts';
-import { verificationReplayLayer } from '../../src/portal-auth/communications/verification-replay.ts';
+import {
+  directVerificationReplayLayer,
+  verificationReplayLayer,
+} from '../../src/portal-auth/communications/verification-replay.ts';
 import { VerificationReplayUnavailable } from '../../src/portal-auth/communications/verification-replay-unavailable.ts';
 import { CommercePortalAuthAccountLookupLive } from '../../src/portal-auth/persistence/portal-auth-account-lookup.ts';
 import {
@@ -128,6 +131,8 @@ const makeCorrelationFixture = Effect.fn('CommerceEnrollmentAccountCorrelation.m
           Layer.provide(Layer.succeed(CommercePortalAuthInstance, auth)),
         ),
         lookupLive,
+        // this fixture never routes through Communications: it names the direct rule explicitly (#1282)
+        directVerificationReplayLayer,
       ),
     ),
   );
@@ -362,7 +367,7 @@ const makeVerificationSendFixture = Effect.fn('CommerceEnrollmentAccountCorrelat
             Layer.provide(Layer.succeed(CommercePortalAuthInstance, auth)),
           ),
           lookupLive,
-          options.replay ? replayLive : Layer.empty,
+          options.replay ? replayLive : directVerificationReplayLayer,
         ),
       ),
     );

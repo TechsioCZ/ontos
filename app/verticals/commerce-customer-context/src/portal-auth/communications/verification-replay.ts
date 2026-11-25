@@ -129,3 +129,15 @@ export const makeVerificationReplay = Effect.fn('CommercePortalAuthVerificationR
 );
 
 export const verificationReplayLayer = Layer.effect(CommercePortalAuthVerificationReplay, makeVerificationReplay());
+
+/**
+ * The replay rule of a deployment whose verification e-mail does NOT go through Communications: the direct English sender.
+ * A replay of the same enrollment operation re-issues the link, exactly as before the Communications path existed, because
+ * the direct sender has no message, intent or outcome to correlate. It is installed EXPLICITLY by the composition that selects
+ * the direct sender (`api/index.ts`): the account-creation gateway requires a replay rule and never falls back to this one by
+ * the mere absence of another, so a deployment that moves to Communications cannot keep re-issuing links by omission (#1282).
+ */
+export const directVerificationReplayLayer = Layer.succeed(CommercePortalAuthVerificationReplay, {
+  begin: () => Effect.succeed(ISSUE),
+  release: () => Effect.void,
+});

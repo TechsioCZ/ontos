@@ -46,8 +46,8 @@ import {
  * invocation correlates the previous issuance, intent and last outcome and sends or issues nothing on uncertainty.
  *
  * Labelled doubles (see `support/auth-communications-world.spec.mts`): the Privacy gate and the missing pre-verification Privacy
- * path, the trusted language, the provider, and the source outcome Read Auth does not have yet (read here from the real
- * Communications history). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery or provider evidence.
+ * path, the trusted language, the provider, and the transport to the Communications outcome Read (Auth's REAL reader decodes and reads the
+ * feed of the real Communications history). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery or provider evidence.
  */
 
 const decodeInvocation = Schema.decodeSync(EnrollmentActionInvocationIdSchema);
@@ -317,6 +317,35 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         expect(realm.issued.verification).toHaveLength(1);
         expect(yield* intentsOf(world)).toHaveLength(1);
         expect(world.submissions).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+  );
+
+  it.live(
+    '[AC-09 T3-16 R-D14] a replay after a PROVEN non-acceptance with no approved recovery rule reports the truth: no message will leave, nothing is reissued, never CREATED',
+    () =>
+      Effect.gen(function* provenNonAcceptanceWithoutRule() {
+        // the production catalog: the verification type has NO recovery rule, so a proven non-acceptance HALTS
+        const { create, realm, world } = yield* setup({ mode: 'B' });
+        world.providerAnswer.current = () => ({ kind: 'REJECTED', reason: 'rate_limited' });
+        yield* create();
+        const intentId = yield* onlyIntent(world);
+        expect((yield* step(world, world.messageHandoff, intentId)).kind).toBe('HANDED_OFF');
+        // the next delivery of the step evaluates recovery: the type has no rule, so it halts and nothing more leaves
+        yield* step(world, world.messageHandoff, intentId);
+        expect((yield* (yield* historyReads(world)).list()).items[0]?.headline).toMatchObject({
+          attention: 'FAILURE',
+          status: 'FAILED',
+        });
+
+        const failure = yield* Effect.flip(create());
+        // not a CREATED answer: the Attempt stays retryable and says why, without repairing the message
+        expect(Schema.is(CommercePortalAuthAccountCreationUnavailable)(failure)).toBe(true);
+        expect(failure.reason).toContain('no verification message will leave');
+        expect(realm.issued.verification).toHaveLength(1);
+        expect(world.submissions).toHaveLength(1);
+        expect(world.messageHandoff.calls).toHaveLength(1);
+        expect(yield* intentsOf(world)).toHaveLength(1);
+        expect(yield* attemptsOf(world)).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 

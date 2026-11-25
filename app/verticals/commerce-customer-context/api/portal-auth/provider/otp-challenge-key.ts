@@ -1,19 +1,13 @@
 import { getAuthoritativeSessionFromCtx } from 'better-auth/api';
-import type { OTPOptions } from 'better-auth/plugins/two-factor';
-import { Data, Duration, Effect, Option, Redacted, Schema } from 'effect';
+import { Data, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
+import { TWO_FACTOR_COOKIE_NAME } from './better-auth-two-factor.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
+import { CommercePortalAuthOtpChallengeKeyReader } from './otp-challenge-key-service.ts';
 import type { CommercePortalAuthOtpChallengeKey } from './recovery/store-service.ts';
+import type { OtpContext } from './otp-challenge-key-service.ts';
 import { safeFailureOf } from './safe-failure.ts';
 import type { SafeFailure } from './safe-failure.ts';
-
-type OtpContext = NonNullable<Parameters<NonNullable<OTPOptions['sendOTP']>>[1]>;
-
-/**
- * The name of the signed cookie Better Auth's two-factor plugin names a pending sign-in challenge by (its own constant; the
- * end-to-end suite of the one-time code runs the real plugin, so a change of it fails there, never silently).
- */
-const TWO_FACTOR_COOKIE_NAME = 'two_factor';
 
 const decodeCookie = Schema.decodeUnknownOption(Schema.String.check(Schema.isMinLength(1)));
 
@@ -82,3 +76,8 @@ export const otpChallengeKeyOf = (
     ),
   );
 };
+
+/** The production reader: the key the real two-factor plugin stores a code under, derived from Better Auth's own context. */
+export const CommercePortalAuthOtpChallengeKeyReaderLive = Layer.succeed(CommercePortalAuthOtpChallengeKeyReader, {
+  keyOf: otpChallengeKeyOf,
+});

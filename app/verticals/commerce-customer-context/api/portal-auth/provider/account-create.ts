@@ -51,7 +51,7 @@ const replayUnavailableReason = {
   PREVIOUS_ISSUANCE_EXPIRED:
     'Commerce portal account creation found the previous verification link expired before it could be sent and does not reissue it',
   PREVIOUS_ISSUANCE_STOPPED:
-    'Commerce portal account creation found the previous verification message stopped and does not repair it',
+    'Commerce portal account creation found that no verification message will leave for the previous issuance and does not repair it',
 } as const satisfies Record<VerificationReplayUnavailable['reason'], string>;
 
 /** Private service input. The password must already be redacted by the owner boundary. */
@@ -208,13 +208,16 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
   function* makeCommercePortalAuthAccountCreationGatewayEffect(): Effect.fn.Return<
     CommercePortalAuthAccountCreationGateway,
     never,
-    CommercePortalAuthAccountCreationProviderService | CommercePortalAuthAccountLookupService
+    | CommercePortalAuthAccountCreationProviderService
+    | CommercePortalAuthAccountLookupService
+    | CommercePortalAuthVerificationReplay
   > {
     const auth = yield* CommercePortalAuthAccountCreationProviderService;
     const accountLookup = yield* CommercePortalAuthAccountLookupService;
-    // Present only when the deployment moved the verification e-mail onto Communications (#1406); absent, the
-    // verification send behaves exactly as before and Core and staff Auth run without Communications.
-    const verificationReplay = yield* Effect.serviceOption(CommercePortalAuthVerificationReplay);
+    // REQUIRED, never optional (#1282): a deployment that moved the verification e-mail onto Communications installs the
+    // Communications replay rule, and one that did not installs `directVerificationReplayLayer` EXPLICITLY. A composition
+    // that installs neither does not build, so a replay can never fall open to re-issuing a link by an absent policy.
+    const verificationReplay = yield* CommercePortalAuthVerificationReplay;
     // Shared by the initial send and the correlated-replay reissue; only the failure reason differs.
     const sendAccountVerificationEmail = (verificationEmail: string, reason: string) =>
       auth.api
@@ -235,30 +238,26 @@ export const makeCommercePortalAuthAccountCreationGateway = Effect.fn('CommerceP
       readonly reason: string;
       readonly replay: boolean;
     }) =>
-      Option.match(verificationReplay, {
-        onNone: () => sendAccountVerificationEmail(input.email, input.reason),
-        onSome: (policy) =>
-          policy
-            .begin({
-              ownerInvocationId: input.ownerInvocationId,
-              providerSubjectId: input.providerSubjectId,
-              replay: input.replay,
-            })
-            .pipe(
-              Effect.mapError((cause) =>
-                withCause(
-                  new CommercePortalAuthAccountCreationUnavailable({
-                    reason: replayUnavailableReason[cause.reason],
-                  }),
-                  cause,
-                ),
-              ),
-              Effect.flatMap((decision) =>
-                decision === 'ISSUE' ? sendAccountVerificationEmail(input.email, input.reason) : Effect.void,
-              ),
-              Effect.ensuring(policy.release({ providerSubjectId: input.providerSubjectId })),
+      verificationReplay
+        .begin({
+          ownerInvocationId: input.ownerInvocationId,
+          providerSubjectId: input.providerSubjectId,
+          replay: input.replay,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            withCause(
+              new CommercePortalAuthAccountCreationUnavailable({
+                reason: replayUnavailableReason[cause.reason],
+              }),
+              cause,
             ),
-      });
+          ),
+          Effect.flatMap((decision) =>
+            decision === 'ISSUE' ? sendAccountVerificationEmail(input.email, input.reason) : Effect.void,
+          ),
+          Effect.ensuring(verificationReplay.release({ providerSubjectId: input.providerSubjectId })),
+        );
     const create = Effect.fn('CommercePortalAuthAccountCreationGateway.create')(function* createAccount(
       input: Pick<
         CommercePortalAccountCreateInput,

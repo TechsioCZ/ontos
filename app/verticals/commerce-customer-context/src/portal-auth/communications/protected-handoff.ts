@@ -117,119 +117,125 @@ const heldWith =
  * reservation stays in this process on purpose: it only spans one provider call of one request (the enrollment gateway reserves,
  * the provider's callback in the same request takes it), so it holds no issuance and nothing to resume.
  */
-export const protectedHandoffLayer = (ledgerProbe: IssuanceLedgerProbe) =>
-  Layer.effect(
-    CommercePortalAuthProtectedHandoff,
-    Effect.gen(function* makeProtectedHandoff() {
-      const store = yield* CommercePortalAuthCommunicationStore;
-      const sealer = yield* CommercePortalAuthProtectedValueSealer;
+const makeProtectedHandoff = Effect.fn('CommercePortalAuthProtectedHandoff.make')(function* makeProtectedHandoffEffect(
+  ledgerProbe: IssuanceLedgerProbe,
+) {
+  const store = yield* CommercePortalAuthCommunicationStore;
+  const sealer = yield* CommercePortalAuthProtectedValueSealer;
 
-      /** The held issuance of a stored row, when its protected side is still there and opens. */
-      const heldOfStored = (stored: StoredIssuance) =>
-        Option.match(stored.sealedValue, {
-          onNone: () => Effect.succeedNone,
-          onSome: (sealed) =>
-            sealer.open(stored.issuance, sealed).pipe(Effect.map(Option.map(heldWith(stored.issuance)))),
-        });
-      const reservations = yield* Ref.make(HashMap.empty<string, IssuanceReservation>());
+  /** The held issuance of a stored row, when its protected side is still there and opens. */
+  const heldOfStored = (stored: StoredIssuance) =>
+    Option.match(stored.sealedValue, {
+      onNone: () => Effect.succeedNone,
+      onSome: (sealed) => sealer.open(stored.issuance, sealed).pipe(Effect.map(Option.map(heldWith(stored.issuance)))),
+    });
+  const reservations = yield* Ref.make(HashMap.empty<string, IssuanceReservation>());
 
-      /** The usable held issuance, or the state that stops it. */
-      const usable = Effect.fn('CommercePortalAuthProtectedHandoff.usable')(function* usableIssuance(
-        issuanceRef: PortalAuthIssuanceRef,
-      ): Effect.fn.Return<
-        { readonly held: Option.Option<HeldIssuance>; readonly state: IssuanceCurrentness },
-        PortalAuthIssuanceStateUnavailable
-      > {
-        const stored = yield* store.find(issuanceRef);
-        if (Option.isNone(stored)) {
-          return { held: Option.none(), state: 'NOT_RESUMABLE' };
-        }
-        if (Option.isSome(stored.value.settled)) {
-          return { held: Option.none(), state: stored.value.settled.value };
-        }
-        const now = yield* DateTime.now;
-        if (!DateTime.isGreaterThan(stored.value.issuance.expiresAt, now)) {
-          return { held: Option.none(), state: 'EXPIRED' };
-        }
-        const held = yield* heldOfStored(stored.value);
-        if (Option.isNone(held)) {
-          return { held, state: 'NOT_RESUMABLE' };
-        }
-        const state = yield* ledgerProbe(held.value);
-        return { held: state === 'CURRENT' ? held : Option.none(), state };
-      });
+  /** The usable held issuance, or the state that stops it. */
+  const usable = Effect.fn('CommercePortalAuthProtectedHandoff.usable')(function* usableIssuance(
+    issuanceRef: PortalAuthIssuanceRef,
+  ): Effect.fn.Return<
+    { readonly held: Option.Option<HeldIssuance>; readonly state: IssuanceCurrentness },
+    PortalAuthIssuanceStateUnavailable
+  > {
+    const stored = yield* store.find(issuanceRef);
+    if (Option.isNone(stored)) {
+      return { held: Option.none(), state: 'NOT_RESUMABLE' };
+    }
+    if (Option.isSome(stored.value.settled)) {
+      return { held: Option.none(), state: stored.value.settled.value };
+    }
+    const now = yield* DateTime.now;
+    if (!DateTime.isGreaterThan(stored.value.issuance.expiresAt, now)) {
+      return { held: Option.none(), state: 'EXPIRED' };
+    }
+    const held = yield* heldOfStored(stored.value);
+    if (Option.isNone(held)) {
+      return { held, state: 'NOT_RESUMABLE' };
+    }
+    const state = yield* ledgerProbe(held.value);
+    return { held: state === 'CURRENT' ? held : Option.none(), state };
+  });
 
-      const currentness = (issuanceRef: PortalAuthIssuanceRef) =>
-        usable(issuanceRef).pipe(Effect.map(({ state }) => state));
+  const currentness = (issuanceRef: PortalAuthIssuanceRef) =>
+    usable(issuanceRef).pipe(Effect.map(({ state }) => state));
 
-      const hold = Effect.fn('CommercePortalAuthProtectedHandoff.hold')(function* holdIssuance(
-        incoming: HeldIssuance,
-        options: {
-          readonly request: CommunicationRequestEncoded;
-          readonly supersede: boolean;
-          readonly tenantId: string;
-        },
-      ) {
-        const [sealedValue, request] = yield* Effect.all(
-          [
-            sealer.seal(incoming),
-            storedRequestOf(options.request).pipe(
-              Effect.mapError((cause) =>
-                withSafeCause(new PortalAuthCommunicationUnavailable({ operation: RECORD_OPERATION }), cause),
-              ),
-            ),
-          ],
-          { concurrency: 1 },
-        );
-        const now = yield* DateTime.now;
-        yield* store.record({
-          issuance: incoming.issuance,
-          now,
-          request,
-          sealedValue,
-          supersede: options.supersede,
-          tenantId: options.tenantId,
-        });
-      });
-
-      const revealSecret = Effect.fn('CommercePortalAuthProtectedHandoff.revealSecret')(function* reveal(input: {
-        readonly flow: PortalAuthEmailFlow;
-        readonly issuanceRef: PortalAuthIssuanceRef;
-        readonly slot: string;
-      }) {
-        if (portalAuthOwnerRenderedSlotOf(input.flow) !== input.slot) {
-          return yield* new OwnerSlotStop({ reason: 'SLOT_NOT_DECLARED' });
-        }
-        const { held, state } = yield* usable(input.issuanceRef);
-        if (state !== 'CURRENT') {
-          return yield* new OwnerSlotStop({ reason: state });
-        }
-        if (Option.isNone(held) || held.value.issuance.flow !== input.flow) {
-          return yield* new OwnerSlotStop({ reason: 'NOT_RESUMABLE' });
-        }
-        return held.value.secret;
-      });
-
-      const endpointOf = (issuanceRef: PortalAuthIssuanceRef) =>
-        usable(issuanceRef).pipe(Effect.map(({ held }) => held.pipe(Option.map(endpointOfHeld))));
-
-      return {
-        currentness,
-        endpointOf,
-        forget: store.forget,
-        hold,
-        issuanceOf: (issuanceRef) => store.find(issuanceRef).pipe(Effect.map(Option.map(issuanceOfStored))),
-        reserve: ({ flow, providerSubjectId, reservation }) =>
-          Ref.update(reservations, (all) =>
-            all.pipe(HashMap.set(reservationKey(flow, providerSubjectId), reservation)),
+  const hold = Effect.fn('CommercePortalAuthProtectedHandoff.hold')(function* holdIssuance(
+    incoming: HeldIssuance,
+    options: {
+      readonly request: CommunicationRequestEncoded;
+      readonly supersede: boolean;
+      readonly tenantId: string;
+    },
+  ) {
+    const [sealedValue, request] = yield* Effect.all(
+      [
+        sealer.seal(incoming),
+        storedRequestOf(options.request).pipe(
+          Effect.mapError((cause) =>
+            withSafeCause(new PortalAuthCommunicationUnavailable({ operation: RECORD_OPERATION }), cause),
           ),
-        revealSecret,
-        settle: store.settle,
-        takeReservation: (flow, providerSubjectId) =>
-          Ref.modify(reservations, (all) => {
-            const key = reservationKey(flow, providerSubjectId);
-            return [all.pipe(HashMap.get(key)), all.pipe(HashMap.remove(key))] as const;
-          }),
-      } satisfies ProtectedHandoffService;
-    }),
-  );
+        ),
+      ],
+      { concurrency: 1 },
+    );
+    const now = yield* DateTime.now;
+    yield* store.record({
+      issuance: incoming.issuance,
+      now,
+      request,
+      sealedValue,
+      supersede: options.supersede,
+      tenantId: options.tenantId,
+    });
+  });
+
+  const revealSecret = Effect.fn('CommercePortalAuthProtectedHandoff.revealSecret')(function* reveal(input: {
+    readonly flow: PortalAuthEmailFlow;
+    readonly issuanceRef: PortalAuthIssuanceRef;
+    readonly slot: string;
+  }) {
+    if (portalAuthOwnerRenderedSlotOf(input.flow) !== input.slot) {
+      return yield* new OwnerSlotStop({ reason: 'SLOT_NOT_DECLARED' });
+    }
+    const { held, state } = yield* usable(input.issuanceRef);
+    if (state !== 'CURRENT') {
+      return yield* new OwnerSlotStop({ reason: state });
+    }
+    if (Option.isNone(held) || held.value.issuance.flow !== input.flow) {
+      return yield* new OwnerSlotStop({ reason: 'NOT_RESUMABLE' });
+    }
+    return held.value.secret;
+  });
+
+  const endpointOf = (issuanceRef: PortalAuthIssuanceRef) =>
+    usable(issuanceRef).pipe(Effect.map(({ held }) => held.pipe(Option.map(endpointOfHeld))));
+
+  return {
+    currentness,
+    endpointOf,
+    forget: store.forget,
+    hold,
+    issuanceOf: (issuanceRef) => store.find(issuanceRef).pipe(Effect.map(Option.map(issuanceOfStored))),
+    reserve: ({ flow, providerSubjectId, reservation }) =>
+      Ref.update(reservations, (all) => all.pipe(HashMap.set(reservationKey(flow, providerSubjectId), reservation))),
+    revealSecret,
+    settle: store.settle,
+    takeReservation: (flow, providerSubjectId) =>
+      Ref.modify(reservations, (all) => {
+        const key = reservationKey(flow, providerSubjectId);
+        return [all.pipe(HashMap.get(key)), all.pipe(HashMap.remove(key))] as const;
+      }),
+  } satisfies ProtectedHandoffService;
+});
+
+export const protectedHandoffLayer = (ledgerProbe: IssuanceLedgerProbe) =>
+  Layer.effect(CommercePortalAuthProtectedHandoff, makeProtectedHandoff(ledgerProbe));
+
+/**
+ * The handoff whose ledger probe is read from the deployment's own services (Auth's recovery ledger): the composition root names
+ * where the probe comes from and the handoff is built over it. Every requirement of the probe stays visible.
+ */
+export const protectedHandoffLayerOverProbe = <Requirements>(
+  probe: Effect.Effect<IssuanceLedgerProbe, never, Requirements>,
+) => Layer.effect(CommercePortalAuthProtectedHandoff, probe.pipe(Effect.flatMap(makeProtectedHandoff)));

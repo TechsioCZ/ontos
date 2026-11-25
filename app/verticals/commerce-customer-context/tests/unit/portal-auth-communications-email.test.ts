@@ -1,5 +1,4 @@
 import type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
-import type { OTPOptions } from 'better-auth/plugins/two-factor';
 import { inspect } from 'node:util';
 import { Cause, DateTime, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -10,6 +9,8 @@ import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/depl
 import { CommercePortalAuthCommunicationsEmailLive } from '../../api/portal-auth/provider/communications-email-delivery.ts';
 import { CommercePortalAuthRawEmailDeliveryService } from '../../api/portal-auth/provider/raw-email-delivery-service.ts';
 import { PortalAuthIssuanceRefSchema } from '../../shared/portal-auth-communications.ts';
+import { CommercePortalAuthOtpChallengeKeyReader } from '../../api/portal-auth/provider/otp-challenge-key-service.ts';
+import type { CommercePortalAuthOtpChallengeKey } from '../../api/portal-auth/provider/recovery/store-service.ts';
 import { CommercePortalAuthIssuedFacts } from '../../src/portal-auth/communications/issued-facts.ts';
 import type { IssuedFactsService } from '../../src/portal-auth/communications/issued-facts.ts';
 import { CommercePortalAuthCommunicationRequestSubmitter } from '../../src/portal-auth/communications/communication-request-submitter.ts';
@@ -56,15 +57,14 @@ const USER = {
 const decodeRef = Schema.decodeSync(PortalAuthIssuanceRefSchema);
 
 /**
- * The slice of Better Auth's endpoint context the delivery reads to name the two-factor challenge of a code (a pending sign-in
- * names it by its signed cookie), scripted and FICTIONAL. The real plugin is exercised by the end-to-end suite of the one-time code.
+ * The two-factor challenge key the plugin would store a freshly issued code under, scripted and FICTIONAL: a pending sign-in names it
+ * by its signed cookie. The key is read through the delivery's reader service, so no fixture forges Better Auth's endpoint context;
+ * how the real plugin names it is proven by the end-to-end suite of the one-time code and the Better Auth canary.
  */
-// SAFETY: the delivery reads only the cookie name, the secret and getSignedCookie of the context, and tolerates a context that
-// cannot name a session; Better Auth's whole endpoint context is not reproduced by this fixture.
-const OTP_CONTEXT = {
-  context: { createAuthCookie: () => ({ name: 'two_factor' }), secret: 'fictional-secret' },
-  getSignedCookie: () => Promise.resolve('fictional-challenge-cookie'),
-} as unknown as Parameters<NonNullable<OTPOptions['sendOTP']>>[1];
+const SIGN_IN_CHALLENGE: Option.Option<CommercePortalAuthOtpChallengeKey> = Option.some({
+  cookie: Redacted.make('fictional-challenge-cookie'),
+  kind: 'SIGN_IN',
+});
 
 /** The expiry Auth itself stored for each issuance (the ledger rows and Better Auth's challenge row), scripted and FICTIONAL. */
 const STORED_EXPIRY = new Date('2026-11-19T10:15:00.000Z');
@@ -103,6 +103,7 @@ const RELAY = {
 const fixture = (
   answer: () => Effect.Effect<PortalAuthSubmission, PortalAuthCommunicationUnavailable> = () => Effect.succeed(pending),
   facts: IssuedFactsService = storedFacts,
+  challengeKey: Option.Option<CommercePortalAuthOtpChallengeKey> = SIGN_IN_CHALLENGE,
 ) => {
   const requests: CommunicationRequestEncoded[] = [];
   const submitter = Layer.succeed(CommercePortalAuthCommunicationRequestSubmitter, {
@@ -119,6 +120,7 @@ const fixture = (
     Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId: TENANT }) }),
     // the delivery reads only these three of the store: the stored expiry of the issuance it was just handed
     Layer.succeed(CommercePortalAuthIssuedFacts, facts),
+    Layer.succeed(CommercePortalAuthOtpChallengeKeyReader, { keyOf: () => Effect.succeed(challengeKey) }),
     commercePortalAuthPlatformCryptoLive,
   );
   const delivery = CommercePortalAuthCommunicationsEmailLive.pipe(Layer.provide(base));
@@ -166,7 +168,7 @@ describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () =>
               user: USER,
             }),
         );
-        yield* runHook(async () => await raw.sendOTP({ otp: '482913', user: USER }, OTP_CONTEXT));
+        yield* runHook(async () => await raw.sendOTP({ otp: '482913', user: USER }));
         // D1: a callback submits nothing itself; its request waits, committed, in the Auth-local outbox
         expect(world.requests).toHaveLength(0);
         const outbox = [...(yield* Ref.get(world.store.outbox)).values()];
@@ -230,7 +232,7 @@ describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () =>
       return Effect.gen(function* scan() {
         const { raw } = yield* servicesOf(world);
         const failures = [
-          yield* Effect.flip(runHook(async () => await raw.sendOTP({ otp: SECRET_CODE, user: USER }, OTP_CONTEXT))),
+          yield* Effect.flip(runHook(async () => await raw.sendOTP({ otp: SECRET_CODE, user: USER }))),
           yield* Effect.flip(
             runHook(
               async () =>
@@ -269,7 +271,7 @@ describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () =>
   );
 
   it.effect('a one-time code whose challenge cannot be named is never submitted: no challenge key, no request', () => {
-    const world = fixture();
+    const world = fixture(() => Effect.succeed(pending), storedFacts, Option.none());
     return Effect.gen(function* unnamed() {
       const { raw } = yield* servicesOf(world);
       const failure = yield* Effect.flip(runHook(async () => await raw.sendOTP({ otp: '555111', user: USER })));
@@ -293,7 +295,7 @@ describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () =>
       });
       return Effect.gen(function* byKey() {
         const { raw } = yield* servicesOf(world);
-        yield* runHook(async () => await raw.sendOTP({ otp: '482913', user: USER }, OTP_CONTEXT));
+        yield* runHook(async () => await raw.sendOTP({ otp: '482913', user: USER }));
         expect(located).toHaveLength(1);
         expect(located[0]?.userId).toBe(USER.id);
         expect(located[0]?.challengeKey).toMatchObject({ kind: 'SIGN_IN' });
@@ -330,7 +332,7 @@ describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () =>
       );
       return Effect.gen(function* stops() {
         const out = yield* servicesOf(outage);
-        yield* runHook(async () => await out.raw.sendOTP({ otp: '111222', user: USER }, OTP_CONTEXT));
+        yield* runHook(async () => await out.raw.sendOTP({ otp: '111222', user: USER }));
         expect(yield* outage.relay).toMatchObject({ claimed: 1, released: 1 });
         expect(outage.requests).toHaveLength(1);
         const [row] = [...(yield* Ref.get(outage.store.outbox)).values()];
@@ -372,6 +374,7 @@ describe('The Communications-routed Portal Auth e-mail callbacks (#1406)', () =>
           world.handoffLayer,
           unconfiguredTrustedScopeLayer,
           Layer.succeed(CommercePortalAuthIssuedFacts, storedFacts),
+          Layer.succeed(CommercePortalAuthOtpChallengeKeyReader, { keyOf: () => Effect.succeed(SIGN_IN_CHALLENGE) }),
           commercePortalAuthPlatformCryptoLive,
         ),
       ),

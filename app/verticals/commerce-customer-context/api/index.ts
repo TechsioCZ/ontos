@@ -91,7 +91,24 @@ import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unav
 import type { CommercePortalAuthHandlerServices } from './portal-auth/realm-unavailable.ts';
 import { CommercePortalAuthEmailDeliveryLive } from './portal-auth/provider/recovery/email-delivery.ts';
 import { CommercePortalAuthRecoveryStoreLive } from '../src/portal-auth/persistence/portal-auth-recovery-store.ts';
-import { CommercePortalAuthTransactionalEmailLive } from './portal-auth/provider/transactional-email.ts';
+import {
+  commercePortalAuthCommunicationsEmailRouteLive,
+  commercePortalAuthCommunicationsIssuanceStateLive,
+  commercePortalAuthDirectEmailRouteLive,
+  commercePortalAuthDirectIssuanceStateLive,
+  commercePortalAuthIssuedFactsLive,
+} from './portal-auth/provider/email-routes.ts';
+import { CommercePortalAuthOtpChallengeKeyReaderLive } from './portal-auth/provider/otp-challenge-key.ts';
+import { communicationOutcomeReaderLayer } from '../src/portal-auth/communications/communication-outcome-feed-reader.ts';
+import { communicationOutcomeTransportUnavailableLayer } from '../src/portal-auth/communications/communication-outcome-transport-unavailable.ts';
+import { portalAuthEmailRoute } from '../src/portal-auth/communications/email-route.ts';
+import { CommercePortalAuthProtectedValueSealerLive } from '../src/portal-auth/communications/protected-value.ts';
+import { configuredTrustedScopeLayer } from '../src/portal-auth/communications/trusted-scope.ts';
+import { CommercePortalAuthCommunicationStoreLive } from '../src/portal-auth/persistence/portal-auth-communication-store.ts';
+import type { CommercePortalAuthRawEmailDeliveryService } from './portal-auth/provider/raw-email-delivery-service.ts';
+import type { CommercePortalAuthProtectedHandoff } from '../src/portal-auth/communications/protected-handoff.ts';
+import type { CommercePortalAuthVerificationReplay } from '../src/portal-auth/communications/verification-replay.ts';
+import type { PortalAuthEmailRoute } from '../src/portal-auth/communications/email-route.ts';
 import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/better-auth-provider.ts';
 import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
@@ -421,8 +438,65 @@ export const commercePortalAuthVerificationHttpExecutorLive = Layer.succeed(
 const commercePortalAuthRecoveryStoreLive = CommercePortalAuthRecoveryStoreLive.pipe(
   Layer.provideMerge(CommercePortalAuthDatabaseLive),
 );
+/** Auth's own store of its issuances and requests, over the realm's own database (the sealed side of D2 and the outbox of D1). */
+const commercePortalAuthCommunicationStoreLive = CommercePortalAuthCommunicationStoreLive.pipe(
+  Layer.provide(CommercePortalAuthDatabaseLive),
+);
+/** The protected handoff of a Communications-routed deployment, built once: the delivery and the issuance-source Read share it. */
+const commercePortalAuthProtectedHandoffLive = commercePortalAuthCommunicationsIssuanceStateLive.pipe(
+  Layer.provide(Layer.merge(commercePortalAuthCommunicationStoreLive, CommercePortalAuthProtectedValueSealerLive)),
+);
+/**
+ * What the Communications-routed delivery and replay rule need beside the handoff: the realm's trusted Tenant, the one-time-code
+ * challenge key reader, what Auth itself stored about an issuance, and the reader of what Communications proves about a message.
+ * The reader's transport is the typed unavailable form in the API process (see `communication-outcome-transport-unavailable.ts`).
+ */
+const commercePortalAuthCommunicationsPartsLive = Layer.mergeAll(
+  commercePortalAuthProtectedHandoffLive,
+  configuredTrustedScopeLayer,
+  CommercePortalAuthOtpChallengeKeyReaderLive,
+  commercePortalAuthIssuedFactsLive,
+  communicationOutcomeReaderLayer.pipe(Layer.provide(communicationOutcomeTransportUnavailableLayer)),
+);
+/**
+ * Where the three Portal Auth e-mails go is ONE deployment decision (#1406, R-D13), read from the same configuration the worker
+ * host reads to relay what this composition commits (`portalAuthEmailRoute`): the unchanged English direct sender by default, or
+ * the Communications-routed delivery when the deployment opted in. Each route is a complete, explicit set of the delivery and the
+ * enrollment replay rule (`portal-auth/provider/email-routes.ts`); the realm below builds on whichever is selected and builds on
+ * neither if none is, so a replay never falls open to re-issuing a link by an absent rule (#1282).
+ */
+export const commercePortalAuthCommunicationsRouteLive = commercePortalAuthCommunicationsEmailRouteLive.pipe(
+  Layer.provide(commercePortalAuthCommunicationsPartsLive),
+);
+const selectEmailRouteLive = (
+  route: PortalAuthEmailRoute,
+): Layer.Layer<
+  CommercePortalAuthRawEmailDeliveryService | CommercePortalAuthVerificationReplay,
+  Layer.Error<typeof commercePortalAuthCommunicationsRouteLive>,
+  | Layer.Services<typeof commercePortalAuthDirectEmailRouteLive>
+  | Layer.Services<typeof commercePortalAuthCommunicationsRouteLive>
+> => (route === 'COMMUNICATIONS' ? commercePortalAuthCommunicationsRouteLive : commercePortalAuthDirectEmailRouteLive);
+const commercePortalAuthEmailRouteLive = Layer.unwrap(portalAuthEmailRoute.pipe(Effect.map(selectEmailRouteLive)));
+/**
+ * The issuance state the issuance-source Read answers from, selected by the same route: a Communications-routed deployment answers
+ * from Auth's own protected handoff, a direct one holds no issuance and answers typed unavailable.
+ */
+const selectIssuanceStateLive = (
+  route: PortalAuthEmailRoute,
+): Layer.Layer<
+  CommercePortalAuthProtectedHandoff,
+  Layer.Error<typeof commercePortalAuthProtectedHandoffLive>,
+  Layer.Services<typeof commercePortalAuthProtectedHandoffLive>
+> => (route === 'COMMUNICATIONS' ? commercePortalAuthProtectedHandoffLive : commercePortalAuthDirectIssuanceStateLive);
+const commercePortalAuthIssuanceStateLive = Layer.unwrap(
+  portalAuthEmailRoute.pipe(Effect.map(selectIssuanceStateLive)),
+).pipe(
+  Layer.provide(commercePortalAuthRecoveryStoreLive),
+  Layer.provide(CommercePortalAuthConfigLive),
+  Layer.provide(commercePortalAuthPlatformCryptoLive),
+);
 const commercePortalAuthEmailDeliveryLive = CommercePortalAuthEmailDeliveryLive.pipe(
-  Layer.provide(CommercePortalAuthTransactionalEmailLive),
+  Layer.provideMerge(commercePortalAuthEmailRouteLive),
   Layer.provideMerge(commercePortalAuthRecoveryStoreLive),
 );
 
@@ -1037,6 +1111,9 @@ export const commerceCustomerContextActionRuntimeAwaitingOwnerPreparation =
   );
 const productionReadRuntimeLive = commerceCustomerContextReadRuntime.pipe(
   Layer.provideMerge(configuredProductionExternalPortsLive),
+  // the issuance-source Read answers from Auth's own protected handoff when the deployment routes its e-mails through
+  // Communications, and typed unavailable when it does not (#1406)
+  Layer.provideMerge(commercePortalAuthIssuanceStateLive),
 );
 
 const redemptionDatabaseLive = GovernedGatewayAssertionRedemptionDatabaseLive.pipe(
