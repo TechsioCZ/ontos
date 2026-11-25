@@ -1,26 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import { nativeServices } from '@app/communications/testing/source-owner-world';
-import type { PrivacyOwnerTransport } from '@app/communications/testing/source-owner-world';
 import {
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentTenantIdSchema,
-  PORTAL_AUTH_EMAIL_FLOWS,
-  PORTAL_AUTH_RESOURCE_TYPE,
-  PreVerificationPrivacyBindingUnavailable,
-  portalAuthCommunicationPurposeOf,
 } from '@app/commerce-customer-context/testing/portal-auth-communications';
-import type {
-  PortalAuthEmailFlow,
-  PreVerificationPrivacyTransportService,
-} from '@app/commerce-customer-context/testing/portal-auth-communications';
-import {
-  makePreVerificationPrivacyNative,
-  preVerificationPrivacyDatabaseLive,
-} from '@app/privacy/testing/pre-verification-binding-native';
-import type { PreVerificationPrivacyNative } from '@app/privacy/testing/pre-verification-binding-native';
-import { Deferred, Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import type { PortalAuthEmailFlow } from '@app/commerce-customer-context/testing/portal-auth-communications';
+import { Effect, Option, Predicate, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { historyReads, textOf } from './support/auth-communications-checks.spec.mts';
@@ -39,6 +25,7 @@ import {
   flowOfPurpose,
   pendingIntentsOf,
   step,
+  worldServices,
 } from './support/auth-communications-world.spec.mts';
 import type { AuthWorld } from './support/auth-communications-world.spec.mts';
 
@@ -47,16 +34,22 @@ import type { AuthWorld } from './support/auth-communications-world.spec.mts';
  *
  * Before the address of a Portal Auth account is verified, Privacy binds the subject: Auth's REAL production binding asks
  * Privacy's public `bind-pre-verification-subject` Action with Auth's own account reference, the flow's Auth purpose and the
- * issuance expiry only; Privacy answers with its own subject and the exact scope its policy allows. The REAL Communications
- * Privacy-gate adapter then asks Privacy's public `pre-verification-eligibility` Read, at the decision and again at the last
- * stoppable handoff, and reads ALLOWED / NOT_ALLOWED / INDETERMINATE from Privacy's own evidence.
+ * issuance expiry only; Privacy answers with its own subject and the exact scope its policy allows. The PRODUCTION
+ * Communications Privacy-gate adapter then asks Privacy's public `pre-verification-eligibility` Read, at the decision and again
+ * at the last stoppable handoff, and reads ALLOWED / NOT_ALLOWED / INDETERMINATE from Privacy's own evidence.
+ *
+ * Every suite of this family now runs on this real Privacy (see `support/auth-communications-world.spec.mts`); this one keeps the
+ * Privacy-specific proofs: what crossed to Privacy, the withdrawal after the decision and the absence of any policy.
  *
  * What is REAL: the Auth realm and issuance, Auth's binding over Privacy's published bind contract, Privacy's bind / withdraw /
  * eligibility bodies over Privacy's own table in native PostgreSQL as the runtime role (row-level security on, Tenant-wide
- * with no Legal Entity, exactly as the Portal Auth realm), Communications' adapter, intake, decision, intents and handoff step.
- * What is NOT run: the HTTP gateway, the access gate and SpiceDB (each transport calls the owner body the governed entrypoint
- * runs after authorization), and D1 (the production principal Auth would call Privacy under). The Privacy POLICY values and the
- * copy are FICTIONAL: no Privacy purpose, controller, scope or legal basis has been approved for any Auth flow.
+ * with no Legal Entity, exactly as the Portal Auth realm), the PRODUCTION owner ports of Communications (Portal Auth source
+ * authority and recipient gate, Privacy gate), its intake, decision, intents and handoff step.
+ * Labelled stubs that remain: the producer's Privacy-scope declaration (production declares none: open owner gate #1396 J), the
+ * Messaging Adapter (step 22), the in-process transport to Auth's Read and to the public Action. What is NOT run: the HTTP
+ * gateway, the access gate and SpiceDB (each transport calls the owner body the governed entrypoint runs after authorization),
+ * and D1 (the production principal Auth would call Privacy under). The Privacy POLICY values and the copy are FICTIONAL: no
+ * Privacy purpose, controller, scope or legal basis has been approved for any Auth flow.
  */
 
 const decodeInvocation = Schema.decodeSync(EnrollmentActionInvocationIdSchema);
@@ -66,74 +59,10 @@ const POLL_MS = 25;
 const RESET = 'reset-password';
 const POLL_LIMIT = 200;
 
-/** A FICTIONAL Privacy owner policy for one Auth flow in one Tenant, with no Legal Entity: test data, never a product value. */
-const fictionalPolicy = (tenantId: string, flow: PortalAuthEmailFlow) =>
-  ({
-    effectiveFrom: '2026-01-01T00:00:00.000Z',
-    legalBasisRef: 'fictional-legal-basis:contract',
-    policyRef: `fictional-policy:${flow}`,
-    revision: 'fictional-r1',
-    scope: {
-      controllerRef: 'fictional-controller',
-      dataCategoryRefs: ['fictional:contact'],
-      operation: 'FICTIONAL_SEND_AUTH_MESSAGE',
-      processingScopeRef: { scopeId: `fictional-scope:${flow}`, scopeType: 'privacy.processing-scope' },
-      purposeRef: `fictional-purpose:${flow}`,
-      purposeVersionId: 'fictional-purpose-v1',
-      recipientRefs: ['fictional.communications'],
-    },
-    sourceModuleId: 'commerce.customer-context',
-    sourcePurposeRef: portalAuthCommunicationPurposeOf(flow),
-    sourceResourceType: PORTAL_AUTH_RESOURCE_TYPE.account,
-    tenantId,
-    validUntil: '2099-01-01T00:00:00.000Z',
-  }) as const;
-
-/**
- * The world composed with the REAL Privacy contract. The world's Tenant exists only once the world does, so both transports
- * wait for the Privacy seam built for that Tenant; every request either side puts to Privacy is recorded for the secret scan.
- */
+/** The world on the REAL Privacy owner; a world with no Privacy policy cannot bind, so nothing is ever asked or sent. */
 const realPrivacyWorld = Effect.fn('PrivacyPositiveE2E.world')(function* makeWorld(withPolicies: boolean) {
-  const seam = yield* Deferred.make<PreVerificationPrivacyNative>();
-  const principalId = randomUUID();
-  const tenantRef = { current: '' };
-  const callAs = (callerAppId: string) => ({ callerAppId, principalId, tenantId: tenantRef.current });
-  const asked: unknown[] = [];
-  const bindings: string[] = [];
-  // Auth's REAL binding asks Privacy's bind Action body as the verified calling module `commerce-customer-context`
-  const binding: PreVerificationPrivacyTransportService = {
-    bind: (payload) =>
-      Deferred.await(seam).pipe(
-        Effect.tap(() => Effect.sync(() => asked.push(payload))),
-        Effect.flatMap((privacy) => privacy.bind(callAs('commerce-customer-context'), payload)),
-        Effect.tap((bound) => Effect.sync(() => bindings.push(bound.bindingRef))),
-        Effect.mapError(
-          (failure) =>
-            new PreVerificationPrivacyBindingUnavailable({
-              reason: Predicate.isTagged(failure, 'PreVerificationBindingRejected')
-                ? 'PRIVACY_REFUSED'
-                : 'PRIVACY_UNAVAILABLE',
-            }),
-        ),
-      ),
-  };
-  // Communications' REAL Privacy gate asks Privacy's eligibility Read body as the verified calling module `communications`
-  const privacyGate: PrivacyOwnerTransport = (question) => {
-    asked.push(question.request);
-    return question.kind === 'PRE_VERIFICATION'
-      ? Deferred.await(seam).pipe(
-          Effect.flatMap((privacy) => privacy.eligibility(callAs('communications'), question.request)),
-          Effect.mapError((cause) => ({ cause, status: 503 })),
-        )
-      : Effect.fail({ status: 503 });
-  };
-  const world = yield* authWorld({ binding, mode: 'B', privacyGate });
-  tenantRef.current = world.tenantId;
-  const privacy = yield* makePreVerificationPrivacyNative(
-    withPolicies ? PORTAL_AUTH_EMAIL_FLOWS.map((flow) => fictionalPolicy(world.tenantId, flow)) : [],
-  );
-  yield* Deferred.succeed(seam, privacy);
-  return { asked, bindings, callAs, privacy, world };
+  const world = yield* authWorld({ mode: 'B', withPrivacyPolicies: withPolicies });
+  return { asked: world.privacyAsked, bindings: world.privacyBindings, world };
 });
 
 /** The handoff step of an intent, as the pre-handoff worker runs it (the world runs it under an operation in progress). */
@@ -169,7 +98,7 @@ const expectNothingSecretAskedOf = (asked: readonly unknown[], secrets: readonly
   }
 };
 
-const services = Layer.mergeAll(nativeServices, preVerificationPrivacyDatabaseLive);
+const services = worldServices;
 
 describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract (native PostgreSQL)', () => {
   it.live('verify-email: a Portal Auth issuance is bound by Privacy before the address is verified, then sent', () =>
@@ -252,14 +181,12 @@ describe('#1406 D.8 positive end-to-end against the REAL Privacy owner contract 
     'a Privacy withdrawal after the decision stops the message at the last stoppable handoff as NOT_ALLOWED',
     () =>
       Effect.gen(function* withdrawn() {
-        const { bindings, callAs, privacy, world } = yield* realPrivacyWorld(true);
+        const { world } = yield* realPrivacyWorld(true);
         const realm = yield* makePostgresRealm(world, 'reset');
         yield* signUp(realm);
         yield* requestReset(realm);
         const intentId = yield* onlyIntentOf(world, RESET);
-        for (const bindingRef of new Set(bindings)) {
-          yield* privacy.withdraw(callAs('privacy'), { bindingRef, evidenceRef: 'fictional-dsr-case' });
-        }
+        yield* world.withdrawBindings;
         expect((yield* handoffOf(world, intentId)).kind).toBe('STOPPED');
         expect(world.mailbox.filter(({ flow }) => flow === RESET)).toHaveLength(0);
         const reasons = (yield* (yield* historyReads(world)).list()).items.flatMap(

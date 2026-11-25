@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Redacted, Ref } from 'effect';
+import { DateTime, Effect, Option, Redacted } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -10,15 +10,11 @@ import {
   portalAuthCommunicationRequest,
   user,
 } from '@app/commerce-customer-context/testing/portal-auth-communications';
-import {
-  nativeServices,
-  portalAuthDefaultCopy,
-  privacyIndeterminate,
-  privacyNotAllowed,
-} from '@app/communications/testing/source-owner-world';
+import { portalAuthDefaultCopy } from '@app/communications/testing/source-owner-world';
 import {
   FICTIONAL_COPY,
   authWorld,
+  worldServices,
   pendingIntentsOf,
   step,
   decisionIdOf,
@@ -47,9 +43,11 @@ import {
  * stores the durable decision and intent, the pre-handoff step re-checks every Current fact, the labelled Messaging Adapter
  * double renders FICTIONAL copy with Auth's real owner-slot completion, and the authorized history Reads show only safe status.
  *
- * Labelled doubles (see `support/auth-communications-world.spec.mts`): the Privacy gate and the missing pre-verification Privacy
- * path, the trusted language, and the provider. No approved Czech or English copy exists; every text here is FICTIONAL.
- * Nothing here is Privacy, delivery or provider evidence.
+ * Owner ports: PRODUCTION (`communicationsOwnerPortsOver`): the Portal Auth source authority and recipient gate asking Auth's
+ * published Read, the Privacy gate over the REAL Privacy owner. Labelled stubs that remain: the producer's Privacy-scope
+ * declaration (production declares none: open owner gate #1396 J), the Messaging Adapter (step 22), the in-process transport to
+ * the public Action and to Auth's Read (HTTP and Shell assertion not run here), and, where a case asks for it, the trusted
+ * language (no owner publishes one). Every text is FICTIONAL; no approved copy exists. Nothing here is delivery evidence.
  */
 
 /** The user asks for a reset; the issuance commits with its request, and one relay tick submits it. */
@@ -128,7 +126,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           recipient: { channel: 'email', role: 'account-holder' },
           template: { language: 'cs', mode: 'B', revisionNumber: 1 },
         });
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live('[AC-04 AC-06 S2.2] no reset link, token, URL, password or address is stored, shown or logged anywhere', () =>
@@ -152,15 +150,15 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
       // the secret exists only where the labelled provider received it: in memory, protected
       expect(Redacted.isRedacted(mail?.text)).toBe(true);
       expect(JSON.stringify(mail?.text)).toBe('"<redacted>"');
-    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
     '[S1.2 S1.3] trusted English with both revisions approved gets the English revision; with only Czech approved it falls back to Czech',
     () =>
       Effect.gen(function* languages() {
-        const both = yield* setup({ mode: 'B' });
-        yield* Ref.set(both.world.languageRef, { kind: 'trusted', language: 'en' });
+        const both = yield* setup({ mode: 'B', recipientLanguage: 'LABELLED_DOUBLE' });
+        yield* both.world.setTrustedLanguage('en');
         yield* requestReset(both.realm);
         yield* step(both.world, both.world.messageHandoff, yield* onlyIntent(both.world));
         expect(both.world.mailbox[0]?.language).toBe('en');
@@ -169,20 +167,30 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           mode: 'B',
         });
 
-        const czechOnly = yield* setup({ languages: ['cs'], mode: 'B', retiredLanguages: ['en'] });
-        yield* Ref.set(czechOnly.world.languageRef, { kind: 'trusted', language: 'en' });
+        const czechOnly = yield* setup({
+          languages: ['cs'],
+          mode: 'B',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['en'],
+        });
+        yield* czechOnly.world.setTrustedLanguage('en');
         yield* requestReset(czechOnly.realm);
         yield* step(czechOnly.world, czechOnly.world.messageHandoff, yield* onlyIntent(czechOnly.world));
         expect(czechOnly.world.mailbox[0]?.language).toBe('cs');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
     '[S1.4 outline] trusted English with an approved English revision but no usable Czech one: stopped in B, pinned in A, nothing is sent in B',
     () =>
       Effect.gen(function* outline() {
-        const modeB = yield* setup({ languages: ['en'], mode: 'B', retiredLanguages: ['cs'] });
-        yield* Ref.set(modeB.world.languageRef, { kind: 'trusted', language: 'en' });
+        const modeB = yield* setup({
+          languages: ['en'],
+          mode: 'B',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeB.world.setTrustedLanguage('en');
         yield* requestReset(modeB.realm);
         expect(pendingIntentsOf(modeB.world)).toHaveLength(0);
         expect(modeB.world.mailbox).toHaveLength(0);
@@ -194,8 +202,13 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           status: 'NOT_SENT',
         });
 
-        const modeA = yield* setup({ languages: ['en'], mode: 'A', retiredLanguages: ['cs'] });
-        yield* Ref.set(modeA.world.languageRef, { kind: 'trusted', language: 'en' });
+        const modeA = yield* setup({
+          languages: ['en'],
+          mode: 'A',
+          recipientLanguage: 'LABELLED_DOUBLE',
+          retiredLanguages: ['cs'],
+        });
+        yield* modeA.world.setTrustedLanguage('en');
         yield* requestReset(modeA.realm);
         yield* step(modeA.world, modeA.world.messageHandoff, yield* onlyIntent(modeA.world));
         expect(modeA.world.mailbox[0]?.language).toBe('en');
@@ -203,7 +216,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           language: 'en',
           mode: 'A',
         });
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live('[S1.6] without an approved Czech fallback revision and no trusted language nothing is sent', () =>
@@ -214,7 +227,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
       expect(pendingIntentsOf(world)).toHaveLength(0);
       const page = yield* (yield* historyReads(world)).list();
       expect(page.items[0]?.headline.status).toBe('NOT_SENT');
-    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -249,7 +262,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           revisionNumber: replaced.revision.revisionNumber,
           source: 'TENANT_REVISION',
         });
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -266,7 +279,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           reasonCodes: ['CZECH_REVISION_UNAVAILABLE'],
           status: 'NOT_SENT',
         });
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -281,10 +294,13 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued.reset).toHaveLength(1);
         const page = yield* (yield* historyReads(world)).list();
-        // the request states the issuance's own expiry (`validUntil`): past it the stop is the concrete SOURCE_NO_LONGER_VALID
-        expect(page.items[0]?.headline).toMatchObject({ reasonCodes: ['SOURCE_NO_LONGER_VALID'] });
+        // the request states the issuance's own expiry (`validUntil`): past it the stop is the concrete SOURCE_NO_LONGER_VALID, and the
+        // REAL Privacy owner adds that its binding (valid only as long as the issuance) has lapsed
+        expect(page.items[0]?.headline).toMatchObject({
+          reasonCodes: ['SOURCE_NO_LONGER_VALID', 'PRIVACY_INDETERMINATE'],
+        });
         expect(page.items[0]?.headline.status).not.toBe('PROVIDER_ACCEPTED');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live("[S2.4] a reset link spent before the handoff stops it, read from Auth's own ledger", () =>
@@ -301,11 +317,11 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
       expect(world.mailbox).toHaveLength(0);
       // Auth's own reset ledger row is `consumed`: the stop is the concrete SOURCE_CONSUMED, never the generic category
       const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
-      // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+      // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
       // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
       expect(codes[0]).toBe('SOURCE_CONSUMED');
       expect(codes).not.toContain('SOURCE_STALE');
-    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live('[AUTH-COM-04] the ORIGINAL address is kept: a later profile edit does not redirect the message', () =>
@@ -318,7 +334,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
       expect(Redacted.value(world.mailbox[0]?.to ?? Redacted.make(''))).toBe(realm.email);
       expect(world.mailbox).toHaveLength(1);
       yield* realm.database.executor.update(user).set({ email: realm.email }).where(eq(user.email, replacement));
-    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+    }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -341,7 +357,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         yield* requestReset(realm);
         expect(world.submissions).toHaveLength(3);
         expect(new Set(world.submissions.map(({ request: sent }) => sent.occurrence.occurrenceId)).size).toBe(2);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -354,8 +370,8 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           ['A', 'en'],
           ['B', 'en'],
         ] as const) {
-          const { realm, subjectId, world } = yield* setup({ mode });
-          yield* Ref.set(world.languageRef, { kind: 'trusted', language });
+          const { realm, subjectId, world } = yield* setup({ mode, recipientLanguage: 'LABELLED_DOUBLE' });
+          yield* world.setTrustedLanguage(language);
           yield* requestReset(realm);
           const issuance = Option.getOrThrow(yield* world.handoff.issuanceOf(issuanceRefOf(world)));
           expect(issuance.providerSubjectId).toBe(subjectId);
@@ -367,7 +383,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
           expect(measuredLifetime).toBeLessThanOrEqual(policyMs);
           expect(measuredLifetime).toBeGreaterThan(policyMs - 5000);
         }
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -394,7 +410,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         expect(JSON.stringify([page, detail])).not.toContain(
           Option.getOrThrow(Option.fromNullishOr(realm.issued.reset[0])),
         );
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -413,7 +429,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         const outcome = yield* world.submitter.submit(crafted);
         expect(outcome).toMatchObject({ decision: { intents: [{ status: 'SUPPRESSED' }], kind: 'MESSAGE_INTENTS' } });
         expect(other).not.toBe(subjectId);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -421,13 +437,14 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
     () =>
       Effect.gen(function* privacyStops() {
         const prohibited = yield* setup();
-        prohibited.world.privacyAnswers.set(prohibited.subjectId, privacyNotAllowed());
+        // Privacy ITSELF records the prohibition (a withdrawal) before it answers
+        prohibited.world.prohibitProcessing();
         yield* requestReset(prohibited.realm);
         expect(prohibited.world.mailbox).toHaveLength(0);
         const proven = (yield* (yield* historyReads(prohibited.world)).list()).items[0]?.headline;
 
-        const unproven = yield* setup();
-        unproven.world.privacyAnswers.set(unproven.subjectId, privacyIndeterminate);
+        // a legal basis that needs a Consent nobody can have given for an unverified address: Privacy answers INDETERMINATE itself
+        const unproven = yield* setup({ legalBasis: 'CONSENT', mode: 'B' });
         yield* requestReset(unproven.realm);
         expect(unproven.world.mailbox).toHaveLength(0);
         const held = (yield* (yield* historyReads(unproven.world)).list()).items[0]?.headline;
@@ -446,7 +463,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         expect(unbound.world.privacyQueries).toHaveLength(0);
         expect(held?.reasonCodes).toEqual(['PRIVACY_INDETERMINATE']);
         expect(unproven.world.privacyQueries.length).toBeGreaterThan(0);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -478,7 +495,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         const [token] = accepted.realm.issued.reset;
         const ledger = yield* accepted.realm.store.peekPasswordResetLedger({ token: Redacted.make(token ?? '') });
         expect(Option.isSome(ledger)).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -495,7 +512,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         expect(world.mailbox).toHaveLength(1);
         expect(realm.issued.reset).toHaveLength(1);
         expect((yield* (yield* historyReads(world)).list()).items[0]?.headline.status).toBe('FAILED');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 
   it.live(
@@ -513,10 +530,10 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         expect(world.mailbox).toHaveLength(0);
         expect(realm.issued.reset).toHaveLength(1);
         const codes = (yield* (yield* historyReads(world)).list()).items[0]?.headline.reasonCodes ?? [];
-        // the source-state fact is the PRIMARY reason (the labelled recipient double adds its own SOURCE_NO_LONGER_VALID for an
+        // the source-state fact is the PRIMARY reason (Auth's production recipient gate adds its own SOURCE_NO_LONGER_VALID for an
         // issuance whose original endpoint Auth no longer offers); the generic category SOURCE_STALE is never the reason shown
         expect(codes[0]).toBe('SOURCE_NOT_RESUMABLE');
         expect(codes).not.toContain('SOURCE_STALE');
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 });

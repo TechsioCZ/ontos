@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Result, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -18,13 +18,12 @@ import {
   buildMessageTypeRegistry,
   CommunicationPurposeKeySchema,
   findMessageTypeByPurpose,
-  nativeServices,
   PORTAL_AUTH_DEFAULT_COPY_APPROVAL,
   portalAuthDefaultCopy,
   recoveryPolicyOf,
   resendPolicyOf,
 } from '@app/communications/testing/source-owner-world';
-import { authWorld, flowOfPurpose } from './support/auth-communications-world.spec.mts';
+import { authWorld, flowOfPurpose, worldServices } from './support/auth-communications-world.spec.mts';
 import { makeOtpRealm } from './support/auth-communications-realms.spec.mts';
 
 /**
@@ -104,8 +103,8 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
           ['A', 'en'],
           ['B', 'en'],
         ] as const) {
-          const world = yield* authWorld({ mode });
-          yield* Ref.set(world.languageRef, { kind: 'trusted', language: trusted });
+          const world = yield* authWorld({ mode, recipientLanguage: 'LABELLED_DOUBLE' });
+          yield* world.setTrustedLanguage(trusted);
           const realm = yield* makeOtpRealm(world);
           const challenge = yield* realm.pendingChallenge;
           yield* Effect.promise(
@@ -131,6 +130,6 @@ describe('The Portal Auth vocabulary and the approved Communications catalog agr
           expect(lifetime).toBeLessThanOrEqual(policySeconds.otp * 1000);
           expect(lifetime).toBeGreaterThan(policySeconds.otp * 1000 - 5000);
         }
-      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+      }).pipe(Effect.scoped, Effect.provide(worldServices)),
   );
 });
