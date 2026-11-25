@@ -78,6 +78,27 @@ export interface RecoveryStopReason {
   readonly proven: boolean;
 }
 
+/**
+ * The stop categories that say an owner could not be ASKED at all (an outage or a timeout, never an answer): the source owner,
+ * Privacy, the recipient owner and the document owner. Such a stop proves nothing against the message and nothing was submitted
+ * to any provider, so asking Core to deliver the same message again is safe and cannot send twice. Every other unproven stop is
+ * an owner's own answer (Privacy INDETERMINATE or ACCESS_DENIED, an ambiguous context, an unknown effect, an unreadable pin): it
+ * is evaluated again when something else triggers the step and is not redelivered here.
+ */
+const OWNER_UNAVAILABLE_CATEGORIES: ReadonlySet<string> = new Set([
+  'DOCUMENT_OWNER_UNAVAILABLE',
+  'PRIVACY_AUTHORITY_UNAVAILABLE',
+  'RECIPIENT_AUTHORITY_UNAVAILABLE',
+  'SOURCE_AUTHORITY_UNAVAILABLE',
+]);
+
+/**
+ * Whether a stop is only an owner that could not be asked: no reason is proven (a proven reason is final and is never retried) and
+ * at least one is an owner outage. See `OWNER_UNAVAILABLE_CATEGORIES`.
+ */
+export const isOwnerUnavailableStop = (reasons: readonly RecoveryStopReason[]): boolean =>
+  reasons.every(({ proven }) => !proven) && reasons.some(({ category }) => OWNER_UNAVAILABLE_CATEGORIES.has(category));
+
 /** The provider documented that it refuses this message for good: no automatic recovery exists, whatever the type's rule. */
 export const PERMANENT_REJECTION_REASON: RecoveryStopReason = {
   category: 'PERMANENT_REJECTION',
