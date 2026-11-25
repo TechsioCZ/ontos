@@ -30,4 +30,3 @@ export const IngestOutcomeSchema = Schema.Literals([
 export type IngestOutcome = typeof IngestOutcomeSchema.Type;
 
 export const IngestProviderObservationResultSchema = Schema.Struct({ outcome: IngestOutcomeSchema });
-export type IngestProviderObservationResult = typeof IngestProviderObservationResultSchema.Type;
