@@ -186,6 +186,9 @@ it('runs only the tooling tests for a change confined to the stage delivery or t
     'app/scripts/zerops/owner-entry.mts',
     'app/scripts/zerops/delivery-plan.mts',
     'app/scripts/zerops/app-runtime-paths.txt',
+    // The native fixture is in scripts/tsconfig; the operator proof resolves its parser from this manifest.
+    'app/scripts/zerops/prove-storefront-artifact.test.mjs',
+    'app/akros-storefront/package.json',
     'app/zerops.yaml',
     '.github/workflows/ultramodern-workspace-gates.yml',
     'app/scripts/integration/stage-recovery-lifecycle.test.mts',

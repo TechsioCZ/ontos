@@ -118,21 +118,10 @@ let returnedVariantCount: number;
 const productRequests = () =>
   requests
     .map(({ query }) => query.view.storefrontCatalog)
-    .filter(
-      (query) =>
-        query.mode !== "categories" &&
-        !(
-          Object.keys(query).length === 4 &&
-          query.marketId === "search-test-market" &&
-          query.pageSize === 1 &&
-          query.fields === "card" &&
-          query.includeCategories === false
-        ),
-    );
+    .filter((query) => query.mode !== "categories");
 const selectedMarketQuery = {
   marketId: "search-test-market",
-  pageSize: 1,
-  fields: "card",
+  mode: "categories",
   includeCategories: false,
 };
 const selectedMarketReads = () =>
@@ -142,8 +131,8 @@ const selectedMarketReads = () =>
       (query) =>
         query.storefrontAppId === undefined &&
         query.marketId === "search-test-market" &&
-        query.pageSize === 1 &&
-        query.fields === "card",
+        query.mode === "categories" &&
+        query.includeCategories === false,
     );
 const noFullReads = async () => {
   await network.idle();
@@ -354,11 +343,18 @@ beforeEach(async () => {
       return new Response("Unknown owner read", { status: 404 });
     requests.push(payload);
     const query = payload.query.view.storefrontCatalog;
-    const navigation = query.mode === "categories";
+    const categoriesOnly = query.mode === "categories";
+    const navigation = categoriesOnly && query.includeCategories !== false;
+    const market = {
+      marketId: "search-test-market",
+      marketCode: "CZ",
+      currency: "CZK",
+      configured: true,
+    };
     const source = query.fields === "full" ? fullP1Body : listingBody;
     const publicControl = query.q === "10799700" || query.q === "10799700035016";
-    const body = navigation
-      ? { products: [], categories }
+    const body = categoriesOnly
+      ? { products: [], market, ...(navigation ? { categories } : {}) }
       : {
           ...source,
           revision,
@@ -371,12 +367,7 @@ beforeEach(async () => {
                 : revision === 1
                   ? source.total
                   : source.total + 1,
-          market: {
-            marketId: "search-test-market",
-            marketCode: "CZ",
-            currency: "CZK",
-            configured: true,
-          },
+          market,
           products: hideProduct
             ? []
             : Array.from({ length: returnedGroups }, (_, index) => {
@@ -614,7 +605,11 @@ describe("fresh searches through the real catalog/gateway transport", () => {
       };
       expect(
         requests
-          .filter(({ query }) => query.view.storefrontCatalog.mode === "categories")
+          .filter(
+            ({ query }) =>
+              query.view.storefrontCatalog.mode === "categories" &&
+              query.view.storefrontCatalog.includeCategories === true,
+          )
           .map(({ query }) => query.view.storefrontCatalog),
       ).toEqual([navigationQuery, navigationQuery]);
     });

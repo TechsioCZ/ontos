@@ -161,8 +161,8 @@ export const matchingPackages = (filters: string, packages: readonly CiWorkspace
 
 /**
  * Whether a change reaches the package's consumers. Everything the broad-path rule does not already widen to the
- * complete suite and that is not part of the package's public surface (its runtime declaration, locales and the
- * files its `exports` map points at) is the package's own: only its own tests select it. The Shell and the root
+ * complete suite and that is not part of the package's public surface (shared-library source, runtime declaration,
+ * locales and the files its `exports` map points at) is the package's own: only its own tests select it. The Shell and the root
  * suites consume every vertical through that surface, so a change confined to a vertical's internals no longer
  * selects them.
  */
@@ -170,6 +170,7 @@ const reachesConsumers = (changedPath: string, owner: CiWorkspacePackage) => {
   const relative = changedPath.slice(`app/${owner.directory}/`.length);
   return (
     owner.directory === '.' ||
+    (owner.directory.startsWith('packages/') && relative.startsWith('src/')) ||
     /^(?:vertical\.runtime-declaration\.[cm]?[jt]sx?|locales\/.*)$/u.test(relative) ||
     (owner.exportTargets ?? []).includes(relative)
   );
@@ -286,7 +287,7 @@ const unaccountedWorkspace = (packages: readonly CiWorkspacePackage[], rootPacka
       (entry.directory !== '.' &&
         !/^(?:apps|packages|verticals)\/[a-z0-9-]+$/u.test(entry.directory) &&
         !rootPackages.includes(entry.directory)) ||
-      (!/^(?:@app\/[a-z0-9-]+|app)$/u.test(entry.name) && !rootPackages.includes(entry.name)) ||
+      (!/^(?:@(?:app|ontos)\/[a-z0-9-]+|app)$/u.test(entry.name) && !rootPackages.includes(entry.name)) ||
       entry.dependencies.some((dependency) => !packages.some(({ name }) => name === dependency)) ||
       (entry.contractProducer !== undefined && !packages.some(({ name }) => name === entry.contractProducer)),
   );

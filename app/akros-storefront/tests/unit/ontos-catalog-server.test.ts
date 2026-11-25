@@ -256,9 +256,14 @@ beforeEach(async () => {
       return Response.json(marketCatalog(), { headers });
     const catalog = body.query.view.storefrontCatalog;
     // Market resolution's real offer reads are not product/navigation reads.
-    if (Object.keys(catalog).sort().join(",") === "fields,includeCategories,marketId,pageSize")
+    if (
+      Object.keys(catalog).sort().join(",") === "includeCategories,marketId,mode" &&
+      catalog.mode === "categories" &&
+      catalog.includeCategories === false
+    )
       return Response.json(
         {
+          products: [],
           market: {
             marketId: catalog.marketId,
             currency: catalog.marketId === skMarketId ? "EUR" : "CZK",

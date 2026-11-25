@@ -135,7 +135,7 @@ beforeAll(async () => {
     }
     return Response.json(
       {
-        ...catalog,
+        ...(query.mode === "categories" ? { products: [] } : catalog),
         market: { marketId: query.marketId, currency: "CZK", configured: true },
       },
       { headers },
@@ -186,12 +186,10 @@ describe("server cart quote", () => {
     );
     expect(reads.filter((read) => read.audience === "commerce-market-catalog")).toHaveLength(1);
     expect(
-      reads.filter(
-        (read) =>
-          read.query?.view?.storefrontCatalog?.pageSize === 1 &&
-          read.query.view.storefrontCatalog.fields === "card",
-      ),
-    ).toHaveLength(1);
+      reads
+        .filter((read) => read.query?.view?.storefrontCatalog?.mode === "categories")
+        .map((read) => read.query.view.storefrontCatalog),
+    ).toEqual([{ marketId: testMarket.marketId, mode: "categories", includeCategories: false }]);
   });
   it("quotes an unpackaged variant without inheriting its parent's package constraint", async () => {
     catalog = {

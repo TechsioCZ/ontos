@@ -31,7 +31,6 @@
         "app/scripts/zerops/verify-service.mjs",
         "app/scripts/zerops/zerops-unit-build-seconds.mts",
         "app/scripts/zerops/*.test.mts",
-        "app/scripts/zerops/*.test.mjs",
         "app/scripts/tests/*.test.mts",
         "app/scripts/tests/zerops-deployment.fixture.mts"
       ],
@@ -47,6 +46,7 @@
       "paths": [
         "app/akros-storefront/**",
         "app/n1-storefront/**",
+        "!app/akros-storefront/package.json",
         "!app/akros-storefront/src/catalog-import/**"
       ],
       "source": [

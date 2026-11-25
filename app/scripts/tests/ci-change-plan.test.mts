@@ -371,6 +371,38 @@ it('keeps mixed documentation and owner changes scoped, but widens a mixed unkno
   ).toBe('full');
 });
 
+it('accounts for the shared OntOS namespace without accepting unknown namespaces or directories', () => {
+  const runtime = {
+    dependencies: [],
+    directory: 'packages/storefront-runtime',
+    exportTargets: ['src/index.ts'],
+    name: '@ontos/storefront-runtime',
+  };
+  const plan = (extra: typeof runtime) =>
+    planCiChecks({
+      applyAffected: true,
+      changedPaths: [CATALOG_SOURCE],
+      packages: [...packages, extra],
+      templates,
+    });
+  expect(plan(runtime).mode).toBe('affected');
+  expect(plan({ ...runtime, name: '@unknown/storefront-runtime' }).mode).toBe('full');
+  expect(plan({ ...runtime, directory: 'external/storefront-runtime' }).mode).toBe('full');
+  const changedRuntime = planCiChecks({
+    applyAffected: true,
+    changedPaths: ['app/packages/storefront-runtime/src/index.ts'],
+    packages: [
+      ...packages.map((entry) =>
+        entry.name === PRICING ? { ...entry, dependencies: [...entry.dependencies, runtime.name] } : entry,
+      ),
+      runtime,
+    ],
+    templates,
+  });
+  expect(changedRuntime.mode).toBe('affected');
+  expect(changedRuntime.affectedPackages).toEqual([PRICING, runtime.name].toSorted());
+});
+
 it('widens broken dependency metadata rather than silently dropping its consumers', () => {
   for (const extra of [
     { dependencies: ['@app/missing'], directory: ANOTHER_DIRECTORY, name: '@app/another' },
@@ -1049,6 +1081,8 @@ const plannerFixture = () => {
   const paths = path.join(fixture, 'paths');
   const plan = (changed: string, flags: readonly string[], cwd = fixture) => {
     writeFileSync(outputs, '');
+    const summary = path.join(fixture, 'summary');
+    writeFileSync(summary, '');
     writeFileSync(paths, `${changed}\0`);
     const log = execFileSync('/bin/bash', [NO_INSTALL_PLANNER, '--paths-file', paths, ...flags], {
       cwd,
@@ -1056,15 +1090,28 @@ const plannerFixture = () => {
       env: {
         CI_MATRICES_OVERLAY: DEMO_OVERLAY,
         GITHUB_OUTPUT: outputs,
-        GITHUB_STEP_SUMMARY: path.join(fixture, 'summary'),
+        GITHUB_STEP_SUMMARY: summary,
         PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
       },
       stdio: 'pipe',
     });
-    return { log, output: readFileSync(outputs, 'utf-8') };
+    return { log, output: readFileSync(outputs, 'utf-8'), summary: readFileSync(summary, 'utf-8') };
   };
   return { fixture, plan, put, remove: () => rmSync(fixture, { force: true, recursive: true }), reset };
 };
+
+it('selects both real storefront consumers for every shared runtime source file', () => {
+  const { plan, remove } = plannerFixture();
+  try {
+    for (const file of ['index.ts', 'observability.ts', 'telemetry.ts']) {
+      const { output, summary } = plan(`app/packages/storefront-runtime/src/${file}`, [APPLY_AFFECTED]);
+      expect(outputLine(output, 'mode'), file).toBe('affected');
+      expect(summary, file).toContain('Affected packages: @ontos/storefront-runtime, akros-storefront, n1-storefront.');
+    }
+  } finally {
+    remove();
+  }
+});
 
 it('plans with nothing installed, from the matrices rows as the installed tools decode them', () => {
   const { fixture, plan, remove } = plannerFixture();
