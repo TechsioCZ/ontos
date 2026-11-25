@@ -67,7 +67,11 @@ export {
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>
-export { executeDemoCatalogRevisionWithAuthorization } from './demo-catalog-revision-client.ts';
+export {
+  executeDemoCatalogRevision,
+  executeDemoCatalogRevisionWithAuthorization,
+} from './demo-catalog-revision-client.ts';
+export type { DemoCatalogRevisionClientOptions } from './demo-catalog-revision-client.ts';
 export { executeDemoOrderExportWithAuthorization } from './demo-order-export-client.ts';
 export { executeRecords, executeRecordsWithAuthorization } from './records-client.ts';
 export type { RecordsClientOptions } from './records-client.ts';

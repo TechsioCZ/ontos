@@ -1,4 +1,6 @@
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, extractVerticalRuntimeSafeDescriptors } from '@app/core-runtime';
+import { Array as EffectArray, Order } from 'effect';
+import { HttpApi } from 'effect/http-api';
 import { describe, expect, it } from 'effect-rstest';
 import { catalogManifest } from '../../vertical.manifest.ts';
 import { catalogRegistration } from '../../vertical.registration.ts';
@@ -16,6 +18,111 @@ import { updateProductRecoveryRead } from '../../src/api/update-product-recovery
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
 import { addProductCategoryAssignmentRecoveryRead } from '../../src/api/add-product-category-assignment-recovery.read.ts';
 import { addProductCategoryAssignmentAction } from '../../src/actions/add-product-category-assignment.action.ts';
+import { governVariantAxesAction } from '../../src/actions/govern-variant-axes.action.ts';
+import { confirmVariantCombinationAction } from '../../src/actions/confirm-variant-combination.action.ts';
+import { setProductUnitTargetDivisibilityAction } from '../../src/actions/set-product-unit-target-divisibility.action.ts';
+import { decideProductTypeUnnecessaryAction } from '../../src/actions/decide-product-type-unnecessary.action.ts';
+import { bindInitialVariantSourceAction } from '../../src/actions/bind-initial-variant-source.action.ts';
+import { correctProductAction } from '../../src/actions/correct-product.action.ts';
+import { updateProductAction } from '../../src/actions/update-product.action.ts';
+import { createVariantAction } from '../../src/actions/create-variant.action.ts';
+import { createProductAction } from '../../src/actions/create-product.action.ts';
+import { selectionEvidenceRead } from '../../src/api/selection-evidence.read.ts';
+import { quantityPreparationRead } from '../../src/api/quantity-preparation.read.ts';
+import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-compatibility.read.ts';
+import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equivalence.read.ts';
+import { productVariantSnapshotRead } from '../../src/api/product-variant-snapshot.read.ts';
+import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
+import { governVariantAxesRecoveryRead } from '../../src/api/govern-variant-axes-recovery.read.ts';
+import { confirmVariantCombinationRecoveryRead } from '../../src/api/confirm-variant-combination-recovery.read.ts';
+import { setProductUnitTargetDivisibilityRecoveryRead } from '../../src/api/set-product-unit-target-divisibility-recovery.read.ts';
+import { decideProductTypeUnnecessaryRecoveryRead } from '../../src/api/decide-product-type-unnecessary-recovery.read.ts';
+import { catalogSourceProductPageRead } from '../../src/api/catalog-source-product-page.read.ts';
+import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
+import { productPageRead } from '../../src/api/product-page.read.ts';
+
+/** The published API aliases and operation names must bind these original native registrations. */
+const providerBindings = [
+  [
+    'add-product-category-assignment-action',
+    'addProductCategoryAssignmentAction.execute',
+    addProductCategoryAssignmentAction,
+  ],
+  [
+    'add-product-category-assignment-recovery',
+    'addProductCategoryAssignmentRecovery.execute',
+    addProductCategoryAssignmentRecoveryRead,
+  ],
+  ['govern-variant-axes-action', 'governVariantAxesAction.execute', governVariantAxesAction],
+  ['confirm-variant-combination-action', 'confirmVariantCombinationAction.execute', confirmVariantCombinationAction],
+  ['set-product-localized-facts-action', 'setProductLocalizedFactsAction.execute', setProductLocalizedFactsAction],
+  [
+    'set-product-unit-target-divisibility-action',
+    'setProductUnitTargetDivisibilityAction.execute',
+    setProductUnitTargetDivisibilityAction,
+  ],
+  [
+    'decide-product-type-unnecessary-action',
+    'decideProductTypeUnnecessaryAction.execute',
+    decideProductTypeUnnecessaryAction,
+  ],
+  ['selection-evidence', 'selectionEvidence.execute', selectionEvidenceRead],
+  ['quantity-preparation', 'quantityPreparation.execute', quantityPreparationRead],
+  ['quantity-basis-compatibility', 'quantityBasisCompatibility.execute', quantityBasisCompatibilityRead],
+  ['pricing-purpose-equivalence', 'pricingPurposeEquivalence.execute', pricingPurposeEquivalenceRead],
+  ['product-variant-snapshot', 'productVariantSnapshot.execute', productVariantSnapshotRead],
+  [
+    'assortment-product-classification-v1',
+    'assortmentProductClassificationV1.execute',
+    assortmentProductClassificationV1Read,
+  ],
+  ['bind-initial-variant-source-action', 'bindInitialVariantSourceAction.execute', bindInitialVariantSourceAction],
+  ['correct-product-action', 'correctProductAction.execute', correctProductAction],
+  ['update-product-action', 'updateProductAction.execute', updateProductAction],
+  ['assign-sku-action', 'assignSkuAction.execute', assignSkuAction],
+  ['set-variant-localized-facts-action', 'setVariantLocalizedFactsAction.execute', setVariantLocalizedFactsAction],
+  ['create-variant-action', 'createVariantAction.execute', createVariantAction],
+  ['create-product-action', 'createProductAction.execute', createProductAction],
+  ['correct-product-recovery', 'correctProductRecovery.execute', correctProductRecoveryRead],
+  ['update-product-recovery', 'updateProductRecovery.execute', updateProductRecoveryRead],
+  ['assign-sku-recovery', 'assignSkuRecovery.execute', assignSkuRecoveryRead],
+  [
+    'set-variant-localized-facts-recovery',
+    'setVariantLocalizedFactsRecovery.execute',
+    setVariantLocalizedFactsRecoveryRead,
+  ],
+  [
+    'set-product-localized-facts-recovery',
+    'setProductLocalizedFactsRecovery.execute',
+    setProductLocalizedFactsRecoveryRead,
+  ],
+  ['create-variant-recovery', 'createVariantRecovery.execute', createVariantRecoveryRead],
+  ['create-product-recovery', 'createProductRecovery.execute', createProductRecoveryRead],
+  [
+    'bind-initial-variant-source-recovery',
+    'bindInitialVariantSourceRecovery.execute',
+    bindInitialVariantSourceRecoveryRead,
+  ],
+  ['govern-variant-axes-recovery', 'governVariantAxesRecovery.execute', governVariantAxesRecoveryRead],
+  [
+    'confirm-variant-combination-recovery',
+    'confirmVariantCombinationRecovery.execute',
+    confirmVariantCombinationRecoveryRead,
+  ],
+  [
+    'set-product-unit-target-divisibility-recovery',
+    'setProductUnitTargetDivisibilityRecovery.execute',
+    setProductUnitTargetDivisibilityRecoveryRead,
+  ],
+  [
+    'decide-product-type-unnecessary-recovery',
+    'decideProductTypeUnnecessaryRecovery.execute',
+    decideProductTypeUnnecessaryRecoveryRead,
+  ],
+  ['catalog-source-product-page', 'catalogSourceProductPage.execute', catalogSourceProductPageRead],
+  ['catalog-source-products', 'catalogSourceProducts.execute', catalogSourceProductsRead],
+  ['product-page', 'productPage.execute', productPageRead],
+] as const;
 
 /**
  * The workload carrier the manifest publishes for an operation that admits workloads: its access declaration and
@@ -36,50 +143,21 @@ const expectedWorkloadCarrier = (descriptor: {
 };
 
 describe('Catalog owner-authored dependency contracts', () => {
-  it('publishes the native owner operations required by Product integration and Assortment', () => {
-    const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
-    for (const [apiKey, operationKey, registration] of [
-      [
-        'add-product-category-assignment-action',
-        'addProductCategoryAssignmentAction.execute',
-        addProductCategoryAssignmentAction,
-      ],
-      [
-        'add-product-category-assignment-recovery',
-        'addProductCategoryAssignmentRecovery.execute',
-        addProductCategoryAssignmentRecoveryRead,
-      ],
-      ['create-product-recovery', 'createProductRecovery.execute', createProductRecoveryRead],
-      ['create-variant-recovery', 'createVariantRecovery.execute', createVariantRecoveryRead],
-      ['update-product-recovery', 'updateProductRecovery.execute', updateProductRecoveryRead],
-      ['correct-product-recovery', 'correctProductRecovery.execute', correctProductRecoveryRead],
-      ['set-variant-localized-facts-action', 'setVariantLocalizedFactsAction.execute', setVariantLocalizedFactsAction],
-      [
-        'set-variant-localized-facts-recovery',
-        'setVariantLocalizedFactsRecovery.execute',
-        setVariantLocalizedFactsRecoveryRead,
-      ],
-      ['set-product-localized-facts-action', 'setProductLocalizedFactsAction.execute', setProductLocalizedFactsAction],
-      [
-        'set-product-localized-facts-recovery',
-        'setProductLocalizedFactsRecovery.execute',
-        setProductLocalizedFactsRecoveryRead,
-      ],
-      ['assign-sku-action', 'assignSkuAction.execute', assignSkuAction],
-      ['assign-sku-recovery', 'assignSkuRecovery.execute', assignSkuRecoveryRead],
-      [
-        'assortment-product-classification-v1',
-        'assortmentProductClassificationV1.execute',
-        assortmentProductClassificationV1Read,
-      ],
-    ] as const) {
-      expect(safe.operationContracts).toContainEqual({
-        apiKey: `commerce.catalog.${apiKey}`,
-        entrypoint: registration.descriptor.entrypoint,
-        operationKey,
-        schemaVersion: registration.descriptor.schemaVersion,
-        ...expectedWorkloadCarrier(registration.descriptor),
-      });
+  it('binds every published operation to its original native owner registration and actual HttpApi endpoint', () => {
+    for (const [apiKey, operationKey, registration] of providerBindings) {
+      const binding = catalogManifest.publicSurface.operationContracts?.find((entry) => entry.apiKey === apiKey);
+      expect(binding?.registration, apiKey).toBe(registration);
+      expect(binding?.operationKey, apiKey).toBe(operationKey);
+      const api = catalogManifest.publicSurface.api[apiKey];
+      if (!HttpApi.isHttpApi(api)) {
+        expect.fail(`${apiKey} must publish a native HttpApi`);
+      }
+      const operations = Object.values(api.groups).flatMap((group) =>
+        Object.values(group.endpoints).map((endpoint) =>
+          group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
+        ),
+      );
+      expect(operations, apiKey).toContain(operationKey);
     }
   });
   it('keeps Party validation conditional without making Party an installation dependency', () => {
@@ -138,16 +216,17 @@ describe('Catalog owner-authored dependency contracts', () => {
   it('validates all actual consumer registrations and publishes only safe own provider claims', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
     expect(safe.requirements).toEqual(catalogManifest.requirements);
-    expect(safe.operationContracts).toHaveLength(32);
-    expect(safe.operationContracts).toEqual(
-      expect.arrayContaining(
-        [
-          'govern-variant-axes-recovery',
-          'confirm-variant-combination-recovery',
-          'set-product-localized-facts-recovery',
-          'set-product-unit-target-divisibility-recovery',
-          'decide-product-type-unnecessary-recovery',
-        ].map((apiKey) => expect.objectContaining({ apiKey: `commerce.catalog.${apiKey}` })),
+    const byApiKey = Order.mapInput(Order.String, (contract: { readonly apiKey: string }) => contract.apiKey);
+    expect(EffectArray.sort(safe.operationContracts, byApiKey)).toEqual(
+      EffectArray.sort(
+        providerBindings.map(([apiKey, operationKey, registration]) => ({
+          apiKey: `commerce.catalog.${apiKey}`,
+          entrypoint: registration.descriptor.entrypoint,
+          operationKey,
+          schemaVersion: registration.descriptor.schemaVersion,
+          ...expectedWorkloadCarrier(registration.descriptor),
+        })),
+        byApiKey,
       ),
     );
     for (const contract of safe.operationContracts) {

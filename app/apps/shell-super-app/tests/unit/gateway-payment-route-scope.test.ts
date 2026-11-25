@@ -1,3 +1,4 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import { LegalEntityContext, LegalEntityContextInactiveError } from '@app/core-runtime';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
@@ -135,7 +136,12 @@ const fixture = Effect.fn('PaymentRouteScopeTest.fixture')(function* fixture(opt
   });
   return {
     calls,
-    layer: Layer.mergeAll(database, issuer, company, Layer.succeed(FetchHttpClient.Fetch, fakeFetch)),
+    layer: Layer.mergeAll(
+      GatewayNativeEvidenceLive.pipe(Layer.provide(database)),
+      issuer,
+      company,
+      Layer.succeed(FetchHttpClient.Fetch, fakeFetch),
+    ),
     publicKey,
   };
 });

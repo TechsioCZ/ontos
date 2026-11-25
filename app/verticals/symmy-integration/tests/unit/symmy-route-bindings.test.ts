@@ -591,7 +591,14 @@ describe('Symmy route bindings', () => {
     );
     const inventory = contract('inventory', 'commerce.inventory', {
       actions: receivingAction('commerce.inventory.import-source-assertion', true),
-      operationContracts: receivingRead('commerce.inventory.api.inventory-source-import-receipt', true),
+      operationContracts: [
+        carrier(
+          'commerce.inventory.api.source-stock-position-resolution',
+          ['commerce.inventory.source-provision', sourceRead],
+          'commerce.inventory.source-stock-position-resolution.read',
+        ),
+        ...receivingRead('commerce.inventory.api.inventory-source-import-receipt', true),
+      ],
     });
     const stock = (companyScoped: boolean) =>
       deriveSymmyRouteBindings({
@@ -603,8 +610,20 @@ describe('Symmy route bindings', () => {
     const tenantWide = stock(false);
     expect(tenantWide.refusals).toEqual([]);
     expect(tenantWide.moduleKeys).toEqual(['commerce.inventory', 'integration.symmy']);
-    // The route context, the admission and its receipt, then the import the gateway checks the integration principal for.
-    expect(workloadsOf(tenantWide.bindings, 'integration')).toEqual([`${admit} | ${poll}`, admit, admit, sourceWrite]);
+    // The route context, admission and receipt, the stock-position read, then the import the gateway checks.
+    expect(workloadsOf(tenantWide.bindings, 'integration')).toEqual([
+      `${admit} | ${poll}`,
+      admit,
+      admit,
+      `commerce.inventory.source-provision | ${sourceRead}`,
+      sourceWrite,
+    ]);
+    expect(tenantWide.bindings).toContainEqual({
+      companyScoped: false,
+      identity: 'integration',
+      purpose: 'commerce.inventory.api.source-stock-position-resolution@1',
+      workloads: ['commerce.inventory.source-provision', sourceRead],
+    });
     // The import and its recovery through the receipt read run as the worker, and no job is executed.
     expect(workloadsOf(tenantWide.bindings, 'executor')).toEqual([sourceWrite, sourceRead]);
     // The route names no company, so neither identity needs a company registration for any binding.

@@ -22,6 +22,8 @@ import {
   ShellNativeRelaySourceSchema,
   ShellNativeAdditionalRelaySourceSchema,
   ShellNativeModuleSourceProvisionCommandSchema,
+  ShellNativeProvisionedResponseSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   decodeShellNativeRegionsEnvironment,
   decodeShellNativePriceReadEnvironment,
   ShellNativeStartupEventSchema,

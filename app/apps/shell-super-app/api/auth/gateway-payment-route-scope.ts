@@ -1,15 +1,16 @@
-import { LegalEntityContext, recoverSqlTransactionError } from '@app/core-runtime';
-import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import { forbidden, notFound, unavailable } from './gateway-payment-route-errors.ts';
+import type { PaymentRouteWorkload } from './gateway-payment-route-errors.ts';
+import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
+import { LegalEntityContext } from '@app/core-runtime';
+
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { RegisteredGatewayRouteScopeSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
   ProviderBindingRouteKeySchema,
   ProviderBindingRouteResponseSchema,
 } from '@app/payment/api/provider-binding-route';
 import type { ProviderBindingRouteResponse } from '@app/payment/api/provider-binding-route';
 import { executeProviderBindingRouteWithAuthorization } from '@app/payment/api/provider-binding-route/client';
-import { sql } from 'drizzle-orm';
 import { Effect, Option, Predicate, Schema } from 'effect';
 
 import { resolvePaymentOwnerReleaseBase } from '../payment-gateway/owner-release-transport.ts';
@@ -23,36 +24,15 @@ import { issueGatewayContextAssertion, issueRouteScopedGatewayContextAssertion }
  */
 
 const PAYMENT_ROUTE_AUDIENCE = 'payment';
-/** Every Payment route principal must also hold the Payment source workload. */
-const paymentSourceWorkload = 'payment.source-ingress';
 const routeScopeKey = 'provider-binding-route';
 
-const PaymentRouteWorkloadSchema = Schema.Literals([
-  'payment.provider-notification-ingress',
-  'payment.provider-reconciliation',
-]);
-export type PaymentRouteWorkload = typeof PaymentRouteWorkloadSchema.Type;
+export type { PaymentRouteWorkload } from './gateway-payment-route-errors.ts';
 type ProviderFamily = ProviderBindingRouteResponse['providerFamily'];
 /** What a notification path names: the Tenant its relay credential belongs to and the provider family. */
 export interface PaymentNotificationPath {
   readonly providerFamily: ProviderFamily;
   readonly tenantId: string;
 }
-
-/** `not_found` is indistinguishable for unknown keys, other tenants' keys and another provider family. */
-const PaymentRouteScopeErrorSchema = Schema.TaggedStruct('PaymentRouteScopeError', {
-  cause: Schema.optionalKey(Schema.Defect()),
-  code: Schema.Literals(['forbidden', 'not_found', 'unavailable']),
-});
-type PaymentRouteScopeError = typeof PaymentRouteScopeErrorSchema.Type;
-const scopeError = (code: PaymentRouteScopeError['code'], cause: unknown): PaymentRouteScopeError =>
-  cause === undefined
-    ? PaymentRouteScopeErrorSchema.make({ code })
-    : PaymentRouteScopeErrorSchema.make({ cause, code });
-const forbidden = (cause?: unknown) =>
-  scopeError(Predicate.isTagged(cause, 'PrincipalResolverUnavailableError') ? 'unavailable' : 'forbidden', cause);
-const notFound = (cause?: unknown) => scopeError('not_found', cause);
-const unavailable = (cause?: unknown) => scopeError('unavailable', cause);
 
 interface RouteScopeFacts {
   readonly compositionRevision: string;
@@ -91,64 +71,11 @@ const sameIdentity = (left: TrustedPrincipalContext, right: TrustedPrincipalCont
   left.authContextRef === right.authContextRef &&
   left.authenticationNamespaceId === right.authenticationNamespaceId;
 
-/**
- * Native identity and workload facts, read again for every proof and every issuance: an active integration
- * principal of an active tenant, its active managed API key binding, the requested route workload and the
- * Payment source workload.
- */
-const validatePaymentRoutePrincipal = Effect.fn('PaymentRouteScope.validatePrincipal')(function* validatePrincipal(
+const validatePaymentRoutePrincipal = Effect.fn('GatewayNativeEvidence.validatePaymentRoutePrincipal')(function* native(
   candidate: TrustedPrincipalContext,
   requestedWorkload: PaymentRouteWorkload,
 ) {
-  const workload = yield* Schema.decodeUnknownEffect(PaymentRouteWorkloadSchema)(requestedWorkload).pipe(
-    Effect.mapError(forbidden),
-  );
-  const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(candidate).pipe(
-    Effect.mapError(forbidden),
-  );
-  if (
-    principal.authMethod !== 'api_key' ||
-    principal.legalEntityId !== undefined ||
-    principal.authBindingId === undefined ||
-    principal.authContextRef === undefined ||
-    !principal.authContextRef.startsWith('better-auth-api-key:')
-  ) {
-    return yield* Effect.fail(forbidden());
-  }
-  const providerKeyId = principal.authContextRef.slice('better-auth-api-key:'.length);
-  const database = yield* CoreDatabase;
-  const eligible = yield* database.executor
-    .transaction(
-      Effect.fn('PaymentRouteScope.nativeIdentity')(function* nativeIdentity(transaction) {
-        yield* transaction.execute(
-          sql`select set_config('ontos.tenant_id', ${principal.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
-          'objects',
-        );
-        return yield* transaction.execute(
-          sql`
-      select p.principal_id
-      from core.principals p
-      join core.tenants t on t.tenant_id=p.tenant_id and t.status='active'
-      join core.principal_auth_bindings a on a.tenant_id=p.tenant_id and a.principal_id=p.principal_id
-        and a.principal_auth_binding_id=${principal.authBindingId}::uuid and a.status='active' and a.revoked_at is null
-        and a.subject_type='api_key' and a.provider='better_auth' and a.provider_subject_id=${providerKeyId}
-        and a.authentication_namespace_id=${principal.authenticationNamespaceId ?? ''}
-      where p.tenant_id=${principal.tenantId}::uuid and p.principal_id=${principal.principalId}::uuid
-        and p.kind='integration' and p.status='active'
-        and exists(select 1 from core.access_workload_bindings w where w.tenant_id=p.tenant_id and w.principal_id=p.principal_id
-          and w.status='active' and w.workload_key=${workload})
-        and exists(select 1 from core.access_workload_bindings s where s.tenant_id=p.tenant_id and s.principal_id=p.principal_id
-          and s.status='active' and s.workload_key=${paymentSourceWorkload})
-      limit 2`,
-          'objects',
-        );
-      }),
-    )
-    .pipe(recoverSqlTransactionError, Effect.mapError(unavailable));
-  if (eligible.length !== 1) {
-    return yield* Effect.fail(forbidden());
-  }
-  return principal;
+  return yield* (yield* GatewayNativeEvidence).validatePaymentRoutePrincipal(candidate, requestedWorkload);
 });
 
 const validateCompany = Effect.fn('PaymentRouteScope.validateCompany')(function* company(

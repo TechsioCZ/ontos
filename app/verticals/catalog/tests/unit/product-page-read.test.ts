@@ -22,6 +22,8 @@ import type {
 } from '../../../../packages/core-runtime/src/operations/access-gate.ts';
 import { ProductPageRequestSchema } from '../../shared/apis/product-page.ts';
 import type { ProductPageRequest } from '../../shared/apis/product-page.ts';
+import { ProductDetailRequestSchema } from '../../shared/apis/product-detail.ts';
+import { CatalogLocaleSchema } from '../../shared/domain/product-descriptive-facts.ts';
 import { CatalogMediaAssignmentSchema, selectCatalogMediaSet } from '../../shared/domain/catalog-media-assignment.ts';
 import { ProductSchema } from '../../shared/domain/product.ts';
 import { productDetailRead } from '../../src/api/product-detail.read.ts';
@@ -139,6 +141,7 @@ describe('Catalog product page request', () => {
   it('pages like the source product page, takes the detail read locale and names each lifecycle once', () => {
     const decode = Schema.decodeUnknownOption(ProductPageRequestSchema);
     const base = { lifecycles: ['ACTIVE'], limit: 24, locale: 'cs-CZ', offset: 0 };
+    expect(ProductPageRequestSchema.fields.locale).toBe(ProductDetailRequestSchema.fields.locale);
     expect(Option.isSome(decode(base))).toBe(true);
     expect(Option.isSome(decode({ ...base, lifecycles: ['DRAFT', 'ACTIVE', 'RETIRED'] }))).toBe(true);
     expect(Option.map(decode({ ...base, search: '  kladivo ' }), ({ search }) => search)).toEqual(
@@ -153,7 +156,11 @@ describe('Catalog product page request', () => {
       { offset: -1 },
       { search: '   ' },
       { search: 'x'.repeat(201) },
-      { locale: 'cs-cz' },
+      { locale: '' },
+      { locale: 'x' },
+      { locale: ' cs-cz' },
+      { locale: 'cs-cz ' },
+      { locale: 'a'.repeat(65) },
       {
         categoryRef: {
           moduleId: 'commerce.catalog',
@@ -167,6 +174,14 @@ describe('Catalog product page request', () => {
     }
     const { lifecycles: _required, ...withoutLifecycles } = base;
     expect(Option.isNone(decode(withoutLifecycles))).toBe(true);
+  });
+
+  it('reads exact stored locale keys without canonicalizing collisions or relaxing new-write validation', () => {
+    for (const locale of ['cs-cz', 'cs-CZ', 'en-us', 'en-US']) {
+      expect(request({ locale }).locale).toBe(locale);
+    }
+    expect(Schema.is(CatalogLocaleSchema)('cs-cz')).toBe(false);
+    expect(Schema.is(CatalogLocaleSchema)('cs-CZ')).toBe(true);
   });
 });
 
@@ -189,21 +204,23 @@ describe('Catalog product page admission and SQL', () => {
 
   it.effect('admits the bound storefront workload to ACTIVE Products in one tenant-scoped page', () =>
     Effect.gen(function* boundStorefront() {
-      const { exit, ownerQueries } = yield* runPage(request(), {
-        gate: workloadGate('service', [storefrontWorkload]),
-        method: 'api_key',
-      });
-      expect(exit).toEqual(Exit.succeed({ count: 0, items: [] }));
-      expect(ownerQueries.map(({ params, sql }) => ({ params, sql }))).toEqual([
-        {
-          params: ['cs-CZ', tenantId, 'ACTIVE'],
-          sql: `select count(*) ${localizedJoin} where (${tenantAndLifecycle})`,
-        },
-        {
-          params: ['cs-CZ', tenantId, 'ACTIVE', 5, 10],
-          sql: `select "catalog"."products"."product_id" ${localizedJoin} where (${tenantAndLifecycle}) ${pageOrder} limit $4 offset $5`,
-        },
-      ]);
+      for (const locale of ['cs-CZ', 'cs-cz']) {
+        const { exit, ownerQueries } = yield* runPage(request({ locale }), {
+          gate: workloadGate('service', [storefrontWorkload]),
+          method: 'api_key',
+        });
+        expect(exit).toEqual(Exit.succeed({ count: 0, items: [] }));
+        expect(ownerQueries.map(({ params, sql }) => ({ params, sql }))).toEqual([
+          {
+            params: [locale, tenantId, 'ACTIVE'],
+            sql: `select count(*) ${localizedJoin} where (${tenantAndLifecycle})`,
+          },
+          {
+            params: [locale, tenantId, 'ACTIVE', 5, 10],
+            sql: `select "catalog"."products"."product_id" ${localizedJoin} where (${tenantAndLifecycle}) ${pageOrder} limit $4 offset $5`,
+          },
+        ]);
+      }
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 

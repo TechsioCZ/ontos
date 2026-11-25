@@ -1,19 +1,16 @@
-import { recoverSqlTransactionError } from '@app/core-runtime';
+import type { GatewayPrivacyDispatchRow } from './gateway-native-evidence.service.ts';
+import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
+
 import { AccessDecisionGate, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { RegisteredGatewayPrivacyDispatchSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayPrivacyDispatch } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { CoreDatabase } from '@app/core-runtime/db/client';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import { MeasureExecutionEligibilityRequestSchema } from '@app/privacy/api/measure-execution-eligibility';
 import { RecordOwnerExecutionOutcomePayloadSchema } from '@app/privacy/api/record-owner-execution-outcome-action';
 import type { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import { validatePrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import {
-  OutboxPayloadSchema,
-  outboxProducerModuleKey,
-  outboxTopic,
-} from '@app/privacy/outbox/privacy-measure-dispatched';
+
+import { outboxProducerModuleKey, outboxTopic } from '@app/privacy/outbox/privacy-measure-dispatched';
 import type { GatewayPrivacyDispatchSubjectSchema } from '@app/shared-contracts';
 import {
   decodeGatewayContextProtectedHeader,
@@ -22,7 +19,6 @@ import {
 } from '@app/shared-contracts';
 import { ExecuteSymmyRetentionPayloadSchema } from '@app/symmy-integration/api/execute-symmy-retention-action';
 import { SymmyJobPrivacyExecutionRequestSchema } from '@app/symmy-integration/api/symmy-job-privacy-execution';
-import { sql } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
 import { jwtVerify } from 'jose';
 
@@ -33,7 +29,7 @@ import {
   resolvePublishedFiniteGatewayTarget,
 } from './gateway-delegation-policy.ts';
 import type { GatewayModuleBinding } from './gateway-delegation-policy.ts';
-import { delegationForbidden, delegationUnavailable, GatewayDelegationError } from './gateway-delegation-errors.ts';
+import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { GatewayDelegationVerification } from './gateway-delegation-verification.ts';
 import { GatewayOriginatorEvidence } from './gateway-originator-evidence.ts';
 
@@ -42,28 +38,12 @@ type Operation = Subject['operation'];
 type Source = Subject['source'];
 type Contract = ShellInstalledCatalog['contracts'][number];
 type Handoff = typeof PrivacyMeasureHandoffSchema.Type;
-const metadataFields = RegisteredGatewayPrivacyDispatchSchema.fields;
 const privacyModule = outboxProducerModuleKey;
 const privacyApp = 'privacy';
 const symmyModule = 'integration.symmy';
 const workerKey = 'integration.symmy.symmy-job-privacy-dispatch';
 const dispatchActionKey = 'privacy.core.dispatch-privacy-measure';
 const receiptRequirementKey = 'privacy.core.requirement.symmy-owner-execution-outcome';
-const rowSchema = Schema.Struct({
-  claimActive: Schema.Boolean,
-  claimId: Schema.OptionFromNullOr(Schema.NonEmptyString),
-  deliveryId: metadataFields.deliveryId,
-  dispatchInvocationId: metadataFields.dispatchInvocationId,
-  domainEventId: metadataFields.domainEventId,
-  eventPayload: OutboxPayloadSchema,
-  governanceLegalEntityId: metadataFields.governanceLegalEntityId,
-  measureId: metadataFields.measureId,
-  messageId: metadataFields.messageId,
-  messagePayload: OutboxPayloadSchema,
-  principalId: metadataFields.principalId,
-  tenantId: metadataFields.tenantId,
-});
-type Row = typeof rowSchema.Type;
 interface Evidence {
   readonly principal: TrustedPrincipalContext;
   readonly privacyDispatch: RegisteredGatewayPrivacyDispatch;
@@ -87,78 +67,15 @@ const witnessSchema = Schema.instanceOf(AdmittedPrivacyDispatchValue);
 export const readAdmittedPrivacyDispatch = (witness: AdmittedPrivacyDispatch): Evidence | undefined =>
   Schema.is(witnessSchema)(witness) ? AdmittedPrivacyDispatchValue.read(witness) : undefined;
 
-const isSupportedHandoff = (handoff: Handoff, row: Row): boolean => {
-  const [resource] = handoff.resourceRefs;
-  const [content] = handoff.contentScopeRefs;
-  const match = /^integration\.symmy\.(?:job|sync-admission):(?<id>[a-fA-F\d-]+)$/u.exec(resource ?? '');
-  return (
-    validatePrivacyMeasureHandoff(handoff).length === 0 &&
-    handoff.tenantId === row.tenantId &&
-    handoff.owningCapability === symmyModule &&
-    (handoff.kind === 'DELETE' || handoff.kind === 'ANONYMIZE') &&
-    handoff.dispositionDecision === handoff.kind &&
-    handoff.resourceRefs.length === 1 &&
-    handoff.contentScopeRefs.length === 1 &&
-    Schema.is(Schema.String.check(Schema.isUUID()))(match?.groups?.['id']) &&
-    content === `${resource}#integration.symmy.job-intent` &&
-    handoff.measureId === row.measureId &&
-    computeCanonicalValueHash(handoff) === computeCanonicalValueHash(row.eventPayload.handoff)
-  );
-};
-const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(input: {
+type Row = GatewayPrivacyDispatchRow;
+const loadRow = Effect.fn('GatewayNativeEvidence.loadPrivacyDispatchRow')(function* load(input: {
   readonly deliveryId?: string;
   readonly dispatchInvocationId?: string;
   readonly tenantId: string;
 }) {
-  const database = yield* CoreDatabase;
-  return yield* database.executor
-    .transaction(
-      Effect.fn('PrivacyDispatchEvidence.nativeTransaction')(function* native(transaction) {
-        yield* transaction.execute(
-          sql`select set_config('ontos.tenant_id',${input.tenantId},true),set_config('ontos.legal_entity_id','',true)`,
-          'objects',
-        );
-        const selection =
-          input.deliveryId === undefined
-            ? sql`i.action_invocation_id=${input.dispatchInvocationId}::uuid`
-            : sql`d.outbox_delivery_id=${input.deliveryId}::uuid`;
-        const rows = yield* transaction.execute(
-          sql`
-      select i.action_invocation_id as "dispatchInvocationId",i.principal_id as "principalId",i.tenant_id as "tenantId",i.legal_entity_id as "governanceLegalEntityId",
-        e.domain_event_id as "domainEventId",m.outbox_message_id as "messageId",d.outbox_delivery_id as "deliveryId",e.subject_resource_id as "measureId",
-        e.payload_json as "eventPayload",m.payload_json as "messagePayload",d.claimed_by as "claimId",
-        (d.status='processing' and d.claim_expires_at>now()) as "claimActive"
-      from core.action_invocations i
-      join core.principals p on p.tenant_id=i.tenant_id and p.principal_id=i.principal_id and p.kind='human'
-      join core.tenants t on t.tenant_id=i.tenant_id and t.status='active'
-      join core.legal_entities l on l.tenant_id=i.tenant_id and l.legal_entity_id=i.legal_entity_id and l.status='active'
-      join core.domain_events e on e.tenant_id=i.tenant_id and e.action_invocation_id=i.action_invocation_id and e.legal_entity_id=i.legal_entity_id
-      join core.outbox_messages m on m.tenant_id=e.tenant_id and m.domain_event_id=e.domain_event_id
-      join core.outbox_deliveries d on d.outbox_message_id=m.outbox_message_id
-      where i.tenant_id=${input.tenantId}::uuid and i.action_key=${dispatchActionKey} and i.status='succeeded' and ${selection}
-        and e.producer_module_key=${privacyModule} and e.subject_module_key=${privacyModule} and e.subject_resource_type='privacy.core.privacy-measure'
-        and e.event_type=${outboxTopic} and m.topic=${outboxTopic} and m.producer_module_key=${privacyModule}
-        and d.consumer_module_key=${symmyModule} and d.worker_key=${workerKey}
-      limit 2`,
-          'objects',
-        );
-        const parsed = yield* Schema.decodeUnknownEffect(Schema.Array(rowSchema), { onExcessProperty: 'error' })(
-          rows,
-        ).pipe(Effect.mapError(delegationUnavailable('source_evidence_unavailable')));
-        const [row] = parsed;
-        if (parsed.length !== 1 || row === undefined || !isSupportedHandoff(row.messagePayload.handoff, row)) {
-          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
-        }
-        return row;
-      }),
-    )
-    .pipe(
-      recoverSqlTransactionError,
-      Effect.mapError((cause) =>
-        Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable('source_evidence_unavailable')(cause),
-      ),
-    );
+  return yield* (yield* GatewayNativeEvidence).loadPrivacyDispatchRow(input);
 });
+
 const assertWorkerCatalog = (contract: Contract): boolean =>
   contract.deployment.appId === 'symmy-integration' &&
   contract.manifest.module.id === symmyModule &&

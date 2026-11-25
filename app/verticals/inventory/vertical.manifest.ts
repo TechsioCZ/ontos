@@ -28,7 +28,6 @@ import { inventoryStockSharingEligibilityManagePermission } from './shared/permi
 import { CatalogToStockBindingResolutionApi } from './shared/apis/catalog-to-stock-binding-resolution.ts';
 import { catalogToStockBindingResourceDescriptor } from './shared/resources/catalog-to-stock-binding.ts';
 import { CatalogVariantOnHandPageApi } from './shared/apis/catalog-variant-on-hand-page.ts';
-import { catalogVariantOnHandPageRead } from './src/api/catalog-variant-on-hand-page.read.ts';
 import { changeStockSharingEligibilityAction } from './src/actions/change-stock-sharing-eligibility.action.ts';
 import { commitmentProtectionResourceDescriptor } from './shared/resources/commitment-protection.ts';
 import { CommitmentProtectionVerificationApi } from './shared/apis/commitment-protection-verification.ts';
@@ -116,7 +115,6 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
-  systemWorkloads: [inventorySourceProvisionSystemWorkload],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
@@ -161,6 +159,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       'inventory-reservation-detail': InventoryReservationDetailApi,
       'inventory-source-conflict-detail': InventorySourceConflictDetailApi,
       'inventory-source-import-receipt': InventorySourceImportReceiptApi,
+      'owner-action-approvals': OwnerActionApprovalApi,
       'provision-source-stock-item-action': ProvisionSourceStockItemActionApi,
       'reservation-confirmation-verification': ReservationConfirmationVerificationApi,
       'source-stock-item-provisioning-receipt': SourceStockItemProvisioningReceiptApi,
@@ -271,4 +270,5 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       timelines: [],
     },
   },
+  systemWorkloads: [inventorySourceProvisionSystemWorkload],
 });

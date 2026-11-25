@@ -2,7 +2,7 @@ import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-crede
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
-import { registeredAssertionPrincipalEligibility } from '../../api/auth/gateway-registered-assertion.ts';
+import { registeredAssertionPrincipalEligibility } from '../../api/auth/gateway-native-enrollment-sql.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '10000000-0000-4000-8000-000000000002';
@@ -23,7 +23,7 @@ it('admits only canonical company platform writers for both sides and both sourc
   for (const side of ['source', 'receiver'] as const) {
     for (const workloadKey of sourceWriters) {
       const query = new PgDialect().sqlToQuery(
-        registeredAssertionPrincipalEligibility({ side, tenantId, legalEntityId, workloadKey }),
+        registeredAssertionPrincipalEligibility({ legalEntityId, side, tenantId, workloadKey }),
       );
       const principal = side === 'source' ? 'source_principal' : 'receiver_principal';
       const binding = side === 'source' ? 'current_source' : 'receiver';
@@ -41,7 +41,7 @@ it('admits only canonical company platform writers for both sides and both sourc
       expect(query.params).toContain(tenantId);
       expect(query.params).toContain(legalEntityId);
       expect(query.params).toContain(workloadKey);
-      expect(query.params).toContain(internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey }));
+      expect(query.params).toContain(internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey }));
     }
   }
 });
@@ -49,10 +49,10 @@ it('admits only canonical company platform writers for both sides and both sourc
 it('keeps unrelated workloads and company-less requests strictly unique-SYSTEM only', () => {
   for (const side of ['source', 'receiver'] as const) {
     for (const input of [
-      { workloadKey: 'integration.symmy.execute-symmy-job', legalEntityId },
-      { workloadKey: 'privacy.core.unregistered-check', legalEntityId },
-      { workloadKey: 'party.registry.source-write', legalEntityId: undefined },
-      { workloadKey: 'commerce.customer-context.source-write', legalEntityId: undefined },
+      { legalEntityId, workloadKey: 'integration.symmy.execute-symmy-job' },
+      { legalEntityId, workloadKey: 'privacy.core.unregistered-check' },
+      { workloadKey: 'party.registry.source-write' },
+      { workloadKey: 'commerce.customer-context.source-write' },
     ]) {
       const query = new PgDialect().sqlToQuery(registeredAssertionPrincipalEligibility({ side, tenantId, ...input }));
       expect(query.sql).toContain("kind='system'");
@@ -67,10 +67,10 @@ it('binds service selection to the requested company rather than another company
   const workloadKey = 'party.registry.source-write';
   const otherCompany = '10000000-0000-4000-8000-000000000003';
   const query = new PgDialect().sqlToQuery(
-    registeredAssertionPrincipalEligibility({ side: 'source', tenantId, legalEntityId, workloadKey }),
+    registeredAssertionPrincipalEligibility({ legalEntityId, side: 'source', tenantId, workloadKey }),
   );
   expect(query.params).not.toContain(otherCompany);
   expect(query.params).not.toContain(
-    internalWorkloadPrincipalId({ tenantId, legalEntityId: otherCompany, workloadKey }),
+    internalWorkloadPrincipalId({ legalEntityId: otherCompany, tenantId, workloadKey }),
   );
 });

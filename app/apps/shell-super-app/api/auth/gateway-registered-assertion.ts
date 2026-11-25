@@ -1,13 +1,12 @@
-import { CoreDatabase } from '@app/core-runtime/db/client';
-import { recoverSqlTransactionError } from '@app/core-runtime';
+import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
+
 import type { ModuleEntrypointAccess } from '@app/core-runtime';
-import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
-import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
+
 import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { sql } from 'drizzle-orm';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import {
@@ -22,7 +21,7 @@ import type {
 import type { GatewayDelegationRequestPayload } from './gateway-delegation-issuer.ts';
 import { readVerifiedGatewayAssertion, snapshotRegisteredGatewayWorkload } from './gateway-assertion-evidence.ts';
 import type { VerifiedGatewayAssertion } from './gateway-assertion-evidence.ts';
-import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
+import { delegationForbidden } from './gateway-delegation-errors.ts';
 
 type Subject = Extract<GatewayDelegationRequestPayload['subject'], { readonly _tag: 'RegisteredAssertion' }>;
 
@@ -89,15 +88,6 @@ const sourceModeAllowsTarget = (
     read &&
     !write
   );
-};
-
-/** A finite receiver contract may project a verified company-scoped source into a tenant-only operation. */
-const targetWorkloadScope = (workload: RegisteredGatewayWorkload): RegisteredGatewayWorkload => {
-  if (workload.legalEntityScope !== 'forbidden') {
-    return workload;
-  }
-  const { legalEntityId: _sourceLegalEntityId, ...tenantWorkload } = workload;
-  return tenantWorkload;
 };
 
 interface NativeAssertionEvidence {
@@ -174,61 +164,6 @@ const admittedSourceMatchesBinding = (
   evidence.compositionRevision === binding.compositionRevision &&
   evidence.compositionRevision === installed.composition.revision;
 
-const customerChainWorkloads: ReadonlySet<string> = new Set([
-  'party.registry.source-write',
-  'party.registry.source-read',
-  'commerce.customer-context.source-write',
-  'commerce.customer-context.source-read',
-  'commerce.customer-context.organization-ico-facts.read',
-  'privacy.core.source-processing-check',
-  'privacy.core.organization-business-check',
-  'privacy.core.organization-profile-ico-check',
-  'integration.symmy.source-organization-facts.read',
-  'pricing.price-group-catalog.source-read',
-]);
-
-/** Installed registered-call rules still constrain every edge; this only identifies its actual enrolled executor. */
-export const registeredAssertionPrincipalEligibility = (input: {
-  readonly side: 'receiver' | 'source';
-  readonly tenantId: string;
-  readonly workloadKey: string;
-  readonly legalEntityId: string | undefined;
-}) => {
-  const principal = sql.raw(input.side === 'receiver' ? 'receiver_principal' : 'source_principal');
-  const binding = sql.raw(input.side === 'receiver' ? 'receiver' : 'current_source');
-  const systemCount = sql`(
-    select count(*) from core.access_workload_bindings legacy_binding
-    join core.principals legacy_principal
-      on legacy_principal.tenant_id=legacy_binding.tenant_id
-      and legacy_principal.principal_id=legacy_binding.principal_id
-      and legacy_principal.kind='system' and legacy_principal.status='active'
-    where legacy_binding.tenant_id=${input.tenantId}::uuid
-      and legacy_binding.workload_key=${input.workloadKey} and legacy_binding.status='active'
-  )`;
-  const legacy = sql`(${principal}.kind='system' and ${systemCount}=1)`;
-  if (input.legalEntityId === undefined || !customerChainWorkloads.has(input.workloadKey)) {
-    return legacy;
-  }
-  const principalId = internalWorkloadPrincipalId({
-    tenantId: input.tenantId,
-    legalEntityId: input.legalEntityId,
-    workloadKey: input.workloadKey,
-  });
-  return sql`(${legacy} or (
-    ${systemCount}=0 and ${principal}.kind='service'
-    and ${principal}.platform_role='internal_workload'
-    and ${principal}.principal_id=${principalId}::uuid
-    and exists (
-      select 1 from core.access_workload_company_bindings company_binding
-      join core.legal_entities company on company.tenant_id=company_binding.tenant_id
-        and company.legal_entity_id=company_binding.legal_entity_id and company.status='active'
-      where company_binding.tenant_id=${binding}.tenant_id
-        and company_binding.workload_binding_id=${binding}.binding_id
-        and company_binding.legal_entity_id=${input.legalEntityId}::uuid and company_binding.status='active'
-    )
-  ))`;
-};
-
 /** A verified owner request can obtain only an explicitly enrolled downstream workload operation. */
 export const admitRegisteredAssertionWorkload = Effect.fn('GatewayDelegation.admitRegisteredAssertion')(
   function* registeredAssertion(input: {
@@ -286,138 +221,14 @@ export const admitRegisteredAssertionWorkload = Effect.fn('GatewayDelegation.adm
     ) {
       return yield* delegationForbidden('registered_operation_refused')();
     }
-    const database = yield* CoreDatabase;
-    const admitted = yield* database.executor
-      .transaction(
-        Effect.fn('GatewayDelegation.registeredAssertionEvidence')(function* evidence(transaction) {
-          yield* transaction
-            .execute(
-              sql`select set_config('ontos.tenant_id', ${sourcePrincipal.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
-              'objects',
-            )
-            .pipe(Effect.mapError(delegationUnavailable('source_evidence_unavailable')));
-          const originalAuthority =
-            workload.recovery === undefined
-              ? sql`
-        join core.principals original on original.tenant_id=t.tenant_id and original.principal_id=${workload.originalPrincipalId}::uuid and original.kind='integration' and original.status='active'
-        join core.access_workload_bindings admission on admission.tenant_id=t.tenant_id and admission.principal_id=original.principal_id and admission.workload_key=${workload.originalWorkloadKey} and admission.incarnation=${workload.originalWorkloadBindingIncarnation}::uuid and admission.status='active'
-        join core.access_workload_bindings owner on owner.tenant_id=t.tenant_id and owner.binding_id=receiver.binding_id and owner.principal_id=receiver.principal_id and owner.workload_key=${rule.workloadKey} and owner.status='active'
-        join core.access_workload_bindings source_owner on source_owner.tenant_id=t.tenant_id and source_owner.binding_id=current_source.binding_id and source_owner.principal_id=source_principal.principal_id and source_owner.workload_key=${workload.workloadKey} and source_owner.incarnation=${workload.originalOwnerBindingIncarnation}::uuid and source_owner.status='active'
-          `
-              : sql``;
-          const ownerBindingExpression = workload.recovery === undefined ? sql`owner.incarnation` : sql`null::uuid`;
-          const rows = yield* transaction
-            .execute(
-              sql`
-        select receiver.principal_id as "principalId", receiver.incarnation as "bindingIncarnation", ${ownerBindingExpression} as "ownerBindingIncarnation"
-        from core.access_workload_bindings receiver
-        join core.principals receiver_principal on receiver_principal.tenant_id=receiver.tenant_id and receiver_principal.principal_id=receiver.principal_id and receiver_principal.status='active'
-        join core.tenants t on t.tenant_id=receiver.tenant_id and t.status='active'
-        join core.principals source_principal on source_principal.tenant_id=t.tenant_id and source_principal.principal_id=${sourcePrincipal.principalId}::uuid and source_principal.status='active'
-        join core.access_workload_bindings current_source on current_source.tenant_id=t.tenant_id and current_source.principal_id=${sourcePrincipal.principalId}::uuid and current_source.workload_key=${workload.workloadKey} and current_source.incarnation=${workload.bindingIncarnation}::uuid and current_source.status='active'
-        ${originalAuthority}
-        where receiver.tenant_id=${sourcePrincipal.tenantId}::uuid and receiver.workload_key=${rule.workloadKey} and receiver.status='active'
-          and ${registeredAssertionPrincipalEligibility({
-            side: 'receiver',
-            tenantId: sourcePrincipal.tenantId,
-            workloadKey: rule.workloadKey,
-            // The installed rule may project to a tenant-only read; executor enrollment remains in the source company.
-            legalEntityId: workload.legalEntityId,
-          })}
-          and ${registeredAssertionPrincipalEligibility({
-            side: 'source',
-            tenantId: sourcePrincipal.tenantId,
-            workloadKey: workload.workloadKey,
-            legalEntityId: workload.legalEntityId,
-          })}
-          and (${workload.sourceMode} <> 'worker' or trust.registered_workload_delivery_is_active(${workload.runReference}::uuid, ${workload.claimId ?? ''}, ${workload.workerKey ?? ''}, ${workload.workerModuleKey ?? ''}, ${sourcePrincipal.tenantId}::uuid))
-          and (${workload.legalEntityId ?? null}::uuid is null or exists(select 1 from core.legal_entities l where l.tenant_id=t.tenant_id and l.legal_entity_id=${workload.legalEntityId ?? null}::uuid and l.status='active'))
-        limit 2
-      `,
-              'objects',
-            )
-            .pipe(
-              Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
-              Effect.flatMap((result) =>
-                Schema.decodeUnknownEffect(
-                  Schema.Array(
-                    Schema.Struct({
-                      bindingIncarnation: Schema.String.check(Schema.isUUID()),
-                      ownerBindingIncarnation: Schema.OptionFromNullOr(Schema.String.check(Schema.isUUID())),
-                      principalId: TrustedPrincipalContextSchema.fields.principalId,
-                    }),
-                  ),
-                )(result).pipe(Effect.mapError(delegationUnavailable('source_evidence_unavailable'))),
-              ),
-            );
-          const [row] = rows;
-          if (
-            rows.length !== 1 ||
-            row === undefined ||
-            (subject.expectedPrincipalId !== undefined && row.principalId !== subject.expectedPrincipalId)
-          ) {
-            return yield* delegationForbidden('workload_binding_not_active')();
-          }
-          const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
-            authContextRef: `job:${rule.jobKey}:run:${workload.runReference}`,
-            authMethod: 'system',
-            principalId: row.principalId,
-            tenantId: sourcePrincipal.tenantId,
-          }).pipe(Effect.mapError(delegationForbidden('source_evidence_malformed')));
-          const targetWorkload = targetWorkloadScope({
-            ...workload,
-            bindingIncarnation: row.bindingIncarnation,
-            declarationKey: rule.declarationKey,
-            entrypointKey: rule.entrypointKey,
-            jobKey: rule.jobKey,
-            legalEntityScope: rule.legalEntityScope,
-            schemaVersion: rule.schemaVersion,
-            sourceAppId: binding.sourceAppId,
-            sourceBuildMarker: binding.sourceBuildMarker,
-            workloadKey: rule.workloadKey,
-          });
-          if (workload.recovery !== undefined) {
-            if (subject.recoveryRequestHash === undefined) {
-              return yield* delegationForbidden('registered_workload_unmatched')();
-            }
-            const {
-              originalOwnerBindingIncarnation: _originalOwnerBindingIncarnation,
-              originalWorkloadBindingIncarnation: _originalWorkloadBindingIncarnation,
-              originalWorkloadKey: _originalWorkloadKey,
-              ...historicalWorkload
-            } = targetWorkload;
-            return {
-              principal,
-              sourceAccess,
-              sourceKey: workload.runReference,
-              workload: {
-                ...historicalWorkload,
-                recovery: { ...workload.recovery, requestHash: subject.recoveryRequestHash },
-              },
-            };
-          }
-          if (Option.isNone(row.ownerBindingIncarnation)) {
-            return yield* delegationForbidden('workload_binding_not_active')();
-          }
-          return {
-            principal,
-            sourceAccess,
-            sourceKey: workload.runReference,
-            workload: {
-              ...targetWorkload,
-              originalOwnerBindingIncarnation: row.ownerBindingIncarnation.value,
-            },
-          };
-        }),
-      )
-      .pipe(
-        recoverSqlTransactionError,
-        Effect.mapError((cause) =>
-          Schema.is(GatewayDelegationError)(cause)
-            ? cause
-            : delegationUnavailable('source_evidence_unavailable')(cause),
-        ),
-      );
+    const admitted = yield* (yield* GatewayNativeEvidence).admitAssertion({
+      binding,
+      rule,
+      sourceAccess,
+      sourcePrincipal,
+      subject,
+      workload,
+    });
     return yield* finishRegisteredAssertion({
       admitted,
       audience: input.audience,

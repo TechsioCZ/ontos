@@ -28,12 +28,23 @@ const ownedClusterTests = ['scripts/integration/migration-equivalence.test.mts']
 // scripts/ci/run-integration-suites.sh) replaces a project's exclude list, so these files would rejoin the suite.
 const elsewhere = [...operatorTests, ...ownedClusterTests].map((file) => `!${file}`);
 
+// These use Node's test context (including t.mock), and run through the demo matrix's native CI row.
+export const nativeScriptTests = [
+  'scripts/demo/symmy-demo-source-policies.test.mts',
+  'scripts/ops/stage-symmy-full-function-proof.test.mts',
+  'scripts/ops/stage-symmy-negative-proof.test.mts',
+  'scripts/ops/stage-symmy-storefront-proof.test.mts',
+  'scripts/tests/inventory-on-hand-exports.test.mts',
+  'scripts/zerops/demo-delivery-parallelism.test.mts',
+  'scripts/zerops/production-declarations.test.mts',
+];
+
 export default defineConfig({
   projects: [
     {
       ...shared,
       exclude: ['scripts/scaffolding/**', 'scripts/integration/**'],
-      include: ['scripts/**/*.test.mts'],
+      include: ['scripts/**/*.test.mts', ...nativeScriptTests.map((file) => `!${file}`)],
       name: 'scripts',
     },
     {

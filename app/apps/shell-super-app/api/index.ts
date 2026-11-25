@@ -36,6 +36,7 @@ import {
 import type { SymmyRouteScopeProof } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteContextRequestSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
+import { GatewayNativeEvidenceLive } from './auth/gateway-native-evidence.service.ts';
 import { PlatformWorkloadKeyAdmission } from './auth/platform-workload-key-admission.ts';
 import { PlatformWorkloadKeyAdmissionLive } from './auth/platform-workload-key-admission.service.ts';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
@@ -4708,6 +4709,7 @@ export const makeShellAuthenticationApiRuntime = (
   const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  const nativeGatewayEvidenceLayer = GatewayNativeEvidenceLive.pipe(Layer.provide(runtimeCorePersistenceLive));
   const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
@@ -4749,6 +4751,7 @@ export const makeShellAuthenticationApiRuntime = (
     delegationScopeResolverLayer,
     delegationLedgerLayer,
     originatorEvidenceLayer,
+    nativeGatewayEvidenceLayer,
     moduleCredentialEnrolmentLayer,
     GatewayDelegationVerificationLive,
     authenticationLayer,

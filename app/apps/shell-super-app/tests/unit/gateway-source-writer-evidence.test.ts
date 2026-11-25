@@ -1,10 +1,11 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import { buildApplicationCompositionCatalog, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { GatewayRegisteredWorkloadSubjectSchema } from '@app/shared-contracts';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
@@ -22,13 +23,13 @@ const actionKey = 'integration.symmy.admit-symmy-job';
 const entrypointKey = 'party.registry.api.source-write';
 const declarationKey = 'party.registry.source-write';
 const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
-  workloadKey: string;
-  systems?: number;
+  claim?: boolean;
   company?: boolean;
   expectedPrincipalId?: string;
-  claim?: boolean;
   originalCompany?: string;
   service?: boolean;
+  systems?: number;
+  workloadKey: string;
 }) {
   const source = makeModuleContractFixture({
     appId: 'symmy-integration',
@@ -41,23 +42,13 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
       ...source,
       manifest: {
         ...source.manifest,
-        requirements: {
-          schemaVersion: '1',
-          coreCapabilities: [],
-          operations: [],
-          intrinsic: [{ moduleId: 'party.registry', requiredOperations: [{ entrypointKey, schemaVersion: '1' }] }],
-        },
         publicSurface: {
           ...source.manifest.publicSurface,
           actions: [
             {
+              accessWorkload: { reason: 'Exact integration admission', workloads: ['integration.symmy-admit'] },
               actionKey,
               auditProfile: 'standard',
-              idempotency: 'required',
-              legalEntityScope: 'optional',
-              owningModuleId: 'integration.symmy',
-              schemaVersion: '1',
-              accessWorkload: { reason: 'Exact integration admission', workloads: ['integration.symmy-admit'] },
               entrypoint: defineTenantModuleEntrypoint({
                 access: 'write',
                 authorization: { kind: 'protected' },
@@ -65,8 +56,18 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
                 moduleKey: 'integration.symmy',
                 role: 'action',
               }),
+              idempotency: 'required',
+              legalEntityScope: 'optional',
+              owningModuleId: 'integration.symmy',
+              schemaVersion: '1',
             },
           ],
+        },
+        requirements: {
+          coreCapabilities: [],
+          intrinsic: [{ moduleId: 'party.registry', requiredOperations: [{ entrypointKey, schemaVersion: '1' }] }],
+          operations: [],
+          schemaVersion: '1',
         },
       },
     },
@@ -80,8 +81,6 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
           operationContracts: [
             {
               apiKey: 'party.registry.api.source',
-              operationKey: 'write.execute',
-              schemaVersion: '1',
               entrypoint: defineTenantModuleEntrypoint({
                 access: 'read',
                 authorization: { kind: 'protected' },
@@ -89,6 +88,8 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
                 moduleKey: 'party.registry',
                 role: 'api',
               }),
+              operationKey: 'write.execute',
+              schemaVersion: '1',
             },
           ],
         },
@@ -99,77 +100,89 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
   const binding = Schema.decodeUnknownSync(GatewayModuleBindingSchema)({
     compositionRevision: snapshot.composition.revision,
     providerKeyId: 'symmy-test-key',
-    sourceAppId: 'symmy-integration',
-    sourceBuildMarker: 'symmy-integration-build',
     registeredWorkloads: [
       {
         audience: 'party-registry',
         declarationKey,
         entrypointKey,
         jobKey: workerKey,
-        workerKey,
         legalEntityScope: 'optional',
         schemaVersion: '1',
+        workerKey,
         workloadKey: input.workloadKey,
       },
     ],
+    sourceAppId: 'symmy-integration',
+    sourceBuildMarker: 'symmy-integration-build',
   });
-  const subject = Schema.decodeUnknownSync(GatewayRegisteredWorkloadSubjectSchema)({
+  const subjectInput = {
     _tag: 'RegisteredWorkload',
     claimId: 'claim-source-writer',
-    deliveryId: invocationId,
     declarationKey,
+    deliveryId: invocationId,
     tenantId,
     workerKey,
-    ...(input.company === false ? {} : { legalEntityId }),
-    ...(input.expectedPrincipalId === undefined ? {} : { expectedPrincipalId: input.expectedPrincipalId }),
-  });
-  const principalId = internalWorkloadPrincipalId({ tenantId, legalEntityId, workloadKey: input.workloadKey });
-  const queries: { sql: string; params: readonly unknown[] }[] = [];
+  };
+  if (input.company !== false) {
+    Object.assign(subjectInput, { legalEntityId });
+  }
+  if (input.expectedPrincipalId !== undefined) {
+    Object.assign(subjectInput, { expectedPrincipalId: input.expectedPrincipalId });
+  }
+  const subject = Schema.decodeUnknownSync(GatewayRegisteredWorkloadSubjectSchema)(subjectInput);
+  const principalId = internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey: input.workloadKey });
+  const queries: { params: readonly unknown[]; sql: string }[] = [];
   const database = Layer.effect(CoreDatabase, testCoreDatabase.pipe(Effect.map((executor) => ({ executor })))).pipe(
     Layer.provide(
       scriptedPgClientLayer(
         Effect.succeed(
           testSqlConnection((sql, params) => {
-            queries.push({ sql, params });
-            if (sql.includes('core.outbox_deliveries'))
+            queries.push({ params, sql });
+            if (sql.includes('core.outbox_deliveries')) {
               return Effect.succeed(
                 input.claim === false
                   ? []
                   : [
                       {
                         actionInvocationId: invocationId,
-                        workerKey,
                         consumerModuleKey: 'integration.symmy',
                         producerModuleKey: 'integration.symmy',
                         topic: 'integration.symmy.job-admitted',
+                        workerKey,
                       },
                     ],
               );
-            if (sql.includes('core.action_invocations'))
+            }
+            if (sql.includes('core.action_invocations')) {
               return Effect.succeed([
                 {
                   actionKey,
-                  principalId: legacyId,
-                  legalEntityId: input.originalCompany ?? (input.company === false ? null : legalEntityId),
-                  workloadKey: 'integration.symmy-admit',
                   bindingIncarnation: incarnation,
+                  legalEntityId: input.originalCompany ?? (input.company === false ? null : legalEntityId),
                   ownerBindingIncarnation: receiverIncarnation,
+                  principalId: legacyId,
+                  workloadKey: 'integration.symmy-admit',
                 },
               ]);
-            if (sql.includes('core.access_workload_bindings'))
+            }
+            if (sql.includes('core.access_workload_bindings')) {
               return Effect.succeed(
                 sql.includes("p.kind = 'service'")
-                  ? input.service === false
-                    ? []
-                    : [{ principalId, bindingIncarnation: receiverIncarnation, actionInvocationId: invocationId }]
-                  : Array.from({ length: input.systems ?? 0 }, () => ({
-                      principalId: legacyId,
-                      bindingIncarnation: receiverIncarnation,
+                  ? Array.from({ length: input.service === false ? 0 : 1 }, () => ({
                       actionInvocationId: invocationId,
+                      bindingIncarnation: receiverIncarnation,
+                      principalId,
+                    }))
+                  : Array.from({ length: input.systems ?? 0 }, () => ({
+                      actionInvocationId: invocationId,
+                      bindingIncarnation: receiverIncarnation,
+                      principalId: legacyId,
                     })),
               );
-            if (sql.includes('from core.legal_entities')) return Effect.succeed([{ legal_entity_id: legalEntityId }]);
+            }
+            if (sql.includes('from core.legal_entities')) {
+              return Effect.succeed([{ legal_entity_id: legalEntityId }]);
+            }
             return Effect.succeed([]);
           }),
         ),
@@ -181,24 +194,24 @@ const run = Effect.fn('SourceWriterEvidenceTest.run')(function* run(input: {
     binding,
     installed: { ...catalog, composition: snapshot.composition },
     subject,
-  }).pipe(Effect.provide(database), Effect.result);
-  return { result, queries, principalId };
+  }).pipe(Effect.provide(GatewayNativeEvidenceLive.pipe(Layer.provide(database))), Effect.result);
+  return { principalId, queries, result };
 });
 
 it.effect('executes durable worker admission for both canonical company source SERVICE writers', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* canonicalSourceWriter() {
     for (const workloadKey of ['party.registry.source-write', 'commerce.customer-context.source-write']) {
-      const { result, queries, principalId } = yield* run({ workloadKey });
-      expect(result._tag).toBe('Success');
-      if (result._tag === 'Success') {
+      const { principalId, queries, result } = yield* run({ workloadKey });
+      expect(Result.isSuccess(result)).toBe(true);
+      if (Result.isSuccess(result)) {
         expect(result.success.principal.principalId).toBe(principalId);
         expect(result.success.workload).toMatchObject({
           bindingIncarnation: receiverIncarnation,
-          originalOwnerBindingIncarnation: receiverIncarnation,
-          originalWorkloadBindingIncarnation: incarnation,
-          legalEntityId,
           claimId: 'claim-source-writer',
+          legalEntityId,
+          originalOwnerBindingIncarnation: receiverIncarnation,
           originalPrincipalId: legacyId,
+          originalWorkloadBindingIncarnation: incarnation,
         });
       }
       const service = queries.find((q) => q.sql.includes("p.kind = 'service'"));
@@ -219,17 +232,20 @@ it.effect('executes durable worker admission for both canonical company source S
         "cb.status = 'active'",
         "le.status = 'active'",
         'le.tenant_id = cb.tenant_id',
-      ])
+      ]) {
         expect(service?.sql).toContain(fence);
+      }
     }
   }),
 );
 
 it.effect('preserves SYSTEM precedence and refuses ambiguity, unrelated jobs, tenant-only and stale evidence', () =>
-  Effect.gen(function* () {
-    const legacy = yield* run({ workloadKey: 'party.registry.source-write', systems: 1 });
-    expect(legacy.result._tag).toBe('Success');
-    if (legacy.result._tag === 'Success') expect(legacy.result.success.principal.principalId).toBe(legacyId);
+  Effect.gen(function* refusedSourceEvidence() {
+    const legacy = yield* run({ systems: 1, workloadKey: 'party.registry.source-write' });
+    expect(Result.isSuccess(legacy.result)).toBe(true);
+    if (Result.isSuccess(legacy.result)) {
+      expect(legacy.result.success.principal.principalId).toBe(legacyId);
+    }
     expect(legacy.queries.some((q) => q.sql.includes("p.kind = 'service'"))).toBe(false);
     for (const input of [
       { systems: 2 },
@@ -241,9 +257,10 @@ it.effect('preserves SYSTEM precedence and refuses ambiguity, unrelated jobs, te
       { service: false },
     ]) {
       const actual = yield* run({ workloadKey: 'party.registry.source-write', ...input });
-      expect(actual.result._tag).toBe('Failure');
-      if ('systems' in input || 'company' in input || 'workloadKey' in input || 'claim' in input)
+      expect(Result.isFailure(actual.result)).toBe(true);
+      if ('systems' in input || 'company' in input || 'workloadKey' in input || 'claim' in input) {
         expect(actual.queries.some((q) => q.sql.includes("p.kind = 'service'"))).toBe(false);
+      }
     }
   }),
 );

@@ -6,9 +6,6 @@ import { expect, it } from 'effect-rstest';
 
 import { provedShellGatewayDatabaseSources } from '../shell-gateway-database-proof.mts';
 
-const nativeRuntimeEntry = 'apps/shell-super-app/api/index.ts';
-const nativeTransportEntry = 'apps/shell-super-app/api/symmy/transport.ts';
-const paymentTransportEntry = 'apps/shell-super-app/api/payment-gateway/transport.ts';
 const fixtureRoot = '/issuer-proof';
 const rootFile = `${fixtureRoot}/apps/shell-super-app/api/index.ts`;
 const helperFile = `${fixtureRoot}/apps/shell-super-app/api/auth/evidence.ts`;
@@ -149,7 +146,7 @@ it.effect.each([
   return proveFixture(sources).pipe(Effect.map((result) => expect(result).toEqual([])));
 });
 
-it.live('proves exactly the seven current Shell issuer bootstrap sources', () =>
+it.live('needs no database exception for the current Shell issuer adapters', () =>
   Effect.gen(function* actualShellIssuerProof() {
     const purePath = yield* Path.Path;
     const root = nodePath.resolve(import.meta.dirname, '../..');
@@ -177,110 +174,23 @@ it.live('proves exactly the seven current Shell issuer bootstrap sources', () =>
       ['@app/shared-contracts/symmy', nodePath.join(root, 'packages/shared-contracts/src/symmy/index.ts')],
       ['@app/core-runtime/db/client', nodePath.join(root, 'packages/core-runtime/src/db/client.ts')],
     ]);
-    expect(
-      new Set(
-        [...provedShellGatewayDatabaseSources(sources, root, purePath, exports)].map((file) => nodePath.basename(file)),
-      ),
-    ).toEqual(
-      new Set([
-        'gateway-organization-governance-evidence.ts',
-        'gateway-payment-route-scope.ts',
-        'gateway-privacy-dispatch-evidence.ts',
-        'gateway-recovery-evidence.ts',
-        'gateway-registered-assertion.ts',
-        'gateway-symmy-route-scope.ts',
-        'gateway-workload-evidence.ts',
-      ]),
-    );
-    const symmyMutations = [
-      {
-        file: nodePath.join(root, nativeRuntimeEntry),
-        from: '      return {\n        admit:',
-        to: '      if (false) return {\n        admit:',
-      },
-      {
-        file: nodePath.join(root, nativeRuntimeEntry),
-        from: 'SymmyIngressHandlersLive.pipe(\n      Layer.provide(\n        Layer.mergeAll(\n          symmyIngressLive,',
-        to: 'symmyIngressLive, SymmyIngressHandlersLive.pipe(\n      Layer.provide(\n        Layer.mergeAll(\n          Layer.empty,',
-      },
-      {
-        file: nodePath.join(root, nativeRuntimeEntry),
-        from: 'SymmyIngressHandlersLive.pipe(',
-        to: 'unregisteredHandlers.pipe(',
-      },
-      {
-        file: nodePath.join(root, nativeTransportEntry),
-        from: 'Context.Service<',
-        to: 'forgedContext.Service<',
-      },
-      {
-        file: nodePath.join(root, nativeTransportEntry),
-        from: '.admit(rawKey, httpRequest)',
-        to: '.foreignAdmit(rawKey, httpRequest)',
-      },
-      {
-        file: nodePath.join(root, 'apps/shell-super-app/shared/api.ts'),
-        from: "from '@app/shared-contracts/symmy'",
-        to: "from '@app/foreign-contracts/symmy'",
-      },
-      {
-        file: nodePath.join(root, nativeRuntimeEntry),
-        from: 'const symmyIngressLive = Layer.effect(\n    SymmyIngress,',
-        to: 'const symmyIngressLive = Layer.effect(\n    foreignService,',
-      },
-    ];
-    for (const mutation of symmyMutations) {
-      const original = sources.get(mutation.file) ?? '';
-      expect(original).toContain(mutation.from);
-      const mutated = new Map([...sources, [mutation.file, original.replace(mutation.from, mutation.to)]]);
-      const proved = provedShellGatewayDatabaseSources(mutated, root, purePath, exports);
-      expect(proved.size).toBe(6);
-      expect(proved.has(nodePath.join(root, 'apps/shell-super-app/api/auth/gateway-symmy-route-scope.ts'))).toBe(false);
-    }
-    const paymentRouteScope = nodePath.join(root, 'apps/shell-super-app/api/auth/gateway-payment-route-scope.ts');
-    const paymentMutations = [
-      {
-        file: nodePath.join(root, nativeRuntimeEntry),
-        from: '      return {\n        authorize:',
-        to: '      if (false) return {\n        authorize:',
-      },
-      {
-        file: nodePath.join(root, nativeRuntimeEntry),
-        from: '    paymentGatewayHandlersLive.pipe(',
-        to: '    unregisteredHandlers.pipe(',
-      },
-      {
-        file: nodePath.join(root, paymentTransportEntry),
-        from: 'Context.Service<',
-        to: 'forgedContext.Service<',
-      },
-      {
-        all: true,
-        file: nodePath.join(root, paymentTransportEntry),
-        from: '.authorize({',
-        to: '.foreignAuthorize({',
-      },
-      {
-        file: nodePath.join(root, nativeRuntimeEntry),
-        from: 'const paymentGatewayRelayLive = Layer.effect(\n    PaymentGatewayRelay,',
-        to: 'const paymentGatewayRelayLive = Layer.effect(\n    foreignService,',
-      },
-    ];
-    for (const mutation of paymentMutations) {
-      const original = sources.get(mutation.file) ?? '';
-      expect(original).toContain(mutation.from);
-      const replaced =
-        mutation.all === true
-          ? original.replaceAll(mutation.from, mutation.to)
-          : original.replace(mutation.from, mutation.to);
-      const proved = provedShellGatewayDatabaseSources(
-        new Map([...sources, [mutation.file, replaced]]),
-        root,
-        purePath,
-        exports,
-      );
-      expect(proved.size).toBe(6);
-      expect(proved.has(paymentRouteScope)).toBe(false);
+    expect([...provedShellGatewayDatabaseSources(sources, root, purePath, exports)]).toEqual([]);
+    // A service implementation, not an issuer exception or adapter rename, owns every native query.
+    for (const name of [
+      'native-route-read-receiver',
+      'organization-governance-evidence',
+      'payment-route-scope',
+      'privacy-dispatch-evidence',
+      'recovery-evidence',
+      'registered-assertion',
+      'symmy-route-proof',
+      'symmy-route-scope',
+      'workload-evidence',
+    ]) {
+      const adapter = sources.get(nodePath.join(root, `apps/shell-super-app/api/auth/gateway-${name}.ts`));
+      expect(adapter).toBeDefined();
+      expect(adapter).not.toMatch(/CoreDatabase|drizzle-orm|transaction\.execute|database\.executor/u);
+      expect(adapter).toContain('GatewayNativeEvidence');
     }
   }).pipe(Effect.provide(Path.layer)),
 );

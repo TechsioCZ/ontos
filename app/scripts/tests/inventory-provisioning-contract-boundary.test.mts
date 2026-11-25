@@ -8,7 +8,7 @@ import {
   checkModuleEntrypointBoundaries,
   makeActualCatalogSelectionFixture,
   write,
-} from './module-entrypoint-boundary-fixtures.mts';
+} from './module-entrypoint-boundaries.fixture.mts';
 
 const selectedCodecImport = (source: string) => {
   const selected = parseSync('codec-import.ts', source).program.body.find(

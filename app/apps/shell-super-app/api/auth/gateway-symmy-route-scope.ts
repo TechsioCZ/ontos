@@ -1,15 +1,14 @@
-import { recoverSqlTransactionError } from '@app/core-runtime';
+import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
+
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
-import { internalWorkloadPrincipalId } from '@app/core-runtime/auth/module-credentials';
+
 import { RegisteredGatewayRouteScopeSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { CoreDatabase } from '@app/core-runtime/db/client';
 import type {
   SymmyRouteContextRequestSchema,
   SymmyRouteContextResponseSchema,
 } from '@app/symmy-integration/api/symmy-route-context';
-import { sql } from 'drizzle-orm';
 import { Crypto, Effect, Schema } from 'effect';
 
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
@@ -110,96 +109,12 @@ const nativeReadWitnessSchema = Schema.instanceOf(AdmittedSymmyNativeReadValue);
 export const readAdmittedSymmyNativeRead = (witness: AdmittedSymmyNativeRead): NativeReadEvidence | undefined =>
   Schema.is(nativeReadWitnessSchema)(witness) ? AdmittedSymmyNativeReadValue.read(witness) : undefined;
 
-const nativeReadRowSchema = Schema.Struct({
-  bindingIncarnation: Schema.String.check(Schema.isUUID()),
-  originalWorkloadBindingIncarnation: Schema.String.check(Schema.isUUID()),
-  originalWorkloadKey: Schema.Literals(['integration.symmy-admit', 'integration.symmy-poll']),
-  principalId: TrustedPrincipalContextSchema.fields.principalId,
-});
-const selectNativeReadReceiver = Effect.fn('SymmyRouteScope.selectNativeReadReceiver')(function* select(
+const selectNativeReadReceiver = Effect.fn('GatewayNativeEvidence.selectNativeReadReceiver')(function* native(
   facts: RouteScopeFacts,
   route: Route,
   workloadKey: string,
 ) {
-  const database = yield* CoreDatabase;
-  const systemCount = sql`(
-    select count(*) from core.access_workload_bindings sb
-    join core.principals sp on sp.tenant_id=sb.tenant_id and sp.principal_id=sb.principal_id
-      and sp.kind='system' and sp.status='active'
-    where sb.tenant_id=${facts.principal.tenantId}::uuid and sb.workload_key=${workloadKey} and sb.status='active'
-  )`;
-  const service =
-    route.legalEntityId === undefined
-      ? sql`false`
-      : sql`
-    receiver.kind='service' and receiver.platform_role='internal_workload'
-    and receiver.principal_id=${internalWorkloadPrincipalId({
-      legalEntityId: route.legalEntityId,
-      tenantId: facts.principal.tenantId,
-      workloadKey,
-    })}::uuid
-    and exists (
-      select 1 from core.access_workload_company_bindings cb
-      join core.legal_entities le on le.tenant_id=cb.tenant_id and le.legal_entity_id=cb.legal_entity_id and le.status='active'
-      where cb.tenant_id=b.tenant_id and cb.workload_binding_id=b.binding_id and cb.status='active'
-        and cb.legal_entity_id=${route.legalEntityId}::uuid
-    )`;
-  const rows = yield* database.executor
-    .transaction(
-      Effect.fn('SymmyRouteScope.nativeReadEvidence')(function* nativeReadEvidence(transaction) {
-        yield* transaction.execute(
-          sql`select set_config('ontos.tenant_id', ${facts.principal.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
-          'objects',
-        );
-        return yield* transaction.execute(
-          sql`
-        select receiver.principal_id as "principalId", b.incarnation as "bindingIncarnation",
-          original_binding.workload_key as "originalWorkloadKey",
-          original_binding.incarnation as "originalWorkloadBindingIncarnation"
-        from core.access_workload_bindings b
-        join core.tenants t on t.tenant_id=b.tenant_id and t.status='active'
-        join core.principals receiver on receiver.tenant_id=b.tenant_id and receiver.principal_id=b.principal_id and receiver.status='active'
-        join core.principals original on original.tenant_id=t.tenant_id and original.principal_id=${facts.principal.principalId}::uuid
-          and original.kind='integration' and original.status='active'
-        join core.principal_auth_bindings original_auth on original_auth.tenant_id=original.tenant_id
-          and original_auth.principal_id=original.principal_id
-          and original_auth.principal_auth_binding_id=${facts.principal.authBindingId}::uuid
-          and original_auth.status='active' and original_auth.revoked_at is null
-          and original_auth.provider='better_auth' and original_auth.subject_type='api_key'
-          and original_auth.provider_subject_id=${facts.principal.authContextRef?.slice('better-auth-api-key:'.length) ?? ''}
-          and original_auth.authentication_namespace_id=${facts.principal.authenticationNamespaceId ?? ''}
-        join core.access_workload_bindings original_binding on original_binding.tenant_id=original.tenant_id
-          and original_binding.principal_id=original.principal_id and original_binding.status='active'
-          and (original_binding.workload_key='integration.symmy-admit' or (
-            ${facts.sourcePurpose}='read' and original_binding.workload_key='integration.symmy-poll'
-            and not exists(select 1 from core.access_workload_bindings preferred
-              where preferred.tenant_id=original.tenant_id and preferred.principal_id=original.principal_id
-                and preferred.workload_key='integration.symmy-admit' and preferred.status='active')
-          ))
-        where b.tenant_id=${facts.principal.tenantId}::uuid and b.workload_key=${workloadKey} and b.status='active'
-          and ((receiver.kind='system' and ${systemCount}=1) or (${systemCount}=0 and ${service}))
-          and (${route.legalEntityId ?? null}::uuid is null or exists(
-            select 1 from core.legal_entities company where company.tenant_id=t.tenant_id
-              and company.legal_entity_id=${route.legalEntityId ?? null}::uuid and company.status='active'))
-        limit 2`,
-          'objects',
-        );
-      }),
-    )
-    .pipe(
-      recoverSqlTransactionError,
-      Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
-      Effect.flatMap((records) =>
-        Schema.decodeUnknownEffect(Schema.Array(nativeReadRowSchema))(records).pipe(
-          Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
-        ),
-      ),
-    );
-  const [receiver] = rows;
-  if (rows.length !== 1 || receiver === undefined) {
-    return yield* delegationForbidden('symmy_route_not_admitted')();
-  }
-  return receiver;
+  return yield* (yield* GatewayNativeEvidence).selectNativeReadReceiver(facts, route, workloadKey);
 });
 
 /** The intake handoff uses the same current native enrollment proof, never an invocation-shaped substitute. */

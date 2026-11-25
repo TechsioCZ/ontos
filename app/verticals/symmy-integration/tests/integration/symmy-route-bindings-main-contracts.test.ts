@@ -183,6 +183,12 @@ it.effect(
         {
           companyScoped: false,
           identity: 'integration',
+          purpose: 'commerce.inventory.api.source-stock-position-resolution@1',
+          workloads: ['commerce.inventory.source-provision', 'commerce.inventory.source-read'],
+        },
+        {
+          companyScoped: false,
+          identity: 'integration',
           purpose: 'commerce.inventory.import-source-assertion@1',
           workloads: ['commerce.inventory.source-write'],
         },

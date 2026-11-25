@@ -1,4 +1,6 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import {
+  LegalEntityContextLive,
   ActionTrustedContextValidationError,
   ActiveApplicationCompositionService,
   AccessActorSchema,
@@ -439,7 +441,7 @@ it.live(
         const enforcement = AccessDecisionLive.pipe(
           Layer.provideMerge(AccessEnforcementPortsLive),
           Layer.provideMerge(TenantIntentLoaderLive),
-          Layer.provide(Layer.succeed(CoreDatabase, runtime)),
+          Layer.provide(GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime)))),
         );
         const gateServices = yield* Layer.build(enforcement);
         const gate = Context.get(gateServices, AccessDecisionGate);
@@ -463,7 +465,8 @@ it.live(
           ONTOS_GATEWAY_PUBLIC_JWKS: publicKeys,
         });
         const services = Layer.mergeAll(
-          Layer.succeed(CoreDatabase, runtime),
+          LegalEntityContextLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, runtime))),
+          GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime))),
           Layer.succeed(AuthDatabase, auth),
           Layer.succeed(PrincipalResolver, makePrincipalResolver(runtime, { authenticationNamespaceId: namespaceId })),
           Layer.succeed(TenantModuleStateService, makeTenantModuleStateService(runtime)),

@@ -21,7 +21,7 @@ export const readSymmyDemoCatalogRevision = Effect.fn('SymmyDemoCatalog.revision
     {},
     `Bearer ${Redacted.value(assertion.assertion)}`,
     yield* newRequestIdentifier,
-    { baseUrl: assertion.apiBaseUrl, compositionRevision: assertion.compositionRevision },
+    { baseUrl: assertion.apiBaseUrl, compositionRevision: assertion.compositionRevision, requestCache: 'no-store' },
   ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
   if (result.tenantId !== scope.tenantId || result.legalEntityId !== company) {
     return yield* Effect.fail(symmyUnavailableProblem);

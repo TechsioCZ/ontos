@@ -100,8 +100,8 @@ it('runs only the storefront scope for a change confined to the storefronts', ()
     const storefront = plan(`app/${directory}/src/app/page.tsx`);
     expect(storefront.mode, directory).toBe('scoped');
     expect(storefront.affectedPackages, directory).toEqual([directory]);
-    // The typecheck and the tooling tests that read storefront files, nothing else from the source rows.
-    expect(names(storefront.source), directory).toEqual([TYPECHECK, ...TOOLING_ROWS]);
+    // The typecheck, Rstest tooling and native tooling rows; no builds or integration jobs.
+    expect(names(storefront.source), directory).toEqual([TYPECHECK, ...STAGE_ROWS]);
     expect(names(storefront.unit), directory).toEqual([EVERY_OTHER_PACKAGE]);
     expect(storefront.unit.find(({ name }) => name === EVERY_OTHER_PACKAGE)?.commands, directory).toContain(
       `--filter ./${directory} run test:unit`,

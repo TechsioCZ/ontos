@@ -1,3 +1,4 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import { buildApplicationCompositionCatalog, defineTenantModuleEntrypoint, PrincipalResolver } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
@@ -166,7 +167,7 @@ const fixture = Effect.fn('OrganizationGovernanceTest.fixture')(function* fixtur
   });
   const scopes: TrustedPrincipalContext[] = [];
   const layer = Layer.mergeAll(
-    database,
+    GatewayNativeEvidenceLive.pipe(Layer.provide(database)),
     Layer.succeed(AuthDatabase, { adapter, executor }),
     Layer.succeed(
       PrincipalResolver,

@@ -1,4 +1,6 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import {
+  LegalEntityContextLive,
   AccessDeclarationSchema,
   AccessWorkloadSchema,
   ActiveApplicationCompositionService,
@@ -477,7 +479,8 @@ it.live(
           }),
         });
         const services = Layer.mergeAll(
-          Layer.succeed(CoreDatabase, runtime),
+          LegalEntityContextLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, runtime))),
+          GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime))),
           Layer.succeed(AccessDecisionGate, gate),
           Layer.succeed(AuthDatabase, auth),
           Layer.succeed(PrincipalResolver, makePrincipalResolver(runtime, { authenticationNamespaceId })),

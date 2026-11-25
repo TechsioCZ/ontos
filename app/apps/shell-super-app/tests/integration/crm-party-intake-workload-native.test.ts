@@ -1,3 +1,4 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 /**
  * CRM's Party intake as its registered workload, with the key the platform issues, through packaged roots only: the
  * Shell and Party Registry run from their built `.output`, CRM runs the way the app host serves its owners
@@ -644,7 +645,9 @@ it.live(
             const companyA = core.legalEntityId;
             const companyB = fixture.secondLegalEntityId;
             const registrationDatabase = Layer.mergeAll(
-              Layer.succeed(CoreDatabase, { executor: runtimeDatabase }),
+              GatewayNativeEvidenceLive.pipe(
+                Layer.provideMerge(Layer.succeed(CoreDatabase, { executor: runtimeDatabase })),
+              ),
               makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT),
             );
             const registrationRuntime = Layer.mergeAll(
@@ -695,7 +698,9 @@ it.live(
             const platform = Layer.mergeAll(
               Layer.succeed(ApiKeyService, keys),
               Layer.succeed(AuthDatabase, fixture.persistence),
-              Layer.succeed(CoreDatabase, { executor: runtimeDatabase }),
+              GatewayNativeEvidenceLive.pipe(
+                Layer.provideMerge(Layer.succeed(CoreDatabase, { executor: runtimeDatabase })),
+              ),
             );
             const release = moduleCredentialReleaseOf({
               composition: current.composition,

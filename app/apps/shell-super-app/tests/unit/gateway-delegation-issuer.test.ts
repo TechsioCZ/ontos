@@ -1,3 +1,4 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import type {
   GatewayContextV2ClaimsSchema,
   GatewayRefusalReason,
@@ -5,6 +6,7 @@ import type {
 } from '@app/shared-contracts';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
+  LegalEntityContext,
   OperationContextDenied,
   OperationContextUnavailable,
   PrincipalResolver,
@@ -575,7 +577,13 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
       verifiedProviderKeyId: callerKeyId,
     }).pipe(
       Effect.provide(signer),
-      Effect.provide(coreDatabase),
+      Effect.provide(NodeCrypto.layer),
+      Effect.provide(
+        Layer.mock(LegalEntityContext, {
+          validateSelection: () => Effect.die('Legacy delegation unexpectedly requested route company authority'),
+        }),
+      ),
+      Effect.provide(GatewayNativeEvidenceLive.pipe(Layer.provide(coreDatabase))),
       Effect.provide(
         Layer.mock(AccessDecisionGate, {
           decide: () => Effect.die('Legacy delegation unexpectedly requested Privacy dispatch authority'),
@@ -842,8 +850,8 @@ it.effect('refuses the Shell deployment as an audience unless the source release
     }
     const missingHost = yield* delegationCase({
       hostedRequirement: 'person',
-      withoutCoreMedia: true,
       target: shellTarget,
+      withoutCoreMedia: true,
     });
     assertDenied(missingHost, 'module_not_installed');
     if (Exit.isFailure(missingHost.result)) {

@@ -112,6 +112,8 @@ it('keeps every stage-delivery file out of everything a scoped plan skips', () =
           !(referrer === 'app/package.json' && toolingTest(file)) &&
           // The lint configuration names tooling tests in its override lists; every scope lints the files it changes.
           !(referrer === 'app/oxlint.config.ts' && toolingTest(file)) &&
+          // Rstest names the native tooling tests only to leave their execution to the native CI row.
+          !(referrer === 'app/rstest.config.ts' && toolingTest(file)) &&
           // The Zerops build and start commands run in the deploy, never in a gate.
           referrer !== 'app/zerops.yaml' &&
           // The deploy planner names its stage workflow and delivery action as delivery roots: paths it classifies a
@@ -230,14 +232,6 @@ const PACKAGES = 'packages/';
 const VERTICALS = 'verticals/';
 const WORKSPACE = ['apps/', PACKAGES, VERTICALS, 'topology/'];
 const skippedCommandInputs = new Map<string, readonly string[]>([
-  [
-    'node --test scripts/zerops/prove-storefront-artifact.test.mjs',
-    [
-      'scripts/zerops/prove-storefront-artifact.test.mjs',
-      'scripts/zerops/prove-storefront-artifact.mts',
-      'packages/storefront-runtime/src/',
-    ],
-  ],
   ['pnpm --filter ./n1-storefront run test run', ['n1-storefront/']],
   ['pnpm --filter ./akros-storefront run lint', ['akros-storefront/src/', 'akros-storefront/tests/']],
   ['pnpm --filter ./n1-storefront run lint', ['n1-storefront/src/', 'n1-storefront/tests/']],

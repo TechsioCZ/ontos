@@ -1,3 +1,4 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import {
   AccessWorkloadSchema,
   AccessDeclarationSchema,
@@ -193,15 +194,17 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     }
     return Response.json(ownerResponse);
   };
+  const nativeState = {
+    activeBinding: options.activeBinding ?? true,
+    onwardSourceActive: options.onwardSourceActive ?? true,
+    originalReadActive: options.originalReadActive ?? true,
+    receiver: options.receiver ?? 'system',
+  };
   const nativeQueries: { parameters: readonly unknown[]; statement: string }[] = [];
   const connection = testSqlConnection((statement, parameters) => {
     if (statement.includes('join core.access_workload_bindings current_source')) {
       nativeQueries.push({ parameters, statement });
-      if (
-        options.originalReadActive === false ||
-        options.onwardSourceActive === false ||
-        options.receiver === 'missing'
-      ) {
+      if (!nativeState.originalReadActive || !nativeState.onwardSourceActive || nativeState.receiver === 'missing') {
         return Effect.succeed([]);
       }
       const workloadKey = parameters
@@ -218,10 +221,10 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
         return Effect.succeed([]);
       }
       return Effect.succeed(
-        Array.from({ length: options.receiver === 'ambiguous' ? 2 : 1 }, () => ({
+        Array.from({ length: nativeState.receiver === 'ambiguous' ? 2 : 1 }, () => ({
           bindingIncarnation: nativeBindingIncarnation,
           principalId:
-            options.receiver === 'service'
+            nativeState.receiver === 'service'
               ? internalWorkloadPrincipalId({ legalEntityId, tenantId: principal.tenantId, workloadKey })
               : nativePrincipalId,
         })),
@@ -242,15 +245,15 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
             'privacy.core.source-processing-check',
           ].includes(parameter),
         );
-      if (workloadKey === undefined || options.receiver === 'missing' || options.originalReadActive === false) {
+      if (workloadKey === undefined || nativeState.receiver === 'missing' || !nativeState.originalReadActive) {
         return Effect.succeed([]);
       }
       const principalId =
-        options.receiver === 'service'
+        nativeState.receiver === 'service'
           ? internalWorkloadPrincipalId({ legalEntityId, tenantId: principal.tenantId, workloadKey })
           : nativePrincipalId;
       return Effect.succeed(
-        Array.from({ length: options.receiver === 'ambiguous' ? 2 : 1 }, () => ({
+        Array.from({ length: nativeState.receiver === 'ambiguous' ? 2 : 1 }, () => ({
           bindingIncarnation: nativeBindingIncarnation,
           originalWorkloadBindingIncarnation: originalReadIncarnation,
           originalWorkloadKey: options.originalReadWorkload ?? 'integration.symmy-admit',
@@ -260,7 +263,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     }
     return Effect.succeed(
       statement.includes('from core.principals p') &&
-        options.activeBinding !== false &&
+        nativeState.activeBinding &&
         parameters.includes(principal.authBindingId) &&
         parameters.includes('native-route-key') &&
         parameters.includes(principal.authenticationNamespaceId)
@@ -320,7 +323,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
     calls,
     grantInputs: grants.inputs,
     layer: Layer.mergeAll(
-      database,
+      GatewayNativeEvidenceLive.pipe(Layer.provide(database)),
       issuer,
       company,
       catalog,
@@ -328,6 +331,7 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
       Layer.succeed(FetchHttpClient.Fetch, fakeFetch),
     ),
     nativeQueries,
+    nativeState,
     publicKey,
   };
 });
@@ -940,10 +944,16 @@ it.effect(
                 { receiver: 'missing' as const },
                 { receiver: 'ambiguous' as const },
               ]) {
-                const revoked = yield* fixture({ catalog: installed, ...unavailable });
-                expect(
-                  yield* admitNativeRouteRead(input).pipe(Effect.flip, Effect.provide(revoked.layer)),
-                ).toMatchObject({ code: 'forbidden', reason: 'workload_binding_not_active' });
+                const priorState = { ...current.nativeState };
+                Object.assign(current.nativeState, unavailable);
+                const priorReads = current.nativeQueries.length;
+                expect(yield* admitNativeRouteRead(input).pipe(Effect.flip)).toMatchObject({
+                  code: 'forbidden',
+                  reason: 'workload_binding_not_active',
+                });
+                expect(current.nativeQueries.length).toBeGreaterThan(priorReads);
+                expect(current.nativeQueries.at(-1)?.statement).toContain('current_source');
+                Object.assign(current.nativeState, priorState);
               }
             }).pipe(
               Effect.provide(Layer.mergeAll(current.layer, assertionAuth, assertionPrincipalResolver, verification)),

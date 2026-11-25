@@ -1,9 +1,9 @@
-import { AccessDeclarationSchema, recoverSqlTransactionError } from '@app/core-runtime';
+import { GatewayNativeEvidence } from './gateway-native-evidence.ts';
+import { AccessDeclarationSchema } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { RegisteredGatewayOrganizationGovernanceReadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayOrganizationGovernanceRead } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { CoreDatabase } from '@app/core-runtime/db/client';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import type { GatewayOrganizationGovernanceReadSubjectSchema } from '@app/shared-contracts';
 import {
@@ -12,13 +12,12 @@ import {
   organizationGovernanceReadOperationContract,
 } from '@app/shared-contracts';
 import { symmySourceOrganizationFactsAccessDeclaration } from '@app/symmy-integration/api/symmy-source-organization-facts';
-import { sql } from 'drizzle-orm';
 import { DateTime, Effect, Option, Predicate, Redacted, Schema } from 'effect';
 import { jwtVerify } from 'jose';
 
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { validateDelegationAuthentication } from './gateway-delegation-authentication.service.ts';
-import { delegationForbidden, delegationUnavailable, GatewayDelegationError } from './gateway-delegation-errors.ts';
+import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { bindingAttestsSource, resolvePublishedFiniteGatewayTarget } from './gateway-delegation-policy.ts';
 import type { GatewayModuleBinding } from './gateway-delegation-policy.ts';
 import { GatewayDelegationVerification } from './gateway-delegation-verification.ts';
@@ -128,49 +127,12 @@ const verifySource = Effect.fn('OrganizationGovernanceEvidence.verifySource')(fu
   return claims;
 });
 
-/** This fresh native identity question neither carries a previous relay actor nor invents a namespace. */
-const validateCurrentHuman = Effect.fn('OrganizationGovernanceEvidence.currentHuman')(function* human(
+const validateCurrentHuman = Effect.fn('GatewayNativeEvidence.validateCurrentHuman')(function* native(
   principal: TrustedPrincipalContext,
 ) {
-  const database = yield* CoreDatabase;
-  yield* database.executor
-    .transaction(
-      Effect.fn('OrganizationGovernanceEvidence.nativeHuman')(function* native(transaction) {
-        yield* transaction.execute(
-          sql`select set_config('ontos.tenant_id',${principal.tenantId},true),set_config('ontos.legal_entity_id',${principal.legalEntityId ?? ''},true)`,
-          'objects',
-        );
-        const namespace =
-          principal.authenticationNamespaceId === undefined
-            ? sql`true`
-            : sql`b.authentication_namespace_id=${principal.authenticationNamespaceId}`;
-        const rows = yield* transaction.execute(
-          sql`
-      select p.principal_id
-      from core.principals p
-      join core.tenants t on t.tenant_id=p.tenant_id and t.status='active'
-      join core.principal_auth_bindings b on b.tenant_id=p.tenant_id and b.principal_id=p.principal_id
-        and b.principal_auth_binding_id=${principal.authBindingId}::uuid and b.status='active' and b.revoked_at is null
-      join core.legal_entities l on l.tenant_id=p.tenant_id and l.legal_entity_id=${principal.legalEntityId}::uuid and l.status='active'
-      where p.tenant_id=${principal.tenantId}::uuid and p.principal_id=${principal.principalId}::uuid
-        and p.kind='human' and p.status='active' and ${namespace}
-        and b.subject_type=${principal.authMethod === 'session' ? 'user' : 'api_key'}
-      limit 2`,
-          'objects',
-        );
-        if (rows.length !== 1) {
-          return yield* delegationForbidden('organization_governance_not_admitted')();
-        }
-        return yield* Effect.void;
-      }),
-    )
-    .pipe(
-      recoverSqlTransactionError,
-      Effect.mapError((cause) =>
-        Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable('source_evidence_unavailable')(cause),
-      ),
-    );
+  return yield* (yield* GatewayNativeEvidence).validateCurrentHuman(principal);
 });
+
 const requireReadRights = Effect.fn('OrganizationGovernanceEvidence.readRights')(function* rights(
   principal: TrustedPrincipalContext,
   sourceKey: string,

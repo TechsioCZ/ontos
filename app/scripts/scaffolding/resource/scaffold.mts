@@ -25,7 +25,7 @@ import {
 } from '../shared.mts';
 import type { OntosVerticalMetadata, ResourceScaffoldConfig } from '../shared.mts';
 
-const CoreResourceNameSchema = Schema.Literals(['legal-entity', 'media-asset']);
+const CoreResourceNameSchema = Schema.Literals(['legal-entity', 'media-asset', 'person']);
 type CoreResourceName = typeof CoreResourceNameSchema.Type;
 const isCoreResourceName = Schema.is(CoreResourceNameSchema);
 const CORE_RESOURCE_NAMES = CoreResourceNameSchema.literals.join(', ');
@@ -43,6 +43,7 @@ interface CoreResourceOwner {
 const CORE_RESOURCES = {
   'legal-entity': { brand: 'LegalEntityId', moduleId: 'core.identity', typeSlug: 'legal-entity' },
   'media-asset': { brand: 'MediaAssetId', moduleId: 'core.media', typeSlug: 'asset' },
+  person: { brand: 'PersonResourceId', moduleId: 'core.identity', typeSlug: 'person' },
 } as const satisfies Readonly<Record<CoreResourceName, CoreResourceOwner>>;
 
 const renderResource = (
@@ -54,13 +55,21 @@ const renderResource = (
   const type = toPascalCase(resource);
   const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
   const resourceType = `${vertical.moduleId}.${coreResource?.typeSlug ?? resource}`;
+  const corePerson = coreResource?.brand === 'PersonResourceId';
+  let resourceIdValidation = 'Schema.isMinLength(1), Schema.isMaxLength(300)';
+  if (corePerson) {
+    resourceIdValidation =
+      "Schema.makeFilter((value) => value.split('.').length === 2 && value.split('.').every(Schema.is(Schema.String.check(Schema.isUUID()))) ? undefined : 'Expected company and principal UUIDs')";
+  } else if (core) {
+    resourceIdValidation = 'Schema.isUUID()';
+  }
   return `${RESOURCE_GENERATOR_HEADER}
 // @ontos-resource-owner ${vertical.moduleId}
 // @ontos-resource-slug ${resource}
 import type { OntosResourceType } from '${core ? '../modules/manifest.ts' : '@app/core-runtime'}';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(${core ? 'Schema.isUUID()' : 'Schema.isMinLength(1), Schema.isMaxLength(300)'})${coreResource === undefined ? '' : `.pipe(Schema.brand('${coreResource.brand}'))`};
+const ResourceIdSchema = Schema.String.check(${resourceIdValidation})${coreResource === undefined ? '' : `.pipe(Schema.brand('${coreResource.brand}'))`};
 const TenantIdSchema = Schema.String.check(Schema.isUUID())${core ? ".pipe(Schema.brand('TenantId'))" : ''};
 
 export const ${type}RefSchema = Schema.Struct({
@@ -74,9 +83,9 @@ export type ${type}Ref = typeof ${type}RefSchema.Type;
 export const ${descriptor} = {
   capabilities: {
     graphVisible: false,
-    linkable: false,
+    linkable: ${corePerson},
     mediaAttachable: false,
-    searchable: false,
+    searchable: ${corePerson},
     timelineVisible: false,
   },
   description: '${toTitle(resource)} resource.',

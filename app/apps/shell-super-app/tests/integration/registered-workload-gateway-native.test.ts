@@ -1,4 +1,6 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import {
+  LegalEntityContextLive,
   ActiveApplicationCompositionService,
   AccessActorSchema,
   AccessDeclarationSchema,
@@ -1133,7 +1135,8 @@ it.live(
           ),
         );
         const services = Layer.mergeAll(
-          Layer.succeed(CoreDatabase, runtime),
+          LegalEntityContextLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, runtime))),
+          GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime))),
           Layer.succeed(AccessDecisionGate, nativeMachineGate(runtime, companyTenants)),
           Layer.succeed(AuthDatabase, auth),
           Layer.succeed(PrincipalResolver, makePrincipalResolver(runtime, { authenticationNamespaceId })),
@@ -1727,7 +1730,7 @@ it.live(
           expectedAuthContextRef: `job:${workerKey}:run:${ingressOnlyInvocation}`,
         };
         const ingressOnly = yield* issue(ingressOnlyAdmission);
-        expect(ingressOnly.machineContext?.principalId).toBe(machinePrincipal);
+        expect(ingressOnly.machineContext).toMatchObject({ principalId: machinePrincipal });
         const ingressPrincipal = yield* receive(ingressOnly.token);
         const ingressScope = yield* receiverScopes.resolve({
           audience: 'party-registry',
@@ -1736,15 +1739,33 @@ it.live(
           principal: ingressPrincipal,
         });
         expect((yield* decide(ingressScope)).outcome).toBe('ALLOWED');
-        expect(readVerifiedGatewayWorkload(ingressScope)?.originalOwnerBindingIncarnation).toBe(machineIncarnation);
+        expect(readVerifiedGatewayWorkload(ingressScope)).toMatchObject({
+          originalOwnerBindingIncarnation: machineIncarnation,
+        });
         const ingressNested = { ...nestedSubject, sourceAssertion: ingressOnly.token };
-        expect((yield* issue(ingressNested, 'privacy', partyProviderKey)).machineContext?.principalId).toBe(privacyMachine);
-        expect(Exit.isFailure(yield* Effect.exit(issue({
-          ...ingressOnlyAdmission, legalEntityId: foreignLegalEntityId,
-        })))).toBe(true);
-        expect(Exit.isFailure(yield* Effect.exit(issue({
-          ...ingressOnlyAdmission, expectedPrincipalId: ingressOnlyPrincipal,
-        })))).toBe(true);
+        expect((yield* issue(ingressNested, 'privacy', partyProviderKey)).machineContext).toMatchObject({
+          principalId: privacyMachine,
+        });
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              issue({
+                ...ingressOnlyAdmission,
+                legalEntityId: foreignLegalEntityId,
+              }),
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              issue({
+                ...ingressOnlyAdmission,
+                expectedPrincipalId: ingressOnlyPrincipal,
+              }),
+            ),
+          ),
+        ).toBe(true);
         yield* insert(sql`update core.access_workload_bindings set status='revoked',revoked_at=now()
           where binding_id=${ingressOnlyBinding}::uuid`);
         expect(Exit.isFailure(yield* Effect.exit(issue(ingressOnlyAdmission)))).toBe(true);
@@ -2050,7 +2071,7 @@ it.live(
           const nativeEnforcement = AccessDecisionLive.pipe(
             Layer.provideMerge(AccessEnforcementPortsLive),
             Layer.provideMerge(TenantIntentLoaderLive),
-            Layer.provide(Layer.succeed(CoreDatabase, runtime)),
+            Layer.provide(GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime)))),
           );
           const nativePorts = yield* Layer.build(nativeEnforcement);
           const runtimeServices = Layer.mergeAll(

@@ -1,4 +1,6 @@
+import { GatewayNativeEvidenceLive } from '../../api/auth/gateway-native-evidence.service.ts';
 import {
+  LegalEntityContextLive,
   ActiveApplicationCompositionService,
   AccessDeclarationSchema,
   AccessActorSchema,
@@ -75,7 +77,7 @@ import {
   ActionPrincipalInvalidErrorSchema,
   bindGatewayPrincipalVerifier,
 } from '@app/gateway-principal-verifier/server';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import {
@@ -572,7 +574,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         AccessDecisionLive.pipe(
           Layer.provide(AccessEnforcementPortsLive),
           Layer.provide(TenantIntentLoaderLive),
-          Layer.provide(Layer.succeed(CoreDatabase, runtime)),
+          Layer.provide(GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime)))),
         ),
       );
       const gate = Context.get(gateServices, AccessDecisionGate);
@@ -602,7 +604,8 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         }),
       });
       const services = Layer.mergeAll(
-        Layer.succeed(CoreDatabase, runtime),
+        LegalEntityContextLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, runtime))),
+        GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime))),
         Layer.succeed(AuthDatabase, auth),
         Layer.succeed(
           PrincipalResolver,
@@ -677,7 +680,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
       const runtimeServices = yield* Layer.build(
         OutboxRuntimeLive.pipe(
           Layer.provide(OutboxRepositoryLive),
-          Layer.provide(Layer.succeed(CoreDatabase, runtime)),
+          Layer.provide(GatewayNativeEvidenceLive.pipe(Layer.provideMerge(Layer.succeed(CoreDatabase, runtime)))),
         ),
       );
       const nativeRuntime = Context.get(runtimeServices, OutboxRuntime);
@@ -1384,6 +1387,8 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         claimOwnerPrefix: 'native-privacy-proof',
         expectedDeployment: { appId: 'symmy-integration', buildMarker: 'symmy-integration-build' },
         layer: Layer.mergeAll(
+          NodeCrypto.layer,
+          LegalEntityContextLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, runtime))),
           Layer.succeed(OutboxRuntime, nativeRuntime),
           Layer.succeed(
             ActiveApplicationCompositionService,

@@ -26,6 +26,7 @@ import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-com
 import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equivalence.read.ts';
 import { productVariantSnapshotRead } from '../../src/api/product-variant-snapshot.read.ts';
 import { manufacturerRelationCurrentRead } from '../../src/api/manufacturer-relation-current.read.ts';
+import { catalogDocumentCurrentRead } from '../../src/api/catalog-document-current.read.ts';
 import { assortmentProductClassificationV1Read } from '../../src/api/assortment-product-classification-v1.read.ts';
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
 import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
@@ -35,6 +36,11 @@ import { assignSkuRecoveryRead } from '../../src/api/assign-sku-recovery.read.ts
 import { createVariantRecoveryRead } from '../../src/api/create-variant-recovery.read.ts';
 import { createProductRecoveryRead } from '../../src/api/create-product-recovery.read.ts';
 import { bindInitialVariantSourceRecoveryRead } from '../../src/api/bind-initial-variant-source-recovery.read.ts';
+import { addProductCategoryAssignmentRecoveryRead } from '../../src/api/add-product-category-assignment-recovery.read.ts';
+import { governVariantAxesRecoveryRead } from '../../src/api/govern-variant-axes-recovery.read.ts';
+import { confirmVariantCombinationRecoveryRead } from '../../src/api/confirm-variant-combination-recovery.read.ts';
+import { setProductUnitTargetDivisibilityRecoveryRead } from '../../src/api/set-product-unit-target-divisibility-recovery.read.ts';
+import { decideProductTypeUnnecessaryRecoveryRead } from '../../src/api/decide-product-type-unnecessary-recovery.read.ts';
 import { catalogSourceProductPageRead } from '../../src/api/catalog-source-product-page.read.ts';
 import { catalogSourceProductsRead } from '../../src/api/catalog-source-products.read.ts';
 import { productPageRead } from '../../src/api/product-page.read.ts';
@@ -68,6 +74,7 @@ describe('Catalog backend declaration and full publication', () => {
       pricingPurposeEquivalenceRead,
       productVariantSnapshotRead,
       manufacturerRelationCurrentRead,
+      catalogDocumentCurrentRead,
       assortmentProductClassificationV1Read,
       correctProductRecoveryRead,
       updateProductRecoveryRead,
@@ -77,6 +84,11 @@ describe('Catalog backend declaration and full publication', () => {
       createVariantRecoveryRead,
       createProductRecoveryRead,
       bindInitialVariantSourceRecoveryRead,
+      addProductCategoryAssignmentRecoveryRead,
+      governVariantAxesRecoveryRead,
+      confirmVariantCombinationRecoveryRead,
+      setProductUnitTargetDivisibilityRecoveryRead,
+      decideProductTypeUnnecessaryRecoveryRead,
       catalogSourceProductPageRead,
       catalogSourceProductsRead,
       productPageRead,
@@ -84,6 +96,9 @@ describe('Catalog backend declaration and full publication', () => {
     expect(declaration.reads).toHaveLength(reads.length);
     for (const [index, read] of reads.entries()) {
       expect(declaration.reads?.[index]).toBe(read);
+      expect(() =>
+        defineVerticalRuntimeRegistration({ ...declaration, reads: reads.filter((entry) => entry !== read) }),
+      ).toThrow();
     }
     for (const binding of runtimeManifest.publicSurface.operationContracts ?? []) {
       expect([...declaration.actions, ...(declaration.reads ?? [])]).toContain(binding.registration);

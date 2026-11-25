@@ -78,6 +78,13 @@ it.effect('Core person generator preserves conditional exports and provider emit
       });
       yield* scaffold(root, 'search-provider', providerArgs);
       const files = yield* snapshotTree(root);
+      const resource = files['packages/core-runtime/src/resources/person.ts'];
+      expect(resource).toContain("Schema.brand('PersonResourceId')");
+      expect(resource).toContain("value.split('.').length === 2");
+      expect(resource).toContain("value.split('.').every(Schema.is(Schema.String.check(Schema.isUUID())))");
+      expect(resource).toContain("resourceType: Schema.Literal('core.identity.person')");
+      expect(resource).toContain('linkable: true');
+      expect(resource).toContain('searchable: true');
       expect(files[peopleSearchPath]).toContain('defineSystemModuleEntrypoint');
       expect(files[peopleSearchPath]).toContain("legalEntityScope: 'required'");
       expect(files[peopleSearchPath]).toContain("key: 'core.identity.people-search.query'");
