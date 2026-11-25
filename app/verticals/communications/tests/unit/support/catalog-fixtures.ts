@@ -62,6 +62,7 @@ interface TypeOverrides {
   readonly meaning?: string;
   readonly onboarding?: 'ACTIVE' | 'NOT_ACTIVATED';
   readonly ownerRequiredLanguage?: 'cs' | 'en';
+  readonly placeholderContract?: unknown;
   readonly privacyPurposeRefs?: readonly string[];
   readonly purpose?: string;
   readonly recovery?: unknown;

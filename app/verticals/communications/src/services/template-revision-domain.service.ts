@@ -15,8 +15,10 @@ import {
   TemplateResolutionFailed,
   TemplateRevisionNotFound,
 } from '../../shared/template-revision-errors.ts';
-import { builtInTemplateDefaultOf } from '../domain/catalog/built-in-template-defaults.ts';
-import type { BuiltInTemplateDefault } from '../domain/catalog/built-in-template-defaults.ts';
+import { approvedMessageTypes } from '../domain/catalog/approved-registry.ts';
+import type { TemplateContract } from '../domain/catalog/template-contract.ts';
+import { templateContractOf } from '../domain/catalog/template-contract.ts';
+import type { TransactionalMessageType } from '../domain/catalog/message-type.ts';
 import type {
   TemplateActivationRecord,
   TemplateReadPortContract,
@@ -78,16 +80,60 @@ const businessTimeOf = Effect.fn('TemplateRevision.businessTime')(function* busi
   return clampBusinessTime(clock, latest);
 });
 
-/** Meaning fingerprint of one revision text: identifies it without storing or exposing the text again. */
+/** The text and the placeholder declarations a revision's digest covers: a changed declaration is a different revision. */
+interface DigestedContent {
+  readonly body: string;
+  readonly optionalPlaceholders: readonly string[];
+  readonly requiredPlaceholders: readonly string[];
+  readonly subject: string;
+}
+
+/**
+ * Meaning fingerprint of one revision: its subject, body and the placeholder names it declares as required and as
+ * optional. It identifies the revision without storing or exposing the text again. The declarations are part of it
+ * because two revisions of the same words that declare different required values are not the same message.
+ */
 export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')(function* contentDigest(
-  subject: string,
-  body: string,
+  content: DigestedContent,
 ) {
   const crypto = yield* Crypto.Crypto;
-  const bytes = new TextEncoder().encode(`${subject.length}:${subject}${body}`);
-  const digest = yield* crypto.digest('SHA-256', bytes).pipe(Effect.orDie);
+  // each field is length-prefixed and a placeholder name never holds a comma, so no two contents share one encoding
+  const canonical = [
+    content.subject,
+    content.body,
+    uniqueSorted(content.requiredPlaceholders).join(','),
+    uniqueSorted(content.optionalPlaceholders).join(','),
+  ]
+    .map((field) => `${field.length}:${field}`)
+    .join('');
+  const digest = yield* crypto.digest('SHA-256', new TextEncoder().encode(canonical)).pipe(Effect.orDie);
   return Hex.encode(digest);
 });
+
+/**
+ * The approved Transactional Message Types as far as templates are concerned: the contract a revision of one message
+ * type key must fit. A key that is not approved has no contract, so no revision of it can be prepared or activated.
+ */
+export interface ApprovedTemplateTypes {
+  readonly contractOf: (messageType: string) => Option.Option<TemplateContract>;
+}
+
+const approvedTemplateTypesOf = (
+  types: readonly Pick<TransactionalMessageType, 'placeholderContract' | 'typeId'>[],
+): ApprovedTemplateTypes => ({
+  contractOf: (messageType) =>
+    Option.fromNullishOr(types.find(({ typeId }) => typeId === messageType)).pipe(Option.map(templateContractOf)),
+});
+
+/** The production set: exactly the approved catalog, the same list the decision layer is built from. */
+export const approvedTemplateTypes: ApprovedTemplateTypes = approvedTemplateTypesOf(approvedMessageTypes);
+
+const approvedContractOf = (catalog: ApprovedTemplateTypes, messageType: string) =>
+  Option.match(catalog.contractOf(messageType), {
+    onNone: () =>
+      refuse('template_content_malformed', 'The message type is not an approved Transactional Message Type'),
+    onSome: Effect.succeed,
+  });
 
 /**
  * An Action of one scope may only change a Template of exactly that scope: a tenant-wide Template needs a tenant-wide
@@ -100,10 +146,13 @@ const assertOperatingScope = (scope: TemplateScope, legalEntityId: string | null
 
 /**
  * What activation requires of a revision: a single-line subject, well-formed placeholders, every placeholder the
- * revision itself requires present and nothing undeclared by it. The Type carries no declaration to fall back on.
+ * revision itself requires present and nothing undeclared by it, and then its fit with the approved message type
+ * (#1398 D.3, #1399 L-08): it may use and declare only placeholders the type allows, it must carry every placeholder the
+ * type requires (the Auth secret slot among them), and a secret-bearing slot never stands in the subject.
  */
 const assessActivatable = Effect.fn('TemplateRevision.assessActivatable')(function* assess(
   revision: TemplateRevisionRecord,
+  contract: TemplateContract,
 ) {
   const subject = extractPlaceholders(revision.subject);
   const body = extractPlaceholders(revision.body);
@@ -131,6 +180,34 @@ const assessActivatable = Effect.fn('TemplateRevision.assessActivatable')(functi
       undeclared,
     );
   }
+  const allowed = new Map(contract.placeholders.map((placeholder) => [placeholder.name, placeholder] as const));
+  const outsideType = uniqueSorted([...declared, ...used].filter((name) => !allowed.has(name)));
+  if (outsideType.length > 0) {
+    return yield* refuse(
+      'template_placeholder_undeclared',
+      'The revision uses or declares a placeholder its message type does not allow',
+      outsideType,
+    );
+  }
+  const secretInSubject = uniqueSorted(subject.names.filter((name) => allowed.get(name)?.kind === 'owner-rendered'));
+  if (secretInSubject.length > 0) {
+    return yield* refuse(
+      'template_content_malformed',
+      'A secret-bearing placeholder may not stand in the subject',
+      secretInSubject,
+    );
+  }
+  const required = new Set(revision.requiredPlaceholders);
+  const lacking = contract.placeholders
+    .flatMap(({ name, required: must }) => (must && !(required.has(name) && used.has(name)) ? [name] : []))
+    .toSorted(Order.String);
+  if (lacking.length > 0) {
+    return yield* refuse(
+      'template_required_placeholder_omitted',
+      'The revision lacks a placeholder its message type requires',
+      lacking,
+    );
+  }
   return uniqueSorted([...used]);
 });
 
@@ -150,8 +227,10 @@ export const prepareRevision = Effect.fn('TemplateRevision.prepare')(function* p
   port: TemplateRevisionPortContract,
   input: PrepareRevisionInput,
   actor: TemplateActor,
+  catalog: ApprovedTemplateTypes = approvedTemplateTypes,
 ) {
   yield* assertOperatingScope(input.scope, actor.legalEntityId);
+  yield* approvedContractOf(catalog, input.messageType);
   const subject = extractPlaceholders(input.subject);
   const body = extractPlaceholders(input.body);
   const required = uniqueSorted(input.requiredPlaceholders);
@@ -180,7 +259,12 @@ export const prepareRevision = Effect.fn('TemplateRevision.prepare')(function* p
     actionInvocationId: actor.actionInvocationId,
     at: yield* port.clockNow,
     body: input.body,
-    contentDigest: yield* templateContentDigest(input.subject, input.body),
+    contentDigest: yield* templateContentDigest({
+      body: input.body,
+      optionalPlaceholders: optional,
+      requiredPlaceholders: required,
+      subject: input.subject,
+    }),
     optionalPlaceholders: optional,
     placeholdersUsed: uniqueSorted([...subject.names, ...body.names]),
     principalId: actor.principalId,
@@ -196,6 +280,7 @@ const loadRevisionAndType = Effect.fn('TemplateRevision.loadRevisionAndType')(fu
   port: TemplateRevisionPortContract,
   revisionId: string,
   actor: TemplateActor,
+  catalog: ApprovedTemplateTypes,
 ) {
   const revision = yield* port.loadRevision(revisionId);
   if (Option.isNone(revision)) {
@@ -213,7 +298,8 @@ const loadRevisionAndType = Effect.fn('TemplateRevision.loadRevisionAndType')(fu
     });
   }
   yield* assertOperatingScope(type.value.identity.scope, actor.legalEntityId);
-  return { revision: revision.value, type: type.value };
+  const contract = yield* approvedContractOf(catalog, type.value.identity.messageType);
+  return { contract, revision: revision.value, type: type.value };
 });
 
 const openActivationOf = (open: readonly TemplateActivationRecord[], revisionId: string) =>
@@ -227,12 +313,13 @@ export const activateRevision = Effect.fn('TemplateRevision.activate')(function*
   port: TemplateRevisionPortContract,
   input: { readonly reason: string; readonly revisionId: string },
   actor: TemplateActor,
+  catalog: ApprovedTemplateTypes = approvedTemplateTypes,
 ) {
-  const { revision, type } = yield* loadRevisionAndType(port, input.revisionId, actor);
+  const { contract, revision, type } = yield* loadRevisionAndType(port, input.revisionId, actor, catalog);
   if (Option.isSome(yield* port.findInvalidation(revision.revisionId))) {
     return yield* refuse('template_revision_invalidated', 'An unsafe-invalidated revision can never be activated');
   }
-  yield* assessActivatable(revision);
+  yield* assessActivatable(revision, contract);
   const open = yield* port.openActivations(type.templateTypeId);
   if (openActivationOf(open, revision.revisionId) !== undefined) {
     return yield* refuse('template_revision_already_active', 'The revision is already the active revision');
@@ -270,8 +357,9 @@ export const deactivateRevision = Effect.fn('TemplateRevision.deactivate')(funct
   port: TemplateRevisionPortContract,
   input: { readonly reason: string; readonly revisionId: string },
   actor: TemplateActor,
+  catalog: ApprovedTemplateTypes = approvedTemplateTypes,
 ) {
-  const { revision, type } = yield* loadRevisionAndType(port, input.revisionId, actor);
+  const { revision, type } = yield* loadRevisionAndType(port, input.revisionId, actor, catalog);
   const open = openActivationOf(yield* port.openActivations(type.templateTypeId), revision.revisionId);
   if (open === undefined) {
     return yield* refuse('template_revision_not_active', 'The revision is not the active revision');
@@ -295,8 +383,9 @@ export const invalidateRevisionAsUnsafe = Effect.fn('TemplateRevision.invalidate
   port: TemplateRevisionPortContract,
   input: { readonly reason: string; readonly revisionId: string },
   actor: TemplateActor,
+  catalog: ApprovedTemplateTypes = approvedTemplateTypes,
 ) {
-  const { revision, type } = yield* loadRevisionAndType(port, input.revisionId, actor);
+  const { revision, type } = yield* loadRevisionAndType(port, input.revisionId, actor, catalog);
   if (Option.isSome(yield* port.findInvalidation(revision.revisionId))) {
     return yield* refuse('template_revision_already_invalidated', 'The revision is already invalidated as unsafe');
   }
@@ -329,51 +418,19 @@ const noActiveRevision = (reason: string) =>
   new TemplateResolutionFailed({ code: 'template_no_active_revision', reason });
 
 /**
- * The built-in default pin of an identity the Tenant never took over, or the explicit no-template failure when no
- * built-in default exists for it. The pin records that the text is the built-in one, its version and its digest.
+ * Pin contract, step one for exactly one Template identity: the unambiguous revision an authorised administrator
+ * prepared AND activated, in force at the decision time. There is no other source (#1398 PO 1A, R-D1): no type, no
+ * activation, an ended, invalidated or ambiguous revision is an explicit failure, never a guess and never a built-in,
+ * shared, foreign-scope, foreign-language or foreign-brand text.
  */
-const builtInPinOr = Effect.fn('TemplateRevision.builtInPin')(function* builtInPin(
-  identity: TemplateIdentity,
-  at: DateTime.Utc,
-  reason: string,
-) {
-  const builtIn = builtInTemplateDefaultOf(identity);
-  if (Option.isNone(builtIn)) {
-    return yield* noActiveRevision(reason);
-  }
-  return yield* decodePin({
-    ...identity,
-    contentDigest: builtIn.value.contentDigest,
-    decisionTime: iso(at),
-    revisionId: builtIn.value.revisionId,
-    revisionNumber: builtIn.value.version,
-    source: 'BUILT_IN_DEFAULT',
-    templateTypeId: builtIn.value.templateTypeId,
-  }).pipe(Effect.orDie);
-});
-
-/**
- * Pin contract, step one: resolve the unambiguous text in force at the decision time for exactly one Template identity.
- * The Tenant's own active revision always wins. Only for an identity the Tenant NEVER took over (no Type, or a Type none
- * of whose revisions was ever activated) does resolution fall back, as its last step, to the built-in default text
- * (#1398, #1406). Once the Tenant activated any own revision of the identity it owns it: a deactivated, replaced-then-
- * ended or unsafe-invalidated own revision fails closed exactly as before, so no fallback re-enables text after a Tenant
- * or a security action stopped it. No text at all, or more than one active revision, is an explicit failure: never a
- * guess, never another scope, language or brand. The Message Intent lane stores the returned pin at the first approved
- * creation of an intent.
- */
-export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(function* resolveTemplatePin(
+const resolveExactPin = Effect.fn('TemplateRevision.resolveExactPin')(function* resolveExactPin(
   port: TemplateReadPortContract,
   identity: TemplateIdentity,
   decisionTime?: DateTime.Utc,
 ) {
   const type = yield* port.findType(identity);
   if (Option.isNone(type)) {
-    return yield* builtInPinOr(
-      identity,
-      decisionTime ?? (yield* port.clockNow),
-      'No Template Type exists for this exact message type, channel, language and scope',
-    );
+    return yield* noActiveRevision('No Template Type exists for this exact message type, channel, language and scope');
   }
   // A decision time taken from the clock is taken under the shared Type lock, so no activation can later commit with a
   // start at or before it: the pin's decision time stays consistent with the end of the revision it pins.
@@ -391,10 +448,7 @@ export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(funct
   }
   const [only] = active;
   if (only === undefined) {
-    // never taken over: only drafts (or nothing) exist, so the built-in default is still the text in force
-    return Option.isNone(yield* port.latestActivityAt(type.value.templateTypeId))
-      ? yield* builtInPinOr(identity, at, NO_USABLE_ACTIVE_REVISION)
-      : yield* noActiveRevision(NO_USABLE_ACTIVE_REVISION);
+    return yield* noActiveRevision(NO_USABLE_ACTIVE_REVISION);
   }
   const [revision, invalidation] = yield* Effect.all(
     [port.loadRevision(only.revisionId), port.findInvalidation(only.revisionId)],
@@ -414,27 +468,31 @@ export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(funct
   }).pipe(Effect.orDie);
 });
 
-/** The built-in text a built-in pin names, only while the catalog still holds exactly that version and text. */
-const builtInOfPin = (pin: TemplatePin): Option.Option<BuiltInTemplateDefault> =>
-  builtInTemplateDefaultOf(pin).pipe(
-    Option.filter(
-      (builtIn) =>
-        builtIn.revisionId === pin.revisionId &&
-        builtIn.templateTypeId === pin.templateTypeId &&
-        builtIn.version === pin.revisionNumber,
-    ),
-  );
-
-/** The exact subject, body and declared placeholders of the text a pin names, wherever that text lives. */
-export const pinnedTemplateText = Effect.fn('TemplateRevision.pinnedText')(function* pinnedText(
-  port: Pick<TemplateReadPortContract, 'loadRevision'>,
-  pin: TemplatePin,
+/**
+ * Pin contract, step one with the Tenant-to-Legal-Entity rule (R-D7). A request in a Legal Entity first looks for a
+ * revision of that exact Legal Entity. Only when the Legal Entity NEVER took the identity over (no Type, or a Type none of
+ * whose revisions was ever activated) does it use the Tenant-wide approved revision of the same message type, channel and
+ * language; the returned pin then carries the Tenant scope it was taken from, so the history shows which scope served the
+ * message. A Legal Entity that activated an own revision owns the identity: its ended, invalidated or ambiguous own
+ * revision fails closed and never falls back. The Message Intent lane stores the returned pin at the first approved
+ * creation of an intent.
+ */
+export const resolveTemplatePin = Effect.fn('TemplateRevision.resolvePin')(function* resolveTemplatePin(
+  port: TemplateReadPortContract,
+  identity: TemplateIdentity,
+  decisionTime?: DateTime.Utc,
 ) {
-  const text: Option.Option<
-    Pick<TemplateRevisionRecord, 'body' | 'optionalPlaceholders' | 'requiredPlaceholders' | 'subject'>
-  > = pin.source === 'BUILT_IN_DEFAULT' ? builtInOfPin(pin) : yield* port.loadRevision(pin.revisionId);
-  return text;
+  if (identity.scope.kind === 'tenant') {
+    return yield* resolveExactPin(port, identity, decisionTime);
+  }
+  const own = yield* port.findType(identity);
+  const takenOver = Option.isSome(own) && Option.isSome(yield* port.latestActivityAt(own.value.templateTypeId));
+  return yield* resolveExactPin(port, takenOver ? identity : { ...identity, scope: { kind: 'tenant' } }, decisionTime);
 });
+
+/** The exact subject, body and declared placeholders of the revision a pin names. */
+export const pinnedTemplateText = (port: Pick<TemplateReadPortContract, 'loadRevision'>, pin: TemplatePin) =>
+  port.loadRevision(pin.revisionId);
 
 /**
  * Pin contract, step two: the Current gate before every stoppable handoff, retry included. A retry reuses its stored
@@ -444,17 +502,6 @@ export const verifyTemplatePinForHandoff = Effect.fn('TemplateRevision.verifyPin
   port: TemplateReadPortContract,
   pin: TemplatePin,
 ) {
-  if (pin.source === 'BUILT_IN_DEFAULT') {
-    // a built-in text is gated by the catalog: a changed or withdrawn wording is a different text, never an upgrade
-    if (Option.isNone(builtInOfPin(pin))) {
-      return yield* new TemplatePinBlocked({
-        code: 'pinned_template_revision_unavailable',
-        reason: 'The pinned built-in default text is no longer available; nothing is upgraded silently',
-        revisionId: pin.revisionId,
-      });
-    }
-    return pin;
-  }
   const revision = yield* port.loadRevision(pin.revisionId);
   if (
     Option.isNone(revision) ||
@@ -539,30 +586,6 @@ export const describeTemplateUse = Effect.fn('TemplateRevision.describeUse')(fun
   port: TemplateRevisionPortContract,
   pin: TemplatePin,
 ) {
-  if (pin.source === 'BUILT_IN_DEFAULT') {
-    const builtIn = builtInOfPin(pin);
-    if (Option.isNone(builtIn)) {
-      return yield* new TemplateRevisionNotFound({
-        code: 'template_revision_not_found',
-        reason: 'The pinned built-in default text is unavailable',
-      });
-    }
-    const builtInAudit: TemplateUseAudit = yield* Schema.decodeUnknownEffect(TemplateUseAuditSchema)({
-      activations: [],
-      activeAtDecisionTime: true,
-      contentDigest: builtIn.value.contentDigest,
-      decisionTime: iso(pin.decisionTime),
-      identity: { channel: pin.channel, language: pin.language, messageType: pin.messageType, scope: pin.scope },
-      lifecycleState: 'active',
-      optionalPlaceholders: builtIn.value.optionalPlaceholders,
-      requiredPlaceholders: builtIn.value.requiredPlaceholders,
-      revisionId: pin.revisionId,
-      revisionNumber: pin.revisionNumber,
-      source: 'BUILT_IN_DEFAULT',
-      templateTypeId: pin.templateTypeId,
-    }).pipe(Effect.orDie);
-    return builtInAudit;
-  }
   const [revision, type, activations, invalidation] = yield* Effect.all(
     [
       port.loadRevision(pin.revisionId),

@@ -62,7 +62,6 @@ export { CommunicationRequestSchema } from '@app/communications-contracts/commun
 export type { CommunicationRequestEncoded } from '@app/communications-contracts/communication-request';
 export { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 export {
-  PORTAL_AUTH_DEFAULT_COPY_ACTIVATION,
   PORTAL_AUTH_DEFAULT_COPY_APPROVAL,
   portalAuthDefaultCopy,
 } from '../../src/domain/catalog/portal-auth-copy-draft.ts';
@@ -90,8 +89,8 @@ export interface FictionalRevision {
 
 export interface SourceOwnerWorldOptions {
   /**
-   * The languages whose FICTIONAL revision the Tenant prepares and activates. A Portal Auth type and language NOT listed
-   * keeps the built-in default text (#1398, #1406), which is active by default.
+   * The languages whose FICTIONAL revision the Tenant prepares and activates. A type and language NOT listed has no text:
+   * only a revision an administrator prepared and activated is ever used, so its message is not sent (R-D1).
    */
   readonly languages: readonly ('cs' | 'en')[];
   /** The Tenant language mode to set, or none to keep the default. */
@@ -103,7 +102,7 @@ export interface SourceOwnerWorldOptions {
   readonly privacyOwner?: PrivacyOwnerTransport | undefined;
   /**
    * The languages the Tenant TOOK OVER and then stopped: the FICTIONAL revision is activated and deactivated again, so the
-   * identity has no text in force and fails closed (no built-in fallback after a Tenant ended its own text).
+   * identity has no text in force and fails closed.
    */
   readonly retiredLanguages?: readonly ('cs' | 'en')[];
   /** The FICTIONAL revision of a type in a language, or none when the suite seeds no copy for that type. */

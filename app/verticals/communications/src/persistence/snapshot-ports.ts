@@ -271,20 +271,17 @@ const snapshotPort = (snapshot: TemplateSnapshot): TemplateReadPortContract => {
   };
 };
 
-/**
- * The template read port of one exact message type, channel and scope, over ONE consistent snapshot read in the
- * worker's scope. `pinnedRevisionId` makes the snapshot contain the pinned revision even when it is no longer active.
- */
-export const readTemplatePortOverRoutines = (
+const readSnapshot = (
   invoker: ScopedRoutineInvoker,
   identity: Omit<TemplateIdentity, 'language'>,
+  scopeKey: string,
   pinnedRevisionId: string | undefined,
 ) =>
   invoker
     .invoke(workerReadTemplateSnapshotRoutine, [
       identity.messageType,
       identity.channel,
-      identity.scope.kind === 'tenant' ? 'tenant' : `legal-entity:${identity.scope.legalEntityId}`,
+      scopeKey,
       pinnedRevisionId ?? null,
     ])
     .pipe(
@@ -292,5 +289,37 @@ export const readTemplatePortOverRoutines = (
       Effect.flatMap((rows) =>
         Schema.decodeUnknownEffect(TemplateSnapshotSchema)(rows[0]?.result).pipe(Effect.mapError(templateUnavailable)),
       ),
-      Effect.map(snapshotPort),
     );
+
+/**
+ * The template read port of one exact message type, channel and scope, over one snapshot read in the worker's scope.
+ * `pinnedRevisionId` makes the snapshot contain the pinned revision even when it is no longer active. For a Legal Entity
+ * scope the Tenant-wide Types are read as well, because a Legal Entity that took nothing over is served by the Tenant-wide
+ * approved revision (R-D7) and the same domain code that resolved the pin must see both scopes to decide that again.
+ */
+export const readTemplatePortOverRoutines = Effect.fn('SnapshotPorts.readTemplatePortOverRoutines')(
+  function* readTemplates(
+    invoker: ScopedRoutineInvoker,
+    identity: Omit<TemplateIdentity, 'language'>,
+    pinnedRevisionId: string | undefined,
+  ) {
+    if (identity.scope.kind === 'tenant') {
+      return snapshotPort(yield* readSnapshot(invoker, identity, 'tenant', pinnedRevisionId));
+    }
+    // two reads of one worker scope, in order: the Legal Entity's own Types first, then the Tenant-wide ones it may fall to
+    const [own, tenant] = yield* Effect.all(
+      [
+        readSnapshot(invoker, identity, `legal-entity:${identity.scope.legalEntityId}`, pinnedRevisionId),
+        readSnapshot(invoker, identity, 'tenant', pinnedRevisionId),
+      ],
+      { concurrency: 1 },
+    );
+    return snapshotPort({
+      activations: [...own.activations, ...tenant.activations],
+      invalidations: [...own.invalidations, ...tenant.invalidations],
+      now: own.now,
+      revisions: [...own.revisions, ...tenant.revisions],
+      types: [...own.types, ...tenant.types],
+    });
+  },
+);

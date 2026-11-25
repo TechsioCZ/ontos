@@ -217,31 +217,21 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
   );
 
   it.live(
-    '[#1398 #1406] the approved built-in text is sent from day one, and a Tenant replacement through prepare + activate is used from then on',
+    '[#1398 #1406 R-D1] with no Tenant revision nothing is sent, and a revision the Tenant prepared and activated is used from then on',
     () =>
-      Effect.gen(function* builtInDefault() {
+      Effect.gen(function* noImplicitText() {
         const RESET = 'commerce.customer-context.portal-auth.reset-password-message';
-        const approved = portalAuthDefaultCopy.find((copy) => copy.messageType === RESET && copy.language === 'cs');
-        // no Tenant revision at all: the built-in default is in force
+        const seed = portalAuthDefaultCopy.find((copy) => copy.messageType === RESET && copy.language === 'cs');
+        // no Tenant revision at all: there is no built-in text to stand in, so tenant mode B stops the message (TPL-05)
         const { realm, world } = yield* setup({ languages: [], mode: 'B' });
         yield* requestReset(realm);
-        expect((yield* step(world, world.messageHandoff, yield* onlyIntent(world))).kind).toBe('HANDED_OFF');
-        const [dayOne] = world.mailbox;
-        expect(dayOne?.language).toBe('cs');
-        expect(dayOne?.subject).toBe(approved?.subject);
-        expect(textOf(dayOne)).toContain('/reset-password/');
-        expect(textOf(dayOne)).not.toContain('{{reset_link}}');
-        // history and audit name the text used, by source, version and digest, never by its content
-        const [first] = (yield* (yield* historyReads(world)).list()).items;
-        expect(first?.template).toMatchObject({
-          contentDigest: approved?.contentDigest,
-          language: 'cs',
-          revisionNumber: 1,
-          source: 'BUILT_IN_DEFAULT',
-        });
-        expect(JSON.stringify(first)).not.toContain(approved?.subject ?? 'unreachable');
+        expect(world.mailbox).toHaveLength(0);
+        expect(pendingIntentsOf(world)).toHaveLength(0);
+        const [dayOne] = (yield* (yield* historyReads(world)).list()).items;
+        expect(dayOne?.headline).toMatchObject({ reasonCodes: ['CZECH_REVISION_UNAVAILABLE'] });
+        expect(JSON.stringify(dayOne)).not.toContain(seed?.subject ?? 'unreachable');
 
-        // the Tenant's authorised user replaces the Czech text with an own FICTIONAL revision
+        // the Tenant's authorised user prepares and activates an own FICTIONAL revision of the Czech text
         const replacement = {
           body: `${FICTIONAL_COPY} replaced reset\n\nOpen this: {{reset_link}}`,
           requiredPlaceholders: ['reset_link'],
@@ -251,7 +241,7 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
         yield* requestReset(realm);
         const next = pendingIntentsOf(world).at(-1);
         expect((yield* step(world, world.messageHandoff, next ?? '')).kind).toBe('HANDED_OFF');
-        expect(world.mailbox[1]?.subject).toBe(replacement.subject);
+        expect(world.mailbox[0]?.subject).toBe(replacement.subject);
         const [latest] = (yield* (yield* historyReads(world)).list()).items;
         expect(latest?.template).toMatchObject({
           contentDigest: replaced.revision.contentDigest,

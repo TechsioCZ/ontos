@@ -36,7 +36,7 @@ const PORTAL_AUTH_CONTACT = {
  * - no documents: a security message never carries one.
  * The Privacy purpose reference is a PROPOSED name; its Privacy-owned values are an open input gate (see #1406 report).
  */
-const portalAuthType = (flow: string, meaning: string): TransactionalMessageType =>
+const portalAuthType = (flow: string, ownerRenderedSlot: string, meaning: string): TransactionalMessageType =>
   // an approved type that does not satisfy its own schema is a defect of this build: it fails at module load, never silently
   Result.getOrThrow(
     decodeType({
@@ -63,6 +63,9 @@ const portalAuthType = (flow: string, meaning: string): TransactionalMessageType
       revision: 1,
       sourceOwner: PORTAL_AUTH_OWNER,
       status: 'ACTIVE',
+      // The one secret slot of the flow is Auth's to fill; no generic value exists for these types, so a revision may
+      // carry that slot and nothing else, and activation refuses a revision that lacks it.
+      placeholderContract: { placeholders: [{ kind: 'owner-rendered', name: ownerRenderedSlot, required: true }] },
       typeId: `commerce.customer-context.portal-auth.${flow}-message`,
     }),
   );
@@ -82,8 +85,13 @@ const portalAuthType = (flow: string, meaning: string): TransactionalMessageType
 export const approvedMessageTypes: readonly TransactionalMessageType[] = [
   portalAuthType(
     'verify-email',
+    'verification_link',
     'Asks the account holder to confirm the e-mail address of a newly created Portal account.',
   ),
-  portalAuthType('reset-password', 'Gives the account holder the one-time link to choose a new Portal password.'),
-  portalAuthType('otp', 'Gives the account holder the one-time code of the second sign-in step.'),
+  portalAuthType(
+    'reset-password',
+    'reset_link',
+    'Gives the account holder the one-time link to choose a new Portal password.',
+  ),
+  portalAuthType('otp', 'otp_code', 'Gives the account holder the one-time code of the second sign-in step.'),
 ];

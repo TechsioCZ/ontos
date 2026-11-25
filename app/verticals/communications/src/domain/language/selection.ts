@@ -1,7 +1,7 @@
 import { Option } from 'effect';
 import type { LanguageMode, LanguagePolicyRef } from '../../../shared/language-policy.ts';
 import { templateScopeKey } from '../../../shared/template-revision.ts';
-import type { TemplateIdentity, TemplatePin } from '../../../shared/template-revision.ts';
+import type { TemplateIdentity, TemplatePin, TemplateScope } from '../../../shared/template-revision.ts';
 import { isSupportedLanguage, primaryLanguageSubtag } from './vocabulary.ts';
 import type {
   LanguageAvailability,
@@ -57,8 +57,16 @@ const requestedOf = (recipient: RecipientLanguageContext): Requested => {
 };
 
 /**
- * A revision counts only when its pin names exactly the type, channel, scope and language this decision is about. A pin
- * of another scope, brand or Tenant never becomes usable by being offered.
+ * The scope a pin may come from for a decision in `base`: exactly that scope, or, for a Legal Entity, the Tenant-wide scope
+ * the resolution fell back to (R-D7). The pin names the scope it was taken from, so this never admits another Legal Entity.
+ */
+const scopeServes = (base: TemplateScope, pinned: TemplateScope) =>
+  templateScopeKey(pinned) === templateScopeKey(base) || pinned.kind === 'tenant';
+
+/**
+ * A revision counts only when its pin names exactly the type, channel and language this decision is about, taken from the
+ * decision's own scope or from the Tenant-wide scope it falls back to. A pin of another Legal Entity, brand or Tenant never
+ * becomes usable by being offered.
  */
 export const usablePin = (
   availability: RevisionAvailability,
@@ -69,7 +77,7 @@ export const usablePin = (
   availability.pin.language === language &&
   availability.pin.channel === base.channel &&
   availability.pin.messageType === base.messageType &&
-  templateScopeKey(availability.pin.scope) === templateScopeKey(base.scope)
+  scopeServes(base.scope, availability.pin.scope)
     ? Option.some(availability.pin)
     : Option.none();
 

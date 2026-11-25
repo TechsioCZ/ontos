@@ -9,9 +9,9 @@ import { actorWith, makeRuntimeDatabase, nativeServices, nextId } from '../suppo
 import { domainFor, fictionalDraft } from '../support/template-fixtures.ts';
 
 /**
- * #1398 / #1406 (product owner, 2026-11-23) on native PostgreSQL as the runtime role: the built-in Portal Auth text is in
- * force for every Tenant until that Tenant replaces it through prepare + activate; the replacement is stored, attributed
- * to the person who made it and isolated per Tenant; a Tenant that stops its own text fails closed.
+ * #1398 / R-D1 on native PostgreSQL as the runtime role: an untouched Tenant has NO text for a Portal Auth type; the text
+ * a message uses is a revision an authorised user prepared AND activated, attributed to that person and isolated per Tenant;
+ * a Tenant that stops its own text fails closed.
  */
 
 const OTP = 'commerce.customer-context.portal-auth.otp-message';
@@ -22,8 +22,8 @@ const identityOf = (language: 'cs' | 'en'): TemplateIdentity => ({
   messageType: OTP,
   scope: tenantScope,
 });
-/** A FICTIONAL own replacement of the OTP text, declaring its secret slot. */
-const replacement = fictionalDraft({
+/** A FICTIONAL own text of the OTP message, declaring its secret slot. */
+const ownText = fictionalDraft({
   body: '[FICTIONAL TEST COPY] {{otp_code}}',
   messageType: OTP,
   optionalPlaceholders: [],
@@ -31,65 +31,75 @@ const replacement = fictionalDraft({
   subject: '[FICTIONAL TEST COPY] Code',
 });
 
-describe('Built-in template defaults on native PostgreSQL as the runtime role', () => {
-  it.live('are in force from day one, are replaced per Tenant by an attributed own revision, and stay isolated', () =>
-    Effect.gen(function* replace() {
-      const database = yield* makeRuntimeDatabase();
-      const tenant = yield* nextId;
-      const otherTenant = yield* nextId;
-      // day one: nothing is stored, and the built-in text is what a message uses
-      const dayOne = yield* database.withPort(tenant, (port) =>
-        Effect.gen(function* builtIn() {
-          const pin = yield* domainFor(port).resolve(identityOf('cs'));
-          return { pin, text: yield* pinnedTemplateText(port, pin) };
-        }),
-      );
-      expect(dayOne.pin.source).toBe('BUILT_IN_DEFAULT');
-      expect(Option.isSome(dayOne.text)).toBe(true);
-      // the Tenant's authorised user replaces the Czech text with an own revision
-      const replacer = { ...actorWith(yield* nextId), principalId: yield* nextId };
-      const replaced = yield* database.withPort(tenant, (port) =>
-        Effect.gen(function* replaceText() {
-          const t = domainFor(port);
-          const prepared = yield* t.prepare(replacement, replacer);
-          const activated = yield* t.approve(prepared.revision.revisionId, replacer);
-          return { activated, prepared };
-        }),
-      );
-      expect(replaced.prepared.revision.createdByPrincipalId).toBe(replacer.principalId);
-      expect(replaced.activated.activation.activatedByPrincipalId).toBe(replacer.principalId);
-      const after = yield* database.withPort(tenant, (port) =>
-        Effect.gen(function* afterReplace() {
-          const pin = yield* domainFor(port).resolve(identityOf('cs'));
-          return { pin, review: yield* reviewBuiltInTemplateDefaults(port, tenantScope) };
-        }),
-      );
-      expect(after.pin).toMatchObject({
-        contentDigest: replaced.prepared.revision.contentDigest,
-        revisionId: replaced.prepared.revision.revisionId,
-        source: 'TENANT_REVISION',
-      });
-      const czech = after.review.find(
-        (entry) => entry.identity.messageType === OTP && entry.identity.language === 'cs',
-      );
-      expect(czech).toMatchObject({
-        builtInDefault: { state: 'BUILT_IN_DEFAULT_REPLACED' },
-        inForce: { revisionId: replaced.prepared.revision.revisionId, source: 'TENANT_REVISION' },
-      });
-      // another Tenant still uses the built-in text and sees none of the replacement
-      const foreign = yield* database.withPort(otherTenant, (port) =>
-        Effect.gen(function* foreignTenant() {
-          const pin = yield* domainFor(port).resolve(identityOf('cs'));
-          return { pin, review: yield* reviewBuiltInTemplateDefaults(port, tenantScope) };
-        }),
-      );
-      expect(foreign.pin.source).toBe('BUILT_IN_DEFAULT');
-      expect(foreign.review.every((entry) => entry.inForce.source === 'BUILT_IN_DEFAULT')).toBe(true);
-      expect(foreign.review.every((entry) => entry.revisions.length === 0)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(nativeServices)),
+describe('Template resolution on native PostgreSQL as the runtime role (R-D1)', () => {
+  it.live(
+    'has no text from day one, uses an attributed own revision once activated, and stays isolated per Tenant',
+    () =>
+      Effect.gen(function* own() {
+        const database = yield* makeRuntimeDatabase();
+        const tenant = yield* nextId;
+        const otherTenant = yield* nextId;
+        // day one: nothing is stored and nothing resolves, so no message of the type can leave
+        const dayOne = yield* database.withPort(tenant, (port) =>
+          Effect.flip(domainFor(port).resolve(identityOf('cs'))),
+        );
+        expect(Schema.is(TemplateResolutionFailed)(dayOne)).toBe(true);
+        expect(dayOne).toMatchObject({ code: 'template_no_active_revision' });
+        const author = { ...actorWith(yield* nextId), principalId: yield* nextId };
+        const prepared = yield* database.withPort(tenant, (port) =>
+          Effect.gen(function* prepareText() {
+            const t = domainFor(port);
+            const draft = yield* t.prepare(ownText, author);
+            // a prepared, never activated draft is not a text in force
+            const stillNone = yield* Effect.flip(t.resolve(identityOf('cs')));
+            expect(stillNone).toMatchObject({ code: 'template_no_active_revision' });
+            return draft;
+          }),
+        );
+        const activated = yield* database.withPort(tenant, (port) =>
+          domainFor(port).approve(prepared.revision.revisionId, author),
+        );
+        expect(prepared.revision.createdByPrincipalId).toBe(author.principalId);
+        expect(activated.activation.activatedByPrincipalId).toBe(author.principalId);
+        const after = yield* database.withPort(tenant, (port) =>
+          Effect.gen(function* afterActivation() {
+            const pin = yield* domainFor(port).resolve(identityOf('cs'));
+            return {
+              pin,
+              review: yield* reviewBuiltInTemplateDefaults(port, tenantScope),
+              text: yield* pinnedTemplateText(port, pin),
+            };
+          }),
+        );
+        expect(after.pin).toMatchObject({
+          contentDigest: prepared.revision.contentDigest,
+          revisionId: prepared.revision.revisionId,
+          source: 'TENANT_REVISION',
+        });
+        expect(Option.isSome(after.text)).toBe(true);
+        const czech = after.review.find(
+          (entry) => entry.identity.messageType === OTP && entry.identity.language === 'cs',
+        );
+        expect(czech).toMatchObject({
+          builtInDefault: { approval: 'PENDING-APPROVER' },
+          inForce: { revisionId: prepared.revision.revisionId, source: 'TENANT_REVISION' },
+        });
+        // another Tenant still has no text and sees none of the revision
+        const foreign = yield* database.withPort(otherTenant, (port) =>
+          Effect.gen(function* foreignTenant() {
+            return {
+              failure: yield* Effect.flip(domainFor(port).resolve(identityOf('cs'))),
+              review: yield* reviewBuiltInTemplateDefaults(port, tenantScope),
+            };
+          }),
+        );
+        expect(foreign.failure).toMatchObject({ code: 'template_no_active_revision' });
+        expect(foreign.review.every((entry) => entry.inForce.source === 'NONE')).toBe(true);
+        expect(foreign.review.every((entry) => entry.revisions.length === 0)).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 
-  it.live('fails closed with the typed reason once the Tenant stopped its own text: no silent fallback', () =>
+  it.live('fails closed with the typed reason once the Tenant stopped its own text', () =>
     Effect.gen(function* stopped() {
       const database = yield* makeRuntimeDatabase();
       const tenant = yield* nextId;
@@ -97,7 +107,7 @@ describe('Built-in template defaults on native PostgreSQL as the runtime role', 
         Effect.gen(function* stopOwn() {
           const t = domainFor(port);
           const actor = actorWith(yield* nextId);
-          const prepared = yield* t.prepare(replacement, actor);
+          const prepared = yield* t.prepare(ownText, actor);
           yield* t.approve(prepared.revision.revisionId, actor);
           yield* t.deactivate(prepared.revision.revisionId, 'Fictional retirement', actor);
           return yield* Effect.flip(t.resolve(identityOf('cs')));
@@ -105,9 +115,11 @@ describe('Built-in template defaults on native PostgreSQL as the runtime role', 
       );
       expect(Schema.is(TemplateResolutionFailed)(failure)).toBe(true);
       expect(failure).toMatchObject({ code: 'template_no_active_revision' });
-      // English, never taken over, is unaffected
-      const english = yield* database.withPort(tenant, (port) => domainFor(port).resolve(identityOf('en')));
-      expect(english.source).toBe('BUILT_IN_DEFAULT');
+      // English, never taken over, has no text either
+      const english = yield* database.withPort(tenant, (port) =>
+        Effect.flip(domainFor(port).resolve(identityOf('en'))),
+      );
+      expect(english).toMatchObject({ code: 'template_no_active_revision' });
     }).pipe(Effect.scoped, Effect.provide(nativeServices)),
   );
 });

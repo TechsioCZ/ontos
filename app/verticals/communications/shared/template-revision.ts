@@ -97,26 +97,26 @@ export const InvalidateTemplateRevisionResultSchema = Schema.Struct({
 });
 
 /**
- * The pin the Message Intent lane stores at the first approved creation of one intent. A retry reuses it verbatim and
- * never resolves again; only a new business request resolves a new pin against the then-active revision.
+ * Which text a message used (#1398): only a revision an authorised administrator of the Tenant prepared AND activated.
+ * There is no shared or built-in text, so a message can never name any other source (R-D1).
  */
-/**
- * Which text a message used (#1398, #1406): a revision the Tenant stored and activated, or the built-in default text in
- * code the product owner approved, used for an identity the Tenant never took over.
- */
-export const TemplateTextSourceSchema = Schema.Literals(['TENANT_REVISION', 'BUILT_IN_DEFAULT']);
+export const TemplateTextSourceSchema = Schema.Literal('TENANT_REVISION');
 export type TemplateTextSource = typeof TemplateTextSourceSchema.Type;
 
+/**
+ * The pin the Message Intent lane stores at the first approved creation of one intent. A retry reuses it verbatim and
+ * never resolves again; only a new business request resolves a new pin against the then-active revision. Its identity
+ * records the scope of the revision that was CHOSEN: a Legal Entity request that fell back to the Tenant-wide approved
+ * revision (R-D7) carries the Tenant scope here, never the scope it was asked in.
+ */
 export const TemplatePinSchema = Schema.Struct({
   ...TemplateIdentitySchema.fields,
-  /** The digest of the exact subject and body the message uses; absent only on a pin stored before #1406 Option A. */
+  /** The digest of the exact subject, body and declared placeholders the message uses. */
   contentDigest: Schema.optionalKey(Schema.String),
   decisionTime: timestamp,
-  /** The Tenant revision, or the stable reference of the built-in text (derived from its content digest). */
   revisionId: TemplateRevisionIdSchema,
-  /** The Tenant revision number, or the catalog version of the built-in text. */
   revisionNumber: Schema.Number,
-  /** Absent only on a pin stored before #1406 Option A: such a pin always names a Tenant revision. */
+  /** Always a Tenant revision; absent only on a pin stored before the source was recorded. */
   source: Schema.optionalKey(TemplateTextSourceSchema),
   templateTypeId: TemplateTypeIdSchema,
 });
@@ -141,7 +141,6 @@ const AuditActivationSchema = Schema.Struct({
  * who/what/when/scope/why trace. It never carries subject, body, placeholder values or any recipient data.
  */
 export const TemplateUseAuditSchema = Schema.Struct({
-  /** Empty for a built-in default: nobody activated it, the product owner approved its text. */
   activations: Schema.Array(AuditActivationSchema),
   activeAtDecisionTime: Schema.Boolean,
   contentDigest: Schema.String,
@@ -165,12 +164,6 @@ export const TemplateUseAuditSchema = Schema.Struct({
 });
 export type TemplateUseAudit = typeof TemplateUseAuditSchema.Type;
 
-/**
- * Whether the built-in default text (#1398, #1406) is still in force for its exact identity: IN_USE while the Tenant
- * never activated an own revision of it, REPLACED once it did (whether or not that revision is still active).
- */
-const BuiltInTemplateDefaultStateSchema = Schema.Literals(['BUILT_IN_DEFAULT_IN_USE', 'BUILT_IN_DEFAULT_REPLACED']);
-
 const ReviewedTextFields = {
   body: Schema.String,
   contentDigest: Schema.String,
@@ -183,25 +176,23 @@ const ReviewedTextFields = {
 const TenantTemplateRevisionReviewSchema = Schema.Struct({
   ...ReviewedTextFields,
   createdAt: timestamp,
-  /** Whether this revision carries exactly the built-in default subject and body. */
+  /** Whether this revision carries exactly the seed subject and body. */
   isBuiltInDefaultText: Schema.Boolean,
   lifecycleState: TemplateLifecycleStateSchema,
   revisionId: TemplateRevisionIdSchema,
   revisionNumber: Schema.Number,
 });
 
-/** The text a new message of the identity uses now, decided by the same rule as template resolution. */
+/**
+ * The text a new message of the identity uses now, decided by the same rule as template resolution: the one active
+ * revision the Tenant's administrator activated, or nothing.
+ */
 const TemplateInForceSchema = Schema.Union([
   Schema.Struct({
     contentDigest: Schema.String,
     revisionId: TemplateRevisionIdSchema,
     revisionNumber: Schema.Number,
     source: Schema.Literal('TENANT_REVISION'),
-  }),
-  Schema.Struct({
-    contentDigest: Schema.String,
-    source: Schema.Literal('BUILT_IN_DEFAULT'),
-    version: Schema.Number,
   }),
   /** Nothing is in force: Communications sends nothing of the identity and records this typed reason. */
   Schema.Struct({
@@ -210,14 +201,15 @@ const TemplateInForceSchema = Schema.Union([
   }),
 ]);
 
-/** One built-in default next to the Tenant's own revisions of exactly the same identity. */
+/**
+ * One seed text next to the Tenant's own revisions of exactly the same identity. The seed text is content an
+ * administrator MAY prepare and activate as an own revision; it is never in force by itself, and no approval of its
+ * wording is confirmed yet (R-D1), so the entry says so instead of claiming one.
+ */
 export const BuiltInTemplateDefaultEntrySchema = Schema.Struct({
   builtInDefault: Schema.Struct({
     ...ReviewedTextFields,
-    /** The product owner's approval of the TEXT as the default. */
-    approval: Schema.Literal('APPROVED-DEFAULT-TEXT'),
-    approvedOn: Schema.String,
-    state: BuiltInTemplateDefaultStateSchema,
+    approval: Schema.Literal('PENDING-APPROVER'),
     version: Schema.Number,
   }),
   identity: TemplateIdentitySchema,

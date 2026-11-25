@@ -71,7 +71,7 @@ import type { Redacted } from 'effect';
  * - the Messaging Adapter (step 22) renders the pinned revision with the REAL generic renderer, asks Auth's REAL owner-slot
  *   completion for the secret slot, and then "sends" into an in-memory mailbox with a scripted provider answer;
  * - every Tenant revision below is clearly FICTIONAL and labelled so; a Portal Auth language the suite seeds no revision
- *   for keeps the built-in default text the product owner approved (#1398, #1406), which is active by default.
+ *   for has no text at all: only a revision an administrator activated is used (#1398, R-D1), so its message is not sent.
  */
 
 export const FICTIONAL_COPY = '[FICTIONAL TEST COPY]';
@@ -102,7 +102,7 @@ export interface AuthWorldOptions {
   readonly binding?: PreVerificationPrivacyTransportService;
   /** Whether the double of Privacy's bind Action evidences a binding. Default: yes (labelled double). */
   readonly evidencing?: boolean;
-  /** The languages with an own FICTIONAL revision; any other Portal Auth language keeps its built-in default text. */
+  /** The languages with an own FICTIONAL revision; any other Portal Auth language has no text and its message is not sent. */
   readonly languages?: readonly ('cs' | 'en')[];
   readonly ledgerProbe?: IssuanceLedgerProbe;
   readonly mode?: 'A' | 'B';

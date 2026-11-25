@@ -9,9 +9,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { prepareTemplateRevisionAction } from '../../src/actions/prepare-template-revision.action.ts';
 import { approvedMessageTypes } from '../../src/domain/catalog/approved-registry.ts';
 import {
-  PORTAL_AUTH_DEFAULT_COPY_ACTIVATION,
   PORTAL_AUTH_DEFAULT_COPY_APPROVAL,
-  PORTAL_AUTH_DEFAULT_COPY_APPROVED_ON,
   PORTAL_AUTH_DEFAULT_COPY_VERSION,
   portalAuthDefaultCopy,
   portalAuthCopyPreparePayloads,
@@ -28,9 +26,9 @@ import { makeInMemoryTemplatePort } from '../support/in-memory-template-port.ts'
 import { makeInMemoryLanguagePolicyPort } from '../support/language-fixtures.ts';
 
 /**
- * #1398 / #1406: the Portal Auth copy is the text the product owner approved on 2026-11-23 as the default, ACTIVE BY
- * DEFAULT for every Tenant that has not replaced it. It is the reviewed text with its pinned digest, it holds only the
- * owner-rendered secret slot, and a Tenant that prepares it through the governed Action stores an ordinary draft.
+ * #1398 / #1406 / R-D1: the Portal Auth copy is SEED content with its pinned digest, pending the approver (the product
+ * owner and the Auth owner have not confirmed it). It holds only the owner-rendered secret slot, it is never used unless an
+ * administrator activates it, and a Tenant that prepares it through the governed Action stores an ordinary draft.
  */
 
 const FLOW_SLOTS = [
@@ -39,43 +37,42 @@ const FLOW_SLOTS = [
   ['otp', 'otp_code'],
 ] as const;
 /**
- * The reviewed text (2026-11-22), approved by the product owner as the default, pinned as subject and Template Revision
- * content digest per flow and language: the very digest the prepare Action returns and the review script prints, so a
- * changed word fails here and needs a new approval.
+ * The seed text, pinned as subject and Template Revision content digest per flow and language: the very digest the
+ * prepare Action returns and the review script prints, so a changed word fails here and needs the approver's confirmation.
  */
 const REVIEWED = [
   {
-    digest: '5c1f1f96466aece909321c52fb671082b9727d93107c6a7b97809fb4027e5ab5',
+    digest: 'ada39fc70e202e9916c91fe422f32dcbdc068dcdd951f5ad56906ffe4e1287e8',
     flow: 'verify-email',
     language: 'cs',
     subject: 'Potvrďte svou e-mailovou adresu',
   },
   {
-    digest: '21459c0a7ab8b187a2157193e0a1bcf76fc945a246a807a00041c25c58cff0d2',
+    digest: '6fbe6883420b43d53ac2399c77d5e0ee201b9bf7293f191f66a8c934d4eb4958',
     flow: 'verify-email',
     language: 'en',
     subject: 'Confirm your email address',
   },
   {
-    digest: '959ca4cb818fe89b7eaca3d92e5959f1a45d36df01fe82400bd684999c7e792c',
+    digest: 'bb39f96170d67022c55e29d1ced180a6bd9246bd999ed1805556862725333865',
     flow: 'reset-password',
     language: 'cs',
     subject: 'Obnovení hesla',
   },
   {
-    digest: '25a2c61d3c5715439784c0438bd2b042a0ea0ad183be0602f510cb4585f98d97',
+    digest: 'c18accecd0fb28e2d147e17a69838a78cf757d2f67b5e51f96c6219757b5af9e',
     flow: 'reset-password',
     language: 'en',
     subject: 'Reset your password',
   },
   {
-    digest: '7bb975b19ed3a22b6734cd968471f0afb4dac4653601932beacb3ee3e03e7ce4',
+    digest: 'cb1fe22a30445d22b0672dac10a7d8f1bff5eeddb99172613872fce3ca63039f',
     flow: 'otp',
     language: 'cs',
     subject: 'Váš jednorázový kód',
   },
   {
-    digest: '7ec875abacd3fb22f2bc3b6efc732536ae77e72046ceb9775fe07eb90da41c0a',
+    digest: 'bf195f673833fc7fd3216862a2836fe47533af8c1b5a56918f76d4ab737ee595',
     flow: 'otp',
     language: 'en',
     subject: 'Your one-time code',
@@ -128,17 +125,15 @@ const sourceFiles = (directory: string): string[] =>
   });
 
 describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
-  it('is marked an approved default text, active by default, versioned, and holds exactly one Czech and one English text per Auth flow', () => {
-    expect(PORTAL_AUTH_DEFAULT_COPY_APPROVAL).toBe('APPROVED-DEFAULT-TEXT');
-    expect(PORTAL_AUTH_DEFAULT_COPY_APPROVED_ON).toBe('2026-11-23');
-    expect(PORTAL_AUTH_DEFAULT_COPY_ACTIVATION).toBe('ACTIVE-BY-DEFAULT');
+  it('is marked pending the approver, versioned, and holds exactly one Czech and one English text per Auth flow', () => {
+    expect(PORTAL_AUTH_DEFAULT_COPY_APPROVAL).toBe('PENDING-APPROVER');
     expect(PORTAL_AUTH_DEFAULT_COPY_VERSION).toBe(1);
     expect(portalAuthDefaultCopy.map(({ flow, language }) => `${flow}/${language}`)).toEqual(
       REVIEWED.map(({ flow, language }) => `${flow}/${language}`),
     );
   });
 
-  it.effect('is the approved default wording, word for word', () =>
+  it.effect('is the seed wording, word for word, and the review marks every text as pending the approver', () =>
     Effect.gen(function* reviewed() {
       expect(portalAuthDefaultCopy.map(({ subject }) => subject)).toEqual(REVIEWED.map(({ subject }) => subject));
       const review = yield* portalAuthCopyReview();
@@ -148,14 +143,20 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
       }
       for (const copy of portalAuthDefaultCopy) {
         expect(review).toContain(`Subject: ${copy.subject}\nBody:\n${copy.body}`);
-        // the digest the catalog keeps is the computed digest of exactly this text
-        expect(copy.contentDigest).toBe(yield* templateContentDigest(copy.subject, copy.body));
+        // the digest the catalog keeps is the computed digest of exactly this text and its placeholder declarations
+        expect(copy.contentDigest).toBe(
+          yield* templateContentDigest({
+            body: copy.body,
+            optionalPlaceholders: [],
+            requiredPlaceholders: [copy.ownerRenderedSlot],
+            subject: copy.subject,
+          }),
+        );
       }
-      expect(
-        review.startsWith(
-          '# Portal Auth e-mail copy, version 1: APPROVED-DEFAULT-TEXT (product owner, 2026-11-23), ACTIVE-BY-DEFAULT',
-        ),
-      ).toBe(true);
+      expect(review.startsWith('# Portal Auth e-mail seed copy, version 1: PENDING-APPROVER')).toBe(true);
+      // one approval marker per text, and no claim of an approval anybody confirmed
+      expect(review.match(/Approval: PENDING-APPROVER/gu)).toHaveLength(6);
+      expect(review).not.toMatch(/APPROVED|ACTIVE-BY-DEFAULT/u);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -211,7 +212,7 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
   );
 
   it.effect(
-    'is in force from day one, and prepared by a Tenant through the governed Action it is only an own draft that changes nothing',
+    'prepared by a Tenant through the governed Action it is only an own draft: nothing is in force until an administrator activates it',
     () =>
       Effect.gen(function* preparedOnly() {
         const { memory, payloads, results } = yield* prepareDraftThroughAction;
@@ -221,11 +222,10 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
           memory.state.revisions.every(({ createdByPrincipalId }) => createdByPrincipalId === principal.principalId),
         ).toBe(true);
         expect(memory.state.activations).toEqual([]);
-        // drafts take nothing over: every identity still resolves to its built-in text, with that text's digest
-        for (const [index, payload] of payloads.entries()) {
-          expect(yield* resolveTemplatePin(memory.port, payload)).toMatchObject({
-            contentDigest: REVIEWED[index]?.digest,
-            source: 'BUILT_IN_DEFAULT',
+        // drafts take nothing over: every identity still has no text, so no message of it can leave
+        for (const payload of payloads) {
+          expect(yield* Effect.flip(resolveTemplatePin(memory.port, payload))).toMatchObject({
+            code: 'template_no_active_revision',
           });
         }
         const policies = makeInMemoryLanguagePolicyPort();
@@ -241,17 +241,17 @@ describe('The approved default Portal Auth e-mail copy (#1398, #1406)', () => {
               ownerPermittedLanguages: ['cs', 'en'],
               recipient,
             });
-          // Czech by default (no trusted locale exists), English for a trusted English recipient
-          expect(yield* decide({ kind: 'not-established' })).toMatchObject({ language: 'cs', outcome: 'selected' });
-          expect(yield* decide({ kind: 'trusted', language: 'en' })).toMatchObject({
-            language: 'en',
-            outcome: 'selected',
+          // no Czech text exists, so nothing is sent whatever the recipient asks for
+          expect(yield* decide({ kind: 'not-established' })).toMatchObject({
+            outcome: 'not-sent',
+            reason: 'czech_revision_unavailable',
           });
+          expect(yield* decide({ kind: 'trusted', language: 'en' })).toMatchObject({ outcome: 'not-sent' });
         }
       }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it('is read by the built-in lookup and the review script only, and the catalog itself activates and stores nothing', () => {
+  it('is read by the seed list and the review script only, and the catalog itself activates and stores nothing', () => {
     const root = path.join(import.meta.dirname, '..', '..');
     const sources = ['src', 'shared', 'api', 'scripts'].flatMap((directory) => sourceFiles(path.join(root, directory)));
     const users = sources

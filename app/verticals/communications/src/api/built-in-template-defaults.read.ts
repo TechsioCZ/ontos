@@ -24,10 +24,12 @@ const builtInTemplateDefaultsEntrypoint = defineTenantModuleEntrypoint({
 });
 
 /**
- * The review a Tenant's authorised user reads before replacing a built-in default (#1398, #1406): per Portal Auth
- * message type and language the text in force now, the built-in default text with its version and digest, and the
- * Tenant's own revisions of exactly that identity. Replacing is the ordinary prepare and activate Actions. It reads and
- * never writes. The text holds placeholder names only, never a recipient or any personal value, so no field group masks
+ * The review a Tenant's authorised user reads before preparing a seed text as an own revision (#1398, #1406, R-D1): per
+ * Portal Auth message type and language the text in force now (an administrator-activated revision or nothing), the seed
+ * text with its version, digest and `PENDING-APPROVER` approval state, and the Tenant's own revisions of exactly that
+ * identity. A seed text is never in force by itself. Preparing and activating is the ordinary Actions. It reads and
+ * never writes. (The read key and its list permission are kept: the list is the revisions and the seed content an
+ * administrator chooses from; presenting the seed as a text in force was the defect, and it no longer does.) The text holds placeholder names only, never a recipient or any personal value, so no field group masks
  * part of it. The permission key is PROPOSED to the product owner and enters a Role only through ADR-0030 adoption.
  */
 export const builtInTemplateDefaultsRead = defineRead(
