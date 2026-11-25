@@ -31,7 +31,7 @@ import {
 import {
   acquireSymmyRouteScopeProof,
   readSymmyRouteScope,
-  requiresSymmyPriceGroupRouteProof,
+  decideSymmyOwnerRouteAdmission,
 } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteScopeProof } from './auth/gateway-symmy-route-scope.ts';
 import type { SymmyRouteContextRequestSchema } from '@app/symmy-integration/api/symmy-route-context';
@@ -2939,17 +2939,19 @@ const admitSymmyIngress = Effect.fn('ShellGateway.admitSymmyIngress')(function* 
     readonly audience: string;
     readonly legalEntityId?: string;
   }) {
-    if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
-      return yield* Effect.fail(gatewayForbiddenProblem());
-    }
-    const nativePriceGroupRead = requiresSymmyPriceGroupRouteProof(selectedRoute?.routeKey, input.audience);
-    if (input.legalEntityId === undefined && input.audience !== 'inventory' && !nativePriceGroupRead) {
+    const routeAdmission = decideSymmyOwnerRouteAdmission(selectedRoute, input);
+    if (routeAdmission.kind === 'unscoped') {
       return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision);
     }
-    if (selectedRoute === undefined) {
+    if (routeAdmission.kind === 'refused') {
       return yield* Effect.fail(gatewayForbiddenProblem());
     }
-    const proof = yield* acquireSymmyIngressRouteProof(rawKey, request, admission.compositionRevision, selectedRoute);
+    const proof = yield* acquireSymmyIngressRouteProof(
+      rawKey,
+      request,
+      admission.compositionRevision,
+      routeAdmission.routeRequest,
+    );
     return yield* acquireSymmyOwnerAssertion(rawKey, input, admission.compositionRevision, proof);
   });
   return {

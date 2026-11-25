@@ -47,6 +47,7 @@ import {
 } from '../../api/auth/gateway-issuer.ts';
 import {
   acquireSymmyRouteScopeProof,
+  decideSymmyOwnerRouteAdmission,
   projectSymmyRouteScopePrincipal,
   readSymmyRouteScope,
   readAdmittedSymmyNativeRead,
@@ -65,6 +66,35 @@ import {
   ShellInstalledModuleCatalog,
   InstalledModuleCatalogUnavailableError,
 } from '../../api/modules/installed-module-catalog.ts';
+
+it('requires the exact selected stock route and preserves scoped and native prerequisite admission', () => {
+  const stock = { routeKey: 'inventoryStockBatch' } satisfies NonNullable<
+    Parameters<typeof decideSymmyOwnerRouteAdmission>[0]
+  >;
+  const products = { routeKey: 'productsBatch' } satisfies NonNullable<
+    Parameters<typeof decideSymmyOwnerRouteAdmission>[0]
+  >;
+  expect(decideSymmyOwnerRouteAdmission(undefined, { audience: 'inventory' })).toEqual({ kind: 'refused' });
+  expect(decideSymmyOwnerRouteAdmission(products, { audience: 'inventory' })).toEqual({ kind: 'refused' });
+  expect(decideSymmyOwnerRouteAdmission(stock, { audience: 'inventory' })).toEqual({
+    kind: 'route-proof',
+    routeRequest: stock,
+  });
+  expect(decideSymmyOwnerRouteAdmission(undefined, { audience: 'party-registry' })).toEqual({ kind: 'unscoped' });
+  expect(
+    decideSymmyOwnerRouteAdmission(undefined, { audience: 'party-registry', legalEntityId: 'selected-company' }),
+  ).toEqual({ kind: 'refused' });
+  expect(
+    decideSymmyOwnerRouteAdmission(products, { audience: 'party-registry', legalEntityId: 'selected-company' }),
+  ).toEqual({ kind: 'route-proof', routeRequest: products });
+  expect(decideSymmyOwnerRouteAdmission(products, { audience: 'price-group-catalog' })).toEqual({
+    kind: 'route-proof',
+    routeRequest: products,
+  });
+  expect(decideSymmyOwnerRouteAdmission(undefined, { audience: 'price-group-catalog' })).toEqual({
+    kind: 'unscoped',
+  });
+});
 
 const compositionRevision = 'a'.repeat(64);
 const principal = {

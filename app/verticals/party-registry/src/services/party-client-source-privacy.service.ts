@@ -5,10 +5,8 @@ import {
   readVerifiedGatewayWorkload,
   readVerifiedGatewayRouteScope,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import {
-  SourceProcessingEligibilityRequestSchema,
-  SourceProcessingEligibilityResponseSchema,
-} from '@app/privacy/api/source-processing-eligibility';
+import type { SourceProcessingEligibilityResponseSchema } from '@app/privacy/api/source-processing-eligibility';
+import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api/source-processing-eligibility';
 import {
   OrganizationBusinessApplicabilityRequestSchema,
   OrganizationBusinessSourceOnboardLiveProofSchema,
@@ -26,7 +24,7 @@ import {
   OrganizationBusinessNameExportFields,
   organizationBusinessNameExportInputDigest,
 } from '../../shared/apis/organization-business-name-export.ts';
-import { Config, Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Config, Context, Crypto, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import {
   OrganizationBusinessUpdateFields,
   OrganizationBusinessEvidenceReadFields,
@@ -712,14 +710,20 @@ interface PartySourcePrivacyInput {
 const sourceSyncOrganizationWitnessMatches = Effect.fn('PartyClientSourcePrivacy.sourceSyncOrganizationWitness')(
   function* matches(input: PartySourcePrivacyInput) {
     const request = yield* PartySourceRequest;
-    if (request === null) return true;
+    if (request === null) {
+      return true;
+    }
     const decoded = yield* Schema.decodeUnknownEffect(SourceOrganizationActionInputSchema, {
       onExcessProperty: 'error',
     })(request).pipe(Effect.option);
-    if (Option.isNone(decoded)) return true;
+    if (Option.isNone(decoded)) {
+      return true;
+    }
     const command = decoded.value;
     const processing = yield* readSourceOrganizationProcessingRef(input.scope, command.operation);
-    if (processing === undefined) return false;
+    if (processing === undefined) {
+      return false;
+    }
     if (command.operation !== 'ONBOARD_COUNTERPARTY_CUSTOMER') {
       return sameOrganizationSourceReference(
         (yield* organizationBusinessSourceInputDigest(request)).sourceReference,
@@ -814,6 +818,24 @@ const readPartySourceProcessing = Effect.fn('PartyClientSourcePrivacy.readSource
   return { payload, result };
 });
 
+const sourceSyncRequestMatches = (
+  evidence: Extract<PartyClientSourcePrivacyDecision, object>['evidence'],
+  request: typeof SourceProcessingEligibilityRequestSchema.Type,
+) => {
+  const { source } = request;
+  return (
+    source !== null &&
+    evidence.source.issuer === source.issuer &&
+    evidence.source.namespace === source.namespace &&
+    evidence.source.recordType === source.recordType &&
+    evidence.source.routeRef === source.routeRef &&
+    evidence.source.recordId === source.recordId &&
+    evidence.source.occurrenceId === source.occurrenceId &&
+    evidence.target?.kind === request.target?.kind &&
+    evidence.target?.resourceId === request.target?.resourceId
+  );
+};
+
 /** Native source-sync authority remains operational evidence, never a business-only applicability finding. */
 export const sourceSyncPartyProcessingAuthority = ({
   scope,
@@ -826,17 +848,13 @@ export const sourceSyncPartyProcessingAuthority = ({
   readonly result: typeof SourceProcessingEligibilityResponseSchema.Type;
   readonly now: DateTime.Utc;
 }): Extract<PartyClientSourcePrivacyDecision, object> | 'DENIED' => {
-  if (
-    result.outcome !== 'ALLOWED' ||
-    !('_tag' in result.evidence) ||
-    result.evidence._tag !== 'SOURCE_SYNC_PROCESSING_POLICY'
-  )
+  if (result.outcome !== 'ALLOWED' || !Predicate.isTagged(result.evidence, 'SOURCE_SYNC_PROCESSING_POLICY')) {
     return 'DENIED' as const;
-  const evidence = result.evidence;
+  }
+  const { evidence } = result;
   const expires = DateTime.make(evidence.validUntil);
-  const source = request.source;
   if (
-    source === null ||
+    !sourceSyncRequestMatches(evidence, request) ||
     evidence.consumerModuleId !== request.consumerModuleId ||
     evidence.operation !== request.operation ||
     evidence.tenantId !== scope.tenantId ||
@@ -845,17 +863,10 @@ export const sourceSyncPartyProcessingAuthority = ({
     result.authorityRevision !== evidence.policyRevision ||
     result.evaluatedAt !== evidence.trustedDecisionTime ||
     Option.isNone(expires) ||
-    DateTime.Order(now, expires.value) >= 0 ||
-    evidence.source.issuer !== source.issuer ||
-    evidence.source.namespace !== source.namespace ||
-    evidence.source.recordType !== source.recordType ||
-    evidence.source.routeRef !== source.routeRef ||
-    evidence.source.recordId !== source.recordId ||
-    evidence.source.occurrenceId !== source.occurrenceId ||
-    evidence.target?.kind !== request.target?.kind ||
-    evidence.target?.resourceId !== request.target?.resourceId
-  )
+    DateTime.Order(now, expires.value) >= 0
+  ) {
     return 'DENIED' as const;
+  }
   return { _tag: 'SOURCE_SYNC_PROCESSING_ALLOWED', evidence } satisfies PartyClientSourcePrivacyDecision;
 };
 
@@ -882,8 +893,9 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
     Effect.catch((error) => failUnavailable('privacy-read', error)),
   );
   if (sourceSyncMode) {
-    if (!(yield* sourceSyncOrganizationWitnessMatches(input).pipe(Effect.mapError(unavailable))))
+    if (!(yield* sourceSyncOrganizationWitnessMatches(input).pipe(Effect.mapError(unavailable)))) {
       return 'DENIED' as const;
+    }
     const { payload, result } = yield* readPartySourceProcessing(input, crypto.value, operationRequirementKey);
     return sourceSyncPartyProcessingAuthority({ scope, request: payload, result, now: yield* DateTime.now });
   }

@@ -1,28 +1,22 @@
 import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { MarketCurrencySchema } from '@app/merchandise/domain/market-offers';
-import { DateTime, Schema, Struct } from 'effect';
+import { Schema, Struct } from 'effect';
 
 import { DemoOrderExportOrderSchema } from '@app/merchandise/apis/demo-order-export';
 import type { DemoOrderExportResponse } from '@app/merchandise/apis/demo-order-export';
-import {
-  lineGrossMinor,
-  orderLineVatMinor,
-  vatInGrossMinor,
-} from '@app/merchandise/domain/order-totals';
+import { lineGrossMinor, orderLineVatMinor, vatInGrossMinor } from '@app/merchandise/domain/order-totals';
 
 export const SymmyDemoOrdersQuerySchema = Schema.Struct({
-  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 1 }))),
   offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type SymmyDemoOrdersQuery = typeof SymmyDemoOrdersQuerySchema.Type;
 /** HttpApi URL parameters decode strings; the dispatcher receives the numeric query above. */
 export const SymmyDemoOrdersUrlQuerySchema = Schema.Struct({
   limit: Schema.optionalKey(
-    Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100 })),
+    Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
   ),
-  offset: Schema.optionalKey(
-    Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
-  ),
+  offset: Schema.optionalKey(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
 });
 export const SymmyDemoOrderIdSchema = DemoOrderExportOrderSchema.fields.id;
 
@@ -50,7 +44,7 @@ export const SymmyDemoOrderSchema = Schema.Struct({
     'totalMinor',
     'totalVatMinor',
   ]),
-  createdAt: Schema.String,
+  createdAt: orderFields.createdAt,
   currencyCode: MarketCurrencySchema,
   customerId: orderFields.partyId,
   lines: Schema.Array(
@@ -62,11 +56,11 @@ export const SymmyDemoOrderSchema = Schema.Struct({
   ),
   pricesIncludeVat: Schema.Boolean,
   totalNetMinor: amount,
-  updatedAt: Schema.String,
+  updatedAt: orderFields.updatedAt,
 });
 export const SymmyDemoOrdersResponseSchema = Schema.Struct({
   count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  limit: Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   orders: Schema.Array(SymmyDemoOrderSchema),
 });
@@ -74,7 +68,7 @@ export const SymmyDemoOrderResponseSchema = Schema.Struct({ order: SymmyDemoOrde
 export const SymmyDemoOrderNotFoundProblemSchema = makeProblemDetailsSchema('SymmyDemoOrderNotFoundProblem', 404);
 export const symmyDemoOrderNotFoundProblem = SymmyDemoOrderNotFoundProblemSchema.make({
   detail: 'The order was not found in the enrolled company.',
-  status: 404,
+  status: SymmyDemoOrderNotFoundProblemSchema.fields.status.literal,
   title: 'Order not found',
   type: 'https://ontos.dev/problems/symmy-order-not-found',
 });
@@ -96,17 +90,16 @@ export const symmyDemoOrdersResultMatches = (
   new Set(result.orders.map(({ id }) => id)).size === result.orders.length &&
   result.count >= result.orders.length &&
   (result.orders.length === 0 || result.count >= expected.offset + result.orders.length) &&
-  (expected.orderId === undefined ||
-    (result.count <= 1 && result.orders.every(({ id }) => id === expected.orderId)));
+  (expected.orderId === undefined || (result.count <= 1 && result.orders.every(({ id }) => id === expected.orderId)));
 
 /** IDs and monetary snapshots come from the persisted order, never from the current product price or Tax. */
 export const mapSymmyDemoOrder = (
   order: DemoOrderExportResponse['orders'][number],
 ): typeof SymmyDemoOrderSchema.Type => {
-  const { createdAt, updatedAt, lines, pricesIncludeVat = false, ...stored } = order;
+  const { createdAt, lines, pricesIncludeVat = false, updatedAt, ...stored } = order;
   return {
     ...stored,
-    createdAt: DateTime.formatIso(createdAt),
+    createdAt,
     currencyCode: order.market?.currency ?? 'CZK',
     customerId: order.partyId,
     lines: lines.map((item) => {
@@ -119,6 +112,6 @@ export const mapSymmyDemoOrder = (
     }),
     pricesIncludeVat,
     totalNetMinor: order.totalMinor - order.totalVatMinor,
-    updatedAt: DateTime.formatIso(updatedAt),
+    updatedAt,
   };
 };

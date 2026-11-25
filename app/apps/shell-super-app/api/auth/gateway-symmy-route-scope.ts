@@ -50,6 +50,29 @@ export const requiresSymmyPriceGroupRouteProof = (
 ): boolean =>
   audience === priceGroupAudience &&
   (routeKey === 'priceLists' || routeKey === 'priceListPricesBatch' || routeKey === 'productsBatch');
+
+type SymmyOwnerRouteAdmission =
+  | { readonly kind: 'refused' }
+  | { readonly kind: 'unscoped' }
+  | { readonly kind: 'route-proof'; readonly routeRequest: RouteRequest };
+
+/** The integration owns which owner calls require its already-selected route; hosts only execute that decision. */
+export const decideSymmyOwnerRouteAdmission = (
+  selectedRoute: RouteRequest | undefined,
+  input: { readonly audience: string; readonly legalEntityId?: string },
+): SymmyOwnerRouteAdmission => {
+  if (input.audience === 'inventory' && selectedRoute?.routeKey !== 'inventoryStockBatch') {
+    return { kind: 'refused' };
+  }
+  if (
+    input.legalEntityId === undefined &&
+    input.audience !== 'inventory' &&
+    !requiresSymmyPriceGroupRouteProof(selectedRoute?.routeKey, input.audience)
+  ) {
+    return { kind: 'unscoped' };
+  }
+  return selectedRoute === undefined ? { kind: 'refused' } : { kind: 'route-proof', routeRequest: selectedRoute };
+};
 type InstalledContract = ShellInstalledCatalog['contracts'][number];
 
 const nativeReadOperations = [

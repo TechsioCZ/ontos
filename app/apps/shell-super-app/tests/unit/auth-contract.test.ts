@@ -33,43 +33,44 @@ import {
 import { AssetMetadataResponseSchema } from '../../shared/core-reads/asset-metadata.ts';
 import { LegalEntityDetailResponseSchema } from '../../shared/core-reads/legal-entity-detail.ts';
 
+const unusedHandler = () => Effect.die('The contract registration proof must not execute a request');
+
 type TenantEndpoint =
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.availableTenants
   | typeof ShellAuthenticationApi.groups.tenants.endpoints.switchTenant;
 
 it.effect('registers the served agent, people and connection handlers against the canonical server contract', () =>
   Effect.gen(function* registerServedGroups() {
-    const unused = () => Effect.die('The contract registration proof must not execute a request');
     yield* Layer.build(
       Layer.mergeAll(
         HttpApiBuilder.group(ShellServerApi, 'agentPlatform', (handlers) =>
           handlers.handleAll({
-            submitAgentProposals: unused,
-            listOwnAgentProposals: unused,
-            agentQueue: unused,
-            agentDecide: unused,
-            agentRevert: unused,
-            agentActivity: unused,
+            agentActivity: unusedHandler,
+            agentDecide: unusedHandler,
+            agentQueue: unusedHandler,
+            agentRevert: unusedHandler,
+            listOwnAgentProposals: unusedHandler,
+            submitAgentProposals: unusedHandler,
           }),
         ),
         HttpApiBuilder.group(ShellServerApi, 'peopleAdministration', (handlers) =>
           handlers.handleAll({
-            requestPeopleSearchRebuild: unused,
-            invitePerson: unused,
-            listCompanyPeople: unused,
-            listTenantPeople: unused,
-            setPeopleCompanyMembership: unused,
+            invitePerson: unusedHandler,
+            listCompanyPeople: unusedHandler,
+            listTenantPeople: unusedHandler,
+            requestPeopleSearchRebuild: unusedHandler,
+            setPeopleCompanyMembership: unusedHandler,
           }),
         ),
         HttpApiBuilder.group(ShellServerApi, 'oauthConnectionsAdmin', (handlers) =>
           handlers.handleAll({
-            listMyConnections: unused,
-            listCompanyConnections: unused,
-            updateConnectionAccess: unused,
-            revokeConnection: unused,
-            listAgentEntities: unused,
-            manageAgentEntity: unused,
-            replaceAgentOperators: unused,
+            listAgentEntities: unusedHandler,
+            listCompanyConnections: unusedHandler,
+            listMyConnections: unusedHandler,
+            manageAgentEntity: unusedHandler,
+            replaceAgentOperators: unusedHandler,
+            revokeConnection: unusedHandler,
+            updateConnectionAccess: unusedHandler,
           }),
         ),
       ),

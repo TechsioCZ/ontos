@@ -1,5 +1,5 @@
 import { assert, it } from 'effect-rstest';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import {
@@ -70,7 +70,9 @@ it('exports persisted order/customer IDs, address snapshots, quantity, totals, s
   assert.deepEqual(order.billingAddress, stored.billingAddress);
   assert.deepEqual(order.deliveryAddress, stored.deliveryAddress);
   assert.deepEqual(order.deliveryRecipient, stored.deliveryRecipient);
-  assert.equal(order.createdAt, stored.createdAt);
+  const encoded = Schema.encodeSync(SymmyDemoOrderSchema)(order);
+  assert.equal(encoded.createdAt, stored.createdAt);
+  assert.equal(encoded.updatedAt, stored.updatedAt);
   assert.equal('history' in order, false);
   assert.equal(Schema.is(SymmyDemoOrderSchema)(order), true);
 });
@@ -154,7 +156,7 @@ it.effect('the real owner client sends the exact authenticated page/detail and c
     });
     const result = yield* executeDemoOrderExportWithAuthorization(
       payload,
-      'Bearer request-local-owner-assertion',
+      Redacted.make('Bearer request-local-owner-assertion'),
       'order-export-test',
       {
         baseUrl: 'https://owner.example.test/merchandise-api',
@@ -198,7 +200,7 @@ it.effect('owner authentication and company permission refusals remain errors, n
         });
       const error = yield* executeDemoOrderExportWithAuthorization(
         { limit: 50, offset: 0 },
-        'Bearer refused',
+        Redacted.make('Bearer refused'),
         'refused-export-test',
         {
           baseUrl: 'https://owner.example.test/merchandise-api',

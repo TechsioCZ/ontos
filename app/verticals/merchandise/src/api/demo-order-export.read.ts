@@ -11,17 +11,20 @@ import type { DemoOrderExportRequest } from '../../shared/apis/demo-order-export
 import { orderPage } from '../services/merchandise-queries.ts';
 import { assertMerchandiseSearchPublished } from '../services/catalog-publication.ts';
 
-const unavailable = () =>
-  new ReadHandlerUnavailable({
-    code: 'read_handler_unavailable',
-    reason: 'The persisted order export is temporarily unavailable',
-  });
+const unavailable = (cause?: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({
+      code: 'read_handler_unavailable',
+      reason: 'The persisted order export is temporarily unavailable',
+    }),
+    'cause',
+    { configurable: false, enumerable: false, value: cause, writable: false },
+  );
 
 interface OrderExportServices {
-  readonly read: (input: DemoOrderExportRequest) => Effect.Effect<
-    typeof DemoOrderExportResponseSchema.Type,
-    ReadHandlerUnavailable
-  >;
+  readonly read: (
+    input: DemoOrderExportRequest,
+  ) => Effect.Effect<typeof DemoOrderExportResponseSchema.Type, ReadHandlerUnavailable>;
 }
 
 const services: ReadServiceFactory<OrderExportServices> = (transaction, scope) =>
@@ -82,8 +85,8 @@ export const demoOrderExportRead = defineRead(
     schemaVersion: '1',
   },
   (input, context) =>
-    context.services.read(input).pipe(
-      Effect.map((result) => ({ evidence: { resultCount: result.orders.length }, result })),
-    ),
+    context.services
+      .read(input)
+      .pipe(Effect.map((result) => ({ evidence: { resultCount: result.orders.length }, result }))),
   services,
 );

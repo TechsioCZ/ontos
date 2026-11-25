@@ -51,7 +51,7 @@ export const readSymmyDemoOrders = Effect.fn('SymmyDemoOrders.read')(function* r
   const credential = yield* acquireSymmyReadAssertion(admission, demoOrderExportOperation.audience, legalEntityId);
   const result = yield* executeDemoOrderExportWithAuthorization(
     payload,
-    `Bearer ${Redacted.value(credential.assertion)}`,
+    Redacted.make(`Bearer ${Redacted.value(credential.assertion)}`),
     yield* newRequestIdentifier,
     { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
   ).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
