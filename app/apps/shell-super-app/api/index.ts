@@ -4258,18 +4258,22 @@ const defaultScopedModuleStateFactory: ShellScopedModuleStateFactory = (transact
 type ShellAuthenticationApiRuntimeArguments = readonly [
   authenticationLayer: ShellAuthenticationLayer,
   issuerLayer: ShellGatewayIssuerLayer,
-  moduleStateLayer?: ShellModuleStateLayer,
+  moduleStateLayer?: ShellModuleStateLayer | undefined,
   loadInstalledModuleCatalog?: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogUnavailableError> | undefined,
-  enableInstalledOutboxMatcher?: boolean,
-  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>>,
-  resourceGateways?: ShellResourceGateways,
-  scopedModuleStateFactory?: ShellScopedModuleStateFactory,
-  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
+  enableInstalledOutboxMatcher?: boolean | undefined,
+  contextAccessLayer?: Layer.Layer<ContextAccess, Layer.Error<typeof defaultContextAccessLive>> | undefined,
+  resourceGateways?: ShellResourceGateways | undefined,
+  scopedModuleStateFactory?: ShellScopedModuleStateFactory | undefined,
+  externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer | undefined,
   /** The access gate this composition asks; a suite supplies a scripted one (never a production default). */
-  accessDecisionLayer?: ShellAccessDecisionLayer,
-  shellReadAuthority?: ActiveApplicationCompositionServiceContract,
-  runtimeDatabase?: DatabaseConnectionPair,
+  accessDecisionLayer?: ShellAccessDecisionLayer | undefined,
+  shellReadAuthority?: ActiveApplicationCompositionServiceContract | undefined,
+  runtimeDatabase?: DatabaseConnectionPair | undefined,
 ];
+
+export const ShellAuthenticationApiRuntimeConfiguration = Context.Service<ShellAuthenticationApiRuntimeArguments>(
+  '@app/shell-super-app/api/ShellAuthenticationApiRuntimeConfiguration',
+);
 
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
@@ -4953,6 +4957,16 @@ export const makeShellAuthenticationApiRuntime = (
     ),
   });
 };
+
+export class ShellAuthenticationApiRuntime extends Context.Service<
+  ShellAuthenticationApiRuntime,
+  ReturnType<typeof makeShellAuthenticationApiRuntime>
+>()('@app/shell-super-app/api/ShellAuthenticationApiRuntime') {}
+
+export const ShellAuthenticationApiRuntimeLive = Layer.effect(
+  ShellAuthenticationApiRuntime,
+  ShellAuthenticationApiRuntimeConfiguration.pipe(Effect.map((args) => makeShellAuthenticationApiRuntime(...args))),
+);
 
 /**
  * The production Shell runtime arguments without the access gate. The default export appends the

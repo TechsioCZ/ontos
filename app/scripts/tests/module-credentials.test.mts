@@ -46,6 +46,8 @@ const MERCHANDISE = 'merchandise';
 const NEW_CALLER = 'work-tasks';
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
 const FINANCE = 'finance-billing';
+const byWorkloadIdentity = (left: readonly string[], right: readonly string[]) =>
+  left.join('/').localeCompare(right.join('/'));
 
 /** Production source of one vertical: no tests, fixtures or generated build output. */
 const productionSources = (directory: string): string[] =>
@@ -208,7 +210,7 @@ describe('the derived callers keep every caller the hand-kept list had', () => {
 });
 
 describe('MODULE_INTERNAL_WORKLOADS', () => {
-  it('names exactly the modules whose own server acts as a workload, each only with workloads its own Actions declare', () => {
+  it('names exactly the reviewed internal purposes under their topology owners, each only with workloads its own Actions declare', () => {
     const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
       readFileSync(path.join(workspace, TOPOLOGY_FILE), 'utf-8'),
     );
@@ -218,11 +220,37 @@ describe('MODULE_INTERNAL_WORKLOADS', () => {
         ? []
         : productionSources(path.join(workspace, vertical.path)).map((file) => readFileSync(file, 'utf-8'));
     };
-    const actingModules = topology.verticals
-      .filter((vertical) => sourcesOf(vertical.id).some((source) => WORKLOAD_CLIENT.test(source)))
-      .map((vertical) => vertical.id)
-      .toSorted();
-    expect([...MODULE_INTERNAL_WORKLOADS.keys()].toSorted()).toEqual(actingModules);
+    const catalog = Schema.decodeUnknownSync(Schema.fromJsonString(AccessCatalogArtifactSchema))(
+      readFileSync(path.join(workspace, 'topology/authorization-catalog.json'), 'utf-8'),
+    );
+    const owners = topology.verticals.map(({ id, path: directory }) => {
+      const manifest = readFileSync(path.join(workspace, directory, 'vertical.manifest.ts'), 'utf-8');
+      const moduleId = /^\/\/ @ontos-module-id (?<id>\S+)$/mu.exec(manifest)?.groups?.id;
+      expect(moduleId, id).toBeDefined();
+      return { appId: id, moduleId };
+    });
+    // Registered-workload calls no longer import acquireWorkloadGatewayContext. The reviewed purpose inventory
+    // and each module's canonical identity, not a gateway helper's spelling, determine credential ownership.
+    const expected = [...INTERNAL_WORKLOAD_LABELS.keys()].map((workload) => {
+      expect(catalog.declaredWorkloadKeys, workload).toContain(workload);
+      const matching = owners.filter(({ moduleId }) => moduleId !== undefined && workload.startsWith(`${moduleId}.`));
+      expect(matching, workload).toHaveLength(1);
+      const [owner] = matching;
+      if (owner === undefined) {
+        expect.unreachable(`No topology owner for ${workload}`);
+      }
+      return [owner.appId, workload];
+    });
+    const actual = [...MODULE_INTERNAL_WORKLOADS].flatMap(([appId, workloads]) =>
+      workloads.map((workload) => [appId, workload]),
+    );
+    expect(actual.toSorted(byWorkloadIdentity)).toEqual(expected.toSorted(byWorkloadIdentity));
+    // Direct gateway callers must still be provisioned; declarative callers are additional, not replacements.
+    for (const { id } of topology.verticals) {
+      if (sourcesOf(id).some((source) => WORKLOAD_CLIENT.test(source))) {
+        expect(MODULE_INTERNAL_WORKLOADS.has(id), id).toBe(true);
+      }
+    }
     for (const [appId, workloads] of MODULE_INTERNAL_WORKLOADS) {
       // A module calls no other module's workload: every key it gets is one its own access declarations admit.
       expect(MODULE_CREDENTIAL_CALLERS).toContain(appId);

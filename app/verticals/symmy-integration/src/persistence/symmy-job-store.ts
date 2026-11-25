@@ -6,7 +6,7 @@ import {
   openScopedSourceExecutionFence,
   readScopedOriginalActionInvocation,
   readScopedSourceExecutionFence,
-  readScopedSystemWorkloadEnrollment,
+  readScopedWorkloadEnrollment,
   requireScopedSourceExecutionFenceOpen,
 } from '@app/core-runtime/access/enforcement';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -177,15 +177,30 @@ const lockRoute = Effect.fn('SymmyJobStore.lockEnrollment')(function* lockRouteS
   return yield* Effect.void;
 });
 
-const sourceWorkloads = new Map([
-  ['commerce.catalog', 'commerce.catalog.symmy-product-import'],
-  ['commerce.pricing', 'commerce.pricing.source-write'],
-  ['pricing.price-group-catalog', 'pricing.price-group-catalog.source-write'],
-  ['commerce.inventory', 'commerce.inventory.source-write'],
-  ['party.registry', 'party.registry.source-write'],
-  ['commerce.customer-context', 'commerce.customer-context.source-write'],
+const sourceWorkloadEnrollments: ReadonlyMap<string, Parameters<typeof readScopedWorkloadEnrollment>[1]> = new Map([
+  ['commerce.catalog', { enrollmentMode: 'system', workloadKey: 'commerce.catalog.symmy-product-import' }],
+  ['commerce.pricing', { enrollmentMode: 'system', workloadKey: 'commerce.pricing.source-write' }],
+  [
+    'pricing.price-group-catalog',
+    { enrollmentMode: 'system', workloadKey: 'pricing.price-group-catalog.source-write' },
+  ],
+  ['commerce.inventory', { enrollmentMode: 'system', workloadKey: 'commerce.inventory.source-write' }],
+  [
+    'party.registry',
+    {
+      enrollmentMode: 'system-or-canonical-company-service',
+      workloadKey: 'party.registry.source-write',
+    },
+  ],
+  [
+    'commerce.customer-context',
+    {
+      enrollmentMode: 'system-or-canonical-company-service',
+      workloadKey: 'commerce.customer-context.source-write',
+    },
+  ],
 ]);
-const sourceWorkloadFor = (moduleId: string) => sourceWorkloads.get(moduleId);
+export const symmySourceWorkloadEnrollmentFor = (moduleId: string) => sourceWorkloadEnrollments.get(moduleId);
 const inventorySourceAllowed = (
   template: SymmyFixtureExecutionPlan,
   intent: NonNullable<SymmyPinnedEffect['intent']>,
@@ -1011,13 +1026,11 @@ const pinSyncEffect = Effect.fn('SymmyJobStore.pinSyncEffect')(function* pinSync
   effect: SymmyPinnedEffect,
 ) {
   const { authContextRef, scope, transaction } = context;
-  const workload = sourceWorkloadFor(effect.ref.operation.moduleId);
-  if (workload === undefined) {
+  const receiver = symmySourceWorkloadEnrollmentFor(effect.ref.operation.moduleId);
+  if (receiver === undefined) {
     return yield* routeDenied();
   }
-  const enrollment = yield* readScopedSystemWorkloadEnrollment(transaction, workload).pipe(
-    Effect.mapError(unavailable),
-  );
+  const enrollment = yield* readScopedWorkloadEnrollment(transaction, receiver).pipe(Effect.mapError(unavailable));
   if (
     Option.isNone(enrollment) ||
     effect.intent === undefined ||

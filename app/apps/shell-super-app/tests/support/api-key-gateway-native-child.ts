@@ -1,5 +1,10 @@
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
-import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
+import {
+  ShellAuthenticationApiRuntime,
+  ShellAuthenticationApiRuntimeConfiguration,
+  ShellAuthenticationApiRuntimeLive,
+  shellProductionRuntimeArguments,
+} from '../../api/index.ts';
 import {
   ChangeSystemWorkloadEnrollmentPayloadSchema,
   shellAuthenticationApiContract,
@@ -156,6 +161,7 @@ const observeProductionIssuer = (outcomes: Ref.Ref<readonly (typeof ShellNativeI
           );
         },
         issueDocument: actual.issueDocument,
+        issueSymmy: actual.issueSymmy,
       });
     }),
   );
@@ -327,21 +333,27 @@ const serve = Effect.scoped(
     );
     const [productionAuthentication, productionIssuer, ...productionArguments] = shellProductionRuntimeArguments;
     const observedProductionIssuer = observeProductionIssuer(issuerOutcomes).pipe(Layer.provide(productionIssuer));
-    const runtime = productionGate
-      ? makeShellAuthenticationApiRuntime(productionAuthentication, observedProductionIssuer, ...productionArguments)
-      : makeShellAuthenticationApiRuntime(
-          runtimeAuthentication,
-          issuer,
-          TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCore)),
-          undefined,
-          false,
-          // Production context access: gateway issuance revalidates the staff principal through its namespace registry.
-          Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive),
-          undefined,
-          undefined,
-          undefined,
-          accessGate,
-        );
+    const runtimeConfiguration = ShellAuthenticationApiRuntimeConfiguration.of(
+      productionGate
+        ? [productionAuthentication, observedProductionIssuer, ...productionArguments]
+        : [
+            runtimeAuthentication,
+            issuer,
+            TenantModuleStateServiceLive.pipe(Layer.provide(runtimeCore)),
+            undefined,
+            false,
+            // Production context access: gateway issuance revalidates the staff principal through its namespace registry.
+            Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive),
+            undefined,
+            undefined,
+            undefined,
+            accessGate,
+          ],
+    );
+    const runtime = yield* ShellAuthenticationApiRuntime.pipe(
+      Effect.provide(ShellAuthenticationApiRuntimeLive),
+      Effect.provideService(ShellAuthenticationApiRuntimeConfiguration, runtimeConfiguration),
+    );
     const observedRuntime = productionGate
       ? {
           api: runtime.api,

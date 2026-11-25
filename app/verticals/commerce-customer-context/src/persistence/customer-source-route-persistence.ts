@@ -1,9 +1,6 @@
 import { defineScopedRoutine, ReadHandlerUnavailable } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
-import {
-  readActiveWorkloadBindingHolders,
-  readScopedSystemWorkloadEnrollment,
-} from '@app/core-runtime/access/enforcement';
+import { readActiveWorkloadBindingHolders, readScopedWorkloadEnrollment } from '@app/core-runtime/access/enforcement';
 import type { WorkloadBindingHolder } from '@app/core-runtime/access/enforcement';
 import { Effect, Match, Option, Schema } from 'effect';
 import {
@@ -81,7 +78,10 @@ const readCustomerSourceRouteRoutine = defineScopedRoutine({
 });
 
 /** Source writes of this owner run as the source-write workload; Profile and Group source reads as source-read. */
-const SOURCE_WRITE_WORKLOAD = 'commerce.customer-context.source-write';
+export const customerSourceWriterEnrollment = {
+  enrollmentMode: 'system-or-canonical-company-service',
+  workloadKey: 'commerce.customer-context.source-write',
+} as const satisfies Parameters<typeof readScopedWorkloadEnrollment>[1];
 const SOURCE_READ_WORKLOAD = 'commerce.customer-context.source-read';
 
 const unavailable = (cause?: unknown) =>
@@ -177,8 +177,8 @@ export const customerSourceRouteServices: ReadServiceFactory<CustomerSourceRoute
     // One owner transaction: its reads run one after another, and a route naming no reader reads no reader.
     const [writer, writers, readers] = yield* Effect.all(
       [
-        readScopedSystemWorkloadEnrollment(transaction, SOURCE_WRITE_WORKLOAD).pipe(Effect.mapError(unavailable)),
-        holdersOf(SOURCE_WRITE_WORKLOAD),
+        readScopedWorkloadEnrollment(transaction, customerSourceWriterEnrollment).pipe(Effect.mapError(unavailable)),
+        holdersOf(customerSourceWriterEnrollment.workloadKey),
         requestedReaders.length === 0 ? Effect.succeed([]) : holdersOf(SOURCE_READ_WORKLOAD),
       ],
       { concurrency: 1 },

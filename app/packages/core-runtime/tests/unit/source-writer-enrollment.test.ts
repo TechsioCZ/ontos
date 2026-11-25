@@ -1,7 +1,7 @@
 import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { readScopedSystemWorkloadEnrollment } from '../../src/access/workloads/system-enrollment.ts';
+import { readScopedWorkloadEnrollment } from '../../src/access/workloads/system-enrollment.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { internalWorkloadPrincipalId } from '../../src/auth/module-credentials.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
@@ -20,6 +20,7 @@ interface Enrollment {
 
 const run = (input: {
   readonly company?: boolean;
+  readonly enrollmentMode?: 'system' | 'system-or-canonical-company-service';
   readonly services?: readonly Enrollment[];
   readonly systems?: readonly Enrollment[];
   readonly workloadKey: string;
@@ -60,7 +61,12 @@ const run = (input: {
     const result = yield* database
       .transaction((transaction) =>
         installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
-          Effect.flatMap((scoped) => readScopedSystemWorkloadEnrollment(scoped, input.workloadKey)),
+          Effect.flatMap((scoped) =>
+            readScopedWorkloadEnrollment(scoped, {
+              enrollmentMode: input.enrollmentMode ?? 'system',
+              workloadKey: input.workloadKey,
+            }),
+          ),
         ),
       )
       .pipe(Effect.result);
@@ -72,6 +78,7 @@ it.effect('resolves both real owner source-write jobs through exact platform com
     for (const workloadKey of nativeSourceWriters) {
       const principalId = internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey });
       const { result, statements } = yield* run({
+        enrollmentMode: 'system-or-canonical-company-service',
         services: [{ bindingIncarnation: incarnation, principalId }],
         workloadKey,
       });
@@ -98,6 +105,7 @@ it.effect('preserves unique legacy system identity without requiring a company r
   Effect.gen(function* test() {
     const { result, statements } = yield* run({
       company: false,
+      enrollmentMode: 'system-or-canonical-company-service',
       systems: [{ bindingIncarnation: incarnation, principalId: legacyId }],
       workloadKey: nativeSourceWriters[0] ?? '',
     });
@@ -112,6 +120,7 @@ it.effect('preserves unique legacy system identity without requiring a company r
 it.effect('does not hide ambiguous legacy enrollment behind a service candidate', () =>
   Effect.gen(function* test() {
     const { result, statements } = yield* run({
+      enrollmentMode: 'system-or-canonical-company-service',
       systems: [
         { bindingIncarnation: incarnation, principalId: legacyId },
         { bindingIncarnation: incarnation, principalId: legalEntityId },
@@ -127,7 +136,11 @@ it.effect('never widens unrelated jobs or tenant-only source requests to service
   Effect.gen(function* test() {
     for (const input of [
       { workloadKey: 'integration.symmy.execute-symmy-job' },
-      { company: false, workloadKey: 'party.registry.source-write' },
+      {
+        company: false,
+        enrollmentMode: 'system-or-canonical-company-service' as const,
+        workloadKey: 'party.registry.source-write',
+      },
       { workloadKey: 'commerce.customer-context.source-read' },
     ]) {
       const { result, statements } = yield* run(input);
@@ -142,11 +155,82 @@ it.effect('never widens unrelated jobs or tenant-only source requests to service
 
 it.effect('returns no enrollment when the exact active company service binding is absent', () =>
   Effect.gen(function* test() {
-    const { result, statements } = yield* run({ workloadKey: 'party.registry.source-write' });
+    const { result, statements } = yield* run({
+      enrollmentMode: 'system-or-canonical-company-service',
+      workloadKey: 'party.registry.source-write',
+    });
     expect(Result.isSuccess(result)).toBe(true);
     if (Result.isSuccess(result)) {
       expect(result.success).toEqual(Option.none());
     }
+    expect(statements).toHaveLength(2);
+  }),
+);
+
+it.effect('reads SYSTEM facts only when the receiver selects system enrollment, even for a customer workload', () =>
+  Effect.gen(function* explicitSystemEnrollment() {
+    const workloadKey = 'commerce.customer-context.source-write';
+    const principalId = internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey });
+    const { result, statements } = yield* run({
+      enrollmentMode: 'system',
+      services: [{ bindingIncarnation: incarnation, principalId }],
+      workloadKey,
+    });
+    expect(result).toMatchObject({ success: Option.none() });
+    expect(statements).toHaveLength(1);
+  }),
+);
+
+it.effect('reads canonical company SERVICE facts without knowing the receiver workload name', () =>
+  Effect.gen(function* ownerNeutralEnrollment() {
+    const workloadKey = 'example.receiver.work';
+    const principalId = internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey });
+    const { result, statements } = yield* run({
+      enrollmentMode: 'system-or-canonical-company-service',
+      services: [{ bindingIncarnation: incarnation, principalId }],
+      workloadKey,
+    });
+    expect(result).toMatchObject({ success: Option.some({ bindingIncarnation: incarnation, principalId }) });
+    expect(statements).toHaveLength(2);
+  }),
+);
+
+it.effect('keeps SYSTEM precedence even when a canonical company SERVICE candidate exists', () =>
+  Effect.gen(function* systemPrecedence() {
+    const workloadKey = 'example.receiver.work';
+    for (const enrollmentMode of ['system', 'system-or-canonical-company-service'] as const) {
+      const { result, statements } = yield* run({
+        enrollmentMode,
+        services: [
+          {
+            bindingIncarnation: incarnation,
+            principalId: internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey }),
+          },
+        ],
+        systems: [{ bindingIncarnation: incarnation, principalId: legacyId }],
+        workloadKey,
+      });
+      expect(result).toMatchObject({
+        success: Option.some({ bindingIncarnation: incarnation, principalId: legacyId }),
+      });
+      expect(statements).toHaveLength(1);
+    }
+  }),
+);
+
+it.effect('refuses ambiguous canonical company SERVICE enrollment', () =>
+  Effect.gen(function* ambiguousServiceEnrollment() {
+    const workloadKey = 'example.receiver.work';
+    const candidate = {
+      bindingIncarnation: incarnation,
+      principalId: internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey }),
+    };
+    const { result, statements } = yield* run({
+      enrollmentMode: 'system-or-canonical-company-service',
+      services: [candidate, candidate],
+      workloadKey,
+    });
+    expect(Result.isFailure(result)).toBe(true);
     expect(statements).toHaveLength(2);
   }),
 );

@@ -138,10 +138,9 @@ index e9ad901968ffcaf2d5cdc6ce0905e45a5c662d09..60f8a38e163bf84eeec09e18793789fe
              };
          }
 diff --git a/dist/cjs/strict-effect-runtime.cjs b/dist/cjs/strict-effect-runtime.cjs
-index f22192f373a55133568c1af783f9ecc5ea8bc1c1..b5e30f477784da5cab9fcbbf140fe1b291ea2acd 100644
 --- a/dist/cjs/strict-effect-runtime.cjs
 +++ b/dist/cjs/strict-effect-runtime.cjs
-@@ -110,12 +110,13 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -110,12 +110,13 @@
                      operator: 'delete'
                  })) {
                      let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
@@ -157,7 +156,79 @@ index f22192f373a55133568c1af783f9ecc5ea8bc1c1..b5e30f477784da5cab9fcbbf140fe1b2
                          binding = types_namespaceObject.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
                      }
                  }
-@@ -296,11 +297,56 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -264,9 +265,70 @@
+             const last = statements.at(-1);
+             return statements.slice(0, -1).every((statement)=>types_namespaceObject.isVariableDeclaration(statement) || types_namespaceObject.isTSTypeAliasDeclaration(statement) || types_namespaceObject.isTSInterfaceDeclaration(statement)) && types_namespaceObject.isReturnStatement(last) ? last.argument : void 0;
+         };
++        /** All loaded aliases of one native namespace must remain immutable and unescaped. */
++        const closedNamespace = (namespace, sources) => {
++          const aliases = [];
++          for (const module of modules.values()) {
++            for (const statement of module.file.program.body) {
++              if (!types_namespaceObject.isImportDeclaration(statement) || statement.importKind === 'type' ||
++                !sources.includes(statement.source.value)) continue;
++              for (const specifier of statement.specifiers) {
++                const matches = types_namespaceObject.isImportNamespaceSpecifier(specifier)
++                  ? statement.source.value === `effect/${namespace}`
++                  : types_namespaceObject.isImportSpecifier(specifier) && specifier.importKind !== 'type' &&
++                    types_namespaceObject.isIdentifier(specifier.imported, { name: namespace });
++                if (matches) aliases.push(paths.get(specifier.local)?.scope.getBinding(specifier.local.name));
++              }
++            }
++          }
++          return aliases.length > 0 && aliases.every((value) => !!value && value.constant && !mutated.has(value) &&
++            value.referencePaths.every((reference) => {
++              if (reference.findParent((parent) => parent.isTSType())) return true;
++              const parent = reference.parentPath.node;
++              return types_namespaceObject.isMemberExpression(parent) && !parent.computed && parent.object === reference.node;
++            }));
++        };
++        const closedMethod = (node, namespace, member, sources) =>
++          method(node, namespace, member, sources) && closedNamespace(namespace, sources);
++        /** A diagnostic Effect may annotate its log data, but cannot replace the observed Layer. */
++        const diagnosticEffect = (node) => guarded(node, (node) => {
++          const value = routeValue(node);
++          if (!types_namespaceObject.isCallExpression(value)) return false;
++          if (closedMethod(value.callee, 'Effect', 'logError', effectSources)) {
++            return value.arguments.length === 1 && types_namespaceObject.isStringLiteral(unwrap(value.arguments[0]));
++          }
++          return types_namespaceObject.isMemberExpression(value.callee) && !value.callee.computed &&
++            types_namespaceObject.isIdentifier(value.callee.property, { name: 'pipe' }) &&
++            diagnosticEffect(value.callee.object) && value.arguments.length > 0 &&
++            value.arguments.every((argument) => types_namespaceObject.isCallExpression(argument) &&
++              closedMethod(argument.callee, 'Effect', 'annotateLogs', effectSources) && argument.arguments.length === 1);
++        });
++        const diagnosticObserver = (node) => {
++          const value = routeValue(node);
++          if ((!types_namespaceObject.isArrowFunctionExpression(value) && !types_namespaceObject.isFunctionExpression(value) &&
++            !types_namespaceObject.isFunctionDeclaration(value)) || value.async || value.generator || value.params.length !== 1 ||
++            !types_namespaceObject.isIdentifier(value.params[0])) return false;
++          const body = value.body;
++          return (!types_namespaceObject.isBlockStatement(body) || body.body.length === 1) &&
++            !!returned(body) && diagnosticEffect(returned(body));
++        };
++        /** Only closed native stages compose: no invocation of a user Layer-transform function. */
++        const startupStage = (node) => guarded(node, (node) => {
++          const value = routeValue(node);
++          if (closedMethod(value, 'Layer', 'orDie', layerSources)) return 'orDie';
++          if (!types_namespaceObject.isCallExpression(value)) return undefined;
++          if (closedMethod(value.callee, 'Layer', 'tapCause', layerSources)) {
++            return value.arguments.length === 1 && diagnosticObserver(value.arguments[0]) &&
++              closedMethod(value.callee, 'Layer', 'tapCause', layerSources) ? 'tapCause' : undefined;
++          }
++          const factory = imported(routeValue(value.callee));
++          return factory?.name === 'flow' && ['effect', 'effect/Function'].includes(factory.specifier) &&
++            value.arguments.length === 2 && startupStage(value.arguments[0]) === 'tapCause' &&
++            startupStage(value.arguments[1]) === 'orDie' ? 'startup' : undefined;
++        });
+         const pipe = (node, check)=>types_namespaceObject.isMemberExpression(node.callee) && !node.callee.computed && types_namespaceObject.isIdentifier(node.callee.property, {
+                 name: 'pipe'
+-            }) && check(node.callee.object) && node.arguments.every((argument)=>method(argument, 'Layer', 'orDie', layerSources) || types_namespaceObject.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && argument.arguments.length > 0);
++            }) && check(node.callee.object) && node.arguments.every((argument)=>startupStage(argument) !== undefined || types_namespaceObject.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && argument.arguments.length > 0);
+         const handled = (node)=>{
+             node = unwrap(node);
+             if (!types_namespaceObject.isArrowFunctionExpression(node) && !types_namespaceObject.isFunctionExpression(node)) return false;
+@@ -296,11 +358,56 @@
              'effect',
              'effect/Effect'
          ];
@@ -219,7 +290,7 @@ index f22192f373a55133568c1af783f9ecc5ea8bc1c1..b5e30f477784da5cab9fcbbf140fe1b2
          };
          const effectReference = (node)=>guarded(node, (node)=>{
                  const init = initialized(node);
-@@ -314,7 +360,7 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -314,7 +421,7 @@
                  if (!types_namespaceObject.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !types_namespaceObject.isIdentifier(node.params[0]) || types_namespaceObject.isBlockStatement(node.body)) return false;
                  const handler = routeHandler(node.body);
                  const parameter = binding(node.params[0]);
@@ -369,10 +440,9 @@ index 5ac54b28a5dc2664262aa8d40898abccef6d3739..5a5c1b9d2ce979ced4ae4f943e563f63
              };
          }
 diff --git a/dist/esm-node/strict-effect-runtime.js b/dist/esm-node/strict-effect-runtime.js
-index 7a3703d3a13afb077feb6f78bc7897a3a02201c9..b0911a7015213e768101324666af76c68c315491 100644
 --- a/dist/esm-node/strict-effect-runtime.js
 +++ b/dist/esm-node/strict-effect-runtime.js
-@@ -67,12 +67,13 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -67,12 +67,13 @@
                      operator: 'delete'
                  })) {
                      let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
@@ -388,7 +458,79 @@ index 7a3703d3a13afb077feb6f78bc7897a3a02201c9..b0911a7015213e768101324666af76c6
                          binding = __rspack_external__babel_types_6e8337dd.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
                      }
                  }
-@@ -253,11 +254,56 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -221,9 +222,70 @@
+             const last = statements.at(-1);
+             return statements.slice(0, -1).every((statement)=>__rspack_external__babel_types_6e8337dd.isVariableDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isTSTypeAliasDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isTSInterfaceDeclaration(statement)) && __rspack_external__babel_types_6e8337dd.isReturnStatement(last) ? last.argument : void 0;
+         };
++        /** All loaded aliases of one native namespace must remain immutable and unescaped. */
++        const closedNamespace = (namespace, sources) => {
++          const aliases = [];
++          for (const module of modules.values()) {
++            for (const statement of module.file.program.body) {
++              if (!__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) || statement.importKind === 'type' ||
++                !sources.includes(statement.source.value)) continue;
++              for (const specifier of statement.specifiers) {
++                const matches = __rspack_external__babel_types_6e8337dd.isImportNamespaceSpecifier(specifier)
++                  ? statement.source.value === `effect/${namespace}`
++                  : __rspack_external__babel_types_6e8337dd.isImportSpecifier(specifier) && specifier.importKind !== 'type' &&
++                    __rspack_external__babel_types_6e8337dd.isIdentifier(specifier.imported, { name: namespace });
++                if (matches) aliases.push(paths.get(specifier.local)?.scope.getBinding(specifier.local.name));
++              }
++            }
++          }
++          return aliases.length > 0 && aliases.every((value) => !!value && value.constant && !mutated.has(value) &&
++            value.referencePaths.every((reference) => {
++              if (reference.findParent((parent) => parent.isTSType())) return true;
++              const parent = reference.parentPath.node;
++              return __rspack_external__babel_types_6e8337dd.isMemberExpression(parent) && !parent.computed && parent.object === reference.node;
++            }));
++        };
++        const closedMethod = (node, namespace, member, sources) =>
++          method(node, namespace, member, sources) && closedNamespace(namespace, sources);
++        /** A diagnostic Effect may annotate its log data, but cannot replace the observed Layer. */
++        const diagnosticEffect = (node) => guarded(node, (node) => {
++          const value = routeValue(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value)) return false;
++          if (closedMethod(value.callee, 'Effect', 'logError', effectSources)) {
++            return value.arguments.length === 1 && __rspack_external__babel_types_6e8337dd.isStringLiteral(unwrap(value.arguments[0]));
++          }
++          return __rspack_external__babel_types_6e8337dd.isMemberExpression(value.callee) && !value.callee.computed &&
++            __rspack_external__babel_types_6e8337dd.isIdentifier(value.callee.property, { name: 'pipe' }) &&
++            diagnosticEffect(value.callee.object) && value.arguments.length > 0 &&
++            value.arguments.every((argument) => __rspack_external__babel_types_6e8337dd.isCallExpression(argument) &&
++              closedMethod(argument.callee, 'Effect', 'annotateLogs', effectSources) && argument.arguments.length === 1);
++        });
++        const diagnosticObserver = (node) => {
++          const value = routeValue(node);
++          if ((!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(value) && !__rspack_external__babel_types_6e8337dd.isFunctionExpression(value) &&
++            !__rspack_external__babel_types_6e8337dd.isFunctionDeclaration(value)) || value.async || value.generator || value.params.length !== 1 ||
++            !__rspack_external__babel_types_6e8337dd.isIdentifier(value.params[0])) return false;
++          const body = value.body;
++          return (!__rspack_external__babel_types_6e8337dd.isBlockStatement(body) || body.body.length === 1) &&
++            !!returned(body) && diagnosticEffect(returned(body));
++        };
++        /** Only closed native stages compose: no invocation of a user Layer-transform function. */
++        const startupStage = (node) => guarded(node, (node) => {
++          const value = routeValue(node);
++          if (closedMethod(value, 'Layer', 'orDie', layerSources)) return 'orDie';
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value)) return undefined;
++          if (closedMethod(value.callee, 'Layer', 'tapCause', layerSources)) {
++            return value.arguments.length === 1 && diagnosticObserver(value.arguments[0]) &&
++              closedMethod(value.callee, 'Layer', 'tapCause', layerSources) ? 'tapCause' : undefined;
++          }
++          const factory = imported(routeValue(value.callee));
++          return factory?.name === 'flow' && ['effect', 'effect/Function'].includes(factory.specifier) &&
++            value.arguments.length === 2 && startupStage(value.arguments[0]) === 'tapCause' &&
++            startupStage(value.arguments[1]) === 'orDie' ? 'startup' : undefined;
++        });
+         const pipe = (node, check)=>__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) && !node.callee.computed && __rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property, {
+                 name: 'pipe'
+-            }) && check(node.callee.object) && node.arguments.every((argument)=>method(argument, 'Layer', 'orDie', layerSources) || __rspack_external__babel_types_6e8337dd.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && argument.arguments.length > 0);
++            }) && check(node.callee.object) && node.arguments.every((argument)=>startupStage(argument) !== undefined || __rspack_external__babel_types_6e8337dd.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && argument.arguments.length > 0);
+         const handled = (node)=>{
+             node = unwrap(node);
+             if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) && !__rspack_external__babel_types_6e8337dd.isFunctionExpression(node)) return false;
+@@ -253,11 +315,56 @@
              'effect',
              'effect/Effect'
          ];
@@ -450,7 +592,7 @@ index 7a3703d3a13afb077feb6f78bc7897a3a02201c9..b0911a7015213e768101324666af76c6
          };
          const effectReference = (node)=>guarded(node, (node)=>{
                  const init = initialized(node);
-@@ -271,7 +317,7 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -271,7 +378,7 @@
                  if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
                  const handler = routeHandler(node.body);
                  const parameter = binding(node.params[0]);
@@ -599,10 +741,9 @@ index abb496e5853f10baf97f2f967d27fdab67063f0a..529bb66ea17e9c6aeab44b308ebcc1af
              };
          }
 diff --git a/dist/esm/strict-effect-runtime.js b/dist/esm/strict-effect-runtime.js
-index 4cb91c54c11d970e96a5b4000dcfdad2dd4e27d1..794de911fcaaa005069635750db1c95cb2e58ce5 100644
 --- a/dist/esm/strict-effect-runtime.js
 +++ b/dist/esm/strict-effect-runtime.js
-@@ -66,12 +66,13 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -66,12 +66,13 @@
                      operator: 'delete'
                  })) {
                      let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
@@ -618,7 +759,79 @@ index 4cb91c54c11d970e96a5b4000dcfdad2dd4e27d1..794de911fcaaa005069635750db1c95c
                          binding = __rspack_external__babel_types_6e8337dd.isIdentifier(alias) ? binding.path.scope.getBinding(alias.name) : void 0;
                      }
                  }
-@@ -252,11 +253,56 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -220,9 +221,70 @@
+             const last = statements.at(-1);
+             return statements.slice(0, -1).every((statement)=>__rspack_external__babel_types_6e8337dd.isVariableDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isTSTypeAliasDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isTSInterfaceDeclaration(statement)) && __rspack_external__babel_types_6e8337dd.isReturnStatement(last) ? last.argument : void 0;
+         };
++        /** All loaded aliases of one native namespace must remain immutable and unescaped. */
++        const closedNamespace = (namespace, sources) => {
++          const aliases = [];
++          for (const module of modules.values()) {
++            for (const statement of module.file.program.body) {
++              if (!__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) || statement.importKind === 'type' ||
++                !sources.includes(statement.source.value)) continue;
++              for (const specifier of statement.specifiers) {
++                const matches = __rspack_external__babel_types_6e8337dd.isImportNamespaceSpecifier(specifier)
++                  ? statement.source.value === `effect/${namespace}`
++                  : __rspack_external__babel_types_6e8337dd.isImportSpecifier(specifier) && specifier.importKind !== 'type' &&
++                    __rspack_external__babel_types_6e8337dd.isIdentifier(specifier.imported, { name: namespace });
++                if (matches) aliases.push(paths.get(specifier.local)?.scope.getBinding(specifier.local.name));
++              }
++            }
++          }
++          return aliases.length > 0 && aliases.every((value) => !!value && value.constant && !mutated.has(value) &&
++            value.referencePaths.every((reference) => {
++              if (reference.findParent((parent) => parent.isTSType())) return true;
++              const parent = reference.parentPath.node;
++              return __rspack_external__babel_types_6e8337dd.isMemberExpression(parent) && !parent.computed && parent.object === reference.node;
++            }));
++        };
++        const closedMethod = (node, namespace, member, sources) =>
++          method(node, namespace, member, sources) && closedNamespace(namespace, sources);
++        /** A diagnostic Effect may annotate its log data, but cannot replace the observed Layer. */
++        const diagnosticEffect = (node) => guarded(node, (node) => {
++          const value = routeValue(node);
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value)) return false;
++          if (closedMethod(value.callee, 'Effect', 'logError', effectSources)) {
++            return value.arguments.length === 1 && __rspack_external__babel_types_6e8337dd.isStringLiteral(unwrap(value.arguments[0]));
++          }
++          return __rspack_external__babel_types_6e8337dd.isMemberExpression(value.callee) && !value.callee.computed &&
++            __rspack_external__babel_types_6e8337dd.isIdentifier(value.callee.property, { name: 'pipe' }) &&
++            diagnosticEffect(value.callee.object) && value.arguments.length > 0 &&
++            value.arguments.every((argument) => __rspack_external__babel_types_6e8337dd.isCallExpression(argument) &&
++              closedMethod(argument.callee, 'Effect', 'annotateLogs', effectSources) && argument.arguments.length === 1);
++        });
++        const diagnosticObserver = (node) => {
++          const value = routeValue(node);
++          if ((!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(value) && !__rspack_external__babel_types_6e8337dd.isFunctionExpression(value) &&
++            !__rspack_external__babel_types_6e8337dd.isFunctionDeclaration(value)) || value.async || value.generator || value.params.length !== 1 ||
++            !__rspack_external__babel_types_6e8337dd.isIdentifier(value.params[0])) return false;
++          const body = value.body;
++          return (!__rspack_external__babel_types_6e8337dd.isBlockStatement(body) || body.body.length === 1) &&
++            !!returned(body) && diagnosticEffect(returned(body));
++        };
++        /** Only closed native stages compose: no invocation of a user Layer-transform function. */
++        const startupStage = (node) => guarded(node, (node) => {
++          const value = routeValue(node);
++          if (closedMethod(value, 'Layer', 'orDie', layerSources)) return 'orDie';
++          if (!__rspack_external__babel_types_6e8337dd.isCallExpression(value)) return undefined;
++          if (closedMethod(value.callee, 'Layer', 'tapCause', layerSources)) {
++            return value.arguments.length === 1 && diagnosticObserver(value.arguments[0]) &&
++              closedMethod(value.callee, 'Layer', 'tapCause', layerSources) ? 'tapCause' : undefined;
++          }
++          const factory = imported(routeValue(value.callee));
++          return factory?.name === 'flow' && ['effect', 'effect/Function'].includes(factory.specifier) &&
++            value.arguments.length === 2 && startupStage(value.arguments[0]) === 'tapCause' &&
++            startupStage(value.arguments[1]) === 'orDie' ? 'startup' : undefined;
++        });
+         const pipe = (node, check)=>__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) && !node.callee.computed && __rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property, {
+                 name: 'pipe'
+-            }) && check(node.callee.object) && node.arguments.every((argument)=>method(argument, 'Layer', 'orDie', layerSources) || __rspack_external__babel_types_6e8337dd.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && argument.arguments.length > 0);
++            }) && check(node.callee.object) && node.arguments.every((argument)=>startupStage(argument) !== undefined || __rspack_external__babel_types_6e8337dd.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && argument.arguments.length > 0);
+         const handled = (node)=>{
+             node = unwrap(node);
+             if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) && !__rspack_external__babel_types_6e8337dd.isFunctionExpression(node)) return false;
+@@ -252,11 +314,56 @@
              'effect',
              'effect/Effect'
          ];
@@ -680,7 +893,7 @@ index 4cb91c54c11d970e96a5b4000dcfdad2dd4e27d1..794de911fcaaa005069635750db1c95c
          };
          const effectReference = (node)=>guarded(node, (node)=>{
                  const init = initialized(node);
-@@ -270,7 +316,7 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+@@ -270,7 +377,7 @@
                  if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
                  const handler = routeHandler(node.body);
                  const parameter = binding(node.params[0]);
